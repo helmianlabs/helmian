@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Helmion Local Service</AssemblyName>
+    <RootNamespace>Helmion.LocalService</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>Helmion Read-only Local Service</Product>
+    <Description>Current-user read-only workspace inspection service for Helmion</Description>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Helmion.LocalService.Protocol\Helmion.LocalService.Protocol.csproj" />
+    <ProjectReference Include="..\Helmion.LocalService.Security\Helmion.LocalService.Security.csproj" />
+  </ItemGroup>
+</Project>
