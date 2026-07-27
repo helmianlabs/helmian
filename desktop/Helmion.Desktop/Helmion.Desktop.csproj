@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Helmion Pilot</AssemblyName>
+    <RootNamespace>Helmion.Desktop</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>Helmion Personal Pilot</Product>
+    <Description>Local Windows dashboard shell for the Helmion personal pilot</Description>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <ApplicationIcon>Assets\Helmion.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Helmion.Desktop.Core\Helmion.Desktop.Core.csproj" />
+    <ProjectReference Include="..\Helmion.LocalService.Protocol\Helmion.LocalService.Protocol.csproj" />
+    <ProjectReference Include="..\Helmion.LocalService\Helmion.LocalService.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="GenerateHelmionIcon"
+          BeforeTargets="CoreCompile"
+          Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\scripts\build-icon.ps1&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\Assets\Helmion.ico&quot;" />
+  </Target>
+</Project>

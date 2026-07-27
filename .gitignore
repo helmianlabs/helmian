@@ -1,0 +1,12 @@
+node_modules/
+.env
+.helmion/
+coverage/
+*.log
+*.tgz
+*.owner-key.dpapi.json
+*.owner-key.recovery.json
+*.owner-confirmation.json
+artifacts/
+desktop/**/bin/
+desktop/**/obj/

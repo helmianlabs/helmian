@@ -1,0 +1,40 @@
+{
+  "name": "@helmion/agent-control",
+  "version": "0.1.0",
+  "description": "Deterministic governance, shared memory, and Maestro coordination for coding agents",
+  "type": "module",
+  "bin": {
+    "helmion": "./bin/helmion.mjs",
+    "mcp-helmion-context": "./bin/mcp-helmion-context.mjs",
+    "mcp-helmion-flywheel": "./bin/mcp-helmion-flywheel.mjs",
+    "mcp-helmion-advisory": "./bin/mcp-helmion-advisory.mjs",
+    "mcp-helmion-codex": "./bin/mcp-helmion-codex.mjs"
+  },
+  "files": [
+    "bin",
+    "docs",
+    "hooks",
+    "src",
+    "sql",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check bin/helmion.mjs && node --check bin/mcp-helmion-codex.mjs && node --check src/core/governance.mjs && node --check src/core/distiller.mjs && node --check src/core/transport.mjs && node --check src/core/maestro.mjs && node --check src/core/operation-policy.mjs && node --check src/core/database-target.mjs && node --check src/core/human-confirmation.mjs && node --check src/core/pilot-policy.mjs && node --check src/core/phase-two-verification.mjs && node --check src/core/provider-adapter-contract.mjs && node --check src/windows/owner-key-store.mjs && node --check src/adapters/neon.mjs && node --check src/adapters/maestro.mjs && node --check src/adapters/codex.mjs && node --check src/mcp/server.mjs && node --check src/mcp/codex-server.mjs",
+    "verify": "npm run check && npm test",
+    "desktop:build": "dotnet build desktop/Helmion.Desktop.slnx --configuration Debug --nologo",
+    "desktop:test": "dotnet run --project desktop/Helmion.Desktop.SmokeTests/Helmion.Desktop.SmokeTests.csproj --configuration Debug",
+    "desktop:verify": "npm run desktop:build && npm run desktop:test",
+    "desktop:run": "dotnet run --project desktop/Helmion.Desktop/Helmion.Desktop.csproj",
+    "desktop:package": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/publish.ps1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.22.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

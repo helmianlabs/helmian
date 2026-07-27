@@ -1,0 +1,2135 @@
+<Window x:Class="Helmion.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Helmion Personal Pilot"
+        Width="1440"
+        Height="900"
+        MinWidth="1120"
+        MinHeight="720"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource CanvasBrush}"
+        Foreground="{DynamicResource TextBrush}"
+        FontFamily="{StaticResource AppFont}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+  <Window.Resources>
+    <Style x:Key="NavButtonStyle" TargetType="Button">
+      <Setter Property="Height" Value="48" />
+      <Setter Property="Margin" Value="0,3" />
+      <Setter Property="Padding" Value="15,0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Chrome"
+                    Background="{TemplateBinding Background}"
+                    CornerRadius="10"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="Opacity" Value="0.86" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Chrome" Property="Opacity" Value="0.68" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="CardStyle" TargetType="Border">
+      <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource StrokeBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="16" />
+      <Setter Property="Padding" Value="22" />
+    </Style>
+
+    <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style x:Key="MutedStyle" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="PillStyle" TargetType="Border">
+      <Setter Property="CornerRadius" Value="20" />
+      <Setter Property="Padding" Value="10,5" />
+      <Setter Property="Background" Value="{DynamicResource AccentPanelBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentStrokeBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentInkBrush}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Chrome"
+                    Background="{TemplateBinding Background}"
+                    CornerRadius="9"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="Opacity" Value="0.88" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <DataTemplate x:Key="ActivityTemplate">
+      <Grid Margin="0,4,0,12">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="92" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <TextBlock Grid.Column="0"
+                   Text="{Binding TimeLabel}"
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   FontSize="12"
+                   Margin="0,3,12,0" />
+        <StackPanel Grid.Column="1">
+          <TextBlock Text="{Binding Title}"
+                     Foreground="{DynamicResource TextBrush}"
+                     FontSize="14"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="{Binding Detail}"
+                     Style="{StaticResource MutedStyle}"
+                     Margin="0,4,18,0" />
+        </StackPanel>
+        <Border Grid.Column="2"
+                Style="{StaticResource PillStyle}"
+                Padding="8,3"
+                VerticalAlignment="Top">
+          <TextBlock Text="{Binding Kind}"
+                     Foreground="{DynamicResource AccentBrush}"
+                     FontSize="10"
+                     FontWeight="Bold" />
+        </Border>
+      </Grid>
+    </DataTemplate>
+
+    <DataTemplate x:Key="OrchestrationEventTemplate">
+      <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="82" />
+            <ColumnDefinition Width="150" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding TimeLabel}"
+                     Foreground="{DynamicResource MutedTextBrush}"
+                     FontFamily="Consolas"
+                     FontSize="12"
+                     Margin="0,3,12,0" />
+          <StackPanel Grid.Column="1" Margin="0,0,18,0">
+            <TextBlock Text="{Binding Actor}"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontSize="11"
+                       FontWeight="Bold" />
+            <TextBlock Text="DEMO EVENT"
+                       Foreground="{DynamicResource AmberBrush}"
+                       FontSize="9"
+                       FontWeight="Bold"
+                       Margin="0,5,0,0" />
+          </StackPanel>
+          <StackPanel Grid.Column="2" Margin="0,0,22,0">
+            <TextBlock Text="{Binding Title}"
+                       Foreground="{DynamicResource TextBrush}"
+                       FontSize="15"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="{Binding Summary}"
+                       Style="{StaticResource MutedStyle}"
+                       Margin="0,5,0,0" />
+            <Expander Margin="0,10,0,0">
+              <Expander.Header>
+                <TextBlock Text="Evidence and redacted detail"
+                           Foreground="{DynamicResource SoftTextBrush}"
+                           FontSize="11"
+                           FontWeight="SemiBold" />
+              </Expander.Header>
+              <StackPanel Margin="0,8,0,2">
+                <TextBlock Text="{Binding EvidenceDetail}"
+                           Foreground="{DynamicResource SoftTextBrush}"
+                           FontSize="11"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="{Binding RawDetail}"
+                           Foreground="{DynamicResource MutedTextBrush}"
+                           FontFamily="Consolas"
+                           FontSize="10"
+                           TextWrapping="Wrap"
+                           Margin="0,6,0,0" />
+              </StackPanel>
+            </Expander>
+          </StackPanel>
+          <StackPanel Grid.Column="3">
+            <Border Style="{StaticResource PillStyle}" Padding="8,3">
+              <TextBlock Text="{Binding Kind}"
+                         Foreground="{DynamicResource AccentBrush}"
+                         FontSize="10"
+                         FontWeight="Bold" />
+            </Border>
+            <TextBlock Text="{Binding EvidenceLabel}"
+                       Foreground="{DynamicResource AmberBrush}"
+                       FontSize="9"
+                       FontWeight="Bold"
+                       HorizontalAlignment="Right"
+                       Margin="0,8,0,0" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="HandoffTemplate">
+      <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="96" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel Grid.Column="0">
+            <TextBlock Text="{Binding Id}"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontSize="15"
+                       FontWeight="Bold" />
+            <TextBlock Text="DEMO"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontSize="10"
+                       FontWeight="Bold"
+                       Margin="0,6,0,0" />
+          </StackPanel>
+          <StackPanel Grid.Column="1" Margin="0,0,22,0">
+            <TextBlock Text="{Binding Direction}"
+                       Foreground="{DynamicResource TextBrush}"
+                       FontWeight="SemiBold"
+                       FontSize="14" />
+            <TextBlock Text="{Binding Summary}"
+                       Style="{StaticResource MutedStyle}"
+                       Margin="0,5,0,0" />
+            <TextBlock Text="{Binding Evidence}"
+                       Foreground="{DynamicResource SoftTextBrush}"
+                       FontSize="12"
+                       Margin="0,10,0,0" />
+          </StackPanel>
+          <Border Grid.Column="2"
+                  Style="{StaticResource PillStyle}"
+                  VerticalAlignment="Top">
+            <TextBlock Text="{Binding Status}"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontSize="11"
+                       FontWeight="Bold" />
+          </Border>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="ApprovalTemplate">
+      <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel Grid.Column="0">
+            <StackPanel Orientation="Horizontal">
+              <Border Background="{DynamicResource WarningPanelBrush}"
+                      BorderBrush="{DynamicResource WarningStrokeBrush}"
+                      BorderThickness="1"
+                      CornerRadius="12"
+                      Padding="9,4">
+                <TextBlock Text="{Binding Risk}"
+                           Foreground="{DynamicResource AmberBrush}"
+                           FontSize="10"
+                           FontWeight="Bold" />
+              </Border>
+              <TextBlock Text="DEMO PREVIEW"
+                         Foreground="{DynamicResource MutedTextBrush}"
+                         FontSize="10"
+                         FontWeight="Bold"
+                         VerticalAlignment="Center"
+                         Margin="10,0,0,0" />
+            </StackPanel>
+            <TextBlock Text="{Binding Title}"
+                       Foreground="{DynamicResource TextBrush}"
+                       FontWeight="SemiBold"
+                       FontSize="16"
+                       Margin="0,12,0,0" />
+            <TextBlock Text="{Binding PolicyOutcome}"
+                       Foreground="{DynamicResource AmberBrush}"
+                       FontSize="13"
+                       Margin="0,6,0,0" />
+            <TextBlock Text="{Binding Detail}"
+                       Style="{StaticResource MutedStyle}"
+                       Margin="0,5,0,0" />
+          </StackPanel>
+          <Border Grid.Column="1"
+                  Background="{DynamicResource PanelSubtleBrush}"
+                  BorderBrush="{DynamicResource StrokeBrush}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Padding="14,9"
+                  VerticalAlignment="Center"
+                  Margin="24,0,0,0">
+            <TextBlock Text="Preview only"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontWeight="SemiBold"
+                       FontSize="12" />
+          </Border>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="IntegrationTemplate">
+      <Border Style="{StaticResource CardStyle}"
+              Width="405"
+              MinHeight="218"
+              Margin="0,0,14,14">
+        <StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="{Binding Name}"
+                       Style="{StaticResource SectionTitleStyle}"
+                       FontSize="16" />
+            <Border Grid.Column="1"
+                    Style="{StaticResource PillStyle}"
+                    Padding="8,3">
+              <TextBlock Text="NOT LIVE"
+                         Foreground="{DynamicResource MutedTextBrush}"
+                         FontWeight="Bold"
+                         FontSize="9" />
+            </Border>
+          </Grid>
+          <TextBlock Text="{Binding State}"
+                     Foreground="{DynamicResource AccentBrush}"
+                     FontSize="13"
+                     FontWeight="SemiBold"
+                     Margin="0,15,0,0" />
+          <TextBlock Text="{Binding Detail}"
+                     Style="{StaticResource MutedStyle}"
+                     Margin="0,8,0,0" />
+          <Border BorderBrush="{DynamicResource StrokeBrush}"
+                  BorderThickness="0,1,0,0"
+                  Margin="0,15,0,0"
+                  Padding="0,13,0,0">
+            <TextBlock Text="{Binding Guidance}"
+                       Foreground="{DynamicResource SoftTextBrush}"
+                       FontSize="12"
+                       TextWrapping="Wrap" />
+          </Border>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="ProviderProfileTemplate">
+      <Border Style="{StaticResource CardStyle}"
+              Width="405"
+              MinHeight="330"
+              Margin="0,0,14,14">
+        <StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="{Binding Name}"
+                       Style="{StaticResource SectionTitleStyle}"
+                       FontSize="16" />
+            <Border Grid.Column="1" Style="{StaticResource PillStyle}" Padding="8,3">
+              <TextBlock Text="{Binding SetupState}"
+                         Foreground="{DynamicResource AmberBrush}"
+                         FontWeight="Bold"
+                         FontSize="9" />
+            </Border>
+          </Grid>
+          <TextBlock Text="{Binding CoordinatorRole}"
+                     Foreground="{DynamicResource AccentBrush}"
+                     FontSize="13"
+                     FontWeight="SemiBold"
+                     Margin="0,14,0,0" />
+          <TextBlock Text="{Binding Availability}"
+                     Foreground="{DynamicResource SoftTextBrush}"
+                     FontSize="12"
+                     Margin="0,6,0,0" />
+          <TextBlock Text="{Binding Interface}"
+                     Style="{StaticResource MutedStyle}"
+                     Margin="0,6,0,0" />
+          <Border Background="{DynamicResource PanelSubtleBrush}"
+                  BorderBrush="{DynamicResource StrokeBrush}"
+                  BorderThickness="1"
+                  CornerRadius="9"
+                  Padding="11"
+                  Margin="0,12,0,0">
+            <StackPanel>
+              <TextBlock Text="AUTHENTICATION"
+                         Foreground="{DynamicResource FaintTextBrush}"
+                         FontSize="9"
+                         FontWeight="Bold" />
+              <TextBlock Text="{Binding AuthenticationClass}"
+                         Foreground="{DynamicResource AccentBrush}"
+                         FontSize="12"
+                         FontWeight="SemiBold"
+                         Margin="0,5,0,0" />
+              <TextBlock Text="{Binding AuthenticationGuidance}"
+                         Foreground="{DynamicResource SoftTextBrush}"
+                         FontSize="11"
+                         TextWrapping="Wrap"
+                         Margin="0,4,0,0" />
+            </StackPanel>
+          </Border>
+          <Border BorderBrush="{DynamicResource StrokeBrush}"
+                  BorderThickness="0,1,0,0"
+                  Margin="0,13,0,0"
+                  Padding="0,12,0,0">
+            <StackPanel>
+              <TextBlock Text="{Binding AuthBoundary}"
+                         Foreground="{DynamicResource SoftTextBrush}"
+                         FontSize="11"
+                         TextWrapping="Wrap" />
+              <TextBlock Text="{Binding ActivationPlan}"
+                         Foreground="{DynamicResource MutedTextBrush}"
+                         FontSize="11"
+                         TextWrapping="Wrap"
+                         Margin="0,6,0,0" />
+              <TextBlock Text="{Binding DocumentationBasis}"
+                         Foreground="{DynamicResource AmberBrush}"
+                         FontSize="10"
+                         TextWrapping="Wrap"
+                         Margin="0,7,0,0" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="MigrationInventoryTemplate">
+      <Border BorderBrush="{DynamicResource StrokeBrush}"
+              BorderThickness="0,0,0,1"
+              Padding="0,11">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="55" />
+            <ColumnDefinition Width="1.2*" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding Version}"
+                     Foreground="{DynamicResource AccentBrush}"
+                     FontWeight="Bold" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding Name}"
+                     Foreground="{DynamicResource SoftTextBrush}"
+                     Margin="8,0,12,0" />
+          <TextBlock Grid.Column="2"
+                     Text="{Binding Sha256}"
+                     Foreground="{DynamicResource MutedTextBrush}"
+                     FontFamily="Consolas"
+                     FontSize="10"
+                     TextTrimming="CharacterEllipsis" />
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="EvidenceInventoryTemplate">
+      <Border BorderBrush="{DynamicResource StrokeBrush}"
+              BorderThickness="0,0,0,1"
+              Padding="0,11">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="105" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding Kind}"
+                     Foreground="{DynamicResource AccentBrush}"
+                     FontSize="10"
+                     FontWeight="Bold" />
+          <StackPanel Grid.Column="1">
+            <TextBlock Text="{Binding Name}"
+                       Foreground="{DynamicResource SoftTextBrush}"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="{Binding Detail}"
+                       Style="{StaticResource MutedStyle}"
+                       Margin="0,3,0,0" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate x:Key="ReleaseCapabilityTemplate">
+      <Border BorderBrush="{DynamicResource StrokeBrush}"
+              BorderThickness="0,0,0,1"
+              Padding="0,15">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="145" />
+            <ColumnDefinition Width="1.35*" />
+            <ColumnDefinition Width="1.05*" />
+            <ColumnDefinition Width="1.25*" />
+            <ColumnDefinition Width="58" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0"
+                     Text="{Binding Area}"
+                     Foreground="{DynamicResource TextBrush}"
+                     FontWeight="SemiBold"
+                     FontSize="13"
+                     Margin="0,0,14,0"
+                     TextWrapping="Wrap" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding Target}"
+                     Foreground="{DynamicResource SoftTextBrush}"
+                     FontSize="12"
+                     Margin="0,0,18,0"
+                     TextWrapping="Wrap" />
+          <TextBlock Grid.Column="2"
+                     Text="{Binding CurrentState}"
+                     Foreground="{DynamicResource AmberBrush}"
+                     FontSize="12"
+                     Margin="0,0,18,0"
+                     TextWrapping="Wrap" />
+          <TextBlock Grid.Column="3"
+                     Text="{Binding ReleaseGate}"
+                     Foreground="{DynamicResource MutedTextBrush}"
+                     FontSize="12"
+                     Margin="0,0,14,0"
+                     TextWrapping="Wrap" />
+          <Border Grid.Column="4"
+                  Style="{StaticResource PillStyle}"
+                  Padding="8,3"
+                  VerticalAlignment="Top">
+            <TextBlock Text="{Binding Phase}"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontWeight="Bold"
+                       FontSize="10"
+                       HorizontalAlignment="Center" />
+          </Border>
+        </Grid>
+      </Border>
+    </DataTemplate>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="248" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <Border Grid.Column="0"
+            Background="{DynamicResource SidebarBrush}"
+            BorderBrush="{DynamicResource StrokeBrush}"
+            BorderThickness="0,0,1,0">
+      <Grid Margin="18,22">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="6,0,6,27">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="44" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Width="38"
+                  Height="38"
+                  Background="{DynamicResource AccentBrush}"
+                  CornerRadius="12">
+            <Grid>
+              <Path Data="M 9,7 L 9,31 M 9,19 L 29,7 M 9,19 L 29,31"
+                    Stroke="{DynamicResource AccentInkBrush}"
+                    StrokeThickness="3.4"
+                    StrokeStartLineCap="Round"
+                    StrokeEndLineCap="Round" />
+              <Ellipse Width="7" Height="7" Fill="{DynamicResource AccentInkBrush}"
+                       HorizontalAlignment="Right"
+                       VerticalAlignment="Top"
+                       Margin="0,5,5,0" />
+            </Grid>
+          </Border>
+          <StackPanel Grid.Column="1" Margin="10,1,0,0">
+            <TextBlock Text="HELMION"
+                       FontWeight="Bold"
+                       FontSize="16" />
+            <TextBlock Text="Personal Pilot"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontSize="11"
+                       Margin="0,2,0,0" />
+          </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="1">
+          <TextBlock Text="PILOT"
+                     Foreground="{DynamicResource FaintTextBrush}"
+                     FontSize="10"
+                     FontWeight="Bold"
+                     Margin="15,0,0,8" />
+          <Button x:Name="OverviewNav"
+                  Tag="Overview"
+                  Content="⌁   Overview"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+          <Button x:Name="WorkspaceNav"
+                  Tag="Workspace"
+                  Content="◇   Workspace"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+          <Button x:Name="ConsoleNav"
+                  Tag="Console"
+                  Content="▣   Console"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+          <Button x:Name="ActivityNav"
+                  Tag="Activity"
+                  Content="◫   Live activity"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+          <Button x:Name="EvidenceNav"
+                  Tag="Evidence"
+                  Content="≡   Evidence"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+          <Button x:Name="ApprovalsNav"
+                  Tag="Approvals"
+                  Content="✓   Approvals"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+          <Button x:Name="IntegrationsNav"
+                  Tag="Integrations"
+                  Content="⌘   Integrations"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+          <Button x:Name="ReleaseNav"
+                  Tag="Release"
+                  Content="↗   Release roadmap"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+          <Button x:Name="SettingsNav"
+                  Tag="Settings"
+                  Content="⚙   Settings"
+                  Style="{StaticResource NavButtonStyle}"
+                  Click="Navigation_Click" />
+        </StackPanel>
+
+        <Border Grid.Row="3"
+                Background="{DynamicResource PanelBrush}"
+                BorderBrush="{DynamicResource StrokeBrush}"
+                BorderThickness="1"
+                CornerRadius="14"
+                Padding="15">
+          <StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <Ellipse x:Name="LocalServiceDot"
+                       Width="8"
+                       Height="8"
+                       Fill="{DynamicResource FaintTextBrush}"
+                       Margin="0,1,8,0" />
+              <TextBlock Text="Local service"
+                         Foreground="{DynamicResource TextBrush}"
+                         FontWeight="SemiBold"
+                         FontSize="12" />
+            </StackPanel>
+            <TextBlock x:Name="LocalServiceSidebarStatus"
+                       Text="Not connected"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontSize="11"
+                       Margin="16,5,0,0" />
+            <TextBlock x:Name="LocalServiceSidebarDetail"
+                       Text="Demo fallback · no network"
+                       Foreground="{DynamicResource FaintTextBrush}"
+                       FontSize="10"
+                       Margin="16,2,0,0" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="1">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="88" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="38" />
+      </Grid.RowDefinitions>
+
+      <Border Grid.Row="0"
+              Background="{DynamicResource HeaderBrush}"
+              BorderBrush="{DynamicResource StrokeBrush}"
+              BorderThickness="0,0,0,1"
+              Padding="30,0">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock x:Name="PageTitle"
+                       Text="Overview"
+                       FontSize="22"
+                       FontWeight="SemiBold" />
+            <TextBlock x:Name="PageContext"
+                       Text="A calm view of the local pilot"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontSize="12"
+                       Margin="0,4,0,0" />
+          </StackPanel>
+          <StackPanel Grid.Column="1"
+                      Orientation="Horizontal"
+                      VerticalAlignment="Center">
+            <Border Style="{StaticResource PillStyle}"
+                    Background="{DynamicResource AccentDarkBrush}"
+                    BorderBrush="{DynamicResource AccentStrokeStrongBrush}"
+                    Margin="0,0,10,0">
+              <TextBlock Text="{Binding ModeLabel, StringFormat={}{0} mode}"
+                         Foreground="{DynamicResource AccentBrush}"
+                         FontSize="11"
+                         FontWeight="Bold" />
+            </Border>
+            <Border Style="{StaticResource PillStyle}">
+              <StackPanel Orientation="Horizontal">
+                <Ellipse Width="7" Height="7" Fill="{DynamicResource AmberBrush}" Margin="0,0,7,0" />
+                <TextBlock x:Name="GlobalDataBadgeText"
+                           Text="DEMO DATA"
+                           Foreground="{DynamicResource AmberBrush}"
+                           FontWeight="Bold"
+                           FontSize="10" />
+              </StackPanel>
+            </Border>
+            <Border Width="38"
+                    Height="38"
+                    Background="{DynamicResource AvatarBrush}"
+                    CornerRadius="19"
+                    Margin="14,0,0,0">
+              <TextBlock Text="P"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         FontWeight="Bold"
+                         Foreground="{DynamicResource AccentBrush}" />
+            </Border>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Grid Grid.Row="1">
+        <!-- Overview -->
+        <ScrollViewer x:Name="OverviewPage"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Margin="30,26,30,34">
+            <Border CornerRadius="20"
+                    BorderBrush="{DynamicResource AccentStrokeBrush}"
+                    BorderThickness="1"
+                    Padding="28">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                  <GradientStop Color="{DynamicResource HeroStartColor}" Offset="0" />
+                  <GradientStop Color="{DynamicResource HeroMiddleColor}" Offset="0.58" />
+                  <GradientStop Color="{DynamicResource HeroEndColor}" Offset="1" />
+                </LinearGradientBrush>
+              </Border.Background>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="310" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,35,0">
+                  <Border Style="{StaticResource PillStyle}"
+                          HorizontalAlignment="Left"
+                          Background="{DynamicResource AccentDarkBrush}"
+                          BorderBrush="{DynamicResource AccentStrokeStrongBrush}">
+                    <TextBlock Text="ACTIVE PERSONAL PILOT"
+                               Foreground="{DynamicResource AccentBrush}"
+                               FontSize="10"
+                               FontWeight="Bold" />
+                  </Border>
+                  <TextBlock Text="Your workspace, with guardrails."
+                             FontSize="30"
+                             FontWeight="SemiBold"
+                             Margin="0,17,0,0" />
+                  <TextBlock Text="Routine bounded local work stays in motion. External and destructive authority is never implied by this demo shell."
+                             Foreground="{DynamicResource SoftTextBrush}"
+                             FontSize="14"
+                             TextWrapping="Wrap"
+                             MaxWidth="680"
+                             HorizontalAlignment="Left"
+                             Margin="0,10,0,0" />
+                  <Button Content="Open workspace  →"
+                          Tag="Workspace"
+                          Click="Navigation_Click"
+                          Style="{StaticResource PrimaryButtonStyle}"
+                          HorizontalAlignment="Left"
+                          Margin="0,22,0,0" />
+                </StackPanel>
+                <Border Grid.Column="1"
+                        Background="{DynamicResource PanelInsetBrush}"
+                        BorderBrush="{DynamicResource AccentStrokeBrush}"
+                        BorderThickness="1"
+                        CornerRadius="15"
+                        Padding="20">
+                  <StackPanel>
+                    <TextBlock Text="TODAY'S POSTURE"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="10"
+                               FontWeight="Bold" />
+                    <Grid Margin="0,16,0,0">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Local guardrails" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" />
+                      <TextBlock Grid.Column="1" Text="Ready" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" />
+                    </Grid>
+                    <Grid Margin="0,12,0,0">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Local service" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" />
+                      <TextBlock x:Name="OverviewServiceStateText"
+                                 Grid.Column="1"
+                                 Text="Offline"
+                                 Foreground="{DynamicResource AmberBrush}"
+                                 FontWeight="SemiBold" />
+                    </Grid>
+                    <Grid Margin="0,12,0,0">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Owner signing" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" />
+                      <TextBlock Grid.Column="1" Text="Optional · off" Foreground="{DynamicResource MutedTextBrush}" FontWeight="SemiBold" />
+                    </Grid>
+                    <Border BorderBrush="{DynamicResource AccentStrokeBrush}"
+                            BorderThickness="0,1,0,0"
+                            Margin="0,17,0,0"
+                            Padding="0,14,0,0">
+                      <TextBlock x:Name="OverviewDataSourceText"
+                                 Text="{Binding DataSourceLabel}"
+                                 Foreground="{DynamicResource MutedTextBrush}"
+                                 FontSize="11"
+                                 TextWrapping="Wrap" />
+                    </Border>
+                  </StackPanel>
+                </Border>
+              </Grid>
+            </Border>
+
+            <UniformGrid Columns="3" Margin="0,18,0,0">
+              <Border Style="{StaticResource CardStyle}" Margin="0,0,12,0">
+                <StackPanel>
+                  <TextBlock Text="WORKSPACES" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
+                  <TextBlock x:Name="WorkspaceCountText" Text="1" FontSize="28" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock x:Name="WorkspaceMetricDetail" Text="Helmion · local pilot" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardStyle}" Margin="6,0">
+                <StackPanel>
+                  <TextBlock Text="LEASE POSTURE" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
+                  <TextBlock x:Name="LeaseMetricText" Text="Demo" Foreground="{DynamicResource AccentBrush}" FontSize="25" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock x:Name="LeaseMetricDetail" Text="Durable state not queried" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardStyle}" Margin="12,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="OPEN DECISIONS" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
+                  <TextBlock Text="0" FontSize="28" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock Text="Preview queue is non-actionable" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                </StackPanel>
+              </Border>
+            </UniformGrid>
+
+            <Grid Margin="0,18,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.55*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
+                <StackPanel>
+                  <Grid Margin="0,0,0,17">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Recent pilot evidence" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Grid.Column="1" Text="DEMO" Foreground="{DynamicResource AmberBrush}" FontWeight="Bold" FontSize="10" VerticalAlignment="Center" />
+                  </Grid>
+                  <ItemsControl ItemsSource="{Binding RecentActivity}"
+                                ItemTemplate="{StaticResource ActivityTemplate}" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="9,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="Guardrail summary" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="Policy is active even while live integrations are deferred."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,7,0,17" />
+                  <Border Background="{DynamicResource AccentStrongBrush}" CornerRadius="11" Padding="13" Margin="0,0,0,10">
+                    <StackPanel>
+                      <TextBlock Text="LOW RISK · LOCAL" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" />
+                      <TextBlock Text="Runs inside clear, bounded guardrails" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" Margin="0,5,0,0" />
+                    </StackPanel>
+                  </Border>
+                  <Border Background="{DynamicResource WarningPanelBrush}" CornerRadius="11" Padding="13" Margin="0,0,0,10">
+                    <StackPanel>
+                      <TextBlock Text="HIGH RISK · EXTERNAL" Foreground="{DynamicResource AmberBrush}" FontWeight="Bold" FontSize="10" />
+                      <TextBlock Text="Requires a future explicit owner decision" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" Margin="0,5,0,0" />
+                    </StackPanel>
+                  </Border>
+                  <Border Background="{DynamicResource PanelSubtleBrush}" CornerRadius="11" Padding="13">
+                    <StackPanel>
+                      <TextBlock Text="ADVISORS" Foreground="{DynamicResource MutedTextBrush}" FontWeight="Bold" FontSize="10" />
+                      <TextBlock Text="Read-only evidence · never authority" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" Margin="0,5,0,0" />
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </Border>
+            </Grid>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,18,0,0">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,30,0">
+                  <TextBlock Text="Helmion Profile Package"
+                             Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="Planned portable bundle: base Policy Pack, reviewed learning, adapter mappings, task-specific profiles, optional templates, and a versioned manifest."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                  <TextBlock Text="Each item gets a plain-English impact/dependency/safety card and its own toggle. Task profiles inherit base safety. No source folder has been scanned."
+                             Foreground="{DynamicResource SoftTextBrush}"
+                             FontSize="12"
+                             TextWrapping="Wrap"
+                             Margin="0,9,0,0" />
+                </StackPanel>
+                <Border Grid.Column="1"
+                        Style="{StaticResource PillStyle}"
+                        VerticalAlignment="Top">
+                  <TextBlock Text="REQUIREMENT · NOT IMPLEMENTED"
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontSize="10"
+                             FontWeight="Bold" />
+                </Border>
+              </Grid>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Workspace -->
+        <ScrollViewer x:Name="WorkspacePage"
+                      Visibility="Collapsed"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,26,30,34">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock x:Name="WorkspacePageTitle"
+                           Text="{Binding Workspace.Name}"
+                           FontSize="28"
+                           FontWeight="SemiBold" />
+                <TextBlock x:Name="WorkspacePagePath"
+                           Text="{Binding Workspace.RootPath}"
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,5,0,0" />
+              </StackPanel>
+              <Border Grid.Column="1" Style="{StaticResource PillStyle}" Background="{DynamicResource AccentDarkBrush}" BorderBrush="{DynamicResource AccentStrokeStrongBrush}" VerticalAlignment="Center">
+                <TextBlock x:Name="WorkspaceSourceBadgeText"
+                           Text="DEMO FALLBACK"
+                           Foreground="{DynamicResource AccentBrush}"
+                           FontSize="10"
+                           FontWeight="Bold" />
+              </Border>
+            </Grid>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,22,0,0">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,28,0">
+                  <TextBlock x:Name="WorkspaceConnectionSummary"
+                             Text="Demo fallback is active"
+                             Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock x:Name="WorkspaceConnectionDetail"
+                             Text="Connect the current-user read-only service, then choose a local project folder."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,7,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                  <Button x:Name="ConnectServiceButton"
+                          Content="Connect local service"
+                          Click="ConnectService_Click"
+                          Style="{StaticResource PrimaryButtonStyle}"
+                          AutomationProperties.Name="Connect Helmion local service" />
+                  <Button x:Name="SelectWorkspaceButton"
+                          Content="Choose workspace"
+                          Click="SelectWorkspace_Click"
+                          IsEnabled="False"
+                          Margin="10,0,0,0"
+                          Style="{StaticResource PrimaryButtonStyle}"
+                          AutomationProperties.Name="Choose a local project workspace" />
+                  <Button x:Name="RefreshWorkspaceButton"
+                          Content="Refresh"
+                          Click="RefreshWorkspace_Click"
+                          IsEnabled="False"
+                          Margin="10,0,0,0"
+                          Style="{StaticResource PrimaryButtonStyle}"
+                          AutomationProperties.Name="Refresh the selected workspace inventory" />
+                </StackPanel>
+              </Grid>
+            </Border>
+
+            <Grid Margin="0,18,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.2*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
+                <StackPanel>
+                  <TextBlock Text="Project workspace" Style="{StaticResource SectionTitleStyle}" />
+                  <Grid Margin="0,20,0,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="145" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Branch" Foreground="{DynamicResource MutedTextBrush}" />
+                    <TextBlock x:Name="WorkspaceBranchText"
+                               Grid.Column="1"
+                               Text="{Binding Workspace.Branch}" />
+                  </Grid>
+                  <Grid Margin="0,13,0,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="145" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Data source" Foreground="{DynamicResource MutedTextBrush}" />
+                    <TextBlock x:Name="WorkspaceDataSourceText"
+                               Grid.Column="1"
+                               Text="Demo snapshot"
+                               Foreground="{DynamicResource AmberBrush}" />
+                  </Grid>
+                  <Grid Margin="0,13,0,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="145" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Next safe action" Foreground="{DynamicResource MutedTextBrush}" />
+                    <TextBlock x:Name="WorkspaceNextActionText"
+                               Grid.Column="1"
+                               Text="{Binding Workspace.NextAction}"
+                               TextWrapping="Wrap" />
+                  </Grid>
+                  <Border Background="{DynamicResource PanelSubtleBrush}" CornerRadius="11" Padding="14" Margin="0,20,0,0">
+                    <TextBlock Text="The authenticated local service inventories selected source files read-only. It does not start agents, query Neon, or mutate project state."
+                               Foreground="{DynamicResource SoftTextBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap" />
+                  </Border>
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="9,0,0,0">
+                <StackPanel>
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Lease status" Style="{StaticResource SectionTitleStyle}" />
+                    <Ellipse Grid.Column="1" Width="9" Height="9" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+                  </Grid>
+                  <TextBlock x:Name="WorkspaceLeaseStateText"
+                             Text="{Binding Workspace.LeaseState}"
+                             Foreground="{DynamicResource AccentBrush}"
+                             FontSize="20"
+                             FontWeight="SemiBold"
+                             Margin="0,20,0,0" />
+                  <TextBlock x:Name="WorkspaceLeaseDetailText"
+                             Text="{Binding Workspace.LeaseHolder}"
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,5,0,0" />
+                  <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,17,0,0">
+                    <StackPanel>
+                      <TextBlock Text="Lease invariant" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
+                      <TextBlock Text="At most one active writer per project. This local slice does not connect a durable lease provider, so it reports that state as unavailable."
+                                 Style="{StaticResource MutedStyle}"
+                                 Margin="0,6,0,0" />
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </Border>
+            </Grid>
+
+            <Grid Margin="0,18,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
+                <StackPanel>
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Migration source inventory" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock x:Name="MigrationInventoryState"
+                               Grid.Column="1"
+                               Text="Demo · not inspected"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="10"
+                               VerticalAlignment="Center" />
+                  </Grid>
+                  <TextBlock x:Name="EmptyMigrationMessage"
+                             Text="Choose a workspace to inventory local checksummed SQL sources."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,16,0,0" />
+                  <ItemsControl x:Name="MigrationInventoryList"
+                                ItemTemplate="{StaticResource MigrationInventoryTemplate}"
+                                Margin="0,8,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="9,0,0,0">
+                <StackPanel>
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Evidence source inventory" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock x:Name="EvidenceInventoryState"
+                               Grid.Column="1"
+                               Text="Demo · not inspected"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="10"
+                               VerticalAlignment="Center" />
+                  </Grid>
+                  <TextBlock x:Name="EmptyEvidenceMessage"
+                             Text="Choose a workspace to inventory local evidence sources."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,16,0,0" />
+                  <ItemsControl x:Name="EvidenceInventoryList"
+                                ItemTemplate="{StaticResource EvidenceInventoryTemplate}"
+                                Margin="0,8,0,0" />
+                </StackPanel>
+              </Border>
+            </Grid>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,18,0,0">
+              <StackPanel>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Workspace flow" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Grid.Column="1" Text="READ-ONLY SLICE" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
+                </Grid>
+                <Grid Margin="0,24,0,3">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Border Grid.Column="0" Background="{DynamicResource AccentPanelBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel>
+                      <TextBlock Text="1 · Observe" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" />
+                      <TextBlock Text="Read project, lease, policy, and evidence state." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                    </StackPanel>
+                  </Border>
+                  <TextBlock Grid.Column="1" Text="→" Foreground="{DynamicResource FaintTextBrush}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  <Border Grid.Column="2" Background="{DynamicResource AccentPanelBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel>
+                      <TextBlock Text="2 · Evaluate" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" />
+                      <TextBlock Text="Classify risk and enforce deterministic guardrails." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                    </StackPanel>
+                  </Border>
+                  <TextBlock Grid.Column="3" Text="→" Foreground="{DynamicResource FaintTextBrush}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  <Border Grid.Column="4" Background="{DynamicResource AccentPanelBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel>
+                      <TextBlock Text="3 · Evidence" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" />
+                      <TextBlock Text="Record checkpoint and acknowledged outcome." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                    </StackPanel>
+                  </Border>
+                </Grid>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Interaction console -->
+        <ScrollViewer x:Name="ConsolePage"
+                      Visibility="Collapsed"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,26,30,34">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Interaction console" FontSize="27" FontWeight="SemiBold" />
+                <TextBlock Text="One control center, several interaction surfaces, one deterministic Maestro authority."
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,6,0,0" />
+              </StackPanel>
+              <Border Grid.Column="1"
+                      Style="{StaticResource PillStyle}"
+                      VerticalAlignment="Center">
+                <TextBlock Text="FOUNDATION · EXECUTION OFF"
+                           Foreground="{DynamicResource AmberBrush}"
+                           FontSize="10"
+                           FontWeight="Bold" />
+              </Border>
+            </Grid>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,22,0,0">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Embedded terminal / CLI console"
+                             Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="The visible console surface is ready for a later service-brokered process session. It does not execute commands in this read-only build."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,7,0,0" />
+                </StackPanel>
+                <Border Grid.Column="1"
+                        Background="{DynamicResource PanelSubtleBrush}"
+                        BorderBrush="{DynamicResource StrokeBrush}"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Padding="13,8"
+                        VerticalAlignment="Center">
+                  <TextBlock Text="No shell started"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="11"
+                             FontWeight="SemiBold" />
+                </Border>
+              </Grid>
+            </Border>
+
+            <Border Background="{DynamicResource PanelInsetBrush}"
+                    BorderBrush="{DynamicResource StrokeBrush}"
+                    BorderThickness="1"
+                    CornerRadius="15"
+                    Padding="20"
+                    Margin="0,14,0,0">
+              <StackPanel>
+                <TextBlock Text="HELMION CONSOLE"
+                           Foreground="{DynamicResource FaintTextBrush}"
+                           FontFamily="Consolas"
+                           FontSize="11"
+                           FontWeight="Bold" />
+                <TextBlock Text="Service-backed session not activated."
+                           Foreground="{DynamicResource SoftTextBrush}"
+                           FontFamily="Consolas"
+                           FontSize="14"
+                           Margin="0,16,0,0" />
+                <TextBlock Text="Tomorrow: select coordinator → verify profile → open read-only canary session."
+                           Foreground="{DynamicResource MutedTextBrush}"
+                           FontFamily="Consolas"
+                           FontSize="12"
+                           Margin="0,8,0,0" />
+                <TextBlock Text="Maestro remains policy and lease authority regardless of provider selection."
+                           Foreground="{DynamicResource AccentBrush}"
+                           FontFamily="Consolas"
+                           FontSize="12"
+                           Margin="0,8,0,0" />
+              </StackPanel>
+            </Border>
+
+            <UniformGrid Columns="4" Margin="0,18,0,0">
+              <Border Style="{StaticResource CardStyle}" Margin="0,0,7,0">
+                <StackPanel>
+                  <TextBlock Text="DASHBOARD" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" />
+                  <TextBlock Text="Active surface" FontWeight="SemiBold" Margin="0,9,0,0" />
+                  <TextBlock Text="Local status, evidence, setup, and owner interaction." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardStyle}" Margin="7,0">
+                <StackPanel>
+                  <TextBlock Text="CLI CONSOLE" Foreground="{DynamicResource AmberBrush}" FontWeight="Bold" FontSize="10" />
+                  <TextBlock Text="Next activation slice" FontWeight="SemiBold" Margin="0,9,0,0" />
+                  <TextBlock Text="Service-brokered, scoped process session with audit." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardStyle}" Margin="7,0">
+                <StackPanel>
+                  <TextBlock Text="IDE ADAPTER" Foreground="{DynamicResource MutedTextBrush}" FontWeight="Bold" FontSize="10" />
+                  <TextBlock Text="Planned" FontWeight="SemiBold" Margin="0,9,0,0" />
+                  <TextBlock Text="Explicit context/tool bridge; Maestro still controls authority." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardStyle}" Margin="7,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="IN-APP VOICE" Foreground="{DynamicResource MutedTextBrush}" FontWeight="Bold" FontSize="10" />
+                  <TextBlock Text="Architecture only" FontWeight="SemiBold" Margin="0,9,0,0" />
+                  <TextBlock Text="Mic → STT → selected adapter → stream → TTS. No existing voice-session control." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                </StackPanel>
+              </Border>
+            </UniformGrid>
+
+            <Grid Margin="0,18,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
+                <StackPanel>
+                  <TextBlock Text="Provider-neutral Policy Pack"
+                             Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="Planned reviewable mappings for evidence and uncertainty rules, guardrails, tool permissions, lifecycle events, and connector access."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                  <TextBlock Text="Provider hook syntax remains adapter-specific. No Claude hooks or configuration are read, copied, or modified automatically."
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontSize="12"
+                             TextWrapping="Wrap"
+                             Margin="0,10,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="9,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="Transport boundaries"
+                             Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="MCP connects tools and context. It is not voice transport and it is not Maestro."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                  <TextBlock Text="A selected provider coordinates a session; it never replaces Helmion policy, lease, confirmation, or audit decisions."
+                             Foreground="{DynamicResource AccentBrush}"
+                             FontSize="12"
+                             TextWrapping="Wrap"
+                             Margin="0,10,0,0" />
+                </StackPanel>
+              </Border>
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Live activity stream -->
+        <ScrollViewer x:Name="ActivityPage"
+                      Visibility="Collapsed"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,26,30,34">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Live Activity Stream" FontSize="27" FontWeight="SemiBold" />
+                <TextBlock Text="Orchestration Timeline · provider routing, review, proof, checkpoints, and handoffs."
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,6,0,0" />
+              </StackPanel>
+              <Border Grid.Column="1"
+                      Style="{StaticResource PillStyle}"
+                      VerticalAlignment="Center">
+                <TextBlock Text="DESIGN MOCK · NO LIVE PROVIDERS"
+                           Foreground="{DynamicResource AmberBrush}"
+                           FontSize="10"
+                           FontWeight="Bold" />
+              </Border>
+            </Grid>
+
+            <UniformGrid Columns="3" Margin="0,22,0,18">
+              <Border Style="{StaticResource CardStyle}" Margin="0,0,8,0">
+                <StackPanel>
+                  <TextBlock Text="SELECTED COORDINATOR" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
+                  <TextBlock Text="None · demo routing" Foreground="{DynamicResource AmberBrush}" FontSize="18" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock Text="Provider choice changes coordination only." Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardStyle}" Margin="8,0">
+                <StackPanel>
+                  <TextBlock Text="MAESTRO" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
+                  <TextBlock Text="Control authority" Foreground="{DynamicResource AccentBrush}" FontSize="18" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock Text="Policy · leases · confirmations · audit" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardStyle}" Margin="8,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="RECORDING MODE" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
+                  <TextBlock Text="Redacted by default" Foreground="{DynamicResource AccentBrush}" FontSize="18" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock Text="No secrets, private prompts, or raw provider logs." Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
+                </StackPanel>
+              </Border>
+            </UniformGrid>
+
+            <Border Background="{DynamicResource WarningSoftBrush}"
+                    BorderBrush="{DynamicResource WarningStrokeBrush}"
+                    BorderThickness="1"
+                    CornerRadius="13"
+                    Padding="16"
+                    Margin="0,0,0,16">
+              <TextBlock Text="Evidence rule: “bug caught,” “test passed,” “blocker resolved,” “checkpoint committed,” and “handoff complete” remain unverified until the event links the actual diff, test, durable state, or acknowledgement."
+                         Foreground="{DynamicResource SoftTextBrush}"
+                         FontSize="12"
+                         TextWrapping="Wrap" />
+            </Border>
+
+            <ItemsControl ItemsSource="{Binding OrchestrationEvents}"
+                          ItemTemplate="{StaticResource OrchestrationEventTemplate}" />
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Evidence -->
+        <ScrollViewer x:Name="EvidencePage"
+                      Visibility="Collapsed"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,26,30,34">
+            <Grid Margin="0,0,0,20">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Handoff &amp; history evidence" FontSize="27" FontWeight="SemiBold" />
+                <TextBlock Text="Readable proof for what changed, what was tested, and what comes next."
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,6,0,0" />
+              </StackPanel>
+              <Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+                <TextBlock Text="DEMO TIMELINE" Foreground="{DynamicResource AmberBrush}" FontSize="10" FontWeight="Bold" />
+              </Border>
+            </Grid>
+            <ItemsControl ItemsSource="{Binding Handoffs}"
+                          ItemTemplate="{StaticResource HandoffTemplate}" />
+            <Border Style="{StaticResource CardStyle}" Margin="0,6,0,0">
+              <StackPanel>
+                <TextBlock Text="Evidence contract" Style="{StaticResource SectionTitleStyle}" />
+                <UniformGrid Columns="3" Margin="0,19,0,0">
+                  <StackPanel Margin="0,0,18,0">
+                    <TextBlock Text="CHECKPOINT" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" />
+                    <TextBlock Text="Work completed, files changed, tests, risks, and next action." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                  </StackPanel>
+                  <StackPanel Margin="9,0">
+                    <TextBlock Text="HANDOFF" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" />
+                    <TextBlock Text="Source, target, completeness, and the exact checkpoint identity." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                  </StackPanel>
+                  <StackPanel Margin="18,0,0,0">
+                    <TextBlock Text="DURABILITY" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" />
+                    <TextBlock Text="Acknowledged commit result before state is presented as durable." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                  </StackPanel>
+                </UniformGrid>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Approvals -->
+        <ScrollViewer x:Name="ApprovalsPage"
+                      Visibility="Collapsed"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,26,30,34">
+            <Border Style="{StaticResource CardStyle}"
+                    Background="{DynamicResource AccentPanelBrush}"
+                    BorderBrush="{DynamicResource AccentStrokeBrush}">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="320" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,28,0">
+                  <Border Style="{StaticResource PillStyle}" HorizontalAlignment="Left" Background="{DynamicResource AccentDarkBrush}">
+                    <TextBlock Text="PERSONAL PILOT MODE" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
+                  </Border>
+                  <TextBlock Text="Routine work keeps moving."
+                             FontSize="26"
+                             FontWeight="SemiBold"
+                             Margin="0,16,0,0" />
+                  <TextBlock Text="Advanced owner signing is optional and not configured. The personal pilot remains useful for bounded local work, evidence, and policy visibility."
+                             Foreground="{DynamicResource SoftTextBrush}"
+                             FontSize="14"
+                             TextWrapping="Wrap"
+                             Margin="0,9,0,0" />
+                </StackPanel>
+                <Border Grid.Column="1"
+                        Background="{DynamicResource PanelBrush}"
+                        BorderBrush="{DynamicResource AccentStrokeBrush}"
+                        BorderThickness="1"
+                        CornerRadius="13"
+                        Padding="18">
+                  <StackPanel>
+                    <TextBlock Text="ADVANCED OWNER SIGNING"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="10"
+                               FontWeight="Bold" />
+                    <TextBlock Text="Not configured"
+                               Foreground="{DynamicResource TextBrush}"
+                               FontSize="18"
+                               FontWeight="SemiBold"
+                               Margin="0,10,0,0" />
+                    <TextBlock Text="Optional feature · no key or enrollment"
+                               Style="{StaticResource MutedStyle}"
+                               Margin="0,5,0,0" />
+                  </StackPanel>
+                </Border>
+              </Grid>
+            </Border>
+
+            <Grid Margin="0,22,0,13">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Decision preview" Style="{StaticResource SectionTitleStyle}" />
+                <TextBlock Text="Examples show policy behavior only; no approval action is wired."
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,5,0,0" />
+              </StackPanel>
+              <TextBlock Grid.Column="1"
+                         Text="0 ACTIONABLE"
+                         Foreground="{DynamicResource MutedTextBrush}"
+                         FontWeight="Bold"
+                         FontSize="10"
+                         VerticalAlignment="Center" />
+            </Grid>
+            <ItemsControl ItemsSource="{Binding ApprovalQueue}"
+                          ItemTemplate="{StaticResource ApprovalTemplate}" />
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,6,0,0">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,25,0">
+                  <TextBlock Text="What runs normally" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" FontSize="15" />
+                  <TextBlock Text="Explicitly local, reversible, well-bounded work without sensitive data or protected-boundary changes."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="25,0,0,0">
+                  <TextBlock Text="What this shell cannot authorize" Foreground="{DynamicResource AmberBrush}" FontWeight="SemiBold" FontSize="15" />
+                  <TextBlock Text="External writes, production deploys, credential access, destructive changes, trust changes, or guard bypasses."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                </StackPanel>
+              </Grid>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Integrations -->
+        <ScrollViewer x:Name="IntegrationsPage"
+                      Visibility="Collapsed"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,26,30,34">
+            <StackPanel>
+              <TextBlock Text="Integrations" FontSize="27" FontWeight="SemiBold" />
+              <TextBlock Text="Provider profiles and capability posture. The desktop renderer accepts no secrets."
+                         Style="{StaticResource MutedStyle}"
+                         Margin="0,6,0,0" />
+            </StackPanel>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,22,0,20">
+              <StackPanel>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Local-service boundary" Style="{StaticResource SectionTitleStyle}" />
+                  <Border Grid.Column="1" Style="{StaticResource PillStyle}">
+                    <TextBlock Text="READ-ONLY IMPLEMENTED" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
+                  </Border>
+                </Grid>
+                <Grid Margin="0,24,0,2">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Border Grid.Column="0" Background="{DynamicResource AccentPanelBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel>
+                      <TextBlock Text="Desktop shell" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" />
+                      <TextBlock Text="No credentials · presentation, setup, owner interaction" Style="{StaticResource MutedStyle}" Margin="0,5,0,0" />
+                    </StackPanel>
+                  </Border>
+                  <TextBlock Grid.Column="1" Text="↔" Foreground="{DynamicResource FaintTextBrush}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  <Border Grid.Column="2" Background="{DynamicResource AccentPanelBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel>
+                      <TextBlock Text="Loopback service" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" />
+                      <TextBlock Text="Current-user named pipe · typed read-only API" Style="{StaticResource MutedStyle}" Margin="0,5,0,0" />
+                    </StackPanel>
+                  </Border>
+                  <TextBlock Grid.Column="3" Text="↔" Foreground="{DynamicResource FaintTextBrush}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  <Border Grid.Column="4" Background="{DynamicResource AccentPanelBrush}" CornerRadius="12" Padding="16">
+                    <StackPanel>
+                      <TextBlock Text="Maestro control plane" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" />
+                      <TextBlock Text="Policy and lease authority · providers coordinate only" Style="{StaticResource MutedStyle}" Margin="0,5,0,0" />
+                    </StackPanel>
+                  </Border>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,18">
+              <StackPanel>
+                <TextBlock Text="Authentication modes stay separate"
+                           Style="{StaticResource SectionTitleStyle}" />
+                <TextBlock Text="Helmion never asks for a provider secret in chat, the embedded console, activity history, logs, or a renderer field."
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,6,0,16" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Border Grid.Column="0"
+                          Background="{DynamicResource AccentPanelBrush}"
+                          CornerRadius="11"
+                          Padding="14"
+                          Margin="0,0,7,0">
+                    <StackPanel>
+                      <TextBlock Text="CLI ACCOUNT SIGN-IN"
+                                 Foreground="{DynamicResource AccentBrush}"
+                                 FontSize="10"
+                                 FontWeight="Bold" />
+                      <TextBlock Text="Provider-owned browser/session flow. Helmion may later request only a redacted sign-in status; it does not collect the account password or copy existing auth files."
+                                 Style="{StaticResource MutedStyle}"
+                                 Margin="0,6,0,0" />
+                    </StackPanel>
+                  </Border>
+                  <Border Grid.Column="1"
+                          Background="{DynamicResource WarningPanelBrush}"
+                          CornerRadius="11"
+                          Padding="14"
+                          Margin="7,0,0,0">
+                    <StackPanel>
+                      <TextBlock Text="API-KEY ADAPTER"
+                                 Foreground="{DynamicResource AmberBrush}"
+                                 FontSize="10"
+                                 FontWeight="Bold" />
+                      <TextBlock Text="A separate adapter with service-only enrollment and Windows CurrentUser DPAPI at rest. No API key is enrolled in this build."
+                                 Style="{StaticResource MutedStyle}"
+                                 Margin="0,6,0,0" />
+                    </StackPanel>
+                  </Border>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Grid Margin="0,0,0,18">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.15*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
+                <StackPanel>
+                  <TextBlock Text="Active coordinator" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="None selected" Foreground="{DynamicResource AmberBrush}" FontSize="20" FontWeight="SemiBold" Margin="0,15,0,0" />
+                  <TextBlock Text="The user will select one eligible, documented CLI or API adapter per session. That changes coordination—not Maestro policy, lease, confirmation, or audit authority."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,7,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="9,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="Isolated development target" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="Helmion Development" Foreground="{DynamicResource AccentBrush}" FontSize="17" FontWeight="SemiBold" Margin="0,15,0,0" />
+                  <TextBlock Text="Endpoint · ep-divine-leaf-ay38p1af" Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                  <TextBlock Text="Database · neondb" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                  <TextBlock Text="Hard-bound profile ready · protected material not enrolled · test not run"
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontSize="11"
+                             Margin="0,9,0,0" />
+                </StackPanel>
+              </Border>
+            </Grid>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,18">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,26,0">
+                  <TextBlock Text="Provider-adapter contract"
+                             Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="Identity · auth type · CLI/API/local endpoint · capabilities · evidence · safety · non-mutating health check"
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,7,0,0" />
+                  <TextBlock Text="An adapter can be added only when the provider offers a supported, documented API, CLI, or local endpoint. Helmion does not scrape or drive consumer chat/voice UIs."
+                             Foreground="{DynamicResource SoftTextBrush}"
+                             FontSize="12"
+                             TextWrapping="Wrap"
+                             Margin="0,9,0,0" />
+                </StackPanel>
+                <Border Grid.Column="1"
+                        Style="{StaticResource PillStyle}"
+                        VerticalAlignment="Top">
+                  <TextBlock Text="CONTRACT IMPLEMENTED · ADAPTERS DESIGN-ONLY"
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontSize="10"
+                             FontWeight="Bold" />
+                </Border>
+              </Grid>
+            </Border>
+
+            <Grid Margin="0,0,0,14">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Provider registry" Style="{StaticResource SectionTitleStyle}" />
+                <TextBlock x:Name="ProviderAvailabilitySummary"
+                           Text="Local command availability has not been checked."
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,6,0,0" />
+              </StackPanel>
+              <Border Grid.Column="1"
+                      Style="{StaticResource PillStyle}"
+                      VerticalAlignment="Center">
+                <TextBlock Text="SETUP ONLY · NO CREDENTIALS"
+                           Foreground="{DynamicResource AmberBrush}"
+                           FontSize="10"
+                           FontWeight="Bold" />
+              </Border>
+            </Grid>
+
+            <ItemsControl x:Name="ProviderRegistryList"
+                          ItemTemplate="{StaticResource ProviderProfileTemplate}"
+                          Margin="0,0,0,8">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+            </ItemsControl>
+
+            <TextBlock Text="Connection boundaries"
+                       Style="{StaticResource SectionTitleStyle}"
+                       Margin="0,4,0,14" />
+            <ItemsControl ItemsSource="{Binding Integrations}"
+                          ItemTemplate="{StaticResource IntegrationTemplate}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+            </ItemsControl>
+
+            <Border Background="{DynamicResource WarningSoftBrush}"
+                    BorderBrush="{DynamicResource WarningStrokeBrush}"
+                    BorderThickness="1"
+                    CornerRadius="13"
+                    Padding="17">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="◈" Foreground="{DynamicResource AmberBrush}" FontSize="17" Margin="0,0,12,0" />
+                <TextBlock Text="Safe guidance: future secrets belong in Windows-protected local-service storage, never in this renderer, logs, chat, command arguments, source control, or fixtures. Every integration starts with identity/scope tests and a read-only canary."
+                           Foreground="{DynamicResource SoftTextBrush}"
+                           FontSize="12"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Multi-user release roadmap -->
+        <ScrollViewer x:Name="ReleasePage"
+                      Visibility="Collapsed"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,26,30,34">
+            <Border CornerRadius="20"
+                    BorderBrush="{DynamicResource AccentStrokeBrush}"
+                    BorderThickness="1"
+                    Padding="27">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                  <GradientStop Color="{DynamicResource HeroStartColor}" Offset="0" />
+                  <GradientStop Color="{DynamicResource HeroMiddleColor}" Offset="0.58" />
+                  <GradientStop Color="{DynamicResource HeroEndColor}" Offset="1" />
+                </LinearGradientBrush>
+              </Border.Background>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="330" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,35,0">
+                  <Border Style="{StaticResource PillStyle}"
+                          Background="{DynamicResource AccentDarkBrush}"
+                          BorderBrush="{DynamicResource AccentStrokeStrongBrush}"
+                          HorizontalAlignment="Left">
+                    <TextBlock Text="MULTI-USER PRODUCT FOUNDATION"
+                               Foreground="{DynamicResource AccentBrush}"
+                               FontSize="10"
+                               FontWeight="Bold" />
+                  </Border>
+                  <TextBlock Text="From personal pilot to trusted team workspace."
+                             FontSize="28"
+                             FontWeight="SemiBold"
+                             Margin="0,16,0,0" />
+                  <TextBlock Text="The native shell is the presentation foundation. Tenant isolation, authenticated roles, invitations, durable audit, approval authority, integrations, and signed distribution remain explicit release gates."
+                             Foreground="{DynamicResource SoftTextBrush}"
+                             FontSize="14"
+                             TextWrapping="Wrap"
+                             Margin="0,9,0,0" />
+                </StackPanel>
+                <Border Grid.Column="1"
+                        Background="{DynamicResource PanelBrush}"
+                        BorderBrush="{DynamicResource AccentStrokeBrush}"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Padding="18">
+                  <StackPanel>
+                    <TextBlock Text="CURRENT PRODUCT STATE"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="10"
+                               FontWeight="Bold" />
+                    <TextBlock Text="Phase 5A · foundation"
+                               Foreground="{DynamicResource AccentBrush}"
+                               FontSize="19"
+                               FontWeight="SemiBold"
+                               Margin="0,11,0,0" />
+                    <TextBlock Text="Personal Pilot is real UI. Multi-user controls below are architecture and roadmap—not implemented claims."
+                               Style="{StaticResource MutedStyle}"
+                               Margin="0,7,0,0" />
+                  </StackPanel>
+                </Border>
+              </Grid>
+            </Border>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,18,0,0">
+              <StackPanel>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Release sequence" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Grid.Column="1"
+                             Text="FOUNDATION → CERTIFICATION"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="10"
+                             FontWeight="Bold"
+                             VerticalAlignment="Center" />
+                </Grid>
+                <ItemsControl ItemsSource="{Binding ReleasePhases}" Margin="0,20,0,0">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <UniformGrid Columns="5" />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Background="{DynamicResource AccentPanelBrush}"
+                              BorderBrush="{DynamicResource AccentStrokeBrush}"
+                              BorderThickness="1"
+                              CornerRadius="12"
+                              Padding="14"
+                              Margin="0,0,9,0"
+                              MinHeight="145">
+                        <StackPanel>
+                          <Grid>
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Id}"
+                                       Foreground="{DynamicResource AccentBrush}"
+                                       FontWeight="Bold"
+                                       FontSize="12" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding Status}"
+                                       Foreground="{DynamicResource MutedTextBrush}"
+                                       FontWeight="Bold"
+                                       FontSize="8"
+                                       VerticalAlignment="Center" />
+                          </Grid>
+                          <TextBlock Text="{Binding Name}"
+                                     Foreground="{DynamicResource TextBrush}"
+                                     FontWeight="SemiBold"
+                                     FontSize="13"
+                                     Margin="0,12,0,0"
+                                     TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding Outcome}"
+                                     Style="{StaticResource MutedStyle}"
+                                     FontSize="11"
+                                     Margin="0,6,0,0" />
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,18,0,0">
+              <StackPanel>
+                <Grid Margin="0,0,0,10">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="145" />
+                    <ColumnDefinition Width="1.35*" />
+                    <ColumnDefinition Width="1.05*" />
+                    <ColumnDefinition Width="1.25*" />
+                    <ColumnDefinition Width="58" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="CAPABILITY" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" FontWeight="Bold" />
+                  <TextBlock Grid.Column="1" Text="RELEASE TARGET" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" FontWeight="Bold" />
+                  <TextBlock Grid.Column="2" Text="CURRENT" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" FontWeight="Bold" />
+                  <TextBlock Grid.Column="3" Text="RELEASE GATE" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" FontWeight="Bold" />
+                  <TextBlock Grid.Column="4" Text="PHASE" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" />
+                </Grid>
+                <ItemsControl ItemsSource="{Binding ReleaseCapabilities}"
+                              ItemTemplate="{StaticResource ReleaseCapabilityTemplate}" />
+              </StackPanel>
+            </Border>
+
+            <Grid Margin="0,18,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,8,0">
+                <StackPanel>
+                  <TextBlock Text="Identity boundary" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" />
+                  <TextBlock Text="System-browser OIDC + PKCE, short sessions, step-up for sensitive actions, and explicit tenant membership."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="8,0">
+                <StackPanel>
+                  <TextBlock Text="Data boundary" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" />
+                  <TextBlock Text="Tenant-scoped APIs and database RLS with negative isolation tests; no unscoped shared-state query path."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="2" Style="{StaticResource CardStyle}" Margin="8,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="Release boundary" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" />
+                  <TextBlock Text="Signed installer and update manifest, staged rings, rollback, SBOM, clean-machine testing, and incident recovery."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                </StackPanel>
+              </Border>
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Settings -->
+        <ScrollViewer x:Name="SettingsPage"
+                      Visibility="Collapsed"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,26,30,34">
+            <TextBlock Text="Settings" FontSize="27" FontWeight="SemiBold" />
+            <TextBlock Text="Transparent pilot defaults and locally persisted visual preferences."
+                       Style="{StaticResource MutedStyle}"
+                       Margin="0,6,0,22" />
+
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,18">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="340" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,30,0">
+                  <TextBlock Text="Color theme" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock x:Name="ThemeDescription"
+                             Text="Deep forest surfaces with a clear mint accent."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                  <StackPanel Orientation="Horizontal" Margin="0,17,0,0">
+                    <Ellipse Width="20" Height="20" Fill="#73E6B1" Margin="0,0,9,0"
+                             ToolTip="Helmion green preview color" />
+                    <Ellipse Width="20" Height="20" Fill="#65D5F5" Margin="0,0,9,0"
+                             ToolTip="Ocean blue preview color" />
+                    <Ellipse Width="20" Height="20" Fill="#FFFFFF" Stroke="#9AA9A4" StrokeThickness="1" Margin="0,0,9,0"
+                             ToolTip="Clean light preview color" />
+                    <Ellipse Width="20" Height="20" Fill="#E9AD6B"
+                             ToolTip="Warm earth preview color" />
+                  </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="SELECT THEME"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="10"
+                             FontWeight="Bold"
+                             Margin="0,0,0,7" />
+                  <ComboBox x:Name="ThemeSelector"
+                            Height="42"
+                            Padding="11,6"
+                            Background="{DynamicResource SurfaceRaisedBrush}"
+                            Foreground="#17221F"
+                            BorderBrush="{DynamicResource StrokeBrush}"
+                            BorderThickness="1"
+                            DisplayMemberPath="Name"
+                            SelectedValuePath="Id"
+                            SelectionChanged="ThemeSelector_SelectionChanged"
+                            AutomationProperties.Name="Color theme"
+                            AutomationProperties.HelpText="Select a color theme. The choice is saved only for the current Windows user." />
+                  <TextBlock x:Name="ThemePersistenceLabel"
+                             Text="Saved locally for this Windows user"
+                             Foreground="{StaticResource FaintTextBrush}"
+                             FontSize="10"
+                             Margin="1,8,0,0" />
+                </StackPanel>
+              </Grid>
+            </Border>
+
+            <Border Style="{StaticResource CardStyle}">
+              <StackPanel>
+                <TextBlock Text="Pilot profile" Style="{StaticResource SectionTitleStyle}" />
+                <Grid Margin="0,22,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="Mode" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
+                    <TextBlock Text="Presentation policy" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
+                  </StackPanel>
+                  <TextBlock Grid.Column="1"
+                             Text="Personal Pilot"
+                             Foreground="{DynamicResource AccentBrush}"
+                             FontWeight="SemiBold"
+                             VerticalAlignment="Center" />
+                  <Border Grid.Column="2" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+                    <TextBlock Text="ACTIVE" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
+                  </Border>
+                </Grid>
+                <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,18,0,0" />
+                <Grid Margin="0,18,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="Data source" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
+                    <TextBlock Text="Operational state" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
+                  </StackPanel>
+                  <TextBlock Grid.Column="1"
+                             Text="Bundled demo snapshot"
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontWeight="SemiBold"
+                             VerticalAlignment="Center" />
+                  <Border Grid.Column="2" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+                    <TextBlock Text="NOT LIVE" Foreground="{DynamicResource AmberBrush}" FontSize="10" FontWeight="Bold" />
+                  </Border>
+                </Grid>
+                <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,18,0,0" />
+                <Grid Margin="0,18,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="Advanced owner signing" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
+                    <TextBlock Text="Optional high-risk ceremony" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
+                  </StackPanel>
+                  <TextBlock Grid.Column="1"
+                             Text="Not configured"
+                             Foreground="{DynamicResource SoftTextBrush}"
+                             FontWeight="SemiBold"
+                             VerticalAlignment="Center" />
+                  <Border Grid.Column="2" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
+                    <TextBlock Text="OPTIONAL · OFF" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" />
+                  </Border>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <Grid Margin="0,18,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
+                <StackPanel>
+                  <TextBlock Text="Safety defaults" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="✓  No credentials loaded by the desktop shell" Foreground="{DynamicResource SoftTextBrush}" Margin="0,18,0,0" />
+                  <TextBlock Text="✓  No agent configuration discovery" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
+                  <TextBlock Text="✓  Demo approval items are non-actionable" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
+                  <TextBlock Text="✓  Advisor consensus stays advisory" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="9,0,0,0">
+                <StackPanel>
+                  <TextBlock Text="Build identity" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="Version" Foreground="{DynamicResource MutedTextBrush}" Margin="0,18,0,0" />
+                  <TextBlock Text="0.1.0 · Phase Five shell" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" Margin="0,4,0,0" />
+                  <TextBlock Text="Runtime" Foreground="{DynamicResource MutedTextBrush}" Margin="0,14,0,0" />
+                  <TextBlock Text=".NET 10 · WPF · Windows x64" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" Margin="0,4,0,0" />
+                  <TextBlock Text="Readiness" Foreground="{DynamicResource MutedTextBrush}" Margin="0,14,0,0" />
+                  <TextBlock Text="Local demo shell · not production" Foreground="{DynamicResource AmberBrush}" FontWeight="SemiBold" Margin="0,4,0,0" />
+                </StackPanel>
+              </Border>
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+
+      <Border Grid.Row="2"
+              Background="{DynamicResource FooterBrush}"
+              BorderBrush="{DynamicResource StrokeBrush}"
+              BorderThickness="0,1,0,0"
+              Padding="30,0">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="No network connections · No credentials loaded · No external authority"
+                     Foreground="{DynamicResource FaintTextBrush}"
+                     FontSize="10"
+                     VerticalAlignment="Center" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding GeneratedAtLabel}"
+                     Foreground="{DynamicResource FaintTextBrush}"
+                     FontSize="10"
+                     VerticalAlignment="Center" />
+        </Grid>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>
