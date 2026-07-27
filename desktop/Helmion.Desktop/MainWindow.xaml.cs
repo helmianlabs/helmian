@@ -19,6 +19,9 @@ public partial class MainWindow : Window
     private DesktopSettings _desktopSettings;
     private bool _themeSelectorReady;
     private string? _registeredWorkspacePath;
+    private ConsoleSession? _consoleSession;
+    private VoiceSession? _voiceSession;
+    private GeminiChatSession? _geminiSession;
 
     public MainWindow(string? themeOverride = null, bool persistTheme = true)
     {
@@ -153,10 +156,140 @@ public partial class MainWindow : Window
         }
     }
 
+    protected override async void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        _consoleSession?.Dispose();
+        _voiceSession?.Dispose();
+        _geminiSession?.Dispose();
+        await _serviceConnector.StopStartedProcessAsync();
+    }
+
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         Loaded -= MainWindow_Loaded;
+        LoadApiKeysToInputs();
+        
+        _consoleSession = new ConsoleSession();
+        _voiceSession = new VoiceSession();
+        _voiceSession.OnSpeechRecognized += VoiceSession_OnSpeechRecognized;
+        var envSettings = EnvironmentSettingsStore.Load();
+        _geminiSession = new GeminiChatSession(envSettings.GeminiApiKey ?? "");
+
         await ConnectServiceAsync(restoreWorkspace: true);
+    }
+
+    private void LoadApiKeysToInputs()
+    {
+        try
+        {
+            var envSettings = EnvironmentSettingsStore.Load();
+            GeminiApiKeyInput.Text = envSettings.GeminiApiKey;
+            DatabaseUrlInput.Text = envSettings.DatabaseUrl;
+            EndpointIdInput.Text = string.IsNullOrWhiteSpace(envSettings.ExpectedEndpointId)
+                ? EnvironmentSettingsStore.ExtractEndpointId(envSettings.DatabaseUrl)
+                : envSettings.ExpectedEndpointId;
+
+            foreach (ComboBoxItem item in CodexModeInput.Items)
+            {
+                if (string.Equals(item.Content?.ToString(), envSettings.CodexMode, StringComparison.OrdinalIgnoreCase))
+                {
+                    CodexModeInput.SelectedItem = item;
+                    break;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore settings loading errors
+        }
+    }
+
+    private async void SaveApiKeys_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var geminiKey = GeminiApiKeyInput.Text.Trim();
+            var dbUrl = DatabaseUrlInput.Text.Trim();
+            var endpointId = EndpointIdInput.Text.Trim();
+            if (string.IsNullOrWhiteSpace(endpointId) && !string.IsNullOrWhiteSpace(dbUrl))
+            {
+                endpointId = EnvironmentSettingsStore.ExtractEndpointId(dbUrl);
+                EndpointIdInput.Text = endpointId;
+            }
+
+            var codexMode = (CodexModeInput.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "read-only";
+            var currentSettings = EnvironmentSettingsStore.Load();
+            var updatedSettings = new EnvironmentSettings(
+                geminiKey,
+                dbUrl,
+                endpointId,
+                codexMode,
+                currentSettings.CodexInstanceId);
+
+            EnvironmentSettingsStore.Save(updatedSettings);
+            _geminiSession?.UpdateApiKey(geminiKey);
+            ApiKeysStatusLabel.Text = "Saved to .env & applied to environment!";
+            ApiKeysStatusLabel.Foreground = (Brush)FindResource("AccentBrush");
+
+            if (_registeredWorkspacePath != null && !string.IsNullOrWhiteSpace(dbUrl) && !string.IsNullOrWhiteSpace(endpointId))
+            {
+                SchemaStatusLabel.Text = "Provisioning schema...";
+                SchemaStatusLabel.Foreground = (Brush)FindResource("MutedTextBrush");
+                try
+                {
+                    var provisionResult = await _serviceConnector.ProvisionSchemaAsync(_registeredWorkspacePath, dbUrl, endpointId);
+                    if (provisionResult.Success)
+                    {
+                        SchemaStatusLabel.Text = $"Schema provisioned: {provisionResult.MigrationCount} migrations applied.";
+                        SchemaStatusLabel.Foreground = (Brush)FindResource("AccentBrush");
+                    }
+                    else
+                    {
+                        SchemaStatusLabel.Text = $"Schema error: {provisionResult.ErrorMessage}";
+                        SchemaStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SchemaStatusLabel.Text = $"Provision failed: {ex.Message}";
+                    SchemaStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+                }
+            }
+
+            await RefreshCapabilitiesAsync();
+        }
+        catch (Exception error)
+        {
+            ApiKeysStatusLabel.Text = $"Save failed: {error.Message}";
+            ApiKeysStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+        }
+    }
+
+    private async void SyncProfile_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            SyncStatusLabel.Text = "Synchronizing profile...";
+            SyncStatusLabel.Foreground = (Brush)FindResource("MutedTextBrush");
+
+            var result = await ProfileSyncEngine.SyncProfileAsync();
+            if (result.Success)
+            {
+                SyncStatusLabel.Text = "Success! " + string.Join(", ", result.SyncedItems);
+                SyncStatusLabel.Foreground = (Brush)FindResource("AccentBrush");
+            }
+            else
+            {
+                SyncStatusLabel.Text = result.Message;
+                SyncStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+            }
+        }
+        catch (Exception error)
+        {
+            SyncStatusLabel.Text = $"Sync failed: {error.Message}";
+            SyncStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+        }
     }
 
     private async void ConnectService_Click(object sender, RoutedEventArgs e)
@@ -389,5 +522,87 @@ public partial class MainWindow : Window
         LocalServiceDot.Fill = connected
             ? (Brush)FindResource("AccentBrush")
             : (Brush)FindResource("MutedTextBrush");
+    }
+    private async void ConsoleSendButton_Click(object sender, RoutedEventArgs e)
+    {
+        await SendConsoleInputAsync();
+    }
+
+    private async void ConsoleInputBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter)
+        {
+            await SendConsoleInputAsync();
+        }
+    }
+
+    private async Task SendConsoleInputAsync()
+    {
+        var text = ConsoleInputBox.Text.Trim();
+        if (string.IsNullOrEmpty(text)) return;
+        
+        ConsoleInputBox.Clear();
+        ConsoleOutputText.Text += $"\n> {text}\n";
+        ConsoleOutputScroll.ScrollToBottom();
+
+        if (text.StartsWith("/"))
+        {
+            if (_consoleSession != null)
+            {
+                await foreach (var line in _consoleSession.SendAsync(text.Substring(1)))
+                {
+                    ConsoleOutputText.Text += $"{line.Text}\n";
+                    ConsoleOutputScroll.ScrollToBottom();
+                }
+            }
+        }
+        else
+        {
+            if (_geminiSession != null && _geminiSession.HasKey)
+            {
+                var responseBuilder = new System.Text.StringBuilder();
+                await foreach (var chunk in _geminiSession.SendAsync(text))
+                {
+                    ConsoleOutputText.Text += chunk;
+                    responseBuilder.Append(chunk);
+                    ConsoleOutputScroll.ScrollToBottom();
+                }
+                ConsoleOutputText.Text += "\n";
+                
+                if (_voiceSession != null && _voiceSession.IsListening)
+                {
+                    _ = _voiceSession.SpeakAsync(responseBuilder.ToString());
+                }
+            }
+            else
+            {
+                ConsoleOutputText.Text += "[No Gemini API Key configured]\n";
+            }
+        }
+    }
+
+    private void ConsoleMicButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_voiceSession == null) return;
+        
+        if (_voiceSession.IsListening)
+        {
+            _voiceSession.StopListening();
+            ConsoleMicButton.Background = (Brush)FindResource("AccentBrush");
+        }
+        else
+        {
+            _voiceSession.StartListening();
+            ConsoleMicButton.Background = (Brush)FindResource("AmberBrush");
+        }
+    }
+
+    private async void VoiceSession_OnSpeechRecognized(object? sender, string text)
+    {
+        await Dispatcher.InvokeAsync(async () =>
+        {
+            ConsoleInputBox.Text = text;
+            await SendConsoleInputAsync();
+        });
     }
 }

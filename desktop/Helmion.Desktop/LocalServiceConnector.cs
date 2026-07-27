@@ -43,14 +43,19 @@ internal sealed class LocalServiceConnector
 
         if (_startedProcess is null || _startedProcess.HasExited)
         {
+            var isDll = _serviceExecutable.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
             var startInfo = new ProcessStartInfo
             {
-                FileName = _serviceExecutable,
+                FileName = isDll ? "dotnet" : _serviceExecutable,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WorkingDirectory = Path.GetDirectoryName(_serviceExecutable)
                     ?? AppContext.BaseDirectory
             };
+            if (isDll)
+            {
+                startInfo.ArgumentList.Add(_serviceExecutable);
+            }
             startInfo.ArgumentList.Add("--parent-pid");
             startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
             _startedProcess = Process.Start(startInfo)
@@ -97,6 +102,21 @@ internal sealed class LocalServiceConnector
         return await client.InspectWorkspaceAsync(workspacePath, cancellationToken);
     }
 
+    public async Task<SchemaProvisioningResult> ProvisionSchemaAsync(
+        string workspacePath,
+        string databaseUrl,
+        string endpointId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable,
+            TimeSpan.FromSeconds(2),
+            cancellationToken);
+        var hello = await client.HelloAsync(cancellationToken);
+        ValidateHello(hello);
+        return await client.ProvisionSchemaAsync(workspacePath, databaseUrl, endpointId, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<LocalCapability>> DetectCapabilitiesAsync(
         CancellationToken cancellationToken = default)
     {
@@ -123,6 +143,10 @@ internal sealed class LocalServiceConnector
                 _startedProcess.Kill(entireProcessTree: true);
                 await _startedProcess.WaitForExitAsync();
             }
+        }
+        catch
+        {
+            // Ignore termination errors on shutdown
         }
         finally
         {
@@ -160,22 +184,39 @@ internal sealed class LocalServiceConnector
 
     private static string ResolveServiceExecutable()
     {
-        var packaged = Path.Combine(AppContext.BaseDirectory, "Helmion Local Service.exe");
-        if (File.Exists(packaged))
+        var candidates = new List<string>
         {
-            return Path.GetFullPath(packaged);
+            Path.Combine(AppContext.BaseDirectory, "Helmion Local Service.exe"),
+            Path.Combine(AppContext.BaseDirectory, "Helmion.LocalService.exe"),
+            Path.Combine(AppContext.BaseDirectory, "Helmion.LocalService.dll")
+        };
+
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            var desktopDir = Path.Combine(current.FullName, "desktop");
+            if (Directory.Exists(desktopDir))
+            {
+                var serviceBase = Path.Combine(desktopDir, "Helmion.LocalService", "bin");
+                foreach (var config in new[] { "Debug", "Release" })
+                {
+                    candidates.Add(Path.Combine(serviceBase, config, "net10.0-windows", "Helmion Local Service.exe"));
+                    candidates.Add(Path.Combine(serviceBase, config, "net10.0-windows", "Helmion.LocalService.dll"));
+                    candidates.Add(Path.Combine(serviceBase, config, "net10.0-windows", "win-x64", "Helmion Local Service.exe"));
+                    candidates.Add(Path.Combine(serviceBase, config, "net10.0-windows", "win-x64", "Helmion.LocalService.dll"));
+                }
+            }
+            current = current.Parent;
         }
 
-        var output = new DirectoryInfo(AppContext.BaseDirectory);
-        var configuration = output.Parent?.Name is "Release" ? "Release" : "Debug";
-        var desktopRoot = Path.GetFullPath(
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        return Path.Combine(
-            desktopRoot,
-            "Helmion.LocalService",
-            "bin",
-            configuration,
-            "net10.0-windows",
-            "Helmion Local Service.exe");
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "Helmion Local Service.exe");
     }
 }

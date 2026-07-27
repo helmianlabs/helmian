@@ -90,6 +90,24 @@ public sealed class ReadOnlyPipeClient : IAsyncDisposable
             ?? throw new InvalidDataException("Local service omitted capability state");
     }
 
+    public async Task<SchemaProvisioningResult> ProvisionSchemaAsync(
+        string workspacePath,
+        string databaseUrl,
+        string endpointId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            new PipeRequest(
+                Guid.NewGuid().ToString("N"),
+                ReadOnlyServiceContract.ProvisionSchemaCommand,
+                workspacePath,
+                databaseUrl,
+                endpointId),
+            cancellationToken);
+        return response.SchemaProvisioning
+            ?? throw new InvalidDataException("Local service omitted schema provisioning result");
+    }
+
     public async Task<PipeResponse> SendForTestAsync(
         string command,
         string? workspacePath = null,

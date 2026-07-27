@@ -139,7 +139,8 @@ try
         [
             ReadOnlyServiceContract.HelloCommand,
             ReadOnlyServiceContract.InspectWorkspaceCommand,
-            ReadOnlyServiceContract.DetectCapabilitiesCommand
+            ReadOnlyServiceContract.DetectCapabilitiesCommand,
+            ReadOnlyServiceContract.ProvisionSchemaCommand
         ]),
         "named-pipe surface exposes no credential enrollment or connection-test command");
     var inspected = await client.InspectWorkspaceAsync(workspaceRoot);
@@ -362,6 +363,26 @@ finally
 }
 
 Console.WriteLine("Helmion protected-profile smoke tests passed (10 checks).");
+
+// ProfileSyncEngine smoke test
+var syncResult = ProfileSyncEngine.SyncProfileAsync().GetAwaiter().GetResult();
+Check(syncResult.Success, "ProfileSyncEngine succeeds");
+Check(syncResult.SyncedItems.Count > 0, "ProfileSyncEngine synced items is non-empty");
+
+var userProfileDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+var appDataDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+Check(File.Exists(Path.Combine(appDataDir, "Claude", "claude_desktop_config.json")), "Claude desktop config is created");
+Check(File.Exists(Path.Combine(userProfileDir, ".claude.json")), "Claude code config is created");
+Check(File.Exists(Path.Combine(userProfileDir, ".gemini", "GEMINI.md")), "Gemini rules file is created");
+Check(File.Exists(Path.Combine(userProfileDir, ".claude", "HELMION_CLAUDE.md")), "Claude rules file is created");
+
+var envPathLoc = EnvironmentSettingsStore.FindEnvPath();
+var projectRootLoc = Path.GetDirectoryName(envPathLoc)!;
+Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "autonomy_rules.json")), "Codex rules file is created/updated");
+Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "hooks", "pretooluse.ps1")), "Codex pretooluse hook script is copied");
+
+Console.WriteLine("Helmion profile sync engine smoke tests passed (6 checks).");
 return;
 
 static void Check(bool condition, string description)
