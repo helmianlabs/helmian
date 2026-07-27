@@ -6,13 +6,16 @@ public static class ReadOnlyServiceContract
     public const string HelloCommand = "hello";
     public const string InspectWorkspaceCommand = "workspace.inspect";
     public const string DetectCapabilitiesCommand = "capabilities.detect";
+    public const string ProvisionSchemaCommand = "schema.provision";
     public const int MaximumMessageBytes = 1024 * 1024;
 }
 
 public sealed record PipeRequest(
     string Id,
     string Command,
-    string? WorkspacePath = null);
+    string? WorkspacePath = null,
+    string? DatabaseUrl = null,
+    string? EndpointId = null);
 
 public sealed record PipeResponse(
     string Id,
@@ -21,7 +24,8 @@ public sealed record PipeResponse(
     string? ErrorMessage = null,
     ServiceHello? Hello = null,
     WorkspaceInspection? Workspace = null,
-    IReadOnlyList<LocalCapability>? Capabilities = null);
+    IReadOnlyList<LocalCapability>? Capabilities = null,
+    SchemaProvisioningResult? SchemaProvisioning = null);
 
 public sealed record ServiceHello(
     int ProtocolVersion,
@@ -68,3 +72,8 @@ public sealed record WorkspaceInspection(
     string EvidenceStateLabel,
     DateTimeOffset InspectedAt,
     bool ProjectWasModified);
+
+public sealed record SchemaProvisioningResult(
+    bool Success,
+    int MigrationCount,
+    string? ErrorMessage);

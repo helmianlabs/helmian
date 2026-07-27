@@ -27,6 +27,7 @@
     "desktop:test": "dotnet run --project desktop/Helmion.Desktop.SmokeTests/Helmion.Desktop.SmokeTests.csproj --configuration Debug",
     "desktop:verify": "npm run desktop:build && npm run desktop:test",
     "desktop:run": "dotnet run --project desktop/Helmion.Desktop/Helmion.Desktop.csproj",
+    "desktop:service": "dotnet run --project desktop/Helmion.LocalService/Helmion.LocalService.csproj",
     "desktop:package": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/publish.ps1"
   },
   "engines": {

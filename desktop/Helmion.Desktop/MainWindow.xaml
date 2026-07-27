@@ -1218,31 +1218,59 @@
               </Border>
             </Grid>
 
-            <Border Style="{StaticResource CardStyle}" Margin="0,22,0,0">
+            <Border Style="{StaticResource CardStyle}" Margin="0,22,0,0" Padding="15">
               <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*" />
-                  <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel>
-                  <TextBlock Text="Embedded terminal / CLI console"
-                             Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="The visible console surface is ready for a later service-brokered process session. It does not execute commands in this read-only build."
-                             Style="{StaticResource MutedStyle}"
-                             Margin="0,7,0,0" />
-                </StackPanel>
-                <Border Grid.Column="1"
-                        Background="{DynamicResource PanelSubtleBrush}"
-                        BorderBrush="{DynamicResource StrokeBrush}"
-                        BorderThickness="1"
-                        CornerRadius="10"
-                        Padding="13,8"
-                        VerticalAlignment="Center">
-                  <TextBlock Text="No shell started"
-                             Foreground="{DynamicResource MutedTextBrush}"
-                             FontSize="11"
-                             FontWeight="SemiBold" />
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="*" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                
+                <Border Grid.Row="0" Background="#0C1412" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,16" Height="360">
+                  <ScrollViewer x:Name="ConsoleOutputScroll" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="ConsoleOutputText" 
+                               FontFamily="Consolas" 
+                               Foreground="#65D5F5" 
+                               Padding="12" 
+                               TextWrapping="Wrap" />
+                  </ScrollViewer>
                 </Border>
+                
+                <Grid Grid.Row="1">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  
+                  <Button x:Name="ConsoleMicButton" 
+                          Grid.Column="0"
+                          Content="🎙" 
+                          Width="44" Height="44" 
+                          Margin="0,0,10,0" 
+                          Click="ConsoleMicButton_Click" 
+                          ToolTip="Toggle Mic"
+                          Style="{StaticResource PrimaryButtonStyle}" />
+                          
+                  <TextBox x:Name="ConsoleInputBox" 
+                           Grid.Column="1"
+                           Height="44"
+                           Padding="10,0"
+                           VerticalContentAlignment="Center"
+                           Background="{DynamicResource SurfaceRaisedBrush}"
+                           Foreground="{DynamicResource TextBrush}"
+                           BorderBrush="{DynamicResource StrokeBrush}"
+                           BorderThickness="1"
+                           FontSize="14"
+                           KeyDown="ConsoleInputBox_KeyDown" />
+                           
+                  <Button x:Name="ConsoleSendButton" 
+                          Grid.Column="2"
+                          Content="Send" 
+                          Margin="10,0,0,0" 
+                          Width="80" Height="44" 
+                          Click="ConsoleSendButton_Click" 
+                          Style="{StaticResource PrimaryButtonStyle}" />
+                </Grid>
               </Grid>
             </Border>
 
@@ -2014,6 +2042,122 @@
               </Grid>
             </Border>
 
+            <!-- API Keys & Database Credentials -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,18">
+              <StackPanel>
+                <Grid Margin="0,0,0,16">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="API Keys &amp; Database Credentials" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="Configure your API keys and Neon PostgreSQL database parameters. Values are saved locally to .env and applied to live runtime processes."
+                               Style="{StaticResource MutedStyle}"
+                               Margin="0,6,0,0" />
+                  </StackPanel>
+                  <Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Top">
+                    <TextBlock Text="LIVE LOCAL CONFIG" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
+                  </Border>
+                </Grid>
+
+                <!-- Gemini API Key -->
+                <TextBlock Text="GEMINI API KEY" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,10,0,6" />
+                <Grid Margin="0,0,0,14">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <TextBox x:Name="GeminiApiKeyInput"
+                           Height="38"
+                           Padding="10,8"
+                           Background="{DynamicResource SurfaceRaisedBrush}"
+                           Foreground="{DynamicResource TextBrush}"
+                           BorderBrush="{DynamicResource StrokeBrush}"
+                           BorderThickness="1"
+                           FontSize="13"
+                           AutomationProperties.Name="Gemini API Key"
+                           AutomationProperties.HelpText="Enter your Gemini API key" />
+                </Grid>
+
+                <!-- Database URL -->
+                <TextBlock Text="POSTGRESQL / NEON DATABASE URL" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                <Grid Margin="0,0,0,14">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <TextBox x:Name="DatabaseUrlInput"
+                           Height="38"
+                           Padding="10,8"
+                           Background="{DynamicResource SurfaceRaisedBrush}"
+                           Foreground="{DynamicResource TextBrush}"
+                           BorderBrush="{DynamicResource StrokeBrush}"
+                           BorderThickness="1"
+                           FontSize="13"
+                           AutomationProperties.Name="Database URL"
+                           AutomationProperties.HelpText="Enter your PostgreSQL or Neon database URL" />
+                </Grid>
+
+                <Grid Margin="0,0,0,14">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="200" />
+                  </Grid.ColumnDefinitions>
+
+                  <!-- Endpoint ID -->
+                  <StackPanel Grid.Column="0">
+                    <TextBlock Text="NEON ENDPOINT ID (EP-...)" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                    <TextBox x:Name="EndpointIdInput"
+                             Height="38"
+                             Padding="10,8"
+                             Background="{DynamicResource SurfaceRaisedBrush}"
+                             Foreground="{DynamicResource TextBrush}"
+                             BorderBrush="{DynamicResource StrokeBrush}"
+                             BorderThickness="1"
+                             FontSize="13"
+                             AutomationProperties.Name="Neon Endpoint ID" />
+                  </StackPanel>
+
+                  <!-- Codex Mode -->
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Text="CODEX MCP MODE" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                    <ComboBox x:Name="CodexModeInput"
+                              Height="38"
+                              Padding="10,8"
+                              Background="{DynamicResource SurfaceRaisedBrush}"
+                              Foreground="#17221F"
+                              BorderBrush="{DynamicResource StrokeBrush}"
+                              BorderThickness="1"
+                              AutomationProperties.Name="Codex Mode">
+                      <ComboBoxItem Content="read-only" IsSelected="True" />
+                      <ComboBoxItem Content="read-write" />
+                    </ComboBox>
+                  </StackPanel>
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                  <Button x:Name="SaveApiKeysButton"
+                          Content="Save API Keys &amp; Apply Environment"
+                          Click="SaveApiKeys_Click"
+                          Style="{StaticResource PrimaryButtonStyle}"
+                          Padding="16,10"
+                          AutomationProperties.Name="Save API Keys and Apply Environment" />
+                  <TextBlock x:Name="ApiKeysStatusLabel"
+                             Text=""
+                             Foreground="{DynamicResource AccentBrush}"
+                             FontSize="12"
+                             VerticalAlignment="Center"
+                             Margin="16,0,0,0" />
+                  <TextBlock x:Name="SchemaStatusLabel"
+                             Text=""
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontSize="12"
+                             VerticalAlignment="Center"
+                             Margin="16,0,0,0" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
             <Border Style="{StaticResource CardStyle}">
               <StackPanel>
                 <TextBlock Text="Pilot profile" Style="{StaticResource SectionTitleStyle}" />
@@ -2075,6 +2219,32 @@
                   <Border Grid.Column="2" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
                     <TextBlock Text="OPTIONAL · OFF" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" />
                   </Border>
+                </Grid>
+                <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,18,0,0" />
+                <Grid Margin="0,18,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="Profile synchronization" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
+                    <TextBlock Text="Sync rules/hooks across Claude, Gemini, Codex" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="SyncProfileButton"
+                            Content="Sync Profile"
+                            Click="SyncProfile_Click"
+                            Style="{StaticResource PrimaryButtonStyle}"
+                            Padding="16,8"
+                            AutomationProperties.Name="Sync Profile" />
+                    <TextBlock x:Name="SyncStatusLabel"
+                               Text=""
+                               Foreground="{DynamicResource AccentBrush}"
+                               FontSize="12"
+                               VerticalAlignment="Center"
+                               Margin="16,0,0,0" />
+                  </StackPanel>
                 </Grid>
               </StackPanel>
             </Border>
