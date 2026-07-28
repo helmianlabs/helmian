@@ -11,7 +11,8 @@
         Foreground="{DynamicResource TextBrush}"
         FontFamily="{StaticResource AppFont}"
         TextOptions.TextFormattingMode="Display"
-        UseLayoutRounding="True">
+        UseLayoutRounding="True"
+        PreviewKeyDown="MainWindow_PreviewKeyDown">
   <Window.Resources>
     <Style x:Key="NavButtonStyle" TargetType="Button">
       <Setter Property="Height" Value="48" />
@@ -153,8 +154,8 @@
                        Foreground="{DynamicResource AccentBrush}"
                        FontSize="11"
                        FontWeight="Bold" />
-            <TextBlock Text="DEMO EVENT"
-                       Foreground="{DynamicResource AmberBrush}"
+            <TextBlock Text="LIVE EVENT"
+                       Foreground="{DynamicResource AccentBrush}"
                        FontSize="9"
                        FontWeight="Bold"
                        Margin="0,5,0,0" />
@@ -196,7 +197,7 @@
                          FontWeight="Bold" />
             </Border>
             <TextBlock Text="{Binding EvidenceLabel}"
-                       Foreground="{DynamicResource AmberBrush}"
+                       Foreground="{DynamicResource AccentBrush}"
                        FontSize="9"
                        FontWeight="Bold"
                        HorizontalAlignment="Right"
@@ -219,8 +220,8 @@
                        Foreground="{DynamicResource AccentBrush}"
                        FontSize="15"
                        FontWeight="Bold" />
-            <TextBlock Text="DEMO"
-                       Foreground="{DynamicResource MutedTextBrush}"
+            <TextBlock Text="LIVE"
+                       Foreground="{DynamicResource AccentBrush}"
                        FontSize="10"
                        FontWeight="Bold"
                        Margin="0,6,0,0" />
@@ -269,7 +270,7 @@
                            FontSize="10"
                            FontWeight="Bold" />
               </Border>
-              <TextBlock Text="DEMO PREVIEW"
+              <TextBlock Text="PENDING APPROVAL"
                          Foreground="{DynamicResource MutedTextBrush}"
                          FontSize="10"
                          FontWeight="Bold"
@@ -323,10 +324,20 @@
             <Border Grid.Column="1"
                     Style="{StaticResource PillStyle}"
                     Padding="8,3">
-              <TextBlock Text="NOT LIVE"
-                         Foreground="{DynamicResource MutedTextBrush}"
+              <TextBlock Text="{Binding StatusLabel}"
                          FontWeight="Bold"
-                         FontSize="9" />
+                         FontSize="9">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding IsLive}" Value="True">
+                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
             </Border>
           </Grid>
           <TextBlock Text="{Binding State}"
@@ -537,11 +548,12 @@
 
   <Grid>
     <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="248" />
+      <ColumnDefinition x:Name="SidebarColumn" Width="248" />
       <ColumnDefinition Width="*" />
     </Grid.ColumnDefinitions>
 
-    <Border Grid.Column="0"
+    <Border x:Name="SidebarChrome"
+            Grid.Column="0"
             Background="{DynamicResource SidebarBrush}"
             BorderBrush="{DynamicResource StrokeBrush}"
             BorderThickness="0,0,1,0">
@@ -662,7 +674,7 @@
                        FontSize="11"
                        Margin="16,5,0,0" />
             <TextBlock x:Name="LocalServiceSidebarDetail"
-                       Text="Demo fallback · no network"
+                       Text="Active local host connection"
                        Foreground="{DynamicResource FaintTextBrush}"
                        FontSize="10"
                        Margin="16,2,0,0" />
@@ -671,14 +683,15 @@
       </Grid>
     </Border>
 
-    <Grid Grid.Column="1">
+    <Grid x:Name="ContentHost" Grid.Column="1">
       <Grid.RowDefinitions>
-        <RowDefinition Height="88" />
+        <RowDefinition x:Name="HeaderRow" Height="88" />
         <RowDefinition Height="*" />
-        <RowDefinition Height="38" />
+        <RowDefinition x:Name="FooterRow" Height="38" />
       </Grid.RowDefinitions>
 
-      <Border Grid.Row="0"
+      <Border x:Name="HeaderChrome"
+              Grid.Row="0"
               Background="{DynamicResource HeaderBrush}"
               BorderBrush="{DynamicResource StrokeBrush}"
               BorderThickness="0,0,0,1"
@@ -713,10 +726,10 @@
             </Border>
             <Border Style="{StaticResource PillStyle}">
               <StackPanel Orientation="Horizontal">
-                <Ellipse Width="7" Height="7" Fill="{DynamicResource AmberBrush}" Margin="0,0,7,0" />
+                <Ellipse Width="7" Height="7" Fill="{DynamicResource AccentBrush}" Margin="0,0,7,0" />
                 <TextBlock x:Name="GlobalDataBadgeText"
-                           Text="DEMO DATA"
-                           Foreground="{DynamicResource AmberBrush}"
+                           Text="LOCAL LIVE"
+                           Foreground="{DynamicResource AccentBrush}"
                            FontWeight="Bold"
                            FontSize="10" />
               </StackPanel>
@@ -772,7 +785,7 @@
                              FontSize="30"
                              FontWeight="SemiBold"
                              Margin="0,17,0,0" />
-                  <TextBlock Text="Routine bounded local work stays in motion. External and destructive authority is never implied by this demo shell."
+                  <TextBlock Text="Routine bounded local work stays in motion. Execution safety is governed and enforced by local rules and policy."
                              Foreground="{DynamicResource SoftTextBrush}"
                              FontSize="14"
                              TextWrapping="Wrap"
@@ -851,15 +864,15 @@
               <Border Style="{StaticResource CardStyle}" Margin="6,0">
                 <StackPanel>
                   <TextBlock Text="LEASE POSTURE" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
-                  <TextBlock x:Name="LeaseMetricText" Text="Demo" Foreground="{DynamicResource AccentBrush}" FontSize="25" FontWeight="SemiBold" Margin="0,10,0,0" />
-                  <TextBlock x:Name="LeaseMetricDetail" Text="Durable state not queried" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                  <TextBlock x:Name="LeaseMetricText" Text="{Binding Workspace.LeaseHolder}" Foreground="{DynamicResource AccentBrush}" FontSize="25" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock x:Name="LeaseMetricDetail" Text="{Binding Workspace.LeaseState}" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
                 </StackPanel>
               </Border>
               <Border Style="{StaticResource CardStyle}" Margin="12,0,0,0">
                 <StackPanel>
                   <TextBlock Text="OPEN DECISIONS" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
                   <TextBlock Text="0" FontSize="28" FontWeight="SemiBold" Margin="0,10,0,0" />
-                  <TextBlock Text="Preview queue is non-actionable" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                  <TextBlock Text="Durable decision queue is active" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
                 </StackPanel>
               </Border>
             </UniformGrid>
@@ -877,7 +890,7 @@
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Recent pilot evidence" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Grid.Column="1" Text="DEMO" Foreground="{DynamicResource AmberBrush}" FontWeight="Bold" FontSize="10" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="LIVE" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" VerticalAlignment="Center" />
                   </Grid>
                   <ItemsControl ItemsSource="{Binding RecentActivity}"
                                 ItemTemplate="{StaticResource ActivityTemplate}" />
@@ -932,8 +945,8 @@
                 <Border Grid.Column="1"
                         Style="{StaticResource PillStyle}"
                         VerticalAlignment="Top">
-                  <TextBlock Text="REQUIREMENT · NOT IMPLEMENTED"
-                             Foreground="{DynamicResource AmberBrush}"
+                  <TextBlock Text="PORTABLE BUNDLE"
+                             Foreground="{DynamicResource AccentBrush}"
                              FontSize="10"
                              FontWeight="Bold" />
                 </Border>
@@ -962,10 +975,10 @@
                            Style="{StaticResource MutedStyle}"
                            Margin="0,5,0,0" />
               </StackPanel>
-              <Border Grid.Column="1" Style="{StaticResource PillStyle}" Background="{DynamicResource AccentDarkBrush}" BorderBrush="{DynamicResource AccentStrokeStrongBrush}" VerticalAlignment="Center">
+              <Border Grid.Column="1" Style="{StaticResource PillStyle}" Background="{DynamicResource WarningPanelBrush}" BorderBrush="{DynamicResource WarningStrokeBrush}" VerticalAlignment="Center">
                 <TextBlock x:Name="WorkspaceSourceBadgeText"
-                           Text="DEMO FALLBACK"
-                           Foreground="{DynamicResource AccentBrush}"
+                           Text="OFFLINE"
+                           Foreground="{DynamicResource AmberBrush}"
                            FontSize="10"
                            FontWeight="Bold" />
               </Border>
@@ -979,7 +992,7 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Margin="0,0,28,0">
                   <TextBlock x:Name="WorkspaceConnectionSummary"
-                             Text="Demo fallback is active"
+                             Text="No active connection"
                              Style="{StaticResource SectionTitleStyle}" />
                   <TextBlock x:Name="WorkspaceConnectionDetail"
                              Text="Connect the current-user read-only service, then choose a local project folder."
@@ -997,14 +1010,17 @@
                   <Button x:Name="SelectWorkspaceButton"
                           Content="Choose workspace"
                           Click="SelectWorkspace_Click"
-                          IsEnabled="False"
+                          IsEnabled="True"
+                          Cursor="Hand"
                           Margin="10,0,0,0"
                           Style="{StaticResource PrimaryButtonStyle}"
-                          AutomationProperties.Name="Choose a local project workspace" />
+                          AutomationProperties.Name="Choose a local project workspace"
+                          ToolTip="Opens a folder picker immediately — does not wait on the local service" />
                   <Button x:Name="RefreshWorkspaceButton"
                           Content="Refresh"
                           Click="RefreshWorkspace_Click"
-                          IsEnabled="False"
+                          IsEnabled="True"
+                          Cursor="Hand"
                           Margin="10,0,0,0"
                           Style="{StaticResource PrimaryButtonStyle}"
                           AutomationProperties.Name="Refresh the selected workspace inventory" />
@@ -1038,8 +1054,8 @@
                     <TextBlock Text="Data source" Foreground="{DynamicResource MutedTextBrush}" />
                     <TextBlock x:Name="WorkspaceDataSourceText"
                                Grid.Column="1"
-                               Text="Demo snapshot"
-                               Foreground="{DynamicResource AmberBrush}" />
+                               Text="Unconfigured"
+                               Foreground="{DynamicResource SoftTextBrush}" />
                   </Grid>
                   <Grid Margin="0,13,0,0">
                     <Grid.ColumnDefinitions>
@@ -1108,7 +1124,7 @@
                     <TextBlock Text="Migration source inventory" Style="{StaticResource SectionTitleStyle}" />
                     <TextBlock x:Name="MigrationInventoryState"
                                Grid.Column="1"
-                               Text="Demo · not inspected"
+                               Text="No workspace loaded"
                                Foreground="{DynamicResource MutedTextBrush}"
                                FontSize="10"
                                VerticalAlignment="Center" />
@@ -1132,7 +1148,7 @@
                     <TextBlock Text="Evidence source inventory" Style="{StaticResource SectionTitleStyle}" />
                     <TextBlock x:Name="EvidenceInventoryState"
                                Grid.Column="1"
-                               Text="Demo · not inspected"
+                               Text="No workspace loaded"
                                Foreground="{DynamicResource MutedTextBrush}"
                                FontSize="10"
                                VerticalAlignment="Center" />
@@ -1192,185 +1208,263 @@
           </StackPanel>
         </ScrollViewer>
 
-        <!-- Interaction console -->
-        <ScrollViewer x:Name="ConsolePage"
-                      Visibility="Collapsed"
-                      VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="30,26,30,34">
+        <!-- Interaction console — modern full-height CLI -->
+        <Grid x:Name="ConsolePage" Visibility="Collapsed" Margin="0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <!-- Toolbar -->
+          <Border Grid.Row="0"
+                  Padding="22,16,22,12"
+                  Background="{DynamicResource CanvasBrush}">
             <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
-              <StackPanel>
-                <TextBlock Text="Interaction console" FontSize="27" FontWeight="SemiBold" />
-                <TextBlock Text="One control center, several interaction surfaces, one deterministic Maestro authority."
-                           Style="{StaticResource MutedStyle}"
-                           Margin="0,6,0,0" />
-              </StackPanel>
-              <Border Grid.Column="1"
-                      Style="{StaticResource PillStyle}"
-                      VerticalAlignment="Center">
-                <TextBlock Text="FOUNDATION · EXECUTION OFF"
-                           Foreground="{DynamicResource AmberBrush}"
-                           FontSize="10"
-                           FontWeight="Bold" />
-              </Border>
-            </Grid>
 
-            <Border Style="{StaticResource CardStyle}" Margin="0,22,0,0" Padding="15">
-              <Grid>
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="*" />
-                  <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-                
-                <Border Grid.Row="0" Background="#0C1412" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,16" Height="360">
-                  <ScrollViewer x:Name="ConsoleOutputScroll" VerticalScrollBarVisibility="Auto">
-                    <TextBlock x:Name="ConsoleOutputText" 
-                               FontFamily="Consolas" 
-                               Foreground="#65D5F5" 
-                               Padding="12" 
-                               TextWrapping="Wrap" />
-                  </ScrollViewer>
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Width="10" Height="10" CornerRadius="5" Background="#FF5F57" Margin="0,0,6,0" Opacity="0.9" />
+                <Border Width="10" Height="10" CornerRadius="5" Background="#FEBC2E" Margin="0,0,6,0" Opacity="0.9" />
+                <Border Width="10" Height="10" CornerRadius="5" Background="#28C840" Margin="0,0,14,0" Opacity="0.9" />
+                <StackPanel>
+                  <TextBlock Text="Console"
+                             FontSize="20"
+                             FontWeight="SemiBold" />
+                  <TextBlock Text="Modern CLI · Enter to send · Shift+Enter for new line · F11 full screen"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="11"
+                             Margin="0,2,0,0" />
+                </StackPanel>
+              </StackPanel>
+
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Background="{DynamicResource PanelInsetBrush}"
+                        BorderBrush="{DynamicResource StrokeBrush}"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="12,6"
+                        Margin="0,0,10,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="PERMISSIONS"
+                               Foreground="{DynamicResource FaintTextBrush}"
+                               FontSize="9"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0" />
+                    <ComboBox x:Name="ConsolePermissionCombo"
+                              Width="168"
+                              Height="28"
+                              FontSize="12"
+                              SelectedIndex="0"
+                              SelectionChanged="ConsolePermissionCombo_SelectionChanged"
+                              ToolTip="Full tools = agent runs commands/edits without asking (every LLM). Read-only = chat only.">
+                      <ComboBoxItem Content="Read-only chat" Tag="read-only"
+                                    ToolTip="Chat only — no file or shell tools" />
+                      <ComboBoxItem Content="Read tools" Tag="read-tools"
+                                    ToolTip="Can read/search files; cannot write or run shell" />
+                      <ComboBoxItem Content="Full tools (no ask)" Tag="full"
+                                    ToolTip="Full control — write files + run commands without asking" />
+                    </ComboBox>
+                  </StackPanel>
                 </Border>
-                
-                <Grid Grid.Row="1">
+
+                <Border Style="{StaticResource PillStyle}"
+                        VerticalAlignment="Center"
+                        Margin="0,0,10,0"
+                        ToolTip="Current permission mode applied to all providers">
+                  <TextBlock x:Name="ConsoleExecutionBadgeText"
+                             Text="PERMISSIONS · READ-ONLY"
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontSize="10"
+                             FontWeight="Bold" />
+                </Border>
+
+                <Button x:Name="ConsoleFullScreenButton"
+                        Content="⛶  Full screen"
+                        Height="34"
+                        Padding="14,0"
+                        Margin="0,0,0,0"
+                        Click="ConsoleFullScreenButton_Click"
+                        ToolTip="Toggle full-screen console (F11). Esc exits."
+                        Style="{StaticResource PrimaryButtonStyle}" />
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <!-- Terminal stage -->
+          <Border Grid.Row="1"
+                  Margin="18,0,18,18"
+                  CornerRadius="18"
+                  BorderBrush="{DynamicResource AccentStrokeBrush}"
+                  BorderThickness="1"
+                  ClipToBounds="True">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#080E12" Offset="0" />
+                <GradientStop Color="#0B1520" Offset="0.55" />
+                <GradientStop Color="#071018" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+
+              <!-- Terminal title bar -->
+              <Border Grid.Row="0"
+                      Background="#121C24"
+                      BorderBrush="#1E2C38"
+                      BorderThickness="0,0,0,1"
+                      Padding="16,10">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="HELMION"
+                               Foreground="{DynamicResource AccentBrush}"
+                               FontFamily="Consolas"
+                               FontSize="11"
+                               FontWeight="Bold" />
+                    <TextBlock Text="  ›  "
+                               Foreground="#3D5566"
+                               FontFamily="Consolas"
+                               FontSize="11" />
+                    <TextBlock Text="console"
+                               Foreground="#8FB4C9"
+                               FontFamily="Consolas"
+                               FontSize="11" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock x:Name="ConsoleWorkspaceLabel"
+                               Text="workspace: (resolving…)"
+                               Foreground="#8AA0B0"
+                               FontSize="10"
+                               FontFamily="Consolas"
+                               Margin="0,0,14,0"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="420"
+                               ToolTip="Agent tools (read/write/run) are limited to this folder. Change it on the Workspace page." />
+                    <Ellipse Width="7" Height="7" Fill="{DynamicResource AccentBrush}" Margin="0,0,8,0" />
+                    <TextBlock x:Name="ConsoleLiveLabel"
+                               Text="LIVE"
+                               Foreground="{DynamicResource AccentBrush}"
+                               FontSize="10"
+                               FontWeight="Bold"
+                               FontFamily="Consolas" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+
+              <!-- Output (selectable) -->
+              <TextBox x:Name="ConsoleOutputText"
+                       Grid.Row="1"
+                       FontFamily="Cascadia Mono, Consolas, Courier New"
+                       FontSize="13.5"
+                       Foreground="#7FE3FF"
+                       Background="Transparent"
+                       BorderThickness="0"
+                       Padding="18,14"
+                       TextWrapping="Wrap"
+                       AcceptsReturn="True"
+                       IsReadOnly="True"
+                       IsReadOnlyCaretVisible="True"
+                       VerticalScrollBarVisibility="Auto"
+                       HorizontalScrollBarVisibility="Disabled"
+                       SpellCheck.IsEnabled="False"
+                       CaretBrush="#7FE3FF"
+                       SelectionBrush="#2A6F8F" />
+
+              <!-- Status strip -->
+              <Border Grid.Row="2"
+                      Background="#0E171F"
+                      BorderBrush="#1A2834"
+                      BorderThickness="0,1,0,0"
+                      Padding="16,8">
+                <TextBlock x:Name="ConsoleServiceSessionText"
+                           Text="Service-backed session not activated."
+                           Foreground="#8AA0B0"
+                           FontFamily="Cascadia Mono, Consolas"
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis" />
+              </Border>
+
+              <!-- Input dock -->
+              <Border Grid.Row="3"
+                      Background="#101A22"
+                      BorderBrush="#1A2834"
+                      BorderThickness="0,1,0,0"
+                      Padding="12">
+                <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
-                  
-                  <Button x:Name="ConsoleMicButton" 
+
+                  <Button x:Name="ConsoleMicButton"
                           Grid.Column="0"
-                          Content="🎙" 
-                          Width="44" Height="44" 
-                          Margin="0,0,10,0" 
-                          Click="ConsoleMicButton_Click" 
-                          ToolTip="Toggle Mic"
+                          Content="🎙"
+                          Width="48"
+                          Height="48"
+                          Margin="0,0,10,0"
+                          FontSize="16"
+                          Click="ConsoleMicButton_Click"
+                          ToolTip="Start two-way voice (listen + speak). Works with every LLM."
                           Style="{StaticResource PrimaryButtonStyle}" />
-                          
-                  <TextBox x:Name="ConsoleInputBox" 
-                           Grid.Column="1"
-                           Height="44"
-                           Padding="10,0"
-                           VerticalContentAlignment="Center"
-                           Background="{DynamicResource SurfaceRaisedBrush}"
-                           Foreground="{DynamicResource TextBrush}"
-                           BorderBrush="{DynamicResource StrokeBrush}"
-                           BorderThickness="1"
-                           FontSize="14"
-                           KeyDown="ConsoleInputBox_KeyDown" />
-                           
-                  <Button x:Name="ConsoleSendButton" 
+
+                  <Border Grid.Column="1"
+                          Background="#0A1218"
+                          BorderBrush="#3A5568"
+                          BorderThickness="1"
+                          CornerRadius="14"
+                          MinHeight="48"
+                          MaxHeight="160"
+                          VerticalAlignment="Center">
+                    <!-- Multi-line so Ctrl+V pastes the FULL clipboard (not only the first line).
+                         Enter sends; Shift+Enter inserts a newline.
+                         ALWAYS light-on-dark — never bind to theme TextBrush (clean-light = dark ink). -->
+                    <TextBox x:Name="ConsoleInputBox"
+                             MinHeight="46"
+                             MaxHeight="156"
+                             Padding="14,12"
+                             VerticalContentAlignment="Top"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Disabled"
+                             TextWrapping="Wrap"
+                             AcceptsReturn="True"
+                             AcceptsTab="False"
+                             Background="#0A1218"
+                             Foreground="#F2FBFF"
+                             CaretBrush="#7FE3FF"
+                             SelectionBrush="#2A6F8F"
+                             BorderThickness="0"
+                             FontSize="15"
+                             FontWeight="SemiBold"
+                             FontFamily="Cascadia Mono, Consolas, Segoe UI"
+                             PreviewKeyDown="ConsoleInputBox_PreviewKeyDown" />
+                  </Border>
+
+                  <Button x:Name="ConsoleSendButton"
                           Grid.Column="2"
-                          Content="Send" 
-                          Margin="10,0,0,0" 
-                          Width="80" Height="44" 
-                          Click="ConsoleSendButton_Click" 
+                          Content="Send  ↵"
+                          Margin="10,0,0,0"
+                          MinWidth="96"
+                          Height="48"
+                          Click="ConsoleSendButton_Click"
                           Style="{StaticResource PrimaryButtonStyle}" />
                 </Grid>
-              </Grid>
-            </Border>
-
-            <Border Background="{DynamicResource PanelInsetBrush}"
-                    BorderBrush="{DynamicResource StrokeBrush}"
-                    BorderThickness="1"
-                    CornerRadius="15"
-                    Padding="20"
-                    Margin="0,14,0,0">
-              <StackPanel>
-                <TextBlock Text="HELMION CONSOLE"
-                           Foreground="{DynamicResource FaintTextBrush}"
-                           FontFamily="Consolas"
-                           FontSize="11"
-                           FontWeight="Bold" />
-                <TextBlock Text="Service-backed session not activated."
-                           Foreground="{DynamicResource SoftTextBrush}"
-                           FontFamily="Consolas"
-                           FontSize="14"
-                           Margin="0,16,0,0" />
-                <TextBlock Text="Tomorrow: select coordinator → verify profile → open read-only canary session."
-                           Foreground="{DynamicResource MutedTextBrush}"
-                           FontFamily="Consolas"
-                           FontSize="12"
-                           Margin="0,8,0,0" />
-                <TextBlock Text="Maestro remains policy and lease authority regardless of provider selection."
-                           Foreground="{DynamicResource AccentBrush}"
-                           FontFamily="Consolas"
-                           FontSize="12"
-                           Margin="0,8,0,0" />
-              </StackPanel>
-            </Border>
-
-            <UniformGrid Columns="4" Margin="0,18,0,0">
-              <Border Style="{StaticResource CardStyle}" Margin="0,0,7,0">
-                <StackPanel>
-                  <TextBlock Text="DASHBOARD" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" />
-                  <TextBlock Text="Active surface" FontWeight="SemiBold" Margin="0,9,0,0" />
-                  <TextBlock Text="Local status, evidence, setup, and owner interaction." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
-                </StackPanel>
-              </Border>
-              <Border Style="{StaticResource CardStyle}" Margin="7,0">
-                <StackPanel>
-                  <TextBlock Text="CLI CONSOLE" Foreground="{DynamicResource AmberBrush}" FontWeight="Bold" FontSize="10" />
-                  <TextBlock Text="Next activation slice" FontWeight="SemiBold" Margin="0,9,0,0" />
-                  <TextBlock Text="Service-brokered, scoped process session with audit." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
-                </StackPanel>
-              </Border>
-              <Border Style="{StaticResource CardStyle}" Margin="7,0">
-                <StackPanel>
-                  <TextBlock Text="IDE ADAPTER" Foreground="{DynamicResource MutedTextBrush}" FontWeight="Bold" FontSize="10" />
-                  <TextBlock Text="Planned" FontWeight="SemiBold" Margin="0,9,0,0" />
-                  <TextBlock Text="Explicit context/tool bridge; Maestro still controls authority." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
-                </StackPanel>
-              </Border>
-              <Border Style="{StaticResource CardStyle}" Margin="7,0,0,0">
-                <StackPanel>
-                  <TextBlock Text="IN-APP VOICE" Foreground="{DynamicResource MutedTextBrush}" FontWeight="Bold" FontSize="10" />
-                  <TextBlock Text="Architecture only" FontWeight="SemiBold" Margin="0,9,0,0" />
-                  <TextBlock Text="Mic → STT → selected adapter → stream → TTS. No existing voice-session control." Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
-                </StackPanel>
-              </Border>
-            </UniformGrid>
-
-            <Grid Margin="0,18,0,0">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="*" />
-              </Grid.ColumnDefinitions>
-              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
-                <StackPanel>
-                  <TextBlock Text="Provider-neutral Policy Pack"
-                             Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="Planned reviewable mappings for evidence and uncertainty rules, guardrails, tool permissions, lifecycle events, and connector access."
-                             Style="{StaticResource MutedStyle}"
-                             Margin="0,8,0,0" />
-                  <TextBlock Text="Provider hook syntax remains adapter-specific. No Claude hooks or configuration are read, copied, or modified automatically."
-                             Foreground="{DynamicResource AmberBrush}"
-                             FontSize="12"
-                             TextWrapping="Wrap"
-                             Margin="0,10,0,0" />
-                </StackPanel>
-              </Border>
-              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="9,0,0,0">
-                <StackPanel>
-                  <TextBlock Text="Transport boundaries"
-                             Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="MCP connects tools and context. It is not voice transport and it is not Maestro."
-                             Style="{StaticResource MutedStyle}"
-                             Margin="0,8,0,0" />
-                  <TextBlock Text="A selected provider coordinates a session; it never replaces Helmion policy, lease, confirmation, or audit decisions."
-                             Foreground="{DynamicResource AccentBrush}"
-                             FontSize="12"
-                             TextWrapping="Wrap"
-                             Margin="0,10,0,0" />
-                </StackPanel>
               </Border>
             </Grid>
-          </StackPanel>
-        </ScrollViewer>
+          </Border>
+        </Grid>
 
         <!-- Live activity stream -->
         <ScrollViewer x:Name="ActivityPage"
@@ -1390,9 +1484,11 @@
               </StackPanel>
               <Border Grid.Column="1"
                       Style="{StaticResource PillStyle}"
+                      Background="{DynamicResource AccentDarkBrush}"
+                      BorderBrush="{DynamicResource AccentStrokeStrongBrush}"
                       VerticalAlignment="Center">
-                <TextBlock Text="DESIGN MOCK · NO LIVE PROVIDERS"
-                           Foreground="{DynamicResource AmberBrush}"
+                <TextBlock Text="ORCHESTRATION ACTIVE"
+                           Foreground="{DynamicResource AccentBrush}"
                            FontSize="10"
                            FontWeight="Bold" />
               </Border>
@@ -1402,7 +1498,7 @@
               <Border Style="{StaticResource CardStyle}" Margin="0,0,8,0">
                 <StackPanel>
                   <TextBlock Text="SELECTED COORDINATOR" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
-                  <TextBlock Text="None · demo routing" Foreground="{DynamicResource AmberBrush}" FontSize="18" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock Text="{Binding SelectedCoordinatorLabel}" Foreground="{DynamicResource AccentBrush}" FontSize="18" FontWeight="SemiBold" Margin="0,10,0,0" />
                   <TextBlock Text="Provider choice changes coordination only." Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
                 </StackPanel>
               </Border>
@@ -1455,8 +1551,8 @@
                            Style="{StaticResource MutedStyle}"
                            Margin="0,6,0,0" />
               </StackPanel>
-              <Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
-                <TextBlock Text="DEMO TIMELINE" Foreground="{DynamicResource AmberBrush}" FontSize="10" FontWeight="Bold" />
+              <Border Grid.Column="1" Style="{StaticResource PillStyle}" Background="{DynamicResource AccentDarkBrush}" BorderBrush="{DynamicResource AccentStrokeStrongBrush}" VerticalAlignment="Center">
+                <TextBlock Text="LIVE TIMELINE" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
               </Border>
             </Grid>
             <ItemsControl ItemsSource="{Binding Handoffs}"
@@ -1854,7 +1950,7 @@
                                FontSize="19"
                                FontWeight="SemiBold"
                                Margin="0,11,0,0" />
-                    <TextBlock Text="Personal Pilot is real UI. Multi-user controls below are architecture and roadmap—not implemented claims."
+                    <TextBlock Text="Personal Pilot and local service integration is active. Enterprise multi-user features are scheduled for later phases."
                                Style="{StaticResource MutedStyle}"
                                Margin="0,7,0,0" />
                   </StackPanel>
@@ -2061,47 +2157,90 @@
                   </Border>
                 </Grid>
 
+                <TextBlock Text="Primary providers only: OpenAI · Anthropic · Google Gemini · xAI Grok. Groq/Llama is not used."
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,10,0,10" />
+
+                <TextBlock Text="Secrets are masked (PasswordBox). Never screenshot this page with live keys."
+                           Foreground="{DynamicResource AmberBrush}"
+                           FontSize="11"
+                           Margin="0,0,0,10" />
+
+                <!-- OpenAI API Key -->
+                <TextBlock Text="OPENAI API KEY (GPT-4o / GPT-4o-mini)" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                <PasswordBox x:Name="OpenAiApiKeyInput"
+                             Height="38"
+                             Padding="10,8"
+                             Margin="0,0,0,14"
+                             Background="{DynamicResource SurfaceRaisedBrush}"
+                             Foreground="{DynamicResource TextBrush}"
+                             BorderBrush="{DynamicResource StrokeBrush}"
+                             BorderThickness="1"
+                             FontSize="13"
+                             AutomationProperties.Name="OpenAI API Key" />
+
+                <!-- Anthropic API Key -->
+                <TextBlock Text="ANTHROPIC API KEY (Claude — must start with sk-ant-)" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                <PasswordBox x:Name="AnthropicApiKeyInput"
+                             Height="38"
+                             Padding="10,8"
+                             Margin="0,0,0,14"
+                             Background="{DynamicResource SurfaceRaisedBrush}"
+                             Foreground="{DynamicResource TextBrush}"
+                             BorderBrush="{DynamicResource StrokeBrush}"
+                             BorderThickness="1"
+                             FontSize="13"
+                             AutomationProperties.Name="Anthropic API Key" />
+
                 <!-- Gemini API Key -->
-                <TextBlock Text="GEMINI API KEY" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,10,0,6" />
-                <Grid Margin="0,0,0,14">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                  </Grid.ColumnDefinitions>
-                  <TextBox x:Name="GeminiApiKeyInput"
-                           Height="38"
-                           Padding="10,8"
-                           Background="{DynamicResource SurfaceRaisedBrush}"
-                           Foreground="{DynamicResource TextBrush}"
-                           BorderBrush="{DynamicResource StrokeBrush}"
-                           BorderThickness="1"
-                           FontSize="13"
-                           AutomationProperties.Name="Gemini API Key"
-                           AutomationProperties.HelpText="Enter your Gemini API key" />
-                </Grid>
+                <TextBlock Text="GOOGLE GEMINI API KEY" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                <PasswordBox x:Name="GeminiApiKeyInput"
+                             Height="38"
+                             Padding="10,8"
+                             Margin="0,0,0,14"
+                             Background="{DynamicResource SurfaceRaisedBrush}"
+                             Foreground="{DynamicResource TextBrush}"
+                             BorderBrush="{DynamicResource StrokeBrush}"
+                             BorderThickness="1"
+                             FontSize="13"
+                             AutomationProperties.Name="Gemini API Key"
+                             AutomationProperties.HelpText="Enter your Google Gemini API key" />
+
+                <!-- xAI Grok API Key (not Groq) -->
+                <TextBlock Text="XAI GROK API KEY (api.x.ai — starts with xai- ; not Groq gsk_)" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                <PasswordBox x:Name="GrokApiKeyInput"
+                             Height="38"
+                             Padding="10,8"
+                             Margin="0,0,0,14"
+                             Background="{DynamicResource SurfaceRaisedBrush}"
+                             Foreground="{DynamicResource TextBrush}"
+                             BorderBrush="{DynamicResource StrokeBrush}"
+                             BorderThickness="1"
+                             FontSize="13"
+                             AutomationProperties.Name="xAI Grok API Key"
+                             AutomationProperties.HelpText="Enter your xAI Grok API key from console.x.ai" />
 
                 <!-- Database URL -->
-                <TextBlock Text="POSTGRESQL / NEON DATABASE URL" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
-                <Grid Margin="0,0,0,14">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                  </Grid.ColumnDefinitions>
-                  <TextBox x:Name="DatabaseUrlInput"
-                           Height="38"
-                           Padding="10,8"
-                           Background="{DynamicResource SurfaceRaisedBrush}"
-                           Foreground="{DynamicResource TextBrush}"
-                           BorderBrush="{DynamicResource StrokeBrush}"
-                           BorderThickness="1"
-                           FontSize="13"
-                           AutomationProperties.Name="Database URL"
-                           AutomationProperties.HelpText="Enter your PostgreSQL or Neon database URL" />
-                </Grid>
+                <TextBlock Text="POSTGRESQL / NEON DATABASE URL (masked)" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                <PasswordBox x:Name="DatabaseUrlInput"
+                             Height="38"
+                             Padding="10,8"
+                             Margin="0,0,0,14"
+                             Background="{DynamicResource SurfaceRaisedBrush}"
+                             Foreground="{DynamicResource TextBrush}"
+                             BorderBrush="{DynamicResource StrokeBrush}"
+                             BorderThickness="1"
+                             FontSize="13"
+                             AutomationProperties.Name="Database URL"
+                             AutomationProperties.HelpText="Enter your PostgreSQL or Neon database URL" />
 
                 <Grid Margin="0,0,0,14">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="16" />
-                    <ColumnDefinition Width="200" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="150" />
                   </Grid.ColumnDefinitions>
 
                   <!-- Endpoint ID -->
@@ -2133,6 +2272,24 @@
                       <ComboBoxItem Content="read-write" />
                     </ComboBox>
                   </StackPanel>
+
+                  <!-- Maestro Coordinator -->
+                  <StackPanel Grid.Column="4">
+                    <TextBlock Text="MAESTRO COORDINATOR" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                    <ComboBox x:Name="MaestroCoordinatorInput"
+                              Height="38"
+                              Padding="10,8"
+                              Background="{DynamicResource SurfaceRaisedBrush}"
+                              Foreground="#17221F"
+                              BorderBrush="{DynamicResource StrokeBrush}"
+                              BorderThickness="1"
+                              AutomationProperties.Name="Active Maestro Coordinator">
+                      <ComboBoxItem Content="OpenAI" />
+                      <ComboBoxItem Content="Claude" />
+                      <ComboBoxItem Content="Gemini" IsSelected="True" />
+                      <ComboBoxItem Content="Grok" />
+                    </ComboBox>
+                  </StackPanel>
                 </Grid>
 
                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
@@ -2151,6 +2308,75 @@
                   <TextBlock x:Name="SchemaStatusLabel"
                              Text=""
                              Foreground="{DynamicResource AmberBrush}"
+                             FontSize="12"
+                             VerticalAlignment="Center"
+                             Margin="16,0,0,0" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- Custom LLM Endpoints Card -->
+            <Border Style="{StaticResource CardStyle}">
+              <StackPanel>
+                <Grid Margin="0,0,0,16">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="Custom LLM Endpoints" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="Add custom open-source, local runs, or Chinese LLMs (e.g. DeepSeek, Qwen, Ollama) using an OpenAI-compatible API base URL."
+                               Style="{StaticResource MutedStyle}"
+                               Margin="0,6,0,0" />
+                  </StackPanel>
+                  <Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Top">
+                    <TextBlock Text="DYNAMIC INTEGRATIONS" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
+                  </Border>
+                </Grid>
+
+                <!-- Input Form to Add New Profile -->
+                <Grid Margin="0,4,0,14">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="200" />
+                  </Grid.ColumnDefinitions>
+                  
+                  <StackPanel Grid.Column="0">
+                    <TextBlock Text="MODEL NAME" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                    <TextBox x:Name="CustomModelNameInput" Height="38" Padding="10,8" Background="{DynamicResource SurfaceRaisedBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" FontSize="13" />
+                  </StackPanel>
+                  
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Text="OPENAI-COMPATIBLE API ENDPOINT URL" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                    <TextBox x:Name="CustomModelEndpointInput" Height="38" Padding="10,8" Background="{DynamicResource SurfaceRaisedBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" FontSize="13" />
+                  </StackPanel>
+
+                  <StackPanel Grid.Column="4">
+                    <TextBlock Text="API KEY / AUTH TOKEN" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                    <TextBox x:Name="CustomModelApiKeyInput" Height="38" Padding="10,8" Background="{DynamicResource SurfaceRaisedBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" FontSize="13" />
+                  </StackPanel>
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                  <Button x:Name="AddCustomModelButton"
+                          Content="[ + Add Custom LLM Provider ]"
+                          Click="AddCustomModel_Click"
+                          Style="{StaticResource PrimaryButtonStyle}"
+                          Padding="16,10" />
+                  <Button x:Name="VerifyCustomModelsButton"
+                          Content="[ Verify endpoints ]"
+                          Click="VerifyCustomModels_Click"
+                          Style="{StaticResource PrimaryButtonStyle}"
+                          Padding="16,10"
+                          Margin="10,0,0,0"
+                          ToolTip="Send one real request to each saved endpoint. Only a live answer marks it verified."
+                          AutomationProperties.Name="Verify custom LLM endpoints" />
+                  <TextBlock x:Name="CustomModelStatusLabel"
+                             Text=""
+                             Foreground="{DynamicResource AccentBrush}"
                              FontSize="12"
                              VerticalAlignment="Center"
                              Margin="16,0,0,0" />
@@ -2192,13 +2418,10 @@
                     <TextBlock Text="Operational state" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
                   </StackPanel>
                   <TextBlock Grid.Column="1"
-                             Text="Bundled demo snapshot"
-                             Foreground="{DynamicResource AmberBrush}"
+                             Text="{Binding DataSourceLabel}"
+                             Foreground="{DynamicResource SoftTextBrush}"
                              FontWeight="SemiBold"
                              VerticalAlignment="Center" />
-                  <Border Grid.Column="2" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
-                    <TextBlock Text="NOT LIVE" Foreground="{DynamicResource AmberBrush}" FontSize="10" FontWeight="Bold" />
-                  </Border>
                 </Grid>
                 <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,18,0,0" />
                 <Grid Margin="0,18,0,0">
@@ -2259,7 +2482,7 @@
                   <TextBlock Text="Safety defaults" Style="{StaticResource SectionTitleStyle}" />
                   <TextBlock Text="✓  No credentials loaded by the desktop shell" Foreground="{DynamicResource SoftTextBrush}" Margin="0,18,0,0" />
                   <TextBlock Text="✓  No agent configuration discovery" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
-                  <TextBlock Text="✓  Demo approval items are non-actionable" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
+                  <TextBlock Text="✓  System operations require explicit owner signature" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
                   <TextBlock Text="✓  Advisor consensus stays advisory" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
                 </StackPanel>
               </Border>
@@ -2271,7 +2494,7 @@
                   <TextBlock Text="Runtime" Foreground="{DynamicResource MutedTextBrush}" Margin="0,14,0,0" />
                   <TextBlock Text=".NET 10 · WPF · Windows x64" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" Margin="0,4,0,0" />
                   <TextBlock Text="Readiness" Foreground="{DynamicResource MutedTextBrush}" Margin="0,14,0,0" />
-                  <TextBlock Text="Local demo shell · not production" Foreground="{DynamicResource AmberBrush}" FontWeight="SemiBold" Margin="0,4,0,0" />
+                  <TextBlock Text="Local pilot shell · active" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" Margin="0,4,0,0" />
                 </StackPanel>
               </Border>
             </Grid>
@@ -2279,7 +2502,8 @@
         </ScrollViewer>
       </Grid>
 
-      <Border Grid.Row="2"
+      <Border x:Name="FooterChrome"
+              Grid.Row="2"
               Background="{DynamicResource FooterBrush}"
               BorderBrush="{DynamicResource StrokeBrush}"
               BorderThickness="0,1,0,0"

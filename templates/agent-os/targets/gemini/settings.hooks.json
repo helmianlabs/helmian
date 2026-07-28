@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agent-os-context",
+            "command": "node \"{{HOOKS_DIR}}/session-start-context.mjs\" --format json",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agent-os-capture",
+            "command": "node \"{{HOOKS_DIR}}/stop-capture.mjs\"",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}

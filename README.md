@@ -126,6 +126,87 @@ Initialization creates only:
 The generated config records `codexAdapterMode: read-only`. Existing
 home-directory hooks are not replaced.
 
+## Agent OS
+
+`helmion agent-os install` sets up a self-improvement loop for a coding agent:
+a lean core-rules file, the companion logs it accumulates, and two hooks that
+carry state between sessions. It is generic — it contains no personal, project,
+or customer content, and a test enforces that (see below).
+
+```powershell
+helmion agent-os install                      # dry run — prints the plan, writes nothing
+helmion agent-os install --yes                # write it, all three targets
+helmion agent-os install --target claude --yes
+helmion agent-os install --yes --json         # machine-readable, for a UI button
+```
+
+`--dir` overrides the destination. Installing several targets into one `--dir`
+gives each its own subdirectory.
+
+### What it installs
+
+| Target | Directory | Context file |
+|---|---|---|
+| `claude` | `~/.claude` | `CLAUDE.md` |
+| `codex` | `~/.codex` | `AGENTS.md` |
+| `gemini` | `~/.gemini` | `GEMINI.md` |
+
+Each target gets the same set:
+
+```text
+<dir>/
+  CLAUDE.md | AGENTS.md | GEMINI.md   core rules + a summary of the loop
+  LESSONS.md                          corrections that must not repeat
+  LEARNINGS.md                        techniques worth reusing
+  BLOCKERS.md                         what is stuck right now
+  WINS.md                             what shipped, and what proved it
+  SESSION_BOARD.md                    which session is holding which files
+  memory/MEMORY.md                    one-line index of the above
+  agent-os/                           installer-owned; safe to delete
+    AGENT_OS.md                       the full loop + advisory lane
+    settings.hooks.json | hooks.json  hook config to merge yourself
+    MERGE_HOOKS.md                    how to merge it
+    hooks/session-start-context.mjs   injects blockers/lessons at session start
+    hooks/stop-capture.mjs            journals each turn
+    journal/                          created on first captured turn
+```
+
+### The loop
+
+```text
+capture  ->  propose  ->  review  ->  promote
+(hook)      (the agent)  (you)      (only after you approve)
+```
+
+The turn-capture hook journals each turn. The agent turns those into candidates
+in the **Proposed** section of `LESSONS.md` or `LEARNINGS.md`. Nothing leaves
+that section without you moving it. The session-start hook then reads the
+promoted state back at the start of the next session, so it opens knowing what
+the last one learned and what is still blocked.
+
+Anything a secondary model produces stays in the advisory lane described in
+`agent-os/AGENT_OS.md`: readable, never authoritative, never auto-promoted.
+
+### What it will not do
+
+- It never overwrites your files. A context file that already exists gets a
+  delimited block appended; the companion logs are created once and then left
+  alone. Re-running is a no-op.
+- It never edits `settings.json` (or Codex's `hooks.json`). Those carry keys
+  this installer knows nothing about, so hook wiring is written as a snippet
+  beside them with merge instructions. **Until you merge it, the hooks are not
+  active** — the `hooksWired: false` field in the JSON output says so plainly.
+- It ships no personal content. `test/agent-os.test.mjs` scans every template
+  against a denylist of names, paths, credentials, and project references, and
+  is itself checked against deliberately poisoned input so a scanner that can
+  no longer fail cannot pass silently.
+
+### Uninstalling
+
+Delete the `agent-os/` directory and remove the hook entries you merged into
+your settings file. The logs outside `agent-os/` are your own notes — keep or
+delete them as you like.
+
 ## Database migrations
 
 On a new database, schema creation requires a role with `CREATE` on the

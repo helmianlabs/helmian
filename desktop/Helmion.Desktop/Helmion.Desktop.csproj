@@ -24,4 +24,32 @@
           Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\scripts\build-icon.ps1&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\Assets\Helmion.ico&quot;" />
   </Target>
+
+  <!-- The Pilot hosts the Local Service as a sibling process. Copy the full
+       service output (exe + dll + deps + runtimeconfig + protocol/security)
+       next to Helmion Pilot.exe. A bare apphost .exe without its .dll exits
+       immediately ("application to execute does not exist"). -->
+  <Target Name="CopyLocalServiceBesidePilot"
+          AfterTargets="Build">
+    <PropertyGroup>
+      <_SvcOut>$(MSBuildThisFileDirectory)..\Helmion.LocalService\bin\$(Configuration)\net10.0-windows\</_SvcOut>
+    </PropertyGroup>
+    <ItemGroup Condition="Exists('$(_SvcOut)Helmion Local Service.dll')">
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion Local Service.exe" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion Local Service.dll" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion Local Service.deps.json" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion Local Service.runtimeconfig.json" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion Local Service.pdb" Condition="Exists('$(_SvcOut)Helmion Local Service.pdb')" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion.LocalService.Protocol.dll" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion.LocalService.Protocol.pdb" Condition="Exists('$(_SvcOut)Helmion.LocalService.Protocol.pdb')" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion.LocalService.Security.dll" Condition="Exists('$(_SvcOut)Helmion.LocalService.Security.dll')" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion.LocalService.Security.pdb" Condition="Exists('$(_SvcOut)Helmion.LocalService.Security.pdb')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_LocalServiceCopy)"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_LocalServiceCopy)' != ''" />
+    <Warning Text="Local Service build output not found at $(_SvcOut) — Pilot cannot start the pipe service until LocalService is built."
+             Condition="!Exists('$(_SvcOut)Helmion Local Service.dll')" />
+  </Target>
 </Project>

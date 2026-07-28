@@ -1,0 +1,474 @@
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+
+namespace Helmion.Desktop.Core;
+
+/// <summary>
+/// Long-lived Node <c>helmion agent-bridge</c> process. Same tool loop as
+/// <c>helmion agent</c> CLI — used by the Windows Pilot EXE console.
+/// </summary>
+public sealed class AgentBridge : IDisposable
+{
+    private Process? _process;
+    private StreamWriter? _stdin;
+    private readonly object _gate = new();
+    private bool _disposed;
+    private Task? _readerTask;
+    private readonly string _helmionRoot;
+    private readonly string _nodeExe;
+    private readonly string _cliScript;
+
+    public string? LastProvider { get; private set; }
+    public string? LastWorkspace { get; private set; }
+    public bool IsRunning => _process is { HasExited: false };
+
+    public AgentBridge()
+    {
+        _helmionRoot = FindHelmionRoot()
+            ?? throw new InvalidOperationException(
+                "Could not find Helmion repo root (bin/helmion.mjs). "
+                + "Run the Pilot from a build under E:\\Helmion or set WORKSPACE_PATH.");
+        _cliScript = Path.Combine(_helmionRoot, "bin", "helmion.mjs");
+        if (!File.Exists(_cliScript))
+        {
+            throw new FileNotFoundException("helmion.mjs not found", _cliScript);
+        }
+        _nodeExe = FindNodeExecutable()
+            ?? throw new FileNotFoundException(
+                "node.exe not found on PATH. Install Node 20+ so the Pilot can run the agent engine.");
+    }
+
+    public string HelmionRoot => _helmionRoot;
+
+    public async Task EnsureStartedAsync(CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            if (_process is { HasExited: false } && _stdin is not null)
+            {
+                return;
+            }
+        }
+
+        await StopAsync().ConfigureAwait(false);
+
+        // Reload .env immediately before spawn so a Settings save or .env fix
+        // is visible even if this process started with stale keys.
+        var settings = EnvironmentSettingsStore.Load();
+        EnvironmentSettingsStore.ApplyToProcess(settings);
+
+        var start = new ProcessStartInfo
+        {
+            FileName = _nodeExe,
+            ArgumentList = { _cliScript, "agent-bridge" },
+            WorkingDirectory = _helmionRoot,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+
+        // Explicitly stamp keys onto the child env. Node also loads .env and
+        // now overrides Helmion-managed keys from file (see src/agent/env.mjs).
+        SetChildEnv(start, "OPENAI_API_KEY", settings.OpenAiApiKey);
+        SetChildEnv(start, "ANTHROPIC_API_KEY", settings.AnthropicApiKey);
+        SetChildEnv(start, "GEMINI_API_KEY", settings.GeminiApiKey);
+        SetChildEnv(start, "XAI_API_KEY", settings.GrokApiKey);
+        SetChildEnv(start, "GROK_API_KEY", settings.GrokApiKey);
+        SetChildEnv(start, "HELMION_DATABASE_URL", settings.DatabaseUrl);
+        SetChildEnv(start, "HELMION_EXPECTED_ENDPOINT_ID", settings.ExpectedEndpointId);
+        SetChildEnv(start, "HELMION_MAESTRO_COORDINATOR", settings.MaestroCoordinator);
+        SetChildEnv(
+            start,
+            "HELMION_PERMISSION_MODE",
+            Environment.GetEnvironmentVariable("HELMION_PERMISSION_MODE")
+                ?? AgentPermission.ReadOnly);
+        SetChildEnv(start, "WORKSPACE_PATH", _helmionRoot);
+        SetChildEnv(start, "HELMION_WORKSPACE_PATH", _helmionRoot);
+
+        // User-defined OpenAI-compatible endpoints. Node resolves a coordinator name
+        // against this list when it is not one of the four built-ins.
+        try
+        {
+            var custom = DesktopSettingsStore.Load().CustomProviders;
+            SetChildEnv(start, "HELMION_CUSTOM_PROVIDERS", SerializeCustomProviders(custom));
+        }
+        catch
+        {
+            // Desktop settings are optional for the bridge; built-ins still work.
+        }
+
+        var process = new Process { StartInfo = start, EnableRaisingEvents = true };
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("Failed to start helmion agent-bridge");
+        }
+
+        lock (_gate)
+        {
+            _process = process;
+            _stdin = process.StandardInput;
+            _stdin.AutoFlush = true;
+            _readerTask = Task.Run(() => DrainStderr(process), CancellationToken.None);
+        }
+
+        // Warm hello (ignore errors — first turn will reconfigure).
+        try
+        {
+            await foreach (var _ in RequestAsync(
+                               new { cmd = "hello" },
+                               cancellationToken).ConfigureAwait(false))
+            {
+                // consume
+            }
+        }
+        catch
+        {
+            // Bridge may still accept configure/turn.
+        }
+    }
+
+    public async IAsyncEnumerable<AgentBridgeEvent> TurnAsync(
+        string text,
+        string workspace,
+        string provider,
+        string? permissionMode = null,
+        IReadOnlyList<CustomProviderProfile>? customProviders = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation]
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+
+        var permission = AgentPermission.Normalize(permissionMode);
+        await foreach (var ev in RequestAsync(
+                           new
+                           {
+                               cmd = "turn",
+                               text,
+                               workspace,
+                               provider,
+                               permission,
+                               customProviders = ToWirePayload(customProviders),
+                           },
+                           cancellationToken).ConfigureAwait(false))
+        {
+            if (ev.Event == "ready" || ev.Event == "hello")
+            {
+                LastWorkspace = ev.Workspace ?? LastWorkspace;
+                LastProvider = ev.Provider ?? LastProvider;
+            }
+            yield return ev;
+        }
+    }
+
+    public async Task ConfigureAsync(
+        string workspace,
+        string provider,
+        string? permissionMode = null,
+        IReadOnlyList<CustomProviderProfile>? customProviders = null,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+        var permission = AgentPermission.Normalize(permissionMode);
+        await foreach (var ev in RequestAsync(
+                           new
+                           {
+                               cmd = "configure",
+                               workspace,
+                               provider,
+                               permission,
+                               customProviders = ToWirePayload(customProviders),
+                           },
+                           cancellationToken).ConfigureAwait(false))
+        {
+            if (ev.Event is "ready" or "hello")
+            {
+                LastWorkspace = ev.Workspace ?? workspace;
+                LastProvider = ev.Provider ?? provider;
+            }
+        }
+    }
+
+    public async Task ResetAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsRunning) return;
+        await foreach (var _ in RequestAsync(new { cmd = "reset" }, cancellationToken)
+                           .ConfigureAwait(false))
+        {
+        }
+    }
+
+    private async IAsyncEnumerable<AgentBridgeEvent> RequestAsync(
+        object request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation]
+        CancellationToken cancellationToken)
+    {
+        Process process;
+        StreamWriter stdin;
+        lock (_gate)
+        {
+            process = _process ?? throw new InvalidOperationException("Bridge not started");
+            stdin = _stdin ?? throw new InvalidOperationException("Bridge stdin missing");
+        }
+
+        var json = JsonSerializer.Serialize(request);
+        await stdin.WriteLineAsync(json).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Read events until done/error-done for this turn.
+        // Note: hello/configure also end with ready (no done) — stop on ready for those,
+        // or done for turn.
+        var cmd = request.GetType().GetProperty("cmd")?.GetValue(request)?.ToString()
+            ?? "turn";
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            if (process.HasExited)
+            {
+                yield return new AgentBridgeEvent(
+                    "error",
+                    Message: $"agent-bridge exited with code {process.ExitCode}");
+                yield return new AgentBridgeEvent("done");
+                yield break;
+            }
+
+            string? line;
+            try
+            {
+                line = await process.StandardOutput
+                    .ReadLineAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                yield break;
+            }
+
+            if (line is null)
+            {
+                yield return new AgentBridgeEvent("error", Message: "agent-bridge closed stdout");
+                yield return new AgentBridgeEvent("done");
+                yield break;
+            }
+
+            AgentBridgeEvent? ev = null;
+            string? parseError = null;
+            try
+            {
+                ev = ParseEvent(line);
+            }
+            catch (Exception ex)
+            {
+                parseError = ex.Message;
+            }
+
+            if (parseError is not null)
+            {
+                yield return new AgentBridgeEvent("error", Message: $"Bad event JSON: {parseError}");
+                continue;
+            }
+
+            if (ev is null) continue;
+            yield return ev;
+
+            if (ev.Event == "done") yield break;
+            if (cmd is "configure" or "hello" or "reset" or "ping"
+                && ev.Event is "ready" or "hello" or "pong")
+            {
+                yield break;
+            }
+        }
+    }
+
+    private static AgentBridgeEvent? ParseEvent(string line)
+    {
+        using var doc = JsonDocument.Parse(line);
+        var root = doc.RootElement;
+        var ev = root.TryGetProperty("event", out var e) ? e.GetString() : null;
+        if (string.IsNullOrEmpty(ev)) return null;
+
+        string? GetStr(string name) =>
+            root.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String
+                ? p.GetString()
+                : null;
+
+        string? argsJson = null;
+        if (root.TryGetProperty("args", out var argsEl))
+        {
+            argsJson = argsEl.GetRawText();
+        }
+
+        return new AgentBridgeEvent(
+            Event: ev!,
+            Message: GetStr("message"),
+            Text: GetStr("text"),
+            Name: GetStr("name"),
+            Preview: GetStr("preview"),
+            Provider: GetStr("provider"),
+            ProviderId: GetStr("providerId"),
+            Workspace: GetStr("workspace"),
+            ArgsJson: argsJson,
+            Partial: root.TryGetProperty("partial", out var part) && part.ValueKind == JsonValueKind.True);
+    }
+
+    private static async Task DrainStderr(Process process)
+    {
+        try
+        {
+            while (!process.HasExited)
+            {
+                var line = await process.StandardError.ReadLineAsync().ConfigureAwait(false);
+                if (line is null) break;
+                // Intentionally not forwarded to UI (may contain noise); available for debugger.
+                Debug.WriteLine($"[agent-bridge stderr] {line}");
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    public async Task StopAsync()
+    {
+        Process? process;
+        lock (_gate)
+        {
+            process = _process;
+            _process = null;
+            try { _stdin?.Dispose(); } catch { /* ignore */ }
+            _stdin = null;
+        }
+
+        if (process is null) return;
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        finally
+        {
+            process.Dispose();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        StopAsync().GetAwaiter().GetResult();
+    }
+
+    public static string? FindHelmionRoot()
+    {
+        var candidates = new List<string>();
+        var envWs = Environment.GetEnvironmentVariable("WORKSPACE_PATH")
+            ?? Environment.GetEnvironmentVariable("HELMION_WORKSPACE_PATH");
+        if (!string.IsNullOrWhiteSpace(envWs)) candidates.Add(envWs);
+        candidates.Add(@"E:\Helmion");
+        candidates.Add(AppContext.BaseDirectory);
+
+        foreach (var start in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var dir = new DirectoryInfo(start);
+            for (var i = 0; i < 10 && dir is not null; i++)
+            {
+                var script = Path.Combine(dir.FullName, "bin", "helmion.mjs");
+                if (File.Exists(script)) return dir.FullName;
+                dir = dir.Parent;
+            }
+        }
+        return null;
+    }
+
+    public static string? FindNodeExecutable()
+    {
+        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var part in path.Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrWhiteSpace(part)) continue;
+            var exe = Path.Combine(part.Trim(), "node.exe");
+            if (File.Exists(exe)) return exe;
+            var unix = Path.Combine(part.Trim(), "node");
+            if (File.Exists(unix)) return unix;
+        }
+        // Common install locations on Windows
+        foreach (var guess in new[]
+                 {
+                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe"),
+                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "nodejs", "node.exe"),
+                 })
+        {
+            if (File.Exists(guess)) return guess;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Shape the Node agent expects for a custom provider: name, baseUrl, apiKey, model.
+    /// Returns null (rather than an empty array) so the bridge keeps its existing list
+    /// when a caller has nothing to send.
+    /// </summary>
+    internal static IReadOnlyList<CustomProviderWire>? ToWirePayload(
+        IReadOnlyList<CustomProviderProfile>? customProviders)
+    {
+        if (customProviders is null || customProviders.Count == 0) return null;
+        return customProviders
+            .Where(p => !string.IsNullOrWhiteSpace(p.Name) && !string.IsNullOrWhiteSpace(p.EndpointUrl))
+            .Select(p => new CustomProviderWire(
+                p.Name.Trim(),
+                p.EndpointUrl.Trim(),
+                p.ApiKey ?? "",
+                CustomChatSession.ResolveModelId(p)))
+            .ToList();
+    }
+
+    /// <summary>JSON for the HELMION_CUSTOM_PROVIDERS child env var; "" when there are none.</summary>
+    internal static string SerializeCustomProviders(
+        IReadOnlyList<CustomProviderProfile>? customProviders)
+    {
+        var wire = ToWirePayload(customProviders);
+        return wire is null || wire.Count == 0 ? "" : JsonSerializer.Serialize(wire);
+    }
+
+    private static void SetChildEnv(ProcessStartInfo start, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            // Leave unset so Node can still fill from .env override path.
+            return;
+        }
+
+        start.Environment[key] = value.Trim();
+    }
+}
+
+/// <summary>Wire shape sent to the Node agent for one user-defined endpoint.</summary>
+public sealed record CustomProviderWire(
+    [property: System.Text.Json.Serialization.JsonPropertyName("name")] string Name,
+    [property: System.Text.Json.Serialization.JsonPropertyName("baseUrl")] string BaseUrl,
+    [property: System.Text.Json.Serialization.JsonPropertyName("apiKey")] string ApiKey,
+    [property: System.Text.Json.Serialization.JsonPropertyName("model")] string Model);
+
+public sealed record AgentBridgeEvent(
+    string Event,
+    string? Message = null,
+    string? Text = null,
+    string? Name = null,
+    string? Preview = null,
+    string? Provider = null,
+    string? ProviderId = null,
+    string? Workspace = null,
+    string? ArgsJson = null,
+    bool Partial = false);

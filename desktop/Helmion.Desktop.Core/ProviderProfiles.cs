@@ -18,10 +18,17 @@ public sealed record ProviderProfileSummary(
 
 public static class ProviderProfileCatalog
 {
-    public static IReadOnlyList<ProviderProfileSummary> CreateUnconfigured()
+    /// <summary>
+    /// Build the provider registry rows. <paramref name="verifiedCustomNames"/> holds the
+    /// custom providers whose endpoint answered a real probe during THIS run — nothing else
+    /// may be labelled active. Existing in settings only proves the user typed a URL.
+    /// </summary>
+    public static IReadOnlyList<ProviderProfileSummary> CreateUnconfigured(
+        IReadOnlyList<CustomProviderProfile>? customProfiles = null,
+        IReadOnlySet<string>? verifiedCustomNames = null)
     {
-        return
-        [
+        var list = new List<ProviderProfileSummary>
+        {
             new(
                 "codex-cli",
                 "Codex CLI",
@@ -141,7 +148,85 @@ public static class ProviderProfileCatalog
                 "Documentation → account/scope test → read-only repository canary",
                 "github-cli",
                 false,
+                false),
+            new(
+                "cursor-ide",
+                "Cursor IDE",
+                "AI-native editor integration",
+                "Local workspace adapter",
+                "Not checked",
+                "Design-only",
+                "Authentication not verified in this slice",
+                "No credentials or system-level tokens are read or stored.",
+                "Cursor configuration and workspace tracking review required",
+                "Supported by direct project rules and file-boundary enforcement.",
+                "Documentation → editor tracking → sandbox test → read-only canary",
+                "cursor-cli",
+                false,
+                false),
+            new(
+                "chatgpt-web",
+                "ChatGPT Web",
+                "Web-based assistant integration",
+                "Browser / standalone adapter",
+                "Not checked",
+                "Design-only",
+                "Session-token authentication",
+                "Authentication goes directly to local secure DPAPI-protected storage.",
+                "Official OpenAI standalone/web session docs verified",
+                "Helmion browser-isolation and proxy security rules active.",
+                "Documentation → session verification → read-only sandbox",
+                null,
+                false,
+                false),
+            new(
+                "claude-api",
+                "Claude API (Direct)",
+                "Direct API adapter candidate",
+                "Direct REST API adapter",
+                "API profile not enrolled",
+                "Not configured",
+                "Anthropic API key / bearer",
+                "Future enrollment goes directly to DPAPI-secured local-service storage.",
+                "Official Anthropic API-key docs verified",
+                "Never renderer, console, chat, logs, history, or source control.",
+                "Protected enrollment → identity/project test → read-only canary",
+                null,
+                false,
                 false)
-        ];
+        };
+
+        if (customProfiles is not null)
+        {
+            foreach (var custom in customProfiles)
+            {
+                var verified = verifiedCustomNames is not null
+                    && verifiedCustomNames.Contains(custom.Name.Trim());
+
+                list.Add(new ProviderProfileSummary(
+                    "custom-" + custom.Name.ToLowerInvariant().Replace(" ", "-"),
+                    custom.Name,
+                    "Custom LLM / OpenAI-compatible endpoint",
+                    "Custom Direct API adapter",
+                    verified
+                        ? "Endpoint answered · verified this run"
+                        : "Saved · endpoint not contacted",
+                    verified
+                        ? "Saved · verified this run"
+                        : "Saved · unverified",
+                    "Custom API key",
+                    "Stored in local application settings for this Windows user.",
+                    verified
+                        ? $"Endpoint: {custom.EndpointUrl} · probe returned an OpenAI-compatible completion"
+                        : $"Endpoint: {custom.EndpointUrl} · never contacted — press Verify to test it",
+                    "User-defined custom model configuration.",
+                    "Custom endpoint → Verify probe → console routing",
+                    null,
+                    true,
+                    verified));
+            }
+        }
+
+        return list;
     }
 }

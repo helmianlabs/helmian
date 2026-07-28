@@ -68,8 +68,9 @@ Settings includes one keyboard-accessible color-theme selector with:
 
 - Helmion green;
 - Ocean blue;
-- Clean light; and
-- Warm earth.
+- Clean light;
+- Warm earth; and
+- Solar yellow.
 
 Themes change presentation only. They do not change data sources, authority,
 policy, leases, approval behavior, or integration state. The selected stable

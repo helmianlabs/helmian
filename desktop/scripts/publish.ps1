@@ -109,6 +109,34 @@ try {
   }
   Move-Item -LiteralPath $stagingDirectory -Destination $outputDirectory
 
+  # Voice-stack assets. Single-file bundling hides native DLLs from Whisper.net's
+  # on-disk probe ("Native Library not found in default paths", seen live 2026-07-28),
+  # and KokoroSharp needs voices/ + espeak/ beside the exe. Models are looked up in
+  # models\ next to the executable (VoiceModelPaths). Mirror the proven dev layout.
+  $releaseOutput = Join-Path $repositoryRoot 'desktop\Helmion.Desktop\bin\Release\net10.0-windows\win-x64'
+  foreach ($asset in @('runtimes', 'voices', 'espeak')) {
+    $source = Join-Path $releaseOutput $asset
+    if (Test-Path -LiteralPath $source) {
+      Copy-Item -LiteralPath $source -Destination (Join-Path $outputDirectory $asset) -Recurse -Force
+    } else {
+      Write-Warning "Voice asset folder missing from build output: $source"
+    }
+  }
+  foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll')) {
+    $source = Join-Path $releaseOutput $dll
+    if (Test-Path -LiteralPath $source) {
+      Copy-Item -LiteralPath $source -Destination $outputDirectory -Force
+    } else {
+      Write-Warning "Voice native DLL missing from build output: $source"
+    }
+  }
+  $modelsSource = Join-Path $repositoryRoot 'desktop\models'
+  if (Test-Path -LiteralPath $modelsSource) {
+    Copy-Item -LiteralPath $modelsSource -Destination (Join-Path $outputDirectory 'models') -Recurse -Force
+  } else {
+    Write-Warning "Voice models not downloaded (desktop\models missing) - packaged app will run voice-degraded. Run desktop/scripts/get-voice-models.ps1 first."
+  }
+
   $desktopExecutable = Join-Path $outputDirectory 'Helmion Pilot.exe'
   $serviceExecutable = Join-Path $outputDirectory 'Helmion Local Service.exe'
   [pscustomobject]@{

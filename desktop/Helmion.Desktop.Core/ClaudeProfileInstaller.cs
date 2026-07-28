@@ -44,9 +44,18 @@ public static class ClaudeProfileInstaller
     /// Writes the template files to ~/.claude/.
     /// Only files listed in <paramref name="approvedPaths"/> are written.
     /// </summary>
+    /// <param name="overwriteExisting">
+    /// Default false: an existing file is NEVER replaced, because these targets are
+    /// living user documents. LESSONS.md and LEARNINGS.md accumulate the user's own
+    /// entries; a blind template write destroys them. On 2026-07-28 a caller passed a
+    /// hardcoded approval set and truncated both back to their templates, losing real
+    /// entries permanently — there was no backup. Overwriting now requires an explicit
+    /// opt-in AND leaves a timestamped .bak beside the original.
+    /// </param>
     public static async Task<InstallResult> InstallAsync(
         IReadOnlySet<string> approvedPaths,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool overwriteExisting = false)
     {
         if (!IsClaudePresent())
         {
@@ -57,6 +66,7 @@ public static class ClaudeProfileInstaller
 
         var written = new List<string>();
         var skipped = new List<string>();
+        var preserved = new List<string>();
 
         foreach (var (relPath, content) in TemplateFiles())
         {
@@ -72,14 +82,29 @@ public static class ClaudeProfileInstaller
             var dir = Path.GetDirectoryName(targetPath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
+            if (File.Exists(targetPath))
+            {
+                if (!overwriteExisting)
+                {
+                    preserved.Add(relPath);
+                    continue;
+                }
+
+                var backupPath = $"{targetPath}.{DateTime.Now:yyyyMMdd-HHmmss}.bak";
+                File.Copy(targetPath, backupPath, overwrite: false);
+            }
+
             await File.WriteAllTextAsync(targetPath, content, cancellationToken);
             written.Add(relPath);
         }
 
-        return new InstallResult(
-            true,
-            $"Installed {written.Count} files. Skipped {skipped.Count}.",
-            written);
+        var message = $"Installed {written.Count} files. Skipped {skipped.Count}.";
+        if (preserved.Count > 0)
+        {
+            message += $" Left {preserved.Count} existing file(s) untouched: {string.Join(", ", preserved)}.";
+        }
+
+        return new InstallResult(true, message, written);
     }
 
     // ── Template content ───────────────────────────────────────────────────────

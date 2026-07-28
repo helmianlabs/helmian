@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{HOOKS_DIR}}/session-start-context.mjs\" --format json",
+            "statusMessage": "Loading agent OS context",
+            "additionalContextLimit": 6000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{HOOKS_DIR}}/stop-capture.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}
