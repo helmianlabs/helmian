@@ -54,7 +54,7 @@ public static class ProfileSyncEngine
         concurrently. Never serialize what can fan out.
         """;
 
-    private static JsonObject CreateMcpServerConfig(string scriptPath, string databaseUrl, string? mode = null, string? instanceId = null)
+    private static JsonObject CreateMcpServerConfig(string scriptPath, string databaseUrl, string? mode = null, string? instanceId = null, string? grokApiKey = null)
     {
         var env = new JsonObject { ["HELMION_DATABASE_URL"] = databaseUrl };
         if (mode is not null)
@@ -64,6 +64,10 @@ public static class ProfileSyncEngine
         if (instanceId is not null)
         {
             env["HELMION_CODEX_INSTANCE_ID"] = instanceId;
+        }
+        if (!string.IsNullOrEmpty(grokApiKey))
+        {
+            env["GROK_API_KEY"] = grokApiKey;
         }
 
         return new JsonObject
@@ -135,10 +139,10 @@ public static class ProfileSyncEngine
             }
 
             var desktopMcpServers = desktopRoot["mcpServers"]!.AsObject();
-            desktopMcpServers["helmion-context"] = CreateMcpServerConfig(contextScript, settings.DatabaseUrl);
-            desktopMcpServers["helmion-flywheel"] = CreateMcpServerConfig(flywheelScript, settings.DatabaseUrl);
-            desktopMcpServers["helmion-advisory"] = CreateMcpServerConfig(advisoryScript, settings.DatabaseUrl);
-            desktopMcpServers["helmion-codex"] = CreateMcpServerConfig(codexScript, settings.DatabaseUrl, settings.CodexMode, settings.CodexInstanceId);
+            desktopMcpServers["helmion-context"] = CreateMcpServerConfig(contextScript, settings.DatabaseUrl, grokApiKey: settings.GrokApiKey);
+            desktopMcpServers["helmion-flywheel"] = CreateMcpServerConfig(flywheelScript, settings.DatabaseUrl, grokApiKey: settings.GrokApiKey);
+            desktopMcpServers["helmion-advisory"] = CreateMcpServerConfig(advisoryScript, settings.DatabaseUrl, grokApiKey: settings.GrokApiKey);
+            desktopMcpServers["helmion-codex"] = CreateMcpServerConfig(codexScript, settings.DatabaseUrl, settings.CodexMode, settings.CodexInstanceId, settings.GrokApiKey);
 
             var serializeOptions = new JsonSerializerOptions { WriteIndented = true };
             await File.WriteAllTextAsync(claudeDesktopConfigPath, JsonSerializer.Serialize(desktopRoot, serializeOptions), cancellationToken);
@@ -169,10 +173,10 @@ public static class ProfileSyncEngine
             }
 
             var codeMcpServers = codeRoot["mcpServers"]!.AsObject();
-            codeMcpServers["helmion-context"] = CreateMcpServerConfig(contextScript, settings.DatabaseUrl);
-            codeMcpServers["helmion-flywheel"] = CreateMcpServerConfig(flywheelScript, settings.DatabaseUrl);
-            codeMcpServers["helmion-advisory"] = CreateMcpServerConfig(advisoryScript, settings.DatabaseUrl);
-            codeMcpServers["helmion-codex"] = CreateMcpServerConfig(codexScript, settings.DatabaseUrl, settings.CodexMode, settings.CodexInstanceId);
+            codeMcpServers["helmion-context"] = CreateMcpServerConfig(contextScript, settings.DatabaseUrl, grokApiKey: settings.GrokApiKey);
+            codeMcpServers["helmion-flywheel"] = CreateMcpServerConfig(flywheelScript, settings.DatabaseUrl, grokApiKey: settings.GrokApiKey);
+            codeMcpServers["helmion-advisory"] = CreateMcpServerConfig(advisoryScript, settings.DatabaseUrl, grokApiKey: settings.GrokApiKey);
+            codeMcpServers["helmion-codex"] = CreateMcpServerConfig(codexScript, settings.DatabaseUrl, settings.CodexMode, settings.CodexInstanceId, settings.GrokApiKey);
 
             if (!codeRoot.ContainsKey("hooks") || codeRoot["hooks"] is not JsonObject)
             {
@@ -297,8 +301,32 @@ public static class ProfileSyncEngine
                 });
             }
 
-            await File.WriteAllTextAsync(autonomyRulesPath, JsonSerializer.Serialize(rulesRoot, serializeOptions), cancellationToken);
-            syncedItems.Add("Codex autonomy rules configuration");
+            // 9. Bidirectional Neon autonomy rule sync (HELMION_DATABASE_URL from .env)
+            try
+            {
+                var neonStatus = await ProfileSyncService.SyncAutonomyRulesAsync(
+                    rulesRoot,
+                    settings.DatabaseUrl,
+                    cancellationToken);
+                syncedItems.Add(neonStatus);
+
+                // Re-write local file after merge from Neon
+                await File.WriteAllTextAsync(
+                    autonomyRulesPath,
+                    JsonSerializer.Serialize(rulesRoot, serializeOptions),
+                    cancellationToken);
+                syncedItems.Add("Codex autonomy rules configuration");
+            }
+            catch (Exception neonEx)
+            {
+                // Offline / schema missing must not fail the whole profile package.
+                await File.WriteAllTextAsync(
+                    autonomyRulesPath,
+                    JsonSerializer.Serialize(rulesRoot, serializeOptions),
+                    cancellationToken);
+                syncedItems.Add("Codex autonomy rules configuration");
+                syncedItems.Add($"Neon autonomy rules warning: {neonEx.Message}");
+            }
 
             return new SyncResult(true, "Profile synchronized successfully.", syncedItems);
         }

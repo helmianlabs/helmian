@@ -31,7 +31,7 @@ public partial class App : Application
             foreach (var theme in ColorThemeCatalog.All)
             {
                 smokeWindow.ApplyThemeForPreview(theme.Id);
-                foreach (var pageName in PilotSnapshot.CreateDemo(DateTimeOffset.UnixEpoch).NavigationItems)
+                foreach (var pageName in PilotSnapshot.CreateLive(true, null, "", "", "", "Codex").NavigationItems)
                 {
                     smokeWindow.NavigateTo(pageName);
                     smokeWindow.UpdateLayout();
@@ -78,8 +78,54 @@ public partial class App : Application
             return;
         }
 
+        // Show the shell first, then auto-start the named-pipe service so the
+        // sidebar can flip to ONLINE without a manual "Connect" click.
         MainWindow = new MainWindow();
         MainWindow.Show();
+        _ = PrestartLocalServiceAsync();
+    }
+
+    private static async Task PrestartLocalServiceAsync()
+    {
+        try
+        {
+            // Service cold-start + pipe bind can exceed a few seconds on this machine.
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var hello = await LocalServiceHost.EnsureStartedAsync(timeout.Token);
+            if (Current?.MainWindow is MainWindow main)
+            {
+                await main.Dispatcher.InvokeAsync(() =>
+                {
+                    main.NotifyLocalServiceOnline(
+                        $"Protocol v{hello.ProtocolVersion} · named pipe connected");
+                });
+            }
+        }
+        catch
+        {
+            if (Current?.MainWindow is MainWindow main)
+            {
+                await main.Dispatcher.InvokeAsync(() =>
+                {
+                    main.NotifyLocalServiceUnavailable(
+                        "Local service did not auto-start — use Retry local service");
+                });
+            }
+        }
+    }
+
+    protected override async void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            await LocalServiceHost.StopAsync();
+        }
+        catch
+        {
+            // Best-effort shutdown
+        }
+
+        base.OnExit(e);
     }
 
     private static async Task<bool> RunServiceSmokeAsync()

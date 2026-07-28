@@ -52,7 +52,27 @@ internal static class ColorThemeManager
                 accentStroke: "#6D4A31", accentStrokeStrong: "#8B5E3A", amber: "#F3C96F",
                 warning: "#46331E", warningSoft: "#38291A", warningStroke: "#735630",
                 blue: "#91B9E8", avatar: "#3D2B20",
-                heroStart: "#50311E", heroMiddle: "#38251A", heroEnd: "#251A13")
+                heroStart: "#50311E", heroMiddle: "#38251A", heroEnd: "#251A13"),
+            ["solar-yellow"] = Create(
+                canvas: "#141109", sidebar: "#1A160C", header: "#18140B", footer: "#12100A",
+                surface: "#221C10", raised: "#2C2414", panel: "#261F12", subtle: "#241E11",
+                inset: "#322914", stroke: "#4A4024", text: "#FFF9E8", soft: "#E6D9B0",
+                muted: "#B8A878", faint: "#8A7D55", accent: "#F5D000", accentInk: "#2A2200",
+                accentDark: "#5A4A10", accentPanel: "#3A3214", accentStrong: "#4A3E12",
+                accentStroke: "#7A6A28", accentStrokeStrong: "#9A8530", amber: "#FFC94A",
+                warning: "#46381C", warningSoft: "#382E16", warningStroke: "#736028",
+                blue: "#8BB8F0", avatar: "#3A3218",
+                heroStart: "#5A4A14", heroMiddle: "#3A3014", heroEnd: "#221C10"),
+            ["crimson-red"] = Create(
+                canvas: "#14090A", sidebar: "#1A0C0E", header: "#180B0D", footer: "#120A0B",
+                surface: "#221012", raised: "#2C1418", panel: "#261214", subtle: "#241113",
+                inset: "#32161A", stroke: "#4A242A", text: "#FFF0F2", soft: "#E6B8BE",
+                muted: "#B87882", faint: "#8A555D", accent: "#E53945", accentInk: "#2A060A",
+                accentDark: "#5A141C", accentPanel: "#3A141A", accentStrong: "#4A1218",
+                accentStroke: "#7A2834", accentStrokeStrong: "#9A3040", amber: "#FFB34A",
+                warning: "#46301C", warningSoft: "#382616", warningStroke: "#735028",
+                blue: "#8BB0F0", avatar: "#3A181C",
+                heroStart: "#5A1820", heroMiddle: "#3A1418", heroEnd: "#221012")
         };
 
     public static void Apply(string? themeId)

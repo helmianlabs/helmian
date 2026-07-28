@@ -1,35 +1,32 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using Helmion.Desktop.Core;
 using Helmion.LocalService.Protocol;
 using Helmion.LocalService.Security;
 
-var snapshot = PilotSnapshot.CreateDemo(
-    new DateTimeOffset(2026, 7, 27, 12, 0, 0, TimeSpan.Zero));
+var snapshot = PilotSnapshot.CreateLive(false, null, "", "", "", "Codex");
 var settingsRoot = Path.Combine(
     Path.GetTempPath(),
     $"helmion-desktop-settings-smoke-{Guid.NewGuid():N}");
 
 Check(snapshot.ModeLabel == "Personal Pilot", "personal pilot mode is explicit");
-Check(snapshot.DataSource == PilotDataSource.Demo, "data source is demo");
-Check(snapshot.DataSourceLabel.Contains("Demo data", StringComparison.Ordinal), "demo label is visible");
+Check(snapshot.DataSource == PilotDataSource.Unconfigured, "data source is unconfigured");
+Check(snapshot.DataSourceLabel.Contains("disconnected", StringComparison.Ordinal), "disconnected label is visible");
 Check(!snapshot.LocalServiceConnected, "local service defaults disconnected");
 Check(!snapshot.AdvancedOwnerSigningConfigured, "owner signing defaults unconfigured");
-Check(!snapshot.ExternalAuthorityGranted, "demo grants no external authority");
-Check(snapshot.LowRiskLocalWorkEnabled, "bounded local work remains enabled");
+Check(!snapshot.ExternalAuthorityGranted, "unconfigured grants no external authority");
+Check(!snapshot.LowRiskLocalWorkEnabled, "bounded local work is disabled when service is disconnected");
 Check(snapshot.NavigationItems.SequenceEqual(
     ["Overview", "Workspace", "Console", "Activity", "Evidence", "Approvals", "Integrations", "Release", "Settings"]),
     "all required navigation destinations exist");
-Check(snapshot.RecentActivity.All(item => item.IsDemo), "activity evidence is marked demo");
-Check(snapshot.Handoffs.All(item => item.IsDemo), "handoffs are marked demo");
-Check(snapshot.ApprovalQueue.All(item => item.IsDemo && !item.IsActionable),
-    "approval previews are demo-only and non-actionable");
-Check(
-    snapshot.OrchestrationEvents.Count == 6
-    && snapshot.OrchestrationEvents.All(item => item.IsDemo && !item.IsEvidenceBacked),
-    "orchestration timeline examples are explicitly demo and make no evidence claims");
-Check(snapshot.Integrations.All(item => !item.AcceptsSecrets && !item.IsLive),
-    "integration cards accept no secrets and claim no live connection");
+Check(snapshot.RecentActivity.Count == 0, "no live activity when unconfigured");
+Check(snapshot.Handoffs.Count == 0, "no live handoffs when unconfigured");
+Check(snapshot.ApprovalQueue.Count == 0, "no live approvals when unconfigured");
+Check(snapshot.OrchestrationEvents.Count == 0, "no live orchestration events when unconfigured");
+Check(snapshot.Integrations.All(item => !item.IsLive), "integrations are offline when unconfigured");
 var providerProfiles = ProviderProfileCatalog.CreateUnconfigured();
-Check(providerProfiles.Count == 8, "provider registry covers all eight pilot profiles");
+Check(providerProfiles.Count == 11, "provider registry covers all eleven pilot profiles");
 Check(
     providerProfiles.Single(profile => profile.Id == "codex-cli").AuthenticationClass
         == "CLI account sign-in"
@@ -73,8 +70,8 @@ try
         "color theme persists without other user state");
     Check(
         ColorThemeCatalog.All.Select(theme => theme.Id).SequenceEqual(
-            ["helmion-green", "ocean-blue", "clean-light", "warm-earth"]),
-        "four supported color themes have stable IDs");
+            ["helmion-green", "ocean-blue", "clean-light", "warm-earth", "solar-yellow", "crimson-red"]),
+        "six supported color themes have stable IDs");
     File.WriteAllText(settingsPath, """{"Version":1,"ColorTheme":"unknown"}""");
     Check(
         DesktopSettingsStore.Load(settingsPath).ColorTheme == ColorThemeCatalog.DefaultThemeId,
@@ -348,10 +345,18 @@ try
             "desktop",
             "Helmion.Desktop",
             "Helmion.Desktop.csproj"));
+    // The Pilot may copy LocalService.Security.dll beside the hosted service
+    // process, but the WPF renderer must not take a ProjectReference to it.
+    var hasSecurityProjectReference =
+        desktopProjectText.Contains(
+            "Helmion.LocalService.Security.csproj",
+            StringComparison.Ordinal)
+        || System.Text.RegularExpressions.Regex.IsMatch(
+            desktopProjectText,
+            @"ProjectReference[^>]*Helmion\.LocalService\.Security",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     Check(
-        !desktopProjectText.Contains(
-            "Helmion.LocalService.Security",
-            StringComparison.Ordinal),
+        !hasSecurityProjectReference,
         "desktop renderer has no reference to service-only profile protection");
 }
 finally
@@ -382,8 +387,413 @@ var projectRootLoc = Path.GetDirectoryName(envPathLoc)!;
 Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "autonomy_rules.json")), "Codex rules file is created/updated");
 Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "hooks", "pretooluse.ps1")), "Codex pretooluse hook script is copied");
 
-Console.WriteLine("Helmion profile sync engine smoke tests passed (6 checks).");
+var neonLine = syncResult.SyncedItems.FirstOrDefault(item =>
+    item.Contains("Neon autonomy rules", StringComparison.OrdinalIgnoreCase));
+Check(neonLine is not null, "Profile sync reports Neon autonomy rules step (success or skip/warning)");
+
+Console.WriteLine("Helmion profile sync engine smoke tests passed (7 checks).");
+
+// Dynamic Maestro router + ToolDispatcher + execution toggle
+using (var console = new ConsoleSession())
+{
+    Check(!console.IsExecutionEnabled, "execution defaults OFF (read-only chat)");
+
+    var fixtureSettings = new EnvironmentSettings(
+        GeminiApiKey: "gemini-fixture-key",
+        DatabaseUrl: "",
+        ExpectedEndpointId: "",
+        CodexMode: "read-only",
+        CodexInstanceId: "smoke",
+        GrokApiKey: "xai-fixture-key",
+        MaestroCoordinator: "Grok",
+        OpenAiApiKey: "openai-fixture-key",
+        AnthropicApiKey: "anthropic-fixture-key");
+
+    console.ConfigureMaestro("Grok", fixtureSettings);
+    Check(
+        ConsoleSession.IsXaiGrokCoordinator(console.ActiveCoordinator)
+        && console.ActiveEndpoint == ConsoleSession.XaiGrokChatCompletionsEndpoint
+        && console.ActiveEndpoint!.Contains("api.x.ai", StringComparison.Ordinal)
+        && !console.ActiveEndpoint.Contains("groq", StringComparison.OrdinalIgnoreCase)
+        && console.HasActiveApiKey,
+        "Grok Maestro selection points console chat at xAI (not Groq) endpoint + key");
+
+    console.ConfigureMaestro("OpenAI", fixtureSettings);
+    Check(
+        console.ActiveEndpoint == ConsoleSession.OpenAiChatCompletionsEndpoint
+        && console.HasActiveApiKey,
+        "OpenAI Maestro selection points console chat at OpenAI endpoint + key");
+
+    console.ConfigureMaestro("Claude", fixtureSettings);
+    Check(
+        console.ActiveEndpoint == ConsoleSession.AnthropicMessagesEndpoint
+        && console.HasActiveApiKey,
+        "Claude Maestro selection points console chat at Anthropic endpoint + key");
+
+    console.ConfigureMaestro("Gemini", fixtureSettings);
+    Check(
+        string.Equals(console.ActiveCoordinator, "Gemini", StringComparison.OrdinalIgnoreCase)
+        && console.ActiveEndpoint == ConsoleSession.GeminiStreamEndpointBase
+        && console.HasActiveApiKey,
+        "Gemini Maestro selection points console chat at Gemini endpoint + key");
+
+    console.ConfigureMaestro("Codex", fixtureSettings);
+    Check(
+        console.ActiveEndpoint is null && !console.HasActiveApiKey,
+        "Codex coordinator has no primary REST chat client");
+
+    // ---- Custom OpenAI-compatible endpoint: resolution + a real streamed round trip ----
+    Check(
+        CustomChatSession.ResolveChatCompletionsUrl("http://localhost:11434")
+            == "http://localhost:11434/v1/chat/completions"
+        && CustomChatSession.ResolveChatCompletionsUrl("http://localhost:11434/v1")
+            == "http://localhost:11434/v1/chat/completions"
+        && CustomChatSession.ResolveChatCompletionsUrl("http://localhost:11434/v1/chat/completions")
+            == "http://localhost:11434/v1/chat/completions",
+        "custom base URL normalizes to /v1/chat/completions from every shape users paste");
+
+    var stub = StartOpenAiCompatibleStub();
+    try
+    {
+        var stubBase = $"http://127.0.0.1:{stub.Port}/v1";
+        var customProfiles = new List<CustomProviderProfile>
+        {
+            new("stub-llm", stubBase, "stub-secret-key", "stub-model-7b")
+        };
+
+        console.ConfigureMaestro("stub-llm", fixtureSettings, customProfiles);
+        Check(
+            string.Equals(console.ActiveCustomProviderName, "stub-llm", StringComparison.Ordinal)
+            && console.ActiveEndpoint == $"{stubBase}/chat/completions"
+            && console.HasActiveApiKey,
+            "custom coordinator resolves to its own endpoint URL and key");
+
+        // The real console send path — not a mock — against the stub server.
+        var streamed = new StringBuilder();
+        var enumerator = console.SendChatAsync("hello custom").GetAsyncEnumerator();
+        try
+        {
+            while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+            {
+                streamed.Append(enumerator.Current);
+            }
+        }
+        finally
+        {
+            enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+
+        Check(
+            streamed.ToString().Contains("Hello from the Helmion stub endpoint", StringComparison.Ordinal),
+            "SendChatAsync streams a real completion back from the custom endpoint");
+        Check(
+            stub.LastRequestBody.Contains("\"model\":\"stub-model-7b\"", StringComparison.Ordinal),
+            "custom session sends the configured model id on the wire");
+        Check(
+            stub.LastRequestHeaders.Contains("Authorization: Bearer stub-secret-key", StringComparison.Ordinal),
+            "custom session sends the configured API key as a bearer token");
+
+        var probe = CustomChatSession.ProbeAsync(customProfiles[0]).GetAwaiter().GetResult();
+        Check(probe.Ok, "verification probe succeeds against a live OpenAI-compatible endpoint");
+
+        var deadProbe = CustomChatSession
+            .ProbeAsync(new CustomProviderProfile("dead", "http://127.0.0.1:1/v1", ""))
+            .GetAwaiter()
+            .GetResult();
+        Check(!deadProbe.Ok, "verification probe fails against an unreachable endpoint");
+
+        // A custom name must never shadow a built-in coordinator.
+        console.ConfigureMaestro(
+            "OpenAI",
+            fixtureSettings,
+            [new CustomProviderProfile("OpenAI", stubBase, "x")]);
+        Check(
+            console.ActiveEndpoint == ConsoleSession.OpenAiChatCompletionsEndpoint
+            && console.ActiveCustomProviderName is null,
+            "built-in coordinators are never shadowed by a same-named custom provider");
+
+        console.ConfigureMaestro("not-a-provider", fixtureSettings, customProfiles);
+        Check(
+            console.ActiveEndpoint is null && console.ActiveCustomProviderName is null,
+            "an unknown coordinator still resolves to no endpoint");
+
+        // ---- Status honesty: existing in config never means active ----
+        var unverifiedRows = ProviderProfileCatalog.CreateUnconfigured(customProfiles);
+        var unverified = unverifiedRows.Single(r => r.Name == "stub-llm");
+        Check(
+            !unverified.IsActivated
+            && unverified.SetupState == "Saved · unverified"
+            && !unverified.Availability.Contains("active", StringComparison.OrdinalIgnoreCase)
+            && !unverified.SetupState.Contains("active", StringComparison.OrdinalIgnoreCase),
+            "a saved-but-unprobed custom provider is never labelled active");
+
+        var verifiedRows = ProviderProfileCatalog.CreateUnconfigured(
+            customProfiles,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "stub-llm" });
+        var verified = verifiedRows.Single(r => r.Name == "stub-llm");
+        Check(
+            verified.IsActivated && verified.SetupState.Contains("verified", StringComparison.Ordinal),
+            "only a verified custom provider is labelled verified");
+    }
+    finally
+    {
+        stub.Dispose();
+    }
+
+    // Config existence must not be reported as a live connection anywhere on the board.
+    var savedOnly = PilotSnapshot.CreateLive(
+        serviceConnected: false,
+        inspection: null,
+        databaseUrl: "postgresql://user:pw@ep-fake.example.com/neondb",
+        apiKeys: "gemini-fixture-key",
+        grokApiKey: "xai-fixture-key",
+        maestroCoordinator: "Gemini");
+    foreach (var integration in savedOnly.Integrations)
+    {
+        Check(
+            !integration.IsLive,
+            $"integration '{integration.Name}' is not live from saved config alone");
+        Check(
+            !integration.StatusLabel.Contains("CONNECTED", StringComparison.OrdinalIgnoreCase),
+            $"integration '{integration.Name}' does not claim CONNECTED from saved config alone");
+    }
+
+    var toolWorkspaceRoot = Path.Combine(
+        Path.GetTempPath(),
+        $"helmion-tool-dispatcher-smoke-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(toolWorkspaceRoot);
+    try
+    {
+        var dispatcher = new ToolDispatcher(console, toolWorkspaceRoot);
+        var refused = dispatcher.DispatchCommandLineAsync("LaunchProcess notepad.exe")
+            .GetAwaiter()
+            .GetResult();
+        Check(
+            refused.Contains("Execution is OFF", StringComparison.OrdinalIgnoreCase),
+            "ToolDispatcher refuses tools when execution is OFF");
+
+        console.IsExecutionEnabled = true;
+        Check(console.IsExecutionEnabled, "execution toggle turns ON");
+
+        var writePath = "agent-note.txt";
+        var writeResult = dispatcher.WriteWorkspaceFile(writePath, "helmion-smoke");
+        Check(
+            writeResult.StartsWith("Success:", StringComparison.Ordinal)
+            && File.Exists(Path.Combine(toolWorkspaceRoot, writePath)),
+            "WriteWorkspaceFile writes inside registered workspace when execution ON");
+
+        var readResult = dispatcher.ReadWorkspaceFile(writePath);
+        Check(readResult == "helmion-smoke", "ReadWorkspaceFile returns written content");
+
+        var outside = dispatcher.WriteWorkspaceFile(
+            Path.Combine(Path.GetTempPath(), $"helmion-escape-{Guid.NewGuid():N}.txt"),
+            "nope");
+        Check(
+            outside.Contains("outside the registered workspace", StringComparison.OrdinalIgnoreCase),
+            "WriteWorkspaceFile rejects paths outside workspace");
+
+        var launch = dispatcher.LaunchProcess("cmd.exe");
+        Check(
+            launch.StartsWith("Success:", StringComparison.Ordinal)
+            || launch.StartsWith("Error launching", StringComparison.Ordinal),
+            "LaunchProcess returns a structured result when execution ON");
+    }
+    finally
+    {
+        if (Directory.Exists(toolWorkspaceRoot))
+        {
+            Directory.Delete(toolWorkspaceRoot, recursive: true);
+        }
+    }
+}
+
+Console.WriteLine("Helmion Maestro router + ToolDispatcher smoke tests passed.");
+
+// WORKSPACE_PATH .env write does not require the loopback service
+var workspaceEnvRoot = Path.Combine(
+    Path.GetTempPath(),
+    $"helmion-workspace-env-smoke-{Guid.NewGuid():N}");
+Directory.CreateDirectory(workspaceEnvRoot);
+var workspaceEnvFile = Path.Combine(workspaceEnvRoot, ".env");
+File.WriteAllText(workspaceEnvFile, "HELMION_CODEX_MODE=read-only\n");
+try
+{
+    var targetWorkspace = Path.Combine(workspaceEnvRoot, "project");
+    Directory.CreateDirectory(targetWorkspace);
+    EnvironmentSettingsStore.SaveWorkspacePath(targetWorkspace, workspaceEnvFile);
+    var loaded = EnvironmentSettingsStore.LoadWorkspacePath(workspaceEnvFile);
+    Check(
+        string.Equals(
+            Path.GetFullPath(loaded ?? string.Empty),
+            Path.GetFullPath(targetWorkspace),
+            StringComparison.OrdinalIgnoreCase),
+        "WORKSPACE_PATH round-trips through .env without local service");
+    var envText = File.ReadAllText(workspaceEnvFile);
+    Check(
+        envText.Contains("WORKSPACE_PATH=", StringComparison.Ordinal)
+        && !envText.Contains("password", StringComparison.OrdinalIgnoreCase),
+        "WORKSPACE_PATH write only updates workspace keys");
+}
+finally
+{
+    if (Directory.Exists(workspaceEnvRoot))
+    {
+        Directory.Delete(workspaceEnvRoot, recursive: true);
+    }
+}
+
+Console.WriteLine("Helmion WORKSPACE_PATH env smoke tests passed.");
+
+// Agent tool workspace is the registered workspace, never a provider CLI home.
+// Pins the live defect: a turn ran as "[Agent · Grok · full · workspace C:\Users\troyh\.grok]"
+// because a CLI config home had been persisted as WORKSPACE_PATH and nothing rejected it.
+var workspaceGuardRoot = Path.Combine(
+    Path.GetTempPath(),
+    $"helmion-workspace-guard-smoke-{Guid.NewGuid():N}");
+var registeredProject = Path.Combine(workspaceGuardRoot, "registered-project");
+var fallbackRepoRoot = Path.Combine(workspaceGuardRoot, "helmion-repo");
+Directory.CreateDirectory(registeredProject);
+Directory.CreateDirectory(fallbackRepoRoot);
+try
+{
+    var userProfileRoot = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    var grokHome = Path.Combine(userProfileRoot, ".grok");
+    var claudeHome = Path.Combine(userProfileRoot, ".claude");
+
+    Check(
+        EnvironmentSettingsStore.IsProviderHomeDirectory(grokHome)
+        && EnvironmentSettingsStore.IsProviderHomeDirectory(claudeHome)
+        && EnvironmentSettingsStore.IsProviderHomeDirectory(Path.Combine(userProfileRoot, ".gemini"))
+        && EnvironmentSettingsStore.IsProviderHomeDirectory(Path.Combine(userProfileRoot, ".codex"))
+        && EnvironmentSettingsStore.IsProviderHomeDirectory(Path.Combine(grokHome, "sessions"))
+        && EnvironmentSettingsStore.IsProviderHomeDirectory(userProfileRoot),
+        "provider CLI homes and the user profile are recognised as non-workspaces");
+
+    Check(
+        !EnvironmentSettingsStore.IsProviderHomeDirectory(registeredProject)
+        && !EnvironmentSettingsStore.IsProviderHomeDirectory(@"E:\Helmion")
+        && !EnvironmentSettingsStore.IsProviderHomeDirectory(
+            Path.Combine(userProfileRoot, "aimforge-main", "artifacts", "dairyforge")),
+        "ordinary project folders under the profile are still valid workspaces");
+
+    Check(
+        EnvironmentSettingsStore.IsUnsafeWorkspaceRoot(grokHome)
+        && EnvironmentSettingsStore.IsUnsafeWorkspaceRoot(@"C:\")
+        && !EnvironmentSettingsStore.IsUnsafeWorkspaceRoot(registeredProject),
+        "unsafe-workspace check covers CLI homes as well as drive roots");
+
+    // The reported failure, with Grok actually selected as the Maestro coordinator.
+    using (var grokConsole = new ConsoleSession())
+    {
+        var grokSettings = new EnvironmentSettings(
+            GeminiApiKey: "gemini-fixture-key",
+            DatabaseUrl: "",
+            ExpectedEndpointId: "",
+            CodexMode: "read-only",
+            CodexInstanceId: "smoke",
+            GrokApiKey: "xai-fixture-key",
+            MaestroCoordinator: "Grok",
+            OpenAiApiKey: "openai-fixture-key",
+            AnthropicApiKey: "anthropic-fixture-key");
+        grokConsole.ConfigureMaestro("Grok", grokSettings);
+        Check(
+            ConsoleSession.IsXaiGrokCoordinator(grokConsole.ActiveCoordinator),
+            "workspace guard runs with Grok genuinely selected as coordinator");
+
+        var withGrokSelected = AgentWorkspaceResolver.Resolve(
+            registeredWorkspacePath: registeredProject,
+            envWorkspacePath: grokHome,
+            lastWorkspacePath: grokHome,
+            helmionRoot: fallbackRepoRoot);
+        Check(
+            string.Equals(withGrokSelected, registeredProject, StringComparison.OrdinalIgnoreCase),
+            "turn workspace is the registered workspace while Grok is the coordinator");
+        Check(
+            !withGrokSelected.Contains(".grok", StringComparison.OrdinalIgnoreCase),
+            "turn workspace is never the Grok CLI home");
+    }
+
+    // Every stored candidate poisoned: fall back to the repo root, never the CLI home.
+    var allPoisoned = AgentWorkspaceResolver.Resolve(
+        registeredWorkspacePath: grokHome,
+        envWorkspacePath: grokHome,
+        lastWorkspacePath: claudeHome,
+        helmionRoot: fallbackRepoRoot);
+    Check(
+        string.Equals(allPoisoned, fallbackRepoRoot, StringComparison.OrdinalIgnoreCase),
+        "a poisoned .env and settings fall back to the repo root, not a CLI home");
+
+    // Provider choice must not move the workspace at all.
+    var perProvider = new[] { "OpenAI", "Claude", "Gemini", "Grok" }
+        .Select(_ => AgentWorkspaceResolver.Resolve(
+            registeredProject,
+            grokHome,
+            claudeHome,
+            fallbackRepoRoot))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    Check(
+        perProvider.Length == 1
+        && string.Equals(perProvider[0], registeredProject, StringComparison.OrdinalIgnoreCase),
+        "workspace is identical for OpenAI, Claude, Gemini and Grok");
+
+    // A CLI home written into .env is refused on read, so the app can overwrite it.
+    var guardEnvFile = Path.Combine(workspaceGuardRoot, ".env");
+    File.WriteAllLines(
+        guardEnvFile,
+        [
+            "HELMION_MAESTRO_COORDINATOR=Grok",
+            $"WORKSPACE_PATH={grokHome}",
+            $"HELMION_WORKSPACE_PATH={grokHome}",
+        ]);
+    Check(
+        EnvironmentSettingsStore.LoadWorkspacePath(guardEnvFile) is null,
+        "a CLI home stored in .env WORKSPACE_PATH is rejected on load");
+
+    var refusedHomeWrite = false;
+    try
+    {
+        EnvironmentSettingsStore.SaveWorkspacePath(grokHome, guardEnvFile);
+    }
+    catch (ArgumentException)
+    {
+        refusedHomeWrite = true;
+    }
+    Check(refusedHomeWrite, "a CLI home can never be persisted as WORKSPACE_PATH");
+
+    EnvironmentSettingsStore.SaveWorkspacePath(registeredProject, guardEnvFile);
+    Check(
+        string.Equals(
+            Path.GetFullPath(EnvironmentSettingsStore.LoadWorkspacePath(guardEnvFile) ?? ""),
+            Path.GetFullPath(registeredProject),
+            StringComparison.OrdinalIgnoreCase),
+        "a real project folder still round-trips through .env");
+}
+finally
+{
+    if (Directory.Exists(workspaceGuardRoot))
+    {
+        Directory.Delete(workspaceGuardRoot, recursive: true);
+    }
+}
+
+Console.WriteLine("Helmion agent workspace guard smoke tests passed (10 checks).");
+
+VoiceSmokeChecks.Run();
 return;
+
+/// <summary>
+/// Minimal OpenAI-compatible endpoint on a loopback TCP port. Raw sockets rather than
+/// HttpListener so no URL ACL reservation is needed to run the suite as a normal user.
+/// </summary>
+static StubEndpoint StartOpenAiCompatibleStub()
+{
+    var listener = new TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    var stub = new StubEndpoint(listener);
+    stub.Run();
+    return stub;
+}
 
 static void Check(bool condition, string description)
 {
@@ -404,4 +814,175 @@ static IReadOnlyList<string> SnapshotFiles(string root)
             return $"{Path.GetRelativePath(root, path)}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
         })
         .ToArray();
+}
+
+sealed class StubEndpoint : IDisposable
+{
+    public const string ReplyText = "Hello from the Helmion stub endpoint.";
+
+    private readonly TcpListener _listener;
+    private readonly CancellationTokenSource _cts = new();
+
+    public StubEndpoint(TcpListener listener) => _listener = listener;
+
+    public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
+
+    /// <summary>Raw request head of the most recent call (headers only).</summary>
+    public string LastRequestHeaders { get; private set; } = "";
+
+    /// <summary>Raw request body of the most recent call.</summary>
+    public string LastRequestBody { get; private set; } = "";
+
+    public void Run() => _ = Task.Run(AcceptLoopAsync);
+
+    private async Task AcceptLoopAsync()
+    {
+        while (!_cts.IsCancellationRequested)
+        {
+            TcpClient client;
+            try
+            {
+                client = await _listener.AcceptTcpClientAsync(_cts.Token);
+            }
+            catch
+            {
+                return;
+            }
+
+            try
+            {
+                await HandleAsync(client);
+            }
+            catch
+            {
+                // A dropped connection must not take the suite down.
+            }
+            finally
+            {
+                client.Dispose();
+            }
+        }
+    }
+
+    private async Task HandleAsync(TcpClient client)
+    {
+        var stream = client.GetStream();
+        var buffer = new byte[16384];
+        var total = 0;
+        string head = "";
+        var headerEnd = -1;
+        var contentLength = 0;
+
+        // Read the head, then the body. HttpClient sends JsonContent chunked (no
+        // Content-Length), so both framings have to terminate this loop.
+        while (total < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(total), _cts.Token);
+            if (read == 0) break;
+            total += read;
+            var text = Encoding.UTF8.GetString(buffer, 0, total);
+            headerEnd = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+            if (headerEnd < 0) continue;
+
+            head = text[..headerEnd];
+            contentLength = ParseContentLength(head);
+            var bodySoFar = text[(headerEnd + 4)..];
+            if (contentLength > 0)
+            {
+                if (bodySoFar.Length >= contentLength) break;
+            }
+            else if (bodySoFar.EndsWith("0\r\n\r\n", StringComparison.Ordinal))
+            {
+                break;
+            }
+        }
+
+        if (headerEnd < 0) return;
+
+        var full = Encoding.UTF8.GetString(buffer, 0, total);
+        LastRequestHeaders = head;
+        LastRequestBody = contentLength > 0
+            ? full[(headerEnd + 4)..]
+            : Dechunk(full[(headerEnd + 4)..]);
+
+        var streaming = LastRequestBody.Contains("\"stream\":true", StringComparison.Ordinal);
+        var body = streaming ? BuildSseBody() : BuildJsonBody();
+        var payload = Encoding.UTF8.GetBytes(body);
+        var header = Encoding.UTF8.GetBytes(
+            "HTTP/1.1 200 OK\r\n"
+            + $"Content-Type: {(streaming ? "text/event-stream" : "application/json")}\r\n"
+            + $"Content-Length: {payload.Length}\r\n"
+            + "Connection: close\r\n\r\n");
+
+        await stream.WriteAsync(header, _cts.Token);
+        await stream.WriteAsync(payload, _cts.Token);
+        await stream.FlushAsync(_cts.Token);
+    }
+
+    private static int ParseContentLength(string head)
+    {
+        foreach (var line in head.Split("\r\n"))
+        {
+            if (!line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)) continue;
+            return int.TryParse(line["Content-Length:".Length..].Trim(), out var value) ? value : 0;
+        }
+
+        return 0;
+    }
+
+    /// <summary>Strip HTTP chunked-transfer framing so assertions see the raw JSON.</summary>
+    private static string Dechunk(string raw)
+    {
+        var result = new StringBuilder();
+        var index = 0;
+        while (index < raw.Length)
+        {
+            var lineEnd = raw.IndexOf("\r\n", index, StringComparison.Ordinal);
+            if (lineEnd < 0) break;
+
+            var sizeToken = raw[index..lineEnd].Split(';')[0].Trim();
+            if (!int.TryParse(
+                    sizeToken,
+                    System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var size)
+                || size == 0)
+            {
+                break;
+            }
+
+            var start = lineEnd + 2;
+            if (start + size > raw.Length) break;
+            result.Append(raw, start, size);
+            index = start + size + 2;
+        }
+
+        return result.Length > 0 ? result.ToString() : raw;
+    }
+
+    private static string BuildSseBody()
+    {
+        var sse = new StringBuilder();
+        foreach (var word in ReplyText.Split(' '))
+        {
+            sse.Append("data: {\"choices\":[{\"delta\":{\"content\":\"")
+                .Append(word)
+                .Append(" \"}}]}\n\n");
+        }
+
+        return sse.Append("data: [DONE]\n\n").ToString();
+    }
+
+    private static string BuildJsonBody() =>
+        "{\"id\":\"chatcmpl-stub\",\"object\":\"chat.completion\",\"choices\":"
+        + "[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\""
+        + ReplyText
+        + "\"},\"finish_reason\":\"stop\"}]}";
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        try { _listener.Stop(); } catch { /* already stopped */ }
+        _cts.Dispose();
+    }
 }

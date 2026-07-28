@@ -16,18 +16,22 @@
     "hooks",
     "src",
     "sql",
+    "templates",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check bin/helmion.mjs && node --check bin/mcp-helmion-codex.mjs && node --check src/core/governance.mjs && node --check src/core/distiller.mjs && node --check src/core/transport.mjs && node --check src/core/maestro.mjs && node --check src/core/operation-policy.mjs && node --check src/core/database-target.mjs && node --check src/core/human-confirmation.mjs && node --check src/core/pilot-policy.mjs && node --check src/core/phase-two-verification.mjs && node --check src/core/provider-adapter-contract.mjs && node --check src/windows/owner-key-store.mjs && node --check src/adapters/neon.mjs && node --check src/adapters/maestro.mjs && node --check src/adapters/codex.mjs && node --check src/mcp/server.mjs && node --check src/mcp/codex-server.mjs",
+    "check": "node --check bin/helmion.mjs && node --check bin/mcp-helmion-codex.mjs && node --check src/agent/env.mjs && node --check src/agent/tools.mjs && node --check src/agent/providers.mjs && node --check src/agent/loop.mjs && node --check src/agent/bridge.mjs && node --check src/agent/session.mjs && node --check src/core/governance.mjs && node --check src/core/agent-os.mjs && node --check src/core/distiller.mjs && node --check src/core/transport.mjs && node --check src/core/maestro.mjs && node --check src/core/operation-policy.mjs && node --check src/core/database-target.mjs && node --check src/core/human-confirmation.mjs && node --check src/core/pilot-policy.mjs && node --check src/core/phase-two-verification.mjs && node --check src/core/provider-adapter-contract.mjs && node --check src/windows/owner-key-store.mjs && node --check src/adapters/neon.mjs && node --check src/adapters/maestro.mjs && node --check src/adapters/codex.mjs && node --check src/mcp/server.mjs && node --check src/mcp/codex-server.mjs",
+    "agent": "node bin/helmion.mjs agent",
     "verify": "npm run check && npm test",
     "desktop:build": "dotnet build desktop/Helmion.Desktop.slnx --configuration Debug --nologo",
     "desktop:test": "dotnet run --project desktop/Helmion.Desktop.SmokeTests/Helmion.Desktop.SmokeTests.csproj --configuration Debug",
     "desktop:verify": "npm run desktop:build && npm run desktop:test",
     "desktop:run": "dotnet run --project desktop/Helmion.Desktop/Helmion.Desktop.csproj",
     "desktop:service": "dotnet run --project desktop/Helmion.LocalService/Helmion.LocalService.csproj",
+    "start:service": "npm run desktop:service",
+    "dev": "npm run desktop:run",
     "desktop:package": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/publish.ps1"
   },
   "engines": {

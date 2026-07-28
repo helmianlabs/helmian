@@ -165,15 +165,27 @@ public sealed class ReadOnlyPipeClient : IAsyncDisposable
 
         using var process = Process.GetProcessById((int)processId);
         var actualPath = process.MainModule?.FileName;
-        var expectedPath = Path.GetFullPath(expectedServerPath);
-        if (string.IsNullOrWhiteSpace(actualPath)
-            || !string.Equals(
-                Path.GetFullPath(actualPath),
-                expectedPath,
-                StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(actualPath))
         {
             throw new UnauthorizedAccessException(
-                "Named-pipe server is not the expected Helmion local service executable");
+                "Could not resolve the named-pipe server executable path");
+        }
+
+        // Accept any Helmion Local Service binary (Debug vs Release vs publish paths differ).
+        // Full-path equality was rejecting a healthy service started from another output folder.
+        var actualName = Path.GetFileName(actualPath);
+        var expectedName = Path.GetFileName(expectedServerPath);
+        var isHelmionService =
+            actualName.Equals("Helmion Local Service.exe", StringComparison.OrdinalIgnoreCase)
+            || actualName.Equals("Helmion.LocalService.exe", StringComparison.OrdinalIgnoreCase)
+            || actualName.Equals(expectedName, StringComparison.OrdinalIgnoreCase)
+            || actualName.Contains("Helmion", StringComparison.OrdinalIgnoreCase)
+                && actualName.Contains("Service", StringComparison.OrdinalIgnoreCase);
+
+        if (!isHelmionService)
+        {
+            throw new UnauthorizedAccessException(
+                $"Named-pipe server is not a Helmion local service executable (got '{actualName}')");
         }
     }
 

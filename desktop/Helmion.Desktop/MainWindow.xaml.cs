@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -17,23 +17,188 @@ public partial class MainWindow : Window
     private readonly LocalServiceConnector _serviceConnector;
     private IReadOnlyList<ProviderProfileSummary> _providerProfiles;
     private DesktopSettings _desktopSettings;
+
+    /// <summary>
+    /// Custom providers whose endpoint answered a real probe during this run. Deliberately
+    /// not persisted: a verification from a previous run proves nothing about right now.
+    /// </summary>
+    private readonly HashSet<string> _verifiedCustomProviders =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The four coordinators with compiled-in endpoints; custom names may not shadow them.</summary>
+    private static readonly string[] BuiltInCoordinators = ["OpenAI", "Claude", "Gemini", "Grok"];
+
     private bool _themeSelectorReady;
     private string? _registeredWorkspacePath;
     private ConsoleSession? _consoleSession;
     private VoiceSession? _voiceSession;
-    private GeminiChatSession? _geminiSession;
+    private AgentBridge? _agentBridge;
+    private bool _serviceConnected;
+    private WorkspaceInspection? _currentWorkspaceInspection;
+    private bool _choosingWorkspace;
+    private bool _refreshingWorkspace;
+    private bool _voiceTurnBusy;
+    private bool _agentBusy;
+    private bool _consoleFullScreen;
+    private WindowState _restoreWindowState = WindowState.Normal;
+    private double _restoreLeft;
+    private double _restoreTop;
+    private double _restoreWidth;
+    private double _restoreHeight;
+
+    private string CurrentPermissionMode
+    {
+        get
+        {
+            if (ConsolePermissionCombo?.SelectedItem is ComboBoxItem { Tag: string tag })
+            {
+                return AgentPermission.Normalize(tag);
+            }
+
+            return _consoleSession?.PermissionMode
+                ?? _desktopSettings.ResolvedPermissionMode
+                ?? AgentPermission.ReadOnly;
+        }
+    }
+
+    private void UpdateConsoleExecutionState()
+    {
+        try
+        {
+            var mode = CurrentPermissionMode;
+            if (_consoleSession is not null)
+            {
+                _consoleSession.PermissionMode = mode;
+            }
+
+            ConsoleExecutionBadgeText.Text = AgentPermission.BadgeLabel(mode);
+            ConsoleExecutionBadgeText.Foreground = mode == AgentPermission.ReadOnly
+                ? (Brush)FindResource("AmberBrush")
+                : (Brush)FindResource("AccentBrush");
+
+            var maestro = _consoleSession?.ActiveCoordinator ?? "?";
+            ConsoleServiceSessionText.Text = mode switch
+            {
+                AgentPermission.Full =>
+                    $"Full tools ON for every LLM · Maestro={maestro} · write_file + run_command allowed.",
+                AgentPermission.ReadTools =>
+                    $"Read tools ON for every LLM · Maestro={maestro} · writes/shell blocked.",
+                _ =>
+                    $"Read-only chat · Maestro={maestro} · no tools until you raise permissions."
+            };
+        }
+        catch
+        {
+            // Ignore UI update exceptions
+        }
+    }
+
+    private void ConsolePermissionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_themeSelectorReady && ConsolePermissionCombo is null)
+        {
+            return;
+        }
+
+        // Avoid firing during InitializeComponent before fields exist.
+        if (!IsLoaded)
+        {
+            return;
+        }
+
+        var mode = CurrentPermissionMode;
+        if (_consoleSession is not null)
+        {
+            _consoleSession.PermissionMode = mode;
+        }
+
+        _desktopSettings = _desktopSettings with { PermissionMode = mode };
+        if (_persistTheme)
+        {
+            try { DesktopSettingsStore.Save(_desktopSettings); } catch { /* ignore */ }
+        }
+
+        try
+        {
+            Environment.SetEnvironmentVariable("HELMION_PERMISSION_MODE", mode);
+        }
+        catch
+        {
+            // ignore
+        }
+
+        UpdateConsoleExecutionState();
+        AppendConsoleLine($"[Permissions → {mode} · applies to OpenAI, Claude, Gemini, Grok]");
+    }
+
+    private void AppendConsoleLine(string line)
+    {
+        if (ConsoleOutputText is null)
+        {
+            return;
+        }
+
+        ConsoleOutputText.AppendText(line.EndsWith('\n') ? line : line + "\n");
+        ConsoleOutputText.CaretIndex = ConsoleOutputText.Text.Length;
+        ConsoleOutputText.ScrollToEnd();
+    }
+
+    private void SelectPermissionInCombo(string? mode)
+    {
+        var normalized = AgentPermission.Normalize(mode);
+        foreach (var item in ConsolePermissionCombo.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag?.ToString(), normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                ConsolePermissionCombo.SelectedItem = item;
+                return;
+            }
+        }
+
+        ConsolePermissionCombo.SelectedIndex = 0;
+    }
+
+    private void UpdateSnapshot()
+    {
+        try
+        {
+            var settings = EnvironmentSettingsStore.Load();
+            DataContext = PilotSnapshot.CreateLive(
+                _serviceConnected,
+                _currentWorkspaceInspection,
+                settings.DatabaseUrl ?? "",
+                settings.GeminiApiKey ?? "",
+                settings.GrokApiKey ?? "",
+                settings.MaestroCoordinator ?? "Codex");
+        }
+        catch
+        {
+            DataContext = PilotSnapshot.CreateLive(
+                _serviceConnected,
+                _currentWorkspaceInspection,
+                "",
+                "",
+                "",
+                "Codex");
+        }
+        UpdateConsoleExecutionState();
+    }
 
     public MainWindow(string? themeOverride = null, bool persistTheme = true)
     {
         _persistTheme = persistTheme;
         _desktopSettings = DesktopSettingsStore.Load();
-        _providerProfiles = ProviderProfileCatalog.CreateUnconfigured();
+        _providerProfiles = ProviderProfileCatalog.CreateUnconfigured(
+            _desktopSettings.CustomProviders,
+            _verifiedCustomProviders);
         var initialTheme = ColorThemeCatalog.Get(themeOverride ?? _desktopSettings.ColorTheme);
         ColorThemeManager.Apply(initialTheme.Id);
-        _serviceConnector = new LocalServiceConnector();
+        // Share the process-wide host so App auto-start and this window do not race-kill the pipe.
+        _serviceConnector = LocalServiceHost.Connector;
 
         InitializeComponent();
-        DataContext = PilotSnapshot.CreateDemo(DateTimeOffset.Now);
+        SetServiceStatus("Starting…", "Waiting for local loopback service", connected: false);
+        UpdateSnapshot();
         ThemeSelector.ItemsSource = ColorThemeCatalog.All;
         ThemeSelector.SelectedValue = initialTheme.Id;
         ThemeDescription.Text = initialTheme.Description;
@@ -66,6 +231,7 @@ public partial class MainWindow : Window
             ["Settings"] = SettingsNav
         };
         ProviderRegistryList.ItemsSource = _providerProfiles;
+        RepopulateMaestroCoordinators();
 
         _themeSelectorReady = true;
         NavigateTo("Overview");
@@ -90,6 +256,13 @@ public partial class MainWindow : Window
             throw new ArgumentOutOfRangeException(nameof(pageName), pageName, "Unknown desktop page");
         }
 
+        // Leaving Console while immersive exits full screen so other pages keep chrome.
+        if (_consoleFullScreen
+            && !string.Equals(pageName, "Console", StringComparison.Ordinal))
+        {
+            SetConsoleFullScreen(false);
+        }
+
         foreach (var page in _pages.Values)
         {
             page.Visibility = Visibility.Collapsed;
@@ -111,7 +284,7 @@ public partial class MainWindow : Window
         {
             "Overview" => "A calm view of the local pilot",
             "Workspace" => "Project and lease posture",
-            "Console" => "Interaction modes and the future governed CLI",
+            "Console" => "Modern CLI · permissions · voice · full screen (F11)",
             "Activity" => "Live Activity Stream · Orchestration Timeline",
             "Evidence" => "Handoffs, checkpoints, and durable proof",
             "Approvals" => "Optional advanced owner decisions",
@@ -120,6 +293,109 @@ public partial class MainWindow : Window
             "Settings" => "Personal pilot preferences",
             _ => "Helmion personal pilot"
         };
+    }
+
+    private void ConsoleFullScreenButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetConsoleFullScreen(!_consoleFullScreen);
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.F11)
+        {
+            // F11 toggles console immersive mode (navigates to Console if needed).
+            if (!_consoleFullScreen)
+            {
+                NavigateTo("Console");
+                SetConsoleFullScreen(true);
+            }
+            else
+            {
+                SetConsoleFullScreen(false);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == System.Windows.Input.Key.Escape && _consoleFullScreen)
+        {
+            SetConsoleFullScreen(false);
+            e.Handled = true;
+        }
+    }
+
+    private void SetConsoleFullScreen(bool enabled)
+    {
+        if (_consoleFullScreen == enabled)
+        {
+            return;
+        }
+
+        if (enabled)
+        {
+            if (ConsolePage.Visibility != Visibility.Visible)
+            {
+                NavigateTo("Console");
+            }
+
+            _restoreWindowState = WindowState;
+            _restoreLeft = Left;
+            _restoreTop = Top;
+            _restoreWidth = Width;
+            _restoreHeight = Height;
+
+            SidebarColumn.Width = new GridLength(0);
+            SidebarChrome.Visibility = Visibility.Collapsed;
+            HeaderChrome.Visibility = Visibility.Collapsed;
+            FooterChrome.Visibility = Visibility.Collapsed;
+            HeaderRow.Height = new GridLength(0);
+            FooterRow.Height = new GridLength(0);
+
+            WindowState = WindowState.Maximized;
+            _consoleFullScreen = true;
+            ConsoleFullScreenButton.Content = "⛶  Exit full screen";
+            ConsoleFullScreenButton.ToolTip = "Exit full-screen console (Esc or F11)";
+            if (ConsoleLiveLabel is not null)
+            {
+                ConsoleLiveLabel.Text = "FULL SCREEN";
+            }
+
+            AppendConsoleLine("[Full screen ON — Esc or F11 to exit]");
+        }
+        else
+        {
+            SidebarColumn.Width = new GridLength(248);
+            SidebarChrome.Visibility = Visibility.Visible;
+            HeaderChrome.Visibility = Visibility.Visible;
+            FooterChrome.Visibility = Visibility.Visible;
+            HeaderRow.Height = new GridLength(88);
+            FooterRow.Height = new GridLength(38);
+
+            WindowState = _restoreWindowState == WindowState.Minimized
+                ? WindowState.Normal
+                : _restoreWindowState;
+            if (WindowState == WindowState.Normal
+                && _restoreWidth > 0
+                && _restoreHeight > 0)
+            {
+                Left = _restoreLeft;
+                Top = _restoreTop;
+                Width = _restoreWidth;
+                Height = _restoreHeight;
+            }
+
+            _consoleFullScreen = false;
+            ConsoleFullScreenButton.Content = "⛶  Full screen";
+            ConsoleFullScreenButton.ToolTip = "Toggle full-screen console (F11). Esc exits.";
+            if (ConsoleLiveLabel is not null)
+            {
+                ConsoleLiveLabel.Text = "LIVE";
+            }
+
+            AppendConsoleLine("[Full screen OFF]");
+        }
     }
 
     public void ApplyThemeForPreview(string themeId)
@@ -142,6 +418,8 @@ public partial class MainWindow : Window
     {
         var selected = ColorThemeCatalog.Get(themeId);
         ColorThemeManager.Apply(selected.Id);
+        // Theme TextBrush changes must not make the dark console composer unreadable.
+        ApplyConsoleInputContrast();
         ThemeDescription.Text = selected.Description;
 
         if (save)
@@ -156,27 +434,113 @@ public partial class MainWindow : Window
         }
     }
 
-    protected override async void OnClosing(CancelEventArgs e)
+    protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
         _consoleSession?.Dispose();
         _voiceSession?.Dispose();
-        _geminiSession?.Dispose();
-        await _serviceConnector.StopStartedProcessAsync();
+        try { _agentBridge?.Dispose(); } catch { /* ignore */ }
+        _agentBridge = null;
+        // Local service lifetime is owned by LocalServiceHost / App.OnExit.
+    }
+
+    /// <summary>Called from App auto-start when the named pipe hello succeeds.</summary>
+    public void NotifyLocalServiceOnline(string detail)
+    {
+        _serviceConnected = true;
+        SetServiceStatus("ONLINE", detail, connected: true);
+        OverviewServiceStateText.Text = "Connected";
+        OverviewServiceStateText.Foreground = (Brush)FindResource("AccentBrush");
+        ConnectServiceButton.Content = "Service ONLINE";
+        ConnectServiceButton.IsEnabled = true;
+        SelectWorkspaceButton.IsEnabled = true;
+        RefreshWorkspaceButton.IsEnabled = true;
+        UpdateSnapshot();
+    }
+
+    /// <summary>Called from App auto-start when the named pipe did not come up.</summary>
+    public void NotifyLocalServiceUnavailable(string detail)
+    {
+        _serviceConnected = false;
+        SetServiceStatus("Unavailable", detail, connected: false);
+        OverviewServiceStateText.Text = "Offline";
+        OverviewServiceStateText.Foreground = (Brush)FindResource("AmberBrush");
+        ConnectServiceButton.Content = "Retry local service";
+        ConnectServiceButton.IsEnabled = true;
+        SelectWorkspaceButton.IsEnabled = true;
+        RefreshWorkspaceButton.IsEnabled = true;
+        UpdateSnapshot();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         Loaded -= MainWindow_Loaded;
         LoadApiKeysToInputs();
-        
+
         _consoleSession = new ConsoleSession();
+        _consoleSession.PermissionMode = _desktopSettings.ResolvedPermissionMode;
+        SelectPermissionInCombo(_consoleSession.PermissionMode);
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                "HELMION_PERMISSION_MODE",
+                _consoleSession.PermissionMode);
+        }
+        catch
+        {
+            // ignore
+        }
+
         _voiceSession = new VoiceSession();
         _voiceSession.OnSpeechRecognized += VoiceSession_OnSpeechRecognized;
+        _voiceSession.OnError += (_, msg) =>
+            Dispatcher.Invoke(() =>
+            {
+                AppendConsoleLine($"\n[Voice] {msg}");
+                ConsoleServiceSessionText.Text = msg;
+            });
+        _voiceSession.OnStatus += (_, msg) =>
+            Dispatcher.Invoke(() =>
+            {
+                ConsoleServiceSessionText.Text = msg;
+            });
         var envSettings = EnvironmentSettingsStore.Load();
-        _geminiSession = new GeminiChatSession(envSettings.GeminiApiKey ?? "");
+        _consoleSession.ConfigureMaestro(
+            envSettings.MaestroCoordinator,
+            envSettings,
+            _desktopSettings.CustomProviders);
+        UpdateConsoleExecutionState();
+        AppendConsoleLine(
+            "[Console ready · paste multi-line with Ctrl+V · permissions apply to every LLM]");
+        UpdateConsoleWorkspaceLabel();
+        ApplyConsoleInputContrast();
+
+        // Full multi-line paste into the console composer (WPF single-line boxes drop lines).
+        DataObject.AddPastingHandler(ConsoleInputBox, ConsoleInputBox_OnPaste);
 
         await ConnectServiceAsync(restoreWorkspace: true);
+        UpdateConsoleWorkspaceLabel();
+        ApplyConsoleInputContrast();
+    }
+
+    /// <summary>
+    /// Keep composer text bright on the dark terminal chrome.
+    /// Theme TextBrush is dark on clean-light — that made typed text invisible.
+    /// </summary>
+    private void ApplyConsoleInputContrast()
+    {
+        if (ConsoleInputBox is null)
+        {
+            return;
+        }
+
+        // Local brushes so theme swaps cannot repaint us dark-on-dark.
+        ConsoleInputBox.Background = new SolidColorBrush(Color.FromRgb(0x0A, 0x12, 0x18));
+        ConsoleInputBox.Foreground = new SolidColorBrush(Color.FromRgb(0xF2, 0xFB, 0xFF));
+        ConsoleInputBox.CaretBrush = new SolidColorBrush(Color.FromRgb(0x7F, 0xE3, 0xFF));
+        ConsoleInputBox.SelectionBrush = new SolidColorBrush(Color.FromRgb(0x2A, 0x6F, 0x8F));
+        ConsoleInputBox.Opacity = 1.0;
+        ConsoleInputBox.Visibility = Visibility.Visible;
     }
 
     private void LoadApiKeysToInputs()
@@ -184,8 +548,11 @@ public partial class MainWindow : Window
         try
         {
             var envSettings = EnvironmentSettingsStore.Load();
-            GeminiApiKeyInput.Text = envSettings.GeminiApiKey;
-            DatabaseUrlInput.Text = envSettings.DatabaseUrl;
+            OpenAiApiKeyInput.Password = envSettings.OpenAiApiKey;
+            AnthropicApiKeyInput.Password = envSettings.AnthropicApiKey;
+            GeminiApiKeyInput.Password = envSettings.GeminiApiKey;
+            DatabaseUrlInput.Password = envSettings.DatabaseUrl;
+            GrokApiKeyInput.Password = envSettings.GrokApiKey;
             EndpointIdInput.Text = string.IsNullOrWhiteSpace(envSettings.ExpectedEndpointId)
                 ? EnvironmentSettingsStore.ExtractEndpointId(envSettings.DatabaseUrl)
                 : envSettings.ExpectedEndpointId;
@@ -198,6 +565,9 @@ public partial class MainWindow : Window
                     break;
                 }
             }
+
+            // Rebuild first so a saved custom coordinator is present to be selected.
+            RepopulateMaestroCoordinators(envSettings.MaestroCoordinator);
         }
         catch
         {
@@ -209,8 +579,11 @@ public partial class MainWindow : Window
     {
         try
         {
-            var geminiKey = GeminiApiKeyInput.Text.Trim();
-            var dbUrl = DatabaseUrlInput.Text.Trim();
+            var openAiKey = OpenAiApiKeyInput.Password.Trim();
+            var anthropicKey = AnthropicApiKeyInput.Password.Trim();
+            var geminiKey = GeminiApiKeyInput.Password.Trim();
+            var dbUrl = DatabaseUrlInput.Password.Trim();
+            var grokKey = GrokApiKeyInput.Password.Trim();
             var endpointId = EndpointIdInput.Text.Trim();
             if (string.IsNullOrWhiteSpace(endpointId) && !string.IsNullOrWhiteSpace(dbUrl))
             {
@@ -219,18 +592,54 @@ public partial class MainWindow : Window
             }
 
             var codexMode = (CodexModeInput.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "read-only";
+            var maestroCoordinator = (MaestroCoordinatorInput.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Gemini";
             var currentSettings = EnvironmentSettingsStore.Load();
             var updatedSettings = new EnvironmentSettings(
                 geminiKey,
                 dbUrl,
                 endpointId,
                 codexMode,
-                currentSettings.CodexInstanceId);
+                currentSettings.CodexInstanceId,
+                grokKey,
+                maestroCoordinator,
+                openAiKey,
+                anthropicKey);
+
+            // Soft validation — wrong key shape is a common paste error, not a silent fake.
+            var keyHints = new List<string>();
+            if (!string.IsNullOrEmpty(anthropicKey) && !anthropicKey.StartsWith("sk-ant-", StringComparison.Ordinal))
+            {
+                keyHints.Add(
+                    "Anthropic key must start with sk-ant- (Google AQ.… keys will get HTTP 401 invalid x-api-key)");
+            }
+            if (!string.IsNullOrEmpty(openAiKey) && !openAiKey.StartsWith("sk-", StringComparison.Ordinal))
+            {
+                keyHints.Add("OpenAI key usually starts with sk-");
+            }
+            if (!string.IsNullOrEmpty(grokKey) && grokKey.StartsWith("gsk_", StringComparison.Ordinal))
+            {
+                keyHints.Add("Grok field still looks like Groq (gsk_) — use xai- from console.x.ai");
+            }
+            if (!string.IsNullOrEmpty(grokKey)
+                && !grokKey.StartsWith("xai-", StringComparison.OrdinalIgnoreCase)
+                && !grokKey.StartsWith("gsk_", StringComparison.Ordinal))
+            {
+                // xAI has used multiple formats; only warn on empty/wrong known bad shapes above
+            }
 
             EnvironmentSettingsStore.Save(updatedSettings);
-            _geminiSession?.UpdateApiKey(geminiKey);
-            ApiKeysStatusLabel.Text = "Saved to .env & applied to environment!";
-            ApiKeysStatusLabel.Foreground = (Brush)FindResource("AccentBrush");
+            _consoleSession ??= new ConsoleSession();
+            _consoleSession.ConfigureMaestro(
+                maestroCoordinator,
+                updatedSettings,
+                _desktopSettings.CustomProviders);
+            UpdateConsoleExecutionState();
+            var hintText = keyHints.Count > 0 ? " · WARN: " + string.Join("; ", keyHints) : "";
+            ApiKeysStatusLabel.Text =
+                $"Saved · Maestro={_consoleSession.ActiveCoordinator} · endpoint={_consoleSession.ActiveEndpoint ?? "none"}{hintText}";
+            ApiKeysStatusLabel.Foreground = keyHints.Count > 0
+                ? (Brush)FindResource("AmberBrush")
+                : (Brush)FindResource("AccentBrush");
 
             if (_registeredWorkspacePath != null && !string.IsNullOrWhiteSpace(dbUrl) && !string.IsNullOrWhiteSpace(endpointId))
             {
@@ -257,12 +666,210 @@ public partial class MainWindow : Window
                 }
             }
 
+            UpdateSnapshot();
+            await ConnectServiceAsync(restoreWorkspace: false);
             await RefreshCapabilitiesAsync();
         }
         catch (Exception error)
         {
             ApiKeysStatusLabel.Text = $"Save failed: {error.Message}";
             ApiKeysStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+        }
+    }
+
+    /// <summary>
+    /// Rebuild the Maestro dropdown as the four built-ins plus every saved custom
+    /// provider, preserving the current selection across a settings reload.
+    /// </summary>
+    private void RepopulateMaestroCoordinators(string? preferredSelection = null)
+    {
+        if (MaestroCoordinatorInput is null) return;
+
+        var previous = preferredSelection
+            ?? (MaestroCoordinatorInput.SelectedItem as ComboBoxItem)?.Content?.ToString();
+
+        MaestroCoordinatorInput.Items.Clear();
+        foreach (var builtIn in BuiltInCoordinators)
+        {
+            MaestroCoordinatorInput.Items.Add(new ComboBoxItem { Content = builtIn });
+        }
+
+        foreach (var custom in _desktopSettings.CustomProviders ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(custom.Name)) continue;
+            MaestroCoordinatorInput.Items.Add(new ComboBoxItem { Content = custom.Name.Trim() });
+        }
+
+        SelectMaestroCoordinator(previous);
+    }
+
+    /// <summary>Select a coordinator by name; falls back to Gemini when the name is gone.</summary>
+    private void SelectMaestroCoordinator(string? name)
+    {
+        if (MaestroCoordinatorInput is null) return;
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            foreach (ComboBoxItem item in MaestroCoordinatorInput.Items)
+            {
+                if (string.Equals(item.Content?.ToString(), name, StringComparison.OrdinalIgnoreCase))
+                {
+                    MaestroCoordinatorInput.SelectedItem = item;
+                    return;
+                }
+            }
+        }
+
+        foreach (ComboBoxItem item in MaestroCoordinatorInput.Items)
+        {
+            if (string.Equals(item.Content?.ToString(), "Gemini", StringComparison.OrdinalIgnoreCase))
+            {
+                MaestroCoordinatorInput.SelectedItem = item;
+                return;
+            }
+        }
+
+        if (MaestroCoordinatorInput.Items.Count > 0) MaestroCoordinatorInput.SelectedIndex = 0;
+    }
+
+    /// <summary>Rebuild the provider registry rows from settings + this run's verified set.</summary>
+    private void RefreshProviderRegistry()
+    {
+        _providerProfiles = ProviderProfileCatalog.CreateUnconfigured(
+            _desktopSettings.CustomProviders,
+            _verifiedCustomProviders);
+        ProviderRegistryList.ItemsSource = null;
+        ProviderRegistryList.ItemsSource = _providerProfiles;
+    }
+
+    private void AddCustomModel_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var name = CustomModelNameInput.Text.Trim();
+            var endpoint = CustomModelEndpointInput.Text.Trim();
+            var apiKey = CustomModelApiKeyInput.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                CustomModelStatusLabel.Text = "Error: Model name cannot be empty.";
+                CustomModelStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(endpoint))
+            {
+                CustomModelStatusLabel.Text = "Error: Endpoint URL cannot be empty.";
+                CustomModelStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+                return;
+            }
+
+            // Built-ins are resolved before custom names, so a shadowing name would
+            // save fine and then silently never route.
+            if (BuiltInCoordinators.Any(b => string.Equals(b, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                CustomModelStatusLabel.Text =
+                    $"Error: '{name}' is a built-in coordinator name. Pick a different name.";
+                CustomModelStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+                return;
+            }
+
+            var customList = _desktopSettings.CustomProviders != null
+                ? new List<CustomProviderProfile>(_desktopSettings.CustomProviders)
+                : new List<CustomProviderProfile>();
+
+            var exists = customList.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (exists)
+            {
+                CustomModelStatusLabel.Text = "Error: A model with that name already exists.";
+                CustomModelStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+                return;
+            }
+
+            var newProfile = new CustomProviderProfile(name, endpoint, apiKey);
+            customList.Add(newProfile);
+
+            _desktopSettings = _desktopSettings with { CustomProviders = customList };
+            DesktopSettingsStore.Save(_desktopSettings);
+
+            // Re-initialize and update snapshots/lists
+            RefreshProviderRegistry();
+            RepopulateMaestroCoordinators();
+            UpdateSnapshot();
+
+            CustomModelNameInput.Text = "";
+            CustomModelEndpointInput.Text = "";
+            CustomModelApiKeyInput.Text = "";
+
+            CustomModelStatusLabel.Text =
+                $"Saved '{name}' — unverified. Press Verify to contact the endpoint, "
+                + "then pick it as Maestro coordinator.";
+            CustomModelStatusLabel.Foreground = (Brush)FindResource("AccentBrush");
+        }
+        catch (Exception ex)
+        {
+            CustomModelStatusLabel.Text = $"Add failed: {ex.Message}";
+            CustomModelStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+        }
+    }
+
+    /// <summary>
+    /// Contact every saved custom endpoint for real. Only a probe that comes back with an
+    /// OpenAI-compatible completion promotes a row from "Saved · unverified" to verified.
+    /// </summary>
+    private async void VerifyCustomModels_Click(object sender, RoutedEventArgs e)
+    {
+        var providers = _desktopSettings.CustomProviders;
+        if (providers is null || providers.Count == 0)
+        {
+            CustomModelStatusLabel.Text = "No custom providers saved yet.";
+            CustomModelStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+            return;
+        }
+
+        VerifyCustomModelsButton.IsEnabled = false;
+        try
+        {
+            var failures = new List<string>();
+            foreach (var provider in providers)
+            {
+                CustomModelStatusLabel.Text = $"Contacting {provider.Name}…";
+                CustomModelStatusLabel.Foreground = (Brush)FindResource("MutedTextBrush");
+
+                var result = await CustomChatSession.ProbeAsync(provider);
+                if (result.Ok)
+                {
+                    _verifiedCustomProviders.Add(provider.Name.Trim());
+                }
+                else
+                {
+                    _verifiedCustomProviders.Remove(provider.Name.Trim());
+                    failures.Add($"{provider.Name}: {result.Detail}");
+                }
+            }
+
+            RefreshProviderRegistry();
+
+            if (failures.Count == 0)
+            {
+                CustomModelStatusLabel.Text =
+                    $"Verified {providers.Count} custom endpoint(s) — each answered a live request.";
+                CustomModelStatusLabel.Foreground = (Brush)FindResource("AccentBrush");
+            }
+            else
+            {
+                CustomModelStatusLabel.Text = string.Join(" | ", failures);
+                CustomModelStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+            }
+        }
+        catch (Exception ex)
+        {
+            CustomModelStatusLabel.Text = $"Verify failed: {ex.Message}";
+            CustomModelStatusLabel.Foreground = (Brush)FindResource("AmberBrush");
+        }
+        finally
+        {
+            VerifyCustomModelsButton.IsEnabled = true;
         }
     }
 
@@ -299,68 +906,163 @@ public partial class MainWindow : Window
 
     private async void SelectWorkspace_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFolderDialog
-        {
-            Title = "Choose a local Helmion project workspace",
-            Multiselect = false
-        };
-        if (!string.IsNullOrWhiteSpace(_registeredWorkspacePath)
-            && Directory.Exists(_registeredWorkspacePath))
-        {
-            dialog.InitialDirectory = _registeredWorkspacePath;
-        }
-
-        if (dialog.ShowDialog(this) != true)
-        {
-            return;
-        }
-
-        await InspectWorkspaceAsync(dialog.FolderName, persistSelection: true);
+        await ChooseWorkspaceAsync();
     }
 
     private async void RefreshWorkspace_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(_registeredWorkspacePath))
+        if (_refreshingWorkspace || _choosingWorkspace)
         {
-            await ConnectServiceAsync(restoreWorkspace: false);
             return;
         }
 
-        await InspectWorkspaceAsync(_registeredWorkspacePath, persistSelection: false);
+        _refreshingWorkspace = true;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_registeredWorkspacePath))
+            {
+                // No path yet — open the chooser instead of a dead-end connect-only path.
+                await ChooseWorkspaceAsync();
+                return;
+            }
+
+            WorkspaceConnectionSummary.Text = "Refreshing workspace…";
+            WorkspaceConnectionDetail.Text = "Local inventory in progress";
+            await InspectWorkspaceAsync(_registeredWorkspacePath, persistSelection: false);
+        }
+        finally
+        {
+            _refreshingWorkspace = false;
+        }
+    }
+
+    private async Task ChooseWorkspaceAsync()
+    {
+        // Do NOT disable the button or await the local service before the folder picker.
+        // Disabling + EnsureConnectedAsync made the cursor flip to an arrow and hang,
+        // so the user never saw the dialog.
+        if (_choosingWorkspace)
+        {
+            return;
+        }
+
+        _choosingWorkspace = true;
+        try
+        {
+            WorkspaceConnectionSummary.Text = "Choose a folder…";
+            WorkspaceConnectionDetail.Text = "Opening folder picker";
+
+            var dialog = new OpenFolderDialog
+            {
+                Title = "Choose a local Helmion project workspace",
+                Multiselect = false
+            };
+            if (!string.IsNullOrWhiteSpace(_registeredWorkspacePath)
+                && Directory.Exists(_registeredWorkspacePath))
+            {
+                dialog.InitialDirectory = _registeredWorkspacePath;
+            }
+            else if (!string.IsNullOrWhiteSpace(_desktopSettings.LastWorkspacePath)
+                && Directory.Exists(_desktopSettings.LastWorkspacePath))
+            {
+                dialog.InitialDirectory = _desktopSettings.LastWorkspacePath;
+            }
+            else if (Directory.Exists(@"E:\Helmion"))
+            {
+                dialog.InitialDirectory = @"E:\Helmion";
+            }
+
+            // Show picker immediately on the UI thread — no awaits above this line.
+            bool? accepted;
+            try
+            {
+                accepted = dialog.ShowDialog(this);
+            }
+            catch (Exception dialogError)
+            {
+                WorkspaceConnectionSummary.Text = "Folder picker failed";
+                WorkspaceConnectionDetail.Text = dialogError.Message;
+                return;
+            }
+
+            if (accepted != true)
+            {
+                WorkspaceConnectionSummary.Text = "No workspace selected";
+                WorkspaceConnectionDetail.Text =
+                    "Folder picker cancelled — pick Choose workspace again when ready.";
+                return;
+            }
+
+            var selected = dialog.FolderName;
+            if (string.IsNullOrWhiteSpace(selected) || !Directory.Exists(selected))
+            {
+                WorkspaceConnectionSummary.Text = "Workspace selection failed";
+                WorkspaceConnectionDetail.Text = "No valid folder was returned by the picker.";
+                return;
+            }
+
+            if (EnvironmentSettingsStore.IsUnsafeWorkspaceRoot(selected))
+            {
+                WorkspaceConnectionSummary.Text = "Drive root not allowed";
+                WorkspaceConnectionDetail.Text =
+                    "Pick a project folder (e.g. DairyForge), not D:\\ or C:\\. "
+                    + "A whole drive makes the agent list recycle bins and everything else.";
+                AppendConsoleLine(
+                    "[Workspace rejected] Drive roots are not valid project workspaces.");
+                return;
+            }
+
+            // Persist WORKSPACE_PATH to .env immediately — does not require loopback service.
+            try
+            {
+                EnvironmentSettingsStore.SaveWorkspacePath(selected);
+            }
+            catch (Exception envError)
+            {
+                WorkspaceConnectionDetail.Text =
+                    $"Folder selected, but .env WORKSPACE_PATH write failed: {envError.Message}";
+            }
+
+            WorkspaceConnectionSummary.Text = "Registering workspace…";
+            WorkspaceConnectionDetail.Text = selected;
+            await InspectWorkspaceAsync(selected, persistSelection: true);
+        }
+        finally
+        {
+            _choosingWorkspace = false;
+            SelectWorkspaceButton.IsEnabled = true;
+            RefreshWorkspaceButton.IsEnabled = true;
+        }
     }
 
     private async Task ConnectServiceAsync(bool restoreWorkspace)
     {
         SetServiceStatus(
             "Connecting…",
-            "Starting authenticated read-only service",
+            "Starting authenticated service",
             connected: false);
+        // Workspace actions must stay available even when the pipe service is down.
+        SelectWorkspaceButton.IsEnabled = true;
+        RefreshWorkspaceButton.IsEnabled = true;
         try
         {
             var hello = await _serviceConnector.EnsureConnectedAsync();
-            SetServiceStatus(
-                "Connected · read-only",
-                $"Protocol v{hello.ProtocolVersion} · current Windows user",
-                connected: true);
-            OverviewServiceStateText.Text = "Read-only";
-            OverviewServiceStateText.Foreground = (Brush)FindResource("AccentBrush");
-            WorkspaceConnectionSummary.Text = "Local service connected";
+            NotifyLocalServiceOnline(
+                $"Protocol v{hello.ProtocolVersion} · named pipe connected");
+            WorkspaceConnectionSummary.Text = "Local service ONLINE";
             WorkspaceConnectionDetail.Text =
-                "Choose a local folder to register it for read-only inspection. No project files are changed.";
-            ConnectServiceButton.Content = "Service connected";
-            ConnectServiceButton.IsEnabled = false;
-            SelectWorkspaceButton.IsEnabled = true;
-            RefreshWorkspaceButton.IsEnabled = true;
+                "Choose a local folder to register it for inspection.";
             await RefreshCapabilitiesAsync();
 
-            var savedWorkspacePath = _desktopSettings.LastWorkspacePath;
+            var savedWorkspacePath = ResolveAgentWorkspace();
             if (restoreWorkspace
                 && !string.IsNullOrWhiteSpace(savedWorkspacePath)
-                && Directory.Exists(savedWorkspacePath))
+                && Directory.Exists(savedWorkspacePath)
+                && !EnvironmentSettingsStore.IsUnsafeWorkspaceRoot(savedWorkspacePath))
             {
                 await InspectWorkspaceAsync(
                     savedWorkspacePath,
-                    persistSelection: false);
+                    persistSelection: true);
             }
         }
         catch (Exception error) when (
@@ -373,18 +1075,21 @@ public partial class MainWindow : Window
                 or Win32Exception
                 or OperationCanceledException)
         {
-            SetServiceStatus(
-                "Unavailable · demo fallback",
-                "Read-only service did not connect",
-                connected: false);
-            OverviewServiceStateText.Text = "Offline";
-            OverviewServiceStateText.Foreground = (Brush)FindResource("AmberBrush");
-            WorkspaceConnectionSummary.Text = "Demo fallback is active";
-            WorkspaceConnectionDetail.Text = error.Message;
-            ConnectServiceButton.Content = "Retry local service";
-            ConnectServiceButton.IsEnabled = true;
-            SelectWorkspaceButton.IsEnabled = false;
-            RefreshWorkspaceButton.IsEnabled = false;
+            NotifyLocalServiceUnavailable(error.Message);
+            WorkspaceConnectionSummary.Text = "No active connection";
+            WorkspaceConnectionDetail.Text =
+                $"{error.Message} — Choose workspace still works (local inventory fallback).";
+
+            // Still restore workspace from .env without the service.
+            var savedWorkspacePath = ResolveAgentWorkspace();
+            if (restoreWorkspace
+                && !string.IsNullOrWhiteSpace(savedWorkspacePath)
+                && Directory.Exists(savedWorkspacePath))
+            {
+                await InspectWorkspaceAsync(
+                    savedWorkspacePath,
+                    persistSelection: false);
+            }
         }
     }
 
@@ -425,7 +1130,8 @@ public partial class MainWindow : Window
                 or TimeoutException
                 or UnauthorizedAccessException
                 or InvalidDataException
-                or LocalServiceResponseException)
+                or LocalServiceResponseException
+                or OperationCanceledException)
         {
             ProviderAvailabilitySummary.Text =
                 $"Capability check unavailable · {error.Message}";
@@ -437,13 +1143,54 @@ public partial class MainWindow : Window
         bool persistSelection)
     {
         WorkspaceConnectionSummary.Text = "Inspecting selected workspace…";
-        WorkspaceConnectionDetail.Text = "Read-only local inventory in progress";
+        WorkspaceConnectionDetail.Text = workspacePath;
         try
         {
-            await _serviceConnector.EnsureConnectedAsync();
-            var inspection = await _serviceConnector.InspectWorkspaceAsync(workspacePath);
+            WorkspaceInspection inspection;
+            var usedFallback = false;
+
+            // Prefer a fast local inventory so registration never hangs on the pipe service.
+            // Optionally upgrade via service when it answers within a short budget.
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
+                await _serviceConnector.EnsureConnectedAsync(timeout.Token);
+                inspection = await _serviceConnector.InspectWorkspaceAsync(
+                    workspacePath,
+                    timeout.Token);
+                _serviceConnected = true;
+            }
+            catch (Exception serviceError) when (
+                serviceError is IOException
+                    or TimeoutException
+                    or UnauthorizedAccessException
+                    or InvalidDataException
+                    or LocalServiceResponseException
+                    or FileNotFoundException
+                    or InvalidOperationException
+                    or Win32Exception
+                    or OperationCanceledException)
+            {
+                inspection = await Task.Run(() => WorkspaceInspector.Inspect(workspacePath));
+                usedFallback = true;
+                _serviceConnected = false;
+            }
+
             ApplyWorkspaceInspection(inspection);
+            if (usedFallback)
+            {
+                WorkspaceSourceBadgeText.Text = "LOCAL FALLBACK";
+                WorkspaceConnectionDetail.Text =
+                    $"Inspected locally · {inspection.InspectedAt:h:mm:ss tt}";
+                WorkspaceDataSourceText.Text = "Direct local inventory · service offline";
+                SetServiceStatus(
+                    "Offline · local inventory",
+                    "Workspace registered without pipe service",
+                    connected: false);
+            }
+
             _registeredWorkspacePath = inspection.ProjectPath;
+            UpdateConsoleWorkspaceLabel(_registeredWorkspacePath);
             if (persistSelection)
             {
                 _desktopSettings = _desktopSettings with
@@ -451,6 +1198,14 @@ public partial class MainWindow : Window
                     LastWorkspacePath = inspection.ProjectPath
                 };
                 DesktopSettingsStore.Save(_desktopSettings);
+                try
+                {
+                    EnvironmentSettingsStore.SaveWorkspacePath(inspection.ProjectPath);
+                }
+                catch
+                {
+                    // Desktop settings already saved; .env write is best-effort.
+                }
             }
         }
         catch (Exception error) when (
@@ -458,7 +1213,9 @@ public partial class MainWindow : Window
                 or TimeoutException
                 or UnauthorizedAccessException
                 or InvalidDataException
-                or LocalServiceResponseException)
+                or LocalServiceResponseException
+                or DirectoryNotFoundException
+                or ArgumentException)
         {
             WorkspaceConnectionSummary.Text = "Workspace inspection failed";
             WorkspaceConnectionDetail.Text = error.Message;
@@ -472,30 +1229,33 @@ public partial class MainWindow : Window
 
     private void ApplyWorkspaceInspection(WorkspaceInspection inspection)
     {
+        _currentWorkspaceInspection = inspection;
+        UpdateSnapshot();
+
         SetServiceStatus(
             "Connected · live local",
-            "Read-only workspace inspection",
+            "Workspace inspection active",
             connected: true);
-        GlobalDataBadgeText.Text = "LOCAL LIVE + DEMO";
-        WorkspaceSourceBadgeText.Text = "LOCAL LIVE · READ ONLY";
+        GlobalDataBadgeText.Text = "LOCAL LIVE";
+        WorkspaceSourceBadgeText.Text = "LOCAL LIVE";
         WorkspaceConnectionSummary.Text = $"{inspection.ProjectName} registered";
         WorkspaceConnectionDetail.Text =
-            $"Inspected {inspection.InspectedAt:h:mm:ss tt} · project modified: no";
+            $"Inspected {inspection.InspectedAt:h:mm:ss tt}";
         ConnectServiceButton.Content = "Service connected";
-        ConnectServiceButton.IsEnabled = false;
+        ConnectServiceButton.IsEnabled = true;
         SelectWorkspaceButton.IsEnabled = true;
         RefreshWorkspaceButton.IsEnabled = true;
-        OverviewServiceStateText.Text = "Read-only";
+        OverviewServiceStateText.Text = "Live Connected";
         OverviewServiceStateText.Foreground = (Brush)FindResource("AccentBrush");
         OverviewDataSourceText.Text =
-            $"Live local workspace inventory · {inspection.ProjectName}; demo evidence remains marked";
+            $"Live local workspace inventory · {inspection.ProjectName}";
 
         WorkspacePageTitle.Text = inspection.ProjectName;
         WorkspacePagePath.Text = inspection.ProjectPath;
         WorkspaceBranchText.Text = inspection.Branch;
         WorkspaceDataSourceText.Text = "Authenticated local service";
         WorkspaceNextActionText.Text =
-            "Local source inventory is live; durable handoff/lease provider remains disconnected.";
+            "Local source inventory is live.";
         WorkspaceLeaseStateText.Text = inspection.Lease.Label;
         WorkspaceLeaseDetailText.Text = inspection.Lease.Detail;
         WorkspaceCountText.Text = "1";
@@ -518,91 +1278,362 @@ public partial class MainWindow : Window
     private void SetServiceStatus(string label, string detail, bool connected)
     {
         LocalServiceSidebarStatus.Text = label;
+        LocalServiceSidebarStatus.Foreground = connected
+            ? (Brush)FindResource("AccentBrush")
+            : (Brush)FindResource("MutedTextBrush");
         LocalServiceSidebarDetail.Text = detail;
         LocalServiceDot.Fill = connected
             ? (Brush)FindResource("AccentBrush")
-            : (Brush)FindResource("MutedTextBrush");
+            : (Brush)FindResource("AmberBrush");
     }
     private async void ConsoleSendButton_Click(object sender, RoutedEventArgs e)
     {
         await SendConsoleInputAsync();
     }
 
-    private async void ConsoleInputBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    /// <summary>
+    /// Enter sends. Shift+Enter inserts a newline so multi-line pastes stay editable.
+    /// </summary>
+    private async void ConsoleInputBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key == System.Windows.Input.Key.Enter)
+        if (e.Key != System.Windows.Input.Key.Enter)
         {
-            await SendConsoleInputAsync();
+            return;
+        }
+
+        // Shift+Enter → keep default newline behavior (AcceptsReturn).
+        if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await SendConsoleInputAsync();
+    }
+
+    /// <summary>
+    /// Force full clipboard text into the composer. Default single-line paste only kept
+    /// the first line; this handler always inserts the complete Unicode text block.
+    /// </summary>
+    private void ConsoleInputBox_OnPaste(object sender, DataObjectPastingEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox box)
+        {
+            return;
+        }
+
+        string? pasted = null;
+        if (e.SourceDataObject.GetDataPresent(DataFormats.UnicodeText))
+        {
+            pasted = e.SourceDataObject.GetData(DataFormats.UnicodeText) as string;
+        }
+        else if (e.SourceDataObject.GetDataPresent(DataFormats.Text))
+        {
+            pasted = e.SourceDataObject.GetData(DataFormats.Text) as string;
+        }
+
+        if (pasted is null)
+        {
+            return;
+        }
+
+        // Normalize rare clipboard line endings; keep every line.
+        pasted = pasted.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+
+        e.CancelCommand();
+
+        var text = box.Text ?? string.Empty;
+        var start = box.SelectionStart;
+        var length = box.SelectionLength;
+        if (start < 0) start = 0;
+        if (start > text.Length) start = text.Length;
+        if (length < 0) length = 0;
+        if (start + length > text.Length) length = text.Length - start;
+
+        box.Text = string.Concat(
+            text.AsSpan(0, start),
+            pasted.AsSpan(),
+            text.AsSpan(start + length));
+        box.CaretIndex = start + pasted.Length;
+        box.ScrollToEnd();
+    }
+
+    private async Task SendConsoleInputAsync(string? overrideText = null)
+    {
+        var text = (overrideText ?? ConsoleInputBox.Text).Trim();
+        if (string.IsNullOrEmpty(text)) return;
+        if (_agentBusy)
+        {
+            AppendConsoleLine("[Busy — wait for the current reply, then try again]");
+            return;
+        }
+
+        if (_consoleSession is null)
+        {
+            // Nothing was dispatched, so the text stays in the composer to be retried.
+            ConsoleInputBox.Text = text;
+            ConsoleInputBox.CaretIndex = text.Length;
+            AppendConsoleLine($"\n> {text}");
+            AppendConsoleLine("[Console session not ready]");
+            return;
+        }
+
+        // Dispatching now: clear the composer at send time so a second Enter cannot
+        // resend the same text. The transcript line below is the record of what went out.
+        ConsoleInputBox.Clear();
+        AppendConsoleLine($"\n> {text}");
+
+        // Explicit local shell escape (does not go through the agent API).
+        if (text.StartsWith("/"))
+        {
+            if (text.Equals("/reset", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (_agentBridge is not null) await _agentBridge.ResetAsync();
+                    AppendConsoleLine("[Agent conversation reset]");
+                }
+                catch (Exception ex)
+                {
+                    AppendConsoleLine($"[Agent reset failed: {ex.Message}]");
+                }
+                return;
+            }
+
+            await foreach (var line in _consoleSession.SendAsync(text.Substring(1)))
+            {
+                AppendConsoleLine(line.Text);
+            }
+            return;
+        }
+
+        // Full coding agent (same engine as `helmion agent` CLI) via Node bridge.
+        // Permissions + provider apply to every LLM the same way.
+        _agentBusy = true;
+        var spoken = new System.Text.StringBuilder();
+        var permission = CurrentPermissionMode;
+        try
+        {
+            var settings = EnvironmentSettingsStore.Load();
+            _consoleSession.ConfigureMaestro(
+                settings.MaestroCoordinator,
+                settings,
+                _desktopSettings.CustomProviders);
+            _consoleSession.PermissionMode = permission;
+
+            var workspace = ResolveAgentWorkspace();
+            UpdateConsoleWorkspaceLabel(workspace);
+            var provider = settings.MaestroCoordinator ?? "Gemini";
+
+            _agentBridge ??= new AgentBridge();
+            AppendConsoleLine(
+                $"[Agent · {provider} · {permission} · workspace {workspace}]");
+            if (permission != AgentPermission.Full)
+            {
+                AppendConsoleLine(
+                    $"[Tip] Permissions={permission}. For full control (tools run without asking), "
+                    + "set the dropdown to Full tools.");
+            }
+
+            await foreach (var ev in _agentBridge.TurnAsync(
+                               text,
+                               workspace,
+                               provider,
+                               permission,
+                               _desktopSettings.CustomProviders))
+            {
+                switch (ev.Event)
+                {
+                    case "status":
+                        AppendConsoleLine($"… {ev.Message}");
+                        break;
+                    case "tool":
+                        AppendConsoleLine($"  → {ev.Name}({Truncate(ev.ArgsJson, 100)})");
+                        break;
+                    case "tool_result":
+                        AppendConsoleLine($"  ← {Truncate(ev.Preview, 160)}");
+                        break;
+                    case "assistant":
+                        if (!string.IsNullOrWhiteSpace(ev.Text))
+                        {
+                            AppendConsoleLine(ev.Text);
+                            if (!ev.Partial) spoken.Append(ev.Text).Append(' ');
+                        }
+                        break;
+                    case "error":
+                        AppendConsoleLine($"[Agent error] {ev.Message}");
+                        if (spoken.Length == 0)
+                        {
+                            spoken.Append("There was an agent error. ");
+                        }
+                        break;
+                    case "hello":
+                    case "ready":
+                        ConsoleServiceSessionText.Text =
+                            $"Agent ready · {ev.Provider ?? provider} · {permission} · {ev.Workspace ?? workspace}";
+                        break;
+                }
+            }
+
+            AppendConsoleLine("");
+
+            if (_voiceSession is { IsVoiceModeActive: true }
+                && spoken.Length > 0)
+            {
+                try
+                {
+                    await _voiceSession.SpeakAsync(spoken.ToString());
+                }
+                catch (Exception voiceEx)
+                {
+                    AppendConsoleLine($"[Voice TTS error: {voiceEx.Message}]");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendConsoleLine(
+                $"[Agent failed to start] {ex.Message}\n"
+                + "Need Node.js on PATH and Helmion repo with bin/helmion.mjs "
+                + "(expected under E:\\Helmion).");
+            if (_voiceSession is { IsVoiceModeActive: true })
+            {
+                try
+                {
+                    await _voiceSession.SpeakAsync(
+                        "The agent failed to start. Check Node and the Helmion install.");
+                }
+                catch
+                {
+                    // ignore TTS failure after agent failure
+                }
+            }
+        }
+        finally
+        {
+            _agentBusy = false;
+            // Composer was already cleared at dispatch; anything typed during the turn
+            // is the user's next message and must survive.
         }
     }
 
-    private async Task SendConsoleInputAsync()
+    private static string Truncate(string? value, int max)
     {
-        var text = ConsoleInputBox.Text.Trim();
-        if (string.IsNullOrEmpty(text)) return;
-        
-        ConsoleInputBox.Clear();
-        ConsoleOutputText.Text += $"\n> {text}\n";
-        ConsoleOutputScroll.ScrollToBottom();
-
-        if (text.StartsWith("/"))
-        {
-            if (_consoleSession != null)
-            {
-                await foreach (var line in _consoleSession.SendAsync(text.Substring(1)))
-                {
-                    ConsoleOutputText.Text += $"{line.Text}\n";
-                    ConsoleOutputScroll.ScrollToBottom();
-                }
-            }
-        }
-        else
-        {
-            if (_geminiSession != null && _geminiSession.HasKey)
-            {
-                var responseBuilder = new System.Text.StringBuilder();
-                await foreach (var chunk in _geminiSession.SendAsync(text))
-                {
-                    ConsoleOutputText.Text += chunk;
-                    responseBuilder.Append(chunk);
-                    ConsoleOutputScroll.ScrollToBottom();
-                }
-                ConsoleOutputText.Text += "\n";
-                
-                if (_voiceSession != null && _voiceSession.IsListening)
-                {
-                    _ = _voiceSession.SpeakAsync(responseBuilder.ToString());
-                }
-            }
-            else
-            {
-                ConsoleOutputText.Text += "[No Gemini API Key configured]\n";
-            }
-        }
+        if (string.IsNullOrEmpty(value)) return "";
+        return value.Length <= max ? value : value[..max] + "…";
     }
 
     private void ConsoleMicButton_Click(object sender, RoutedEventArgs e)
     {
         if (_voiceSession == null) return;
-        
-        if (_voiceSession.IsListening)
+
+        if (_voiceSession.IsVoiceModeActive)
         {
-            _voiceSession.StopListening();
+            _voiceSession.StopVoiceMode();
             ConsoleMicButton.Background = (Brush)FindResource("AccentBrush");
+            ConsoleMicButton.ToolTip = "Start two-way voice (listen + speak). Works with every LLM.";
+            AppendConsoleLine("\n[Voice mode OFF]");
+            ConsoleServiceSessionText.Text = "Voice mode off";
         }
         else
         {
-            _voiceSession.StartListening();
+            _voiceSession.StartVoiceMode();
+            if (!_voiceSession.IsVoiceModeActive)
+            {
+                // StartVoiceMode flips off if mic init failed.
+                ConsoleMicButton.Background = (Brush)FindResource("AccentBrush");
+                AppendConsoleLine("[Voice] Mic failed to start — see message above.");
+                return;
+            }
+
             ConsoleMicButton.Background = (Brush)FindResource("AmberBrush");
+            ConsoleMicButton.ToolTip = "Stop two-way voice";
+            AppendConsoleLine(
+                "\n[Voice mode ON — two-way: speak, wait for the reply, speak again. Click mic to stop.]");
+            AppendConsoleLine(
+                "[Voice uses the selected Maestro LLM + permissions dropdown for tools.]");
+            ConsoleServiceSessionText.Text = "Voice mode on — listening (two-way)";
         }
     }
 
     private async void VoiceSession_OnSpeechRecognized(object? sender, string text)
     {
-        await Dispatcher.InvokeAsync(async () =>
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        // Marshal to the UI thread and fully await the turn (InvokeAsync(async () =>) would not).
+        if (!Dispatcher.CheckAccess())
         {
-            ConsoleInputBox.Text = text;
-            await SendConsoleInputAsync();
-        });
+            await Dispatcher.InvokeAsync(() => VoiceSession_OnSpeechRecognized(sender, text));
+            return;
+        }
+
+        if (_voiceTurnBusy || _agentBusy) return;
+        if (_voiceSession is { IsSpeaking: true }) return;
+
+        var heard = text.Trim();
+        // Drop pure noise crumbs Windows dictation sometimes emits.
+        if (heard.Length < 3)
+        {
+            return;
+        }
+
+        _voiceTurnBusy = true;
+        try
+        {
+            // Pause mic while we call the model so ambient noise does not stack turns.
+            _voiceSession?.PauseListeningForTts();
+
+            // Windows STT mishears often ("DairyForge" → garbage), so the transcript goes
+            // to the console log. SendConsoleInputAsync clears the composer at dispatch.
+            ConsoleInputBox.Focus();
+            AppendConsoleLine($"[You said] {heard}");
+            ConsoleServiceSessionText.Text = $"Voice heard: {Truncate(heard, 80)}";
+
+            await SendConsoleInputAsync(heard);
+        }
+        finally
+        {
+            _voiceTurnBusy = false;
+            // If chat failed before SpeakAsync (or TTS was empty), ensure mic comes back.
+            if (_voiceSession is { IsVoiceModeActive: true, IsSpeaking: false })
+            {
+                _voiceSession.ResumeListeningAfterTts();
+            }
+        }
+    }
+
+    private void UpdateConsoleWorkspaceLabel(string? workspace = null)
+    {
+        try
+        {
+            var path = workspace ?? ResolveAgentWorkspace();
+            if (ConsoleWorkspaceLabel is not null)
+            {
+                ConsoleWorkspaceLabel.Text = $"workspace: {path}";
+                ConsoleWorkspaceLabel.ToolTip =
+                    "Tools can only touch files under this folder.\n"
+                    + "Change it: Workspace page → Choose workspace.\n"
+                    + "Point it at DairyForge, Helmion, or any project — not a whole drive.";
+            }
+        }
+        catch
+        {
+            // ignore UI races
+        }
+    }
+
+    /// <summary>
+    /// Project folder for agent tools. Never a bare drive root (D:\, C:\), never a provider
+    /// CLI home (%USERPROFILE%\.grok and friends), and never derived from the selected
+    /// Maestro provider. See <see cref="AgentWorkspaceResolver"/>.
+    /// </summary>
+    private string ResolveAgentWorkspace()
+    {
+        return AgentWorkspaceResolver.Resolve(
+            _registeredWorkspacePath,
+            EnvironmentSettingsStore.LoadWorkspacePath(),
+            _desktopSettings.LastWorkspacePath,
+            AgentBridge.FindHelmionRoot());
     }
 }

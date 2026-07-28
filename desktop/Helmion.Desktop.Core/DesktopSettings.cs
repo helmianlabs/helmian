@@ -28,7 +28,15 @@ public static class ColorThemeCatalog
         new(
             "warm-earth",
             "Warm earth",
-            "Grounded brown surfaces with a warm sand accent.")
+            "Grounded brown surfaces with a warm sand accent."),
+        new(
+            "solar-yellow",
+            "Solar yellow",
+            "Warm charcoal surfaces with a bright golden-yellow accent."),
+        new(
+            "crimson-red",
+            "Crimson red",
+            "Dark charcoal surfaces with a vivid crimson accent.")
     ];
 
     public static bool IsKnown(string? id)
@@ -44,13 +52,28 @@ public static class ColorThemeCatalog
     }
 }
 
+/// <summary>
+/// A user-defined OpenAI-compatible endpoint. <paramref name="Model"/> is optional;
+/// when blank the profile name is sent as the model id (the Ollama/vLLM convention).
+/// </summary>
+public sealed record CustomProviderProfile(
+    string Name,
+    string EndpointUrl,
+    string ApiKey,
+    string? Model = null);
+
 public sealed record DesktopSettings(
     int Version,
     string ColorTheme,
-    string? LastWorkspacePath = null)
+    string? LastWorkspacePath = null,
+    IReadOnlyList<CustomProviderProfile>? CustomProviders = null,
+    string? PermissionMode = null)
 {
     public static DesktopSettings Default { get; } =
-        new(1, ColorThemeCatalog.DefaultThemeId);
+        new(1, ColorThemeCatalog.DefaultThemeId, null, [], AgentPermission.ReadOnly);
+
+    /// <summary>Normalized console permission mode (read-only | read-tools | full).</summary>
+    public string ResolvedPermissionMode => AgentPermission.Normalize(PermissionMode);
 }
 
 public static class DesktopSettingsStore

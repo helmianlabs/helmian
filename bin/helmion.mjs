@@ -240,6 +240,164 @@ async function ownerKeyCommand() {
   );
 }
 
+async function agentOs() {
+  const { installAgentOsTargets, resolveTargets } = await import('../src/core/agent-os.mjs');
+  const subcommand = process.argv[3] ?? 'help';
+  if (subcommand !== 'install') {
+    throw new Error('agent-os subcommand must be install');
+  }
+
+  const targets = resolveTargets(option('--target', 'all'));
+  const apply = hasFlag('--yes');
+  const asJson = hasFlag('--json');
+  const report = await installAgentOsTargets({
+    targets,
+    dir: option('--dir', null),
+    apply,
+  });
+
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return;
+  }
+
+  const verb = apply ? 'Installed' : 'Would install (dry run — pass --yes to write)';
+  process.stdout.write(`${verb}\n`);
+  for (const result of report.targets) {
+    process.stdout.write(`\n${result.label} — ${result.directory}\n`);
+    for (const file of result.files) {
+      process.stdout.write(`  ${file.action.padEnd(9)} ${file.path}${file.action === 'skip' || file.action === 'append' ? `  (${file.reason})` : ''}\n`);
+    }
+    process.stdout.write(
+      `  Hooks are NOT wired automatically. Merge ${result.settingsSnippet}\n`
+      + `  into ${result.settingsFile} — see agent-os/MERGE_HOOKS.md.\n`,
+    );
+  }
+}
+
+// Advisory lane read path — docs/FLYWHEEL_AUDIT_2026-07-28.md finding #2.
+//
+// bigsister.advisory_outputs lives on a DIFFERENT Neon endpoint from
+// HELMION_DATABASE_URL (audit finding #19: bigsister ep-dry-fog-aku9i5gq vs
+// helmion ep-divine-leaf-ay38p1af), so this takes its own connection string and
+// never reuses the Helmion one.
+async function advisory() {
+  const { Client } = await import('pg');
+  const {
+    createAdvisoryLane,
+    confirmationPhrase,
+  } = await import('../src/core/advisory-lane.mjs');
+
+  const subcommand = process.argv[3] ?? 'help';
+  if (!['list', 'show', 'promote', 'reject'].includes(subcommand)) {
+    throw new Error('advisory subcommand must be list, show, promote, or reject');
+  }
+
+  const connectionString = option('--database-url', process.env.BIGSISTER_DATABASE_URL);
+  if (!connectionString) {
+    throw new Error(
+      'Set BIGSISTER_DATABASE_URL (the bigsister endpoint, not HELMION_DATABASE_URL) '
+      + 'or pass --database-url. No connection was opened.',
+    );
+  }
+
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    const lane = createAdvisoryLane({ client });
+
+    if (subcommand === 'list') {
+      const result = await lane.list({
+        state: option('--state', 'unreviewed'),
+        projectSlug: option('--project', null),
+        limit: option('--limit', '20'),
+      });
+      if (hasFlag('--json')) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+      if (!result.rows.length) {
+        process.stdout.write(`No ${result.state} advisory rows.\n`);
+        return;
+      }
+      process.stdout.write(`${result.rows.length} ${result.state} advisory row(s)\n\n`);
+      for (const row of result.rows) {
+        process.stdout.write(
+          `  #${row.id}  ${String(row.advisor).padEnd(8)} ${String(row.project_slug ?? '-').padEnd(14)}`
+          + ` ${row.response_chars} chars  ${new Date(row.created_at).toISOString().slice(0, 16)}\n`
+          + `      Q: ${row.question}\n`
+          + `      A: ${row.response_preview}\n`,
+        );
+      }
+      if (!result.capabilities.hasReviewState) {
+        process.stdout.write(
+          '\n  Note: this database has no review_decision column yet, so only the\n'
+          + '  promoted boolean is tracked on the row. Attribution still goes to\n'
+          + '  bigsister.agent_logs. Apply sql/bigsister/001_advisory_output_review_state.sql\n'
+          + '  (Tier B — needs Troy) for full review state.\n',
+        );
+      }
+      process.stdout.write(
+        `\n  Review one:  helmion advisory promote <id> --reviewer "<name>" --note "<why>"\n`
+        + `               helmion advisory reject  <id> --reviewer "<name>" --note "<why>"\n`,
+      );
+      return;
+    }
+
+    if (subcommand === 'show') {
+      const row = await lane.show(process.argv[4]);
+      process.stdout.write(`${JSON.stringify(row, null, 2)}\n`);
+      return;
+    }
+
+    // promote / reject — Rule 0.27: never automatic, never implicit.
+    const decision = subcommand === 'promote' ? 'PROMOTED' : 'REJECTED';
+    const id = process.argv[4];
+    const row = await lane.show(id);
+
+    process.stdout.write(`\nADVISORY REVIEW — this is a human decision, not an automatic one.
+Row:      #${row.id}
+Advisor:  ${row.advisor}  (low-trust lane, CLAUDE.md Rule 0.27)
+Project:  ${row.project_slug ?? '-'}
+Asked:    ${row.question}
+
+${row.response}
+
+Decision: ${decision}
+Reviewer: ${option('--reviewer', '(missing --reviewer)')}
+Why:      ${option('--note', '(missing --note)')}
+
+`);
+
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new Error(
+        'Advisory promotion requires a real interactive terminal so a human types '
+        + 'the confirmation. Nothing was written.',
+      );
+    }
+    const input = createInterface({ input: process.stdin, output: process.stdout });
+    let typed;
+    try {
+      typed = await input.question(
+        `Type exactly "${confirmationPhrase(decision, id)}" to record this, or anything else to abort: `,
+      );
+    } finally {
+      input.close();
+    }
+
+    const result = await lane.review({
+      id,
+      decision,
+      reviewer: option('--reviewer', null),
+      note: option('--note', null),
+      confirmation: typed,
+    });
+    process.stdout.write(`\nRecorded: #${result.data.id} ${result.decision} by ${result.reviewer}\n`);
+  } finally {
+    await client.end();
+  }
+}
+
 async function loadRules() {
   const path = process.env.HELMION_RULES_PATH
     ? resolve(process.env.HELMION_RULES_PATH)
@@ -372,7 +530,16 @@ async function maestroRead(method) {
 }
 
 const command = process.argv[2] ?? 'help';
-if (command === 'guard') await guard();
+if (command === 'agent' || command === 'chat' || command === 'code') {
+  const { runAgentCli } = await import('../src/agent/session.mjs');
+  await runAgentCli(process.argv.slice(3));
+} else if (command === 'agent-bridge') {
+  // Long-lived NDJSON protocol for the Windows Pilot EXE.
+  const { runAgentBridge } = await import('../src/agent/bridge.mjs');
+  await runAgentBridge();
+} else if (command === 'guard') await guard();
+else if (command === 'agent-os') await agentOs();
+else if (command === 'advisory') await advisory();
 else if (command === 'init') await init();
 else if (command === 'db-inspect') await inspectDatabase();
 else if (command === 'migrate') await migrate();
@@ -409,42 +576,60 @@ else if (command === 'validate-proof') {
   if (result.decision === PILOT_DECISION.PAUSE_FOR_OWNER) process.exitCode = 2;
   if (result.decision === PILOT_DECISION.BLOCK) process.exitCode = 3;
 } else {
-  process.stdout.write(`Helmion Agent Governance Kernel
+  process.stdout.write(`Helmion
 
-Usage:
+Coding agent (what you want day-to-day):
+  helmion agent                 # interactive REPL — tools on disk
+  helmion chat                  # same as agent
+  helmion code                  # same as agent
+  helmion agent --provider grok
+  helmion agent --workspace E:\\MyProject -p "fix the login bug"
+
+Agent OS (self-improvement loop — rules, lessons, blockers, wins, hooks):
+  helmion agent-os install                    # dry run: shows every file first
+  helmion agent-os install --yes              # write it (all three targets)
+  helmion agent-os install --target claude --yes
+  helmion agent-os install --target claude,codex --dir E:\\scratch --yes
+  helmion agent-os install --yes --json       # machine-readable, for the UI
+    Targets: claude | codex | gemini | all (default all)
+    Never overwrites your files and never edits a settings file.
+
+Advisory lane (Grok / Gemini / ChatGPT output — low-trust until a human reviews it):
+  helmion advisory list                       # unreviewed rows, oldest first
+  helmion advisory list --state all --json
+  helmion advisory list --project sitevector --limit 5
+  helmion advisory show <id>
+  helmion advisory promote <id> --reviewer "Troy" --note "<why this is trustworthy>"
+  helmion advisory reject  <id> --reviewer "Troy" --note "<why it is not>"
+    Promotion is NEVER automatic (Rule 0.27). It needs a named reviewer, a
+    written reason, and an exact typed confirmation in a real terminal.
+    Reads BIGSISTER_DATABASE_URL — a DIFFERENT endpoint from HELMION_DATABASE_URL.
+
+Governance / Maestro (existing kernel):
   helmion init [workspace]
-  helmion guard                 # reads a tool-hook JSON payload on stdin
-  helmion validate-proof        # reads resolution evidence JSON on stdin
-  helmion consensus             # reads operation/actionHash/reviews JSON on stdin
-  helmion distill               # reads a resolved blocker JSON on stdin
+  helmion guard                 # tool-hook JSON on stdin
+  helmion validate-proof
+  helmion consensus
+  helmion distill
   helmion confirmation-action-hash
-                                # reads projectSlug/handoffId/operation JSON on stdin
-  helmion pilot-policy          # reads operation/guardState JSON on stdin
-                                # exits 0 auto-run, 2 owner pause, or 3 blocked
-  helmion owner-key init --provider <id> --subject <id>
-      --public-output <path> --recovery-output <outside-workspace-path>
-      [--key-dir <outside-workspace\\owner-keys>]
-                                # interactive DPAPI key + protected recovery setup
-  helmion owner-key inspect --key <local-key-path>
-  helmion owner-key export-public --key <local-key-path> --output <path>
-  helmion owner-key restore --recovery <path> [--key-dir <...\\owner-keys>]
-                                # interactive protected recovery
-  helmion owner-key approve --key <local-key-path>
-      --request <request.json> --output <outside-workspace\\confirmations\\file.json>
-                                # interactive APPROVE/DECLINE; never accepts a flag
+  helmion pilot-policy
+  helmion owner-key …
   helmion db-inspect --expect-endpoint <ep-id>
-                                # read-only target and migration inventory
-  helmion migrate --expect-endpoint <ep-id> [--require-empty-helmion]
-                                # applies checksummed SQL migrations
-  helmion phase-two-switch-test --expect-endpoint <ep-id> [--project <slug>]
-                                # isolated lease/checkpoint/transfer/release test
-  helmion blockers [project]    # lists active blockers from Neon
+  helmion migrate --expect-endpoint <ep-id>
+  helmion phase-two-switch-test --expect-endpoint <ep-id>
+  helmion blockers [project]
   helmion maestro-state <project>
   helmion maestro-handoff <project>
 
-Environment:
+Environment (.env walk-up or process env):
+  OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY / XAI_API_KEY
+  HELMION_MAESTRO_COORDINATOR   # default provider for agent
+  WORKSPACE_PATH                # default workspace for agent
   HELMION_DATABASE_URL
   HELMION_EXPECTED_ENDPOINT_ID
   HELMION_RULES_PATH
+
+Install on PATH (from E:\\Helmion):
+  npm link
 `);
 }

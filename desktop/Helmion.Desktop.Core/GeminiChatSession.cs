@@ -12,7 +12,7 @@ namespace Helmion.Desktop.Core;
 /// </summary>
 public sealed class GeminiChatSession : IDisposable
 {
-    private const string ApiBase = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent";
+    private const string ApiBase = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent";
     private readonly HttpClient _http;
     private readonly List<GeminiMessage> _history = [];
     private string _apiKey;
@@ -44,7 +44,7 @@ public sealed class GeminiChatSession : IDisposable
 
         var requestBody = new GeminiRequest(
             _history,
-            new GeminiSystemInstruction("You are Helmion, a focused personal AI pilot. Be concise."));
+            new GeminiSystemInstruction(PilotToolPrompt.ForProvider("Gemini")));
 
         var url = $"{ApiBase}?key={Uri.EscapeDataString(_apiKey)}&alt=sse";
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
@@ -145,12 +145,17 @@ public sealed class GeminiChatSession : IDisposable
 
     private sealed record GeminiRequest(
         [property: JsonPropertyName("contents")] List<GeminiMessage> Contents,
-        [property: JsonPropertyName("systemInstruction")] GeminiSystemInstruction SystemInstruction);
+        [property: JsonPropertyName("system_instruction")] GeminiSystemInstruction SystemInstruction);
 
-    private sealed record GeminiSystemInstruction(string Text)
+    private sealed class GeminiSystemInstruction
     {
         [JsonPropertyName("parts")]
-        public GeminiPart[] Parts { get; } = [new(Text)];
+        public GeminiPart[] Parts { get; }
+
+        public GeminiSystemInstruction(string text)
+        {
+            Parts = [new(text)];
+        }
     }
 
     private sealed record GeminiMessage(

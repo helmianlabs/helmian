@@ -1,11 +1,25 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="System.Speech" Version="10.0.10" />
+    <PackageReference Include="Npgsql" Version="9.0.3" />
+    <!--
+      Local voice stack (replaces System.Speech/SAPI).
+      Whisper.net.Runtime carries the whisper.cpp CPU native library.
+      KokoroSharp.CPU bundles ONNX Runtime, the espeak-ng phonemizer and the
+      speaker embeddings, and copies espeak/ and voices/ to the build output.
+      The two large model files are fetched by desktop/scripts/get-voice-models.ps1.
+    -->
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+    <PackageReference Include="KokoroSharp.CPU" Version="0.8.0" />
+    <PackageReference Include="NAudio" Version="2.3.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Helmion.LocalService.Protocol\Helmion.LocalService.Protocol.csproj" />
   </ItemGroup>
 </Project>

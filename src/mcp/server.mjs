@@ -39,8 +39,27 @@ const TOOLSETS = {
   ],
   advisory: [
     {
+      name: 'helmion_register_action',
+      description:
+        'Pin the exact operation under review and return its immutable action_hash. '
+        + 'Required before any advisor vote: the hash is derived from the operation, '
+        + 'so votes cannot be moved onto a different action. Registering approves nothing.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          operation: { type: 'object' },
+          projectSlug: { type: 'string' },
+          diffSummary: { type: 'string' },
+        },
+        required: ['operation'],
+      },
+    },
+    {
       name: 'helmion_record_review',
-      description: 'Record one read-only advisor vote for an immutable action hash.',
+      description:
+        'Record one read-only advisor vote for an immutable action hash. '
+        + 'Register the action first (helmion_register_action), or pass the same '
+        + 'operation here to register and vote in one call.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -50,6 +69,7 @@ const TOOLSETS = {
           read_only: { const: true },
           rationale: { type: 'string' },
           evidence: { type: 'object' },
+          operation: { type: 'object' },
         },
         required: ['action_hash', 'advisor', 'decision', 'read_only'],
       },
@@ -90,6 +110,7 @@ export async function runMcpServer(mode) {
     if (name === 'helmion_get_context') return store.getContext(args.projectSlug);
     if (name === 'helmion_list_blockers') return store.listActiveBlockers(args.projectSlug ?? null);
     if (name === 'helmion_resolve_blocker') return store.resolveBlocker(args.id, args);
+    if (name === 'helmion_register_action') return store.registerGovernanceAction(args);
     if (name === 'helmion_record_review') return store.recordReview(args);
     if (name === 'helmion_consensus_status') return store.getConsensus(args.actionHash, args.operation);
     throw new Error(`Unknown tool: ${name}`);

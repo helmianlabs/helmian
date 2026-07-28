@@ -18,6 +18,12 @@ import {
   consensusStatus,
 } from '../core/governance.mjs';
 import {
+  UnregisteredGovernanceActionError,
+  assertActionHashMatches,
+  assertOperationShape,
+  governanceActionHash,
+} from '../core/advisory-action.mjs';
+import {
   IdempotencyConflictError,
   LeaseAuthorizationError,
   LeaseConflictError,
@@ -167,6 +173,36 @@ async function requireActiveLease(client, {
     );
   }
   return result.rows[0];
+}
+
+// Idempotent by construction: action_hash is derived from the operation, so a
+// conflict means the identical operation was already registered. Returns the
+// durable row either way so a caller can tell a fresh registration from a replay.
+async function insertGovernanceAction(client, {
+  actionHash,
+  projectSlug,
+  tier,
+  operation,
+  diffSummary,
+}) {
+  const inserted = await client.query(
+    `insert into helmion.governance_actions
+       (action_hash, project_slug, tier, operation, diff_summary)
+     values ($1,$2,$3,$4::jsonb,$5)
+     on conflict (action_hash) do nothing
+     returning *`,
+    [actionHash, projectSlug, tier, JSON.stringify(operation), diffSummary ?? null],
+  );
+  if (inserted.rowCount === 1) return { inserted: true, row: inserted.rows[0] };
+
+  const existing = await client.query(
+    'select * from helmion.governance_actions where action_hash=$1',
+    [actionHash],
+  );
+  if (existing.rowCount !== 1) {
+    throw new Error(`Governance action ${actionHash} could not be registered or read back`);
+  }
+  return { inserted: false, row: existing.rows[0] };
 }
 
 async function loadMigrations() {
@@ -404,8 +440,57 @@ export async function createNeonStore(
       });
     },
 
-    async recordReview(review) {
+    // The missing writer for helmion.governance_actions. Without it the NOT NULL
+    // foreign key at sql/001_helmion.sql:83 made every recordReview call fail
+    // 23503 and roll back (docs/FLYWHEEL_AUDIT_2026-07-28.md finding #3).
+    //
+    // The hash is derived from the operation, never supplied, so re-registering
+    // the same operation is a no-op and a different operation is a different
+    // action. That is what makes "immutable action hash" (src/mcp/server.mjs:43)
+    // true rather than aspirational.
+    async registerGovernanceAction(input = {}) {
+      const operation = assertOperationShape(input.operation);
+      const actionHash = governanceActionHash(operation);
+      if (input.actionHash ?? input.action_hash) {
+        assertActionHashMatches(input.actionHash ?? input.action_hash, operation);
+      }
+      const projectSlug = input.projectSlug ?? input.project_slug ?? null;
+      const { tier } = classifyOperation(operation);
       return withCommittedTransaction(pool, async (client) => {
+        const data = await insertGovernanceAction(client, {
+          actionHash,
+          projectSlug,
+          tier,
+          operation,
+          diffSummary: input.diffSummary ?? input.diff_summary ?? null,
+        });
+        return { registered: data.inserted, action_hash: actionHash, data: data.row };
+      });
+    },
+
+    async recordReview(review) {
+      const actionHash = requiredText(review?.action_hash, 'action_hash');
+      // An optional operation lets a caller register and vote in one round trip.
+      // It is still hashed, not trusted: a mismatch is rejected rather than
+      // silently registering a second action nobody reviewed.
+      const operation = review?.operation ?? null;
+      if (operation) assertActionHashMatches(actionHash, operation);
+
+      return withCommittedTransaction(pool, async (client) => {
+        const existing = await client.query(
+          'select action_hash from helmion.governance_actions where action_hash=$1',
+          [actionHash],
+        );
+        if (existing.rowCount !== 1) {
+          if (!operation) throw new UnregisteredGovernanceActionError(actionHash);
+          await insertGovernanceAction(client, {
+            actionHash,
+            projectSlug: review.project_slug ?? review.projectSlug ?? null,
+            tier: classifyOperation(operation).tier,
+            operation,
+            diffSummary: review.diff_summary ?? null,
+          });
+        }
         const result = await client.query(
           `insert into helmion.advisory_reviews
              (action_hash, advisor, decision, read_only, rationale, evidence)
@@ -416,7 +501,7 @@ export async function createNeonStore(
                  reviewed_at=clock_timestamp()
            returning *`,
           [
-            review.action_hash,
+            actionHash,
             String(review.advisor).toLowerCase(),
             String(review.decision).toUpperCase(),
             review.read_only === true,
@@ -428,12 +513,45 @@ export async function createNeonStore(
       });
     },
 
-    async getConsensus(actionHash, operation) {
-      const reviews = (await pool.query(
-        'select * from helmion.advisory_reviews where action_hash=$1',
-        [actionHash],
-      )).rows;
-      return consensusStatus({ operation, actionHash, reviews });
+    async getConsensus(actionHashInput, operation) {
+      const actionHash = requiredText(actionHashInput, 'actionHash');
+      const [action, reviews] = await Promise.all([
+        pool.query(
+          'select * from helmion.governance_actions where action_hash=$1',
+          [actionHash],
+        ),
+        pool.query(
+          'select * from helmion.advisory_reviews where action_hash=$1',
+          [actionHash],
+        ),
+      ]);
+
+      const registered = action.rowCount === 1;
+      // The registered operation is authoritative. A caller-supplied operation
+      // is only ever a cross-check: if it does not hash to this action, the
+      // votes on file were cast for something else and must not be inherited.
+      if (registered && operation != null) assertActionHashMatches(actionHash, operation);
+      if (!registered && operation == null) {
+        throw new UnregisteredGovernanceActionError(actionHash);
+      }
+
+      const status = consensusStatus({
+        operation: registered ? action.rows[0].operation : operation,
+        actionHash,
+        reviews: reviews.rows,
+      });
+      return {
+        ...status,
+        action_registered: registered,
+        ...(registered ? { action_state: action.rows[0].state } : {
+          // Tier A short-circuits before reviews are consulted, so say plainly
+          // that this verdict rests on an operation nobody pinned down.
+          unregistered_action_note:
+            'No helmion.governance_actions row exists for this hash, so this verdict '
+            + 'rests on the caller-supplied operation and no advisor vote can be '
+            + 'recorded against it yet. Register the action first.',
+        }),
+      };
     },
 
     async getMaestroProjectState(projectSlugInput) {
