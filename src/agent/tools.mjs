@@ -16,6 +16,7 @@ import {
   normalizeDecision,
   resolveAskTimeoutMs,
 } from './approval.mjs';
+import { evaluateToolCall, governanceRefusalMessage } from '../core/governance-gate.mjs';
 
 const READ_TOOLS = new Set(['read_file', 'list_dir', 'search_text']);
 const WRITE_TOOLS = new Set(['write_file', 'run_command']);
@@ -182,6 +183,7 @@ async function decideWithTimeout(promise, ms) {
  *   approver?: (req: {tool: string, args: any, workspace: string, permissionMode: string}) => Promise<string>,
  *   approvalTimeoutMs?: number,
  *   onApprovalDecision?: (info: {tool: string, decision: string, source: string}) => void,
+ *   projectSlug?: string,
  * }} [options]
  *
  * `approver` is the ONLY way a call gets approved in ask mode. Leaving it unset
@@ -192,6 +194,8 @@ async function decideWithTimeout(promise, ms) {
 export function createToolRuntime(workspaceRoot, options = {}) {
   const root = resolve(workspaceRoot);
   const permissionMode = normalizePermissionMode(options.permissionMode);
+  /** Which project's promoted rules apply; null means every rule applies. */
+  const projectSlug = options.projectSlug ?? options.project_slug ?? null;
   const approver = typeof options.approver === 'function' ? options.approver : null;
   const approvalTimeoutMs = resolveAskTimeoutMs(
     options.approvalTimeoutMs ?? process.env.HELMION_ASK_TIMEOUT_MS,
@@ -424,6 +428,41 @@ export function createToolRuntime(workspaceRoot, options = {}) {
       // Snapshot before approval so the arguments a human sees are the exact
       // arguments that run — nothing can be swapped in between the two.
       const callArgs = cloneArgs(args);
+
+      // GOVERNANCE FIRST, and deliberately BEFORE the ask tier.
+      //
+      // These are two different things and the order encodes which one wins.
+      // Governance is a HARD block: operations that are never allowed, decided
+      // by the deterministic kernel. Approval is a SOFT ask: a human choosing.
+      // Asking first would let a person click "allow" on something the kernel
+      // forbids, so the kernel answers first and a refusal returns here — the
+      // approver is never even reached, and neither is tool.execute.
+      //
+      // Every tool goes through this, not just run_command. write_file is
+      // governed because an agent silently overwriting a human's file is the
+      // exact harm this repo exists to stop; the built-in destructive-pattern
+      // half only inspects `command` (governance.mjs:52-53) so for a write it
+      // is the promoted rules that decide, matched against the path AND the
+      // content.
+      let governance;
+      try {
+        governance = evaluateToolCall({
+          tool: name,
+          args: callArgs,
+          workspace: root,
+          projectSlug,
+        });
+      } catch (err) {
+        // The gate is written not to throw. If it ever does, that is exactly
+        // the ambiguous case that must not execute.
+        governance = {
+          allowed: false,
+          reason: `the governance gate itself failed (${err.message}); governance fails closed`,
+        };
+      }
+      if (!governance.allowed) {
+        return redactSecrets(governanceRefusalMessage(name, governance));
+      }
 
       if (permissionMode === 'ask') {
         const { decision, reason } = await requestApproval(name, callArgs);

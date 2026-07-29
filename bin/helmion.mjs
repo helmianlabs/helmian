@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, writeFile, mkdir, copyFile } from 'node:fs/promises';
+import { writeFile, mkdir, copyFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,11 @@ import {
   evaluateRules,
   validateResolutionEvidence,
 } from '../src/core/governance.mjs';
+import {
+  assertRulesUsable,
+  loadPromotedRules,
+  resolveRulesPath,
+} from '../src/core/governance-gate.mjs';
 import { distillResolvedBlocker } from '../src/core/distiller.mjs';
 import { createCodexAdapter } from '../src/adapters/codex.mjs';
 import { createNeonStore } from '../src/adapters/neon.mjs';
@@ -399,23 +404,36 @@ Why:      ${option('--note', '(missing --note)')}
 }
 
 async function loadRules() {
-  const path = process.env.HELMION_RULES_PATH
-    ? resolve(process.env.HELMION_RULES_PATH)
-    : join(process.cwd(), '.helmion', 'autonomy_rules.json');
-  if (!existsSync(path)) return [];
-  const parsed = JSON.parse(await readFile(path, 'utf8'));
-  return Array.isArray(parsed) ? parsed : parsed.promoted_rules ?? parsed.rules ?? [];
+  // One loading path, shared with the agent runtime's governance gate, so the
+  // hook and an in-process tool call are governed by the same rules read the
+  // same way. This resolves HELMION_RULES_PATH first and otherwise
+  // <cwd>/.helmion/autonomy_rules.json, exactly as before.
+  return assertRulesUsable(loadPromotedRules(process.cwd()), resolveRulesPath(process.cwd()));
 }
 
 async function guard() {
   const payload = await stdinJson();
-  const destructive = detectDestructiveOperation(payload);
-  const rules = evaluateRules(payload, await loadRules());
-  const result = {
-    allowed: !destructive.blocked && !rules.blocked,
-    destructive,
-    rules,
-  };
+  let result;
+  try {
+    const destructive = detectDestructiveOperation(payload);
+    const rules = evaluateRules(payload, await loadRules());
+    result = {
+      allowed: !destructive.blocked && !rules.blocked,
+      destructive,
+      rules,
+    };
+  } catch (err) {
+    // FAIL CLOSED. A rule set that cannot be read, parsed, or compiled used to
+    // throw out of here, which exits 1 — and a PreToolUse hook treats 1 as a
+    // non-blocking error, so a broken rules file silently let everything
+    // through. An unevaluatable rule set now BLOCKS with exit 2.
+    result = {
+      allowed: false,
+      error: `governance could not be evaluated: ${err.message}`,
+      destructive: { blocked: false, hits: [], approved: false, reason: '' },
+      rules: { blocked: false, blocks: [], flags: [], approved: false, approvalReason: '' },
+    };
+  }
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (!result.allowed) process.exitCode = 2;
 }
