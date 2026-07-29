@@ -190,10 +190,22 @@ test('the NDJSON bridge routes a turn through a custom provider sent in the payl
 
   // Deliberately no HELMION_CUSTOM_PROVIDERS: this proves the configure/turn payload
   // path the desktop AgentBridge uses, not the env-var seed.
+  //
+  // HELMION_LOCAL_ENABLED is forced OFF for this child. The turn below is short
+  // and trivial, so with local routing on it is exactly the shape the router
+  // sends to Ollama — the assertion then compares the stub's reply against a
+  // real qwen answer and fails. That happened the moment the flag was switched
+  // on in .env. A test must not depend on a user's machine-level setting, so it
+  // pins the value rather than the .env being "correct".
   const child = spawn(process.execPath, ['bin/helmion.mjs', 'agent-bridge'], {
     cwd: root,
     stdio: ['pipe', 'pipe', 'ignore'],
-    env: { ...process.env, HELMION_CUSTOM_PROVIDERS: '', HELMION_MAESTRO_COORDINATOR: 'Gemini' },
+    env: {
+      ...process.env,
+      HELMION_CUSTOM_PROVIDERS: '',
+      HELMION_MAESTRO_COORDINATOR: 'Gemini',
+      HELMION_LOCAL_ENABLED: '0',
+    },
   });
 
   const customProviders = [{
