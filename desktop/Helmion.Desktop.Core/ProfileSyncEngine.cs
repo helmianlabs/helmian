@@ -245,9 +245,25 @@ public static class ProfileSyncEngine
             }
 
             // 7. Sync Gemini Rules
+            //
+            // GEMINI.md is the operator's own global rules file for the Gemini CLI —
+            // the same class of living document as BASE_RULES.md and LESSONS.md, and
+            // this line used to truncate it unconditionally on every sync. The
+            // preserve-existing rule was extended to the Claude installer on
+            // 2026-07-28 and never to this one, so it stayed a silent reset.
+            //
+            // Troy's instruction 2026-07-29: no deletion, no reset. Seed it when it
+            // does not exist; leave it exactly as it is when it does.
             Directory.CreateDirectory(geminiDir);
-            await File.WriteAllTextAsync(geminiRulesPath, GeminiRulesContent, cancellationToken);
-            syncedItems.Add("Gemini global rules (GEMINI.md)");
+            if (File.Exists(geminiRulesPath))
+            {
+                syncedItems.Add("Gemini global rules (GEMINI.md) left untouched — your file, not ours");
+            }
+            else
+            {
+                await File.WriteAllTextAsync(geminiRulesPath, GeminiRulesContent, cancellationToken);
+                syncedItems.Add("Gemini global rules (GEMINI.md) created");
+            }
 
             // 8. Sync Codex Rules & Hooks
             var helmionConfigDir = Path.Combine(projectRoot, ".helmion");

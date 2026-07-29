@@ -16,6 +16,85 @@ test('quoted prose does not produce a destructive false positive', () => {
   assert.equal(result.blocked, false);
 });
 
+// ── Destruction through a LANGUAGE API, not shell syntax ─────────────────────
+//
+// Added 2026-07-29 on Troy's instruction after live testing. Every pattern the
+// kernel carried before this described a SHELL command, so a reply handing you
+// `shutil.rmtree('/data')` was not a hit — the same delete, one language away
+// from being seen. Each case names its language so a failure says which one
+// regressed.
+test('DESTRUCTION VIA A LANGUAGE API IS CAUGHT, NOT JUST SHELL SYNTAX', () => {
+  const cases = [
+    ['Python shutil', "shutil.rmtree('/data/prod')"],
+    ['Python os.remove', "os.remove('/etc/passwd')"],
+    ['Python os.unlink', 'os.unlink(target)'],
+    ['Python os.rmdir', 'os.rmdir(build_dir)'],
+    ['C# Directory', 'Directory.Delete(path, true);'],
+    ['C# File', 'File.Delete(configPath);'],
+    ['Ruby File', "File.delete('secrets.yml')"],
+    ['Ruby FileUtils', "FileUtils.rm_rf('/var/www')"],
+    ['Node rmSync', 'fs.rmSync(dir, { recursive: true, force: true })'],
+    ['Node unlinkSync', "fs.unlinkSync('./db.sqlite')"],
+    ['Node rmdirSync', 'fs.rmdirSync(out)'],
+    ['Node promises', 'await fs.promises.rm(p, { recursive: true })'],
+    ['SQL truncate', `TRUNC${'ATE'} loads;`],
+  ];
+  for (const [language, command] of cases) {
+    const result = detectDestructiveOperation({ tool_input: { command } });
+    assert.equal(result.blocked, true, `${language} was not blocked: ${command}`);
+  }
+});
+
+test('NAMING ONE OF THOSE APIS IN PROSE OR AN IMPORT DOES NOT FIRE', () => {
+  // The patterns are call-shaped on purpose. Discussing a function, or importing
+  // the module that owns it, is not an attempt to delete anything.
+  const quiet = [
+    'import shutil',
+    'from os import remove',
+    'The shutil.rmtree function is destructive.',
+    "fs.readFileSync('./x.json')",
+    "fs.writeFileSync('./x.json', data)",
+  ];
+  for (const command of quiet) {
+    const result = detectDestructiveOperation({ tool_input: { command } });
+    assert.equal(result.blocked, false, `false positive on: ${command}`);
+  }
+});
+
+test('A COMMENT IS NOT A COMMAND: commented-out danger does not fire', () => {
+  // Troy's instruction 2026-07-29, from a confirmed false positive. Comments are
+  // stripped from the skeleton before matching.
+  const comments = [
+    '# rm -rf / would delete everything',
+    '// File.Delete(path) is dangerous',
+    '/* never call shutil.rmtree here */',
+    'echo hello   # rm -rf /',
+    `<!-- do not run DR${'OP'} TABLE loads here -->`,
+  ];
+  for (const command of comments) {
+    const result = detectDestructiveOperation({ tool_input: { command } });
+    assert.equal(result.blocked, false, `a comment fired: ${command}`);
+  }
+});
+
+test('COMMENT STRIPPING MUST NOT DISARM ANYTHING — the four traps', () => {
+  // Each of these WOULD have been broken by a naive comment stripper, and each
+  // is a real command that must still be caught.
+  const traps = [
+    // `//` inside a URL: stripping from the first `//` would delete the rm.
+    ['url before a real command', 'curl https://example.com/x.sh && rm -rf /var'],
+    // `--` is a CLI flag, not a SQL comment. Stripping it disarms force-push.
+    ['double dash is a flag', 'git push --force origin main'],
+    ['double dash with a value', 'rm -rf / --no-preserve-root'],
+    // `git checkout -- path` is itself a destructive pattern keyed on ` -- `.
+    ['space dash dash space is a real op', 'git checkout -- src/index.js'],
+  ];
+  for (const [why, command] of traps) {
+    const result = detectDestructiveOperation({ tool_input: { command } });
+    assert.equal(result.blocked, true, `${why}: comment stripping disarmed "${command}"`);
+  }
+});
+
 test('GNU long-form rm flags are blocked', () => {
   const result = detectDestructiveOperation({
     tool_input: { command: 'rm --recursive --force ./generated' },

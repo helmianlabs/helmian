@@ -17,6 +17,42 @@ public static class ClaudeProfileInstaller
 
     private static readonly string SkillsDir = Path.Combine(ClaudeDir, "skills");
 
+    /// <summary>
+    /// Files that ACCUMULATE the operator's own writing and are therefore never
+    /// Helmion's to replace.
+    ///
+    /// Troy's instruction, 2026-07-29, verbatim in intent: "instead of wiping
+    /// BASE_RULES.md, LESSONS.md, and LEARNINGS.md down to a blank template, it
+    /// copies your existing content forward as-is into the new profile. No
+    /// deletion, no reset, just a straight copy."
+    ///
+    /// Two consequences, and both are enforced in code rather than by a default
+    /// argument, because a default is only as good as its callers:
+    ///
+    ///   1. <see cref="InstallAsync"/> will not overwrite one of these even when
+    ///      overwriteExisting is TRUE. There is no flag, no caller and no code
+    ///      path that resets them. That is the "stops getting nuked every time
+    ///      you hit that button out of habit" half.
+    ///   2. Installing into a NEW profile directory copies the operator's live
+    ///      file forward byte-for-byte, and falls back to the starter template
+    ///      only when there is nothing to carry. That is the "new client starts
+    ///      with the same accumulated rules" half.
+    ///
+    /// This exists because it already went wrong twice: on 2026-07-28 a blind
+    /// template write destroyed BASE_RULES.md (5,512 bytes of his own writing)
+    /// with no backup, and on 2026-07-29 the shipped binary re-templated
+    /// BASE_RULES.md and LESSONS.md again — both were restored from .bak copies.
+    /// </summary>
+    private static readonly HashSet<string> LivingDocuments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "BASE_RULES.md",
+        "LEARNINGS.md",
+        "LESSONS.md",
+    };
+
+    /// <summary>True when Helmion must never author over this path.</summary>
+    public static bool IsLivingDocument(string relPath) => LivingDocuments.Contains(relPath);
+
     /// <summary>Returns true if the ~/.claude directory exists (Claude Code is installed).</summary>
     public static bool IsClaudePresent() => Directory.Exists(ClaudeDir);
 
@@ -59,13 +95,21 @@ public static class ClaudeProfileInstaller
     /// LEARNINGS.md, and NO test would have caught the regression that did it.
     /// Production callers leave this null.
     /// </param>
+    /// <param name="carryForwardFrom">
+    /// Where to read an existing living document from when seeding a NEW profile.
+    /// Defaults to the operator's real ~/.claude. Injectable so the carry-forward
+    /// guarantee can be proven against two temp directories instead of reading
+    /// Troy's live files during a test run.
+    /// </param>
     public static async Task<InstallResult> InstallAsync(
         IReadOnlySet<string> approvedPaths,
         CancellationToken cancellationToken = default,
         bool overwriteExisting = false,
-        string? targetDirectory = null)
+        string? targetDirectory = null,
+        string? carryForwardFrom = null)
     {
         var claudeDir = targetDirectory ?? ClaudeDir;
+        var sourceDir = carryForwardFrom ?? ClaudeDir;
         if (targetDirectory is null && !IsClaudePresent())
         {
             return new InstallResult(false, "~/.claude directory not found. Install Claude Code first.", []);
@@ -76,6 +120,7 @@ public static class ClaudeProfileInstaller
         var written = new List<string>();
         var skipped = new List<string>();
         var preserved = new List<string>();
+        var carriedForward = new List<string>();
 
         foreach (var (relPath, content) in TemplateFiles())
         {
@@ -91,9 +136,14 @@ public static class ClaudeProfileInstaller
             var dir = Path.GetDirectoryName(targetPath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
+            var isLiving = LivingDocuments.Contains(relPath);
+
             if (File.Exists(targetPath))
             {
-                if (!overwriteExisting)
+                // A living document that already exists is finished business. It is
+                // the operator's file, it is newer than anything Helmion knows, and
+                // nothing here may touch it — not even with overwriteExisting set.
+                if (isLiving || !overwriteExisting)
                 {
                     preserved.Add(relPath);
                     continue;
@@ -103,17 +153,76 @@ public static class ClaudeProfileInstaller
                 File.Copy(targetPath, backupPath, overwrite: false);
             }
 
-            await File.WriteAllTextAsync(targetPath, content, cancellationToken);
+            // Nothing at the target yet. For a living document, carry the operator's
+            // accumulated content forward verbatim rather than seeding a blank
+            // template, so a new profile starts where they actually are. The
+            // template is the fallback for a machine that has no such file yet.
+            var payload = content;
+            if (isLiving)
+            {
+                var carried = await TryReadLiveDocumentAsync(relPath, claudeDir, sourceDir, cancellationToken);
+                if (carried is not null)
+                {
+                    payload = carried;
+                    carriedForward.Add(relPath);
+                }
+            }
+
+            await File.WriteAllTextAsync(targetPath, payload, cancellationToken);
             written.Add(relPath);
         }
 
         var message = $"Installed {written.Count} files. Skipped {skipped.Count}.";
+        if (carriedForward.Count > 0)
+        {
+            message += $" Copied {carriedForward.Count} existing document(s) forward unchanged: "
+                + $"{string.Join(", ", carriedForward)}.";
+        }
         if (preserved.Count > 0)
         {
             message += $" Left {preserved.Count} existing file(s) untouched: {string.Join(", ", preserved)}.";
         }
 
         return new InstallResult(true, message, written);
+    }
+
+    /// <summary>
+    /// Reads the operator's live copy of a living document so it can be copied
+    /// forward into a new profile unchanged.
+    ///
+    /// Returns null when there is nothing to carry — the live file is absent,
+    /// empty, or we are already installing INTO the live directory (in which case
+    /// an existing file was preserved above and a missing one legitimately wants
+    /// the starter template). A read failure also returns null rather than
+    /// throwing: failing to carry content forward must never abort an install,
+    /// and it must never write a partial file.
+    /// </summary>
+    private static async Task<string?> TryReadLiveDocumentAsync(
+        string relPath,
+        string claudeDir,
+        string sourceDir,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var livePath = Path.Combine(sourceDir, relPath);
+            if (Path.GetFullPath(claudeDir).Equals(Path.GetFullPath(sourceDir), StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            if (!File.Exists(livePath)) return null;
+
+            var live = await File.ReadAllTextAsync(livePath, cancellationToken);
+            return string.IsNullOrWhiteSpace(live) ? null : live;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     // ── Template content ───────────────────────────────────────────────────────

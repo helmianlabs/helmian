@@ -635,11 +635,41 @@ using (var console = new ConsoleSession())
             outside.Contains("outside the registered workspace", StringComparison.OrdinalIgnoreCase),
             "WriteWorkspaceFile rejects paths outside workspace");
 
-        var launch = dispatcher.LaunchProcess("cmd.exe");
+        // This used to be LaunchProcess("cmd.exe"), which spawned a REAL, VISIBLE
+        // command prompt on Troy's desktop on every single test run and never
+        // killed it — they piled up in his face. A test suite is not allowed to
+        // put windows on his screen.
+        //
+        // The contract under test is "returns a structured result", and a path
+        // that cannot launch exercises it just as well as one that can, with no
+        // process and no window. The launching-succeeds direction is covered
+        // below with an explicitly hidden window that is killed immediately.
+        var launchMissing = dispatcher.LaunchProcess(
+            Path.Combine(toolWorkspaceRoot, "helmion-no-such-binary.exe"));
         Check(
-            launch.StartsWith("Success:", StringComparison.Ordinal)
-            || launch.StartsWith("Error launching", StringComparison.Ordinal),
-            "LaunchProcess returns a structured result when execution ON");
+            launchMissing.StartsWith("Error launching", StringComparison.Ordinal),
+            "LaunchProcess returns a structured error for a path that cannot start");
+
+        var launched = dispatcher.LaunchProcess("cmd.exe", hidden: true);
+        Check(
+            launched.StartsWith("Success:", StringComparison.Ordinal),
+            "LaunchProcess returns a structured success result when execution ON");
+
+        // Leave nothing running. The old version leaked a cmd.exe per run.
+        var launchedPid = ExtractProcessId(launched);
+        Check(launchedPid > 0, "LaunchProcess reports the process id it started");
+        try
+        {
+            using var spawned = System.Diagnostics.Process.GetProcessById(launchedPid);
+            spawned.Kill(entireProcessTree: true);
+            spawned.WaitForExit(5000);
+            Check(spawned.HasExited, "the process the test launched is not left running");
+        }
+        catch (ArgumentException)
+        {
+            // Already gone on its own. Also acceptable — nothing is left behind.
+            Check(true, "the process the test launched is not left running");
+        }
     }
     finally
     {
@@ -850,6 +880,14 @@ static void Check(bool condition, string description)
     {
         throw new InvalidOperationException($"Desktop smoke check failed: {description}");
     }
+}
+
+// Pulls the pid out of LaunchProcess's "Success: Launched 'x' (Process ID: 123)"
+// so the test can kill what it started. Returns 0 when there is no id to find.
+static int ExtractProcessId(string result)
+{
+    var match = System.Text.RegularExpressions.Regex.Match(result, @"Process ID:\s*(\d+)");
+    return match.Success && int.TryParse(match.Groups[1].Value, out var pid) ? pid : 0;
 }
 
 static IReadOnlyList<string> SnapshotFiles(string root)

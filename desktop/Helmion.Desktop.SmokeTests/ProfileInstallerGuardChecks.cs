@@ -80,7 +80,14 @@ internal static class ProfileInstallerGuardChecks
                 "the newly installed template is not empty");
             checks += 2;
 
-            // --- 3. Opting IN to overwrite takes a backup FIRST -------------------
+            // --- 3. overwriteExisting=true STILL cannot touch a living document ---
+            //
+            // REWRITTEN 2026-07-29 on Troy's instruction. This check used to assert
+            // the opposite: that an explicit overwrite DOES replace BASE_RULES.md as
+            // long as it takes a .bak first. That was the loaded gun — on 2026-07-29
+            // the shipped binary re-templated BASE_RULES.md and LESSONS.md again.
+            // His instruction: "No deletion, no reset, just a straight copy." So the
+            // flag no longer reaches a living document at all, and this proves it.
             var explicitResult = ClaudeProfileInstaller
                 .InstallAsync(approved, CancellationToken.None, overwriteExisting: true, targetDirectory: sandbox)
                 .GetAwaiter().GetResult();
@@ -88,17 +95,95 @@ internal static class ProfileInstallerGuardChecks
             Assert(explicitResult.Success, "explicit overwrite reports success");
             checks++;
 
-            var backups = Directory.GetFiles(sandbox, "BASE_RULES.md.*.bak");
+            foreach (var (name, body) in userAuthored)
+            {
+                var onDisk = File.ReadAllText(Path.Combine(sandbox, name));
+                Assert(
+                    onDisk == body,
+                    $"{name} survived even overwriteExisting:true — a living document has no "
+                    + "overwrite path, by flag or otherwise");
+                checks++;
+            }
+
             Assert(
-                backups.Length > 0,
-                "an explicit overwrite wrote a timestamped .bak before replacing the file");
+                Directory.GetFiles(sandbox, "BASE_RULES.md.*.bak").Length == 0,
+                "no .bak was needed for BASE_RULES.md because nothing was replaced");
             checks++;
 
-            var backedUp = File.ReadAllText(backups[0]);
+            // A Helmion-OWNED file is still replaceable on explicit opt-in, and still
+            // gets a backup first. The guarantee is scoped to the operator's
+            // documents, not a blanket refusal to ever write anything.
+            var ownedBackups = Directory.GetFiles(sandbox, "HELMION_CLAUDE.md.*.bak");
             Assert(
-                backedUp == userAuthored["BASE_RULES.md"],
-                "the .bak holds the user's original content, not the template");
+                ownedBackups.Length > 0,
+                "an explicit overwrite of a Helmion-owned file still wrote a timestamped .bak");
             checks++;
+
+            // --- 4. A NEW profile CARRIES the operator's content forward ----------
+            //
+            // Troy's instruction: "copies your existing content forward as-is into
+            // the new profile ... so the new client starts with the same accumulated
+            // rules and lessons you've already built." Not the template. His bytes.
+            var newProfile = Path.Combine(
+                Path.GetTempPath(),
+                $"helmion-newprofile-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(newProfile);
+            try
+            {
+                var carryResult = ClaudeProfileInstaller
+                    .InstallAsync(
+                        approved,
+                        CancellationToken.None,
+                        targetDirectory: newProfile,
+                        carryForwardFrom: sandbox)
+                    .GetAwaiter().GetResult();
+
+                Assert(carryResult.Success, "installing into a brand-new profile succeeds");
+                checks++;
+
+                foreach (var (name, body) in userAuthored)
+                {
+                    var seeded = File.ReadAllText(Path.Combine(newProfile, name));
+                    Assert(
+                        seeded == body,
+                        $"the new profile's {name} is the operator's accumulated content, "
+                        + "copied forward byte-for-byte, NOT a blank template");
+                    checks++;
+                }
+
+                // And the fallback still works: a living document with nothing to
+                // carry gets the starter template rather than an empty file.
+                var bare = Path.Combine(Path.GetTempPath(), $"helmion-bare-{Guid.NewGuid():N}");
+                var emptySource = Path.Combine(Path.GetTempPath(), $"helmion-empty-{Guid.NewGuid():N}");
+                Directory.CreateDirectory(bare);
+                Directory.CreateDirectory(emptySource);
+                try
+                {
+                    ClaudeProfileInstaller
+                        .InstallAsync(
+                            approved,
+                            CancellationToken.None,
+                            targetDirectory: bare,
+                            carryForwardFrom: emptySource)
+                        .GetAwaiter().GetResult();
+
+                    var seededFresh = Path.Combine(bare, "BASE_RULES.md");
+                    Assert(File.Exists(seededFresh), "a first-run machine still gets BASE_RULES.md");
+                    Assert(
+                        new FileInfo(seededFresh).Length > 0,
+                        "the first-run BASE_RULES.md is the template, not an empty file");
+                    checks += 2;
+                }
+                finally
+                {
+                    try { Directory.Delete(bare, recursive: true); } catch { /* temp dir */ }
+                    try { Directory.Delete(emptySource, recursive: true); } catch { /* temp dir */ }
+                }
+            }
+            finally
+            {
+                try { Directory.Delete(newProfile, recursive: true); } catch { /* temp dir */ }
+            }
         }
         finally
         {
