@@ -529,6 +529,159 @@ async function maestroRead(method) {
   }
 }
 
+// MCP server install security pipeline. Five gated stages; nothing is
+// installed without an interactive human yes. See src/core/mcp-*.mjs.
+async function mcpInstall() {
+  const subcommand = process.argv[3] ?? 'help';
+  const valid = ['discover', 'audit', 'sandbox', 'review', 'drift'];
+  if (!valid.includes(subcommand)) {
+    throw new Error(`mcp-install subcommand must be one of: ${valid.join(', ')}`);
+  }
+  const asJson = hasFlag('--json');
+
+  if (subcommand === 'discover') {
+    const { discoverMcpServers, formatDiscoveryReport } = await import('../src/core/mcp-discovery.mjs');
+    const need = process.argv[4];
+    if (!need) throw new Error('mcp-install discover requires a stated need, e.g. "read local sqlite"');
+    const report = await discoverMcpServers({
+      need,
+      limit: Number(option('--limit', '10')),
+      token: process.env.GITHUB_TOKEN ?? null,
+    });
+    process.stdout.write(asJson ? `${JSON.stringify(report, null, 2)}\n` : `${formatDiscoveryReport(report)}\n`);
+    return;
+  }
+
+  const target = process.argv[4];
+  if (!target) throw new Error(`mcp-install ${subcommand} requires a path to the candidate directory`);
+  const candidateRoot = resolve(target);
+  const { loadDeclaredManifest } = await import('../src/core/mcp-install-pipeline.mjs');
+  const declared = await loadDeclaredManifest(candidateRoot);
+
+  if (subcommand === 'audit') {
+    const { auditCandidate, formatAuditReport } = await import('../src/core/mcp-code-audit.mjs');
+    const report = await auditCandidate({ root: candidateRoot, declared });
+    process.stdout.write(asJson ? `${JSON.stringify(report, null, 2)}\n` : `${formatAuditReport(report)}\n`);
+    if (report.blocking) process.exitCode = 2;
+    return;
+  }
+
+  if (subcommand === 'sandbox') {
+    const { runSandboxedCandidate, formatSandboxReport } = await import('../src/core/mcp-sandbox.mjs');
+    const report = await runSandboxedCandidate({
+      root: candidateRoot,
+      entry: option('--entry', 'index.mjs'),
+      declared,
+    });
+    process.stdout.write(asJson ? `${JSON.stringify(report, null, 2)}\n` : `${formatSandboxReport(report)}\n`);
+    if (report.verdict !== 'no-observed-misbehaviour') process.exitCode = 2;
+    return;
+  }
+
+  const { defaultLedgerDirectory } = await import('../src/core/mcp-install-ledger.mjs');
+  const ledgerDir = option('--ledger-dir', defaultLedgerDirectory(option('--workspace', process.cwd())));
+
+  if (subcommand === 'drift') {
+    const { checkForDrift } = await import('../src/core/mcp-install-ledger.mjs');
+    const serverName = option('--name', declared.name ?? candidateRoot.split(/[\\/]/).filter(Boolean).pop());
+    const result = await checkForDrift({ ledgerDir, serverName, root: candidateRoot, declared });
+    process.stdout.write(asJson ? `${JSON.stringify(result, null, 2)}\n` : `${result.status.toUpperCase()}: ${result.message}\n`);
+    if (result.status === 'drift-detected') process.exitCode = 2;
+    return;
+  }
+
+  // review — the full five-stage pipeline. Stage 4 requires a real terminal.
+  const { runInstallPipeline, formatPipelineOutcome } = await import('../src/core/mcp-install-pipeline.mjs');
+  const report = await runInstallPipeline({
+    root: candidateRoot,
+    serverName: option('--name', null),
+    ledgerDir,
+    projectSlug: option('--project', null),
+    haltOnCritical: !hasFlag('--review-blocked-candidate'),
+  });
+  process.stdout.write(asJson ? `${JSON.stringify(report, null, 2)}\n` : `${formatPipelineOutcome(report)}\n`);
+  // Anything short of an installed server exits non-zero, so a caller that only
+  // checks the exit code can never mistake a refusal for a success.
+  if (report.finalDecision !== 'installed') process.exitCode = 2;
+}
+
+// Plugins / connectors. A plugin is a local directory carrying commands/ and
+// optionally an .mcp.json. This command NEVER fetches and NEVER executes plugin
+// code: a remote spec is refused, and every declared MCP server is refused
+// unless the install ledger (helmion mcp-install) already approved that exact
+// code. There is deliberately no second install path here.
+async function plugin() {
+  const subcommand = process.argv[3] ?? 'list';
+  const valid = ['list', 'add', 'remove', 'commands'];
+  if (!valid.includes(subcommand)) {
+    throw new Error(`plugin subcommand must be one of: ${valid.join(', ')}`);
+  }
+  const workspace = resolve(option('--workspace', process.cwd()));
+  const asJson = hasFlag('--json');
+  const {
+    addPlugin, formatPluginReport, loadEnabledPlugins, removePlugin,
+  } = await import('../src/agent/plugins.mjs');
+
+  if (subcommand === 'add') {
+    const spec = process.argv[4];
+    if (!spec) throw new Error('plugin add requires a local directory path');
+    let result;
+    try {
+      result = await addPlugin({ workspace, spec });
+    } catch (error) {
+      // A refusal is a decision, not a crash. Print the reason plainly rather
+      // than burying it in a stack trace the reader has to decode.
+      if (error.name === 'RemoteSourceRefusedError') {
+        process.stderr.write(`${error.message}\n`);
+        process.exitCode = 2;
+        return;
+      }
+      throw error;
+    }
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify(result.plugin, null, 2)}\n`);
+    } else {
+      process.stdout.write(
+        `${result.replaced ? 'Updated' : 'Added'} plugin "${result.plugin.name}"\n`
+        + `${formatPluginReport([result.plugin])}`,
+      );
+    }
+    // A plugin whose MCP servers were all refused still registers its commands,
+    // but the caller should be able to notice the refusal without parsing prose.
+    if (result.plugin.refusals.length) process.exitCode = 3;
+    return;
+  }
+
+  if (subcommand === 'remove') {
+    const name = process.argv[4];
+    if (!name) throw new Error('plugin remove requires a plugin name');
+    const { removed } = await removePlugin({ workspace, name });
+    process.stdout.write(removed ? `Removed "${name}"\n` : `No plugin named "${name}"\n`);
+    if (!removed) process.exitCode = 1;
+    return;
+  }
+
+  const { plugins, errors } = await loadEnabledPlugins({ workspace });
+
+  if (subcommand === 'commands') {
+    const {
+      discoverCommands, formatCommandList, serializeRegistry,
+    } = await import('../src/agent/commands.mjs');
+    const registry = await discoverCommands({ workspace, plugins });
+    process.stdout.write(asJson
+      ? `${JSON.stringify(serializeRegistry(registry), null, 2)}\n`
+      : `Slash commands (workspace ${workspace}):\n${formatCommandList(registry)}`);
+    return;
+  }
+
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({ plugins, errors }, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`Plugins (workspace ${workspace}):\n${formatPluginReport(plugins)}`);
+  for (const err of errors) process.stdout.write(`  ! ${err.name ?? '?'}: ${err.message}\n`);
+}
+
 const command = process.argv[2] ?? 'help';
 if (command === 'agent' || command === 'chat' || command === 'code') {
   const { runAgentCli } = await import('../src/agent/session.mjs');
@@ -539,6 +692,8 @@ if (command === 'agent' || command === 'chat' || command === 'code') {
   await runAgentBridge();
 } else if (command === 'guard') await guard();
 else if (command === 'agent-os') await agentOs();
+else if (command === 'mcp-install') await mcpInstall();
+else if (command === 'plugin' || command === 'plugins') await plugin();
 else if (command === 'advisory') await advisory();
 else if (command === 'init') await init();
 else if (command === 'db-inspect') await inspectDatabase();
@@ -593,6 +748,38 @@ Agent OS (self-improvement loop — rules, lessons, blockers, wins, hooks):
   helmion agent-os install --yes --json       # machine-readable, for the UI
     Targets: claude | codex | gemini | all (default all)
     Never overwrites your files and never edits a settings file.
+
+Slash commands (your own, in markdown — same format as Claude Code's):
+  Put files in .helmion/commands/ (this project) or ~/.helmion/commands/ (all
+  projects). deploy.md becomes /deploy; frontend/component.md becomes
+  /frontend:component. Optional frontmatter: description, argument-hint,
+  arguments, allowed-tools, model, user-invocable.
+  In the body: $ARGUMENTS is everything typed; $0 is the first argument and $1
+  the second (0-based, as documented); named args come from "arguments:".
+  Type /help in the agent REPL to list everything discovered.
+  Built-in commands (/exit, /help, /clear, …) cannot be overridden; a file that
+  tries is listed as IGNORED rather than silently dropped.
+
+Plugins / connectors (a directory with commands/ and optionally .mcp.json):
+  helmion plugin list                         # what is registered, and its MCP verdicts
+  helmion plugin add E:\\path\\to\\my-plugin     # LOCAL directories only
+  helmion plugin remove <name>
+  helmion plugin commands                     # every slash command, plugins included
+    A remote source (URL, git, owner/repo) is REFUSED, not fetched.
+    Plugin code is never executed by this command — it reads markdown and JSON.
+    A declared MCP server is REFUSED unless "helmion mcp-install review" already
+    approved that exact code, and is refused again if the code changed since.
+
+MCP server install security (never install third-party code unreviewed):
+  helmion mcp-install discover "read local sqlite"   # stage 1: search GitHub
+  helmion mcp-install audit <path>                   # stage 2: read every source file
+  helmion mcp-install sandbox <path>                 # stage 3: run with no credentials
+  helmion mcp-install review <path>                  # all 5 stages, asks you to approve
+  helmion mcp-install drift <path> --name <server>   # stage 5: changed since you approved it?
+    review REQUIRES an interactive terminal. Piped or redirected stdin is
+    refused and nothing is installed. There is no --yes and no auto-approve.
+    Installing never edits your MCP config — it prints the snippet for you.
+    Exit code is non-zero for anything other than a completed install.
 
 Advisory lane (Grok / Gemini / ChatGPT output — low-trust until a human reviews it):
   helmion advisory list                       # unreviewed rows, oldest first

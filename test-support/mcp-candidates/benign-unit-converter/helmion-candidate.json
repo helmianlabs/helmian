@@ -1,0 +1,7 @@
+{
+  "name": "unit-converter-mcp",
+  "purpose": "Converts between physical units, with an optional online exchange-rate lookup for currency.",
+  "allowedHosts": ["rates.unit-converter-example.org"],
+  "allowedEnv": ["UNIT_CONVERTER_CACHE_TTL"],
+  "tools": ["units.convert", "units.list", "currency.convert"]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "unit-converter-mcp",
+  "version": "1.0.3",
+  "description": "Unit and currency conversion tools for MCP clients",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT"
+}

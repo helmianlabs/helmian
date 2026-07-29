@@ -9,6 +9,13 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { redactSecrets } from './redact.mjs';
+import {
+  ALLOW_SESSION,
+  DENY,
+  isAllowed,
+  normalizeDecision,
+  resolveAskTimeoutMs,
+} from './approval.mjs';
 
 const READ_TOOLS = new Set(['read_file', 'list_dir', 'search_text']);
 const WRITE_TOOLS = new Set(['write_file', 'run_command']);
@@ -93,12 +100,25 @@ function buildSafeEnv() {
  * Normalize console permission mode used by every LLM provider.
  * - read-only: no tools
  * - read-tools: read_file, list_dir, search_text
- * - full: all tools including write_file + run_command
+ * - ask:       every tool is eligible, but each individual call must be
+ *              approved by a human before it runs
+ * - full:      all tools including write_file + run_command, no asking
  */
 export function normalizePermissionMode(mode) {
   const m = String(mode || 'read-only').trim().toLowerCase();
   if (m === 'full' || m === 'execution' || m === 'on' || m === 'write' || m === 'all') {
     return 'full';
+  }
+  if (
+    m === 'ask'
+    || m === 'always-ask'
+    || m === 'always_ask'
+    || m === 'ask-each'
+    || m === 'approve'
+    || m === 'prompt'
+    || m === 'confirm'
+  ) {
+    return 'ask';
   }
   if (m === 'read-tools' || m === 'read' || m === 'tools-read' || m === 'readonly-tools') {
     return 'read-tools';
@@ -106,21 +126,129 @@ export function normalizePermissionMode(mode) {
   return 'read-only';
 }
 
+/**
+ * Eligibility only. In `ask` mode every tool is eligible, which is NOT the same
+ * as runnable — see the approval gate in `execute`, which is the thing that
+ * actually decides whether a call happens.
+ */
 function isToolAllowed(permissionMode, name) {
   if (permissionMode === 'full') return true;
+  if (permissionMode === 'ask') return true;
   if (permissionMode === 'read-tools') return READ_TOOLS.has(name);
   return false;
 }
 
 /**
+ * Snapshot arguments once, so the object a human approved is byte-for-byte the
+ * object that executes. Never throws: an unclonable value falls back to the
+ * original rather than failing a call in the non-ask modes.
+ */
+function cloneArgs(args) {
+  if (args === null || args === undefined) return {};
+  if (typeof args !== 'object') return args;
+  try {
+    return structuredClone(args);
+  } catch {
+    try {
+      return JSON.parse(JSON.stringify(args));
+    } catch {
+      return args;
+    }
+  }
+}
+
+/** Resolve a promise, or DENY if it takes longer than `ms` or rejects. */
+async function decideWithTimeout(promise, ms) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise),
+      new Promise((resolvePromise) => {
+        timer = setTimeout(() => resolvePromise({ __helmionApprovalTimeout: true }), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * Workspace-scoped tools for the Helmion coding agent CLI.
  * Paths outside the workspace root are rejected.
+ *
  * @param {string} workspaceRoot
- * @param {{ permissionMode?: string }} [options]
+ * @param {{
+ *   permissionMode?: string,
+ *   approver?: (req: {tool: string, args: any, workspace: string, permissionMode: string}) => Promise<string>,
+ *   approvalTimeoutMs?: number,
+ *   onApprovalDecision?: (info: {tool: string, decision: string, source: string}) => void,
+ * }} [options]
+ *
+ * `approver` is the ONLY way a call gets approved in ask mode. Leaving it unset
+ * denies every tool call — a runtime that cannot reach a human must not act.
+ * Session grants live on this runtime instance, so recreating the runtime (a
+ * permission change, a reset, a new workspace) clears them by construction.
  */
 export function createToolRuntime(workspaceRoot, options = {}) {
   const root = resolve(workspaceRoot);
   const permissionMode = normalizePermissionMode(options.permissionMode);
+  const approver = typeof options.approver === 'function' ? options.approver : null;
+  const approvalTimeoutMs = resolveAskTimeoutMs(
+    options.approvalTimeoutMs ?? process.env.HELMION_ASK_TIMEOUT_MS,
+  );
+  const onApprovalDecision = typeof options.onApprovalDecision === 'function'
+    ? options.onApprovalDecision
+    : () => {};
+
+  /** Tool names the user approved for the rest of THIS runtime's life. */
+  const sessionGrants = new Set();
+
+  function noteDecision(tool, decision, source) {
+    try {
+      onApprovalDecision({ tool, decision, source });
+    } catch {
+      // A broken host listener must never change a permission outcome.
+    }
+  }
+
+  /**
+   * Ask a human about one call. Returns {decision, reason}; anything other than
+   * an explicit allow is a denial with the reason it was denied.
+   */
+  async function requestApproval(name, args) {
+    if (sessionGrants.has(name)) {
+      noteDecision(name, ALLOW_SESSION, 'session-grant');
+      return { decision: ALLOW_SESSION, reason: 'session-grant' };
+    }
+    if (!approver) {
+      noteDecision(name, DENY, 'no-approver');
+      return { decision: DENY, reason: 'no approver is connected' };
+    }
+
+    let raw;
+    try {
+      raw = await decideWithTimeout(
+        approver({ tool: name, args, workspace: root, permissionMode }),
+        approvalTimeoutMs,
+      );
+    } catch {
+      noteDecision(name, DENY, 'approver-error');
+      return { decision: DENY, reason: 'the approval channel failed' };
+    }
+
+    if (raw && typeof raw === 'object' && raw.__helmionApprovalTimeout) {
+      noteDecision(name, DENY, 'timeout');
+      return { decision: DENY, reason: `no answer within ${approvalTimeoutMs}ms` };
+    }
+
+    const decision = normalizeDecision(raw);
+    if (decision === ALLOW_SESSION) sessionGrants.add(name);
+    noteDecision(name, decision, 'approver');
+    return {
+      decision,
+      reason: decision === DENY ? 'the user denied it' : 'approved',
+    };
+  }
 
   function resolveInWorkspace(userPath) {
     const raw = (userPath || '.').trim() || '.';
@@ -266,6 +394,10 @@ export function createToolRuntime(workspaceRoot, options = {}) {
   return {
     root,
     permissionMode,
+    /** Tools the user granted for this runtime's lifetime (ask mode only). */
+    get grantedTools() {
+      return Object.freeze([...sessionGrants]);
+    },
     get tools() {
       return allowedTools();
     },
@@ -283,13 +415,30 @@ export function createToolRuntime(workspaceRoot, options = {}) {
       if (!isToolAllowed(permissionMode, name)) {
         return (
           `Error: tool '${name}' blocked by permission mode '${permissionMode}'. `
-          + `Use the Console permissions dropdown (Read tools / Full tools).`
+          + `Use the Console permissions dropdown (Read tools / Ask before each tool / Full tools).`
         );
       }
       const tool = tools[name];
       if (!tool) return `Error: unknown tool ${name}`;
+
+      // Snapshot before approval so the arguments a human sees are the exact
+      // arguments that run — nothing can be swapped in between the two.
+      const callArgs = cloneArgs(args);
+
+      if (permissionMode === 'ask') {
+        const { decision, reason } = await requestApproval(name, callArgs);
+        if (!isAllowed(decision)) {
+          return (
+            `Error: tool '${name}' was DENIED — ${reason}. `
+            + 'It did NOT run and nothing was changed. Permission mode is \'ask\', so every '
+            + 'tool call needs the user to approve it first. Do not retry this same call: '
+            + 'explain what you need it for, or propose a different step.'
+          );
+        }
+      }
+
       try {
-        const result = await tool.execute(args || {});
+        const result = await tool.execute(callArgs);
         // Redact secrets from all tool outputs as a final safety net
         return redactSecrets(String(result));
       } catch (err) {

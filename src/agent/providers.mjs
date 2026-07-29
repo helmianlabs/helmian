@@ -78,6 +78,7 @@ export async function chatWithTools({
       messages,
       toolDefs,
       signal,
+      providerId,
     });
   }
 
@@ -104,7 +105,15 @@ export async function chatWithTools({
   throw new Error(`Unsupported provider: ${providerId}`);
 }
 
-async function openAiCompatibleTurn({ url, apiKey, model, messages, toolDefs, signal }) {
+async function openAiCompatibleTurn({
+  url,
+  apiKey,
+  model,
+  messages,
+  toolDefs,
+  signal,
+  providerId,
+}) {
   const body = {
     model,
     messages,
@@ -113,6 +122,18 @@ async function openAiCompatibleTurn({ url, apiKey, model, messages, toolDefs, si
   if (Array.isArray(toolDefs) && toolDefs.length > 0) {
     body.tools = toolDefs;
     body.tool_choice = 'auto';
+
+    // The gpt-5.6 family defaults to a reasoning effort that chat.completions
+    // refuses to combine with function tools. Verified from OpenAI's own 400:
+    // "Function tools with reasoning_effort are not supported for gpt-5.6-terra
+    //  in /v1/chat/completions. To use function tools, use /v1/responses or set
+    //  reasoning_effort to 'none'." Every tool-bearing OpenAI turn 400s without
+    // this. Scoped to providerId 'openai' — xAI and user-supplied
+    // OpenAI-compatible endpoints (Ollama, vLLM, LM Studio) reject the unknown
+    // field, so it must not be sent to them.
+    if (providerId === 'openai') {
+      body.reasoning_effort = 'none';
+    }
   }
   const res = await fetch(url, {
     method: 'POST',

@@ -1,0 +1,7 @@
+{
+  "name": "note-keeper-mcp",
+  "purpose": "Stores and retrieves plain-text notes for the agent.",
+  "allowedHosts": ["api.note-keeper-example.com"],
+  "allowedEnv": ["NOTE_KEEPER_DIR"],
+  "tools": ["notes.write", "notes.read", "notes.list"]
+}

@@ -81,6 +81,8 @@ public partial class MainWindow : Window
             {
                 AgentPermission.Full =>
                     $"Full tools ON for every LLM · Maestro={maestro} · write_file + run_command allowed.",
+                AgentPermission.Ask =>
+                    $"Ask before each tool · Maestro={maestro} · every call waits for your approval; no answer = denied.",
                 AgentPermission.ReadTools =>
                     $"Read tools ON for every LLM · Maestro={maestro} · writes/shell blocked.",
                 _ =>
@@ -130,6 +132,104 @@ public partial class MainWindow : Window
         UpdateConsoleExecutionState();
         AppendConsoleLine($"[Permissions → {mode} · applies to OpenAI, Claude, Gemini, Grok]");
     }
+
+    /// <summary>
+    /// The approval question currently on screen (ask mode), or null.
+    /// Completed by a button click, or cancelled when the agent decides for
+    /// itself first — a timeout on the Node side, for instance.
+    /// </summary>
+    private TaskCompletionSource<string>? _pendingApproval;
+
+    private string? _pendingApprovalId;
+
+    /// <summary>
+    /// Show the approval strip and wait for the user. Returns the decision, or
+    /// null when the request was withdrawn before anyone clicked.
+    /// </summary>
+    private Task<string?> RequestToolApprovalAsync(AgentBridgeEvent request)
+    {
+        // Only one question at a time: the agent loop asks serially.
+        CancelPendingApproval();
+
+        _pendingApprovalId = request.Id;
+        var completion = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingApproval = completion;
+
+        var tool = request.Tool ?? request.Name ?? "tool";
+        ConsoleApprovalTitleText.Text = $"APPROVAL NEEDED · {tool}";
+        ConsoleApprovalSummaryText.Text = request.Summary ?? tool;
+
+        var seconds = request.TimeoutMs is > 0 ? request.TimeoutMs.Value / 1000 : 0;
+        ConsoleApprovalDetailText.Text = seconds > 0
+            ? $"workspace {request.Workspace ?? "?"} · denied automatically in {seconds}s if you do not answer"
+            : $"workspace {request.Workspace ?? "?"}";
+
+        ConsoleApprovalPanel.Visibility = Visibility.Visible;
+        ConsoleApprovalAllowOnceButton.Focus();
+
+        AppendConsoleLine($"  ⚠ APPROVAL NEEDED — {request.Summary ?? tool}");
+
+        // The agent denies on its own clock. Stop waiting slightly after it does,
+        // or this loop would still be blocked on a click while the turn has
+        // already moved on — the permission_decision event sits unread behind us.
+        var budget = request.TimeoutMs is > 0 ? request.TimeoutMs.Value : 300000;
+        return WaitForApprovalAsync(completion, budget + 2000);
+    }
+
+    private static async Task<string?> WaitForApprovalAsync(
+        TaskCompletionSource<string> completion,
+        int abandonAfterMs)
+    {
+        var finished = await Task.WhenAny(
+            completion.Task,
+            Task.Delay(abandonAfterMs)).ConfigureAwait(true);
+
+        if (finished != completion.Task)
+        {
+            // Nobody answered in time; the agent has already denied it.
+            return null;
+        }
+
+        var decision = await completion.Task.ConfigureAwait(true);
+        return string.IsNullOrEmpty(decision) ? null : decision;
+    }
+
+    /// <summary>Withdraw the on-screen question without answering it.</summary>
+    private void CancelPendingApproval()
+    {
+        var pending = _pendingApproval;
+        _pendingApproval = null;
+        _pendingApprovalId = null;
+        HideApprovalPanel();
+        pending?.TrySetResult(string.Empty);
+    }
+
+    private void HideApprovalPanel()
+    {
+        if (ConsoleApprovalPanel is not null)
+        {
+            ConsoleApprovalPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void CompleteApproval(string decision)
+    {
+        var pending = _pendingApproval;
+        _pendingApproval = null;
+        _pendingApprovalId = null;
+        HideApprovalPanel();
+        pending?.TrySetResult(decision);
+    }
+
+    private void ConsoleApprovalAllowOnce_Click(object sender, RoutedEventArgs e) =>
+        CompleteApproval(AgentApprovalDecision.AllowOnce);
+
+    private void ConsoleApprovalAllowSession_Click(object sender, RoutedEventArgs e) =>
+        CompleteApproval(AgentApprovalDecision.AllowSession);
+
+    private void ConsoleApprovalDeny_Click(object sender, RoutedEventArgs e) =>
+        CompleteApproval(AgentApprovalDecision.Deny);
 
     private void AppendConsoleLine(string line)
     {
@@ -1429,11 +1529,17 @@ public partial class MainWindow : Window
             _agentBridge ??= new AgentBridge();
             AppendConsoleLine(
                 $"[Agent · {provider} · {permission} · workspace {workspace}]");
-            if (permission != AgentPermission.Full)
+            if (permission == AgentPermission.Ask)
             {
                 AppendConsoleLine(
-                    $"[Tip] Permissions={permission}. For full control (tools run without asking), "
-                    + "set the dropdown to Full tools.");
+                    "[Ask mode] Every tool call stops here for your approval: Allow once, "
+                    + "Allow for session, or Deny. Anything you do not answer is denied.");
+            }
+            else if (permission != AgentPermission.Full)
+            {
+                AppendConsoleLine(
+                    $"[Tip] Permissions={permission}. To approve tools one at a time, choose "
+                    + "\"Ask before each tool\"; for no prompts at all, choose Full tools.");
             }
 
             await foreach (var ev in _agentBridge.TurnAsync(
@@ -1453,6 +1559,51 @@ public partial class MainWindow : Window
                         break;
                     case "tool_result":
                         AppendConsoleLine($"  ← {Truncate(ev.Preview, 160)}");
+                        break;
+                    case "permission_request":
+                    {
+                        // Ask mode: the agent is blocked until we answer. Awaiting
+                        // here is safe — the UI thread keeps pumping while the
+                        // button click completes the task.
+                        var decision = await RequestToolApprovalAsync(ev);
+                        if (decision is null)
+                        {
+                            // Withdrawn (the bridge timed out or reset it first);
+                            // the permission_decision event reports what happened.
+                            break;
+                        }
+
+                        if (_agentBridge is not null && !string.IsNullOrEmpty(ev.Id))
+                        {
+                            await _agentBridge.RespondToPermissionAsync(ev.Id, decision);
+                        }
+
+                        break;
+                    }
+                    case "permission_decision":
+                    {
+                        // Whatever settled it — our click, a timeout, a shutdown —
+                        // the transcript records the outcome, and any question
+                        // still on screen for this id comes down.
+                        if (!string.IsNullOrEmpty(ev.Id) && ev.Id == _pendingApprovalId)
+                        {
+                            CancelPendingApproval();
+                        }
+
+                        var verdict = AgentApprovalDecision.IsAllowed(ev.Decision) ? "ALLOWED" : "DENIED";
+                        var by = ev.Source switch
+                        {
+                            "timeout" => " (no answer in time)",
+                            "session-grant" => " (already allowed for this session)",
+                            "no-approver" => " (nothing available to ask)",
+                            "shutdown" or "reset" => " (session ended before you answered)",
+                            _ => ""
+                        };
+                        AppendConsoleLine($"  ⇢ {verdict}: {ev.Tool ?? ev.Name ?? "tool"}{by}");
+                        break;
+                    }
+                    case "permission_unknown":
+                        AppendConsoleLine($"  ⇢ Approval ignored — {ev.Message}");
                         break;
                     case "assistant":
                         if (!string.IsNullOrWhiteSpace(ev.Text))
@@ -1513,6 +1664,9 @@ public partial class MainWindow : Window
         finally
         {
             _agentBusy = false;
+            // A question can only be answered while its turn is running, so never
+            // leave one on screen after the turn ends.
+            CancelPendingApproval();
             // Composer was already cleared at dispatch; anything typed during the turn
             // is the user's next message and must survive.
         }

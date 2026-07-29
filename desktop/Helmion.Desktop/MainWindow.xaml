@@ -1255,16 +1255,18 @@
                                VerticalAlignment="Center"
                                Margin="0,0,8,0" />
                     <ComboBox x:Name="ConsolePermissionCombo"
-                              Width="168"
+                              Width="196"
                               Height="28"
                               FontSize="12"
                               SelectedIndex="0"
                               SelectionChanged="ConsolePermissionCombo_SelectionChanged"
-                              ToolTip="Full tools = agent runs commands/edits without asking (every LLM). Read-only = chat only.">
+                              ToolTip="Applies to every LLM. Read-only = chat only. Ask = you approve each tool call. Full = no asking.">
                       <ComboBoxItem Content="Read-only chat" Tag="read-only"
                                     ToolTip="Chat only — no file or shell tools" />
                       <ComboBoxItem Content="Read tools" Tag="read-tools"
                                     ToolTip="Can read/search files; cannot write or run shell" />
+                      <ComboBoxItem Content="Ask before each tool" Tag="ask"
+                                    ToolTip="Every tool available, but each call stops and waits for your approval. No answer = denied." />
                       <ComboBoxItem Content="Full tools (no ask)" Tag="full"
                                     ToolTip="Full control — write files + run commands without asking" />
                     </ComboBox>
@@ -1312,6 +1314,7 @@
               <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
               </Grid.RowDefinitions>
@@ -1396,8 +1399,73 @@
                            TextTrimming="CharacterEllipsis" />
               </Border>
 
+              <!-- Approval prompt — visible only while ask mode is waiting on you -->
+              <Border x:Name="ConsoleApprovalPanel"
+                      Grid.Row="3"
+                      Visibility="Collapsed"
+                      Background="#1C1608"
+                      BorderBrush="{DynamicResource AmberBrush}"
+                      BorderThickness="0,1,0,1"
+                      Padding="16,10">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+
+                  <StackPanel VerticalAlignment="Center" Margin="0,0,14,0">
+                    <TextBlock x:Name="ConsoleApprovalTitleText"
+                               Text="APPROVAL NEEDED"
+                               Foreground="{DynamicResource AmberBrush}"
+                               FontSize="10"
+                               FontWeight="Bold"
+                               Margin="0,0,0,3" />
+                    <TextBlock x:Name="ConsoleApprovalSummaryText"
+                               Text=""
+                               Foreground="#F2E4C4"
+                               FontFamily="Cascadia Mono, Consolas"
+                               FontSize="13"
+                               TextWrapping="Wrap" />
+                    <TextBlock x:Name="ConsoleApprovalDetailText"
+                               Text=""
+                               Foreground="#B7A88A"
+                               FontSize="10.5"
+                               Margin="0,3,0,0"
+                               TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+
+                  <StackPanel Grid.Column="1"
+                              Orientation="Horizontal"
+                              VerticalAlignment="Center">
+                    <Button x:Name="ConsoleApprovalAllowOnceButton"
+                            Content="Allow once"
+                            Height="32"
+                            Padding="14,0"
+                            Margin="0,0,8,0"
+                            Click="ConsoleApprovalAllowOnce_Click"
+                            ToolTip="Run this one call. The next call asks again."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                    <Button x:Name="ConsoleApprovalAllowSessionButton"
+                            Content="Allow for session"
+                            Height="32"
+                            Padding="14,0"
+                            Margin="0,0,8,0"
+                            Click="ConsoleApprovalAllowSession_Click"
+                            ToolTip="Stop asking about THIS tool until you change permissions or reset."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                    <Button x:Name="ConsoleApprovalDenyButton"
+                            Content="Deny"
+                            Height="32"
+                            Padding="18,0"
+                            Click="ConsoleApprovalDeny_Click"
+                            ToolTip="Refuse this call. Nothing runs."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+
               <!-- Input dock -->
-              <Border Grid.Row="3"
+              <Border Grid.Row="4"
                       Background="#101A22"
                       BorderBrush="#1A2834"
                       BorderThickness="0,1,0,0"
