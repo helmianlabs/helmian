@@ -319,3 +319,95 @@ Troy said the sweep above missed several apps. It did. This section is the secon
 Grep patterns run against candidate trees: `diary`, `Diary`, `brain.?dump`, `braindump`, `journal`, `haiku`, `docs\.google`, `googleapis`, `drive\.file`, `documents\.create`, `transcri`. The diary was found by grepping `n8n_Pod_Uploader_jarvis` — a repo whose `package.json` is still named `faith-and-thread` and which the inventory above lists as "ThinkBuddy", which is exactly why the diary was invisible on the first pass: **it is a second app living inside a third app's repo under a fourth app's name.**
 
 Live HTTP checks run 2026-07-28 ~23:45 MDT via `Invoke-WebRequest -Method Head`: `thinkbuddy.vercel.app` **401** · `aimforge-gray.vercel.app` **200** · `caldmere-login.vercel.app` **200**.
+
+---
+
+## DEEP HUNT 2026-07-29
+
+**Appended by `f3673e34/agent-AC-deep-app-hunt`. APPEND ONLY — nothing above this line was altered. READ-ONLY sweep. No `.env` or secret file was opened.**
+
+### Why the two earlier passes fell short
+
+Both prior sweeps read **folders**. Folders lie about deployment. This pass read the **deploy account** instead: `vercel project ls` as the logged-in user `troy83352`, which returns every project *and its real production URL*. That single command corrected four of Troy's five complaints at once, because **the production URL is not derived from the folder name**.
+
+The headline: `thinkbuddy.vercel.app` is not the site. The `thinkbuddy` project serves **`thinkinbuddy.vercel.app`** (note the extra "in"). The first hostname is a stale deploy sitting behind Vercel deployment protection and returns **401**, which is exactly why Troy could not open the diary on his phone and why the FOUND LATER pass had to leave it unverified.
+
+Every URL below was fetched with `Invoke-WebRequest -Method Get` on 2026-07-29 ~01:15 MDT and the HTML `<title>` recorded. A status with no title means the page renders its title in JavaScript.
+
+### 1. SELLABLE AND LIVE — things with a price on them today
+
+| App | Real name | Path | Live link (verified) | State |
+|---|---|---|---|---|
+| **Gumroad product #1** | **The AI Memory Blueprint** | `C:\Users\troyh\OneDrive\Desktop\BLUEPRINT_MEMORY.md` | **https://troyverse387.gumroad.com/l/gnroja** → **200** | **PUBLISHED, FOR SALE.** Teaches a buyer to build a Neon + Vercel MCP memory server. Price recorded as **$29** in the session where he published it — the live page renders price in JS so I could not read it off the page itself |
+| **Gumroad product #2** | **The Voice Diary Blueprint** | `C:\Users\troyh\OneDrive\Desktop\BLUEPRINT_VOICE.md` | **https://troyverse387.gumroad.com/l/qlnaps** → **200** | **PUBLISHED, FOR SALE.** Sells the Site Diary app as a build-it-yourself kit. Same $29 caveat |
+| **His storefront** | Gumroad store, seller name **"Troy Shoemaker"** | — | **https://troyverse387.gumroad.com** → **200** | **LIVE.** Neither product appears anywhere in the inventory above — this is real revenue infrastructure that was completely invisible to both prior passes |
+| **Site Diary** | `Site Diary` (HTML `<title>`, `diary.html:7`) | `C:\Users\troyh\n8n_Pod_Uploader_jarvis\jarvis\api\diary.js` + `jarvis\public\diary.html` | **https://thinkinbuddy.vercel.app/diary.html** → **200**, title `Site Diary` | **LIVE — open it on your phone.** Voice → Whisper → Claude Haiku → Google Sheets |
+| **ThinkinBuddy** | `ThinkinBuddy` | `C:\Users\troyh\n8n_Pod_Uploader_jarvis\jarvis` | **https://thinkinbuddy.vercel.app** → **200** | **LIVE.** The parent app the diary lives inside — 28 API routes (chat, memory, image, video, MCP, alarm, search, browse). 🔴 A prior audit found `/api/mcp` has **no auth**: `mcp.js:3` promises a Bearer check that `mcp.js:135-227` never implements |
+| **Cognitive Aptitude Test** | `Cognitive Aptitude Test — how sharp are you today?` | `C:\Users\troyh\iq-app` | **https://iq-app-seven.vercel.app** → **200** | **LIVE.** This is the real IQ app URL |
+| **FirstPrinciples Assessment** | `FirstPrinciples Assessment — how do you think?` | `C:\Users\troyh\firstprinciples-assessment` | **https://firstprinciples-assessment.vercel.app** → **200** | **LIVE.** Separate app from the IQ test, but they **share one Neon database** — the `firstprinciples` schema holds `iq_attempts`, `iq_results`, `candidates` (13 rows), `visual_responses` (77 rows) |
+| **HVAC Tech Calc** | `HVAC Tech Calc` | `C:\Users\troyh\hvac-tech-calc` | **https://hvac-tech-calc.vercel.app** → **200** | **LIVE and the UI is COMPLETE** — 7 working calculators, no placeholders, no "coming soon" |
+| **Claude AI Memory Vault** | `Claude AI Memory Vault` | `C:\Users\troyh\OneDrive\Desktop\claude-ai-memory-vault` | **https://claude-ai-memory-vault.vercel.app** → **200** | **LIVE.** The inventory above called this a "kit" — it is also a deployed site. This is the app that really does write **Google Docs** |
+| **PC Auto Drive Organizer** | `PC Auto Drive Organizer` | `D:\pc-auto-drive-organizer` | Desktop app — no URL | **BUILT EXE EXISTS:** `D:\pc-auto-drive-organizer\release\win-unpacked\PC Auto Drive Organizer.exe`, **180 MB, built 2026-07-26 14:58** |
+
+### 2. LIVE, ALREADY KNOWN — links corrected or confirmed
+
+| App | Live link (verified 2026-07-29) | Note |
+|---|---|---|
+| DairyForge | **https://dairyforge.com** → 200 · also **https://dairyforge.vercel.app** → 200 | Vercel project `dairyforge`. The gap the first pass flagged is now closed |
+| AimForge console | **https://aimforge-console.vercel.app** → 200 | Title reads `Forge — TMS & AI dispatch for freight carriers` |
+| AimForge landing | **https://aimforge-gray.vercel.app** → 200 | Vercel project `aimforge`, from `OneDrive\Desktop\aimforge-web` |
+| Caldmere Codex | **https://caldmere-codex.vercel.app** → 200 | 🔴 Deploys from **`C:\Users\troyh\.claude\apps\caldmere-codex`** (one 420 KB static `index.html`) — NOT from `E:\UnityProjects\Caldmere_v2` as line 30 above says |
+| Caldmere login | **https://caldmere-login.vercel.app** → 200 | |
+| Caldmere screenshots | **https://troy83352.github.io/caldmere-shots/** → 200 | Live gallery, title `Caldmere — Minotaur Character Creation`. Pushed by `D:\_dem\bridge\push_gallery.ps1` |
+| DFA Saadi demo | **https://dfa-saadi-demo.vercel.app** → 200 | |
+| Claude Memory API | **https://claude-memory-api.vercel.app** → 200 | |
+| Claude Memory MCP | **https://claude-memory-mcp-troy.fly.dev** → 200 | |
+| Faith & Light store | **https://faithnlight.shop** → 200 | 🔴 Its page title still says **"Faith & Light"**, the name Troy calls dead — see §4 |
+| Faith & Thread store | **https://n8n-pod-uploader.vercel.app** → 200 | Title `Faith & Thread — Christian Streetwear`. A **second live storefront** with the new brand name |
+| Faith & Thread API | **https://faith-thread-api-production.up.railway.app/api/products** → 200 | 🔴 **RAILWAY.** The inventory has zero Railway rows. Root `/` returns 404; the API path answers |
+| Faith & Thread n8n | **https://faith-thread-n8n.fly.dev** → 200 | |
+| Forge Fleet Ops | **https://forge-fleet-ops.fly.dev** → 200, title `Fleet Ops Layer` | 🔴 A **live Fly app whose source is lost** — only the 4-file salvage stub at `C:\Users\troyh\forge-fleet-ops-recovered` remains |
+| Forge punch list | **https://forge-punchlist.vercel.app** → 200 | Title `Forge — Master Punch List`. No folder on disk |
+| ForgeFleet landing | **https://forgefleet.vercel.app** → 200 | No folder on disk |
+| Forge web deploy | **https://forge-web-deploy.vercel.app** → 200 | No folder on disk |
+| ForgeFleet dash | **https://forgefleet-dash.vercel.app** → 200 | From `C:\Users\troyh\forge-monorepo` |
+| DairyForge unified dash | **https://dairyforge-unified-dash.vercel.app** → 200 | From `C:\Users\troyh\df-wt-dashboard` — a June-16 feature branch is what is live |
+
+### 3. DEAD LINKS — verified non-answering, so nobody chases them again
+
+`jarvis-asteroid.vercel.app` **404** · `memorybridge-demo.vercel.app` **404** · `forge-api-app.fly.dev` **404** · `faith-thread-resizer.fly.dev` **404** · `dairyforge-api.fly.dev` **404 at `/`** (routes, but no root route) · `aimforge-api.fly.dev` **404 at `/`** (same) · `troy83352.itch.io/caldmere` **404** (the Caldmere itch.io build is gone or private) · `thinkbuddy.vercel.app` **401** · `faithandlight.shop` **DNS does not resolve** · `forgefleet-api.fly.dev` **DNS does not resolve** · `dairyforge-backend-legacy.fly.dev` **DNS does not resolve** (good — that is the do-not-deploy archive).
+
+**Not his, do not chase:** `iq-app.vercel.app` (redirects to a stranger, already noted above) and **`aim-forge.vercel.app`**, which is live but titles itself `AIM FORGE — Crosshair Overlay` — a gaming overlay. 🔴 `skills/name-the-system-before-you-touch-it/SKILL.md:72` wrongly equates `aim-forge.vercel.app` with the AimForge console. That skill line is wrong.
+
+### 4. Apps with NO row anywhere in this document
+
+| App | Real name | Path | Live link | State |
+|---|---|---|---|---|
+| **DairyForge USB demo / DairyPort** | Two EXE brands off ONE `app.py` | `C:\Users\troyh\Documents\Codex\2026-07-02\alright-forget-that-fucking-email-thing\work` | Desktop EXE, no URL | **WORKING.** `app.py` is 6,212 lines. Builds `dist\START_DAIRYFORGE_DEMO.exe` **and** `dist\START_DAIRYPORT_DEMO.exe` — "DairyPort" is a second brand, not a second codebase. 20 dated USB release folders under `release\`. **Not a git repo.** This is the Chobani/Twin Falls demo tree — the most customer-facing artifact he owns, and it had no inventory row |
+| **Helmion Hub** | `helmion-hub` | `C:\Users\troyh\helmion-hub` | Not deployed | **IN PROGRESS.** Next.js + vitest. Its own description: *"Shared access hub: Troy and Bryce publish and test each other's Helmion builds."* |
+| **ThinkinBuddy Android APK** | "Mark" | `…\n8n_Pod_Uploader_jarvis\jarvis\public\mark-android.apk` | Wraps thinkinbuddy.vercel.app | **BUILT.** Capacitor thin shell loading the live site in a native WebView |
+| **Gauge pre-rename snapshots** | bundle `com.troy.gaugesandbox` | `C:\Users\troyh\OneDrive\Desktop\archive\gauge-snapshots-2026-05-09\` (5 trees) + `C:\Users\troyh\Desktop\Gauge\recovered` | — | **ARCHIVE.** The whole `OneDrive\Desktop\archive` tree was missing from this document |
+| **`D:\_dem`** | "Caldmere tooling / scratch" | `D:\_dem` | — | **ACTIVE.** Registered as a first-class project in Neon (`bigsister.projects` id=8) with a running watcher and 615 `pattern_library` rows, yet absent from this document |
+
+### 5. Fly apps — the complete list, from all 36 `fly.toml` files on disk
+
+`flyctl` is **not logged in** on this machine (`no access token available`), so disk config is the only source. **9 real app names + 1 placeholder:**
+
+`dairyforge-api` (in **25** separate folders — every worktree carries a deployable copy) · `aimforge-api` (3) · `forgefleet-api` (1, DNS dead) · `forge-api-app` (1) · `dairyforge-backend-legacy` (1) · `dairyforge-telegram-bot` (1) · `faith-thread-n8n` (1) · `faith-thread-resizer` (1) · `claude-memory-mcp-troy` (1) · and `CHANGEME-claude-ai-memory-vault-pro`, a **template placeholder that was never deployed**.
+
+🔴 The 25-folder `dairyforge-api` count is the real hazard: **a `fly deploy` from any one of those 28 folders targets live production.**
+
+### 6. Two structural traps that made apps invisible
+
+1. **`.vercel/repo.json` is not `.vercel/project.json`.** `C:\Users\troyh\aimforge\.vercel\` contains only `repo.json`, so any sweep grepping for `project.json` misses the AimForge console entirely. Search for both.
+2. **The OneDrive tree is a reparse point** (attribute `0x100411`, cloud placeholders). A recursive scan with a standard `ReparsePoint` skip returns **zero hits for all of `OneDrive\Desktop` in ~300 ms** and looks like a successful empty search. Both Gumroad products, the Memory Vault and the archive tree live in there. This is almost certainly why two passes missed them.
+
+Also: **8 live Vercel projects have no deploy config on disk at all** — `dairyforge`, `forgefleet`, `forge-web-deploy`, `claude-ai-memory-vault`, `n8n-pod-uploader`, `forge-punchlist`, `jarvis`, `jarvis-troy`. They deploy through Vercel's GitHub integration, which leaves no local artifact. **No disk-only sweep can ever find them.** `vercel project ls` is the only way.
+
+### 7. Honest gaps in THIS pass
+
+- **Gumroad prices were not read off the live pages.** Both product pages return 200 and render their correct titles, but the price is JavaScript-rendered. The `$29` figure comes from his own `BLUEPRINT_*.md` files and the session transcript where he confirmed both showed "Unpublish". Treat the *price* as secondary-source, the *published status* as verified.
+- **Fly runtime status is unproven.** `flyctl` is not authenticated, so "live" for a `.fly.dev` host means only that HTTP answered, not that the app is healthy.
+- **`bigsister.context`, `bigsister.decisions` and `bigsister.sprints` are all EMPTY** (0 rows). The high-trust tier described in Rule 0.27 has never been written to, while the low-trust lane holds 405 `agent_logs`, 1,752 `failure_logs` and 3,978 `session_snapshots`.
+- **No `.env` was opened**, and no credential value was read or printed anywhere in this pass.
+- **Nothing was changed, deployed, or deleted.**

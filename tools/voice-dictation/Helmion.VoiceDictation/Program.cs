@@ -67,6 +67,21 @@ internal static class Program
             }
         }
 
+        HotkeySpec? conversationHotkey = null;
+        if (!string.IsNullOrWhiteSpace(config.ConversationHotkey))
+        {
+            if (HotkeySpec.TryParse(config.ConversationHotkey, out var parsedConversation, out var conversationProblem))
+            {
+                conversationHotkey = parsedConversation;
+            }
+            else
+            {
+                DictationLog.Warn(
+                    $"Conversation hotkey \"{config.ConversationHotkey}\" ignored ({conversationProblem}). "
+                    + "Toggle spoken replies with voice.ps1 -Conversation instead.");
+            }
+        }
+
         var modelPath = VocabularyTranscriber.ResolveModelPath(config.ModelPath);
         if (modelPath is null)
         {
@@ -89,7 +104,7 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
 
-        using var host = new DictationHost(config, dictateHotkey, cancelHotkey, transcriber);
+        using var host = new DictationHost(config, dictateHotkey, cancelHotkey, conversationHotkey, transcriber);
         using var stopEvent = new EventWaitHandle(false, EventResetMode.AutoReset, StopEventName);
 
         var registration = ThreadPool.RegisterWaitForSingleObject(

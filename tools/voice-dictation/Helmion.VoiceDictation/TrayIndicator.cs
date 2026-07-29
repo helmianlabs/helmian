@@ -26,16 +26,45 @@ public enum DictationState
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class TrayIndicator : IDisposable
 {
+    /// <summary>
+    /// Dictionary key for the green "replies are spoken" dot.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT a member of <see cref="DictationState"/>. Conversation mode
+    /// is orthogonal to what the microphone is doing — replies can be spoken while
+    /// a recording is in progress — so putting it in the enum would invent
+    /// combinations ("Recording and Conversation") that every switch in the code
+    /// would then have to handle. A private key gives the icon a slot without
+    /// making the state machine lie.
+    /// </remarks>
+    private const DictationState ConversationIconKey = (DictationState)100;
+
     private readonly NotifyIcon? _notifyIcon;
     private readonly Dictionary<DictationState, Icon> _icons = new();
     private readonly List<IntPtr> _iconHandles = new();
     private readonly string _hotkeyText;
+    private readonly string _conversationHotkeyText;
 
     private bool _disposed;
 
-    public TrayIndicator(bool enabled, string hotkeyText, Action onQuit, Action onOpenLog)
+    /// <summary>Whether spoken replies are on, which changes the idle dot to green.</summary>
+    private bool _conversationOn;
+
+    /// <summary>
+    /// The last state passed to <see cref="Show"/>, so <see cref="SetConversation"/>
+    /// can re-render without the caller having to tell it what it was.
+    /// </summary>
+    private DictationState _lastState = DictationState.Idle;
+
+    public TrayIndicator(
+        bool enabled,
+        string hotkeyText,
+        string conversationHotkeyText,
+        Action onQuit,
+        Action onOpenLog)
     {
         _hotkeyText = hotkeyText;
+        _conversationHotkeyText = conversationHotkeyText;
 
         if (!enabled)
         {
@@ -74,9 +103,18 @@ public sealed class TrayIndicator : IDisposable
             return;
         }
 
+        _lastState = state;
+
         try
         {
-            if (_icons.TryGetValue(state, out var icon))
+            // Green while idle means "replies are being spoken" — the one piece of
+            // state a terminal user cannot otherwise see, since conversation mode
+            // has no window and produces no output until Claude answers.
+            var key = state == DictationState.Idle && _conversationOn
+                ? ConversationIconKey
+                : state;
+
+            if (_icons.TryGetValue(key, out var icon))
             {
                 _notifyIcon.Icon = icon;
             }
@@ -86,15 +124,25 @@ public sealed class TrayIndicator : IDisposable
                 DictationState.Recording => $"Recording… {_hotkeyText} to stop.",
                 DictationState.Transcribing => "Transcribing…",
                 DictationState.Error => detail ?? "Something failed — see the log.",
-                _ => $"Idle. {_hotkeyText} to talk.",
+                _ when _conversationOn => $"replies spoken. {_conversationHotkeyText} = off",
+                _ => $"idle. {_hotkeyText} to talk.",
             };
 
-            _notifyIcon.Text = Truncate($"Helmion Dictation — {label}");
+            _notifyIcon.Text = Truncate($"Helmion — {label}");
         }
         catch (Exception ex)
         {
             DictationLog.Warn($"Could not update the tray icon: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Record whether spoken replies are on and re-render the dot immediately.
+    /// </summary>
+    public void SetConversation(bool on)
+    {
+        _conversationOn = on;
+        Show(_lastState);
     }
 
     public void Dispose()
@@ -139,6 +187,7 @@ public sealed class TrayIndicator : IDisposable
         _icons[DictationState.Recording] = MakeDot(Color.FromArgb(220, 40, 40));
         _icons[DictationState.Transcribing] = MakeDot(Color.FromArgb(230, 160, 30));
         _icons[DictationState.Error] = MakeDot(Color.FromArgb(120, 10, 10));
+        _icons[ConversationIconKey] = MakeDot(Color.FromArgb(40, 180, 70));
     }
 
     /// <summary>
