@@ -6,10 +6,12 @@ using Helmion.Desktop.Core;
 ///
 /// WHY THIS EXISTS. On 2026-07-28 this installer overwrote Troy's
 /// ~/.claude/BASE_RULES.md — 5,512 bytes / 105 lines of his own writing, his
-/// supreme-rules file — with a 1,635-byte template, and did the same to
-/// LEARNINGS.md. No backup was produced, because the backup branch only runs when
-/// overwriting is explicitly requested. The content was eventually recovered
-/// byte-exact from Claude Code session transcripts, but nothing on disk survived.
+/// supreme-rules file — with a 1,635-byte template. No backup was produced,
+/// because the backup branch only runs when overwriting is explicitly requested.
+/// The content was eventually recovered byte-exact from Claude Code session
+/// transcripts, but nothing on disk survived. The same write hit LEARNINGS.md and
+/// LESSONS.md; LEARNINGS.md happened to hold only the template already, so nothing
+/// was lost there, but LESSONS.md lost real entries.
 ///
 /// The preserve-existing default was added the same day. NOTHING TESTED IT. A
 /// future edit flipping that default back would silently destroy the file again
