@@ -45,6 +45,12 @@ public sealed class VoiceBackendSelector : IDisposable
     private bool _wantsVoice;
     private bool _disposed;
 
+    /// <summary>
+    /// Bumped by every teardown. A start that began before the bump has been
+    /// superseded and is refused when it tries to publish its backend.
+    /// </summary>
+    private int _epoch;
+
     /// <param name="turnBasedFactory">Builds the Whisper+Kokoro session. Required — it is the fallback.</param>
     /// <param name="duplexFactory">
     /// Builds the duplex session. Null when no duplex backend is installed on this
@@ -108,6 +114,57 @@ public sealed class VoiceBackendSelector : IDisposable
                 return _turnBased is null || _duplex is null;
             }
         }
+    }
+
+    /// <summary>
+    /// The ONLY writer of <see cref="_duplex"/> and <see cref="_turnBased"/>.
+    /// Both fields are always written together under one lock, so "both backends
+    /// live" is unrepresentable rather than merely avoided by careful ordering.
+    /// </summary>
+    /// <remarks>
+    /// This exists because the previous code assigned each field at its own call
+    /// site. Every individual assignment was correct and the orderings still
+    /// admitted a both-set window under load: a start that assigns
+    /// <see cref="_duplex"/> can land after a fallback that already assigned
+    /// <see cref="_turnBased"/>, and no single site was wrong enough to see it.
+    /// Writing the pair atomically removes the interleaving instead of timing it.
+    /// Returns false when the caller has been superseded and must tear down what
+    /// it just built.
+    /// </remarks>
+    private bool TrySetLiveBackend(IDuplexVoiceSession? duplex, VoiceSession? turnBased, int expectedEpoch)
+    {
+        lock (_gate)
+        {
+            if (_epoch != expectedEpoch)
+            {
+                return false;
+            }
+
+            _duplex = duplex;
+            _turnBased = turnBased;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Invalidates any start still in flight and clears both fields. Returns the
+    /// new epoch, which a subsequent start must present to be allowed to publish.
+    /// </summary>
+    private int BeginTransition(out IDuplexVoiceSession? duplex, out VoiceSession? turnBased)
+    {
+        lock (_gate)
+        {
+            duplex = _duplex;
+            turnBased = _turnBased;
+            _duplex = null;
+            _turnBased = null;
+            return ++_epoch;
+        }
+    }
+
+    private int CurrentEpoch
+    {
+        get { lock (_gate) return _epoch; }
     }
 
     /// <summary>
@@ -231,6 +288,7 @@ public sealed class VoiceBackendSelector : IDisposable
     private async Task<string?> TryStartDuplexAsync(CancellationToken cancellationToken)
     {
         IDuplexVoiceSession? duplex = null;
+        var epoch = CurrentEpoch;
         try
         {
             duplex = _duplexFactory!();
@@ -245,9 +303,22 @@ public sealed class VoiceBackendSelector : IDisposable
                 throw new InvalidOperationException("Moshi session did not open its stream.");
             }
 
-            lock (_gate)
+            // A stream that died while we were opening it — or a stop the user
+            // asked for meanwhile — has already bumped the epoch. Publishing here
+            // would resurrect a dead backend on top of whatever replaced it.
+            if (!TrySetLiveBackend(duplex, null, epoch))
             {
-                _duplex = duplex;
+                throw new InvalidOperationException(
+                    "Moshi session was superseded before it went live.");
+            }
+
+            // Ended raised between the check above and publication would have been
+            // ignored by Duplex_Ended, because the session was not live yet. Re-read
+            // now that it is, so a stream that died in that window falls back
+            // instead of being published dead.
+            if (!duplex.IsRunning)
+            {
+                throw new InvalidOperationException("Moshi session closed while going live.");
             }
 
             SetStatus(VoiceBackendStatus.MoshiActive(duplex.State));
@@ -266,7 +337,10 @@ public sealed class VoiceBackendSelector : IDisposable
 
             lock (_gate)
             {
-                _duplex = null;
+                if (ReferenceEquals(_duplex, duplex))
+                {
+                    _duplex = null;
+                }
             }
 
             return $"Moshi unavailable: {ex.Message}";
@@ -276,6 +350,7 @@ public sealed class VoiceBackendSelector : IDisposable
     private VoiceBackend StartTurnBased(string? fallbackReason)
     {
         VoiceSession? session = null;
+        var epoch = CurrentEpoch;
         try
         {
             session = _turnBasedFactory();
@@ -288,9 +363,10 @@ public sealed class VoiceBackendSelector : IDisposable
                     "Whisper+Kokoro could not open the microphone.");
             }
 
-            lock (_gate)
+            if (!TrySetLiveBackend(null, session, epoch))
             {
-                _turnBased = session;
+                throw new InvalidOperationException(
+                    "Whisper+Kokoro session was superseded before it went live.");
             }
 
             SetStatus(VoiceBackendStatus.WhisperKokoroActive(session.EngineState, fallbackReason));
@@ -306,7 +382,10 @@ public sealed class VoiceBackendSelector : IDisposable
 
             lock (_gate)
             {
-                _turnBased = null;
+                if (ReferenceEquals(_turnBased, session))
+                {
+                    _turnBased = null;
+                }
             }
 
             var detail = fallbackReason is null
@@ -326,15 +405,7 @@ public sealed class VoiceBackendSelector : IDisposable
     /// </summary>
     private async Task StopBackendsAsync()
     {
-        IDuplexVoiceSession? duplex;
-        VoiceSession? turnBased;
-        lock (_gate)
-        {
-            duplex = _duplex;
-            turnBased = _turnBased;
-            _duplex = null;
-            _turnBased = null;
-        }
+        BeginTransition(out var duplex, out var turnBased);
 
         if (duplex is not null)
         {
@@ -367,6 +438,14 @@ public sealed class VoiceBackendSelector : IDisposable
 
         lock (_gate)
         {
+            // Only the backend that is actually live may trigger a fallback. A
+            // superseded session raising Ended on its way out would otherwise
+            // tear down the backend that replaced it.
+            if (!ReferenceEquals(_duplex, sender))
+            {
+                return;
+            }
+
             // Chain the recovery onto any transition already in flight so two
             // deaths in quick succession cannot start two fallbacks at once.
             _pendingTransition = _pendingTransition.ContinueWith(

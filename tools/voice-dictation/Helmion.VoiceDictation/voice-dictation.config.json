@@ -1,0 +1,66 @@
+{
+  "//": "Helmion Voice Dictation. Edit this file, then restart the app (stop-dictation.ps1 then start-dictation.ps1). Nothing here is compiled in.",
+
+  "//hotkey": "Press once to start recording, press again to stop, transcribe and inject. Modifiers: ctrl, alt, shift, win. Chosen default avoids Grok Build's ctrl+space and F8 — RegisterHotKey matches modifiers EXACTLY, so ctrl+alt+space never steals plain ctrl+space.",
+  "hotkey": "ctrl+alt+space",
+
+  "//cancelHotkey": "Throws away the current recording without transcribing or typing anything. Leave empty to disable.",
+  "cancelHotkey": "ctrl+alt+x",
+
+  "//injectionMode": "'paste' = set clipboard then send ctrl+v (fast, exact, any length). 'type' = synthesise the characters with SendInput unicode events (works where there is no paste keybinding, e.g. some remote/legacy consoles).",
+  "injectionMode": "paste",
+
+  "//restoreClipboard": "With injectionMode 'paste', put whatever was on the clipboard back after pasting.",
+  "restoreClipboard": true,
+
+  "//appendTrailingSpace": "Add one space after the injected text so consecutive dictations do not run together.",
+  "appendTrailingSpace": true,
+
+  "//autoSubmit": "false = text lands in the prompt and Troy presses Enter himself. Leave this false: true would send dictated text to Claude with no chance to fix a mis-hear.",
+  "autoSubmit": false,
+
+  "//maxRecordingSeconds": "Hard stop so a forgotten hotkey cannot record forever.",
+  "maxRecordingSeconds": 300,
+
+  "//modelPath": "Empty = resolve automatically: HELMION_VOICE_MODELS env var, then models/ beside the exe, then walk up to desktop/models/ggml-base.en.bin.",
+  "modelPath": "",
+
+  "//showTrayIcon": "Small coloured dot near the clock: grey idle, red recording, amber transcribing, dark red error. No console, no taskbar entry, no popups.",
+  "showTrayIcon": true,
+
+  "//logPath": "Empty = %LOCALAPPDATA%\\Helmion\\voice-dictation.log",
+  "logPath": "",
+
+  "//vocabulary": "THE POINT OF THIS TOOL. These words are fed to Whisper as an initial prompt so it stops turning 'Helmion' into 'Helmand' and 'Moshi' into 'Moshe'. Add your own freely — one string per term. Whisper only reads the LAST ~224 tokens of the prompt, and later terms carry more weight, so if this list ever gets very long, put the words that matter most at the END.",
+  "vocabulary": [
+    "Helmion",
+    "Moshi",
+    "Kokoro",
+    "Whisper",
+    "Kyutai",
+    "DairyForge",
+    "AimForge",
+    "Caldmere",
+    "SiteVector",
+    "Neon",
+    "Clerk",
+    "Vercel",
+    "Fly.io",
+    "Ollama",
+    "Qwen",
+    "Bryce",
+    "Chobani",
+    "Glanbia",
+    "Gauge",
+    "Cora",
+    "LLM",
+    "LLMs",
+    "MCP",
+    "VRAM",
+    "quantization",
+    "duplex"
+  ],
+
+  "//vocabularyPromptOverride": "Advanced. Non-empty replaces the generated prompt entirely with this exact text. Leave empty to let the vocabulary list above build it.",
+  "vocabularyPromptOverride": ""
+}

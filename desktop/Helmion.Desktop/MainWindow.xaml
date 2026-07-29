@@ -1313,10 +1313,17 @@
             <Grid>
               <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <!-- 0 title bar -->
                 <RowDefinition Height="*" />
+                <!-- 1 transcript -->
                 <RowDefinition Height="Auto" />
+                <!-- 2 status strip -->
                 <RowDefinition Height="Auto" />
+                <!-- 3 MCP install security (collapsed until asked for) -->
                 <RowDefinition Height="Auto" />
+                <!-- 4 approval strip -->
+                <RowDefinition Height="Auto" />
+                <!-- 5 input dock -->
               </Grid.RowDefinitions>
 
               <!-- Terminal title bar -->
@@ -1355,6 +1362,35 @@
                                TextTrimming="CharacterEllipsis"
                                MaxWidth="420"
                                ToolTip="Agent tools (read/write/run) are limited to this folder. Change it on the Workspace page." />
+                    <!-- Which model actually answered, and which tier the router put it in.
+                         Filled from the bridge's "model" event; stays "—" until one arrives. -->
+                    <TextBlock x:Name="ConsoleModelLabel"
+                               Text="model: —"
+                               Foreground="{DynamicResource AccentBrush}"
+                               FontSize="10"
+                               FontFamily="Consolas"
+                               Margin="0,0,14,0"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="280"
+                               ToolTip="The model the per-task router chose for the last turn." />
+                    <Button x:Name="ConsoleCommandsButton"
+                            Content="/ commands"
+                            Height="22"
+                            Padding="10,0"
+                            Margin="0,0,8,0"
+                            FontSize="10"
+                            Click="ConsoleCommandsButton_Click"
+                            ToolTip="List the slash commands available in this workspace."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                    <Button x:Name="ConsoleMcpSecurityButton"
+                            Content="mcp security"
+                            Height="22"
+                            Padding="10,0"
+                            Margin="0,0,12,0"
+                            FontSize="10"
+                            Click="ConsoleMcpSecurityButton_Click"
+                            ToolTip="Discover and audit third-party MCP servers before trusting them."
+                            Style="{StaticResource PrimaryButtonStyle}" />
                     <Ellipse Width="7" Height="7" Fill="{DynamicResource AccentBrush}" Margin="0,0,8,0" />
                     <TextBlock x:Name="ConsoleLiveLabel"
                                Text="LIVE"
@@ -1391,17 +1427,129 @@
                       BorderBrush="#1A2834"
                       BorderThickness="0,1,0,0"
                       Padding="16,8">
-                <TextBlock x:Name="ConsoleServiceSessionText"
-                           Text="Service-backed session not activated."
-                           Foreground="#8AA0B0"
-                           FontFamily="Cascadia Mono, Consolas"
-                           FontSize="12"
-                           TextTrimming="CharacterEllipsis" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock x:Name="ConsoleServiceSessionText"
+                             Text="Service-backed session not activated."
+                             Foreground="#8AA0B0"
+                             FontFamily="Cascadia Mono, Consolas"
+                             FontSize="12"
+                             TextTrimming="CharacterEllipsis" />
+                  <!-- Which voice backend the selector actually resolved to.
+                       Not a claim that voice is on — that is what it SAYS. -->
+                  <TextBlock x:Name="ConsoleVoiceBackendLabel"
+                             Grid.Column="1"
+                             Text="voice: off"
+                             Foreground="#8AA0B0"
+                             FontFamily="Cascadia Mono, Consolas"
+                             FontSize="11"
+                             Margin="14,0,0,0"
+                             TextTrimming="CharacterEllipsis"
+                             MaxWidth="360"
+                             ToolTip="The live speech backend. Moshi needs a GPU this machine does not have, so this resolves to Whisper+Kokoro." />
+                </Grid>
+              </Border>
+
+              <!-- MCP install security — stages 1 and 2 only. Approval is deliberately
+                   absent: it requires a real terminal and a typed challenge phrase. -->
+              <Border x:Name="ConsoleMcpPanel"
+                      Grid.Row="3"
+                      Visibility="Collapsed"
+                      Background="#0C1A16"
+                      BorderBrush="#1F4A3C"
+                      BorderThickness="0,1,0,1"
+                      Padding="16,10">
+                <StackPanel>
+                  <TextBlock Text="MCP INSTALL SECURITY · read-only stages"
+                             Foreground="#5FD3A8"
+                             FontSize="10"
+                             FontWeight="Bold"
+                             Margin="0,0,0,6" />
+                  <TextBlock Text="Never install an MCP server you have not read. Discover finds candidates; Audit reads every source file and reports what the code can actually do. Results print in the console above."
+                             Foreground="#9FBDB2"
+                             FontSize="11"
+                             TextWrapping="Wrap"
+                             Margin="0,0,0,8" />
+
+                  <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="McpDiscoverNeedInput"
+                             Height="30"
+                             Padding="10,0"
+                             VerticalContentAlignment="Center"
+                             Background="#08120F"
+                             Foreground="#E8F6F1"
+                             CaretBrush="#5FD3A8"
+                             BorderBrush="#1F4A3C"
+                             BorderThickness="1"
+                             FontFamily="Cascadia Mono, Consolas"
+                             FontSize="12"
+                             ToolTip="What do you need the server to do? e.g. read local sqlite" />
+                    <Button x:Name="McpDiscoverButton"
+                            Grid.Column="1"
+                            Content="Discover"
+                            Height="30"
+                            MinWidth="96"
+                            Margin="8,0,0,0"
+                            Click="McpDiscoverButton_Click"
+                            ToolTip="Stage 1 — search GitHub for candidates. Installs nothing."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                  </Grid>
+
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="McpAuditPathInput"
+                             Height="30"
+                             Padding="10,0"
+                             VerticalContentAlignment="Center"
+                             Background="#08120F"
+                             Foreground="#E8F6F1"
+                             CaretBrush="#5FD3A8"
+                             BorderBrush="#1F4A3C"
+                             BorderThickness="1"
+                             FontFamily="Cascadia Mono, Consolas"
+                             FontSize="12"
+                             ToolTip="Folder holding the candidate server's source code." />
+                    <Button x:Name="McpBrowseButton"
+                            Grid.Column="1"
+                            Content="Browse…"
+                            Height="30"
+                            MinWidth="84"
+                            Margin="8,0,0,0"
+                            Click="McpBrowseButton_Click"
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                    <Button x:Name="McpAuditButton"
+                            Grid.Column="2"
+                            Content="Audit"
+                            Height="30"
+                            MinWidth="96"
+                            Margin="8,0,0,0"
+                            Click="McpAuditButton_Click"
+                            ToolTip="Stage 2 — read every source file. No network, no execution."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                  </Grid>
+
+                  <TextBlock Text="Approval, sandbox and install are NOT here. Approving an install means typing a freshly generated challenge phrase into a real terminal, which is what makes the approval a human act. Run:  helmion mcp-install review &lt;path&gt;"
+                             Foreground="#C9A227"
+                             FontSize="10.5"
+                             TextWrapping="Wrap"
+                             Margin="0,10,0,0" />
+                </StackPanel>
               </Border>
 
               <!-- Approval prompt — visible only while ask mode is waiting on you -->
               <Border x:Name="ConsoleApprovalPanel"
-                      Grid.Row="3"
+                      Grid.Row="4"
                       Visibility="Collapsed"
                       Background="#1C1608"
                       BorderBrush="{DynamicResource AmberBrush}"
@@ -1465,7 +1613,7 @@
               </Border>
 
               <!-- Input dock -->
-              <Border Grid.Row="4"
+              <Border Grid.Row="5"
                       Background="#101A22"
                       BorderBrush="#1A2834"
                       BorderThickness="0,1,0,0"
@@ -1477,16 +1625,28 @@
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
 
-                  <Button x:Name="ConsoleMicButton"
-                          Grid.Column="0"
-                          Content="🎙"
-                          Width="48"
-                          Height="48"
-                          Margin="0,0,10,0"
-                          FontSize="16"
-                          Click="ConsoleMicButton_Click"
-                          ToolTip="Start two-way voice (listen + speak). Works with every LLM."
-                          Style="{StaticResource PrimaryButtonStyle}" />
+                  <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,0">
+                    <Button x:Name="ConsoleMicButton"
+                            Content="🎙"
+                            Width="48"
+                            Height="48"
+                            FontSize="16"
+                            Click="ConsoleMicButton_Click"
+                            ToolTip="Start two-way voice (listen + speak). Works with every LLM."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                    <!-- Dictate: speech goes into the composer at the caret instead of
+                         to the model. "new line", "scratch that", "send it" and
+                         "stop dictation" are spoken commands; everything else is typed. -->
+                    <Button x:Name="ConsoleDictateButton"
+                            Content="⌨"
+                            Width="48"
+                            Height="48"
+                            Margin="8,0,0,0"
+                            FontSize="16"
+                            Click="ConsoleDictateButton_Click"
+                            ToolTip="Dictate mode: what you say is TYPED into the box, not sent to the model. Say &quot;send it&quot; to submit, &quot;new line&quot;, &quot;scratch that&quot;, or &quot;stop dictation&quot;."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+                  </StackPanel>
 
                   <Border Grid.Column="1"
                           Background="#0A1218"

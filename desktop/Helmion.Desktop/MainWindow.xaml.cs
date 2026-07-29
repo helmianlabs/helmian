@@ -31,6 +31,13 @@ public partial class MainWindow : Window
     private bool _themeSelectorReady;
     private string? _registeredWorkspacePath;
     private ConsoleSession? _consoleSession;
+
+    /// <summary>
+    /// Chooses and owns the live speech backend. The session below is whatever it
+    /// built — read it, never construct it.
+    /// </summary>
+    private VoiceBackendSelector? _voiceSelector;
+
     private VoiceSession? _voiceSession;
     private AgentBridge? _agentBridge;
     private bool _serviceConnected;
@@ -166,7 +173,22 @@ public partial class MainWindow : Window
             : $"workspace {request.Workspace ?? "?"}";
 
         ConsoleApprovalPanel.Visibility = Visibility.Visible;
-        ConsoleApprovalAllowOnceButton.Focus();
+
+        // Focus used to jump to "Allow once" unconditionally. Two problems with
+        // that: it eats the characters of whoever was mid-sentence in the
+        // composer, and the next stray Space or Enter APPROVES a tool call the
+        // user never read. So leave a typist alone, and when we do take focus,
+        // take it to Deny — the same direction every other unanswered path in
+        // ask mode resolves. Both buttons stay Tab-reachable either way.
+        if (ConsoleInputBox.IsKeyboardFocusWithin)
+        {
+            AppendConsoleLine(
+                "  (still typing — approval buttons are below; press Tab to reach them)");
+        }
+        else
+        {
+            ConsoleApprovalDenyButton.Focus();
+        }
 
         AppendConsoleLine($"  ⚠ APPROVAL NEEDED — {request.Summary ?? tool}");
 
@@ -538,7 +560,12 @@ public partial class MainWindow : Window
     {
         base.OnClosing(e);
         _consoleSession?.Dispose();
+        // The selector disposes the session it built; disposing both is safe
+        // (VoiceSession.Dispose is idempotent) and covers the pre-selector path.
+        try { _voiceSelector?.Dispose(); } catch { /* audio never blocks close */ }
+        _voiceSelector = null;
         _voiceSession?.Dispose();
+        _voiceSession = null;
         try { _agentBridge?.Dispose(); } catch { /* ignore */ }
         _agentBridge = null;
         // Local service lifetime is owned by LocalServiceHost / App.OnExit.
@@ -591,17 +618,18 @@ public partial class MainWindow : Window
             // ignore
         }
 
-        _voiceSession = new VoiceSession();
-        _voiceSession.OnSpeechRecognized += VoiceSession_OnSpeechRecognized;
-        _voiceSession.OnError += (_, msg) =>
+        // Voice goes through the backend selector rather than newing a VoiceSession
+        // here, so the app can say which backend is live instead of assuming.
+        // duplexFactory is deliberately null: Moshi needs ~14 GB of VRAM and this
+        // box measured 6 GB, so the honest resolution is Whisper+Kokoro. A fake
+        // duplex adapter would only move the lie into the UI.
+        _voiceSelector = new VoiceBackendSelector(CreateVoiceSession);
+        _voiceSelector.StatusChanged += (_, status) =>
+            Dispatcher.Invoke(() => ApplyVoiceBackendStatus(status));
+        _voiceSelector.Error += (_, msg) =>
             Dispatcher.Invoke(() =>
             {
                 AppendConsoleLine($"\n[Voice] {msg}");
-                ConsoleServiceSessionText.Text = msg;
-            });
-        _voiceSession.OnStatus += (_, msg) =>
-            Dispatcher.Invoke(() =>
-            {
                 ConsoleServiceSessionText.Text = msg;
             });
         var envSettings = EnvironmentSettingsStore.Load();
@@ -1481,31 +1509,82 @@ public partial class MainWindow : Window
 
         // Dispatching now: clear the composer at send time so a second Enter cannot
         // resend the same text. The transcript line below is the record of what went out.
-        ConsoleInputBox.Clear();
+        //
+        // Only when the text actually CAME from the composer. A spoken turn arrives as
+        // overrideText, and clearing then would silently destroy a draft the user was
+        // part-way through typing — text nobody asked to send and which the transcript
+        // does not preserve. Nothing can double-send in that case either, since the box
+        // was never the source. Dictation's "send it" passes no override, so it still clears.
+        if (overrideText is null)
+        {
+            ConsoleInputBox.Clear();
+        }
+
         AppendConsoleLine($"\n> {text}");
 
-        // Explicit local shell escape (does not go through the agent API).
-        if (text.StartsWith("/"))
+        // "/reset" is a console control, not a command file — handle it before anything else.
+        if (text.Equals("/reset", StringComparison.OrdinalIgnoreCase))
         {
-            if (text.Equals("/reset", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                try
-                {
-                    if (_agentBridge is not null) await _agentBridge.ResetAsync();
-                    AppendConsoleLine("[Agent conversation reset]");
-                }
-                catch (Exception ex)
-                {
-                    AppendConsoleLine($"[Agent reset failed: {ex.Message}]");
-                }
+                if (_agentBridge is not null) await _agentBridge.ResetAsync();
+                AppendConsoleLine("[Agent conversation reset]");
+            }
+            catch (Exception ex)
+            {
+                AppendConsoleLine($"[Agent reset failed: {ex.Message}]");
+            }
+            return;
+        }
+
+        // Explicit local shell escape. This WAS "/", which silently hijacked every
+        // slash command: typing "/deploy staging" ran `deploy staging` in PowerShell
+        // instead of expanding the /deploy command file — arbitrary shell execution
+        // from what looks like a chat command. "/" now belongs to the command system
+        // (expanded in bridge.mjs before the turn); "!" is the shell escape.
+        if (text.StartsWith("!"))
+        {
+            var shellCommand = text.Substring(1).Trim();
+            if (shellCommand.Length == 0)
+            {
+                AppendConsoleLine("[Shell escape: type ! followed by a command, e.g. !git status]");
                 return;
             }
 
-            await foreach (var line in _consoleSession.SendAsync(text.Substring(1)))
+            await foreach (var line in _consoleSession.SendAsync(shellCommand))
             {
                 AppendConsoleLine(line.Text);
             }
             return;
+        }
+
+        // A "/" line is a slash command: the bridge expands it before the turn
+        // (src/agent/bridge.mjs:308-314). An unknown one is still sent as chat by
+        // design, but the user should be told that is what happened rather than
+        // wondering why nothing ran.
+        if (text.StartsWith('/'))
+        {
+            if (!_commandsListed) await ListSlashCommandsAsync(quiet: true);
+
+            var typed = text[1..].Split(' ', 2)[0];
+
+            // Only say a command does not exist when the listing describes the SAME
+            // folder this turn will run in. Listed from somewhere else, the registry
+            // says nothing about /typed, and a confident "no such command" would be a
+            // false accusation about a command that is really there. Staying quiet
+            // costs nothing: the bridge expands whatever it finds either way.
+            var sameWorkspace = _knownCommandsWorkspace is not null
+                && string.Equals(
+                    Path.TrimEndingDirectorySeparator(_knownCommandsWorkspace),
+                    Path.TrimEndingDirectorySeparator(ResolveAgentWorkspace()),
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (typed.Length > 0 && sameWorkspace && !_knownCommands.Contains(typed))
+            {
+                AppendConsoleLine(
+                    $"[No command named /{typed} — sending it to the model as ordinary text. "
+                    + "Click \"/ commands\" to see what exists.]");
+            }
         }
 
         // Full coding agent (same engine as `helmion agent` CLI) via Node bridge.
@@ -1553,6 +1632,16 @@ public partial class MainWindow : Window
                 {
                     case "status":
                         AppendConsoleLine($"… {ev.Message}");
+                        break;
+                    case "model":
+                        // Which model the per-task router picked for this round, and why.
+                        // The CLI has always printed this; the app used to drop it.
+                        ShowChosenModel(ev);
+                        break;
+                    case "command":
+                        // A slash command was expanded before the model saw it.
+                        AppendConsoleLine(
+                            $"  ⌘ /{ev.Name} expanded from {ev.CommandPath ?? "a command file"}");
                         break;
                     case "tool":
                         AppendConsoleLine($"  → {ev.Name}({Truncate(ev.ArgsJson, 100)})");
@@ -1678,24 +1767,387 @@ public partial class MainWindow : Window
         return value.Length <= max ? value : value[..max] + "…";
     }
 
-    private void ConsoleMicButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Render the router's choice for one round: the header label keeps the last
+    /// one, the transcript keeps all of them with the reason.
+    /// </summary>
+    private void ShowChosenModel(AgentBridgeEvent ev)
     {
-        if (_voiceSession == null) return;
+        var model = ev.Model;
+        if (string.IsNullOrWhiteSpace(model)) return;
 
-        if (_voiceSession.IsVoiceModeActive)
+        var tier = string.IsNullOrWhiteSpace(ev.Tier) ? null : ev.Tier;
+        var label = tier is null ? model! : $"{tier} · {model}";
+
+        if (ConsoleModelLabel is not null)
         {
-            _voiceSession.StopVoiceMode();
-            ConsoleMicButton.Background = (Brush)FindResource("AccentBrush");
-            ConsoleMicButton.ToolTip = "Start two-way voice (listen + speak). Works with every LLM.";
-            AppendConsoleLine("\n[Voice mode OFF]");
-            ConsoleServiceSessionText.Text = "Voice mode off";
+            ConsoleModelLabel.Text = $"model: {label}";
+            ConsoleModelLabel.ToolTip = string.IsNullOrWhiteSpace(ev.Reason)
+                ? $"Router chose {label}."
+                : $"Router chose {label} — {ev.Reason}";
+        }
+
+        var line = $"  ◆ {label}";
+        if (!string.IsNullOrWhiteSpace(ev.Reason)) line += $" — {ev.Reason}";
+        if (ev.Round is > 1) line += $"  (round {ev.Round})";
+        AppendConsoleLine(line);
+    }
+
+    /// <summary>
+    /// Slash commands available in this workspace. Refreshed whenever the list is
+    /// shown, and used to tell the user when a "/" line is not a command at all
+    /// rather than letting it go to the model unremarked.
+    /// </summary>
+    private readonly HashSet<string> _knownCommands = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The workspace the bridge actually scanned to produce <see cref="_knownCommands"/>.
+    /// Not necessarily the workspace the next turn will use: the bridge starts at
+    /// <c>env.workspace || process.cwd()</c> (src/agent/bridge.mjs:54) and only adopts
+    /// the desktop's workspace on a `configure` (:240) or a `turn` (:322), while the
+    /// `commands` branch (:276) never reads req.workspace and re-scans
+    /// <c>state.runtime.root</c> (:94). So a listing taken before the first turn can
+    /// describe a different directory — exactly the mismatch that put
+    /// WORKSPACE_PATH=C:\Users\troyh\.grok into a live agent turn.
+    /// </summary>
+    private string? _knownCommandsWorkspace;
+
+    private bool _commandsListed;
+
+    private async void ConsoleCommandsButton_Click(object sender, RoutedEventArgs e)
+    {
+        await ListSlashCommandsAsync(quiet: false);
+    }
+
+    private async Task ListSlashCommandsAsync(bool quiet)
+    {
+        try
+        {
+            _agentBridge ??= new AgentBridge();
+            var ev = await _agentBridge.ListCommandsAsync();
+            _commandsListed = true;
+
+            if (ev.Event != "commands")
+            {
+                if (!quiet) AppendConsoleLine($"[Commands unavailable] {ev.Message ?? "no answer"}");
+                return;
+            }
+
+            _knownCommands.Clear();
+            foreach (var cmd in ev.Commands ?? [])
+            {
+                _knownCommands.Add(cmd.Name);
+            }
+
+            _knownCommandsWorkspace = ev.Workspace;
+
+            if (quiet) return;
+
+            var invocable = (ev.Commands ?? [])
+                .Where(c => c.UserInvocable)
+                .ToList();
+
+            AppendConsoleLine("");
+            AppendConsoleLine($"[Slash commands · workspace {ev.Workspace ?? "?"}]");
+            if (invocable.Count == 0)
+            {
+                AppendConsoleLine(
+                    "  (none yet — add a markdown file to .helmion\\commands\\, "
+                    + "e.g. .helmion\\commands\\deploy.md becomes /deploy)");
+            }
+            else
+            {
+                foreach (var cmd in invocable)
+                {
+                    var head = string.IsNullOrWhiteSpace(cmd.ArgumentHint)
+                        ? $"/{cmd.Name}"
+                        : $"/{cmd.Name} {cmd.ArgumentHint}";
+                    AppendConsoleLine(
+                        $"  {head.PadRight(34)}{cmd.Description ?? "(no description)"}  [{cmd.Source}]");
+                }
+            }
+
+            var plugins = ev.Plugins ?? [];
+            AppendConsoleLine(plugins.Count == 0
+                ? "  plugins: none loaded"
+                : $"  plugins: {string.Join(", ", plugins)}");
+            AppendConsoleLine("");
+        }
+        catch (Exception ex)
+        {
+            if (!quiet) AppendConsoleLine($"[Commands unavailable] {ex.Message}");
+        }
+    }
+
+    private void ConsoleMcpSecurityButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ConsoleMcpPanel is null) return;
+
+        var showing = ConsoleMcpPanel.Visibility == Visibility.Visible;
+        ConsoleMcpPanel.Visibility = showing ? Visibility.Collapsed : Visibility.Visible;
+        if (!showing)
+        {
+            AppendConsoleLine(
+                "\n[MCP install security] Stage 1 (discover) and stage 2 (audit) run from here. "
+                + "Approval, sandbox and install stay on the command line: approving requires typing "
+                + "a freshly generated challenge phrase into a real terminal, and a window cannot "
+                + "stand in for that.");
+        }
+    }
+
+    private void McpBrowseButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "Choose the candidate MCP server's source folder",
+        };
+
+        if (dialog.ShowDialog(this) == true)
+        {
+            McpAuditPathInput.Text = dialog.FolderName;
+        }
+    }
+
+    private async void McpDiscoverButton_Click(object sender, RoutedEventArgs e)
+    {
+        await RunMcpStageAsync(
+            "discover",
+            McpDiscoverButton,
+            () => McpSecurityRunner.DiscoverAsync(McpDiscoverNeedInput.Text));
+    }
+
+    private async void McpAuditButton_Click(object sender, RoutedEventArgs e)
+    {
+        await RunMcpStageAsync(
+            "audit",
+            McpAuditButton,
+            () => McpSecurityRunner.AuditAsync(McpAuditPathInput.Text));
+    }
+
+    private async Task RunMcpStageAsync(
+        string stage,
+        Button button,
+        Func<Task<McpSecurityResult>> run)
+    {
+        button.IsEnabled = false;
+        AppendConsoleLine($"\n[mcp-install {stage}] running…");
+        try
+        {
+            var result = await run();
+            AppendConsoleLine(result.Summary);
+            if (!string.IsNullOrWhiteSpace(result.Stderr))
+            {
+                AppendConsoleLine($"  stderr: {Truncate(result.Stderr, 400)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendConsoleLine($"[mcp-install {stage} failed] {ex.Message}");
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Dictate mode: recognized speech is typed into the composer at the caret
+    /// instead of being sent to the model. Off by default; the mic alone still
+    /// means "talk to the agent".
+    /// </summary>
+    private bool _dictateMode;
+
+    private void ConsoleDictateButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetDictateMode(!_dictateMode);
+    }
+
+    private void SetDictateMode(bool on)
+    {
+        _dictateMode = on;
+        ConsoleDictateButton.Background = on
+            ? (Brush)FindResource("AmberBrush")
+            : (Brush)FindResource("AccentBrush");
+
+        if (on)
+        {
+            ConsoleInputBox.Focus();
+            AppendConsoleLine(
+                "\n[Dictate ON — what you say is typed into the box, not sent. "
+                + "Say \"send it\" to submit, \"new line\", \"scratch that\", or \"stop dictation\".]");
+            ConsoleServiceSessionText.Text = "Dictate mode — speech goes to the composer";
+
+            if (_voiceSession is not { IsVoiceModeActive: true })
+            {
+                AppendConsoleLine("[Dictate needs the mic — click 🎙 to start listening.]");
+            }
         }
         else
         {
-            _voiceSession.StartVoiceMode();
-            if (!_voiceSession.IsVoiceModeActive)
+            AppendConsoleLine("\n[Dictate OFF — speech goes to the agent again]");
+            ConsoleServiceSessionText.Text = _voiceSession is { IsVoiceModeActive: true }
+                ? "Voice mode on — listening (two-way)"
+                : "Voice mode off";
+        }
+    }
+
+    /// <summary>
+    /// Route one dictated utterance. Returns true when it was handled as
+    /// dictation and must NOT reach the model.
+    /// </summary>
+    private bool HandleDictation(string heard)
+    {
+        var command = DictationCommands.Detect(heard);
+        switch (command.Kind)
+        {
+            case DictationCommandKind.Newline:
+                InsertAtCaret(Environment.NewLine);
+                return true;
+
+            case DictationCommandKind.Scratch:
+                // Erase the last chunk this mode inserted. Nothing dictated yet
+                // means there is nothing of ours to take back — leave typed text alone.
+                if (_lastDictatedSpan is { Length: > 0 })
+                {
+                    var text = ConsoleInputBox.Text ?? string.Empty;
+                    var start = Math.Clamp(_lastDictatedStart, 0, text.Length);
+                    var length = Math.Clamp(_lastDictatedSpan.Length, 0, text.Length - start);
+                    if (length > 0
+                        && string.Equals(
+                            text.Substring(start, length),
+                            _lastDictatedSpan,
+                            StringComparison.Ordinal))
+                    {
+                        ConsoleInputBox.Text = text.Remove(start, length);
+                        ConsoleInputBox.CaretIndex = start;
+                    }
+                }
+
+                _lastDictatedSpan = null;
+                ConsoleServiceSessionText.Text = "Scratched the last dictated phrase";
+                return true;
+
+            case DictationCommandKind.Send:
+                _lastDictatedSpan = null;
+                // Falls through to the normal submit path, which clears the composer.
+                _ = SendConsoleInputAsync();
+                return true;
+
+            case DictationCommandKind.Stop:
+                SetDictateMode(false);
+                return true;
+
+            default:
+                if (string.IsNullOrWhiteSpace(command.Text)) return true;
+                InsertAtCaret(
+                    NeedsLeadingSpace() ? " " + command.Text : command.Text);
+                return true;
+        }
+    }
+
+    private string? _lastDictatedSpan;
+    private int _lastDictatedStart;
+
+    private bool NeedsLeadingSpace()
+    {
+        var text = ConsoleInputBox.Text ?? string.Empty;
+        var caret = Math.Clamp(ConsoleInputBox.CaretIndex, 0, text.Length);
+        if (caret == 0) return false;
+        var previous = text[caret - 1];
+        return !char.IsWhiteSpace(previous);
+    }
+
+    /// <summary>
+    /// Splice text in at the caret, the same span-concat the paste handler uses,
+    /// so a dictated phrase lands where the cursor is rather than at the end.
+    /// </summary>
+    private void InsertAtCaret(string insert)
+    {
+        var box = ConsoleInputBox;
+        var text = box.Text ?? string.Empty;
+        var start = Math.Clamp(box.SelectionStart, 0, text.Length);
+        var length = Math.Clamp(box.SelectionLength, 0, text.Length - start);
+
+        box.Text = string.Concat(
+            text.AsSpan(0, start),
+            insert.AsSpan(),
+            text.AsSpan(start + length));
+        box.CaretIndex = start + insert.Length;
+        box.ScrollToEnd();
+
+        _lastDictatedStart = start;
+        _lastDictatedSpan = insert;
+    }
+
+    /// <summary>
+    /// Builds the turn-based session for the selector. Handlers are attached HERE
+    /// rather than at the call site because the selector constructs a fresh
+    /// session on every start and on every automatic fallback — anything wired to
+    /// one instance from outside would be silently dropped on the next one.
+    /// </summary>
+    private VoiceSession CreateVoiceSession()
+    {
+        var session = new VoiceSession();
+        session.OnSpeechRecognized += VoiceSession_OnSpeechRecognized;
+        session.OnError += (_, msg) =>
+            Dispatcher.Invoke(() =>
             {
-                // StartVoiceMode flips off if mic init failed.
+                AppendConsoleLine($"\n[Voice] {msg}");
+                ConsoleServiceSessionText.Text = msg;
+            });
+        session.OnStatus += (_, msg) =>
+            Dispatcher.Invoke(() =>
+            {
+                ConsoleServiceSessionText.Text = msg;
+            });
+
+        _voiceSession = session;
+        return session;
+    }
+
+    /// <summary>Show which speech backend is actually live. Never asserts more than the selector reported.</summary>
+    private void ApplyVoiceBackendStatus(VoiceBackendStatus status)
+    {
+        if (ConsoleVoiceBackendLabel is null) return;
+
+        var degraded = status.State == VoiceState.Degraded;
+        ConsoleVoiceBackendLabel.Text = status.Backend switch
+        {
+            VoiceBackend.None when !degraded => "voice: off",
+            _ => $"voice: {status.Display}",
+        };
+        ConsoleVoiceBackendLabel.Foreground = degraded
+            ? (Brush)FindResource("AmberBrush")
+            : (Brush)FindResource("MutedTextBrush");
+        ConsoleVoiceBackendLabel.ToolTip = string.IsNullOrWhiteSpace(status.Detail)
+            ? status.Display
+            : $"{status.Display} — {status.Detail}";
+    }
+
+    private async void ConsoleMicButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_voiceSelector is null) return;
+
+        ConsoleMicButton.IsEnabled = false;
+        try
+        {
+            if (_voiceSession is { IsVoiceModeActive: true })
+            {
+                await _voiceSelector.StopAsync();
+                // The selector owns and disposes the session it built.
+                _voiceSession = null;
+                if (_dictateMode) SetDictateMode(false);
+                ConsoleMicButton.Background = (Brush)FindResource("AccentBrush");
+                ConsoleMicButton.ToolTip =
+                    "Start two-way voice (listen + speak). Works with every LLM.";
+                AppendConsoleLine("\n[Voice mode OFF]");
+                ConsoleServiceSessionText.Text = "Voice mode off";
+                return;
+            }
+
+            var backend = await _voiceSelector.StartAsync();
+            if (backend == VoiceBackend.None || _voiceSession is not { IsVoiceModeActive: true })
+            {
                 ConsoleMicButton.Background = (Brush)FindResource("AccentBrush");
                 AppendConsoleLine("[Voice] Mic failed to start — see message above.");
                 return;
@@ -1705,9 +2157,22 @@ public partial class MainWindow : Window
             ConsoleMicButton.ToolTip = "Stop two-way voice";
             AppendConsoleLine(
                 "\n[Voice mode ON — two-way: speak, wait for the reply, speak again. Click mic to stop.]");
+            AppendConsoleLine($"[Speech backend: {_voiceSelector.Status.Display}"
+                              + (string.IsNullOrWhiteSpace(_voiceSelector.Status.Detail)
+                                  ? "]"
+                                  : $" — {_voiceSelector.Status.Detail}]"));
             AppendConsoleLine(
                 "[Voice uses the selected Maestro LLM + permissions dropdown for tools.]");
             ConsoleServiceSessionText.Text = "Voice mode on — listening (two-way)";
+        }
+        catch (Exception ex)
+        {
+            // Audio never takes the window down with it.
+            AppendConsoleLine($"[Voice] {ex.Message}");
+        }
+        finally
+        {
+            ConsoleMicButton.IsEnabled = true;
         }
     }
 
@@ -1722,7 +2187,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_voiceTurnBusy || _agentBusy) return;
         if (_voiceSession is { IsSpeaking: true }) return;
 
         var heard = text.Trim();
@@ -1731,6 +2195,19 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        // Dictate mode: the words are the message, not a request. They go to the
+        // caret, and the four reserved phrases act on the composer. Deliberately
+        // ahead of the busy guards — typing into the box while the agent is
+        // thinking is exactly what a person would do.
+        if (_dictateMode)
+        {
+            AppendConsoleLine($"[Dictated] {heard}");
+            HandleDictation(heard);
+            return;
+        }
+
+        if (_voiceTurnBusy || _agentBusy) return;
 
         _voiceTurnBusy = true;
         try

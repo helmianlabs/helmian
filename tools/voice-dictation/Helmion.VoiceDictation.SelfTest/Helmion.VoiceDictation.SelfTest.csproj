@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      A console Exe on purpose — this is the test harness, NOT the daemon. It is
+      run by hand from an existing terminal and prints its report to stdout; it
+      never runs on Troy's machine in normal use. The daemon it tests
+      (Helmion.VoiceDictation) is a WinExe with no console at all.
+
+      It is also a standalone project, deliberately NOT added to
+      desktop/Helmion.Desktop.slnx, so that running it can never drag in
+      Helmion.Desktop.SmokeTests — which performs a REAL sync against the live
+      ~/.claude and has destroyed files on this machine.
+    -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>Helmion.VoiceDictation.SelfTest</RootNamespace>
+    <AssemblyName>Helmion.VoiceDictation.SelfTest</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Helmion.VoiceDictation\Helmion.VoiceDictation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Kokoro is used ONLY here, to synthesize a known sentence containing Troy's
+      vocabulary so the transcription path can be proven without a human at a
+      microphone. The daemon does not reference it — dictation is input only.
+    -->
+    <PackageReference Include="KokoroSharp.CPU" Version="0.8.0" />
+  </ItemGroup>
+</Project>

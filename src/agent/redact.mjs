@@ -4,9 +4,13 @@
  */
 
 const REDACT_PATTERNS = [
-  // PostgreSQL/Neon connection strings - redact password portion
+  // Database connection strings - redact the password portion.
+  // WAS `postgresql?:` — the `?` binds to the `l`, so this matched "postgresql://"
+  // and "postgresq://" but NEVER the extremely common "postgres://". Verified by
+  // audit 2026-07-28 against 18 inputs. Now an explicit optional group, and the
+  // other drivers Troy actually uses are covered too.
   {
-    pattern: /(postgresql?:\/\/[^:]+:)([^@]+)(@[^\s]+)/gi,
+    pattern: /((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^:/\s]+:)([^@\s]+)(@[^\s]+)/gi,
     replace: '$1[REDACTED]$3',
   },
   // Neon passwords (npg_ prefix)
@@ -57,6 +61,38 @@ const REDACT_PATTERNS = [
   {
     pattern: /(Authorization:\s*Bearer\s+)[^\s\n]+/gi,
     replace: '$1[REDACTED]',
+  },
+  // Added 2026-07-28 after an audit measured the set above against 18 inputs and
+  // found these live credential shapes passing through unredacted.
+  // Stripe (live keys are the dangerous ones, but test keys leak customer data too)
+  {
+    pattern: /\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/g,
+    replace: '[REDACTED]',
+  },
+  // AWS access key IDs
+  {
+    pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+    replace: '[REDACTED]',
+  },
+  // Slack tokens (bot/user/app/legacy)
+  {
+    pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,
+    replace: '[REDACTED]',
+  },
+  // Hugging Face access tokens
+  {
+    pattern: /\bhf_[A-Za-z0-9]{16,}/g,
+    replace: '[REDACTED]',
+  },
+  // JSON Web Tokens — three base64url segments; often carry identity claims
+  {
+    pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+    replace: '[REDACTED]',
+  },
+  // Private key blocks (RSA/EC/OPENSSH/PGP) — redact the whole body, not the header
+  {
+    pattern: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g,
+    replace: '[REDACTED PRIVATE KEY]',
   },
 ];
 

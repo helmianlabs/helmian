@@ -17,7 +17,16 @@
  * rather than inventing an ID that would 404 at runtime.
  */
 
-/** Ordered cheapest → most capable. Index doubles as the escalation rank. */
+import { LOCAL_TIER, classifyLocalEligibility } from './local-provider.mjs';
+
+/**
+ * Ordered cheapest → most capable. Index doubles as the escalation rank.
+ *
+ * 'local' is deliberately NOT a member. These three are vendor models selected
+ * per turn and keyed into PROVIDER_TIER_MODELS; local is a different endpoint
+ * on this machine, chosen by a pre-empt that runs before this ladder. See the
+ * header of local-provider.mjs.
+ */
 export const TIERS = ['fast', 'standard', 'deep'];
 
 const TIER_RANK = { fast: 0, standard: 1, deep: 2 };
@@ -308,7 +317,14 @@ export function modelForTier(provider, tier) {
  * `modelOverride` (CLI --model) pins an exact model string and skips the router
  * entirely — it is the top of the override chain.
  *
- * @returns {{model: string|null, tier: string, reason: string, source: string}}
+ * `localProvider` (optional) opts the caller into local-model routing. When the
+ * turn qualifies, the returned `provider` is the LOCAL endpoint rather than the
+ * frontier one, and `tier` reports 'local'. Callers that pass nothing get
+ * exactly the behaviour they had before local routing existed — the returned
+ * `provider` is then the provider they passed in.
+ *
+ * @returns {{model: string|null, tier: string, reason: string, source: string,
+ *            provider: object, isLocal: boolean}}
  */
 export function resolveTurnModel({
   provider,
@@ -320,6 +336,7 @@ export function resolveTurnModel({
   envTier = null,
   floorTier = null,
   modelOverride = null,
+  localProvider = null,
 } = {}) {
   const pinned = typeof modelOverride === 'string' ? modelOverride.trim() : '';
   if (pinned) {
@@ -331,6 +348,8 @@ export function resolveTurnModel({
       tier,
       reason: `explicit --model ${pinned}`,
       source: 'explicit --model',
+      provider,
+      isLocal: false,
     };
   }
 
@@ -343,6 +362,32 @@ export function resolveTurnModel({
     envTier,
     floorTier,
   });
+
+  // Local pre-empt. Runs AFTER classification because eligibility is defined in
+  // terms of the tier the frontier ladder already chose — 'fast' is the router's
+  // own "nothing to reason about" verdict, and that is the only bucket a 4B
+  // model is trusted with. Never fires without an explicit localProvider.
+  if (localProvider) {
+    const verdict = classifyLocalEligibility({
+      tier,
+      userText,
+      roundsUsedThisTurn,
+      localProvider,
+      explicitTier,
+      modelOverride,
+    });
+    if (verdict.local) {
+      return {
+        model: localProvider.model,
+        tier: LOCAL_TIER,
+        reason: verdict.reason,
+        source: `local endpoint ${localProvider.baseUrl}`,
+        provider: localProvider,
+        isLocal: true,
+      };
+    }
+  }
+
   const { model, source } = modelForTier(provider, tier);
-  return { model, tier, reason, source };
+  return { model, tier, reason, source, provider, isLocal: false };
 }
