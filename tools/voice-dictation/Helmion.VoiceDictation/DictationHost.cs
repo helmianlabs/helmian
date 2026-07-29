@@ -26,10 +26,13 @@ public sealed class DictationHost : Form
     private const int WmHotkey = 0x0312;
     private const int DictateHotkeyId = 0xA71;
     private const int CancelHotkeyId = 0xA72;
+    private const int ConversationHotkeyId = 0xA73;
 
     private readonly DictationConfig _config;
     private readonly HotkeySpec _dictateHotkey;
     private readonly HotkeySpec? _cancelHotkey;
+    private readonly HotkeySpec? _conversationHotkey;
+    private readonly string _voiceStateFile;
     private readonly MicRecorder _recorder = new();
     private readonly VocabularyTranscriber _transcriber;
     private readonly System.Windows.Forms.Timer _capTimer = new();
@@ -41,11 +44,14 @@ public sealed class DictationHost : Form
         DictationConfig config,
         HotkeySpec dictateHotkey,
         HotkeySpec? cancelHotkey,
+        HotkeySpec? conversationHotkey,
         VocabularyTranscriber transcriber)
     {
         _config = config;
         _dictateHotkey = dictateHotkey;
         _cancelHotkey = cancelHotkey;
+        _conversationHotkey = conversationHotkey;
+        _voiceStateFile = ConversationMode.ResolveStateFile(config.VoiceStateFile);
         _transcriber = transcriber;
 
         FormBorderStyle = FormBorderStyle.None;
@@ -81,10 +87,23 @@ public sealed class DictationHost : Form
         _tray = new TrayIndicator(
             _config.ShowTrayIcon,
             _dictateHotkey.Text,
+            _conversationHotkey?.Text ?? "voice.ps1 -Conversation",
             onQuit: () => Close(),
             onOpenLog: OpenLog);
 
         RegisterHotkeys();
+
+        // Conversation mode survives a restart, because the switch is a file. Show
+        // the state that is really on disk rather than assuming off, and make sure
+        // the speaker is up if it says on — otherwise replies would queue silently.
+        var conversationOn = ConversationMode.IsOn(_voiceStateFile);
+        _tray?.SetConversation(conversationOn);
+
+        if (conversationOn)
+        {
+            DictationLog.Info($"Conversation mode was already ON at startup ({_voiceStateFile}).");
+            ConversationMode.EnsureSpeakerRunning(_config.SpeakExePath);
+        }
 
         // The 141 MB model takes a couple of seconds to load. Doing it now means
         // the first dictation is not the slow one.
@@ -118,6 +137,12 @@ public sealed class DictationHost : Form
                 CancelDictation();
                 return;
             }
+
+            if (id == ConversationHotkeyId)
+            {
+                ToggleConversation();
+                return;
+            }
         }
 
         base.WndProc(ref m);
@@ -129,6 +154,7 @@ public sealed class DictationHost : Form
 
         UnregisterHotKey(Handle, DictateHotkeyId);
         UnregisterHotKey(Handle, CancelHotkeyId);
+        UnregisterHotKey(Handle, ConversationHotkeyId);
 
         _capTimer.Stop();
         _recorder.Dispose();
@@ -166,6 +192,27 @@ public sealed class DictationHost : Form
         else if (_cancelHotkey is { } registered)
         {
             DictationLog.Info($"Cancel hotkey registered: {registered.Text} (throws the recording away).");
+        }
+
+        if (_conversationHotkey is { } conversation)
+        {
+            if (RegisterHotKey(Handle, ConversationHotkeyId, conversation.Modifiers, conversation.VirtualKey))
+            {
+                // A clean registration IS the collision proof. RegisterHotKey is
+                // exclusive machine-wide and returns ERROR_HOTKEY_ALREADY_REGISTERED
+                // (1409) to the second caller, so nothing else on this machine owns
+                // this combination at the moment this line was written.
+                DictationLog.Info(
+                    $"Conversation hotkey registered: {conversation.Text} "
+                    + "(toggles spoken replies on and off).");
+            }
+            else
+            {
+                DictationLog.Warn(
+                    $"Could not register the conversation hotkey {conversation.Text} — Win32 error "
+                    + $"{Marshal.GetLastWin32Error()} (1409 means another application owns it). "
+                    + "Dictation still works; toggle with voice.ps1 -Conversation instead.");
+            }
         }
     }
 
@@ -213,6 +260,48 @@ public sealed class DictationHost : Form
         _recorder.Cancel();
         _tray?.Show(DictationState.Idle);
         DictationLog.Info("Recording discarded by the cancel hotkey.");
+    }
+
+    /// <summary>
+    /// Turn spoken replies on or off. This is the whole hands-free loop's switch.
+    /// </summary>
+    /// <remarks>
+    /// <para>Turning ON writes "local" to the file the Claude Code Stop hook reads
+    /// (stop_hook_speak.py:139-144), starts the Kokoro watcher if it is not up, and
+    /// says two words so Troy knows it took — a hotkey with no window has no other
+    /// way to answer him.</para>
+    ///
+    /// <para>Turning OFF does the reverse AND silences whatever is speaking right
+    /// now, because the realistic reason to reach for this key is that he wants the
+    /// talking to stop this second, not after the current paragraph. It is
+    /// deliberately silent on the way out: confirming "voice off" out loud would be
+    /// one more sentence he did not ask for.</para>
+    /// </remarks>
+    private void ToggleConversation()
+    {
+        var nowOn = ConversationMode.Toggle(_voiceStateFile, out var problem);
+
+        if (problem is not null)
+        {
+            DictationLog.Error(problem);
+            _tray?.Show(DictationState.Error, "Could not switch conversation mode");
+            return;
+        }
+
+        if (nowOn)
+        {
+            ConversationMode.EnsureSpeakerRunning(_config.SpeakExePath);
+            // His name, not a status line. See ConversationMode.AttentionUtterance.
+            ConversationMode.Announce(ConversationMode.AttentionUtterance);
+            DictationLog.Info($"Conversation mode ON — replies will be spoken. ({_voiceStateFile} = local)");
+        }
+        else
+        {
+            ConversationMode.SilenceNow();
+            DictationLog.Info($"Conversation mode OFF — audio cut and queue cleared. ({_voiceStateFile} = off)");
+        }
+
+        _tray?.SetConversation(nowOn);
     }
 
     private void OnRecordingCapReached(object? sender, EventArgs e)

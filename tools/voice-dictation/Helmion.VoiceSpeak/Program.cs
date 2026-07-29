@@ -51,6 +51,12 @@ internal static class Program
                 return SignalStop();
             }
 
+            var cleanIn = ValueOf(args, "--clean");
+            if (cleanIn is not null)
+            {
+                return CleanToFile(cleanIn, ValueOf(args, "--out"));
+            }
+
             var voice = ValueOf(args, "--voice")
                 ?? Environment.GetEnvironmentVariable("HELMION_SPEAK_VOICE")
                 ?? DefaultVoice;
@@ -68,7 +74,8 @@ internal static class Program
             }
 
             SpeakLog.Warn(
-                "Nothing to do. Use --text \"...\", --file <path>, --wav <path>, --watch or --stop.");
+                "Nothing to do. Use --text \"...\", --file <path>, --wav <path>, "
+                + "--clean <in> --out <out>, --watch or --stop.");
             return 1;
         }
         catch (Exception ex)
@@ -143,6 +150,48 @@ internal static class Program
     }
 
     /// <summary>
+    /// Run a reply through <see cref="ReplyTextCleaner"/> and write the result,
+    /// touching no model and no audio device.
+    /// </summary>
+    /// <remarks>
+    /// This exists for the same reason <c>--wav</c> does: nobody building this can
+    /// hear it. "The code block was not read aloud" is not something a log line
+    /// asserting success can establish — the only honest evidence is the exact
+    /// text that would have reached the synthesizer, on disk, next to the input it
+    /// came from. It is also how a change to the cleaning rules gets checked
+    /// without speaking a word.
+    /// </remarks>
+    private static int CleanToFile(string inputPath, string? outputPath)
+    {
+        string raw;
+        try
+        {
+            raw = File.ReadAllText(inputPath, Encoding.UTF8);
+        }
+        catch (Exception ex)
+        {
+            SpeakLog.Error($"Could not read --clean {inputPath}", ex);
+            return 1;
+        }
+
+        var cleaned = ReplyTextCleaner.Clean(raw);
+        var target = string.IsNullOrWhiteSpace(outputPath) ? inputPath + ".cleaned.txt" : outputPath;
+
+        try
+        {
+            File.WriteAllText(target, cleaned, new UTF8Encoding(false));
+        }
+        catch (Exception ex)
+        {
+            SpeakLog.Error($"Could not write {target}", ex);
+            return 1;
+        }
+
+        SpeakLog.Info($"Cleaned {raw.Length} chars to {cleaned.Length} chars -> {target}");
+        return 0;
+    }
+
+    /// <summary>
     /// Hold the model in memory and speak whatever lands in the queue folder.
     /// </summary>
     private static int RunWatcher(string voice)
@@ -211,6 +260,23 @@ internal static class Program
             }
 
             var text = TakeQueuedText(path);
+
+            // A queue file named *.reply.txt is a finished AI reply and is cleaned
+            // for the ear; a plain .txt is an exact sentence somebody wrote and is
+            // spoken verbatim, exactly as it always has been. See
+            // ReplyTextCleaner.ReplySuffix for why the two are not treated alike.
+            if (!string.IsNullOrWhiteSpace(text)
+                && Path.GetFileName(path).EndsWith(ReplyTextCleaner.ReplySuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                var cleaned = ReplyTextCleaner.Clean(text);
+
+                // Both lengths, because a reply that cleans away to nothing and a
+                // reply that never arrived look identical from a silent speaker.
+                SpeakLog.Info($"Reply cleaned for speech: {text.Length} chars in, {cleaned.Length} out.");
+                SpeakLog.Info($"Text reaching Kokoro: {cleaned}");
+                text = cleaned;
+            }
+
             if (!string.IsNullOrWhiteSpace(text))
             {
                 Utter(synthesizer, text);

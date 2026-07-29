@@ -36,6 +36,25 @@ public sealed class DictationConfig
 
     public string CancelHotkey { get; init; } = "ctrl+alt+x";
 
+    /// <summary>
+    /// Toggles hands-free conversation mode: every finished Claude Code reply is
+    /// spoken by the local Kokoro voice. Empty disables the hotkey and leaves the
+    /// mode switchable only from <c>voice.ps1 -Conversation</c>.
+    /// </summary>
+    public string ConversationHotkey { get; init; } = "ctrl+alt+c";
+
+    /// <summary>
+    /// The file the Claude Code Stop hook reads before it speaks anything. Empty
+    /// resolves to <see cref="ConversationMode.DefaultStateFile"/>.
+    /// </summary>
+    public string VoiceStateFile { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Explicit path to "Helmion Voice Speak.exe". Empty resolves it by walking up
+    /// from this executable, which is what works for a normal side-by-side build.
+    /// </summary>
+    public string SpeakExePath { get; init; } = string.Empty;
+
     public string InjectionMode { get; init; } = "paste";
 
     public bool RestoreClipboard { get; init; } = true;

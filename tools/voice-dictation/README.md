@@ -22,9 +22,14 @@ keyboard input and it is in front, it gets the text.
 | Do this | What happens |
 |---|---|
 | `.\voice.ps1 -Start` | Starts both halves. No window appears — that is correct. |
-| `.\voice.ps1 -Status` | Says what is running, and what to press. |
+| `.\voice.ps1 -Status` | Says what is running, what to press, and whether conversation mode is on. |
+| `.\voice.ps1 -Conversation On` | **Hands-free.** Every Claude Code reply gets read aloud from now on. |
+| `.\voice.ps1 -Conversation Off` | Stops talking *this instant* and stays quiet. |
 | `.\voice.ps1 -Say "text"` | Reads that text aloud. Starts the speaker if it is not up. |
 | `.\voice.ps1 -Stop` | Stops both cleanly. |
+
+Conversation mode is **off** until you turn it on, and `Ctrl+Alt+C` is the same
+switch without leaving the keyboard.
 
 ### Talking to it
 
@@ -33,6 +38,7 @@ keyboard input and it is in front, it gets the text.
 | **Ctrl+Alt+Space** | Start talking. Tray dot turns **red**. |
 | **Ctrl+Alt+Space** again | Stops, transcribes (**amber**), types the text into the focused window. |
 | **Ctrl+Alt+X** | Throws the current recording away. Nothing is typed. |
+| **Ctrl+Alt+C** | Hands-free conversation on/off. Dot turns **green** while it is on. |
 | Right-click the tray dot | "Open log" or "Quit dictation". |
 
 The text is **not** submitted for you. It lands in the prompt, you read it, you
@@ -48,16 +54,101 @@ port, no import. `voice.ps1 -Say` is just a two-line wrapper around it.
 **The stop button silences it.** `~/.claude/scripts/stop_voice.ps1` already runs
 on every prompt submit and stamps `~/.claude/_voice/STOP`; the speaker watches
 that file and cuts the current sentence **and drops everything still queued**.
-Measured 2026-07-29: press to silence in 16 ms, with two queued utterances
-discarded rather than played on. It had to be built in explicitly — that hook
-silences the older Edge-TTS path by killing `ffplay`, and this speaker is not
-ffplay, so nothing would have stopped it otherwise.
+It had to be built in explicitly — that hook silences the older Edge-TTS path by
+killing `ffplay`, and this speaker is not ffplay, so nothing would have stopped
+it otherwise.
+
+Measured 2026-07-29 across four mid-sentence cuts, timed from stamping `STOP` to
+the speaker's own log line saying the audio had stopped:
+
+| Step | Time |
+|---|---|
+| Stamp → the sentinel poll notices | 14–15 ms |
+| Stamp → audio actually stopped | **44, 45, 56 ms** (three warm runs) |
+| Same, on the very first utterance after startup | 186 ms (cold audio device) |
+
+The 16 ms figure quoted in an earlier version of this file was the **first** row,
+not the second — detection, not silence. Both are real; the second is the one you
+hear. Every run also dropped the rest of the queue rather than playing on.
 
 **Never pass the text as a PowerShell argument.** `-ArgumentList 'x y z'` splits
 on spaces, so only the first word arrives. Measured 2026-07-29: an 85-character
 sentence arrived as 7 characters and produced 1.45 s of audio instead of 6.78 s,
 which looks exactly like a broken model and is not one. Use `-Say`, the queue
 folder, or `--file`.
+
+---
+
+## Hands-free: talking with Claude Code in the terminal
+
+Press **Ctrl+Alt+C** once. From then on you talk, and it talks back, and you do
+not touch the keyboard in between except to send.
+
+The half that was missing until now was the return trip. Dictation typed into the
+terminal and the speaker could read any file aloud, but nothing connected Claude
+Code's *reply* to the speaker — you had to copy text into `voice.ps1 -Say` by
+hand, which nobody does twice. This closes that.
+
+**How the reply gets out of the terminal.** Claude Code has no API to subscribe
+to, but it does run a **Stop hook** when a response finishes, and it hands that
+hook the path to the session transcript. That hook was already installed and
+already firing — `~/.claude/_stop_hook_debug.log` shows it firing on every reply
+long before this feature existed; it just exited immediately because the switch
+said `off`. So the loop is not a new mechanism, it is a new route through one
+that was already running:
+
+```
+you speak  → Ctrl+Alt+Space → Whisper → your terminal prompt   (already existed)
+Claude replies → Stop hook → transcript → speak-queue\*.reply.txt
+             → Kokoro watcher → cleaned → your speakers        (this is the new part)
+```
+
+Two other routes were considered and rejected. **Polling the transcript JSONL**
+directly needs a second daemon that guesses which of many session files is the
+live one, and cannot tell a finished reply from a half-streamed one — the hook is
+handed both the exact file and an authoritative "the turn is over". **Scraping
+the terminal** is worse again: a terminal exposes its buffer as read-only text, so
+there is nothing to subscribe to, and everything on screen — tool output, your own
+typing, its logs — would be read aloud along with the answer.
+
+**Exactly one reply, exactly once.** The hook collects only assistant text that
+appears *after the last user turn* in the transcript, and tool results are
+recorded as user turns — so tool output, tool inputs and older replies are all
+behind that cut and none of them reach the queue. The watcher then deletes each
+queue file *before* speaking it, so nothing can be spoken twice. Proven against a
+transcript holding two older replies, a tool call and its output: one file
+appeared, containing one sentence, and fourteen seconds of further polling
+produced no repeat.
+
+**It does not read your screen out loud.** `ReplyTextCleaner.cs` runs first and
+takes out what only makes sense to look at. A real reply, 1,117 characters in:
+
+| In the reply | What is spoken |
+|---|---|
+| A markdown table | "table omitted" |
+| A fenced code block | "code omitted" |
+| `E:\Helmion\tools\...\README.md` | "README.md" |
+| `TextInjector.cs:334` | "TextInjector.cs line 334" |
+| A URL | "link" |
+| `2099199f4c8e1b2a3d5` | "hash" |
+| ✓ 🔴 — → | dropped, or said as words |
+| `the exit code is 0 \| 1 \| 2` | **kept** — one line of pipes is prose, not a table |
+
+That last row is the one that matters: the table rule needs *two adjacent* pipe
+lines, so a sentence that happens to contain pipes is not silently eaten.
+
+**Turning it off is also the panic button.** Ctrl+Alt+C off does not merely stop
+future replies — it stamps the same `STOP` sentinel the square stop button uses,
+so whatever is talking right now stops mid-word and the queue is dropped with it.
+Timings are in the table above.
+
+**It stays local.** Whisper in, Kokoro out, both on this machine. The Stop hook
+still has its original Edge-TTS path and that path is untouched — the switch takes
+three values, `local` for Kokoro, `on` for the old cloud voice, anything else for
+silence. A Claude session running an older copy of the hook sees `local`, decides
+it is not `on`, and stays quiet, which is the safe way to fail.
+
+---
 
 Auto-start at logon is **off**. Turn it on with
 `.\autostart-dictation.ps1 -Enable` (writes one HKCU value, no admin needed),
@@ -164,6 +255,7 @@ Unity, VS Code, Cursor and Grok Build all running at the time.
 |---|---|---|
 | **Ctrl+Alt+Space** | Helmion dictation (global) | Registered clean, log 00:29:01.046 |
 | **Ctrl+Alt+X** | Helmion dictation (global) | Registered clean, log 00:29:01.047 |
+| **Ctrl+Alt+C** | Helmion conversation toggle (global) | Registered clean, log 01:23:13.069 — VS Code, Grok Build and Windows Terminal all running. Unity and Cursor were **not** running at that moment, so those two are untested for this key. |
 | **Ctrl+Space** | Grok Build dictation | Untouched — modifiers are matched exactly, so Ctrl+Alt+Space is a different registration |
 | **F8** | Grok Build | Untouched — never registered here |
 | **Ctrl+V** | Windows Terminal paste | Used by the injector, deliberately |
