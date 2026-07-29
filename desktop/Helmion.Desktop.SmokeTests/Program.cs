@@ -369,29 +369,72 @@ finally
 
 Console.WriteLine("Helmion protected-profile smoke tests passed (10 checks).");
 
-// ProfileSyncEngine smoke test
-var syncResult = ProfileSyncEngine.SyncProfileAsync().GetAwaiter().GetResult();
-Check(syncResult.Success, "ProfileSyncEngine succeeds");
-Check(syncResult.SyncedItems.Count > 0, "ProfileSyncEngine synced items is non-empty");
+// ProfileSyncEngine smoke test.
+//
+// This runs the REAL sync — every write path, the installer, and the Neon step —
+// but against a throwaway user profile and AppData root. Until 2026-07-28 it ran
+// against Troy's live machine on every `dotnet run`: it rewrote ~/.claude
+// markdown, ~/.claude.json (restoring plaintext API keys that had been moved to
+// environment variables), and ~/.gemini/GEMINI.md. A test suite must never be
+// able to reach a user's real configuration, so the targets are injected here.
+var syncSandbox = Path.Combine(
+    Path.GetTempPath(),
+    $"helmion-profile-sync-smoke-{Guid.NewGuid():N}");
+var sandboxUserProfile = Path.Combine(syncSandbox, "user");
+var sandboxAppData = Path.Combine(syncSandbox, "appdata");
+Directory.CreateDirectory(sandboxUserProfile);
+Directory.CreateDirectory(sandboxAppData);
 
-var userProfileDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-var appDataDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+// Fingerprinted before the sync and re-checked after: if any of these change,
+// the sync escaped its sandbox and reached the real user.
+var liveUserProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+var liveAppData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+string[] liveWitnesses =
+[
+    Path.Combine(liveUserProfile, ".claude.json"),
+    Path.Combine(liveUserProfile, ".claude", "BASE_RULES.md"),
+    Path.Combine(liveUserProfile, ".claude", "LEARNINGS.md"),
+    Path.Combine(liveUserProfile, ".claude", "LESSONS.md"),
+    Path.Combine(liveUserProfile, ".claude", "HELMION_CLAUDE.md"),
+    Path.Combine(liveUserProfile, ".gemini", "GEMINI.md"),
+    Path.Combine(liveAppData, "Claude", "claude_desktop_config.json"),
+];
+var liveBefore = SnapshotWitnesses(liveWitnesses);
 
-Check(File.Exists(Path.Combine(appDataDir, "Claude", "claude_desktop_config.json")), "Claude desktop config is created");
-Check(File.Exists(Path.Combine(userProfileDir, ".claude.json")), "Claude code config is created");
-Check(File.Exists(Path.Combine(userProfileDir, ".gemini", "GEMINI.md")), "Gemini rules file is created");
-Check(File.Exists(Path.Combine(userProfileDir, ".claude", "HELMION_CLAUDE.md")), "Claude rules file is created");
+try
+{
+    var syncResult = ProfileSyncEngine
+        .SyncProfileAsync(targets: new ProfileSyncTargets(sandboxUserProfile, sandboxAppData))
+        .GetAwaiter().GetResult();
+    Check(syncResult.Success, "ProfileSyncEngine succeeds");
+    Check(syncResult.SyncedItems.Count > 0, "ProfileSyncEngine synced items is non-empty");
 
-var envPathLoc = EnvironmentSettingsStore.FindEnvPath();
-var projectRootLoc = Path.GetDirectoryName(envPathLoc)!;
-Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "autonomy_rules.json")), "Codex rules file is created/updated");
-Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "hooks", "pretooluse.ps1")), "Codex pretooluse hook script is copied");
+    Check(File.Exists(Path.Combine(sandboxAppData, "Claude", "claude_desktop_config.json")), "Claude desktop config is created");
+    Check(File.Exists(Path.Combine(sandboxUserProfile, ".claude.json")), "Claude code config is created");
+    Check(File.Exists(Path.Combine(sandboxUserProfile, ".gemini", "GEMINI.md")), "Gemini rules file is created");
+    Check(File.Exists(Path.Combine(sandboxUserProfile, ".claude", "HELMION_CLAUDE.md")), "Claude rules file is created");
 
-var neonLine = syncResult.SyncedItems.FirstOrDefault(item =>
-    item.Contains("Neon autonomy rules", StringComparison.OrdinalIgnoreCase));
-Check(neonLine is not null, "Profile sync reports Neon autonomy rules step (success or skip/warning)");
+    var envPathLoc = EnvironmentSettingsStore.FindEnvPath();
+    var projectRootLoc = Path.GetDirectoryName(envPathLoc)!;
+    Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "autonomy_rules.json")), "Codex rules file is created/updated");
+    Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "hooks", "pretooluse.ps1")), "Codex pretooluse hook script is copied");
 
-Console.WriteLine("Helmion profile sync engine smoke tests passed (7 checks).");
+    var neonLine = syncResult.SyncedItems.FirstOrDefault(item =>
+        item.Contains("Neon autonomy rules", StringComparison.OrdinalIgnoreCase));
+    Check(neonLine is not null, "Profile sync reports Neon autonomy rules step (success or skip/warning)");
+
+    Check(
+        liveBefore.SequenceEqual(SnapshotWitnesses(liveWitnesses), StringComparer.Ordinal),
+        "a sandboxed profile sync leaves every real user config file byte-identical");
+}
+finally
+{
+    // The sandbox .claude.json holds the same live API keys the real one would
+    // have; it does not outlive the test run.
+    try { Directory.Delete(syncSandbox, recursive: true); } catch { /* temp dir */ }
+}
+
+Console.WriteLine("Helmion profile sync engine smoke tests passed (8 checks).");
 
 // Dynamic Maestro router + ToolDispatcher + execution toggle
 using (var console = new ConsoleSession())
@@ -818,6 +861,28 @@ static IReadOnlyList<string> SnapshotFiles(string root)
         {
             var file = new FileInfo(path);
             return $"{Path.GetRelativePath(root, path)}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+        })
+        .ToArray();
+}
+
+/// <summary>
+/// Fingerprints an exact list of files by content hash, so a test can prove it left
+/// the user's real configuration untouched. Absent files are recorded as absent, so
+/// a file appearing where there was none also fails the comparison.
+/// </summary>
+static IReadOnlyList<string> SnapshotWitnesses(IReadOnlyList<string> paths)
+{
+    return paths
+        .Select(path =>
+        {
+            if (!File.Exists(path))
+            {
+                return $"{path}|absent";
+            }
+
+            var hash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
+            return $"{path}|{hash}";
         })
         .ToArray();
 }

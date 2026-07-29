@@ -246,3 +246,76 @@ Doing #1, #2 and #7 alone would return roughly **330 GB on E: and several GB on 
 - **Eight Caldmere branches all committed on 2026-07-26 with the message "Capture uncommitted work on this branch."** That is one automated sweep, not eight days of work. Do not read those dates as development activity.
 - **No `git fetch` was run.** All ahead/behind and unmerged counts are against local refs.
 - **No `.env` file was opened.** Presence confirmed in: Helmion, heartbeat-voice, claude-memory-api, iq-app, firstprinciples-assessment, caldmere-login, aimforge, gauge-sandbox, dairyforge-mobile, fleet-fwd-pwa. Values never read.
+
+---
+
+## FOUND LATER
+
+**Appended 2026-07-28 by `f3673e34/agent-V-find-missing-apps`. READ-ONLY sweep — nothing above this line was altered. No `.env` or secret file was opened.**
+
+Troy said the sweep above missed several apps. It did. This section is the second pass.
+
+### The one he was asking about: Site Diary — voice → Haiku → a Google spreadsheet
+
+| Fact | Evidence |
+|---|---|
+| Where it lives | `C:\Users\troyh\n8n_Pod_Uploader_jarvis\jarvis\api\diary.js` (server) + `jarvis\public\diary.html` and `jarvis\diary.html` (the mic page, title `Site Diary`) |
+| Voice in | `diary.html:165` `navigator.mediaDevices.getUserMedia({audio:true})` → `MediaRecorder` → base64 POST to `/api/diary` |
+| Transcription | `diary.js:79` OpenAI Whisper (`whisper-1`), English |
+| The organizer | `diary.js:123` **`model: 'claude-haiku-4-5-20251001'`** — a system prompt at `diary.js:100-113` turns the raw dictation into strict JSON: date, time, location, category, summary, detail, `action_items[]`, priority |
+| Where it lands | `diary.js:148-171` POSTs a flat row to a Google **Apps Script webhook** in `SHEETS_DIARY_WEBHOOK` |
+| Deploy wiring | `jarvis\vercel.json` gives `api/diary.js` a 60 s maxDuration; `jarvis\.vercel\project.json` → Vercel project **`thinkbuddy`** |
+| History | `api/diary.js` committed `86ddabd` 2026-07-01; `public/diary.html` last touched `8b3d24f` 2026-07-20 |
+
+🔴 **Two honest corrections to how it was described.**
+
+1. **It writes to Google _Sheets_, not Google Docs.** `diary.js:148` builds an 8-cell `row` and posts it to a Sheets Apps Script webhook. There is no Docs call anywhere in the file. (The Docs behaviour he may be thinking of is a *different* app of his — Claude AI Memory Vault, below, which really does create Google Docs.)
+2. **Its prompt is written for a construction job site,** not a personal diary — `diary.js:101` says *"a voice note dictated on a job site"* and the categories are Safety / Progress / Subcontractor / Material / Weather / Issue / Inspection / General.
+
+🔴 **Live status UNVERIFIED, not assumed.** `https://thinkbuddy.vercel.app/` returns **401** right now (Vercel deployment protection), and `/diary.html` returned 404 through that same protection. The code is complete and committed and the route is configured; I could not prove the page is reachable in production, and I am not claiming it is.
+
+### The other voice → Google **Docs** app (this one really is Docs)
+
+| App | Absolute path | What it is | Status |
+|---|---|---|---|
+| **Claude AI Memory Vault** | `C:\Users\troyh\OneDrive\Desktop\claude-ai-memory-vault` | A packaged, sellable kit: 3 MCP tools — `search_memory`, `save_to_memory`, **`push_to_docs`** (creates a real Google Doc in his own Drive via his own Apps Script, `google-docs/PushToDocs.gs`). Because MCP connectors do not load inside claude.ai voice mode, it also answers plain GET URLs `/m/<secret>/{search,save,docs}` (`vercel.json:7-9`) so a voice session can still reach it hands-free while driving. Has an OAuth Pro extra that deploys to Fly, and `GUMROAD_LISTING.md` with a suggested $49 price | **PRODUCT / KIT** — this is the source kit behind the already-listed live `claude-memory-api` and `claude-memory-mcp` |
+
+### The drive organizer — question 1 answered: yes, and there are **two**
+
+| App | Absolute path | What it is | Status |
+|---|---|---|---|
+| **PC Auto Drive Organizer** | `D:\pc-auto-drive-organizer` | **CONFIRMED as the one.** `package.json` → `productName: "PC Auto Drive Organizer"`, `author: "Troy Halter"`, *"Automatically watches and organizes files on any drive (HDD, USB, SD) into tidy folders. Moves, never deletes."* Electron + Vite + chokidar, has `engine/engine.test.js`, ships via `electron-builder --win`, has a `dist\` and a `release\`. Shortcut on his OneDrive Desktop: `PC Auto Drive Organizer.lnk` | **WORKING** — no newer or different organizer app exists |
+| **D: drive auto-organizer (script)** | `D:\_organizer` | A *separate, earlier* one — `organize-d.ps1`, a PowerShell FileSystemWatcher for `D:\` with `-DryRun` / `-Once` / `-IncludeExisting` modes, plus `install-organizer-task.ps1` to run it as a Scheduled Task. Same safety promise: *"It NEVER deletes anything."* Has `baseline.txt` + `organize-log.txt`, so it has actually run | **WORKING** — script, not an app |
+
+### Apps and products with no row in the inventory above
+
+| App | Absolute path | What it is (one line) | Status |
+|---|---|---|---|
+| **AimForge landing page** | `C:\Users\troyh\OneDrive\Desktop\aimforge-web` | Single static marketing page for the Forge/AimForge brand, no backend, no build step. Its own `CLAUDE.md` warns the copy is aspirational — Cora voice, EDI, ELD, ROI numbers are marketing, not shipped features | **LIVE** — `https://aimforge-gray.vercel.app` → **200**; Vercel project `aimforge`; commit `0aebb83` 2026-07-11 |
+| **Caldmere account portal** | `C:\Users\troyh\caldmere-login` | Next.js + Supabase sign-in portal for the game, plus Codex and Builder nav tabs and the character builder hosted at `/builder`. This is what the WPF launcher authenticates against | **LIVE** — `https://caldmere-login.vercel.app` → **200**; Vercel project `caldmere-login`; commit `c36d256` 2026-07-14 on `master`. Keys present, not read |
+| **DairyForge backend (legacy)** | `C:\Users\troyh\dairyforge-backend` | The earlier standalone TypeScript/Drizzle backend for dairyforge.com, superseded by `dairyforge-monorepo` | **ARCHIVE — DO NOT DEPLOY.** `fly.toml` was deliberately renamed to `dairyforge-backend-legacy` on 2026-07-25 with a comment stating that deploying from here would replace the LIVE API and run a stale migration against the production database. Last commit `0de053c` 2026-06-27 on `feat/driver-loads-endpoints` |
+| **Shadowbane private server** | `E:\ShadowbaneServer` | A Node/Express/socket.io game server for the `sb2Client` — accounts, characters, guilds, banes, mobs, loot, market, `seed_world.js`, node-cron ticks | **WORKING (local)** — not deployed, no git found |
+| **Image Automation** | `C:\Users\troyh\OneDrive\Desktop\Image Automation` | Python image generator that uploads straight into Google Drive (`run_this.py`, google-auth + googleapiclient + cv2), with a `run_image_generator.bat` launcher. Sibling of the already-listed `C:\Users\troyh\image_generator` — this copy is the one holding live OAuth credentials | **WORKING** — ⚠ `client_secret.json`, `credentials.json` and `token.json` sit here in plaintext on the Desktop. Not opened. Worth moving or rotating |
+| **OilForge** | `C:\Users\troyh\Desktop\OilForge` | The oilfield vertical of DairyForge — hotshot, frac sand, water hauling, vacuum trucks. `OilForge_Full_Spec.md` dated 2026-05-01, grounded in his own Oilfield Solutions LLC background | **SPEC ONLY** — one markdown file, zero code. A fifth Forge vertical that was never built |
+| **Unity scratch project** | `C:\Users\troyh\My project` | An untitled Unity **2022.3.34f1** project (Caldmere is 6000.4.10f1, so this is unrelated to the game) | **UNKNOWN / scratch** — default name, never renamed |
+
+### Not apps, but worth knowing they exist
+
+| Thing | Absolute path | What it is |
+|---|---|---|
+| Obsidian knowledge vault | `C:\Users\troyh\OneDrive\Desktop\troys brain` | An Obsidian vault (`troys brain\`) plus the `KJ OS Template` and the Obsidian 1.12.7 installer. His personal second-brain system |
+| Voice brain-dump recordings | `D:\braindumps_2026-05-21_wav` | 24 WAV files from 2026-05-21, named `mic_*` and `phone_*`. Real captured brain dumps. 🔴 I could not identify which app recorded them — no recorder in that folder and no matching output path in the diary or wake-word trees. Stated as unresolved rather than guessed |
+| Gauge recovery scripts | `C:\Users\troyh\Desktop\Gauge` | Python scripts that recovered the Gauge/Jarvis source (`recover_gauge*.py`, `probe_*.py`) plus the 2026-05-06 JARVIS handoff. Archive of a rescue, not a product |
+| Gemini brain-dump pack | `C:\Users\troyh\Documents\Gemini_Braindump_2026-06-25` | 9 markdown files (PMO compliance engine, PostGIS schema, biometric triggers, Blender rebake) plus an `AUDIT_REPORT.md` |
+| ProDriver LLC archive | `C:\Users\troyh\Desktop\ProDriver-Archive` | His prior trucking company's financials, bank analysis and investor plan. Business records, not software |
+| Third-party, **not his** | `D:\Bezi` (Bezi.exe, a Unity AI assistant) · `C:\Users\troyh\.minion` (Minion 3.0.12, a game addon manager) | Listed only so a future sweep does not mistake them for his products |
+
+### What I checked and found nothing in
+
+`C:\Users\troyh\Downloads` (no project folders at all) · `D:\dairyforge-work` (empty) · `C:\Users\troyh\OneDrive\Desktop\veritas` (empty) · `C:\Users\troyh\OneDrive\Desktop\replit` (a single unopened `ReplitExport-troy83352.tar.gz`) · `C:\Users\troyh\OneDrive\Desktop\Cowork Homebase` (spreadsheets only).
+
+### Method, so this is auditable
+
+Grep patterns run against candidate trees: `diary`, `Diary`, `brain.?dump`, `braindump`, `journal`, `haiku`, `docs\.google`, `googleapis`, `drive\.file`, `documents\.create`, `transcri`. The diary was found by grepping `n8n_Pod_Uploader_jarvis` — a repo whose `package.json` is still named `faith-and-thread` and which the inventory above lists as "ThinkBuddy", which is exactly why the diary was invisible on the first pass: **it is a second app living inside a third app's repo under a fourth app's name.**
+
+Live HTTP checks run 2026-07-28 ~23:45 MDT via `Invoke-WebRequest -Method Head`: `thinkbuddy.vercel.app` **401** · `aimforge-gray.vercel.app` **200** · `caldmere-login.vercel.app` **200**.

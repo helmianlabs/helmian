@@ -13,6 +13,25 @@ public sealed record SyncResult(
     string Message,
     IReadOnlyList<string> SyncedItems);
 
+/// <summary>
+/// The filesystem roots a profile sync writes user-scoped files into
+/// (<c>.claude.json</c>, <c>.claude/</c>, <c>.gemini/</c>, and
+/// <c>AppData/Claude/claude_desktop_config.json</c>).
+///
+/// Production callers pass null and get the real user profile and roaming
+/// AppData. Tests MUST pass a temp pair: on 2026-07-28 the smoke suite invoked
+/// a live sync on every <c>dotnet run</c>, which rewrote the user's own
+/// BASE_RULES.md back to a template and restored plaintext API keys into
+/// <c>~/.claude.json</c> after they had been moved to environment variables.
+/// A test suite must never be able to reach a user's real configuration.
+/// </summary>
+public sealed record ProfileSyncTargets(string UserProfileDirectory, string AppDataDirectory)
+{
+    public static ProfileSyncTargets Live() => new(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+}
+
 public static class ProfileSyncEngine
 {
     private const string GeminiRulesContent = """
@@ -78,7 +97,9 @@ public static class ProfileSyncEngine
         };
     }
 
-    public static async Task<SyncResult> SyncProfileAsync(CancellationToken cancellationToken = default)
+    public static async Task<SyncResult> SyncProfileAsync(
+        CancellationToken cancellationToken = default,
+        ProfileSyncTargets? targets = null)
     {
         var syncedItems = new List<string>();
         try
@@ -95,8 +116,9 @@ public static class ProfileSyncEngine
             }
 
             // 3. Setup paths
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var resolvedTargets = targets ?? ProfileSyncTargets.Live();
+            var appData = resolvedTargets.AppDataDirectory;
+            var userProfile = resolvedTargets.UserProfileDirectory;
 
             var claudeDesktopConfigPath = Path.Combine(appData, "Claude", "claude_desktop_config.json");
             var claudeCodeConfigPath = Path.Combine(userProfile, ".claude.json");
@@ -206,7 +228,13 @@ public static class ProfileSyncEngine
                 "skills/concurrent-session-hygiene/SKILL.md",
                 "skills/go-no-go-stall-detection/SKILL.md"
             };
-            var installerResult = await ClaudeProfileInstaller.InstallAsync(approvedClaudeFiles, cancellationToken);
+            // A sandboxed sync must install into the sandbox too, otherwise the
+            // installer falls back to the real ~/.claude and the isolation leaks.
+            var installerResult = await ClaudeProfileInstaller.InstallAsync(
+                approvedClaudeFiles,
+                cancellationToken,
+                overwriteExisting: false,
+                targetDirectory: targets is null ? null : claudeDir);
             if (installerResult.Success)
             {
                 syncedItems.Add($"Claude markdown rules and skills ({installerResult.WrittenPaths.Count} files)");
