@@ -10,6 +10,8 @@ coverage/
 artifacts/
 desktop/**/bin/
 desktop/**/obj/
+tools/**/bin/
+tools/**/obj/
 
 # Local voice models (~470MB) - fetch with desktop/scripts/get-voice-models.ps1
 desktop/models/
