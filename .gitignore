@@ -8,10 +8,24 @@ coverage/
 *.owner-key.recovery.json
 *.owner-confirmation.json
 artifacts/
-desktop/**/bin/
+
+# .NET build output. 2026-07-29: these were `desktop/**/bin/` and `tools/**/bin/`,
+# which is a trap in THIS repo — `bin/` is a SOURCE directory here (bin/helmion.mjs,
+# bin/helmion-jobs.mjs and four more are tracked), so a future tool laid out the
+# ordinary Node way as `tools/newtool/bin/cli.mjs` was silently untracked and one
+# `git clean` from gone. Naming the MSBuild configurations instead keeps the
+# ignore precise. `obj/` needs no such care — nothing but MSBuild writes it.
+desktop/**/bin/Debug/
+desktop/**/bin/Release/
 desktop/**/obj/
-tools/**/bin/
+tools/**/bin/Debug/
+tools/**/bin/Release/
 tools/**/obj/
+# Catch a non-standard configuration name without swallowing a source bin/.
+**/bin/*/net[0-9]*/
+**/bin/x64/
+**/bin/x86/
+**/bin/AnyCPU/
 
 # Local voice models (~470MB) - fetch with desktop/scripts/get-voice-models.ps1
 desktop/models/
