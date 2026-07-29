@@ -784,6 +784,8 @@ AskPermissionSmokeChecks.Run();
 VoiceSmokeChecks.Run();
 
 VoiceBackendSmokeChecks.Run();
+
+ProfileInstallerGuardChecks.Run();
 return;
 
 /// <summary>

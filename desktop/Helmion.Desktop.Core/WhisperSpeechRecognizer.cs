@@ -550,6 +550,21 @@ public sealed class WhisperSpeechRecognizer : IDisposable
     {
         if (e.Exception is not null)
         {
+            // An unexpected stop (device unplugged, driver reset, exclusive-mode
+            // grab) leaves a dead WaveInEvent in _capture. Start() short-circuits
+            // on `_capture is not null` (:99-105) and would flip _running back to
+            // true without reopening anything — IsRunning then reports true over a
+            // microphone that produces no audio, and the UI says "Listening".
+            // Releasing it here is what makes the next Start() actually reopen the
+            // device. Safe to call from this callback: SafeDisposeCapture nulls
+            // _capture under the lock before touching the device, so a re-entrant
+            // RecordingStopped finds nothing to dispose and returns.
+            lock (_gate)
+            {
+                _running = false;
+            }
+
+            SafeDisposeCapture();
             Error?.Invoke(this, $"Microphone stopped: {e.Exception.Message}");
         }
 

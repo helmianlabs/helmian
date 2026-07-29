@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      WinExe, not Exe. This is the single most important line in the file: an
+      Exe gets a console subsystem, and a console window flashing up every time
+      the hotkey fires is the one behaviour Troy has explicitly banned. WinExe
+      links the GUI subsystem, so the process has no console at all — not a
+      hidden one, none.
+
+      UseWindowsForms buys three things that would otherwise be several hundred
+      lines of P/Invoke: a message pump (RegisterHotKey needs one), a window
+      handle to receive WM_HOTKEY, and NotifyIcon for the tray indicator. The
+      hidden form is never shown.
+    -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>Helmion Voice Dictation</AssemblyName>
+    <RootNamespace>Helmion.VoiceDictation</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>Helmion Voice Dictation</Product>
+    <Description>Hidden hotkey dictation: microphone to Whisper to the focused window</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The same stack the Pilot already proves on this machine
+      (desktop/Helmion.Desktop.Core/Helmion.Desktop.Core.csproj), at the same
+      versions, reading the same ggml-base.en.bin. This project does NOT
+      reference Helmion.Desktop.Core — see README.md "Why a standalone project".
+    -->
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+    <PackageReference Include="NAudio" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      PreserveNewest, never Always: this is the file Troy edits to add his own
+      vocabulary, and Always would overwrite his edits on every build.
+    -->
+    <None Update="voice-dictation.config.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

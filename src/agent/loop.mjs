@@ -7,6 +7,7 @@ import {
 import { createToolRuntime } from './tools.mjs';
 import { redactSecrets } from './redact.mjs';
 import { readEnvTier, resolveTurnModel } from './model-router.mjs';
+import { resolveLocalProvider, withLocalBrevity } from './local-provider.mjs';
 
 /** Default cap for tool↔model rounds per user message (was 12; too low for real coding). */
 export const MAX_TOOL_ROUNDS_DEFAULT = 48;
@@ -43,6 +44,9 @@ export async function runAgentTurn({
   tier: explicitTier = null,
   modelOverride = null,
   envTier = readEnvTier(),
+  // Local-model routing. Null disables it entirely; the default reads env, so a
+  // machine without a local runtime simply never qualifies.
+  localProvider = resolveLocalProvider(),
 }) {
   const toolDefs = runtime.definitionsForOpenAi();
   const limit = resolveMaxToolRounds(maxToolRounds);
@@ -52,7 +56,7 @@ export async function runAgentTurn({
   // to a weaker model than one that has already worked on it.
   let floorTier = null;
 
-  const pickModel = (roundsUsedThisTurn) => {
+  const pickModel = (roundsUsedThisTurn, { allowLocal = true } = {}) => {
     const choice = resolveTurnModel({
       provider,
       userText,
@@ -63,38 +67,80 @@ export async function runAgentTurn({
       envTier,
       floorTier,
       modelOverride,
+      localProvider: allowLocal ? localProvider : null,
     });
-    floorTier = choice.tier;
+    // 'local' must never become the escalate-only floor. The floor exists to
+    // stop a turn dropping to a WEAKER model, and local is the weakest thing
+    // here — recording it would pin the rest of the turn at the bottom.
+    if (!choice.isLocal) floorTier = choice.tier;
     return choice;
   };
 
-  for (let round = 0; round < limit; round += 1) {
-    const choice = pickModel(round);
+  // One call against whichever provider the router chose for this round. Local
+  // calls carry a timeout so an Ollama box that has wedged cannot hang the turn.
+  const callProvider = (choice) => {
+    const active = choice.provider || provider;
+    return chatWithTools({
+      providerId: active.id,
+      apiKey: active.key,
+      // Custom OpenAI-compatible endpoints carry their own URL + model id.
+      url: active.url,
+      model: choice.model,
+      // Local turns get a brevity instruction folded into a COPY of the
+      // history; a frontier turn is handed the exact same array it always was.
+      // withLocalBrevity never mutates, so nothing leaks back into `messages`.
+      messages: choice.isLocal ? withLocalBrevity(messages) : messages,
+      toolDefs,
+      // ONLY the local endpoint. qwen3.5:4b is a reasoning model; without this a
+      // short conversational turn burns ~2,603 tokens over ~40 s to say one
+      // sentence, and 30 tokens in 0.9 s with it. Deliberately keyed off the
+      // routing decision, NOT providerId 'custom' — a user-supplied LM Studio /
+      // vLLM / DeepSeek endpoint is also 'custom' and was never tested here.
+      reasoningEffortNone: Boolean(choice.isLocal),
+      signal: choice.isLocal && active.timeoutMs
+        ? AbortSignal.timeout(active.timeoutMs)
+        : undefined,
+    });
+  };
+
+  const announce = (choice, round) => {
+    const active = choice.provider || provider;
     onEvent({
       type: 'model',
-      provider: provider.label,
-      providerId: provider.id,
+      provider: active.label,
+      providerId: active.id,
       model: choice.model,
       tier: choice.tier,
       reason: choice.reason,
       round,
+      isLocal: Boolean(choice.isLocal),
     });
     onEvent({
       type: 'status',
       message: round === 0
-        ? `${provider.label} thinking… (${choice.tier} · ${choice.model || 'provider default'})`
-        : `${provider.label} tool round ${round}/${limit}… (${choice.tier} · ${choice.model || 'provider default'})`,
+        ? `${active.label} thinking… (${choice.tier} · ${choice.model || 'provider default'})`
+        : `${active.label} tool round ${round}/${limit}… (${choice.tier} · ${choice.model || 'provider default'})`,
     });
+  };
 
-    const reply = await chatWithTools({
-      providerId: provider.id,
-      apiKey: provider.key,
-      // Custom OpenAI-compatible endpoints carry their own URL + model id.
-      url: provider.url,
-      model: choice.model,
-      messages,
-      toolDefs,
-    });
+  for (let round = 0; round < limit; round += 1) {
+    let choice = pickModel(round);
+    announce(choice, round);
+
+    let reply;
+    try {
+      reply = await callProvider(choice);
+    } catch (err) {
+      // A local failure must never fail the turn. Anything else propagates.
+      if (!choice.isLocal) throw err;
+      onEvent({
+        type: 'status',
+        message: `local model unavailable (${err.message}) — falling back to ${provider.label}`,
+      });
+      choice = pickModel(round, { allowLocal: false });
+      announce(choice, round);
+      reply = await callProvider(choice);
+    }
 
     if (!reply.toolCalls?.length) {
       // Redact secrets from final assistant response before showing to user

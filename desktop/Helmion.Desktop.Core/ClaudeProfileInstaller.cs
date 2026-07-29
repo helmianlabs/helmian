@@ -52,17 +52,26 @@ public static class ClaudeProfileInstaller
     /// entries permanently — there was no backup. Overwriting now requires an explicit
     /// opt-in AND leaves a timestamped .bak beside the original.
     /// </param>
+    /// <param name="targetDirectory">
+    /// Overrides ~/.claude. Exists so the preserve-existing guarantee can be tested
+    /// against a temp directory instead of Troy's live config — on 2026-07-28 this
+    /// installer destroyed BASE_RULES.md (5,512 B of his own writing) and
+    /// LEARNINGS.md, and NO test would have caught the regression that did it.
+    /// Production callers leave this null.
+    /// </param>
     public static async Task<InstallResult> InstallAsync(
         IReadOnlySet<string> approvedPaths,
         CancellationToken cancellationToken = default,
-        bool overwriteExisting = false)
+        bool overwriteExisting = false,
+        string? targetDirectory = null)
     {
-        if (!IsClaudePresent())
+        var claudeDir = targetDirectory ?? ClaudeDir;
+        if (targetDirectory is null && !IsClaudePresent())
         {
             return new InstallResult(false, "~/.claude directory not found. Install Claude Code first.", []);
         }
 
-        Directory.CreateDirectory(SkillsDir);
+        Directory.CreateDirectory(Path.Combine(claudeDir, "skills"));
 
         var written = new List<string>();
         var skipped = new List<string>();
@@ -78,7 +87,7 @@ public static class ClaudeProfileInstaller
                 continue;
             }
 
-            var targetPath = Path.Combine(ClaudeDir, relPath);
+            var targetPath = Path.Combine(claudeDir, relPath);
             var dir = Path.GetDirectoryName(targetPath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 

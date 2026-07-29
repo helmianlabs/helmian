@@ -39,6 +39,19 @@ Rules:
 - You are not a fake UI stub. Tools execute for real.`;
 }
 
+/**
+ * @param {boolean} [reasoningEffortNone]
+ *   Opt-in: send `reasoning_effort: 'none'` on a tool-bearing turn. Set ONLY by
+ *   callers that have verified their endpoint supports the field. Measured on
+ *   this box 2026-07-28 with Ollama v0.32.5 + qwen3.5:4b, which is a reasoning
+ *   model: a short conversational turn burned 2,603 tokens over ~40 s without
+ *   the field and 30 tokens in 0.9 s with it. Every cheaper workaround failed —
+ *   `PARAMETER think false`, a `/no_think` system message, a `/no_think` user
+ *   suffix, and `enable_thinking=False` (which returned an EMPTY answer after
+ *   4,068 tokens). This flag is the only lever that works.
+ *   It is deliberately NOT inferred from providerId 'custom': LM Studio, vLLM
+ *   and DeepSeek were never tested and may reject the unknown field.
+ */
 export async function chatWithTools({
   providerId,
   apiKey,
@@ -47,6 +60,7 @@ export async function chatWithTools({
   toolDefs,
   signal,
   url,
+  reasoningEffortNone = false,
 }) {
   if (!apiKey) {
     throw new Error(`No API key configured for provider ${providerId}`);
@@ -65,6 +79,7 @@ export async function chatWithTools({
       messages,
       toolDefs,
       signal,
+      reasoningEffortNone,
     });
   }
 
@@ -113,27 +128,38 @@ async function openAiCompatibleTurn({
   toolDefs,
   signal,
   providerId,
+  reasoningEffortNone = false,
 }) {
   const body = {
     model,
     messages,
   };
+  const hasTools = Array.isArray(toolDefs) && toolDefs.length > 0;
+
   // Empty tools arrays break some providers (xAI/OpenAI). Omit when permission is read-only.
-  if (Array.isArray(toolDefs) && toolDefs.length > 0) {
+  if (hasTools) {
     body.tools = toolDefs;
     body.tool_choice = 'auto';
+  }
 
-    // The gpt-5.6 family defaults to a reasoning effort that chat.completions
-    // refuses to combine with function tools. Verified from OpenAI's own 400:
-    // "Function tools with reasoning_effort are not supported for gpt-5.6-terra
-    //  in /v1/chat/completions. To use function tools, use /v1/responses or set
-    //  reasoning_effort to 'none'." Every tool-bearing OpenAI turn 400s without
-    // this. Scoped to providerId 'openai' — xAI and user-supplied
-    // OpenAI-compatible endpoints (Ollama, vLLM, LM Studio) reject the unknown
-    // field, so it must not be sent to them.
-    if (providerId === 'openai') {
-      body.reasoning_effort = 'none';
-    }
+  // Two different reasons to pin reasoning effort, with different scopes:
+  //
+  // 1. OpenAI, TOOL TURNS ONLY. The gpt-5.6 family refuses function tools at its
+  //    default effort. From OpenAI's own 400: "Function tools with
+  //    reasoning_effort are not supported for gpt-5.6-terra in
+  //    /v1/chat/completions. To use function tools, use /v1/responses or set
+  //    reasoning_effort to 'none'."
+  // 2. A caller that explicitly opted in (today: the local Ollama provider), on
+  //    EVERY turn. Ollama documents the field as supported, and qwen3.5:4b is a
+  //    reasoning model whose runaway thinking hits CONVERSATIONAL turns hardest —
+  //    measured 2,603 tokens / ~40 s without it vs 30 tokens / 0.9 s with it.
+  //    Tool turns were fine either way, so gating this on hasTools would have
+  //    left the exact case the router sends local still broken.
+  //
+  // Never inferred from providerId 'custom': LM Studio, vLLM and DeepSeek are
+  // untested and may reject the unknown field.
+  if (reasoningEffortNone || (providerId === 'openai' && hasTools)) {
+    body.reasoning_effort = 'none';
   }
   const res = await fetch(url, {
     method: 'POST',

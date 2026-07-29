@@ -228,6 +228,31 @@ public sealed class AgentBridge : IDisposable
         }
     }
 
+    /// <summary>
+    /// Ask the bridge what slash commands exist right now. The bridge re-scans
+    /// the command directories before answering, so a file added since startup
+    /// shows up without a restart.
+    /// </summary>
+    /// <returns>
+    /// The <c>commands</c> event, or an <c>error</c> event describing why the
+    /// listing failed. Never null — a caller can always render something.
+    /// </returns>
+    public async Task<AgentBridgeEvent> ListCommandsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+
+        AgentBridgeEvent? last = null;
+        await foreach (var ev in RequestAsync(new { cmd = "commands" }, cancellationToken)
+                           .ConfigureAwait(false))
+        {
+            last = ev;
+            if (ev.Event == "commands") return ev;
+        }
+
+        return last ?? new AgentBridgeEvent("error", Message: "No answer from agent-bridge.");
+    }
+
     private async IAsyncEnumerable<AgentBridgeEvent> RequestAsync(
         object request,
         [System.Runtime.CompilerServices.EnumeratorCancellation]
@@ -307,6 +332,13 @@ public sealed class AgentBridge : IDisposable
             {
                 yield break;
             }
+
+            // commands/expand answer with a single event and no "done". Without
+            // these the reader would block until the NEXT command's output.
+            // Their error paths do emit "done" (bridge.mjs:391-395), so a
+            // failure still terminates on the check above.
+            if (cmd == "commands" && ev.Event == "commands") yield break;
+            if (cmd == "expand" && ev.Event == "expanded") yield break;
         }
     }
 
@@ -346,7 +378,83 @@ public sealed class AgentBridge : IDisposable
             Source: GetStr("source"),
             TimeoutMs: root.TryGetProperty("timeoutMs", out var t) && t.ValueKind == JsonValueKind.Number
                 ? t.GetInt32()
-                : null);
+                : null,
+            // model event (src/agent/bridge.mjs:361-370): which model the router
+            // picked for this round, which tier, and why. Dropped before this.
+            Model: GetStr("model"),
+            Tier: GetStr("tier"),
+            Reason: GetStr("reason"),
+            // command event (src/agent/bridge.mjs:311): the file that was expanded.
+            CommandPath: GetStr("path"),
+            Round: root.TryGetProperty("round", out var r) && r.ValueKind == JsonValueKind.Number
+                ? r.GetInt32()
+                : null,
+            // commands event (src/agent/bridge.mjs:279-292).
+            Commands: ParseCommands(root),
+            Plugins: ParsePlugins(root));
+    }
+
+    private static IReadOnlyList<AgentSlashCommand>? ParseCommands(JsonElement root)
+    {
+        if (!root.TryGetProperty("commands", out var el) || el.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var list = new List<AgentSlashCommand>();
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+
+            string? Field(string name) =>
+                item.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String
+                    ? p.GetString()
+                    : null;
+
+            var name = Field("name");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            list.Add(new AgentSlashCommand(
+                name!,
+                Field("description"),
+                Field("argumentHint"),
+                Field("source"),
+                Field("path"),
+                // Absent means invocable; only an explicit false hides it.
+                !(item.TryGetProperty("userInvocable", out var ui)
+                  && ui.ValueKind == JsonValueKind.False)));
+        }
+
+        return list;
+    }
+
+    private static IReadOnlyList<string>? ParsePlugins(JsonElement root)
+    {
+        if (!root.TryGetProperty("plugins", out var el) || el.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var list = new List<string>();
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                var s = item.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) list.Add(s!);
+                continue;
+            }
+
+            if (item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("name", out var n)
+                && n.ValueKind == JsonValueKind.String)
+            {
+                var s = n.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) list.Add(s!);
+            }
+        }
+
+        return list;
     }
 
     private static async Task DrainStderr(Process process)
@@ -512,4 +620,22 @@ public sealed record AgentBridgeEvent(
     string? Summary = null,
     string? Decision = null,
     string? Source = null,
-    int? TimeoutMs = null);
+    int? TimeoutMs = null,
+    // model (per-task router: which model answered this round, and why)
+    string? Model = null,
+    string? Tier = null,
+    string? Reason = null,
+    int? Round = null,
+    string? CommandPath = null,
+    // commands (slash-command registry listing)
+    IReadOnlyList<AgentSlashCommand>? Commands = null,
+    IReadOnlyList<string>? Plugins = null);
+
+/// <summary>One user-defined slash command as reported by the bridge.</summary>
+public sealed record AgentSlashCommand(
+    string Name,
+    string? Description,
+    string? ArgumentHint,
+    string? Source,
+    string? Path,
+    bool UserInvocable);

@@ -1,0 +1,166 @@
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Helmion.VoiceDictation;
+
+/// <summary>
+/// Everything Troy can change without a rebuild, loaded from
+/// voice-dictation.config.json beside the executable.
+/// </summary>
+/// <remarks>
+/// Loading never throws. A missing file, a typo'd hotkey or malformed JSON all
+/// degrade to the built-in defaults and a log line — requirement 4 (fail safe)
+/// means a bad config must not stop the microphone working.
+/// </remarks>
+public sealed class DictationConfig
+{
+    /// <summary>Whisper reads only the last ~224 tokens of an initial prompt.</summary>
+    /// <remarks>
+    /// Sources agree on the 224-token ceiling and that later tokens dominate
+    /// (developers.openai.com/cookbook/examples/whisper_prompting_guide). English
+    /// BPE runs roughly 4 characters per token, so 700 characters sits under the
+    /// ceiling with room to spare. When the list overflows we keep the TAIL,
+    /// because that is the end the model weights most heavily.
+    /// </remarks>
+    public const int PromptCharBudget = 700;
+
+    private static readonly JsonSerializerOptions ReadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
+    public string Hotkey { get; init; } = "ctrl+alt+space";
+
+    public string CancelHotkey { get; init; } = "ctrl+alt+x";
+
+    public string InjectionMode { get; init; } = "paste";
+
+    public bool RestoreClipboard { get; init; } = true;
+
+    /// <summary>
+    /// How long to wait after sending Ctrl+V before putting the old clipboard
+    /// back.
+    /// </summary>
+    /// <remarks>
+    /// This is a race and there is no way to close it from outside the target
+    /// process: the paste is handled by whatever window has focus, on its own
+    /// message loop, and nothing tells us when it has finished reading the
+    /// clipboard. Restore too early and the target pastes the PREVIOUS clipboard
+    /// contents instead of the dictation — a silent wrong-text bug, which is far
+    /// worse than leaving a transcript on the clipboard. The default is therefore
+    /// generous. Set restoreClipboard to false to remove the race entirely.
+    /// </remarks>
+    public int ClipboardRestoreDelayMs { get; init; } = 400;
+
+    public bool AppendTrailingSpace { get; init; } = true;
+
+    public bool AutoSubmit { get; init; }
+
+    public int MaxRecordingSeconds { get; init; } = 300;
+
+    public string ModelPath { get; init; } = string.Empty;
+
+    public bool ShowTrayIcon { get; init; } = true;
+
+    public string LogPath { get; init; } = string.Empty;
+
+    public IReadOnlyList<string> Vocabulary { get; init; } = Array.Empty<string>();
+
+    public string VocabularyPromptOverride { get; init; } = string.Empty;
+
+    /// <summary>True when text should be injected by clipboard + Ctrl+V.</summary>
+    [JsonIgnore]
+    public bool UsesPasteInjection =>
+        !InjectionMode.Equals("type", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Default config path: beside the executable.</summary>
+    public static string DefaultPath =>
+        Path.Combine(AppContext.BaseDirectory, "voice-dictation.config.json");
+
+    /// <summary>
+    /// Read the config, or return defaults. <paramref name="problem"/> carries a
+    /// human-readable reason when the file could not be used, so the caller can
+    /// log it — this method itself never throws and never shows a dialog.
+    /// </summary>
+    public static DictationConfig Load(string path, out string? problem)
+    {
+        problem = null;
+
+        try
+        {
+            if (!File.Exists(path))
+            {
+                problem = $"No config at {path}; using built-in defaults.";
+                return new DictationConfig { Vocabulary = Array.Empty<string>() };
+            }
+
+            var json = File.ReadAllText(path);
+            var parsed = JsonSerializer.Deserialize<DictationConfig>(json, ReadOptions);
+            if (parsed is null)
+            {
+                problem = $"Config at {path} parsed to nothing; using built-in defaults.";
+                return new DictationConfig();
+            }
+
+            return parsed;
+        }
+        catch (Exception ex)
+        {
+            problem = $"Config at {path} could not be read ({ex.Message}); using built-in defaults.";
+            return new DictationConfig();
+        }
+    }
+
+    /// <summary>
+    /// Build the Whisper initial prompt from the vocabulary list.
+    /// </summary>
+    /// <remarks>
+    /// The prompt is written as ordinary prose rather than a bare token dump
+    /// because the initial prompt is decoded as if it were the beginning of the
+    /// transcript — text that reads like a transcript conditions the model, text
+    /// that reads like a config file conditions it toward config files.
+    /// </remarks>
+    public string BuildVocabularyPrompt()
+    {
+        if (!string.IsNullOrWhiteSpace(VocabularyPromptOverride))
+        {
+            return Trim(VocabularyPromptOverride.Trim());
+        }
+
+        var terms = Vocabulary
+            .Where(term => !string.IsNullOrWhiteSpace(term))
+            .Select(term => term.Trim())
+            .ToArray();
+
+        if (terms.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder();
+        builder.Append("The following words appear in this recording: ");
+        builder.Append(string.Join(", ", terms));
+        builder.Append('.');
+
+        return Trim(builder.ToString());
+    }
+
+    /// <summary>
+    /// Keep the tail within <see cref="PromptCharBudget"/>, cutting on a comma so
+    /// the prompt never opens mid-word.
+    /// </summary>
+    private static string Trim(string prompt)
+    {
+        if (prompt.Length <= PromptCharBudget)
+        {
+            return prompt;
+        }
+
+        var tail = prompt[^PromptCharBudget..];
+        var firstBreak = tail.IndexOf(", ", StringComparison.Ordinal);
+        return firstBreak >= 0 ? tail[(firstBreak + 2)..] : tail;
+    }
+}
