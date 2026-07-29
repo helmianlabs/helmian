@@ -84,6 +84,18 @@ public static class ReplyTextCleaner
     /// <summary>Sentence boundary: after . ! or ? and the whitespace that follows.</summary>
     private static readonly Regex SentenceBreak = new(@"(?<=[.!?])\s+", RegexOptions.Compiled);
 
+    /// <summary>Omission cues left stranded at the end of a shortened utterance.</summary>
+    /// <remarks>
+    /// "(table omitted)" earns its place in the middle of a sentence, where it
+    /// explains a gap the listener would otherwise notice. Trailing off the end of
+    /// a two-sentence clip it explains nothing — and because most replies end in a
+    /// table or a command block, it would be the last thing Troy heard on nearly
+    /// every single utterance. Measured on the 902-character fixture: the second
+    /// kept "sentence" was the cue and nothing else.
+    /// </remarks>
+    private static readonly Regex TrailingOmissionCue =
+        new(@"(?:\s*\((?:table|code) omitted\)\.?)+\s*$", RegexOptions.Compiled);
+
     // Fenced code first, so that pipes, paths and hashes INSIDE a code sample are
     // never mistaken for a table or a citation out in the prose.
     private static readonly Regex FencedCode = new(@"```[\s\S]*?```", RegexOptions.Compiled);
@@ -232,7 +244,11 @@ public static class ReplyTextCleaner
                 : result[..MaxSpokenReplyChars];
         }
 
-        return result.TrimEnd();
+        // Strip trailing "(table omitted)." cues — but only when real words remain
+        // underneath. A reply that IS nothing but a table should still say so
+        // rather than go silent, which is why this is conditional.
+        var trimmed = TrailingOmissionCue.Replace(result, string.Empty).TrimEnd();
+        return trimmed.Length > 0 ? trimmed : result.TrimEnd();
     }
 
     /// <summary>

@@ -25,6 +25,7 @@ keyboard input and it is in front, it gets the text.
 | `.\voice.ps1 -Status` | Says what is running, what to press, and whether conversation mode is on. |
 | `.\voice.ps1 -Conversation On` | **Hands-free.** Every Claude Code reply gets read aloud from now on. |
 | `.\voice.ps1 -Conversation Off` | Stops talking *this instant* and stays quiet. |
+| `.\voice.ps1 -Attention` | Says your name once, and nothing else. The only thing it ever says uninvited. |
 | `.\voice.ps1 -Say "text"` | Reads that text aloud. Starts the speaker if it is not up. |
 | `.\voice.ps1 -Stop` | Stops both cleanly. |
 
@@ -136,6 +137,31 @@ takes out what only makes sense to look at. A real reply, 1,117 characters in:
 
 That last row is the one that matters: the table rule needs *two adjacent* pipe
 lines, so a sentence that happens to contain pipes is not silently eaten.
+
+**It says a couple of sentences, not a speech.** Stripping the noise is not the
+same as being short — the first version of this cleaned a reply down to 902
+characters, which is still **55.9 seconds** of unbroken talking. Kokoro speaks at
+about 12.5 characters a second, so the reply is now cut to the first **two
+sentences** and a hard ceiling of **220 characters**, on a word boundary, and a
+trailing "(table omitted)" is dropped rather than being the last thing you hear.
+Measured on the same reply, synthesized to a file:
+
+| | Characters | Audio |
+|---|---|---|
+| Before the cap | 902 | 55.90 s |
+| After the cap | 156 | **9.47 s** |
+| A normal short reply | 24 | 1.98 s |
+
+Nothing is appended to say it was shortened. At this length almost every reply
+gets cut, so announcing it would add a syllable of noise to every utterance to
+state something permanently true. The full text is already on the screen — that
+is the point. The voice is not a substitute for reading it.
+
+**To get your attention it says your name, and nothing else.** `-Attention`
+speaks the single word "Troy" (1.4 s) and stops. That is the only sound this
+stack ever makes uninvited, and turning conversation mode on says the same word
+instead of announcing itself. A spoken status update you did not ask for is the
+thing that interrupts you; a name just makes you look at the screen.
 
 **Turning it off is also the panic button.** Ctrl+Alt+C off does not merely stop
 future replies — it stamps the same `STOP` sentinel the square stop button uses,
