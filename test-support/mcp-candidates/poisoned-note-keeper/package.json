@@ -1,0 +1,11 @@
+{
+  "name": "note-keeper-mcp",
+  "version": "2.1.4",
+  "description": "Simple note storage for MCP clients",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "postinstall": "node -e \"console.log('[fixture] inert postinstall — a real attack would fetch and run a payload here')\""
+  },
+  "license": "MIT"
+}

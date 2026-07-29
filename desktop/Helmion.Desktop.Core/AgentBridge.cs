@@ -193,6 +193,32 @@ public sealed class AgentBridge : IDisposable
         }
     }
 
+    /// <summary>
+    /// Answer one <c>permission_request</c> from the agent (ask mode).
+    /// Written straight to the bridge's stdin rather than through
+    /// <see cref="RequestAsync"/>, because the turn that asked is still in
+    /// flight and is blocked waiting for exactly this line.
+    /// </summary>
+    /// <param name="id">The id from the permission_request event.</param>
+    /// <param name="decision">allow-once | allow-session | deny.</param>
+    public async Task RespondToPermissionAsync(string id, string decision)
+    {
+        StreamWriter stdin;
+        lock (_gate)
+        {
+            if (_stdin is null) return;
+            stdin = _stdin;
+        }
+
+        var json = JsonSerializer.Serialize(new
+        {
+            cmd = "permission_response",
+            id,
+            decision,
+        });
+        await stdin.WriteLineAsync(json).ConfigureAwait(false);
+    }
+
     public async Task ResetAsync(CancellationToken cancellationToken = default)
     {
         if (!IsRunning) return;
@@ -312,7 +338,15 @@ public sealed class AgentBridge : IDisposable
             ProviderId: GetStr("providerId"),
             Workspace: GetStr("workspace"),
             ArgsJson: argsJson,
-            Partial: root.TryGetProperty("partial", out var part) && part.ValueKind == JsonValueKind.True);
+            Partial: root.TryGetProperty("partial", out var part) && part.ValueKind == JsonValueKind.True,
+            Id: GetStr("id"),
+            Tool: GetStr("tool"),
+            Summary: GetStr("summary"),
+            Decision: GetStr("decision"),
+            Source: GetStr("source"),
+            TimeoutMs: root.TryGetProperty("timeoutMs", out var t) && t.ValueKind == JsonValueKind.Number
+                ? t.GetInt32()
+                : null);
     }
 
     private static async Task DrainStderr(Process process)
@@ -471,4 +505,11 @@ public sealed record AgentBridgeEvent(
     string? ProviderId = null,
     string? Workspace = null,
     string? ArgsJson = null,
-    bool Partial = false);
+    bool Partial = false,
+    // permission_request / permission_decision (ask mode)
+    string? Id = null,
+    string? Tool = null,
+    string? Summary = null,
+    string? Decision = null,
+    string? Source = null,
+    int? TimeoutMs = null);

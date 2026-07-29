@@ -779,7 +779,11 @@ finally
 
 Console.WriteLine("Helmion agent workspace guard smoke tests passed (10 checks).");
 
+AskPermissionSmokeChecks.Run();
+
 VoiceSmokeChecks.Run();
+
+VoiceBackendSmokeChecks.Run();
 return;
 
 /// <summary>

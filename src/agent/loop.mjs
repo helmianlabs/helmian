@@ -226,7 +226,10 @@ export function createSessionState(workspaceRoot, options = {}) {
 
 export function resetSessionState(state, workspaceRoot, options = {}) {
   const permissionMode = options.permissionMode ?? state.permissionMode ?? 'full';
-  state.runtime = createToolRuntime(workspaceRoot, { permissionMode });
+  // Forward the whole option bag exactly like createSessionState does. Dropping
+  // it here silently detached the ask-mode approver on every reconfigure, which
+  // fails closed (every tool denied) rather than loudly.
+  state.runtime = createToolRuntime(workspaceRoot, { ...options, permissionMode });
   state.permissionMode = state.runtime.permissionMode;
   state.messages = [
     { role: 'system', content: systemPrompt(state.runtime.root) },
