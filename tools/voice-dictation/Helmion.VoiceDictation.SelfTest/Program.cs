@@ -403,39 +403,121 @@ internal static class Program
     }
 
     /// <summary>
-    /// A real, focusable window that Troy cannot see: fully transparent, absent
-    /// from the taskbar and from Alt-Tab.
+    /// A real, focusable window Troy cannot see, running its OWN message loop on
+    /// its own STA thread.
     /// </summary>
     /// <remarks>
-    /// Opacity 0 rather than an off-screen position, because a window parked at
-    /// -32000,-32000 activates unreliably while a transparent on-screen one
-    /// behaves like any normal window. A layered window with zero alpha still
-    /// receives keyboard input — only WS_EX_TRANSPARENT passes input through, and
-    /// that flag is not set here.
+    /// <para>The separate thread is the whole point, and an earlier version of
+    /// this harness got it wrong. With the target on the same thread as the
+    /// injector, TextInjector's post-paste sleep blocks the very message loop
+    /// that has to process Ctrl+V — so the paste is still sitting unhandled in the
+    /// queue when the clipboard is restored, and the target then pastes the
+    /// restored contents. That produced a failing clipboard-restore check which
+    /// looked like a product bug but was an artifact of the test.</para>
+    ///
+    /// <para>Running the target on its own pump reproduces what actually happens
+    /// in production, where the target is a different process entirely. It also
+    /// means the check is now a genuine test of the restore delay rather than of
+    /// the harness's threading.</para>
+    ///
+    /// <para>Opacity 0 rather than an off-screen position: a window parked at
+    /// -32000,-32000 activates unreliably, while a transparent on-screen one
+    /// behaves normally. A layered window with zero alpha still receives keyboard
+    /// input — only WS_EX_TRANSPARENT passes input through, and it is not set.</para>
     /// </remarks>
-    private static Form CreateInvisibleTarget(out TextBox box)
+    private sealed class TargetWindow : IDisposable
     {
-        var form = new Form
+        private readonly Thread _thread;
+        private readonly ManualResetEventSlim _ready = new(false);
+
+        private Form? _form;
+        private TextBox? _box;
+
+        public TargetWindow()
         {
-            StartPosition = FormStartPosition.Manual,
-            Location = new Point(40, 40),
-            Size = new Size(320, 80),
-            ShowInTaskbar = false,
-            FormBorderStyle = FormBorderStyle.None,
-            Opacity = 0d,
-            TopMost = true,
-        };
+            _thread = new Thread(Run) { IsBackground = true };
+            _thread.SetApartmentState(ApartmentState.STA);
+            _thread.Start();
 
-        box = new TextBox { Multiline = true, Dock = DockStyle.Fill };
-        form.Controls.Add(box);
-        form.Show();
+            if (!_ready.Wait(TimeSpan.FromSeconds(10)))
+            {
+                throw new TimeoutException("The test target window did not come up.");
+            }
+        }
 
-        var focusTarget = box;
-        form.Activate();
-        focusTarget.Focus();
-        Pump(150);
+        public IntPtr Handle { get; private set; }
 
-        return form;
+        /// <summary>Read the target's text from the caller's thread.</summary>
+        public string Text
+        {
+            get
+            {
+                var form = _form;
+                var box = _box;
+                if (form is null || box is null || !form.IsHandleCreated)
+                {
+                    return string.Empty;
+                }
+
+                try
+                {
+                    return (string)form.Invoke(() => box.Text);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"        (could not read the target window: {ex.Message})");
+                    return string.Empty;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                var form = _form;
+                if (form is not null && form.IsHandleCreated)
+                {
+                    form.Invoke(form.Close);
+                }
+            }
+            catch
+            {
+                // Tearing down; nothing here is actionable.
+            }
+
+            _thread.Join(TimeSpan.FromSeconds(3));
+            _ready.Dispose();
+        }
+
+        private void Run()
+        {
+            var form = new Form
+            {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(40, 40),
+                Size = new Size(320, 80),
+                ShowInTaskbar = false,
+                FormBorderStyle = FormBorderStyle.None,
+                Opacity = 0d,
+                TopMost = true,
+            };
+
+            var box = new TextBox { Multiline = true, Dock = DockStyle.Fill };
+            form.Controls.Add(box);
+
+            form.Shown += (_, _) =>
+            {
+                Handle = form.Handle;
+                box.Focus();
+                _ready.Set();
+            };
+
+            _form = form;
+            _box = box;
+
+            Application.Run(form);
+        }
     }
 
     /// <summary>
