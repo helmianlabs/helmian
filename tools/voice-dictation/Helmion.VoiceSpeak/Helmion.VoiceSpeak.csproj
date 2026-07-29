@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      WinExe, not Exe — the same single most important line as the sibling
+      dictation project. An Exe links the console subsystem and flashes a window
+      every time it runs, which is the one behaviour Troy has explicitly banned.
+      WinExe has no console at all, not even a hidden one, so the log file is the
+      only output channel (see SpeakLog).
+
+      No UseWindowsForms here, unlike Helmion.VoiceDictation: that project needs a
+      window handle for RegisterHotKey and a message pump. Speaking needs neither.
+
+      No [STAThread] on Main either, so the process runs MTA. WASAPI is a COM API
+      that prefers MTA, and nothing here touches the clipboard, which is the only
+      reason the dictation tool needs STA.
+    -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>Helmion Voice Speak</AssemblyName>
+    <RootNamespace>Helmion.VoiceSpeak</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>Helmion Voice Speak</Product>
+    <Description>Local Kokoro text-to-speech any terminal AI can call</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      This project DOES reference Helmion.Desktop.Core, and that is a deliberate
+      reversal of the sibling dictation project's choice, not an oversight.
+
+      README.md "Why a standalone project" gives three reasons dictation avoids
+      Core, and none of them survive the move from speech-to-text to
+      text-to-speech. (1) Dictation needed WithPrompt(...) at processor-build
+      time, which Core's recogniser does not call — irrelevant here; nothing in
+      TTS is being customised. (2) Core drags in Npgsql and KokoroSharp "for what
+      is a microphone-to-text tool" — but KokoroSharp IS the tool here, so that
+      reason inverts. (3) Core's recogniser ends an utterance after 750 ms of
+      silence, wrong for dictation — that is the recogniser, not the synthesiser.
+
+      What reusing Core buys, concretely: KokoroSpeechSynthesizer.cs:477-483 falls
+      back from WASAPI to the waveOut mapper because a pinned device index threw
+      "BadDeviceId calling waveOutOpen" on this machine on 2026-07-28. Copying the
+      playback code would mean re-earning that bug. It also brings the device
+      watchdog that survives headphones being plugged in mid-session.
+
+      Referencing Core does NOT pull in Helmion.Desktop.SmokeTests. That project
+      references Core, not the other way round, so the live ~/.claude sync the
+      README warns about cannot be dragged in through this edge.
+    -->
+    <ProjectReference Include="..\..\..\desktop\Helmion.Desktop.Core\Helmion.Desktop.Core.csproj" />
+  </ItemGroup>
+</Project>
