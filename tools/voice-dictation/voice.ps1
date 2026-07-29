@@ -79,14 +79,23 @@ function Start-Stack {
 function Stop-Stack {
     if (Test-Path $dictationExe) { Start-Process -FilePath $dictationExe -ArgumentList '--stop' | Out-Null }
     if (Test-Path $speakExe)     { Start-Process -FilePath $speakExe     -ArgumentList '--stop' | Out-Null }
-    Start-Sleep -Milliseconds 900
 
-    # Clean shutdown releases the microphone, the hotkeys and the tray icon.
-    # Only fall back to killing when the signal was not honoured.
+    # Polled rather than a fixed sleep. Measured 2026-07-29: the signal reached
+    # dictation in 0.3s but the process was still alive at 0.9s, so a fixed
+    # 900 ms wait force-killed a shutdown that was already underway — which is
+    # what leaves the tray icon on screen until the next mouse-over. Disposing a
+    # 141 MB Whisper model and a 310 MB Kokoro model is simply not instant.
+    $deadline = (Get-Date).AddSeconds(6)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Get-Proc 'Helmion Voice Dictation') -and -not (Get-Proc 'Helmion Voice Speak')) { break }
+        Start-Sleep -Milliseconds 150
+    }
+
+    # Only kill what genuinely ignored the signal.
     foreach ($name in 'Helmion Voice Dictation', 'Helmion Voice Speak') {
         $still = Get-Proc $name
         if ($still) {
-            Write-Host "Clean shutdown did not take for $name; stopping it." -ForegroundColor Yellow
+            Write-Host "$name did not shut down in 6s; stopping it." -ForegroundColor Yellow
             $still | Stop-Process -Force
         }
     }

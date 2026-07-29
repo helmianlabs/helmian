@@ -1,29 +1,63 @@
-# Helmion Voice Dictation
+# Helmion Local Voice
 
-Talk to Claude Code instead of typing. Press a key, say your piece, press it
-again — the text lands in whatever window has focus, with your own vocabulary
-already loaded so it stops turning **Helmion** into "Helmand" and **Moshi** into
-"Moshe".
+Talk to any AI in a terminal instead of typing, and have it talk back. Press a
+key, say your piece, press it again — the text lands in whatever window has
+focus, with your own vocabulary already loaded so it stops turning **Helmion**
+into "Helmand" and **Moshi** into "Moshe". Anything that can write a file can
+speak back through the same stack.
 
 Runs entirely on this machine. No network call, no API key, no audio leaves the
 box.
 
+**It is not tied to Claude Code.** Dictation types into the focused window using
+`SendInput`, and the only thing it asks Windows is "which window is in front"
+(`TextInjector.cs:334`). There is no process-name check anywhere in the injector.
+Claude Code, Grok Build, Codex, a plain PowerShell prompt, Notepad — if it takes
+keyboard input and it is in front, it gets the text.
+
 ---
 
-## Use it
+## Use it — one command
 
 | Do this | What happens |
 |---|---|
-| `.\start-dictation.ps1` | Starts it. No window appears — that is correct. |
+| `.\voice.ps1 -Start` | Starts both halves. No window appears — that is correct. |
+| `.\voice.ps1 -Status` | Says what is running, and what to press. |
+| `.\voice.ps1 -Say "text"` | Reads that text aloud. Starts the speaker if it is not up. |
+| `.\voice.ps1 -Stop` | Stops both cleanly. |
+
+### Talking to it
+
+| Key | What happens |
+|---|---|
 | **Ctrl+Alt+Space** | Start talking. Tray dot turns **red**. |
 | **Ctrl+Alt+Space** again | Stops, transcribes (**amber**), types the text into the focused window. |
 | **Ctrl+Alt+X** | Throws the current recording away. Nothing is typed. |
-| `.\stop-dictation.ps1` | Stops it cleanly. |
 | Right-click the tray dot | "Open log" or "Quit dictation". |
 
 The text is **not** submitted for you. It lands in the prompt, you read it, you
 press Enter. That is deliberate — a mis-heard word should never reach Claude
 before you have seen it.
+
+### It talking to you
+
+Any program, in any language, can speak by dropping a UTF-8 `.txt` file into
+`%LOCALAPPDATA%\Helmion\speak-queue`. That is the whole interface — no SDK, no
+port, no import. `voice.ps1 -Say` is just a two-line wrapper around it.
+
+**The stop button silences it.** `~/.claude/scripts/stop_voice.ps1` already runs
+on every prompt submit and stamps `~/.claude/_voice/STOP`; the speaker watches
+that file and cuts the current sentence **and drops everything still queued**.
+Measured 2026-07-29: press to silence in 16 ms, with two queued utterances
+discarded rather than played on. It had to be built in explicitly — that hook
+silences the older Edge-TTS path by killing `ffplay`, and this speaker is not
+ffplay, so nothing would have stopped it otherwise.
+
+**Never pass the text as a PowerShell argument.** `-ArgumentList 'x y z'` splits
+on spaces, so only the first word arrives. Measured 2026-07-29: an 85-character
+sentence arrived as 7 characters and produced 1.45 s of audio instead of 6.78 s,
+which looks exactly like a broken model and is not one. Use `-Say`, the queue
+folder, or `--file`.
 
 Auto-start at logon is **off**. Turn it on with
 `.\autostart-dictation.ps1 -Enable` (writes one HKCU value, no admin needed),
@@ -106,6 +140,40 @@ binary: the PE subsystem byte reads `2` (GUI), not `3` (console). Starting it
 adds zero `conhost` processes and its `MainWindowHandle` is `0`. The tray dot is
 the only thing it ever puts on screen. Everything else goes to
 `%LOCALAPPDATA%\Helmion\voice-dictation.log`.
+
+**Why the local Kokoro speaker did not replace `~/.claude/speak.ps1`.** That
+script maps a name to a specific Edge-TTS voice — `bigsister` to Emma,
+`clyde` to Andrew (`speak.ps1:8-13`) — and `CLAUDE.md` rule 0.26 locks that map
+by name, marks it "DO NOT FLIP", and names the script itself as the source of
+truth. Kokoro cannot produce Emma or Andrew; its voices are a different set
+entirely (`af_heart` and 53 others). Repointing `speak.ps1` at Kokoro would have
+silently re-voiced both identities and destroyed the by-ear distinction that map
+exists to create. So the local speaker is a **second, additive** path: no
+network and no cost when you want that, with the locked identity untouched.
+
+---
+
+## Who owns which key
+
+Nothing here collides. `RegisterHotKey` is exclusive machine-wide — a second
+registrant gets Win32 error 1409 — so a successful registration *is* the proof
+that nothing else holds the combination. Verified 2026-07-29 00:29:01 with
+Unity, VS Code, Cursor and Grok Build all running at the time.
+
+| Combination | Owner | Verified |
+|---|---|---|
+| **Ctrl+Alt+Space** | Helmion dictation (global) | Registered clean, log 00:29:01.046 |
+| **Ctrl+Alt+X** | Helmion dictation (global) | Registered clean, log 00:29:01.047 |
+| **Ctrl+Space** | Grok Build dictation | Untouched — modifiers are matched exactly, so Ctrl+Alt+Space is a different registration |
+| **F8** | Grok Build | Untouched — never registered here |
+| **Ctrl+V** | Windows Terminal paste | Used by the injector, deliberately |
+
+One consequence worth knowing: a global hotkey is consumed by Windows before the
+focused app sees it, so while dictation runs, no application receives
+Ctrl+Alt+Space at all. Windows Terminal's settings bind neither combination, and
+neither VS Code nor Cursor has a `keybindings.json` — so nothing on this machine
+loses a shortcut it was using. Change either key in the config if that ever
+stops being true.
 
 ---
 
