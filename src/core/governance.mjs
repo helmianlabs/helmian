@@ -14,8 +14,49 @@ const DESTRUCTIVE_PATTERNS = [
   ['git worktree remove', /\bgit\b[^;&|]*\bworktree\b[^;&|]*\bremove\b/i],
   ['Clear-Content', /\bClear-Content\b/i],
   ['direct SQL DDL', /\b(?:DROP\s+(?:TABLE|DATABASE|SCHEMA)|TRUNCATE\s+TABLE)\b/i],
+  ['SQL TRUNCATE', /\bTRUNCATE\s+(?:TABLE\b|(?:ONLY\s+)?[A-Za-z_"`[])/i],
   ['dd device write', /\bdd\b[^;&|]*\bof=/i],
   ['filesystem format', /\bmkfs(?:\.|\s)/i],
+
+  // ── Destruction expressed through a LANGUAGE API, not shell syntax ─────────
+  //
+  // Added 2026-07-29 on Troy's instruction after live testing. Every pattern
+  // above this block describes a SHELL command, so a reply that hands you
+  // `shutil.rmtree('/data')` or `fs.rmSync(dir, {recursive:true})` passed
+  // straight through — the same delete, one language away from being seen.
+  //
+  // These are deliberately call-shaped (`name.method(`) rather than bare words,
+  // so prose naming the function does not fire and neither does an import line.
+  ['Python recursive tree delete', /\bshutil\s*\.\s*rmtree\s*\(/i],
+  ['Python file or directory delete', /\bos\s*\.\s*(?:remove|unlink|rmdir|removedirs)\s*\(/i],
+  ['Python pathlib delete', /\.\s*(?:unlink|rmdir)\s*\(\s*(?:missing_ok\s*=|\))/i],
+  ['.NET directory delete', /\bDirectory\s*\.\s*Delete\s*\(/i],
+  // Case-insensitive, so this covers C# File.Delete and Ruby File.delete both.
+  ['File.delete call', /\bFile\s*\.\s*delete\s*\(/i],
+  ['Ruby forced recursive rm', /\bFileUtils\s*\.\s*rm_(?:rf|r|f)\b/i],
+  ['Node filesystem delete', /\bfs(?:\s*\.\s*promises)?\s*\.\s*(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\s*\(/i],
+  ['recursive delete option', /\brm(?:Sync)?\s*\([^)]*\brecursive\s*:\s*true/i],
+];
+
+// Line and block comments. Stripped from the skeleton BEFORE matching, on
+// Troy's instruction 2026-07-29: a code block that merely MENTIONS a dangerous
+// command in a comment was firing, and that was the confirmed false positive.
+//
+// Two things are deliberately NOT here, and both would be security holes:
+//
+//   `--` SQL comments. `--force`, `--recursive` and `--no-preserve-root` are
+//   CLI flags, and `git checkout -- src/` is itself a destructive pattern above
+//   (`git checkout/restore discard` matches on `\s--\s`). Stripping `--` would
+//   disarm those. SQL comment handling needs the block's declared language,
+//   which this function does not receive.
+//
+//   `//` after a colon. `curl https://host && rm -rf /` must not lose everything
+//   after `https:`. The lookbehind below refuses a `//` preceded by `:`.
+const COMMENT_PATTERNS = [
+  [/\/\*[\s\S]*?\*\//g, ' '],        // /* block */
+  [/<!--[\s\S]*?-->/g, ' '],         // <!-- html -->
+  [/(?:^|[ \t])#[^\n]*/g, ' '],      // # shell, python, ruby, powershell
+  [/(?<!:)\/\/[^\n]*/g, ' '],        // // js, c#, but never inside a URL
 ];
 
 const SQL_DDL = /\b(?:DROP\s+(?:TABLE|DATABASE|SCHEMA)|TRUNCATE\s+TABLE|ALTER\s+TABLE\b[^;]*\bDROP\b)\b/i;
@@ -40,11 +81,20 @@ export function quotedStrings(command) {
 }
 
 export function commandSkeleton(command) {
-  return String(command)
+  let skeleton = String(command)
     .replace(/<<-?\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\r?\n[\s\S]*?^\s*\1\s*$/gm, ' <<HEREDOC> ')
     .replace(/@'[\s\S]*?'@/g, ' <PSHERE> ')
     .replace(/@"[\s\S]*?"@/g, ' <PSHERE> ')
+    // Strings first, comments second, and the order is load-bearing: strip a
+    // comment out of `echo "a # b"` first and you leave a dangling quote for the
+    // string pass to trip over. Strings go to <STR>, so a `#` living inside one
+    // is gone before the comment pass ever sees it.
     .replace(/"[^"]*"|'[^']*'/g, ' <STR> ');
+
+  for (const [pattern, replacement] of COMMENT_PATTERNS) {
+    skeleton = skeleton.replace(pattern, replacement);
+  }
+  return skeleton;
 }
 
 export function detectDestructiveOperation(payload) {

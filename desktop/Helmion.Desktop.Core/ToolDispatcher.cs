@@ -62,7 +62,14 @@ public sealed class ToolDispatcher
         }
     }
 
-    public string LaunchProcess(string path)
+    /// <param name="hidden">
+    /// Suppress the launched program's window. Defaults to false because the
+    /// point of LaunchProcess is to open something the operator wants to SEE.
+    /// Set it true for automated callers — a test suite must never put a window
+    /// on the operator's desktop, and this one did: the smoke suite launched a
+    /// real visible cmd.exe on every run and never closed it.
+    /// </param>
+    public string LaunchProcess(string path, bool hidden = false)
     {
         if (!_session.IsExecutionEnabled)
         {
@@ -79,8 +86,12 @@ public sealed class ToolDispatcher
             var startInfo = new ProcessStartInfo
             {
                 FileName = path.Trim('\"', '\''),
+                // UseShellExecute stays true so a document or a shell alias still
+                // opens the way the operator expects. WindowStyle is the lever that
+                // works in that mode; CreateNoWindow is ignored when shell-executing.
                 UseShellExecute = true,
-                CreateNoWindow = false
+                CreateNoWindow = hidden,
+                WindowStyle = hidden ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal
             };
             using var proc = Process.Start(startInfo);
             if (proc != null)
