@@ -166,6 +166,31 @@ internal static class GuardLivenessChecks
             Assert(blind.Detail.Contains("not an all-clear", StringComparison.Ordinal), "and it says so");
             checks += 2;
 
+            // ── HOW TO RUN A NEGATIVE CONTROL IN A TREE OTHERS ARE WORKING IN ──
+            //
+            // The fixtures below were proven real by breaking the probe on purpose
+            // — reverting BrowserExtensionProbe.PreferenceFileNames to
+            // ["Preferences"], watching the Secure-Preferences fixture fail, then
+            // reverting. A test that passes on both the broken and the fixed code
+            // proves nothing, so that step is not optional.
+            //
+            // BUT DO IT ON A SCRATCH COPY, NOT IN THE SHARED TREE. While that
+            // deliberate break was live on disk, another session read the file,
+            // found the single-file bug sitting there under a comment promising it
+            // was temporary, and escalated it as a shipping defect. They were right
+            // to: the file genuinely was broken at the moment they looked.
+            //
+            // IN A SHARED TREE, A READ OF ANOTHER SESSION'S FILE IS A READ OF A
+            // MOMENT, NOT OF A STATE. Nothing distinguishes a half-finished edit
+            // from a finished one, and "temporary, reverted below" is a promise to
+            // your future self that everyone else's tooling will believe literally.
+            // The same trap runs in both directions: a session that reported this
+            // work missing was reading a moment too, minutes before it reappeared.
+            //
+            // So: run the break in a throwaway worktree or a copy, and if it must
+            // happen in place, say so out loud before you start and confirm the
+            // revert with git rather than memory.
+
             // ── THE RECORD LIVES IN ONE OF TWO FILES, AND EITHER COUNTS. ───────
             //
             // This is the bug that shipped: the probe read only "Preferences", and

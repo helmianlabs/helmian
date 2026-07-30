@@ -19,7 +19,7 @@ public partial class App : Application
             var succeeded = Task.Run(RunServiceSmokeAsync)
                 .GetAwaiter()
                 .GetResult();
-            Shutdown(succeeded ? 0 : 2);
+            ExitWith(succeeded ? 0 : 2);
             return;
         }
 
@@ -38,7 +38,22 @@ public partial class App : Application
                 }
             }
             smokeWindow.Close();
-            Shutdown(0);
+            ExitWith(0);
+            return;
+        }
+
+        // "A fresh empty workspace must produce zero red banners." — Troy,
+        // 2026-07-30. Exit code 3 means at least one first-run state regressed
+        // back into being reported as a failure.
+        if (e.Args.Contains("--empty-workspace-audit", StringComparer.Ordinal))
+        {
+            var auditWindow = CreateLaidOutWindow(persistTheme: false);
+            var red = auditWindow.CountFreshWorkspaceRedRows();
+            Console.WriteLine(red == 0
+                ? "Fresh-workspace red audit passed: 0 red rows on an empty workspace."
+                : $"Fresh-workspace red audit FAILED: {red} first-run state(s) reported as failures.");
+            auditWindow.Close();
+            ExitWith(red == 0 ? 0 : 3);
             return;
         }
 
@@ -58,7 +73,18 @@ public partial class App : Application
             var themeId = themeIndex >= 0 && themeIndex + 1 < e.Args.Length
                 ? e.Args[themeIndex + 1]
                 : ColorThemeCatalog.DefaultThemeId;
-            var previewWindow = CreateLaidOutWindow(themeId, persistTheme: false);
+            // Window size is settable so the layout can be photographed NARROW,
+            // not only at the comfortable 1440 default. Clipping hides at width.
+            var previewWindow = CreateLaidOutWindow(
+                themeId,
+                persistTheme: false,
+                width: ReadNumericArg(e.Args, "--width") ?? 1440,
+                height: ReadNumericArg(e.Args, "--height") ?? 900);
+            var previewScale = ReadNumericArg(e.Args, "--text-scale");
+            if (previewScale is not null)
+            {
+                previewWindow.ApplyTextScaleForPreview(previewScale.Value);
+            }
             var workspaceIndex = Array.IndexOf(e.Args, "--workspace");
             if (workspaceIndex >= 0)
             {
@@ -71,10 +97,23 @@ public partial class App : Application
                     WorkspaceInspector.Inspect(e.Args[workspaceIndex + 1]));
             }
             previewWindow.NavigateTo(pageName);
+            if (e.Args.Contains("--reveal-mcp", StringComparer.Ordinal))
+            {
+                previewWindow.RevealMcpPanelForPreview();
+            }
+            if (e.Args.Contains("--demo-plugins", StringComparer.Ordinal))
+            {
+                previewWindow.RunPlusMenuActionForPreview(PlusMenuKind.Plugin);
+            }
+            if (e.Args.Contains("--demo-empty-states", StringComparer.Ordinal))
+            {
+                previewWindow.NavigateTo("Console");
+                previewWindow.CountFreshWorkspaceRedRows();
+            }
             previewWindow.UpdateLayout();
             RenderPreview(previewWindow, e.Args[previewIndex + 1]);
             previewWindow.Close();
-            Shutdown(0);
+            ExitWith(0);
             return;
         }
 
@@ -128,6 +167,23 @@ public partial class App : Application
         base.OnExit(e);
     }
 
+    /// <summary>
+    /// Ends a headless run with an exit code the CALLER can actually see.
+    ///
+    /// <see cref="Application.Shutdown(int)"/> alone is not enough. WPF generates
+    /// a <c>void Main()</c>, so nothing ever returns Application.ExitCode to the
+    /// OS and the process exits 0 no matter what was passed. Measured 2026-07-30:
+    /// a deliberately failing audit printed FAILED and still exited 0, which means
+    /// publish.ps1's Invoke-PackagedSmoke — whose only check is
+    /// <c>$smokeProcess.ExitCode -ne 0</c> — could never have failed a build.
+    /// Setting Environment.ExitCode is what the OS actually reads.
+    /// </summary>
+    private void ExitWith(int exitCode)
+    {
+        Environment.ExitCode = exitCode;
+        Shutdown(exitCode);
+    }
+
     private static async Task<bool> RunServiceSmokeAsync()
     {
         var connector = new LocalServiceConnector();
@@ -147,16 +203,95 @@ public partial class App : Application
         }
     }
 
+    /// <summary>Reads a numeric preview flag, or null when it is absent or unparseable.</summary>
+    private static double? ReadNumericArg(string[] args, string name)
+    {
+        var index = Array.IndexOf(args, name);
+        return index >= 0
+            && index + 1 < args.Length
+            && double.TryParse(
+                args[index + 1],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var value)
+                ? value
+                : null;
+    }
+
+    /// <summary>
+    /// Where headless layout windows live: far outside any real desktop.
+    ///
+    /// -32000 is beyond the virtual screen of any monitor arrangement Windows
+    /// supports, so the window is off every display rather than merely behind
+    /// something.
+    /// </summary>
+    private const double OffscreenOrigin = -32000;
+
+    /// <summary>
+    /// Builds a fully laid-out window for the headless paths WITHOUT PUTTING
+    /// ANYTHING ON THE USER'S SCREEN.
+    ///
+    /// ── THIS IS THE BUG THAT COST TROY AN AFTERNOON. ──
+    ///
+    /// This method used to call <c>window.Show()</c> on a 1440x900 window with
+    /// <c>WindowStyle.None</c> and <c>ShowInTaskbar = false</c>. publish.ps1 runs
+    /// the packaged exe twice through paths that reach here — line 98
+    /// (--smoke-test) and line 103 (--empty-workspace-audit) — so every publish
+    /// presented two real, borderless windows. Borderless meant no close button;
+    /// ShowInTaskbar = false meant no taskbar entry to right-click. They were
+    /// literally undismissable, and they appeared while Troy was on sales calls.
+    ///
+    /// WHY IT HID FOR SO LONG: publish.ps1:54 sets
+    /// <c>ProcessStartInfo.CreateNoWindow = true</c>, which reads like "no windows
+    /// please". It only suppresses a CONSOLE window and has no effect whatsoever on
+    /// a WPF window. The script looked like it had already handled this.
+    ///
+    /// ── WHY THIS STILL CALLS Show(), OFF-SCREEN, RATHER THAN NOT AT ALL ──
+    ///
+    /// The obvious fix is to drop Show() and call Measure/Arrange directly. That
+    /// produces a layout pass, but WPF raises <c>FrameworkElement.Loaded</c> only
+    /// when an element is connected to a PresentationSource — which a never-shown
+    /// window does not have. MainWindow does real wiring in Loaded handlers
+    /// (ConsolePlusRows_Loaded assigns the + menu's ItemsSource, among others), so
+    /// a never-shown window would run the checks against half-wired controls. The
+    /// red-row audit in particular would count zero red rows because the rows were
+    /// never populated, and report that as a PASS. That is a false green, and
+    /// trading Troy's screen for his coverage is not a fix.
+    ///
+    /// So the window is still shown — at <see cref="OffscreenOrigin"/>, off every
+    /// display, and with <c>ShowActivated = false</c> so it cannot take focus from
+    /// whatever he is actually doing. Layout, Loaded, and the rendered visual tree
+    /// all behave exactly as before; the only thing that changes is that no pixel
+    /// of it can land on a monitor.
+    ///
+    /// NOT VERIFIED BY RUNNING: nothing may launch this exe, so this has been
+    /// proven to compile and is pinned by OffscreenWindowChecks in the console
+    /// smoke suite, which fails if these guards are ever removed. It has NOT been
+    /// observed running. A session permitted to launch it should confirm both that
+    /// nothing appears and that the checks still count what they used to.
+    /// </summary>
     private static MainWindow CreateLaidOutWindow(
         string? themeOverride = null,
-        bool persistTheme = false)
+        bool persistTheme = false,
+        double width = 1440,
+        double height = 900)
     {
         var window = new MainWindow(themeOverride, persistTheme)
         {
-            Width = 1440,
-            Height = 900,
+            Width = width,
+            Height = height,
             WindowStyle = WindowStyle.None,
-            ShowInTaskbar = false
+            ShowInTaskbar = false,
+
+            // Manual, and set BEFORE Show(), or WPF centres it on the primary
+            // display and the move happens after it is already visible.
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = OffscreenOrigin,
+            Top = OffscreenOrigin,
+
+            // Never steal focus. A window that cannot be seen but eats the next
+            // keystroke of a sales call is its own kind of harm.
+            ShowActivated = false
         };
         window.Show();
         window.UpdateLayout();
