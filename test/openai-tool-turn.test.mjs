@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chatWithTools } from '../src/agent/providers.mjs';
+import { sharedProvenanceWorkspace } from '../test-support/provenance-workspace.mjs';
+
+// Every call below produces a completion, and every completion is recorded
+// (src/agent/providers.mjs). Without a workspace of its own, this file's rows
+// land in the repo's real ledger and `helmion provenance` then reports that
+// OpenAI answered Troy at the moment a unit test ran.
+const LEDGER = sharedProvenanceWorkspace('helmion-openai-tool-');
 
 /**
  * OpenAI's chat.completions endpoint rejects function tools when the gpt-5.6
@@ -52,6 +59,7 @@ test('openai tool turns pin reasoning_effort to none', async () => {
       model: 'gpt-5.6-terra',
       messages: [{ role: 'user', content: 'hi' }],
       toolDefs: TOOL_DEFS,
+      provenance: { workspace: LEDGER },
     });
     assert.equal(sink.body.reasoning_effort, 'none');
     assert.equal(sink.body.tool_choice, 'auto');
@@ -66,6 +74,7 @@ test('openai turns WITHOUT tools do not send reasoning_effort', async () => {
       model: 'gpt-5.6-terra',
       messages: [{ role: 'user', content: 'hi' }],
       toolDefs: [],
+      provenance: { workspace: LEDGER },
     });
     assert.equal('reasoning_effort' in sink.body, false);
     assert.equal('tools' in sink.body, false);
@@ -81,6 +90,7 @@ test('xai tool turns never send reasoning_effort', async () => {
       model: 'grok-4.3',
       messages: [{ role: 'user', content: 'hi' }],
       toolDefs: TOOL_DEFS,
+      provenance: { workspace: LEDGER },
     });
     assert.equal('reasoning_effort' in sink.body, false);
     assert.equal(sink.body.tools.length, 1);
@@ -97,6 +107,7 @@ test('custom OpenAI-compatible endpoints never send reasoning_effort', async () 
       model: 'llama-local',
       messages: [{ role: 'user', content: 'hi' }],
       toolDefs: TOOL_DEFS,
+      provenance: { workspace: LEDGER },
     });
     assert.equal('reasoning_effort' in sink.body, false);
     assert.equal(sink.url, 'http://127.0.0.1:11434/v1/chat/completions');

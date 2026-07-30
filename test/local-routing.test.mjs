@@ -17,6 +17,7 @@ import {
 } from '../src/agent/local-provider.mjs';
 import { runAgentTurn } from '../src/agent/loop.mjs';
 import { createStubServer } from '../test-support/openai-compatible-stub.mjs';
+import { sharedProvenanceWorkspace } from '../test-support/provenance-workspace.mjs';
 
 // Keys here are deliberately long, distinctive strings. providers.mjs redacts
 // the outbound body by splitting on the RAW key with no minimum-length guard
@@ -235,7 +236,16 @@ async function withStub(fn) {
   }
 }
 
-const fakeRuntime = { permissionMode: 'read-only', definitionsForOpenAi: () => [] };
+// `root` is not decoration. runAgentTurn passes runtime.root to the provenance
+// ledger as the workspace a turn belongs to (src/agent/loop.mjs), and a runtime
+// without one falls back to process.cwd() — which during `node --test` is the
+// repo, so every turn below would append a row to Helmion's own ledger claiming
+// a model answered Troy.
+const fakeRuntime = {
+  permissionMode: 'read-only',
+  definitionsForOpenAi: () => [],
+  root: sharedProvenanceWorkspace('helmion-local-routing-'),
+};
 
 test('a DEAD local endpoint falls back to the frontier — the turn still succeeds', async () => {
   await withStub(async ({ port, seen }) => {

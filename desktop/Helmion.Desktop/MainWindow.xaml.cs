@@ -1956,6 +1956,12 @@ public partial class MainWindow : Window
                         // The CLI has always printed this; the app used to drop it.
                         ShowChosenModel(ev);
                         break;
+                    case "provenance":
+                        // Which model ACTUALLY answered. Emitted after the response
+                        // arrived and after the row was written to the ledger, so
+                        // this overwrites the header's guess with evidence.
+                        ShowAnsweringModel(ev);
+                        break;
                     case "command":
                         // A slash command was expanded before the model saw it.
                         AppendConsoleLine(
@@ -2131,8 +2137,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Render the router's choice for one round: the header label keeps the last
-    /// one, the transcript keeps all of them with the reason.
+    /// Render the router's choice for one round: the transcript keeps all of
+    /// them with the reason.
+    ///
+    /// This is an INTENTION, not a result — src/agent/loop.mjs emits the `model`
+    /// event before the request goes out. It no longer writes the header label,
+    /// because on 2026-07-30 that header was the only thing on screen and it
+    /// showed a model that did not answer. <see cref="ShowAnsweringModel"/> owns
+    /// the header now.
     /// </summary>
     private void ShowChosenModel(AgentBridgeEvent ev)
     {
@@ -2142,18 +2154,57 @@ public partial class MainWindow : Window
         var tier = string.IsNullOrWhiteSpace(ev.Tier) ? null : ev.Tier;
         var label = tier is null ? model! : $"{tier} · {model}";
 
-        if (ConsoleModelLabel is not null)
-        {
-            ConsoleModelLabel.Text = $"model: {label}";
-            ConsoleModelLabel.ToolTip = string.IsNullOrWhiteSpace(ev.Reason)
-                ? $"Router chose {label}."
-                : $"Router chose {label} — {ev.Reason}";
-        }
-
         var line = $"  ◆ {label}";
         if (!string.IsNullOrWhiteSpace(ev.Reason)) line += $" — {ev.Reason}";
         if (ev.Round is > 1) line += $"  (round {ev.Round})";
         AppendConsoleLine(line);
+    }
+
+    /// <summary>
+    /// Put the model that ACTUALLY answered into the console header.
+    ///
+    /// Driven by the `provenance` event, which the bridge emits only after a
+    /// response has arrived and after the row has been written to
+    /// <c>.helmion\audit\provenance-YYYY-MM-DD.jsonl</c>. So this label and the
+    /// durable ledger cannot disagree — the header is a view of the evidence,
+    /// not a second opinion about it.
+    ///
+    /// A LOCAL answer says so, loudly and first. Troy asked "who am I talking
+    /// to" after a 4B model on this machine replied in Helmion's voice with
+    /// nothing on screen to say so; a marker he has to hunt for would not have
+    /// answered him any faster than no marker at all.
+    /// </summary>
+    private void ShowAnsweringModel(AgentBridgeEvent ev)
+    {
+        var model = ev.Model;
+        if (string.IsNullOrWhiteSpace(model)) return;
+
+        var provider = string.IsNullOrWhiteSpace(ev.Provider) ? null : ev.Provider;
+        var label = provider is null ? model! : $"{provider} · {model}";
+        if (ev.IsLocal) label = $"LOCAL · {label}";
+
+        if (ConsoleModelLabel is not null)
+        {
+            ConsoleModelLabel.Text = $"model: {label}";
+            var host = string.IsNullOrWhiteSpace(ev.EndpointHost) ? "an unrecorded host" : ev.EndpointHost;
+            ConsoleModelLabel.ToolTip =
+                $"{label} answered the last turn, from {host}."
+                + (ev.IsLocal
+                    ? "\nThis ran on THIS MACHINE, not a frontier provider."
+                    : string.Empty)
+                + $"\nRecorded in .helmion\\audit\\provenance-*.jsonl (session {ev.SessionId ?? "unknown"})."
+                + "\nRun: helmion provenance last";
+        }
+
+        // Only the local case earns a transcript line. A frontier answer is
+        // already described by the ◆ line above it, and repeating every turn
+        // would bury the one case that matters.
+        if (ev.IsLocal)
+        {
+            AppendConsoleLine(
+                $"  ⚑ answered by a LOCAL model on this machine: {model}"
+                + (string.IsNullOrWhiteSpace(ev.EndpointHost) ? "" : $" ({ev.EndpointHost})"));
+        }
     }
 
     /// <summary>

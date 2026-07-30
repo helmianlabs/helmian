@@ -10,6 +10,12 @@ import {
 } from '../src/agent/env.mjs';
 import { chatWithTools, redactOutboundBody } from '../src/agent/providers.mjs';
 import { createStubServer } from '../test-support/openai-compatible-stub.mjs';
+import { sharedProvenanceWorkspace } from '../test-support/provenance-workspace.mjs';
+
+// Completions here are recorded like any other (src/agent/providers.mjs). They
+// go to a throwaway workspace so a test run cannot append invented rows to the
+// repo's own provenance ledger.
+const LEDGER = sharedProvenanceWorkspace('helmion-custom-provider-');
 
 const BUILTIN_ENV = {
   openai: 'openai-key',
@@ -126,6 +132,7 @@ test('chatWithTools sends a custom provider to its own endpoint and returns the 
       model: provider.model,
       messages: [{ role: 'user', content: 'ping' }],
       toolDefs: [],
+      provenance: { workspace: LEDGER },
     });
 
     assert.equal(reply.role, 'assistant');
@@ -166,6 +173,7 @@ test('the custom path redacts secrets in the outbound body like every other prov
         content: 'my key is xai-abcdef0123456789 and my db is postgresql://u:secretpw@host/db',
       }],
       toolDefs: [],
+      provenance: { workspace: LEDGER },
     });
 
     const sent = JSON.stringify(seen[0].body);
@@ -228,7 +236,9 @@ test('the NDJSON bridge routes a turn through a custom provider sent in the payl
           child.stdin.write(`${JSON.stringify({
             cmd: 'turn',
             text: 'ping the bridge',
-            workspace: root,
+            // A throwaway workspace, not the repo: an agent turn run against
+            // E:\Helmion appends its provenance rows to the real ledger.
+            workspace: LEDGER,
             provider: 'bridge-stub',
             permission: 'read-only',
             customProviders,
@@ -242,7 +252,7 @@ test('the NDJSON bridge routes a turn through a custom provider sent in the payl
       child.on('error', reject);
       child.stdin.write(`${JSON.stringify({
         cmd: 'configure',
-        workspace: root,
+        workspace: LEDGER,
         provider: 'bridge-stub',
         permission: 'read-only',
         customProviders,

@@ -34,6 +34,14 @@ import { loadEnabledPlugins } from './plugins.mjs';
  *   {"event":"ready", ...}
  *   {"event":"status","message":"..."}
  *   {"event":"model","model":"...","tier":"fast|standard|deep","reason":"..."}
+ *      — the router's CHOICE, emitted BEFORE the request goes out.
+ *   {"event":"provenance","model":"…","provider":"claude|openai|gemini|grok|local",
+ *    "endpointHost":"…","isLocal":false,"sessionId":"…"}
+ *      — what ACTUALLY answered, emitted after the response arrived and after
+ *        the row was written to .helmion/audit/provenance-*.jsonl. When a
+ *        fallback fires, this and the `model` event above disagree, and THIS
+ *        one is the true statement. Anything showing the user "which model" is
+ *        talking to them should render this, not `model`.
  *   {"event":"tool","name":"...","args":{}}
  *   {"event":"tool_result","name":"...","preview":"..."}
  *   {"event":"permission_request","id":"…","tool":"…","summary":"…","timeoutMs":N}
@@ -367,6 +375,26 @@ export async function runAgentBridge() {
                 round: ev.round,
                 provider: ev.provider,
                 providerId: ev.providerId,
+              });
+            } else if (ev.type === 'provenance') {
+              // WHAT ANSWERED, not what was going to. The 'model' event above
+              // fires before the request leaves, so it reports an intention; on
+              // 2026-07-30 an intention on screen ("Qwen 3.5") was all Troy had
+              // while something else did the answering. This one carries the row
+              // written to .helmion/audit/provenance-*.jsonl once the response
+              // arrived, so a header rendering it is rendering evidence.
+              emit({
+                event: 'provenance',
+                model: ev.model,
+                provider: ev.provider,
+                providerId: ev.providerId,
+                providerLabel: ev.providerLabel,
+                endpointHost: ev.endpointHost,
+                isLocal: ev.isLocal,
+                tier: ev.tier,
+                round: ev.round,
+                timestamp: ev.timestamp,
+                sessionId: ev.sessionId,
               });
             } else if (ev.type === 'status') emit({ event: 'status', message: ev.message });
             else if (ev.type === 'tool') {

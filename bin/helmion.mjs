@@ -884,6 +884,167 @@ async function auditLedger() {
   }
 }
 
+// THE PROVENANCE READ PATH — src/core/provenance-log.mjs, the ledger that
+// answers "who answered me". READ-ONLY: it never writes a row; only the code
+// that has a completion in hand does that (src/agent/providers.mjs).
+//
+// A SIBLING OF `helmion audit`, NOT A SUBCOMMAND OF IT. That command is the
+// BLOCK ledger: it validates `--layer browser|execution` and counts by matched
+// pattern, neither of which means anything for a completion. Both read the same
+// .helmion/audit/ directory through the same JSONL discipline; they answer two
+// different questions and keep two different required schemas.
+async function provenanceLedger() {
+  const subcommand = process.argv[3] ?? 'list';
+  const valid = ['list', 'summary', 'last'];
+  if (!valid.includes(subcommand)) {
+    throw new Error(`provenance subcommand must be one of: ${valid.join(', ')}`);
+  }
+  const {
+    PROVIDER_NAMES, LOCAL_PROVIDER_NAME, lastAnswerer, readCompletions, summarizeCompletions,
+  } = await import('../src/core/provenance-log.mjs');
+  const workspace = resolve(option('--workspace', process.cwd()));
+  const asJson = hasFlag('--json');
+
+  // A misspelled provider must NOT read as "nothing answered", for exactly the
+  // reason `helmion audit` refuses an unknown --layer: a clean-looking zero is
+  // the worst possible output from a tool whose job is answering who was there.
+  const provider = option('--provider', null);
+  const providers = [...new Set([...Object.values(PROVIDER_NAMES), LOCAL_PROVIDER_NAME])];
+  if (provider !== null && !providers.includes(provider)) {
+    throw new Error(`--provider must be one of: ${providers.join(', ')} (got "${provider}")`);
+  }
+
+  // `--since 1h` / `45m` / `2d` — the question is almost always "in the last
+  // hour", and making someone compute an ISO timestamp to ask it is how a tool
+  // goes unused at the moment it is needed.
+  const sinceRaw = option('--since', null);
+  const since = parseSinceWindow(sinceRaw);
+  if (sinceRaw !== null && since === null) {
+    throw new Error(`--since must be a duration like 1h, 45m, 2d, or a date (got "${sinceRaw}")`);
+  }
+
+  const filter = {
+    provider,
+    since,
+    sessionId: option('--session', null),
+    isLocal: hasFlag('--local') ? true : (hasFlag('--remote') ? false : null),
+  };
+
+  if (subcommand === 'last') {
+    const last = lastAnswerer(workspace, filter);
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ workspace, filter, last }, null, 2)}\n`);
+      return;
+    }
+    // "Nothing is recorded" is stated as itself. It is NOT the same as "a
+    // frontier model answered", and collapsing the two is the original defect.
+    process.stdout.write(last
+      ? `${last.timestamp}  ${last.label}\n`
+        + `  endpoint: ${last.endpointHost}\n  session:  ${last.sessionId}\n`
+      : `No completion is recorded in ${workspace}.\n`
+        + 'Nothing has answered here, or nothing was recording. Those are different;\n'
+        + 'this ledger cannot tell you which, and will not guess.\n');
+    return;
+  }
+
+  const summary = summarizeCompletions(workspace, filter);
+  const { entries, malformed, files } = readCompletions(workspace, {
+    ...filter,
+    limit: subcommand === 'summary' ? 0 : Number(option('--limit', '20')),
+  });
+
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify({
+      workspace,
+      filter,
+      summary,
+      files,
+      malformed,
+      ...(subcommand === 'list' ? { entries } : {}),
+    }, null, 2)}\n`);
+  } else if (subcommand === 'summary' || entries.length) {
+    process.stdout.write(
+      `Provenance ledger — ${workspace}\n`
+      + `${summary.total} completion(s), ${summary.local} LOCAL, ${summary.remote} remote, `
+      + `${summary.sessions} session(s), ${summary.files} file(s), ${summary.bytes} bytes\n`,
+    );
+    if (subcommand === 'list') {
+      process.stdout.write('\n');
+      for (const entry of entries) {
+        // The LOCAL marker is loud and first. A row that a reader has to squint
+        // at to notice is a row that answers Troy's question too late.
+        const mark = entry.isLocal ? 'LOCAL ' : '      ';
+        process.stdout.write(
+          `  ${String(entry.timestamp).slice(0, 19)}  ${mark}`
+          + `${String(entry.provider).padEnd(8)} ${entry.model}\n`
+          + `      endpoint: ${entry.endpointHost}`
+          + `${entry.tier ? `   tier: ${entry.tier}` : ''}`
+          + `${Number.isFinite(entry.round) ? `   round: ${entry.round}` : ''}`
+          + `${Number.isFinite(entry.latencyMs) ? `   ${entry.latencyMs}ms` : ''}\n`
+          + `      session:  ${entry.sessionId}`
+          + `${entry.reason ? `   (${entry.reason})` : ''}\n`,
+        );
+        // Only surfaced when the two disagree — the case worth a second look.
+        if (typeof entry.routedLocal === 'boolean' && entry.routedLocal !== entry.isLocal) {
+          process.stdout.write(
+            `      ! the router said routedLocal=${entry.routedLocal} but the endpoint says `
+            + `isLocal=${entry.isLocal}\n`,
+          );
+        }
+      }
+      if (summary.total > entries.length) {
+        process.stdout.write(`  … ${summary.total - entries.length} older completion(s) — raise --limit\n`);
+      }
+    }
+    process.stdout.write(
+      `\nBy provider: ${Object.entries(summary.byProvider).sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}\n`
+      + `By model:    ${Object.entries(summary.byModel).sort((a, b) => b[1] - a[1]).slice(0, 10)
+        .map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}\n`
+      + `Newest:      ${summary.newest ?? '-'}\n`
+      + `Oldest:      ${summary.oldest ?? '-'}\n`,
+    );
+  } else {
+    process.stdout.write(
+      `Provenance ledger — ${workspace}\n`
+      + 'No completions recorded'
+      + `${provider ? ` from ${provider}` : ''}${since ? ` since ${since}` : ''}.\n`
+      + 'Either nothing has answered here, or nothing was recording. Rows are written\n'
+      + 'by src/agent/providers.mjs the moment a provider response arrives, into\n'
+      + '.helmion/audit/provenance-YYYY-MM-DD.jsonl under the turn\'s workspace.\n',
+    );
+  }
+
+  if (malformed.length) {
+    process.stdout.write(`\n! ${malformed.length} UNREADABLE line(s) — this ledger is not intact:\n`);
+    for (const bad of malformed.slice(0, 20)) {
+      process.stdout.write(`    ${bad.file}:${bad.line}  ${bad.raw}\n`);
+    }
+    if (malformed.length > 20) process.stdout.write(`    … and ${malformed.length - 20} more\n`);
+    process.exitCode = 2;
+  }
+}
+
+/**
+ * `1h` / `45m` / `2d` / `30s` → an ISO timestamp that far back; anything else is
+ * handed to Date.parse. Returns null when it is neither, so the caller can
+ * REFUSE it rather than silently reading the whole ledger — a rejected filter
+ * that returns everything is a lie in the other direction.
+ */
+function parseSinceWindow(raw) {
+  if (raw === null || raw === undefined) return null;
+  const text = String(raw).trim();
+  if (!text) return null;
+  const relative = /^(\d+(?:\.\d+)?)\s*([smhd])$/i.exec(text);
+  if (relative) {
+    const scale = {
+      s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000,
+    }[relative[2].toLowerCase()];
+    return new Date(Date.now() - Number(relative[1]) * scale).toISOString();
+  }
+  return Number.isNaN(Date.parse(text)) ? null : text;
+}
+
 async function init() {
   const targetArg = process.argv[3] ?? process.cwd();
   const target = resolve(targetArg);
@@ -1159,6 +1320,7 @@ else if (command === 'review') await review();
 else if (command === 'herald') await herald();
 else if (command === 'relay') await relay();
 else if (command === 'audit') await auditLedger();
+else if (command === 'provenance') await provenanceLedger();
 else if (command === 'agent-os') await agentOs();
 else if (command === 'project') await projectCommand();
 else if (command === 'mcp-install') await mcpInstall();
@@ -1289,6 +1451,24 @@ Block ledger (durable record of every block, both layers — .helmion/audit/*.js
     fully parsed is not clean evidence.
     Browser-layer rows need a sink Chrome does not have without a permission;
     see the comment at the top of extension/background/scan.js.
+
+Provenance ledger (which model actually answered — .helmion/audit/provenance-*.jsonl):
+  helmion provenance last                     # who answered me most recently
+  helmion provenance list --since 1h          # who answered me in the last hour
+  helmion provenance list --local             # only answers from this machine
+  helmion provenance list --provider claude   # claude|openai|gemini|grok|custom|local
+  helmion provenance list --session pid1234-… --json
+  helmion provenance summary                  # counts by provider and by model
+  helmion provenance --workspace E:\\MyProject
+    Written by src/agent/providers.mjs at the moment a provider's response
+    arrives — never by the router that chose the model, which would be wrong
+    exactly when a fallback fires. A local attempt that fails records nothing,
+    because nothing answered; the frontier retry records itself.
+    LOCAL is derived from the endpoint that was dialled, not from a flag a
+    caller passed, so an on-box model cannot be filed as a frontier one.
+    Query strings are dropped before writing: Gemini authenticates with the key
+    in the URL, and no ledger of ours will hold a live credential.
+    Unreadable lines are printed and exit non-zero, same as the block ledger.
 
 Governance / Maestro (existing kernel):
   helmion init [workspace]

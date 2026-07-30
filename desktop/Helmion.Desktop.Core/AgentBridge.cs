@@ -379,8 +379,9 @@ public sealed class AgentBridge : IDisposable
             TimeoutMs: root.TryGetProperty("timeoutMs", out var t) && t.ValueKind == JsonValueKind.Number
                 ? t.GetInt32()
                 : null,
-            // model event (src/agent/bridge.mjs:361-370): which model the router
-            // picked for this round, which tier, and why. Dropped before this.
+            // model event: which model the router picked for this round, which
+            // tier, and why. The `provenance` event carries the same three
+            // fields for the model that actually answered.
             Model: GetStr("model"),
             Tier: GetStr("tier"),
             Reason: GetStr("reason"),
@@ -389,6 +390,14 @@ public sealed class AgentBridge : IDisposable
             Round: root.TryGetProperty("round", out var r) && r.ValueKind == JsonValueKind.Number
                 ? r.GetInt32()
                 : null,
+            // provenance event: where the answer actually came from. IsLocal
+            // defaults to false ONLY because every other event lacks the field
+            // entirely; a provenance event always carries it explicitly, and
+            // ShowAnsweringModel reads it only from that event.
+            EndpointHost: GetStr("endpointHost"),
+            IsLocal: root.TryGetProperty("isLocal", out var local)
+                && local.ValueKind == JsonValueKind.True,
+            SessionId: GetStr("sessionId"),
             // commands event (src/agent/bridge.mjs:279-292).
             Commands: ParseCommands(root),
             Plugins: ParsePlugins(root));
@@ -621,12 +630,25 @@ public sealed record AgentBridgeEvent(
     string? Decision = null,
     string? Source = null,
     int? TimeoutMs = null,
-    // model (per-task router: which model answered this round, and why)
+    // model (per-task router: which model it INTENDS to use this round, and why).
+    //
+    // The old comment here said "which model answered this round". It does not,
+    // and the difference is the whole 2026-07-30 incident: src/agent/loop.mjs
+    // emits this BEFORE the request goes out, so when a fallback fires it names
+    // a model that never produced a word. For what actually answered, read the
+    // `provenance` event below — these three fields are populated by both.
     string? Model = null,
     string? Tier = null,
     string? Reason = null,
     int? Round = null,
     string? CommandPath = null,
+    // provenance (src/agent/bridge.mjs): emitted AFTER the response arrived and
+    // after the row was written to .helmion/audit/provenance-*.jsonl. Reuses
+    // Model / Tier / Provider / ProviderId / Round above and adds the two fields
+    // that make "which model am I talking to" answerable.
+    string? EndpointHost = null,
+    bool IsLocal = false,
+    string? SessionId = null,
     // commands (slash-command registry listing)
     IReadOnlyList<AgentSlashCommand>? Commands = null,
     IReadOnlyList<string>? Plugins = null);

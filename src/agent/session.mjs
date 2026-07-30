@@ -426,6 +426,16 @@ async function runTurn({ userText, messages, provider, runtime, tier, modelOverr
     onEvent: (ev) => {
       if (ev.type === 'model') {
         process.stdout.write(`\n[model] ${ev.model || 'provider default'} · ${ev.tier} — ${ev.reason}\n`);
+      } else if (ev.type === 'provenance') {
+        // What ANSWERED, as opposed to the [model] line above, which is what
+        // the router intended before the request went out. Printed only when a
+        // local model answered: that is the case nobody could see on
+        // 2026-07-30, and printing it every turn would bury it again.
+        if (ev.isLocal) {
+          process.stdout.write(
+            `\n[answered by a LOCAL model on this machine: ${ev.model} @ ${ev.endpointHost}]\n`,
+          );
+        }
       } else if (ev.type === 'status') {
         process.stdout.write(`\n[${ev.message}]\n`);
       } else if (ev.type === 'tool') {
