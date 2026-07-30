@@ -571,6 +571,41 @@ async function review() {
   if (!result.decision.allowed) process.exitCode = 2;
 }
 
+// Helmion Herald — the phone companion.
+//
+// `helmion herald [--lan] [--port 7420]`
+//
+// Prints a URL with a one-run token. Loopback by default; --lan is the explicit
+// choice to serve the local network, because the difference between 127.0.0.1
+// and 0.0.0.0 is the difference between "my machine" and "everyone on this
+// Wi-Fi" and must never be a default nobody picked.
+async function herald() {
+  const { startHerald } = await import('../src/herald/server.mjs');
+  const lan = hasFlag('--lan');
+
+  const running = await startHerald({
+    workspace: process.cwd(),
+    host: lan ? '0.0.0.0' : '127.0.0.1',
+    port: Number(option('--port', '7420')),
+  });
+
+  process.stdout.write('\nHELMION HERALD — read-only. It cannot approve, run or change anything.\n\n');
+  if (running.urls.length === 0) {
+    process.stdout.write('  No reachable address was found on this machine.\n');
+  }
+  for (const url of running.urls) {
+    process.stdout.write(`  ${url}\n`);
+  }
+  process.stdout.write(
+    lan
+      ? '\nServing the LOCAL NETWORK. The token is required and is valid only while this runs.\n'
+      : '\nLoopback only. Pass --lan to open it to your phone on the same Wi-Fi.\n',
+  );
+  process.stdout.write('Ctrl+C to stop.\n');
+
+  await new Promise(() => {}); // run until interrupted
+}
+
 async function guard() {
   const payload = await stdinJson();
   let result;
@@ -982,6 +1017,7 @@ if (command === 'agent' || command === 'chat' || command === 'code') {
   await runAgentBridge();
 } else if (command === 'guard') await guard();
 else if (command === 'review') await review();
+else if (command === 'herald') await herald();
 else if (command === 'audit') await auditLedger();
 else if (command === 'agent-os') await agentOs();
 else if (command === 'project') await projectCommand();
