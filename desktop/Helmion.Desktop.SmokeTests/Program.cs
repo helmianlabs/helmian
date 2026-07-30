@@ -876,6 +876,8 @@ GuardFeedChecks.Run();
 LeaseInspectorChecks.Run();
 
 PlusMenuChecks.Run();
+
+ProjectShelfChecks.Run();
 return;
 
 /// <summary>
