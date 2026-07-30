@@ -19,6 +19,7 @@ import {
   buildProposal,
   gate,
   parseReview,
+  findVerdictObject,
   reviewPrompt,
 } from '../src/core/advisory-loop.mjs';
 
@@ -202,4 +203,55 @@ test('the gate ANSWERS, it does not act', () => {
     Object.keys(decision).sort(),
     ['allowed', 'approvals', 'blocks', 'concerns', 'counted', 'missing', 'reason'],
   );
+});
+
+/* ─── THE PARSER, HARDENED AGAINST WHAT ADVISORS ACTUALLY SEND ──────────────
+ *
+ * Measured live 2026-07-30: an advisor answered with prose containing braces
+ * around its JSON, and the naive first-{ to last-} slice produced a valid object
+ * with no verdict. The gate refused it — safe, but it refused a review that had
+ * actually been given, and reported that advisor as silent.
+ *
+ * Refusing is always the safe direction. Being unable to READ an answer that was
+ * given is still a defect, and these pin the fix without loosening the refusals. */
+
+test('a verdict is found inside prose that also contains braces', () => {
+  const review = parseReview('grok',
+    'Here { is some prose } and now my answer:\n'
+    + '{"verdict":"BLOCK","reason":"this deletes the audit ledger with no backup"}');
+  assert.equal(review.counted, true);
+  assert.equal(review.verdict, 'BLOCK');
+});
+
+test('a verdict is found inside a markdown code fence', () => {
+  const review = parseReview('gemini',
+    '```json\n{"verdict":"CONCERN","reason":"the summary claims read-only but the diff writes"}\n```');
+  assert.equal(review.counted, true);
+  assert.equal(review.verdict, 'CONCERN');
+});
+
+test('a nested object does not confuse the scan', () => {
+  const review = parseReview('chatgpt',
+    '{"meta":{"model":"x","nested":{"deep":true}},"verdict":"APPROVED",'
+    + '"reason":"checked every line against the stated intent"}');
+  assert.equal(review.counted, true);
+  assert.equal(review.verdict, 'APPROVED');
+});
+
+test('HARDENING DID NOT LOOSEN THE REFUSALS', () => {
+  // The whole point of the change was to read more real answers, never to accept
+  // more non-answers.
+  for (const junk of [
+    '{"note":"I think it is fine"}',
+    'Looks good to me!',
+    '{"verdict":"MAYBE","reason":"a perfectly long reason that still is not a verdict"}',
+    '{ unbalanced',
+  ]) {
+    assert.equal(parseReview('grok', junk).counted, false, `must still refuse: ${junk.slice(0, 30)}`);
+  }
+});
+
+test('findVerdictObject returns null rather than guessing when nothing is there', () => {
+  assert.equal(findVerdictObject('no braces at all'), null);
+  assert.equal(findVerdictObject(''), null);
 });
