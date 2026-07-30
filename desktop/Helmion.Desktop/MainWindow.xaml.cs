@@ -269,14 +269,40 @@ public partial class MainWindow : Window
     private void ConsoleApprovalDeny_Click(object sender, RoutedEventArgs e) =>
         CompleteApproval(AgentApprovalDecision.Deny);
 
+    /// <summary>
+    /// Write one line to the console.
+    ///
+    /// SESSION-AWARE. When sessions exist, every line belongs to exactly one of them
+    /// and is appended to THAT session's own transcript. It reaches the visible box
+    /// only when that session is the one on screen — so a turn running in a session
+    /// you are not looking at can never scribble into the transcript you ARE looking
+    /// at. <c>_turnSession</c> wins over the selection because output belongs to the
+    /// session that produced it even if you switched away mid-turn.
+    ///
+    /// With no sessions started, <c>owner</c> is null and this behaves exactly as it
+    /// did before: straight to the box.
+    /// </summary>
     private void AppendConsoleLine(string line)
     {
+        var text = line.EndsWith('\n') ? line : line + "\n";
+
+        // The ownership rule itself lives in Core (SessionShelf.cs, SessionOutputRouting)
+        // so the smoke suite can drive it — this project is not referenced by the test
+        // project, and inline the rule was untestable.
+        var destination = SessionOutputRouting.ForLine(_turnSession, _sessions.Selected);
+        destination.Owner?.Transcript.Append(text);
+
+        if (!destination.ShowOnScreen)
+        {
+            return;
+        }
+
         if (ConsoleOutputText is null)
         {
             return;
         }
 
-        ConsoleOutputText.AppendText(line.EndsWith('\n') ? line : line + "\n");
+        ConsoleOutputText.AppendText(text);
         ConsoleOutputText.CaretIndex = ConsoleOutputText.Text.Length;
         ConsoleOutputText.ScrollToEnd();
     }
@@ -352,6 +378,9 @@ public partial class MainWindow : Window
         ThemePersistenceLabel.Text = persistTheme
             ? "Saved locally for this Windows user"
             : "Preview override · not saved";
+        // Restore the saved text size. save:false — reapplying what we just read
+        // would rewrite the settings file on every launch for no reason.
+        ApplyTextScale(_desktopSettings.ResolvedTextScale, save: false);
 
         _pages = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal)
         {
@@ -449,6 +478,35 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        // Ctrl+= / Ctrl+- / Ctrl+0 — the browser convention, so nobody has to be
+        // taught it. Handled here in PreviewKeyDown so it works on every page,
+        // including while the console input box has focus.
+        if ((System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control)
+            == System.Windows.Input.ModifierKeys.Control)
+        {
+            // OemPlus/OemMinus are the main row; Add/Subtract are the numeric pad.
+            switch (e.Key)
+            {
+                case System.Windows.Input.Key.OemPlus:
+                case System.Windows.Input.Key.Add:
+                    ApplyTextScale(TextScaleRange.Larger(_desktopSettings.ResolvedTextScale));
+                    e.Handled = true;
+                    return;
+
+                case System.Windows.Input.Key.OemMinus:
+                case System.Windows.Input.Key.Subtract:
+                    ApplyTextScale(TextScaleRange.Smaller(_desktopSettings.ResolvedTextScale));
+                    e.Handled = true;
+                    return;
+
+                case System.Windows.Input.Key.D0:
+                case System.Windows.Input.Key.NumPad0:
+                    ApplyTextScale(TextScaleRange.Default);
+                    e.Handled = true;
+                    return;
+            }
+        }
+
         if (e.Key == System.Windows.Input.Key.F11)
         {
             // F11 toggles console immersive mode (navigates to Console if needed).
@@ -471,6 +529,42 @@ public partial class MainWindow : Window
             SetConsoleFullScreen(false);
             e.Handled = true;
         }
+    }
+
+    /// <summary>
+    /// Ctrl+Wheel — text size, the way every browser does it. Troy asked for this
+    /// one by name: "control and mouse wheel or something easily."
+    ///
+    /// PREVIEW, NOT THE BUBBLING MouseWheel. A ScrollViewer handles MouseWheel and
+    /// marks it handled, so a bubbling handler on the Window never runs whenever the
+    /// pointer happens to be over a scrollable region — which is most of this shell,
+    /// and exactly where someone trying to read a card would have the mouse. The
+    /// tunnelling PreviewMouseWheel reaches the Window first, so this works
+    /// everywhere rather than only over the gaps between panels.
+    /// </summary>
+    private void MainWindow_PreviewMouseWheel(
+        object sender,
+        System.Windows.Input.MouseWheelEventArgs e)
+    {
+        if ((System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control)
+            != System.Windows.Input.ModifierKeys.Control)
+        {
+            return;
+        }
+
+        if (e.Delta == 0)
+        {
+            return;
+        }
+
+        // One notch, one stop on the ladder — the same ladder and the same save the
+        // keyboard path uses, so the two can never disagree about where the stops are.
+        ApplyTextScale(e.Delta > 0
+            ? TextScaleRange.Larger(_desktopSettings.ResolvedTextScale)
+            : TextScaleRange.Smaller(_desktopSettings.ResolvedTextScale));
+
+        // Without this the page scrolls as well as the text resizing.
+        e.Handled = true;
     }
 
     private void SetConsoleFullScreen(bool enabled)
@@ -551,6 +645,63 @@ public partial class MainWindow : Window
         ThemeSelector.SelectedValue = ColorThemeCatalog.Get(themeId).Id;
     }
 
+    /// <summary>
+    /// Preview-only hooks, used by --render-preview to photograph states that
+    /// normally need a click. save:false throughout — a screenshot must never
+    /// write to the real user's settings file.
+    /// </summary>
+    public void ApplyTextScaleForPreview(double scale) => ApplyTextScale(scale, save: false);
+
+    /// <summary>The MCP security panel starts collapsed behind the "mcp security" button.</summary>
+    public void RevealMcpPanelForPreview()
+    {
+        NavigateTo("Console");
+        ConsoleMcpPanel.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// THE FRESH-WORKSPACE RED AUDIT. Runs every + action whose outcome is decided
+    /// purely by a local precondition, against a workspace with nothing in it, and
+    /// returns how many of them came back red.
+    ///
+    /// Troy's rule, 2026-07-30: "a fresh empty workspace must produce zero red
+    /// banners." The answer must be 0. A non-zero count means some first-run state
+    /// — no plugins yet, nothing typed yet, no project yet — is once again being
+    /// reported as a failure, which is the bug that made the only correctly
+    /// working thing on the screen look like the broken one.
+    ///
+    /// Deliberately excludes Skills and Upload: Skills calls the agent bridge and
+    /// Upload opens a file dialog, so neither has a deterministic offline answer,
+    /// and a red from a bridge that genuinely did not start IS a real failure.
+    /// </summary>
+    public int CountFreshWorkspaceRedRows()
+    {
+        _plusMenu.Clear();
+        if (ConsoleInputBox is not null)
+        {
+            ConsoleInputBox.Text = string.Empty;
+        }
+
+        AddPluginsAsync().GetAwaiter().GetResult();   // no .helmion/plugins.json
+        _ = AddConnectorAsync();                      // nothing typed in the box
+        NewProjectButton_Click(this, new RoutedEventArgs());  // no name typed
+
+        return _plusMenu.Items.Count(item => item.State == PlusActionState.Failed);
+    }
+
+    /// <summary>Runs one + menu action so its resulting row can be photographed.</summary>
+    public void RunPlusMenuActionForPreview(PlusMenuKind kind)
+    {
+        NavigateTo("Console");
+        ConsolePlusPopup.IsOpen = true;
+        _ = kind switch
+        {
+            PlusMenuKind.Plugin => AddPluginsAsync(),
+            PlusMenuKind.Connector => AddConnectorAsync(),
+            _ => Task.CompletedTask,
+        };
+    }
+
     private void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_themeSelectorReady || ThemeSelector.SelectedValue is not string themeId)
@@ -578,6 +729,113 @@ public partial class MainWindow : Window
         else
         {
             ThemePersistenceLabel.Text = "Preview override · not saved";
+        }
+    }
+
+    // ── text size ─────────────────────────────────────────────────────────────
+    //
+    // Troy, 2026-07-29: "there needs to be a way to enlarge the text on all of
+    // that, 'cause I can't read anything on the cards."
+    //
+    // The scale is applied to ONE ScaleTransform on the root Grid (MainWindow.xaml
+    // AppScale), because MainWindow.xaml sets FontSize as a literal in 261 places
+    // and reads it from a resource in none — see the comment on the transform for
+    // why routing all 261 through a resource is both bigger and worse.
+
+    /// <summary>
+    /// The window minimums as authored in MainWindow.xaml, before any scaling.
+    /// Kept here rather than read back off the properties because ApplyTextScale
+    /// overwrites those, and a minimum derived from an already-scaled minimum
+    /// ratchets upward every time the user presses Ctrl+=.
+    /// </summary>
+    private const double BaseMinWidth = 1120;
+    private const double BaseMinHeight = 720;
+
+    private void TextScaleSmallerButton_Click(object sender, RoutedEventArgs e) =>
+        ApplyTextScale(TextScaleRange.Smaller(_desktopSettings.ResolvedTextScale));
+
+    private void TextScaleLargerButton_Click(object sender, RoutedEventArgs e) =>
+        ApplyTextScale(TextScaleRange.Larger(_desktopSettings.ResolvedTextScale));
+
+    private void TextScaleResetButton_Click(object sender, RoutedEventArgs e) =>
+        ApplyTextScale(TextScaleRange.Default);
+
+    /// <summary>
+    /// Sets the shell scale, updates the readout and saves the choice.
+    ///
+    /// SAVING IS BEST-EFFORT AND NEVER FATAL. A settings file that cannot be
+    /// written is a reason to lose the preference at restart, not a reason to
+    /// refuse to make the text bigger for the user asking right now.
+    /// </summary>
+    private void ApplyTextScale(double scale, bool save = true)
+    {
+        var resolved = TextScaleRange.Clamp(scale);
+
+        if (AppScale is not null)
+        {
+            AppScale.ScaleX = resolved;
+            AppScale.ScaleY = resolved;
+        }
+
+        if (TextScaleValueLabel is not null)
+        {
+            TextScaleValueLabel.Text = TextScaleRange.Describe(resolved);
+        }
+
+        // THE WINDOW HAS TO GROW WITH THE TEXT.
+        //
+        // The shell declares MinWidth 1120 / MinHeight 720 in DIPs of ITS OWN
+        // coordinate space, which the transform shrinks: at 160% a 1440px window
+        // gives the layout only 900 units to work with — less than the 1120 it
+        // says it needs — and the fixed 248px sidebar and 336px guard column eat
+        // most of what is left, crushing the console between them. Scaling the
+        // minimums keeps that from happening, and nudging the window out to meet
+        // them means enlarging the text enlarges the window instead of squeezing
+        // the middle. Bounded by the work area so it can never grow off-screen.
+        // CAPPED AT THE SCREEN. A minimum is still a minimum: WPF enforces it even
+        // when it exceeds the display, so an uncapped BaseMinHeight * 2.0 = 1440
+        // pins a 1080p window taller than the monitor and pushes its own bottom
+        // edge out of reach. The cap is what keeps "make the text bigger" from
+        // costing the user the bottom of the window.
+        var workArea = SystemParameters.WorkArea;
+        MinWidth = Math.Min(BaseMinWidth * resolved, workArea.Width);
+        MinHeight = Math.Min(BaseMinHeight * resolved, workArea.Height);
+
+        if (WindowState == WindowState.Normal)
+        {
+            if (Width < MinWidth)
+            {
+                Width = MinWidth;
+            }
+
+            if (Height < MinHeight)
+            {
+                Height = MinHeight;
+            }
+        }
+
+        if (!save)
+        {
+            return;
+        }
+
+        _desktopSettings = _desktopSettings with { TextScale = resolved };
+        try
+        {
+            DesktopSettingsStore.Save(_desktopSettings);
+            if (TextScalePersistenceLabel is not null)
+            {
+                TextScalePersistenceLabel.Text = "Saved locally for this Windows user";
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Say so rather than showing "Saved" over a write that did not happen.
+            if (TextScalePersistenceLabel is not null)
+            {
+                TextScalePersistenceLabel.Text =
+                    "Applied, but NOT saved — this setting will reset when Helmion restarts.";
+            }
         }
     }
 
@@ -1528,7 +1786,12 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(text)) return;
         if (_agentBusy)
         {
-            AppendConsoleLine("[Busy — wait for the current reply, then try again]");
+            // Name the session that is holding the line. One turn runs at a time
+            // because the ask-mode approval strip is a single slot — see the class
+            // note in MainWindow.Sessions.cs — so this can be a different session
+            // than the one you are looking at, and saying which one is the
+            // difference between a wait and a mystery.
+            AppendConsoleLine(SessionTurnRouting.BusyMessage(_turnSession));
             return;
         }
 
@@ -1624,25 +1887,44 @@ public partial class MainWindow : Window
 
         // Full coding agent (same engine as `helmion agent` CLI) via Node bridge.
         // Permissions + provider apply to every LLM the same way.
+        //
+        // ROUTED AT THE SELECTED SESSION. With a session selected the turn runs on
+        // THAT session's provider and THAT session's own bridge process, and its
+        // output is tagged with the session's name. With no sessions started,
+        // `session` is null and every line below is exactly what it was before:
+        // the Maestro coordinator from settings, on the shared bridge.
+        var session = _sessions.Selected;
+        _turnSession = session;
+        if (session is not null) session.IsBusy = true;
         _agentBusy = true;
         var spoken = new System.Text.StringBuilder();
         var permission = CurrentPermissionMode;
         try
         {
             var settings = EnvironmentSettingsStore.Load();
+
+            // Core owns the routing rule (SessionShelf.cs, SessionTurnRouting) so the
+            // smoke suite can prove a selected session's turn reaches ITS coordinator
+            // rather than the global Maestro setting. Inline here, nothing could.
+            var route = SessionTurnRouting.ForTurn(session, settings.MaestroCoordinator);
+            var provider = route.Provider;
+
             _consoleSession.ConfigureMaestro(
-                settings.MaestroCoordinator,
+                provider,
                 settings,
                 _desktopSettings.CustomProviders);
             _consoleSession.PermissionMode = permission;
 
             var workspace = ResolveAgentWorkspace();
             UpdateConsoleWorkspaceLabel(workspace);
-            var provider = settings.MaestroCoordinator ?? "Gemini";
 
-            _agentBridge ??= new AgentBridge();
-            AppendConsoleLine(
-                $"[Agent · {provider} · {permission} · workspace {workspace}]");
+            var bridge = route.Session is null
+                ? (_agentBridge ??= new AgentBridge())
+                : ResolveSessionBridge(route.Session);
+
+            AppendConsoleLine(session is null
+                ? $"[Agent · {provider} · {permission} · workspace {workspace}]"
+                : $"[Session \"{session.Name}\" · {provider} · {permission} · workspace {workspace}]");
             if (permission == AgentPermission.Ask)
             {
                 AppendConsoleLine(
@@ -1656,7 +1938,8 @@ public partial class MainWindow : Window
                     + "\"Ask before each tool\"; for no prompts at all, choose Full tools.");
             }
 
-            await foreach (var ev in _agentBridge.TurnAsync(
+            var turnFailed = (string?)null;
+            await foreach (var ev in bridge.TurnAsync(
                                text,
                                workspace,
                                provider,
@@ -1697,9 +1980,9 @@ public partial class MainWindow : Window
                             break;
                         }
 
-                        if (_agentBridge is not null && !string.IsNullOrEmpty(ev.Id))
+                        if (!string.IsNullOrEmpty(ev.Id))
                         {
-                            await _agentBridge.RespondToPermissionAsync(ev.Id, decision);
+                            await bridge.RespondToPermissionAsync(ev.Id, decision);
                         }
 
                         break;
@@ -1738,6 +2021,7 @@ public partial class MainWindow : Window
                         break;
                     case "error":
                         AppendConsoleLine($"[Agent error] {ev.Message}");
+                        turnFailed = ev.Message ?? "The bridge reported an error with no message.";
                         if (spoken.Length == 0)
                         {
                             spoken.Append("There was an agent error. ");
@@ -1752,6 +2036,33 @@ public partial class MainWindow : Window
             }
 
             AppendConsoleLine("");
+
+            // The turn's outcome becomes this session's guard card, which is what
+            // moves its dot. A clean turn reports Normal — the feed treats Normal as
+            // recovery and resets the sighting count (GuardFeed.cs:184-188), so a
+            // session that failed once and then worked goes back to green instead of
+            // ratcheting toward red on a condition that has cleared.
+            if (session is not null)
+            {
+                if (turnFailed is null)
+                {
+                    ReportSessionTurn(
+                        session,
+                        GuardLevel.Normal,
+                        $"\"{session.Name}\" completed a turn",
+                        $"The last turn on {provider} finished without the bridge reporting an "
+                        + "error. This says the turn completed — not that the answer was correct.");
+                }
+                else
+                {
+                    ReportSessionTurn(
+                        session,
+                        GuardLevel.Warning,
+                        $"\"{session.Name}\" reported an error",
+                        $"The bridge answered: {turnFailed}. Repeats escalate on the panel's stated "
+                        + "rule; a clean turn clears it.");
+                }
+            }
 
             if (_voiceSession is { IsVoiceModeActive: true }
                 && spoken.Length > 0)
@@ -1772,6 +2083,19 @@ public partial class MainWindow : Window
                 $"[Agent failed to start] {ex.Message}\n"
                 + "Need Node.js on PATH and Helmion repo with bin/helmion.mjs "
                 + "(expected under E:\\Helmion).");
+
+            // Red, not yellow: this session could not run at all, and the dot has to
+            // say that rather than the softer "a turn reported an error".
+            if (session is not null)
+            {
+                ReportSessionTurn(
+                    session,
+                    GuardLevel.Critical,
+                    $"\"{session.Name}\" could not start its agent",
+                    $"Starting the Node bridge for this session threw: {ex.Message}. "
+                    + "Nothing ran. Needs Node.js on PATH and bin/helmion.mjs.");
+            }
+
             if (_voiceSession is { IsVoiceModeActive: true })
             {
                 try
@@ -1788,6 +2112,10 @@ public partial class MainWindow : Window
         finally
         {
             _agentBusy = false;
+            if (session is not null) session.IsBusy = false;
+            // Output stops belonging to this session the moment its turn ends, so
+            // anything printed afterwards follows the selection again.
+            _turnSession = null;
             // A question can only be answered while its turn is running, so never
             // leave one on screen after the turn ends.
             CancelPendingApproval();
