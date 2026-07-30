@@ -89,6 +89,32 @@ internal static class PlusMenuChecks
                 $"{kind}: a reasonless failure names itself as a Helmion bug rather than showing an empty error");
             checks += 1;
 
+            // EMPTY — the state that did not exist, and whose absence made every
+            // fresh workspace look broken. An empty plugins registry was drawn in
+            // red as "Failed" when nothing had failed at all.
+            var nothing = controller.Begin(kind, $"empty {kind}");
+            controller.Empty(nothing, "No plugins are installed in this workspace yet. Install one with: helmion plugin add <path>");
+            Assert(nothing.State == PlusActionState.Empty, $"{kind}: an empty result lands in the empty state");
+            Assert(nothing.StateText == "Nothing yet",
+                $"{kind}: an empty result says 'Nothing yet' — it must never read as Failed");
+            Assert(nothing.StateKey == "Empty",
+                $"{kind}: empty carries its own colour key, so it is not drawn in the failure colour");
+            Assert(nothing.StateKey != "Failed" && nothing.StateText != "Failed",
+                $"{kind}: nothing-found is not reported as a failure anywhere on the row");
+            Assert(nothing.Message.Contains("helmion plugin add", StringComparison.Ordinal),
+                $"{kind}: an empty row still tells the user what would put something there");
+            Assert(nothing.CanRemove && !nothing.IsBusy,
+                $"{kind}: an empty row is settled and can be dismissed");
+            checks += 6;
+
+            // An empty state with no guidance is refused, same as a reasonless
+            // failure. "Nothing yet" and no next step is a dead end.
+            var mute = controller.Begin(kind, "mute");
+            controller.Empty(mute, "  ");
+            Assert(mute.Message.Contains("bug in Helmion", StringComparison.Ordinal),
+                $"{kind}: an empty row with no guidance names itself a Helmion bug rather than sitting there blank");
+            checks += 1;
+
             // Discard is the only thing that deletes, and only from Removed.
             Assert(!controller.Discard(failed), $"{kind}: a failed row is not discarded without being removed first");
             controller.Remove(failed);

@@ -169,25 +169,24 @@ public partial class MainWindow
         var root = ResolveProjectRoot();
         var row = _plusMenu.Begin(PlusMenuKind.Skill, "New project", "Writing the project folder…");
 
-        if (string.IsNullOrWhiteSpace(root))
+        // NEITHER OF THESE IS A FAILURE. Nothing was attempted: one is a workspace
+        // the user has not picked yet, the other is a name they have not typed
+        // yet. Both are hints about the next step, and both used to come back in
+        // the same red as a scaffold that actually blew up. Red that fires on
+        // normal first-run states is red the user learns to ignore.
+        //
+        // Both decisions live in Core so the headless suite can assert them; a
+        // non-null result means nothing was attempted and the row is already settled.
+        var typed = (ConsoleInputBox?.Text ?? string.Empty).Trim();
+        if (!FirstRunStates.CanCreateProject(root, typed, out var projectRoot, out var name, out var notYet))
         {
-            _plusMenu.Fail(row, "No workspace is registered, so there is nowhere to create a project. "
-                + "Pick one on the Workspace page first.");
-            return;
-        }
-
-        var name = (ConsoleInputBox?.Text ?? string.Empty).Trim();
-        if (name.Length == 0)
-        {
-            _plusMenu.Fail(row,
-                "Type the project name into the box first, then press + New. "
-                + "It becomes the folder name and the title inside PROJECT.md.");
+            _plusMenu.Settle(row, notYet);
             return;
         }
 
         try
         {
-            var result = await ProjectScaffoldRunner.InitAsync(HelmionRootPath(), root, name);
+            var result = await ProjectScaffoldRunner.InitAsync(HelmionRootPath(), projectRoot, name);
             if (!result.Ok)
             {
                 _plusMenu.Fail(row, result.Summary);
