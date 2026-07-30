@@ -23,18 +23,31 @@ single coding session into a multi-agent team by spawning worker agents in
 isolated git worktrees, coordinating them through a custom SQLite mail system,
 and merging their work back with tiered conflict resolution."*
 
-**CORRECTED 2026-07-30 after a deeper read.** An earlier draft of this file
-guessed that Warren might be Overstory's predecessor. It is not. They are **two
-separate, concurrent projects by the same author, doing different jobs**:
+**CORRECTED TWICE. Read this whole block before believing any of it.**
+
+Draft 1 guessed Warren was Overstory's predecessor. Draft 2 "corrected" that to
+"two separate concurrent projects." **Draft 2 was also wrong, and more confidently
+wrong.** The primary source settles it:
+
+- The **Overstory repo is ARCHIVED (read-only) as of 2026-05-28.**
+- Its own README: *"Active development has moved to **Warren**, a self-hostable
+  control plane for sandboxed cloud agents and **overstory's spiritual
+  successor** — start there for anything new."*
+- Warren shipped **v0.12.2 on 2026-07-28**.
+
+So: **Warren is current. Overstory is dead prior art, in the author's own words.**
+Draft 1's guess was closer than draft 2's confident correction. The video demo
+predates the archive.
 
 | | Warren | Overstory |
 |---|---|---|
+| Status | **current**, v0.12.2, 2026-07-28 | **archived** 2026-05-28 |
 | What | *"a self-hostable control plane for ephemeral coding agents"* | *"Multi-agent orchestration for AI coding agents"* |
-| Shape | one run, sandboxed, pushes a branch, exits | many agents, coordinated, worktrees + mail bus |
-| Tagline | *"The Coolify of coding agents"* | — |
+| Shape | one run, sandboxed, pushes a branch, exits | 20-30 sessions, worktrees + mail bus |
 
-Warren is the **run substrate**. Overstory is the **manager**. Reading either as
-the other's replacement is a mistake this file made once already.
+The lesson worth keeping from this file's own history: a correction stated with
+more confidence than the thing it corrected is still a guess. Draft 2 asserted a
+relationship no source stated.
 
 ## The demo that prompted this
 
@@ -256,7 +269,121 @@ confirmed "most recent 10".
 
 ## Still not established, after both reads
 
-- Overstory's internals beyond its README — the hierarchy's actual files, how one
-  prompt becomes nine issues, whether Beads is the queue, what its isolation
-  boundary is beyond the worktree.
-- Whether Overstory has approvals, audit, MCP, or named/resumable sessions.
+*(The items formerly listed here were answered by the Overstory read below.)*
+
+---
+
+# APPENDED 2026-07-30 — Overstory internals, and the author's own case AGAINST it
+
+Overstory: MIT · 1.3k stars · 209 forks · 1,712 commits · TypeScript ·
+**ARCHIVED 2026-05-28** · `bun install -g @os-eco/overstory-cli` · 11 runtime
+adapters (Claude Code, Pi, Copilot, Gemini, Aider, Goose…).
+
+## THE MOST VALUABLE THING IN THE REPO — his STEELMAN.md
+
+He wrote down the argument against his own system, with numbers:
+
+> Every AI agent has a nonzero error rate. When you run agents in parallel,
+> errors compound multiplicatively rather than additively.
+
+> A single focused agent working sequentially often matches or exceeds swarm
+> throughput at a fraction of the cost.
+
+> A 20-agent swarm…consumed 8M tokens (roughly $60 at API rates). A single
+> agent…consumed 1.2M tokens (roughly $9).
+
+**6.7× the cost.** And:
+
+> Swarms encourage breaking problems into subtasks before the problem is fully
+> understood. This is backwards.
+
+> You spend more time doing forensic reconstruction than actually fixing the
+> issue.
+
+> Swarms can amplify costs rapidly before human intervention…A single-agent
+> workflow is fail-safe by default.
+
+He then archived it. **Anyone reaching for a swarm should read those six lines
+first.**
+
+## The hierarchy, from `agents/*.md`
+
+| Tier | Access | Spawned by |
+|---|---|---|
+| Orchestrator | read-only | *"your Claude Code session IS the orchestrator — there's no separate daemon"* |
+| Coordinator | read-only | `ov coordinator start` |
+| Lead | read-write | `ov sling <task-id> --capability lead --depth 1` |
+| Builder | read-write | `ov sling <bead-id> --capability builder --files <scoped-files> --parent … --depth n` |
+| Reviewer / Scout | read-only | same shape |
+| Merger | read-write | same shape |
+
+Scale: *"4-5 leads with 4-5 builders each = 20-30 total sessions"*, *"Target 2-5
+builders per lead"*, and depth is capped — *"default maxDepth is 2."* That is the
+21 agents in the video. Leads may not implement: *"Leads coordinate; they do not
+implement"* — Write/Edit and `git commit` are forbidden to them.
+
+## Four conflict-control layers — partition, not mutual exclusion
+
+1. **Worktree per agent** — *"no file conflicts between agents."*
+2. **File scoping at spawn** — `--files <scoped-files>` narrows a Builder.
+3. **Tool guards, mechanically enforced** — *"Runtime-specific guards (hooks for
+   Claude Code, extensions for Pi) mechanically block file modifications for
+   non-implementation agents and dangerous git operations for all agents."*
+4. **FIFO merge queue, SQLite, 4-tier resolution**, gated: *"leads send explicit
+   `merge_ready` mail before branch merge is authorized. Workers cannot trigger
+   merges directly."*
+
+**No lease and no lock — CANNOT CONFIRM either exists.** Collisions are prevented
+by *partitioning* the work, not by mutual exclusion. Note how issues are cut:
+by **file ownership**, so worktrees cannot collide by construction.
+
+## Isolation is weaker than Warren's
+
+Worktree + tool guards only. Agents are local processes (`Bun.spawn`). No
+container, no sandbox: *"'Machine per swarm' stays the isolation knob.
+Container-per-swarm via plain Docker is the target"* — proposed, never shipped,
+repo archived. No restriction on env vars, network or credentials could be
+confirmed.
+
+## Work tracking — the backend is pluggable
+
+*"Issues are tracked by the configured task tracker backend (beads or seeds)…
+via `src/tracker/` with a pluggable backend system."* Agent files are templated
+with `{{TRACKER_CLI}}`, injected at render time. **Beads** (steveyegge/beads) is
+*"Distributed graph issue tracker for AI agents, powered by Dolt"* — a
+*"persistent, structured memory for coding agents"* that *"replaces messy
+markdown plans with a dependency-aware graph."* Storage is Dolt, not GitHub
+Issues, not files.
+
+## Self-improvement — no such feature, and the mechanism is narrower than the video
+
+**CANNOT CONFIRM a named self-improvement feature; the repo never claims one.**
+What exists: agent behaviour lives in ordinary repo files (`agents/*.md`), so a
+swarm coding on its own repo can edit them, and every **subsequently spawned**
+agent renders from the new file. That is improvement-on-next-spawn, **not
+mid-flight**. Plus Mulch (`ml record` / `ml prime`) for capturing patterns.
+
+## Capability table
+
+| Capability | Overstory | Citation |
+|---|---|---|
+| Multi-agent | Yes, 20-30 | coordinator.md |
+| Isolation | worktree + guards, **no sandbox** | direction doc: container "is the target" |
+| Approvals / HITL | **No** | CANNOT CONFIRM in any doc |
+| Audit log | **No** | CANNOT CONFIRM |
+| MCP | **No** | CANNOT CONFIRM |
+| Session naming | **Yes** | `ov sling --name`, `ov mail list --from` |
+| Single feed | **Yes** | `ov serve` :7321 — "read the mail bus, inspect per-agent timelines" |
+| Lease / lock | **No** | partition only |
+
+## What this means for Helmion — observation, not a plan
+
+Overstory is the closest prior art to a multi-session manager, **its author
+killed it, and he wrote down why.** Transferable: worktree-per-agent, `--files`
+scoping at spawn, tool guards enforced by role, and a `merge_ready`-gated merge
+queue.
+
+What he never built is **enforcement** — a lease, a human approval gate, an audit
+trail. `src/core/lease.mjs` already exists here.
+
+**Nothing follows from this. Nothing is being built. Filed only.**
