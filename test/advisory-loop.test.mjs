@@ -103,56 +103,86 @@ test('THE HAPPY PATH: three real approvals let it through', () => {
   assert.equal(decision.counted, 3);
 });
 
-test('SILENCE IS NOT CONSENT — a missing advisor blocks and is NAMED', () => {
-  // The failure mode of every advisory system: it degrades quietly into an empty
-  // ritual because the quorum silently shrinks to whoever happened to answer.
+test('SILENCE IS NOT A VETO — a quiet advisor does NOT stop the work', () => {
+  // Corrected by Troy 2026-07-30. The first version blocked here, and that is
+  // exactly what bit him: Gemini went quiet and the gate halted a change nobody
+  // had objected to. An advisor that did not answer caught nothing.
   const decision = gate({
     proposal: buildProposal({ summary: 'tidy a function' }),
     reviews: [approve('grok'), approve('gemini')],
   });
-  assert.equal(decision.allowed, false);
-  assert.deepEqual(decision.missing, ['chatgpt']);
-  assert.match(decision.reason, /has not approved anything/);
+  assert.equal(decision.allowed, true);
+  assert.deepEqual(decision.silent, ['chatgpt']);
+  assert.equal(decision.coverage, '2/3');
 });
 
-test('an advisor that answered with junk counts as MISSING, not as agreeing', () => {
+test('…but the gap is RECORDED and named, never quietly dropped', () => {
+  // Proceeding is not the same as pretending it was fully checked. "Two looked
+  // and found nothing" is a weaker statement than three and the caller must be
+  // able to tell which it got.
+  const decision = gate({
+    proposal: buildProposal({ summary: 'tidy a function' }),
+    reviews: [approve('grok'), approve('gemini')],
+  });
+  assert.match(decision.reason, /NOT CHECKED BY: chatgpt/);
+  assert.match(decision.reason, /coverage was 2\/3, not full/);
+});
+
+test('an advisor that answered with junk is SILENT, not agreeing', () => {
   const decision = gate({
     proposal: buildProposal({ summary: 'tidy a function' }),
     reviews: [approve('grok'), approve('gemini'), parseReview('chatgpt', 'yeah fine')],
   });
-  assert.equal(decision.allowed, false);
-  assert.deepEqual(decision.missing, ['chatgpt']);
+  assert.deepEqual(decision.silent, ['chatgpt'], 'junk counts as no answer, never as approval');
+  assert.equal(decision.coverage, '2/3');
 });
 
-test('one BLOCK stops it, and the reason travels', () => {
+test('ONE CATCH IS ENOUGH — it does not need a second opinion', () => {
+  // The whole point. A tripwire, not a quorum: a single advisor spotting a real
+  // mistake stops the change while the other two are still saying it is fine.
   const decision = gate({
-    proposal: buildProposal({ summary: 'delete some files' }),
+    proposal: buildProposal({ summary: 'delete the audit folder' }),
     reviews: [
       approve('grok'),
       approve('gemini'),
       parseReview('chatgpt', JSON.stringify({
-        verdict: 'BLOCK', reason: 'this removes the audit ledger the panel reads',
+        verdict: 'BLOCK', reason: 'this deletes the audit ledger with no backup',
       })),
     ],
   });
   assert.equal(decision.allowed, false);
-  assert.match(decision.reason, /said BLOCK/);
-  assert.match(decision.reason, /audit ledger/, 'the advisor\'s own words reach the caller');
+  assert.equal(decision.catches.length, 1, 'one catch, against two approvals');
+  assert.match(decision.reason, /CAUGHT by chatgpt/);
+  assert.match(decision.reason, /audit ledger/, "the catcher's own words reach the caller");
 });
 
-test('a CONCERN stops it too — advisory does not mean ignorable', () => {
+test('a CONCERN is a catch too — a mistake spotted is a mistake spotted', () => {
   const decision = gate({
     proposal: buildProposal({ summary: 'change a default' }),
     reviews: [
       approve('grok'),
-      approve('gemini'),
-      parseReview('chatgpt', JSON.stringify({
+      parseReview('gemini', JSON.stringify({
         verdict: 'CONCERN', reason: 'the summary says read-only but the diff writes a file',
       })),
     ],
   });
   assert.equal(decision.allowed, false);
-  assert.match(decision.reason, /raised a concern/);
+  assert.match(decision.reason, /CAUGHT by gemini/);
+});
+
+test('A CATCH WITHOUT A REASON CANNOT STOP ANYTHING', () => {
+  // Troy: "that needs to be reasons." A bare BLOCK with no usable reason is a
+  // rubber stamp in reverse — parseReview refuses it, so it never reaches the
+  // gate as a catch and cannot halt work on nothing.
+  const bare = parseReview('grok', JSON.stringify({ verdict: 'BLOCK', reason: 'no' }));
+  assert.equal(bare.counted, false);
+
+  const decision = gate({
+    proposal: buildProposal({ summary: 'a change' }),
+    reviews: [bare, approve('gemini'), approve('chatgpt')],
+  });
+  assert.equal(decision.allowed, true, 'a reasonless BLOCK does not stop the work');
+  assert.deepEqual(decision.silent, ['grok'], 'it is recorded as no answer from that advisor');
 });
 
 test('TIER B IS NEVER CLEARED BY VOTES, even a clean sweep', () => {
@@ -189,10 +219,21 @@ test('a BLOCK outranks the tier message, so the sharpest reason is the one shown
   assert.match(decision.reason, /drops a table/);
 });
 
-test('no reviews at all is a refusal, not a pass', () => {
+test('NOBODY REACHABLE: it proceeds, and says plainly that nothing was checked', () => {
+  // The sharp edge of "silence is not a veto", and it is stated rather than
+  // hidden. If every advisor is down, work is NOT blocked — but the decision
+  // says in as many words that nothing was checked, so a reader can never
+  // mistake zero coverage for a clean bill of health.
   const decision = gate({ proposal: buildProposal({ summary: 'x' }), reviews: [] });
-  assert.equal(decision.allowed, false);
-  assert.equal(decision.missing.length, ADVISORS.length);
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.coverage, '0/3');
+  assert.match(decision.reason, /Nothing was caught, and nothing was checked/);
+  assert.deepEqual(decision.silent, ADVISORS);
+});
+
+test('coverage is always reported, so a pass can be read for what it is worth', () => {
+  assert.equal(gate({ proposal: buildProposal({ summary: 'x' }), reviews: allApproved() }).coverage, '3/3');
+  assert.equal(gate({ proposal: buildProposal({ summary: 'x' }), reviews: [approve('grok')] }).coverage, '1/3');
 });
 
 test('the gate ANSWERS, it does not act', () => {
@@ -201,7 +242,7 @@ test('the gate ANSWERS, it does not act', () => {
   const decision = gate({ proposal: buildProposal({ summary: 'x' }), reviews: allApproved() });
   assert.deepEqual(
     Object.keys(decision).sort(),
-    ['allowed', 'approvals', 'blocks', 'concerns', 'counted', 'missing', 'reason'],
+    ['allowed', 'approvals', 'blocks', 'catches', 'concerns', 'counted', 'coverage', 'missing', 'reason', 'silent'],
   );
 });
 

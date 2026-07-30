@@ -12,7 +12,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -355,9 +355,12 @@ test('THE RACE: twelve real processes reach for one lease and exactly one wins',
     // race, and the test reads as "nobody won" — which would have looked like a
     // broken lease instead of a broken harness.
     const moduleUrl = pathToFileURL(path.join(REPO, 'src', 'core', 'lease.mjs')).href;
+    const stopFile = path.join(dir, 'RACE-OVER');
     writeFileSync(runner, `
 import { acquireLease, LeaseHeldError } from ${JSON.stringify(moduleUrl)};
+import { existsSync } from 'node:fs';
 const dir = process.argv[2];
+const stopFile = process.argv[3];
 try {
   const out = acquireLease(dir, { projectSlug: 'race', instanceId: 'racer-' + process.pid });
   console.log('WON ' + out.record.leaseToken);
@@ -366,7 +369,20 @@ try {
   // would take over and "exactly one wins" would be measuring nothing. Staying
   // alive is what makes the other eleven contend with a LIVE holder, which is
   // the invariant under test.
-  await new Promise((r) => setTimeout(r, 2500));
+  //
+  // It waits for the PARENT'S SIGNAL, not for a clock. The first version slept a
+  // fixed 2500ms, which quietly made the assertion depend on how fast this
+  // machine could spawn twelve processes: any racer that arrived after the
+  // winner exited found a dead pid, took the lease it was entitled to take, and
+  // the test reported "2 of 12 won" as though the lease had failed. It had not —
+  // reclaiming a dead holder's lease is deliberate, and 'A STALE RIVAL DOES NOT
+  // BLOCK FOREVER' above asserts exactly that. Reproduced with a shortened hold
+  // and a delayed straggler: two winners, every time. Holding until the parent
+  // says every racer has reported removes the clock from the invariant.
+  const deadline = Date.now() + 30_000;
+  while (!existsSync(stopFile) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
 } catch (err) {
   if (err instanceof LeaseHeldError) console.log('LOST');
   else console.log('ERROR ' + err.name + ' ' + err.message);
@@ -375,16 +391,40 @@ try {
 
     const RACERS = 12;
     const results = [];
+    let reported = 0;
+    const noteReported = () => {
+      reported += 1;
+      // Every racer has said its piece, so the winner may stop holding. Written
+      // on the LAST report — including a racer that died without printing —
+      // otherwise one crashed child would leave the winner waiting on its own
+      // 30s deadline.
+      if (reported === RACERS) writeFileSync(stopFile, 'over', 'utf8');
+    };
+
     const children = [];
     for (let i = 0; i < RACERS; i += 1) {
       children.push(new Promise((resolve) => {
-        execFile(process.execPath, [runner, dir], { timeout: 30_000 }, (err, stdout, stderr) => {
-          const out = String(stdout ?? '').trim();
+        const child = spawn(process.execPath, [runner, dir, stopFile], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        let errText = '';
+        let counted = false;
+        child.stdout.on('data', (chunk) => {
+          out += chunk;
+          // Counted the moment the line arrives, NOT on exit — the winner does
+          // not exit until every racer has reported, so waiting for its exit
+          // here would deadlock.
+          if (!counted && out.includes('\n')) { counted = true; noteReported(); }
+        });
+        child.stderr.on('data', (chunk) => { errText += chunk; });
+        const finish = () => {
+          const line = out.trim();
+          if (!counted) { counted = true; noteReported(); }
           // Surface stderr. Swallowing it is what made the first run of this test
           // report "0 of 12 won" with no explanation.
-          if (!out) resolve(`ERROR child produced no stdout: ${String(stderr ?? '').trim().split('\n')[0] || 'no stderr either'}`);
-          else resolve(out);
-        });
+          resolve(line || `ERROR child produced no stdout: ${errText.trim().split('\n')[0] || 'no stderr either'}`);
+        };
+        child.on('close', finish);
+        child.on('error', (err) => { errText += String(err.message); finish(); });
       }));
     }
 
