@@ -46,3 +46,35 @@ public sealed class GuardInvertBooleanConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException("GuardInvertBooleanConverter is one-way.");
 }
+
+/// <summary>
+/// A + menu row's state key → the colour that state is drawn in.
+///
+/// The row already says its state IN WORDS ("Connecting…", "Added", "Failed",
+/// "Removed") — this is the redundant second channel, never the only one. Same
+/// discipline as the guard panel, where a red card sitting over healthy text
+/// taught nobody anything.
+///
+/// An unrecognised key is grey, not green. A state this converter cannot read is
+/// not a success.
+/// </summary>
+public sealed class PlusStateBrushConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        (value as string) switch
+        {
+            "Busy" => new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x7F, 0xE3, 0xFF)),   // cyan — working
+            "Ok" => new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x4C, 0xC3, 0x8A)),   // green — added
+            "Failed" => new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0xE0, 0x6C, 0x60)),   // red — failed
+            "Removed" => new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x7A, 0x82, 0x90)),   // grey — removed
+            _ => new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x7A, 0x82, 0x90)),
+        };
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

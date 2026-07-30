@@ -20,6 +20,7 @@
     <local:GuardTrueToVisibleConverter x:Key="GuardBoolHides" />
     <local:GuardNonZeroToVisibleConverter x:Key="GuardZeroHides" />
     <local:GuardInvertBooleanConverter x:Key="GuardBoolInvert" />
+    <local:PlusStateBrushConverter x:Key="PlusStateBrush" />
 
     <Style x:Key="NavButtonStyle" TargetType="Button">
       <Setter Property="Height" Value="48" />
@@ -2102,6 +2103,84 @@
                       BorderBrush="#1A2834"
                       BorderThickness="0,1,0,0"
                       Padding="12">
+                <StackPanel>
+                  <!-- The state rows. Every + action shows one of four states
+                       here and never disappears silently: Connecting…, Added,
+                       Failed with the reason, or Removed with an Undo. -->
+                  <ItemsControl x:Name="ConsolePlusRows"
+                                Loaded="ConsolePlusRows_Loaded"
+                                Margin="0,0,0,8">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Margin="0,0,0,6"
+                                Padding="10,7"
+                                CornerRadius="8"
+                                Background="#0A1218"
+                                BorderThickness="1"
+                                BorderBrush="{Binding StateKey, Converter={StaticResource PlusStateBrush}}">
+                          <Grid>
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="Auto" />
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding Entry.Icon}"
+                                       FontSize="15"
+                                       Width="26"
+                                       VerticalAlignment="Center"
+                                       Foreground="{Binding StateKey, Converter={StaticResource PlusStateBrush}}" />
+
+                            <StackPanel Grid.Column="1">
+                              <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Title}"
+                                           FontSize="13"
+                                           FontWeight="SemiBold"
+                                           Foreground="#F2FBFF" />
+                                <TextBlock Text="{Binding StateText}"
+                                           Margin="10,0,0,0"
+                                           FontSize="12"
+                                           FontWeight="Bold"
+                                           Foreground="{Binding StateKey, Converter={StaticResource PlusStateBrush}}" />
+                              </StackPanel>
+                              <TextBlock Text="{Binding Message}"
+                                         FontSize="12"
+                                         Margin="0,2,0,0"
+                                         TextWrapping="Wrap"
+                                         Foreground="#9FB6C6" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                              <Button Content="Remove"
+                                      Click="ConsolePlusRemove_Click"
+                                      Margin="6,0,0,0"
+                                      Padding="8,4"
+                                      FontSize="11"
+                                      Background="Transparent"
+                                      BorderBrush="#3A5568"
+                                      BorderThickness="1"
+                                      Foreground="#9FB6C6"
+                                      Cursor="Hand"
+                                      Visibility="{Binding CanRemove, Converter={StaticResource GuardBoolHides}}" />
+                              <Button Content="Undo"
+                                      Click="ConsolePlusUndo_Click"
+                                      Margin="6,0,0,0"
+                                      Padding="8,4"
+                                      FontSize="11"
+                                      Background="Transparent"
+                                      BorderBrush="#7FE3FF"
+                                      BorderThickness="1"
+                                      Foreground="#7FE3FF"
+                                      Cursor="Hand"
+                                      Visibility="{Binding CanUndo, Converter={StaticResource GuardBoolHides}}" />
+                            </StackPanel>
+                          </Grid>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -2110,6 +2189,66 @@
                   </Grid.ColumnDefinitions>
 
                   <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="0,0,10,0">
+                    <!-- The + menu: Connectors, Plugins, Skills, Upload. Every row
+                         carries a plain-language line because "connector",
+                         "plugin" and "skill" are the same word to a new user. -->
+                    <Button x:Name="ConsolePlusButton"
+                            Content="+"
+                            Width="48"
+                            Height="48"
+                            Margin="0,0,8,0"
+                            FontSize="22"
+                            Click="ConsolePlusButton_Click"
+                            ToolTip="Add a connector, plugin, skill, or attach a file."
+                            Style="{StaticResource PrimaryButtonStyle}" />
+
+                    <Popup x:Name="ConsolePlusPopup"
+                           PlacementTarget="{Binding ElementName=ConsolePlusButton}"
+                           Placement="Top"
+                           StaysOpen="False"
+                           AllowsTransparency="True"
+                           PopupAnimation="Fade">
+                      <Border Background="#101A22"
+                              BorderBrush="#3A5568"
+                              BorderThickness="1"
+                              CornerRadius="12"
+                              Padding="6"
+                              MaxWidth="440">
+                        <ItemsControl x:Name="ConsolePlusItems">
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                              <Button Click="ConsolePlusItem_Click"
+                                      Tag="{Binding Kind}"
+                                      HorizontalContentAlignment="Stretch"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      Padding="10,8"
+                                      Cursor="Hand">
+                                <StackPanel Orientation="Horizontal">
+                                  <TextBlock Text="{Binding Icon}"
+                                             FontSize="17"
+                                             Width="28"
+                                             VerticalAlignment="Top"
+                                             Foreground="#7FE3FF" />
+                                  <StackPanel Width="370">
+                                    <TextBlock Text="{Binding Label}"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Foreground="#F2FBFF" />
+                                    <TextBlock Text="{Binding OneLiner}"
+                                               FontSize="12"
+                                               Margin="0,2,0,0"
+                                               TextWrapping="Wrap"
+                                               Foreground="#9FB6C6" />
+                                  </StackPanel>
+                                </StackPanel>
+                              </Button>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </Border>
+                    </Popup>
+
                     <Button x:Name="ConsoleMicButton"
                             Content="🎙"
                             Width="48"
@@ -2173,6 +2312,7 @@
                           Click="ConsoleSendButton_Click"
                           Style="{StaticResource PrimaryButtonStyle}" />
                 </Grid>
+                </StackPanel>
               </Border>
             </Grid>
           </Border>
