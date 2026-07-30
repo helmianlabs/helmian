@@ -18,8 +18,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
+  COPIES,
+  KERNEL,
+  CLAIMS,
   GENERATED_FILE,
   KERNEL_SOURCE,
+  CLAIMS_GENERATED_FILE,
+  CLAIMS_SOURCE,
   HEADER_END,
   buildGeneratedFile,
   stripHeader,
@@ -28,6 +33,8 @@ import {
 
 import * as original from '../../src/core/governance.mjs';
 import * as copy from '../generated/helmion-governance.generated.js';
+import * as claimsOriginal from '../../src/core/unverified-claims.mjs';
+import * as claimsCopy from '../generated/helmion-unverified-claims.generated.js';
 
 test('THE DRIFT TEST: the shipped copy is exactly what sync-kernel.mjs produces today', async () => {
   const onDisk = await readFile(GENERATED_FILE, 'utf8');
@@ -147,4 +154,101 @@ test('generation refuses a kernel that a browser could not run', () => {
 test('the kernel as it stands today passes the browser-safety check', async () => {
   const source = await readFile(KERNEL_SOURCE, 'utf8');
   assert.equal(assertBrowserSafe(source), true);
+});
+
+/* ─── THE SECOND COPY ───────────────────────────────────────────────────────
+ *
+ * src/core/unverified-claims.mjs is copied the same way and for the same
+ * reason. It says so in its own header — "BROWSER-SAFE ON PURPOSE. No imports
+ * at all, so this can be copied into the extension the same way
+ * src/core/governance.mjs is" — and every guarantee the kernel copy carries has
+ * to carry over, or the second copy becomes the one that drifts. */
+
+test('THE DRIFT TEST, claim detector: the shipped copy is what sync-kernel.mjs produces today', async () => {
+  const onDisk = await readFile(CLAIMS_GENERATED_FILE, 'utf8');
+  const expected = await buildGeneratedFile(CLAIMS);
+  assert.equal(
+    onDisk,
+    expected,
+    'extension/generated/helmion-unverified-claims.generated.js is stale. '
+    + 'Run: node extension/tools/sync-kernel.mjs',
+  );
+});
+
+test('the claim detector copy is byte-for-byte identical to the original below the header', async () => {
+  const onDisk = await readFile(CLAIMS_GENERATED_FILE, 'utf8');
+  const body = stripHeader(onDisk);
+  const source = await readFile(CLAIMS_SOURCE, 'utf8');
+  assert.notEqual(body, null, 'the generated header is missing — the file was replaced by hand');
+  assert.equal(body, source);
+});
+
+test('the claim detector copy exports the same names as the original', () => {
+  assert.deepEqual(Object.keys(claimsCopy).sort(), Object.keys(claimsOriginal).sort());
+});
+
+test('the original and the copy give the same verdict on every kind of claim', () => {
+  const passages = [
+    'The setting is probably under Preferences > Advanced.',
+    'The retry limit is probably set in config.json.',
+    'The endpoint is probably /api/loads.',
+    'Timeouts are usually 30 seconds by default.',
+    'I believe HELMION_WORKSPACE is the variable.',
+    'Run npm run check, I think.',
+    'Node 22 shipped it, as far as I know.',
+    'I think that design is cleaner.',
+    'I am not sure — let me check.',
+    'The retry limit is set in config.json.',
+    '',
+  ];
+
+  for (const passage of passages) {
+    assert.deepEqual(
+      claimsCopy.detectUnverifiedClaims(passage),
+      claimsOriginal.detectUnverifiedClaims(passage),
+      `the copy disagrees with the original on: ${passage}`,
+    );
+  }
+});
+
+test('the claim detector as it stands today passes the browser-safety check', async () => {
+  const source = await readFile(CLAIMS_SOURCE, 'utf8');
+  assert.equal(assertBrowserSafe(source), true);
+});
+
+test('POSITIVE CONTROL: the claim detector drift test really fails when the copy is edited', async () => {
+  const scratch = join(tmpdir(), `helmion-claims-drift-control-${process.pid}.js`);
+  const expected = await buildGeneratedFile(CLAIMS);
+  try {
+    await writeFile(scratch, `${expected}\nCONFIDENCE_MARKERS.push('somebody added this by hand');\n`, 'utf8');
+    const tampered = await readFile(scratch, 'utf8');
+    assert.notEqual(tampered, expected, 'the drift check did not notice an edited copy');
+  } finally {
+    await rm(scratch, { force: true });
+  }
+
+  const shipped = await readFile(CLAIMS_GENERATED_FILE, 'utf8');
+  assert.equal(shipped, expected, 'the shipped claim detector copy was modified by the control');
+});
+
+test('every copy the script knows about lands in its own file, from its own source', () => {
+  // A second entry pointed at the first entry's output would silently overwrite
+  // it, and whichever ran last would win.
+  assert.ok(COPIES.length >= 2);
+  assert.equal(new Set(COPIES.map((entry) => entry.generated)).size, COPIES.length);
+  assert.equal(new Set(COPIES.map((entry) => entry.source)).size, COPIES.length);
+  assert.equal(KERNEL.generated, GENERATED_FILE);
+  assert.equal(CLAIMS.generated, CLAIMS_GENERATED_FILE);
+});
+
+test('no generated header carries an absolute path, so a clone anywhere still passes', async () => {
+  // The header used to name E:\Helmion. Building it from the real absolute path
+  // would have made every clone at a different path fail the drift test on
+  // checkout; a repo-relative label is the same text on every machine.
+  for (const entry of COPIES) {
+    const built = await buildGeneratedFile(entry);
+    const header = built.slice(0, built.indexOf(HEADER_END));
+    assert.ok(!/[A-Za-z]:\\/.test(header), `${entry.name} header carries a Windows absolute path`);
+    assert.ok(header.includes(entry.label), `${entry.name} header does not name its source`);
+  }
 });
