@@ -53,6 +53,69 @@ public static class ColorThemeCatalog
 }
 
 /// <summary>
+/// The app-wide text scale, as a multiplier applied to the entire shell.
+///
+/// A LADDER, NOT A FREE SLIDER. The stops are fixed so Ctrl+= and Ctrl+- land on
+/// the same values every time, and so the number written to disk is always one a
+/// later build still recognises.
+///
+/// CLAMPING IS TOTAL. Every number that reaches <see cref="Clamp"/> — a
+/// hand-edited settings file, a NaN, an infinity — resolves to a value inside the
+/// ladder. The failure this prevents is not cosmetic: a shell scaled to 0 renders
+/// nothing at all, and a user who cannot read the screen also cannot navigate to
+/// the control that would fix it.
+/// </summary>
+public static class TextScaleRange
+{
+    public const double Default = 1.0;
+    public const double Min = 0.9;
+    public const double Max = 2.0;
+
+    private const double Tolerance = 0.001;
+
+    /// <summary>The stops Ctrl+= and Ctrl+- walk through, smallest first.</summary>
+    public static IReadOnlyList<double> Steps { get; } =
+        [0.9, 1.0, 1.1, 1.25, 1.4, 1.6, 1.8, 2.0];
+
+    public static double Clamp(double scale) =>
+        double.IsNaN(scale) ? Default : Math.Clamp(scale, Min, Max);
+
+    /// <summary>The next stop up, or the largest when already there.</summary>
+    public static double Larger(double scale)
+    {
+        var current = Clamp(scale);
+        foreach (var step in Steps)
+        {
+            if (step > current + Tolerance)
+            {
+                return step;
+            }
+        }
+
+        return Max;
+    }
+
+    /// <summary>The next stop down, or the smallest when already there.</summary>
+    public static double Smaller(double scale)
+    {
+        var current = Clamp(scale);
+        for (var i = Steps.Count - 1; i >= 0; i--)
+        {
+            if (Steps[i] < current - Tolerance)
+            {
+                return Steps[i];
+            }
+        }
+
+        return Min;
+    }
+
+    /// <summary>What the control on screen reads, e.g. "125%".</summary>
+    public static string Describe(double scale) =>
+        $"{Math.Round(Clamp(scale) * 100)}%";
+}
+
+/// <summary>
 /// A user-defined OpenAI-compatible endpoint. <paramref name="Model"/> is optional;
 /// when blank the profile name is sent as the model id (the Ollama/vLLM convention).
 /// </summary>
@@ -77,13 +140,26 @@ public sealed record DesktopSettings(
     /// nothing. That is why this can live in settings while the project list
     /// deliberately cannot.
     /// </summary>
-    IReadOnlyList<string>? PinnedProjects = null)
+    IReadOnlyList<string>? PinnedProjects = null,
+    /// <summary>
+    /// App-wide text scale. Last in the parameter list on purpose: a settings file
+    /// written by an earlier build has no such property, and System.Text.Json fills
+    /// the gap with this default rather than refusing the whole file.
+    /// </summary>
+    double TextScale = TextScaleRange.Default)
 {
     public static DesktopSettings Default { get; } =
-        new(1, ColorThemeCatalog.DefaultThemeId, null, [], AgentPermission.ReadOnly, []);
+        new(1, ColorThemeCatalog.DefaultThemeId, null, [], AgentPermission.ReadOnly, [],
+            TextScaleRange.Default);
 
     /// <summary>Normalized console permission mode (read-only | read-tools | full).</summary>
     public string ResolvedPermissionMode => AgentPermission.Normalize(PermissionMode);
+
+    /// <summary>
+    /// The scale actually safe to apply. Always read this, never <see cref="TextScale"/>
+    /// directly — the raw value came off disk and nothing validated it there.
+    /// </summary>
+    public double ResolvedTextScale => TextScaleRange.Clamp(TextScale);
 }
 
 public static class DesktopSettingsStore

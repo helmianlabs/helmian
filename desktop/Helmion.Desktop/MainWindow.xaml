@@ -13,7 +13,8 @@
         FontFamily="{StaticResource AppFont}"
         TextOptions.TextFormattingMode="Display"
         UseLayoutRounding="True"
-        PreviewKeyDown="MainWindow_PreviewKeyDown">
+        PreviewKeyDown="MainWindow_PreviewKeyDown"
+        PreviewMouseWheel="MainWindow_PreviewMouseWheel">
   <Window.Resources>
     <!-- Declared first: StaticResource cannot resolve forward references inside
          the same dictionary. See GuardValueConverters.cs. -->
@@ -660,6 +661,60 @@
       </Style.Triggers>
     </Style>
 
+    <!-- A session's stoplight dot in the left panel. Same LevelKey values and the
+         same four brushes as the guard cards above, because it is the same
+         escalation rule's output — not a parallel scheme. Unknown is the DEFAULT
+         setter, so a session with no card behind it, or a binding that failed,
+         renders grey rather than inheriting a confident colour. The row also
+         prints the level as a word, so the dot is never the only channel. -->
+    <Style x:Key="SessionDotStyle" TargetType="Ellipse">
+      <Setter Property="Fill" Value="{StaticResource GuardUnknownBrush}" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Normal">
+          <Setter Property="Fill" Value="{StaticResource GuardNormalBrush}" />
+        </DataTrigger>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Warning">
+          <Setter Property="Fill" Value="{StaticResource GuardWarningBrush}" />
+        </DataTrigger>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Critical">
+          <Setter Property="Fill" Value="{StaticResource GuardCriticalBrush}" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- One provider pill under the composer. Deliberately plain: it is a button
+         that starts a real session, not a status light. -->
+    <Style x:Key="SessionPillStyle" TargetType="Button">
+      <Setter Property="Height" Value="26" />
+      <Setter Property="Padding" Value="14,0" />
+      <Setter Property="Margin" Value="0,0,7,0" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="#9FB6C6" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="PillBorder"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="#3A5568"
+                    BorderThickness="1"
+                    CornerRadius="13"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="PillBorder" Property="BorderBrush" Value="#7FE3FF" />
+                <Setter Property="Foreground" Value="#7FE3FF" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <!--
       THE PULSE. Driven by AnimatePulse, which is ShouldPulse AND the OS allows
       motion (GuardFeed.AnimationsEnabled ← SystemParameters.ClientAreaAnimation).
@@ -903,25 +958,22 @@
                        FontWeight="SemiBold"
                        TextWrapping="Wrap"
                        Margin="0,5,0,0" />
+            <!-- WRAPS IN FULL. It used to be capped at MaxHeight 32 with a
+                 CharacterEllipsis, which cut the reason mid-sentence — "The next
+                 writer may…" — on the one surface whose entire job is to explain
+                 why it interrupted you. A guard card that cannot state its reason
+                 is not doing the thing it exists to do.
+
+                 Chosen over click-to-expand deliberately: expanding needs a
+                 disclosure control, a per-card expanded flag, and a user who knows
+                 to click. The list already lives in a ScrollViewer (the "running
+                 list" below), so a long card costs scrolling and nothing else, and
+                 the text is readable without anyone discovering a gesture first. -->
             <TextBlock Text="{Binding Detail}"
                        Foreground="{DynamicResource MutedTextBrush}"
                        FontSize="11"
                        TextWrapping="Wrap"
-                       Margin="0,5,0,0">
-              <TextBlock.Style>
-                <Style TargetType="TextBlock">
-                  <!-- Compact: two lines, trimmed. This is the "small" card. -->
-                  <Setter Property="MaxHeight" Value="32" />
-                  <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-                  <Style.Triggers>
-                    <DataTrigger Binding="{Binding HasOptions}" Value="True">
-                      <Setter Property="MaxHeight" Value="240" />
-                      <Setter Property="TextTrimming" Value="None" />
-                    </DataTrigger>
-                  </Style.Triggers>
-                </Style>
-              </TextBlock.Style>
-            </TextBlock>
+                       Margin="0,5,0,0" />
             <!-- The threshold that fired, with its number in it. -->
             <TextBlock Text="{Binding Reason}"
                        Foreground="{DynamicResource FaintTextBrush}"
@@ -973,6 +1025,26 @@
   </Window.Resources>
 
   <Grid>
+    <!-- TEXT SIZE. One transform, the whole shell.
+
+         This is a LayoutTransform, not a RenderTransform, and the difference is
+         the entire feature: a LayoutTransform is applied BEFORE measure, so the
+         content is laid out against the scaled-down space and everything reflows
+         and re-wraps. A RenderTransform would scale finished pixels and clip.
+
+         WHY NOT A FontSize RESOURCE. There are 261 hardcoded FontSize literals in
+         this file and none of them read a resource; the most common value is 10,
+         used 99 times, which is smaller than WPF's own 12pt default. Routing all
+         261 through a resource is 261 chances to miss one, and it still would not
+         touch padding, icon boxes or fixed row heights — so the text would grow
+         and the boxes around it would not. Scaling the shell moves all of it at
+         once and cannot be partially applied.
+
+         Driven by ApplyTextScale in MainWindow.xaml.cs. Ctrl+= / Ctrl+- / Ctrl+0,
+         and the control on the Settings page. -->
+    <Grid.LayoutTransform>
+      <ScaleTransform x:Name="AppScale" ScaleX="1" ScaleY="1" />
+    </Grid.LayoutTransform>
     <Grid.ColumnDefinitions>
       <ColumnDefinition x:Name="SidebarColumn" Width="248" />
       <ColumnDefinition Width="*" />
@@ -1128,21 +1200,97 @@
 
           <!-- ─── SESSIONS ────────────────────────────────────────────────────
                Deliberately NOT a "New session" button. Sessions are started by
-               the per-LLM pills, and a new one ADDS to what is running rather
-               than replacing a chat. Until that lands this states plainly that
-               it is not built, instead of showing an empty list that looks
-               broken. -->
+               the per-LLM pills under the composer, and a new one ADDS to what is
+               running rather than replacing a chat.
+
+               THE DOT IS REAL. Its colour comes from GuardFeed cards this session
+               actually owns, read back by signature (MainWindow.Sessions.cs
+               RefreshSessionDots) and evaluated by the SAME escalation rule as
+               every other card — grey UNKNOWN until something has computed a
+               state, and never green on no evidence. The level is also spelled
+               out in words next to the name so the colour is never the only
+               channel. -->
           <TextBlock Text="SESSIONS"
                      Foreground="{DynamicResource FaintTextBrush}"
                      FontSize="10"
                      FontWeight="Bold"
                      Margin="15,6,0,6" />
+
+          <ItemsControl x:Name="SessionShelfList" Loaded="SessionShelfList_Loaded">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="8,0,8,2">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+
+                  <!-- AutomationProperties.Name carries the session's name and its
+                       level IN WORDS, because the row's own content is a panel of
+                       TextBlocks and a coloured Ellipse — which a screen reader
+                       reads as an unnamed button and a shape it cannot describe.
+                       Without this the stoplight would be available to sighted
+                       users only, which is the same failure as making colour the
+                       only channel. -->
+                  <Button Grid.Column="0"
+                          Click="SessionShelfItem_Click"
+                          Tag="{Binding Id}"
+                          AutomationProperties.Name="{Binding AccessibleName}"
+                          AutomationProperties.HelpText="{Binding DotTooltip}"
+                          HorizontalContentAlignment="Stretch"
+                          Background="Transparent"
+                          BorderThickness="0"
+                          Padding="7,5"
+                          Cursor="Hand"
+                          ToolTip="{Binding DotTooltip}">
+                    <StackPanel Orientation="Horizontal">
+                      <!-- The stoplight. Style triggers on LevelKey, the same keys
+                           and the same brushes the guard cards use. -->
+                      <Ellipse Width="9"
+                               Height="9"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"
+                               Style="{StaticResource SessionDotStyle}" />
+                      <StackPanel>
+                        <TextBlock Text="{Binding Name}"
+                                   FontSize="12"
+                                   FontWeight="{Binding RowWeight}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextBrush}" />
+                        <TextBlock Text="{Binding SubtitleText}"
+                                   FontSize="10"
+                                   Margin="0,1,0,0"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource FaintTextBrush}" />
+                      </StackPanel>
+                    </StackPanel>
+                  </Button>
+
+                  <Button Grid.Column="1"
+                          Click="SessionClose_Click"
+                          Tag="{Binding Id}"
+                          AutomationProperties.Name="{Binding CloseAccessibleName}"
+                          Content="✕"
+                          VerticalAlignment="Top"
+                          Margin="0,6,4,0"
+                          Padding="4,0"
+                          FontSize="11"
+                          Background="Transparent"
+                          BorderThickness="0"
+                          Foreground="{DynamicResource FaintTextBrush}"
+                          Cursor="Hand"
+                          ToolTip="Close this session. Its agent process is stopped and its guard cards are removed." />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
           <TextBlock x:Name="SessionShelfEmpty"
                      Margin="15,0,12,10"
                      FontSize="11"
                      TextWrapping="Wrap"
                      Foreground="{DynamicResource FaintTextBrush}"
-                     Text="Not built yet. Sessions will start from the per-LLM buttons and stack here." />
+                     Text="No sessions yet. Press one of the pills under the message box to start one." />
 
           <!-- ─── PILOT, COLLAPSED ────────────────────────────────────────────
                The nine pages are the app's own furniture, not the operator's
@@ -1834,34 +1982,52 @@
           <Border Grid.Row="0"
                   Padding="22,16,22,12"
                   Background="{DynamicResource CanvasBrush}">
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-              </Grid.ColumnDefinitions>
-
-              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <!-- DockPanel, not a two-column Grid. A Grid Auto column is measured
+                 at infinite width, so the controls reported a single-line width,
+                 never wrapped, and were then cropped when the row ran out of room
+                 — that is what cut the end off "Full screen". Docking the controls
+                 Right measures them against the space that actually exists: they
+                 take the width they need, wrap to a second line when they cannot,
+                 and the decorative subtitle absorbs the squeeze instead of a
+                 button label. The interactive thing wins the space. -->
+            <!-- THE WHOLE TOOLBAR WRAPS.
+                 At the narrowest window this shell allows (1120), the content
+                 column is about 490px while the title and the permission
+                 controls together need roughly 800. Any layout that keeps them
+                 on one row has to crop one of them — a Grid, a DockPanel and a
+                 StackPanel were each tried here and each just chose a different
+                 victim ("Full screen" became "Ful", or the title became a single
+                 half-drawn dot). A WrapPanel is the only arrangement with a
+                 third option: put the controls on a second row and crop nothing.
+                 The cost is that the controls are no longer flush right at wide
+                 widths. A label you can read beats a label in the right place. -->
+            <WrapPanel Orientation="Horizontal">
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,4">
                 <Border Width="10" Height="10" CornerRadius="5" Background="#FF5F57" Margin="0,0,6,0" Opacity="0.9" />
                 <Border Width="10" Height="10" CornerRadius="5" Background="#FEBC2E" Margin="0,0,6,0" Opacity="0.9" />
                 <Border Width="10" Height="10" CornerRadius="5" Background="#28C840" Margin="0,0,14,0" Opacity="0.9" />
                 <StackPanel>
                   <TextBlock Text="Console"
                              FontSize="20"
-                             FontWeight="SemiBold" />
+                             FontWeight="SemiBold"
+                             TextTrimming="CharacterEllipsis" />
                   <TextBlock Text="Modern CLI · Enter to send · Shift+Enter for new line · F11 full screen"
                              Foreground="{DynamicResource MutedTextBrush}"
                              FontSize="11"
+                             TextTrimming="CharacterEllipsis"
                              Margin="0,2,0,0" />
                 </StackPanel>
               </StackPanel>
 
-              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <!-- Inner WrapPanel so the controls stay a group and wrap among
+                   themselves once they have dropped to their own row. -->
+              <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <Border Background="{DynamicResource PanelInsetBrush}"
                         BorderBrush="{DynamicResource StrokeBrush}"
                         BorderThickness="1"
                         CornerRadius="12"
                         Padding="12,6"
-                        Margin="0,0,10,0">
+                        Margin="0,0,10,4">
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="PERMISSIONS"
                                Foreground="{DynamicResource FaintTextBrush}"
@@ -1901,14 +2067,14 @@
 
                 <Button x:Name="ConsoleFullScreenButton"
                         Content="⛶  Full screen"
-                        Height="34"
-                        Padding="14,0"
-                        Margin="0,0,0,0"
+                        MinHeight="34"
+                        Padding="14,4"
+                        Margin="0,0,0,4"
                         Click="ConsoleFullScreenButton_Click"
                         ToolTip="Toggle full-screen console (F11). Esc exits."
                         Style="{StaticResource PrimaryButtonStyle}" />
-              </StackPanel>
-            </Grid>
+              </WrapPanel>
+            </WrapPanel>
           </Border>
 
           <!-- Terminal stage -->
@@ -2094,9 +2260,16 @@
                       <ColumnDefinition Width="*" />
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <!-- MinHeight, never Height. PrimaryButtonStyle carries
+                         Padding="16,10" (line 90); 20px of vertical padding plus a
+                         12pt line does not fit in 30px, so a fixed Height cropped
+                         every label here. The console buttons above escape it by
+                         overriding Padding to "10,0" — these did not. MinHeight
+                         keeps the row looking the same at 100% and lets it grow
+                         with the text scale instead of clipping. -->
                     <TextBox x:Name="McpDiscoverNeedInput"
-                             Height="30"
-                             Padding="10,0"
+                             MinHeight="30"
+                             Padding="10,4"
                              VerticalContentAlignment="Center"
                              Background="#08120F"
                              Foreground="#E8F6F1"
@@ -2109,8 +2282,8 @@
                     <Button x:Name="McpDiscoverButton"
                             Grid.Column="1"
                             Content="Discover"
-                            Height="30"
-                            MinWidth="96"
+                            MinHeight="30"
+                            Padding="14,4"
                             Margin="8,0,0,0"
                             Click="McpDiscoverButton_Click"
                             ToolTip="Stage 1 — search GitHub for candidates. Installs nothing."
@@ -2124,8 +2297,9 @@
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="McpAuditPathInput"
-                             Height="30"
-                             Padding="10,0"
+                             MinHeight="30"
+                             MinWidth="60"
+                             Padding="10,4"
                              VerticalContentAlignment="Center"
                              Background="#08120F"
                              Foreground="#E8F6F1"
@@ -2135,19 +2309,23 @@
                              FontFamily="Cascadia Mono, Consolas"
                              FontSize="12"
                              ToolTip="Folder holding the candidate server's source code." />
+                    <!-- No MinWidth on either button: the label decides the width,
+                         so it cannot be cropped by a number set before anyone knew
+                         what font size the label would be drawn at. -->
                     <Button x:Name="McpBrowseButton"
                             Grid.Column="1"
                             Content="Browse…"
-                            Height="30"
-                            MinWidth="84"
+                            MinHeight="30"
+                            Padding="14,4"
                             Margin="8,0,0,0"
                             Click="McpBrowseButton_Click"
+                            ToolTip="Pick the folder to audit."
                             Style="{StaticResource PrimaryButtonStyle}" />
                     <Button x:Name="McpAuditButton"
                             Grid.Column="2"
                             Content="Audit"
-                            Height="30"
-                            MinWidth="96"
+                            MinHeight="30"
+                            Padding="14,4"
                             Margin="8,0,0,0"
                             Click="McpAuditButton_Click"
                             ToolTip="Stage 2 — read every source file. No network, no execution."
@@ -2462,6 +2640,116 @@
                           Click="ConsoleSendButton_Click"
                           Style="{StaticResource PrimaryButtonStyle}" />
                 </Grid>
+
+                <!-- ─── SESSION PILLS ──────────────────────────────────────────
+                     Troy, 2026-07-30: "little pill buttons underneath the text box
+                     somewhere kind of left to right in a row where you could just
+                     press the button for Claude or ChatGPT, Grok, whatever,
+                     Gemini, and it'll spin up a fresh session, you can name it."
+
+                     Pressing one opens the naming box; confirming starts a real
+                     session that ADDS to what is running. It starts NO process —
+                     the session's agent is launched on its first send, so an idle
+                     session costs nothing. ChatGPT is labelled as Troy says it and
+                     routes to the OpenAI coordinator; the naming header says so
+                     out loud rather than quietly renaming his button. -->
+                <StackPanel x:Name="SessionPillRow"
+                            Orientation="Horizontal"
+                            Margin="0,10,0,0"
+                            VerticalAlignment="Center">
+                  <TextBlock Text="NEW SESSION"
+                             FontSize="9.5"
+                             FontWeight="Bold"
+                             VerticalAlignment="Center"
+                             Margin="2,0,10,0"
+                             Foreground="#5E7386" />
+                  <Button x:Name="SessionPillClaude"
+                          Tag="Claude"
+                          Content="Claude"
+                          Click="SessionPill_Click"
+                          Style="{StaticResource SessionPillStyle}"
+                          ToolTip="Start a new named Claude session. It adds to what is running." />
+                  <Button x:Name="SessionPillChatGpt"
+                          Tag="ChatGPT"
+                          Content="ChatGPT"
+                          Click="SessionPill_Click"
+                          Style="{StaticResource SessionPillStyle}"
+                          ToolTip="Start a new named ChatGPT session — routed to the OpenAI coordinator." />
+                  <Button x:Name="SessionPillGrok"
+                          Tag="Grok"
+                          Content="Grok"
+                          Click="SessionPill_Click"
+                          Style="{StaticResource SessionPillStyle}"
+                          ToolTip="Start a new named Grok session. It adds to what is running." />
+                  <Button x:Name="SessionPillGemini"
+                          Tag="Gemini"
+                          Content="Gemini"
+                          Click="SessionPill_Click"
+                          Style="{StaticResource SessionPillStyle}"
+                          ToolTip="Start a new named Gemini session. It adds to what is running." />
+                </StackPanel>
+
+                <!-- Naming the session. A Popup rather than a modal dialog so the
+                     stop button and the rest of the window stay reachable. -->
+                <Popup x:Name="SessionNamePopup"
+                       PlacementTarget="{Binding ElementName=SessionPillRow}"
+                       Placement="Top"
+                       StaysOpen="False"
+                       AllowsTransparency="True"
+                       PopupAnimation="Fade">
+                  <Border Background="#101A22"
+                          BorderBrush="#3A5568"
+                          BorderThickness="1"
+                          CornerRadius="12"
+                          Padding="14"
+                          MaxWidth="440">
+                    <StackPanel>
+                      <TextBlock x:Name="SessionNameHeader"
+                                 FontSize="12"
+                                 TextWrapping="Wrap"
+                                 Margin="0,0,0,8"
+                                 Foreground="#7FE3FF" />
+                      <TextBox x:Name="SessionNameBox"
+                               MinWidth="300"
+                               Padding="10,7"
+                               FontSize="13"
+                               Background="#0A1218"
+                               Foreground="#F2FBFF"
+                               CaretBrush="#7FE3FF"
+                               SelectionBrush="#2A6F8F"
+                               BorderBrush="#3A5568"
+                               BorderThickness="1"
+                               PreviewKeyDown="SessionNameBox_PreviewKeyDown" />
+                      <TextBlock x:Name="SessionNameProblem"
+                                 FontSize="11.5"
+                                 Margin="0,7,0,0"
+                                 TextWrapping="Wrap"
+                                 Visibility="Collapsed"
+                                 Foreground="#E06C60" />
+                      <StackPanel Orientation="Horizontal"
+                                  HorizontalAlignment="Right"
+                                  Margin="0,11,0,0">
+                        <Button Content="Cancel"
+                                Click="SessionNameCancel_Click"
+                                Height="30"
+                                Padding="14,0"
+                                Margin="0,0,8,0"
+                                FontSize="12"
+                                Background="Transparent"
+                                BorderBrush="#3A5568"
+                                BorderThickness="1"
+                                Foreground="#9FB6C6"
+                                Cursor="Hand" />
+                        <Button Content="Start session"
+                                Click="SessionNameStart_Click"
+                                Height="30"
+                                Padding="16,0"
+                                FontSize="12"
+                                Style="{StaticResource PrimaryButtonStyle}" />
+                      </StackPanel>
+                    </StackPanel>
+                  </Border>
+                </Popup>
                 </StackPanel>
               </Border>
             </Grid>
@@ -3149,6 +3437,83 @@
                              Foreground="{StaticResource FaintTextBrush}"
                              FontSize="10"
                              Margin="1,8,0,0" />
+                </StackPanel>
+              </Grid>
+            </Border>
+
+            <!-- Text size -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,18">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,30,0">
+                  <TextBlock Text="Text size" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="Scales the whole window together — the guard feed on the right, the navigation on the left, and the console text. Everything grows at once, so nothing overlaps."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                  <TextBlock Text="Anywhere in the app:  Ctrl and +  to enlarge  ·  Ctrl and -  to shrink  ·  Ctrl and 0  to reset to 100%"
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,8,0,0" />
+                  <TextBlock x:Name="TextScalePersistenceLabel"
+                             Text="Saved locally for this Windows user"
+                             Foreground="{StaticResource FaintTextBrush}"
+                             FontSize="10"
+                             Margin="0,8,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" MinWidth="210">
+                  <TextBlock Text="TEXT SIZE"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="10"
+                             FontWeight="Bold"
+                             Margin="0,0,0,7" />
+                  <StackPanel Orientation="Horizontal">
+                    <Button x:Name="TextScaleSmallerButton"
+                            Content="A−"
+                            MinWidth="52"
+                            MinHeight="42"
+                            Padding="12,4"
+                            Click="TextScaleSmallerButton_Click"
+                            Style="{StaticResource PrimaryButtonStyle}"
+                            AutomationProperties.Name="Smaller text"
+                            ToolTip="Smaller text (Ctrl and -)" />
+                    <Border Background="{DynamicResource SurfaceRaisedBrush}"
+                            BorderBrush="{DynamicResource StrokeBrush}"
+                            BorderThickness="1"
+                            CornerRadius="9"
+                            MinWidth="76"
+                            MinHeight="42"
+                            Margin="8,0"
+                            Padding="10,4">
+                      <TextBlock x:Name="TextScaleValueLabel"
+                                 Text="100%"
+                                 Foreground="{DynamicResource TextBrush}"
+                                 FontSize="15"
+                                 FontWeight="SemiBold"
+                                 HorizontalAlignment="Center"
+                                 VerticalAlignment="Center"
+                                 AutomationProperties.Name="Current text size" />
+                    </Border>
+                    <Button x:Name="TextScaleLargerButton"
+                            Content="A+"
+                            MinWidth="52"
+                            MinHeight="42"
+                            Padding="12,4"
+                            Click="TextScaleLargerButton_Click"
+                            Style="{StaticResource PrimaryButtonStyle}"
+                            AutomationProperties.Name="Larger text"
+                            ToolTip="Larger text (Ctrl and +)" />
+                  </StackPanel>
+                  <Button x:Name="TextScaleResetButton"
+                          Content="Reset to 100%"
+                          MinHeight="34"
+                          Padding="12,4"
+                          Margin="0,9,0,0"
+                          HorizontalAlignment="Left"
+                          Click="TextScaleResetButton_Click"
+                          Style="{StaticResource PrimaryButtonStyle}"
+                          AutomationProperties.Name="Reset text size" />
                 </StackPanel>
               </Grid>
             </Border>
