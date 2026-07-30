@@ -67,10 +67,20 @@ public sealed record DesktopSettings(
     string ColorTheme,
     string? LastWorkspacePath = null,
     IReadOnlyList<CustomProviderProfile>? CustomProviders = null,
-    string? PermissionMode = null)
+    string? PermissionMode = null,
+    /// <summary>
+    /// Slugs of projects pinned to the top of the left panel.
+    ///
+    /// A PREFERENCE, not a registry. The project list itself is still read from
+    /// disk every time — see ProjectShelf — so a pin that names a folder which has
+    /// since been renamed or deleted simply never matches anything and costs
+    /// nothing. That is why this can live in settings while the project list
+    /// deliberately cannot.
+    /// </summary>
+    IReadOnlyList<string>? PinnedProjects = null)
 {
     public static DesktopSettings Default { get; } =
-        new(1, ColorThemeCatalog.DefaultThemeId, null, [], AgentPermission.ReadOnly);
+        new(1, ColorThemeCatalog.DefaultThemeId, null, [], AgentPermission.ReadOnly, []);
 
     /// <summary>Normalized console permission mode (read-only | read-tools | full).</summary>
     public string ResolvedPermissionMode => AgentPermission.Normalize(PermissionMode);

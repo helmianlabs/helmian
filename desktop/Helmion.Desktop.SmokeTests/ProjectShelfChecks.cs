@@ -89,6 +89,38 @@ internal static class ProjectShelfChecks
                 "a workspace that is itself a project appears in its own shelf");
             checks += 1;
 
+            // --- 6b. PINS SORT, THEY DO NOT FILTER ----------------------------
+            // Claude, ChatGPT and Gemini all put pinned items above recents. A pin
+            // is a deliberate choice and outranks recency, which is only a guess.
+            File.SetLastWriteTimeUtc(Path.Combine(real, "PROJECT.md"), DateTime.UtcNow.AddHours(-5));
+            var pinnedFirst = ProjectShelf.Discover(root, new[] { "invoice-importer" });
+            Assert(pinnedFirst[0].Slug == "invoice-importer",
+                "a pinned project sorts above a more recently touched one");
+            Assert(pinnedFirst[0].IsPinned && pinnedFirst[0].PinGlyph == "★",
+                "a pinned project says so with a filled star");
+            Assert(pinnedFirst.Count == withRoot.Count,
+                "pinning SORTS the shelf; it never removes anything from it");
+            Assert(pinnedFirst.Skip(1).All(p => !p.IsPinned && p.PinGlyph == "☆"),
+                "everything else stays unpinned with a hollow star");
+            // A pin naming a folder that is gone is harmless - that is why a pin
+            // may live in settings while the project list may not.
+            var ghostPin = ProjectShelf.Discover(root, new[] { "deleted-last-week" });
+            Assert(ghostPin.Count == withRoot.Count && ghostPin.All(p => !p.IsPinned),
+                "a pin for a project that no longer exists matches nothing and breaks nothing");
+            checks += 5;
+
+            // --- 6c. SEARCH MATCHES TITLE OR SLUG -----------------------------
+            Assert(ProjectShelf.Discover(root, null, "Invoice").Single().Slug == "invoice-importer",
+                "search matches the readable title");
+            Assert(ProjectShelf.Discover(root, null, "invoice-imp").Single().Slug == "invoice-importer",
+                "search matches the hyphenated slug too, so either way of typing it works");
+            Assert(ProjectShelf.Discover(root, null, "INVOICE").Count == 1, "search is case-insensitive");
+            Assert(ProjectShelf.Discover(root, null, "   ").Count == withRoot.Count,
+                "a blank filter shows everything rather than nothing");
+            Assert(ProjectShelf.Discover(root, null, "zzz-no-such-thing").Count == 0,
+                "a filter that matches nothing returns nothing — the caller says so in words");
+            checks += 5;
+
             // --- 7. DEGENERATE INPUT DOES NOT THROW ---------------------------
             // The panel must never blank because a path was missing. A new machine
             // with no workspace is a normal state, not an error.
