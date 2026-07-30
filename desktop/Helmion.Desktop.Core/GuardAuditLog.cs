@@ -47,6 +47,100 @@ public static partial class GuardAuditLog
     /// <summary>Mirrors <c>AUDIT_DIR</c> in src/core/audit-log.mjs:42.</summary>
     public const string AuditRelativeDirectory = @".helmion\audit";
 
+    /// <summary>
+    /// Written when the ledger folder is first created, so an empty ledger can
+    /// say WHEN it started recording. Without it, "no blocks" and "nobody was
+    /// recording" look identical, which is the ambiguity that made this card
+    /// report Unknown in the first place.
+    /// </summary>
+    public const string LedgerMarkerFile = "ledger-started.json";
+
+    /// <summary>
+    /// Creates the ledger folder if it is absent, and stamps when it began.
+    ///
+    /// Idempotent: an existing ledger is never touched, and an existing marker is
+    /// never rewritten — overwriting the start date would erase the one fact the
+    /// marker exists to carry. Returns false when the folder could not be made,
+    /// so the caller reports it rather than assuming success.
+    /// </summary>
+    public static bool EnsureLedger(string workspacePath)
+    {
+        if (string.IsNullOrWhiteSpace(workspacePath)) return false;
+
+        try
+        {
+            var directory = DirectoryFor(workspacePath);
+            var existed = System.IO.Directory.Exists(directory);
+            System.IO.Directory.CreateDirectory(directory);
+
+            var marker = Path.Combine(directory, LedgerMarkerFile);
+            if (!existed && !File.Exists(marker))
+            {
+                // Serialized, not hand-built. The first version of this line
+                // concatenated an interpolated string with a plain one, so the
+                // trailing "}}" was escaped in the first half and taken literally
+                // in the second — the marker shipped with an extra closing brace
+                // and every read of it threw. Caught by the smoke suite, not by
+                // reading it back.
+                File.WriteAllText(marker, System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    startedAt = DateTimeOffset.UtcNow.ToString("O"),
+                    note = "Block ledger created by Helmion. An empty ledger from this date forward "
+                        + "means nothing was blocked, not that nobody was watching.",
+                }));
+            }
+
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>When the ledger began recording, or null if that is not knowable.</summary>
+    public static DateTimeOffset? LedgerStartedAt(string auditDirectory)
+    {
+        // The marker is the best answer. Its own try/catch, NOT a shared one:
+        // an earlier version wrapped both attempts together, so a malformed
+        // marker threw straight past the directory fallback and returned null —
+        // a working ledger reporting that it did not know when it started.
+        // A failing better answer must fall back to the worse one, not to none.
+        try
+        {
+            var marker = Path.Combine(auditDirectory, LedgerMarkerFile);
+            if (File.Exists(marker))
+            {
+                using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(marker));
+                if (document.RootElement.TryGetProperty("startedAt", out var value)
+                    && DateTimeOffset.TryParse(value.GetString(), out var parsed))
+                {
+                    return parsed;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Unreadable or malformed marker. Fall through to the folder date.
+        }
+
+        // No usable marker (an older ledger, or a corrupt one): the folder's own
+        // creation time is the next best fact, and it is still a fact.
+        try
+        {
+            if (System.IO.Directory.Exists(auditDirectory))
+            {
+                return new DirectoryInfo(auditDirectory).CreationTimeUtc;
+            }
+        }
+        catch (Exception)
+        {
+            // Genuinely unknowable now.
+        }
+
+        return null;
+    }
+
     public const string LayerBrowser = "browser";
     public const string LayerExecution = "execution";
 
@@ -208,6 +302,26 @@ public static partial class GuardAuditLog
                 + "since the ledger was added, or no guard has run here. This is not proof that "
                 + "nothing was blocked before it existed.",
                 GuardLevel.Unknown);
+        }
+
+        // An EXISTING ledger with no entries is a computable fact, not an unknown:
+        // it says "recording since <date>, nothing blocked yet". The Unknown above
+        // is reserved for the case where the ledger has never been started, where
+        // the panel genuinely cannot distinguish "nothing happened" from "nobody
+        // was recording".
+        if (read.Entries.Count == 0)
+        {
+            var since = LedgerStartedAt(read.Directory);
+            return new GuardObservation(
+                "Local",
+                "Block ledger",
+                "ledger-health",
+                "Block ledger is recording · nothing blocked yet",
+                $"{read.Directory} exists and is readable"
+                + (since is null ? "" : $", recording since {since:yyyy-MM-dd HH:mm}")
+                + ". No block has been written, which here means none has happened — not that "
+                + "nobody was watching.",
+                GuardLevel.Normal);
         }
 
         if (read.UnreadableFiles.Count > 0)
