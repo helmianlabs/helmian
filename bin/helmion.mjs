@@ -606,6 +606,72 @@ async function herald() {
   await new Promise(() => {}); // run until interrupted
 }
 
+async function relay() {
+  const { createRelayClient } = await import('../src/relay/client.mjs');
+
+  // The secret is read from the environment, never from a flag. An argument
+  // lands in the shell history and in every `ps` listing on the machine.
+  const key = process.env.HELMION_RELAY_KEY;
+  if (!key) {
+    process.stderr.write(
+      'Set HELMION_RELAY_KEY to the relay secret (the MCP_SECRET on the Vercel side).\n'
+      + 'It is read from the environment on purpose — a --key flag would sit in your\n'
+      + 'shell history and in every process listing on this machine.\n',
+    );
+    process.exit(2);
+  }
+
+  const url = option('--url', process.env.HELMION_RELAY_URL || '');
+  if (!url) {
+    process.stderr.write('Pass --url wss://<your-app>/api/relay (or set HELMION_RELAY_URL).\n');
+    process.exit(2);
+  }
+
+  const channel = option('--channel', process.env.HELMION_RELAY_CHANNEL || 'troy');
+
+  process.stdout.write('\nHELMION RELAY — this connection carries TEXT.\n');
+  process.stdout.write('It dials out; nothing listens on this machine. It cannot run anything.\n\n');
+
+  const client = createRelayClient({
+    url,
+    key,
+    channel,
+    role: 'desktop',
+    onMessage: (f) => {
+      const when = f.at ? new Date(f.at).toLocaleTimeString() : new Date().toLocaleTimeString();
+      process.stdout.write(`  [${when}] ${f.from}: ${f.body}\n`);
+    },
+    onStatus: (s) => {
+      if (s.state === 'connected') process.stdout.write(`  · connected (cursor ${s.cursor})\n`);
+      else if (s.state === 'backoff') process.stdout.write(`  · ${s.reason} — retrying in ${Math.round(s.retryInMs / 100) / 10}s\n`);
+      else if (s.terminal) process.stdout.write(`  · STOPPED: ${s.reason}\n`);
+      else if (s.refused) process.stdout.write(`  · dropped a frame: ${s.refused}\n`);
+    },
+  });
+
+  // Ctrl+C closes the socket rather than orphaning it, so the far end sees the
+  // close instead of waiting out its silence timeout.
+  process.on('SIGINT', () => { client.stop(); process.exit(0); });
+  client.start();
+
+  // Anything typed here goes to the phone. Held and flushed if the relay is down.
+  process.stdin.setEncoding('utf8');
+  let buffer = '';
+  process.stdin.on('data', (chunk) => {
+    buffer += chunk;
+    let cut;
+    while ((cut = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 1);
+      const result = client.send(line);
+      if (!result.sent && result.queued) process.stdout.write(`  · held (${result.pending} waiting for the relay)\n`);
+      else if (!result.sent && result.reason !== 'nothing to send') process.stdout.write(`  · not sent: ${result.reason}\n`);
+    }
+  });
+
+  await new Promise(() => {}); // run until interrupted
+}
+
 async function guard() {
   const payload = await stdinJson();
   let result;
@@ -1018,6 +1084,7 @@ if (command === 'agent' || command === 'chat' || command === 'code') {
 } else if (command === 'guard') await guard();
 else if (command === 'review') await review();
 else if (command === 'herald') await herald();
+else if (command === 'relay') await relay();
 else if (command === 'audit') await auditLedger();
 else if (command === 'agent-os') await agentOs();
 else if (command === 'project') await projectCommand();
