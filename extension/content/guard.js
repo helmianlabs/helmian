@@ -45,12 +45,28 @@
   const PROBE_DANGEROUS = 'rm -rf /helmion-selftest-probe';
   const PROBE_CLEAN = 'echo helmion-selftest-probe';
 
+  // Where a block came from, for the block ledger's `source` field. Every real
+  // scan names it; the self-test probes above deliberately do NOT, which is what
+  // keeps them out of the ledger — see background/scan.js scanBlocks. The
+  // hostname is all that is sent: the conversation URL would put a page a user
+  // may consider private into an audit record, and the site is the part that
+  // matters for evidence.
+  const SOURCE = (typeof window !== 'undefined' && window.location
+    && window.location.hostname) || 'unknown-site';
+
   // ------------------------------------------------------------------- state
 
   const state = {
     broken: false,
     degraded: false,
     dangerousIds: new Set(),
+    // Block-ledger tally for this tab. Counted separately from dangerousIds
+    // because "we warned about it" and "it reached the ledger" are two different
+    // facts, and a browser-layer event only reaches an in-worker QUEUE today —
+    // see the long comment in background/scan.js. Nothing here claims the event
+    // is durable, because it is not.
+    auditRecorded: 0,
+    auditUnrecorded: 0,
     healthFailures: 0,
     lastTier: null,
     lastStreaming: false,
@@ -259,7 +275,10 @@
     try {
       response = await askWorker({
         type: 'helmion:scan',
-        blocks: pending.map((block) => ({ id: block.id, text: block.text })),
+        // `source` travels per block because background/worker.js:53 hands
+        // message.blocks straight to scanBlocks — a per-block field is the only
+        // route to the scanner that does not need the worker changed.
+        blocks: pending.map((block) => ({ id: block.id, text: block.text, source: SOURCE })),
       });
     } catch (error) {
       // Undo the seen markers so these blocks are retried on the next pass
@@ -271,6 +290,30 @@
 
     recover();
     applyResults(pending, response.results || []);
+  }
+
+  // Tally what reached the block ledger, and say so when something did not.
+  //
+  // A blocked code block that produced no ledger row is a gap in the evidence,
+  // and the one thing this extension is never allowed to do is let a gap look
+  // like a clean result. It is a console warning rather than a page banner
+  // because the CHECK still worked and the user is still protected — the banner
+  // is reserved for "the guard is not watching".
+  function noteAudit(result) {
+    const audit = result && result.audit;
+    if (!audit) {
+      state.auditUnrecorded += 1;
+      console.warn(
+        '[Helmion Guard] a blocked code block came back with no audit field at all — '
+        + 'background/scan.js is older than content/guard.js.',
+      );
+      return;
+    }
+    state.auditRecorded += Number(audit.recorded) || 0;
+    if (audit.reason) {
+      state.auditUnrecorded += 1;
+      console.warn('[Helmion Guard] block ledger:', audit.reason);
+    }
   }
 
   function applyResults(pending, results) {
@@ -295,6 +338,7 @@
       HelmionUI.warnBlock(block.element, result, { mask: MASK_DANGEROUS_BLOCKS });
       state.dangerousIds.add(block.id);
       if (!newlyDangerous) newlyDangerous = result;
+      noteAudit(result);
     }
 
     if (newlyDangerous) {

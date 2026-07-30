@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { detectDestructiveOperation, evaluateRules } from './governance.mjs';
+import { collectStrings, detectDestructiveOperation, evaluateRules } from './governance.mjs';
+import { LAYER, recordBlockEvent } from './audit-log.mjs';
 import { verifyLeaseHeld } from './lease.mjs';
 
 /**
@@ -131,6 +132,104 @@ function refuse(reason, extra = {}) {
   };
 }
 
+/* ─── THE BLOCK LEDGER: recording an execution-layer refusal ──────────────────
+ *
+ * Troy's requirement, 2026-07-29: every time either layer blocks something it
+ * gets written somewhere durable — "not screenshots, not chat history."
+ * `src/core/audit-log.mjs` is that durable writer. This is the execution half.
+ *
+ * WHY THE RECORDING IS OPT-IN, AND WHY THE OPTION IS A PATH
+ *
+ * `evaluateToolCall` was a PURE evaluator: same inputs, same verdict, no I/O.
+ * That is worth keeping, because a gate with an unconditional side effect is a
+ * gate whose behaviour depends on the filesystem — and the one thing this
+ * module must never do is let a disk problem change a verdict. So recording is
+ * off unless a caller names a workspace to record into, and a caller that names
+ * one gets `audit` back on the refusal so it can SEE whether the write landed.
+ *
+ * The option is `auditWorkspace` — a path — rather than `audit: true` or an
+ * injected recorder function, for two reasons:
+ *
+ *   1. A boolean would let a caller enable auditing without deciding WHERE the
+ *      evidence goes. A path makes the location an explicit decision. It is
+ *      separate from the existing `workspace` parameter on purpose: `workspace`
+ *      answers "whose rules govern this call", which is not necessarily the
+ *      directory the evidence belongs in.
+ *   2. An injected recorder could be substituted by one that returns
+ *      {logged:true} and writes nothing, and this module would have no way to
+ *      tell. With a path, the gate always calls the one audited implementation,
+ *      and a test that wants to prove recording has to look at the disk.
+ *
+ * A LOGGING FAILURE NEVER CHANGES THE VERDICT AND NEVER THROWS.
+ * `recordBlockEvent` returns {logged, reason} instead of throwing, and the
+ * result is attached to the refusal rather than swallowed — the caller can say
+ * "the block stood but was not recorded", which is a materially different
+ * statement from "nothing was blocked".
+ */
+
+/**
+ * A cap on the recorded triggering text, because `write_file` content is
+ * unbounded and an append-only ledger must not be turned into a disk-filler by
+ * one 50 MB write. When it fires, the truncation DECLARES ITSELF inside the
+ * recorded text: silently shortened evidence is worse than none.
+ */
+export const AUDIT_TEXT_LIMIT = 20000;
+
+/**
+ * The exact material the kernel evaluated, so the evidence corresponds to the
+ * verdict. `detectDestructiveOperation` reads `tool_input.command`
+ * (governance.mjs:120) and `evaluateRules` matches every string in the args
+ * (governance.mjs:249) — so the honest "full triggering text" is that same
+ * flattened string set, not just the command.
+ */
+export function auditTextForPayload(payload = {}) {
+  const text = collectStrings(payload?.tool_input ?? {}).join('\n');
+  if (text.length <= AUDIT_TEXT_LIMIT) return text;
+  return `${text.slice(0, AUDIT_TEXT_LIMIT)}\n[truncated by the Helmion audit log: `
+    + `${AUDIT_TEXT_LIMIT} of ${text.length} characters recorded]`;
+}
+
+/**
+ * Shape one execution-layer block event in Troy's schema.
+ *
+ * Exported because there are two execution-layer refusal paths and they must
+ * produce identical evidence: this evaluator (the agent runtime's gate) and the
+ * `helmion guard` PreToolUse hook in bin/helmion.mjs, which does its own
+ * evaluation to keep its long-standing stdout contract. One shaping function,
+ * so a reviewer reading the ledger cannot tell which path wrote a row apart
+ * from the `source` field that says so.
+ *
+ * `matchedPattern` is passed in rather than guessed, because the fail-closed
+ * refusals have no pattern that fired — the check could not be completed at all
+ * — and writing '' there would make them uncountable in
+ * `summarizeBlockEvents`. They get an explicit `fail-closed:<why>` label so a
+ * compliance reviewer can count "refused because the check broke" separately
+ * from "refused because a rule matched".
+ */
+export function executionBlockEvent({
+  tool,
+  workspace,
+  payload = {},
+  matchedPattern,
+  reason = '',
+  hits = [],
+  source = 'governance-gate',
+}) {
+  const event = {
+    layer: LAYER.EXECUTION,
+    matchedPattern: String(matchedPattern ?? ''),
+    text: auditTextForPayload(payload),
+    // Identifies the tool and the workspace, prefixed by which refusal path
+    // recorded it.
+    source: `${source}:${tool ?? 'unknown-tool'}:${workspace ?? ''}`,
+    // The call did not run, in every branch that reaches here.
+    outcome: 'blocked',
+    detail: reason,
+  };
+  if (Array.isArray(hits) && hits.length) event.hits = hits;
+  return event;
+}
+
 /**
  * Evaluate ONE tool call against the kernel.
  *
@@ -138,8 +237,13 @@ function refuse(reason, extra = {}) {
  * (`{tool_name, tool_input, project_slug}`), so both callers are governed by
  * one contract and one rule syntax.
  *
+ * When `auditWorkspace` is given, a refusal also carries
+ * `audit: {logged, file, entry, reason}` from src/core/audit-log.mjs. It is
+ * absent when auditing is off, and absent on an allow — nothing is recorded for
+ * a call that was permitted.
+ *
  * @returns {{allowed: boolean, reason: string, hits: string[], blocks: object[],
- *            flags: object[], failedClosed: boolean}}
+ *            flags: object[], failedClosed: boolean, audit?: object}}
  */
 export function evaluateToolCall({
   tool,
@@ -151,11 +255,35 @@ export function evaluateToolCall({
   // The `helmion guard` hook path passes nothing and is unaffected, because the
   // tool names it sees are not in that set.
   leaseToken = null,
+  // Where to record a refusal in the durable block ledger. null = record
+  // nothing, which keeps this a pure evaluator by default. See the long comment
+  // above executionBlockEvent for why this is a path and not a boolean.
+  auditWorkspace = null,
+  // Who is asking, for the recorded `source` field.
+  auditSource = 'governance-gate',
 } = {}) {
   const payload = {
     tool_name: tool ?? null,
     tool_input: args ?? {},
     project_slug: projectSlug ?? null,
+  };
+
+  // Record the refusal, then hand it back unchanged apart from the `audit`
+  // field. Deliberately NOT allowed to alter `allowed` or to throw: a ledger
+  // that cannot be written must never turn a block into an allow, and
+  // recordBlockEvent returns its failure instead of raising it.
+  const denied = (verdict, matchedPattern) => {
+    if (!auditWorkspace) return verdict;
+    const audit = recordBlockEvent(auditWorkspace, executionBlockEvent({
+      tool,
+      workspace: workspace ?? auditWorkspace,
+      payload,
+      matchedPattern,
+      reason: verdict.reason,
+      hits: verdict.hits,
+      source: auditSource,
+    }));
+    return { ...verdict, audit };
   };
 
   // 1. Built-in destructive patterns. No file I/O, so nothing can make this
@@ -164,21 +292,21 @@ export function evaluateToolCall({
   try {
     destructive = detectDestructiveOperation(payload);
   } catch (err) {
-    return refuse(
+    return denied(refuse(
       `the destructive-operation kernel failed to evaluate this call (${err.message}); `
       + 'governance fails closed',
       { failedClosed: true },
-    );
+    ), 'fail-closed:destructive-kernel-error');
   }
   if (destructive?.blocked) {
-    return {
+    return denied({
       allowed: false,
       reason: `it matches a destructive operation the kernel always blocks: ${destructive.hits.join(', ')}`,
       hits: destructive.hits,
       blocks: [],
       flags: [],
       failedClosed: false,
-    };
+    }, destructive.hits.join(', '));
   }
 
   // 2. Promoted rules for this workspace.
@@ -187,20 +315,20 @@ export function evaluateToolCall({
   try {
     rules = assertRulesUsable(loadPromotedRules(workspace), path);
   } catch (err) {
-    return refuse(
+    return denied(refuse(
       `the promoted rule set could not be evaluated (${err.message}); governance fails closed`,
       { failedClosed: true },
-    );
+    ), 'fail-closed:promoted-rules-unusable');
   }
 
   let verdict;
   try {
     verdict = evaluateRules(payload, rules);
   } catch (err) {
-    return refuse(
+    return denied(refuse(
       `the governance kernel failed to evaluate this call (${err.message}); governance fails closed`,
       { failedClosed: true },
-    );
+    ), 'fail-closed:rule-evaluation-error');
   }
 
   // Belt and braces: assertRulesUsable already rejects uncompilable patterns,
@@ -208,23 +336,23 @@ export function evaluateToolCall({
   // other reason. Unknown reason -> refuse.
   const invalid = (verdict.flags ?? []).filter((rule) => rule?.invalid);
   if (invalid.length) {
-    return refuse(
+    return denied(refuse(
       `${invalid.length} promoted rule(s) have an invalid regular expression and could not be `
       + 'evaluated; governance fails closed',
       { failedClosed: true, flags: verdict.flags ?? [] },
-    );
+    ), 'fail-closed:invalid-rule-pattern');
   }
 
   if (verdict.blocked) {
     const patterns = verdict.blocks.map((rule) => `/${rule.pattern}/`).join(', ');
-    return {
+    return denied({
       allowed: false,
       reason: `it matches a promoted block rule: ${patterns}`,
       hits: [],
       blocks: verdict.blocks,
       flags: verdict.flags ?? [],
       failedClosed: false,
-    };
+    }, patterns);
   }
 
   // 3. THE WRITE LEASE. Last, and only for mutating tools.
@@ -240,10 +368,10 @@ export function evaluateToolCall({
   if (requiresWriteLease(tool)) {
     const lease = verifyLeaseHeld(workspace, { leaseToken });
     if (!lease.held) {
-      return refuse(
+      return denied(refuse(
         `it needs the project's write lease and this session does not hold it: ${lease.reason}`,
         { failedClosed: Boolean(lease.failedClosed) },
-      );
+      ), 'write-lease:not-held');
     }
   }
 

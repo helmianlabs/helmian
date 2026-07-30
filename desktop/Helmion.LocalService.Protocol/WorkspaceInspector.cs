@@ -53,11 +53,14 @@ public static partial class WorkspaceInspector
             Branch: InspectBranch(projectPath),
             HelmionConfigPresent: helmionConfigPresent,
             LooksLikeHelmionWorkspace: looksLikeHelmion,
-            Lease: new LeasePosture(
-                Status: "UNAVAILABLE",
-                Label: "Durable lease not connected",
-                Detail: "The read-only local service found no local lease authority. No database was queried.",
-                IsLive: false),
+            // 2026-07-29: this used to be four hardcoded literals — Status:
+            // "UNAVAILABLE", "Durable lease not connected", "found no local lease
+            // authority" — returned regardless of what was on disk. src/core/lease.mjs
+            // now owns a real file lease at <workspace>\.helmion\lease.json and
+            // reports four honest states through inspectLease; LeaseInspector reads
+            // that same file with the same rules. UNREADABLE is never laundered
+            // into NONE (LeaseInspector.cs:21-27).
+            Lease: LeaseInspector.Inspect(projectPath),
             Migrations: migrations,
             Evidence: evidence,
             MigrationStateLabel: migrations.Count == 0

@@ -11,20 +11,56 @@ public enum PilotDataSource
     Unconfigured
 }
 
+/// <summary>
+/// The workspace card's contents. The four lease fields are the four honest states
+/// <c>inspectLease</c> reports (src/core/lease.mjs:437-486), carried separately
+/// instead of being crushed into two prose strings — the previous shape put the
+/// lease LABEL in <c>LeaseHolder</c> and the DETAIL in <c>LeaseState</c>, so no
+/// caller could branch on the actual status.
+/// </summary>
 public sealed record WorkspaceSummary(
     string Name,
     string RootPath,
     string Branch,
-    string LeaseHolder,
-    string LeaseState,
-    string NextAction);
+    string LeaseStatus,
+    string LeaseLabel,
+    string LeaseDetail,
+    bool LeaseIsLive,
+    string NextAction)
+{
+    /// <summary>The status word, for a template that must not carry it in colour alone.</summary>
+    public string LeaseStatusText => string.IsNullOrWhiteSpace(LeaseStatus) ? "UNKNOWN" : LeaseStatus;
+
+    /// <summary>
+    /// Colour key. ACTIVE is the only value that earns the accent colour; UNREADABLE
+    /// is a failure, not an absence, so it does not share NONE's quiet grey.
+    /// </summary>
+    public string LeaseLevelKey => LeaseStatusText switch
+    {
+        "ACTIVE" => "Normal",
+        "STALE" => "Warning",
+        "UNREADABLE" => "Critical",
+        "NONE" => "Quiet",
+        _ => "Unknown"
+    };
+}
 
 public sealed record ActivityEvidence(
     string TimeLabel,
     string Title,
     string Detail,
     string Kind,
-    bool IsDemo);
+    bool IsDemo)
+{
+    /// <summary>
+    /// Bound by MainWindow.xaml's ActivityTemplate. Before 2026-07-29 this flag
+    /// existed and NO xaml read it, while the card above the list said "LIVE" over
+    /// every row — a demo row and a live row rendered identically.
+    /// </summary>
+    public string ProvenanceLabel => IsDemo ? "DEMO" : "LIVE";
+
+    public bool IsLive => !IsDemo;
+}
 
 public sealed record HandoffEvidence(
     string Id,
@@ -32,7 +68,11 @@ public sealed record HandoffEvidence(
     string Status,
     string Summary,
     string Evidence,
-    bool IsDemo);
+    bool IsDemo)
+{
+    /// <summary>Bound by HandoffTemplate, which used to print the literal "LIVE" on every row.</summary>
+    public string ProvenanceLabel => IsDemo ? "DEMO" : "LIVE";
+}
 
 public sealed record ApprovalPreview(
     string Title,
@@ -40,7 +80,22 @@ public sealed record ApprovalPreview(
     string PolicyOutcome,
     string Detail,
     bool IsActionable,
-    bool IsDemo);
+    bool IsDemo)
+{
+    /// <summary>
+    /// Bound by ApprovalTemplate, which used to print the literal "PENDING APPROVAL"
+    /// on every row regardless of whether the row could be acted on at all.
+    /// </summary>
+    public string ProvenanceLabel => IsDemo
+        ? "DEMO · NOT ACTIONABLE"
+        : IsActionable
+            ? "PENDING APPROVAL"
+            : "PREVIEW ONLY · NOT ACTIONABLE";
+
+    public string ActionabilityLabel => IsActionable
+        ? "Actionable"
+        : "Preview only";
+}
 
 public sealed record OrchestrationEvent(
     string TimeLabel,
@@ -52,7 +107,19 @@ public sealed record OrchestrationEvent(
     string EvidenceDetail,
     string RawDetail,
     bool IsDemo,
-    bool IsEvidenceBacked);
+    bool IsEvidenceBacked)
+{
+    /// <summary>
+    /// Bound by OrchestrationEventTemplate, which used to print the literal
+    /// "LIVE EVENT" on every row while both of these flags went unread. An event with
+    /// no evidence link now says so on its face.
+    /// </summary>
+    public string ProvenanceLabel => IsDemo
+        ? "DEMO EVENT"
+        : IsEvidenceBacked
+            ? "LIVE EVENT · EVIDENCE LINKED"
+            : "LIVE EVENT · NO EVIDENCE LINK";
+}
 
 public sealed record IntegrationSummary(
     string Name,
@@ -108,20 +175,30 @@ public sealed class PilotSnapshot
         var hasDb = !string.IsNullOrWhiteSpace(databaseUrl);
         var hasKeys = !string.IsNullOrWhiteSpace(apiKeys) || !string.IsNullOrWhiteSpace(grokApiKey);
 
+        // The lease now comes from LeaseInspector reading the real
+        // <workspace>\.helmion\lease.json, and it is carried through with its status
+        // intact so a template can branch on ACTIVE / STALE / NONE / UNREADABLE.
+        // With no workspace registered there is no lease file to read, so the honest
+        // answer is UNKNOWN — not "None", which would claim we looked.
+        var noWorkspaceLease = LeaseInspector.NoWorkspace();
         var workspace = inspection != null
             ? new WorkspaceSummary(
                 inspection.ProjectName,
                 inspection.ProjectPath,
                 inspection.Branch,
+                inspection.Lease.Status,
                 inspection.Lease.Label,
                 inspection.Lease.Detail,
-                inspection.Lease.Status)
+                inspection.Lease.IsLive,
+                "Local source inventory is live. Writes still require the write lease.")
             : new WorkspaceSummary(
                 "No registered workspace",
                 "None",
-                "None",
-                "None",
-                "Not active",
+                "Unknown",
+                noWorkspaceLease.Status,
+                noWorkspaceLease.Label,
+                noWorkspaceLease.Detail,
+                noWorkspaceLease.IsLive,
                 "Select a local project workspace to get started");
 
         var activity = inspection?.Evidence

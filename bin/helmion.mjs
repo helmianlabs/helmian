@@ -12,9 +12,11 @@ import {
 } from '../src/core/governance.mjs';
 import {
   assertRulesUsable,
+  executionBlockEvent,
   loadPromotedRules,
   resolveRulesPath,
 } from '../src/core/governance-gate.mjs';
+import { LAYER, recordBlockEvent } from '../src/core/audit-log.mjs';
 import { distillResolvedBlocker } from '../src/core/distiller.mjs';
 import { createCodexAdapter } from '../src/adapters/codex.mjs';
 import { createNeonStore } from '../src/adapters/neon.mjs';
@@ -280,6 +282,52 @@ async function agentOs() {
   }
 }
 
+// Project scaffold — the planning folder that has to exist BEFORE any coding
+// tool opens the project. Dry run by default; --yes writes.
+//
+// Nothing is ever overwritten. An existing file is reported as preserved, the
+// command still succeeds, and there is deliberately no flag that changes that:
+// these files accumulate the operator's own reasoning, which no template can
+// reconstruct.
+async function projectCommand() {
+  const { scaffoldProject } = await import('../src/core/project-scaffold.mjs');
+  const subcommand = process.argv[3] ?? 'help';
+  if (subcommand !== 'init') {
+    throw new Error('project subcommand must be init');
+  }
+
+  const name = process.argv[4];
+  if (!name || name.startsWith('--')) {
+    throw new Error('project init requires a name, e.g. helmion project init "Invoice Importer"');
+  }
+
+  const apply = hasFlag('--yes');
+  const asJson = hasFlag('--json');
+  const report = await scaffoldProject({
+    name,
+    dir: option('--dir', null),
+    sprintNumber: Number(option('--sprint', '1')),
+    apply,
+  });
+
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return;
+  }
+
+  const verb = apply ? 'Created' : 'Would create (dry run — pass --yes to write)';
+  process.stdout.write(`${verb} ${report.project} (${report.slug})\n  ${report.directory}\n\n`);
+  for (const file of report.files) {
+    process.stdout.write(`  ${file.action.padEnd(9)} ${file.path}${file.action === 'preserve' ? `  (${file.reason})` : ''}\n`);
+  }
+  process.stdout.write(
+    `\n  ${report.counts.create ?? 0} new, ${report.counts.preserve ?? 0} already there and left untouched.\n`
+    + '  Nothing is ever overwritten — there is no flag that changes that.\n'
+    + '  Next: fill in planning/requirements.md, then give\n'
+    + `  sprints/${report.sprint}/handoff-prompt.md to the session that will build.\n`,
+  );
+}
+
 // Advisory lane read path — docs/FLYWHEEL_AUDIT_2026-07-28.md finding #2.
 //
 // bigsister.advisory_outputs lives on a DIFFERENT Neon endpoint from
@@ -411,6 +459,44 @@ async function loadRules() {
   return assertRulesUsable(loadPromotedRules(process.cwd()), resolveRulesPath(process.cwd()));
 }
 
+/**
+ * Shape this hook's refusal for the block ledger.
+ *
+ * `guard` keeps its own evaluation rather than calling evaluateToolCall, because
+ * its stdout shape ({allowed, destructive, rules}) is the PreToolUse contract
+ * hooks/pretooluse.ps1 relays. The EVIDENCE is shared, though: this goes through
+ * the same executionBlockEvent shaper the gate uses, so a reviewer reading the
+ * ledger sees identical rows from both execution paths, distinguished only by
+ * the `source` field that names which one wrote it.
+ */
+function guardAuditEvent(payload, result) {
+  const hits = result.destructive?.hits ?? [];
+  let matchedPattern;
+  let reason;
+  if (result.destructive?.blocked) {
+    matchedPattern = hits.join(', ');
+    reason = `it matches a destructive operation the kernel always blocks: ${matchedPattern}`;
+  } else if (result.rules?.blocked) {
+    matchedPattern = (result.rules.blocks ?? []).map((rule) => `/${rule.pattern}/`).join(', ');
+    reason = `it matches a promoted block rule: ${matchedPattern}`;
+  } else {
+    // The fail-closed path below: nothing matched because nothing could be
+    // evaluated. Labelled so a reviewer can count "the check broke" separately
+    // from "a rule fired" — an empty matchedPattern would be uncountable.
+    matchedPattern = 'fail-closed:governance-unevaluatable';
+    reason = result.error ?? 'governance could not be evaluated';
+  }
+  return executionBlockEvent({
+    tool: payload?.tool_name ?? null,
+    workspace: process.cwd(),
+    payload,
+    matchedPattern,
+    reason,
+    hits,
+    source: 'guard-hook',
+  });
+}
+
 async function guard() {
   const payload = await stdinJson();
   let result;
@@ -434,8 +520,120 @@ async function guard() {
       rules: { blocked: false, blocks: [], flags: [], approved: false, approvalReason: '' },
     };
   }
+
+  // THE BLOCK LEDGER. Troy 2026-07-29: every block from either layer gets
+  // written somewhere durable, "not screenshots, not chat history." This is the
+  // hook path — the one that actually refuses things in a live Claude Code
+  // session — so it records by default rather than behind a flag.
+  //
+  // It writes into <cwd>/.helmion/audit/, the same resolution base loadRules
+  // already uses, so the evidence lands in the project the hook is guarding.
+  // The result is REPORTED on stdout, never swallowed: a refusal that could not
+  // be recorded has to be visible, and a logging failure must not change the
+  // verdict or the exit code. recordBlockEvent returns its failure rather than
+  // throwing, so neither can happen.
+  if (!result.allowed) {
+    const written = recordBlockEvent(process.cwd(), guardAuditEvent(payload, result));
+    result.audit = { logged: written.logged, file: written.file, reason: written.reason };
+  }
+
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (!result.allowed) process.exitCode = 2;
+}
+
+// The block ledger read path — src/core/audit-log.mjs, whose docstring names
+// this command. READ-ONLY: it never writes an event, it reports what the two
+// guards wrote. `helmion mcp-install audit` is a different thing entirely
+// (stage 2 of the MCP install pipeline) and is unaffected.
+async function auditLedger() {
+  const subcommand = process.argv[3] ?? 'list';
+  const valid = ['list', 'summary'];
+  if (!valid.includes(subcommand)) {
+    throw new Error(`audit subcommand must be one of: ${valid.join(', ')}`);
+  }
+  const { readBlockEvents, summarizeBlockEvents } = await import('../src/core/audit-log.mjs');
+  const workspace = resolve(option('--workspace', process.cwd()));
+  const asJson = hasFlag('--json');
+
+  // A misspelled layer must NOT read as "nothing was blocked". `--layer Browser`
+  // would filter every row out and print a clean-looking zero, which is the
+  // worst possible failure for an audit tool, so an unknown value is refused.
+  const layer = option('--layer', null);
+  const layers = Object.values(LAYER);
+  if (layer !== null && !layers.includes(layer)) {
+    throw new Error(`--layer must be one of: ${layers.join(', ')} (got "${layer}")`);
+  }
+
+  const filter = { layer, since: option('--since', null) };
+  const summary = summarizeBlockEvents(workspace, filter);
+  const { entries, malformed, files } = readBlockEvents(workspace, {
+    ...filter,
+    limit: subcommand === 'summary' ? 0 : Number(option('--limit', '20')),
+  });
+
+  if (asJson) {
+    // `summary` reports counts; it does not dump the ledger. `list` does.
+    process.stdout.write(`${JSON.stringify({
+      workspace,
+      filter,
+      summary,
+      files,
+      malformed,
+      ...(subcommand === 'list' ? { entries } : {}),
+    }, null, 2)}\n`);
+  } else if (subcommand === 'summary' || entries.length) {
+    const scope = layer ? `layer ${layer}` : 'both layers';
+    process.stdout.write(
+      `Block ledger — ${workspace}\n`
+      + `${summary.total} event(s), ${scope}, ${summary.files} file(s), ${summary.bytes} bytes\n`,
+    );
+    if (subcommand === 'list') {
+      process.stdout.write('\n');
+      for (const entry of entries) {
+        const text = String(entry.text ?? '').replace(/\s+/g, ' ');
+        // Declared truncation. The full text is in the file and in --json.
+        const shown = text.length > 160 ? `${text.slice(0, 160)}… (${text.length} chars)` : text;
+        process.stdout.write(
+          `  ${String(entry.timestamp).slice(0, 19)}  ${String(entry.layer).padEnd(9)}`
+          + ` ${entry.matchedPattern || '(no pattern)'}\n`
+          + `      outcome: ${entry.outcome}${entry.redacted ? '  [credentials redacted]' : ''}\n`
+          + `      source:  ${entry.source}\n`
+          + `      text:    ${shown}\n`,
+        );
+      }
+      if (summary.total > entries.length) {
+        process.stdout.write(`  … ${summary.total - entries.length} older event(s) — raise --limit\n`);
+      }
+    }
+    process.stdout.write(
+      `\nBy layer:   ${Object.entries(summary.byLayer).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}\n`
+      + `By pattern: ${Object.entries(summary.byPattern)
+        .sort((a, b) => b[1] - a[1]).slice(0, 10)
+        .map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}\n`
+      + `Newest:     ${summary.newest ?? '-'}\n`
+      + `Oldest:     ${summary.oldest ?? '-'}\n`,
+    );
+  } else {
+    process.stdout.write(
+      `Block ledger — ${workspace}\n`
+      + `No block events${layer ? ` from the ${layer} layer` : ''}.\n`
+      + 'Either nothing has been blocked, or nothing has written here yet: the\n'
+      + 'execution layer records from `helmion guard` and from the agent gate when\n'
+      + 'a caller passes auditWorkspace. Files live in .helmion/audit/.\n',
+    );
+  }
+
+  // Unreadable lines are surfaced and made to matter. A ledger nobody can fully
+  // parse is not clean evidence, so this exits non-zero rather than printing a
+  // tidy report with a footnote.
+  if (malformed.length) {
+    process.stdout.write(`\n! ${malformed.length} UNREADABLE line(s) — this ledger is not intact:\n`);
+    for (const bad of malformed.slice(0, 20)) {
+      process.stdout.write(`    ${bad.file}:${bad.line}  ${bad.raw}\n`);
+    }
+    if (malformed.length > 20) process.stdout.write(`    … and ${malformed.length - 20} more\n`);
+    process.exitCode = 2;
+  }
 }
 
 async function init() {
@@ -709,7 +907,9 @@ if (command === 'agent' || command === 'chat' || command === 'code') {
   const { runAgentBridge } = await import('../src/agent/bridge.mjs');
   await runAgentBridge();
 } else if (command === 'guard') await guard();
+else if (command === 'audit') await auditLedger();
 else if (command === 'agent-os') await agentOs();
+else if (command === 'project') await projectCommand();
 else if (command === 'mcp-install') await mcpInstall();
 else if (command === 'plugin' || command === 'plugins') await plugin();
 else if (command === 'advisory') await advisory();
@@ -767,6 +967,19 @@ Agent OS (self-improvement loop — rules, lessons, blockers, wins, hooks):
     Targets: claude | codex | gemini | all (default all)
     Never overwrites your files and never edits a settings file.
 
+Project scaffold (the planning folder, written BEFORE any coding tool opens it):
+  helmion project init "Invoice Importer"        # dry run: shows every file first
+  helmion project init "Invoice Importer" --yes  # write it
+  helmion project init "Invoice Importer" --dir E:\\work\\importer --yes
+  helmion project init "Invoice Importer" --sprint 2 --yes
+  helmion project init "Invoice Importer" --yes --json   # machine-readable
+    Creates PROJECT.md, planning/ (requirements, blueprint, acceptance
+    criteria, STATE, DECISIONS, RISKS), sprints/sprint-001/ (the four-file
+    architect pack), docs/ with a handoff template, and prompts/ for the
+    architect and builder roles.
+    Default directory is ./<slug>. Never overwrites: an existing file is
+    reported as preserved and the run still succeeds, so re-running is safe.
+
 Slash commands (your own, in markdown — same format as Claude Code's):
   Put files in .helmion/commands/ (this project) or ~/.helmion/commands/ (all
   projects). deploy.md becomes /deploy; frontend/component.md becomes
@@ -809,6 +1022,22 @@ Advisory lane (Grok / Gemini / ChatGPT output — low-trust until a human review
     Promotion is NEVER automatic (Rule 0.27). It needs a named reviewer, a
     written reason, and an exact typed confirmation in a real terminal.
     Reads BIGSISTER_DATABASE_URL — a DIFFERENT endpoint from HELMION_DATABASE_URL.
+
+Block ledger (durable record of every block, both layers — .helmion/audit/*.jsonl):
+  helmion audit                               # 20 most recent, newest first
+  helmion audit list --limit 100
+  helmion audit list --layer execution        # execution | browser, nothing else
+  helmion audit list --since 2026-07-01 --json
+  helmion audit summary                       # counts by layer and by pattern
+  helmion audit --workspace E:\\MyProject
+    Written by "helmion guard" on every refusal, and by the agent governance
+    gate when its caller passes auditWorkspace. Credentials in the triggering
+    text are masked before the line is written, and the masking is declared on
+    the row so a redacted log is not mistaken for a tampered one.
+    Unreadable lines are printed and exit non-zero — a ledger that cannot be
+    fully parsed is not clean evidence.
+    Browser-layer rows need a sink Chrome does not have without a permission;
+    see the comment at the top of extension/background/scan.js.
 
 Governance / Maestro (existing kernel):
   helmion init [workspace]
