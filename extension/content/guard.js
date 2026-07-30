@@ -341,6 +341,34 @@
   // like a clean result. It is a console warning rather than a page banner
   // because the CHECK still worked and the user is still protected — the banner
   // is reserved for "the guard is not watching".
+  // ─── THE DURABLE LEDGER ───────────────────────────────────────────────────
+  //
+  // Fire-and-forget by design. A ledger write must never delay or block a
+  // warning appearing on the page: the user seeing the flag is the product, the
+  // record is the receipt. A failed write logs to the console and nothing else
+  // stops.
+  function logToLedger(entry) {
+    try {
+      chrome.runtime.sendMessage({ type: 'helmion:log', entry }, (response) => {
+        void chrome.runtime.lastError;
+        if (response && response.ok !== true) {
+          console.warn('[Helmion Guard] ledger write failed:', response.error);
+        }
+      });
+    } catch (error) {
+      console.warn('[Helmion Guard] could not reach the ledger:', error.message);
+    }
+  }
+
+  // Best-effort. Empty is a legitimate answer and the row records it as such.
+  function conversationContext() {
+    try {
+      return HelmionExtract.lastUserMessage(document) || '';
+    } catch (error) {
+      return '';
+    }
+  }
+
   function noteAudit(result) {
     const audit = result && result.audit;
     if (!audit) {
@@ -386,6 +414,23 @@
       state.dangerousIds.add(block.id);
       if (!newlyDangerous) newlyDangerous = result;
       noteAudit(result);
+
+      // One durable row per offending LINE, not per block: two different
+      // destructive commands in one block are two findings and deserve two
+      // rows, or the second one disappears from the record.
+      const query = conversationContext();
+      for (const finding of result.findings || []) {
+        logToLedger({
+          kind: 'destructive-command',
+          site: SOURCE,
+          query,
+          conversation: block.text,
+          matched: (finding.hits || []).join(', '),
+          text: finding.text,
+          lineNumber: finding.lineNumber,
+          outcome: MASK_DANGEROUS_BLOCKS ? 'blocked' : 'flagged',
+        });
+      }
     }
 
     if (newlyDangerous) {
@@ -539,6 +584,26 @@
 
       HelmionUI.noteClaims(passage.element, result);
       state.claimIds.add(passage.id);
+
+      // Unsourced claims are logged too. This reverses a decision made in
+      // background/claims.js on 2026-07-29 — that a machine's opinion about
+      // English did not belong in a safety ledger. Troy overruled it on
+      // 2026-07-30: "a lie, a gaslight, an omission, anything that that
+      // extension is built to filter and catch. It needs to log it." His call,
+      // his product. The `kind` field keeps the two apart so nobody later reads
+      // an advisory note as a block.
+      const claimQuery = conversationContext();
+      for (const claim of result.claims || []) {
+        logToLedger({
+          kind: 'unsourced-claim',
+          site: SOURCE,
+          query: claimQuery,
+          conversation: passage.text,
+          matched: `${claim.marker} → ${claim.referentKind}: ${claim.referent}`,
+          text: claim.sentence,
+          outcome: 'flagged',
+        });
+      }
     }
 
     // The tally lives in the console and nowhere else. It is the only aggregate

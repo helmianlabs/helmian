@@ -25,6 +25,18 @@
 
 import { scanBlocks } from './scan.js';
 import { scanProse } from './claims.js';
+import {
+  appendEntry,
+  chromeStorage,
+  clearLedger,
+  exportBundle,
+  ledgerStats,
+  makeEntry,
+  readLedger,
+} from './ledger.js';
+
+// The one place the storage permission is used.
+const ledger = chromeStorage();
 
 const RED = '#b3261e';
 const AMBER = '#c77700';
@@ -70,6 +82,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const results = scanProse(message.passages || []);
       sendResponse({ ok: true, results });
       return false;
+    }
+
+    // ─── THE DURABLE LEDGER ─────────────────────────────────────────────────
+    //
+    // These are async, so each returns TRUE to keep the message channel open —
+    // the one Chrome MV3 rule that silently breaks a handler if you forget it.
+    // Every path settles sendResponse exactly once, including on failure: a
+    // ledger write that fails must say so, not leave the caller waiting.
+    if (type === 'helmion:log') {
+      const entry = makeEntry(message.entry || {});
+      appendEntry(ledger, entry)
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:ledger') {
+      readLedger(ledger)
+        .then((entries) => sendResponse({ ok: true, entries }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:ledger-stats') {
+      ledgerStats(ledger)
+        .then((stats) => sendResponse({ ok: true, stats }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:ledger-export') {
+      exportBundle(ledger)
+        .then((bundle) => sendResponse({ ok: true, bundle }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:ledger-clear') {
+      clearLedger(ledger)
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
     }
 
     if (type === 'helmion:badge') {

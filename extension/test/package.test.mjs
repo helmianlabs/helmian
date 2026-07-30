@@ -75,25 +75,68 @@ test('the content scripts load in the order guard.js depends on', () => {
   ]);
 });
 
-test('it runs on exactly the three sites and nothing else', () => {
-  assert.deepEqual(manifest.content_scripts[0].matches, [
-    'https://claude.ai/*',
-    'https://chatgpt.com/*',
-    'https://gemini.google.com/*',
-  ]);
+test('it never asks for every site', () => {
   assert.ok(
     !JSON.stringify(manifest).includes('<all_urls>'),
     'the manifest asks for every site; it must not',
   );
 });
 
-test('it asks for no permissions at all', () => {
-  // Phase 1 reads the page it is already on and runs a regular expression. It
-  // needs no permission for that, and asking for one it does not use is how a
-  // safety tool loses trust.
-  assert.equal(manifest.permissions, undefined);
+test('it asks for exactly ONE permission, and that one is storage', () => {
+  // This check used to assert zero permissions, and it was right to. Phase 1
+  // only read the page and ran a regular expression.
+  //
+  // It changed on 2026-07-30 by Troy's decision, and the decision was the one
+  // background/scan.js had been waiting on in writing: "A QUEUE IS NOT A DURABLE
+  // LOG… Closing that gap needs a decision from Troy — grant one permission, or
+  // add a UI that drains this queue." He chose the permission, because a flag
+  // that vanishes when Chrome evicts the service worker is not evidence.
+  //
+  // ONE permission. Not "storage plus downloads" — the export uses a blob URL
+  // and an anchor, which needs none. Not host permissions. Not unlimitedStorage
+  // — the ledger caps itself instead. Every extra permission asked for is trust
+  // spent, and this test is what stops the list quietly growing.
+  assert.deepEqual(manifest.permissions, ['storage']);
   assert.equal(manifest.host_permissions, undefined);
   assert.equal(manifest.optional_permissions, undefined);
+});
+
+test('the only thing that uses the storage permission is the ledger', async () => {
+  // A permission is a promise about scope. If chrome.storage started appearing
+  // in the content scripts or the scanners, that promise would be broader than
+  // the test above implies.
+  const files = (await listJsFiles(EXTENSION_ROOT)).filter(isShippedFile);
+  const users = [];
+  for (const file of files) {
+    const source = await readFile(file, 'utf8');
+    if (/chrome\s*\.\s*storage/.test(source)) {
+      users.push(path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/'));
+    }
+  }
+  assert.deepEqual(users, ['background/ledger.js'],
+    `chrome.storage is used in ${users.join(', ')} — it belongs in the ledger and nowhere else`);
+});
+
+test('the popup the manifest points at exists, with its script and styles', async () => {
+  assert.equal(manifest.action.default_popup, 'popup/popup.html');
+  const html = await readFile(path.join(EXTENSION_ROOT, 'popup', 'popup.html'), 'utf8');
+  await readFile(path.join(EXTENSION_ROOT, 'popup', 'popup.js'));
+  await readFile(path.join(EXTENSION_ROOT, 'popup', 'popup.css'));
+
+  // No inline script and no inline handlers: MV3's content security policy
+  // refuses them, and the popup would silently do nothing.
+  assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?\S[\s\S]*?<\/script>/.test(html),
+    'the popup carries an inline <script>, which MV3 will refuse to run');
+  assert.ok(!/\son[a-z]+\s*=/.test(html), 'the popup uses an inline event handler, which MV3 refuses');
+});
+
+test('it runs on the four sites, still not on every site', () => {
+  assert.deepEqual(manifest.content_scripts[0].matches, [
+    'https://claude.ai/*',
+    'https://chatgpt.com/*',
+    'https://gemini.google.com/*',
+    'https://grok.com/*',
+  ]);
 });
 
 // Every way a page can reach off this machine, plus the two dynamic-code paths

@@ -238,9 +238,45 @@
     return { tier: 0, tierName: 'nothing matched', passages: [] };
   }
 
+  // ─── CONVERSATION CONTEXT, FOR THE LEDGER ─────────────────────────────────
+  //
+  // Troy, 2026-07-30: a flag must record "what the query was, what the
+  // conversation was, all of it." A row saying a rule fired, with no idea what
+  // was being discussed, is useless the day he wants to show a vendor.
+  //
+  // These anchors ARE site-specific, which everything else in this file avoids.
+  // That is a deliberate trade: the code and prose scanners must never depend on
+  // a vendor's markup, because a redesign would silently stop the guard. This is
+  // context for a log entry — if it comes back empty the flag is still raised,
+  // still shown, still logged, and the row records that the context could not be
+  // captured rather than leaving a blank that reads like "nothing was asked".
+  var USER_MESSAGE_SELECTORS = [
+    '[data-message-author-role="user"]',
+    '[data-testid*="user-message" i]',
+    '[data-testid*="user_message" i]',
+    'article[data-author="user"]',
+    '.user-message, .human-message, .message-user',
+  ];
+
+  function lastUserMessage(root) {
+    var scope = root || (typeof document !== 'undefined' ? document : null);
+    if (!scope || typeof scope.querySelectorAll !== 'function') return '';
+
+    for (var i = 0; i < USER_MESSAGE_SELECTORS.length; i += 1) {
+      var found = scope.querySelectorAll(USER_MESSAGE_SELECTORS[i]);
+      if (!found || found.length === 0) continue;
+      var last = found[found.length - 1];
+      var text = proseText(last).replace(/[ \t]+/g, ' ').trim();
+      if (text) return text;
+    }
+    return '';
+  }
+
   var api = {
     BLOCK_SELECTORS: BLOCK_SELECTORS,
     PROSE_SELECTORS: PROSE_SELECTORS,
+    USER_MESSAGE_SELECTORS: USER_MESSAGE_SELECTORS,
+    lastUserMessage: lastUserMessage,
     extractFencedBlocks: extractFencedBlocks,
     collectCodeBlocks: collectCodeBlocks,
     collectProse: collectProse,
