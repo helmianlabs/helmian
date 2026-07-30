@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Helmion Guard</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Helmion Guard</h1>
+    <p id="tagline">Every flag it raises is logged on this machine, and nowhere else.</p>
+  </header>
+
+  <section id="stats" aria-live="polite">
+    <div class="stat"><span class="n" id="statTotal">–</span><span class="l">flags logged</span></div>
+    <div class="stat"><span class="n danger" id="statDestructive">–</span><span class="l">destructive commands</span></div>
+    <div class="stat"><span class="n note" id="statUnsourced">–</span><span class="l">unsourced claims</span></div>
+  </section>
+
+  <p id="range" class="muted"></p>
+
+  <div class="actions">
+    <button id="exportBtn" type="button">Export log (.json)</button>
+    <button id="clearBtn" type="button" class="danger-btn">Clear log</button>
+  </div>
+
+  <p id="confirm" class="confirm" hidden>
+    This deletes every logged flag on this machine and cannot be undone.
+    <button id="confirmClear" type="button" class="danger-btn">Yes, delete them</button>
+    <button id="cancelClear" type="button">Cancel</button>
+  </p>
+
+  <h2>Most recent</h2>
+  <ul id="entries"></ul>
+  <p id="empty" class="muted" hidden>Nothing logged yet. The log fills up as the guard flags things.</p>
+
+  <footer>
+    <p class="muted">
+      The log stays in this browser profile. Nothing is uploaded — this extension
+      makes no network calls at all, and a test in its own suite fails the build
+      if that ever changes. The export file contains excerpts of your
+      conversations; read it before you share it.
+    </p>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

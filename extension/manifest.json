@@ -1,8 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Helmion Guard",
-  "version": "0.1.0",
-  "description": "Warns when an AI chat reply hands you a destructive command, before you copy it.",
+  "version": "0.2.0",
+  "description": "Catches destructive commands and unsourced claims in AI chat replies, and keeps a durable local log of every flag.",
+  "permissions": [
+    "storage"
+  ],
   "background": {
     "service_worker": "background/worker.js",
     "type": "module"
@@ -12,7 +15,8 @@
       "matches": [
         "https://claude.ai/*",
         "https://chatgpt.com/*",
-        "https://gemini.google.com/*"
+        "https://gemini.google.com/*",
+        "https://grok.com/*"
       ],
       "js": [
         "content/extract.js",
@@ -28,6 +32,7 @@
     }
   ],
   "action": {
-    "default_title": "Helmion Guard"
+    "default_title": "Helmion Guard",
+    "default_popup": "popup/popup.html"
   }
 }

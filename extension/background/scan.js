@@ -83,44 +83,29 @@ export function scanCodeBlock(code) {
  * src/core/audit-log.mjs does exactly that for the execution layer, in
  * append-only JSONL on disk.
  *
- * THIS HALF CANNOT REACH THAT FILE, AND THAT IS NOT A BUG I CAN FIX HERE.
+ * RESOLVED 2026-07-30. THIS COMMENT USED TO SAY THE GAP COULD NOT BE CLOSED.
  *
- * audit-log.mjs is built on node:fs. This file runs in a Chrome extension
- * service worker, which has no filesystem. Every route from here to a file on
- * disk needs something the extension deliberately does not have:
+ * It laid out the options — the storage permission, a local HTTP post, downloads,
+ * IndexedDB — rejected each one, and ended: "Closing that gap needs a decision
+ * from Troy… until he makes it, the browser layer's evidence is in-memory only."
  *
- *   chrome.storage.local  needs the "storage" permission —
- *                         developer.chrome.com/docs/extensions/reference/api/storage:
- *                         "To use the storage API, declare the "storage"
- *                         permission in the extension manifest." That would fail
- *                         extension/test/package.test.mjs:90 ("it asks for no
- *                         permissions at all"), and that test is right, so it is
- *                         not being weakened to make this convenient.
- *   a local HTTP/WS post  fails extension/test/package.test.mjs:128 ("nothing in
- *                         the extension calls out to the network").
- *   downloads / native    both are permissions, same objection as storage.
- *   IndexedDB or OPFS     permission-free and durable, but it lands inside the
- *                         Chrome profile where no compliance reviewer will ever
- *                         find it, and reading it back needs a UI surface this
- *                         extension does not have yet.
+ * He made it: *"when any browser AI… flags anything harmful, a lie, a gaslight,
+ * an omission… It needs to log it. Timestamp what the query was, what the
+ * conversation was, all of it."* One permission — `storage` — and the durable
+ * ledger now lives in background/ledger.js. The network objection still stands
+ * and is still enforced by extension/test/package.test.mjs.
  *
- * There is no permission-free, network-free path from a Chrome extension to a
- * file on disk. So what this file does is the honest remainder:
+ * WHAT THIS FILE STILL DOES, and why the queue below did not simply get deleted:
  *
- *   1. It SHAPES every browser block into exactly the schema audit-log.mjs
- *      writes — Troy's six fields, layer 'browser'. The evidence is correct and
- *      ready; only the sink is missing.
- *   2. It QUEUES those events in the worker and exposes them by two
- *      permission-free routes: `recordedBrowserBlocks()` for anything running
- *      inside the worker, and an `audit` field on each scan result, which
- *      reaches the content script through background/worker.js:53-54 passing
- *      `results` straight back untouched.
+ *   1. It SHAPES every browser block into the schema src/core/audit-log.mjs
+ *      writes — Troy's six fields, layer 'browser'.
+ *   2. It QUEUES them in the worker for anything running in-process, and hands
+ *      the same data back on each scan result so the content script can decide
+ *      what to draw.
  *
- * A QUEUE IS NOT A DURABLE LOG AND THIS COMMENT WILL NOT PRETEND OTHERWISE.
- * Chrome evicts an idle service worker after about 30 seconds and this array
- * dies with it. Closing that gap needs a decision from Troy — grant one
- * permission, or add a UI that drains this queue — and until he makes it, the
- * browser layer's evidence is in-memory only.
+ * The queue is a per-session convenience, NOT the record. The record is the
+ * ledger, and content/guard.js writes to it directly on every finding. If the
+ * two ever disagree, the ledger is the one that survived a restart.
  *
  * `layer: 'browser'` is spelled literally rather than imported from
  * src/core/audit-log.mjs LAYER.BROWSER, because importing anything from src/
