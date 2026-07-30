@@ -98,6 +98,9 @@ try {
   Invoke-PackagedSmoke -Executable $desktopExecutable -Argument '--smoke-test'
   Invoke-PackagedSmoke -Executable $serviceExecutable -Argument '--smoke-test'
   Invoke-PackagedSmoke -Executable $desktopExecutable -Argument '--service-smoke-test'
+  # "A fresh empty workspace must produce zero red banners." Exits 3 if a first-run
+  # empty state has regressed into being reported as a failure.
+  Invoke-PackagedSmoke -Executable $desktopExecutable -Argument '--empty-workspace-audit'
 
   $resolvedArtifactsRoot = [System.IO.Path]::GetFullPath($artifactsRoot).TrimEnd('\') + '\'
   $resolvedOutput = [System.IO.Path]::GetFullPath($outputDirectory)
