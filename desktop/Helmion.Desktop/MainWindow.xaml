@@ -1028,11 +1028,102 @@
         </Grid>
 
         <StackPanel Grid.Row="1">
-          <TextBlock Text="PILOT"
+          <!-- ─── PROJECTS ────────────────────────────────────────────────────
+               The panel leads with the operator's work, not with the app's own
+               pages. A project here is a folder `helmion project init` wrote:
+               PROJECT.md at its root, with planning / sprints / docs / prompts
+               beside it. The disk is the registry - there is no saved list to go
+               stale when a folder is renamed outside the app. -->
+          <Grid Margin="15,0,12,8">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="PROJECTS"
+                       Foreground="{DynamicResource FaintTextBrush}"
+                       FontSize="10"
+                       FontWeight="Bold"
+                       VerticalAlignment="Center" />
+            <Button x:Name="NewProjectButton"
+                    Grid.Column="1"
+                    Content="+ New"
+                    FontSize="11"
+                    Padding="8,3"
+                    Background="Transparent"
+                    BorderBrush="{DynamicResource StrokeBrush}"
+                    BorderThickness="1"
+                    Foreground="{DynamicResource FaintTextBrush}"
+                    Cursor="Hand"
+                    ToolTip="Create a structured project folder: planning, sprints, docs and handoff prompts, written before any coding tool opens it."
+                    Click="NewProjectButton_Click" />
+          </Grid>
+
+          <ItemsControl x:Name="ProjectShelfList" Margin="0,0,0,4" Loaded="ProjectShelfList_Loaded">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Button Click="ProjectShelfItem_Click"
+                        Tag="{Binding Directory}"
+                        HorizontalContentAlignment="Stretch"
+                        Style="{StaticResource NavButtonStyle}">
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding PartsText}"
+                               FontSize="10"
+                               Margin="0,2,0,0"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource FaintTextBrush}" />
+                  </StackPanel>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <TextBlock x:Name="ProjectShelfEmpty"
+                     Margin="15,0,12,10"
+                     FontSize="11"
+                     TextWrapping="Wrap"
+                     Visibility="Collapsed"
+                     Foreground="{DynamicResource FaintTextBrush}" />
+
+          <!-- ─── SESSIONS ────────────────────────────────────────────────────
+               Deliberately NOT a "New session" button. Sessions are started by
+               the per-LLM pills, and a new one ADDS to what is running rather
+               than replacing a chat. Until that lands this states plainly that
+               it is not built, instead of showing an empty list that looks
+               broken. -->
+          <TextBlock Text="SESSIONS"
                      Foreground="{DynamicResource FaintTextBrush}"
                      FontSize="10"
                      FontWeight="Bold"
-                     Margin="15,0,0,8" />
+                     Margin="15,6,0,6" />
+          <TextBlock x:Name="SessionShelfEmpty"
+                     Margin="15,0,12,10"
+                     FontSize="11"
+                     TextWrapping="Wrap"
+                     Foreground="{DynamicResource FaintTextBrush}"
+                     Text="Not built yet. Sessions will start from the per-LLM buttons and stack here." />
+
+          <!-- ─── PILOT, COLLAPSED ────────────────────────────────────────────
+               The nine pages are the app's own furniture, not the operator's
+               work, so they sit behind one row that opens. Collapsed by default. -->
+          <ToggleButton x:Name="PilotPagesToggle"
+                        Margin="15,4,12,4"
+                        Padding="0,4"
+                        HorizontalContentAlignment="Left"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Foreground="{DynamicResource FaintTextBrush}"
+                        FontSize="10"
+                        FontWeight="Bold"
+                        Cursor="Hand"
+                        Content="PILOT  ▾"
+                        Checked="PilotPagesToggle_Changed"
+                        Unchecked="PilotPagesToggle_Changed" />
+
+          <StackPanel x:Name="PilotPagesPanel" Visibility="Collapsed">
           <Button x:Name="OverviewNav"
                   Tag="Overview"
                   Content="⌁   Overview"
@@ -1078,6 +1169,7 @@
                   Content="⚙   Settings"
                   Style="{StaticResource NavButtonStyle}"
                   Click="Navigation_Click" />
+          </StackPanel>
         </StackPanel>
 
         <Border Grid.Row="3"
