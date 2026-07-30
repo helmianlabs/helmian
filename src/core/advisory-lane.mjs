@@ -98,10 +98,22 @@ export function summarizeRow(row, width = 96) {
   };
 }
 
-// The review columns arrive with sql/bigsister/001_advisory_output_review_state.sql,
-// which is a Tier B change awaiting Troy. Until it is applied the lane still
-// works: it falls back to the `promoted` boolean that already exists, and the
-// human attribution is written to bigsister.agent_logs so it is never lost.
+// The review columns arrive with a migration that HAS NOT BEEN WRITTEN. This
+// comment, and the error below, used to tell the operator to apply a migration
+// file under sql/bigsister/ as though it were sitting in the repo. There is no
+// such directory: sql/ holds 001_helmion.sql, 002_maestro_phase_one.sql and
+// 003_human_confirmations.sql and nothing else, so anyone following that
+// instruction went looking for a file nobody had written. Naming a remediation
+// that does not exist is worse than naming none — it costs the reader the trip.
+//
+// The DDL text is real and it is written down: docs/FLYWHEEL_AUDIT_2026-07-28.md
+// section 6.5. It was not turned into a migration file because
+// hook_autonomy_boundary.ps1 classifies that as a Tier B schema change needing
+// Troy, and that gate has not been bypassed.
+//
+// None of this stops the lane working. It falls back to the `promoted` boolean
+// that already exists, and the human attribution is written to
+// bigsister.agent_logs so it is never lost.
 export function laneCapabilities(columnNames) {
   const columns = new Set(columnNames);
   return {
@@ -129,8 +141,10 @@ export function buildListQuery({ state, projectSlug = null, limit = 20, capabili
     // Say so rather than quietly returning the wrong set.
     throw new AdvisoryApprovalError(
       'This database has no review_decision column yet, so rejections are not '
-      + 'recorded on the row. Apply sql/bigsister/001_advisory_output_review_state.sql '
-      + '(Tier B — needs Troy) or list with --state unreviewed.',
+      + 'recorded on the row. The migration that adds it has not been written — it is '
+      + 'a schema change and needs Troy. The exact DDL is in '
+      + 'docs/FLYWHEEL_AUDIT_2026-07-28.md section 6.5. Until it is applied, list with '
+      + '--state unreviewed.',
     );
   }
 

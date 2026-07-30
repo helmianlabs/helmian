@@ -232,3 +232,67 @@ test('a lane pointed at the wrong endpoint says so instead of returning nothing'
   const lane = createAdvisoryLane({ client });
   await assert.rejects(lane.list({}), /different\s+Neon endpoint/i);
 });
+
+/* ─── THE REMEDIATION A MESSAGE NAMES HAS TO EXIST ───────────────────────────
+ *
+ * For most of 2026-07-28 and 2026-07-29 this lane told its operator, in a
+ * thrown error and again in `helmion advisory list` output, to apply
+ * `sql/bigsister/001_advisory_output_review_state.sql`. There is no
+ * `sql/bigsister/` directory and there never was — `sql/` holds three files and
+ * none of them is that one. The instruction was unfollowable, and nothing in
+ * the suite noticed, because every test asserted on the part of the sentence
+ * that was true.
+ *
+ * A remediation is a promise. This pins the promise. */
+
+import { existsSync } from 'node:fs';
+import { readFile as readSourceFile } from 'node:fs/promises';
+import { fileURLToPath as toPath } from 'node:url';
+import { dirname as dirOf, join as joinPath } from 'node:path';
+
+const REPO_ROOT = joinPath(dirOf(toPath(import.meta.url)), '..');
+
+// A repo-relative path, of the kinds these files actually name. Deliberately
+// includes comments as well as strings: a comment pointing at a file that was
+// renamed away is the same rot arriving a little more quietly.
+const REPO_PATH = /\b(?:sql|docs|src|bin|hooks|templates|extension|test)\/[A-Za-z0-9._/-]+\.(?:sql|md|mjs|js|json|ps1)\b/g;
+
+const OPERATOR_FACING = ['src/core/advisory-lane.mjs', 'bin/helmion.mjs'];
+
+for (const relative of OPERATOR_FACING) {
+  test(`every repo path named in ${relative} is a file that exists`, async () => {
+    const source = await readSourceFile(joinPath(REPO_ROOT, relative), 'utf8');
+    const named = [...new Set(source.match(REPO_PATH) || [])];
+    assert.ok(named.length > 0, `no paths were found in ${relative}, so this test proves nothing`);
+
+    const missing = named.filter((path) => !existsSync(joinPath(REPO_ROOT, path)));
+    assert.deepEqual(
+      missing,
+      [],
+      `${relative} points the reader at ${missing.length} file(s) that do not exist: ${missing.join(', ')}`,
+    );
+  });
+}
+
+test('POSITIVE CONTROL: the path check really catches a made-up file', () => {
+  const invented = 'sql/bigsister/001_advisory_output_review_state.sql';
+  assert.match(invented, REPO_PATH, 'the pattern would not even see the path that caused this');
+  assert.equal(
+    existsSync(joinPath(REPO_ROOT, invented)),
+    false,
+    'that file now exists — if Troy applied the migration, point the messages back at it',
+  );
+});
+
+test('the pre-migration error still tells the reader where the DDL actually is', () => {
+  assert.throws(
+    () => buildListQuery({ state: 'rejected', capabilities: LEGACY }),
+    (error) => {
+      assert.ok(error instanceof AdvisoryApprovalError);
+      assert.match(error.message, /no review_decision column yet/i);
+      assert.match(error.message, /docs\/FLYWHEEL_AUDIT_2026-07-28\.md/);
+      assert.match(error.message, /has not been written/i, 'it still implies the migration is sitting there');
+      return true;
+    },
+  );
+});
