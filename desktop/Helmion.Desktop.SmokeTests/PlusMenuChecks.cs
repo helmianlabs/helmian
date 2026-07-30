@@ -197,7 +197,99 @@ internal static class PlusMenuChecks
             try { Directory.Delete(dir, recursive: true); } catch { /* temp dir */ }
         }
 
+        // --- 5. THE MENU IS PER-MAESTRO, WITH THAT CLI'S REAL SYNTAX -----------
+        //
+        // Troy's correction, 2026-07-30: "whoever the Maestro is, that's whose
+        // skills, connectors, plugins, all that, exact copied and populated and
+        // working." A generic four-item list was the wrong build. These checks
+        // pin that each provider carries ITS OWN paths and commands, taken from
+        // that provider's own documentation.
+        var builtIns = new[] { "OpenAI", "Claude", "Gemini", "Grok" };
+        foreach (var name in builtIns)
+        {
+            var caps = ProviderCapabilityCatalog.For(name);
+            Assert(caps is not null, $"{name} is a built-in coordinator and must have a mapped menu");
+            Assert(caps!.Count == 4, $"{name} exposes all four kinds");
+            Assert(caps.Select(c => c.Kind).Distinct().Count() == 4, $"{name} has no duplicate kinds");
+            foreach (var cap in caps)
+            {
+                Assert(cap.Label.Length > 0 && cap.OneLiner.Length > 0, $"{name}/{cap.Kind} is labelled and explained");
+                Assert(cap.Detail.Length > 20, $"{name}/{cap.Kind} carries real syntax, not a placeholder");
+                Assert(cap.Icon.Length > 0, $"{name}/{cap.Kind} inherits the shared icon for its kind");
+            }
+            checks += 3 + (caps.Count * 3);
+        }
+
+        // Each provider's connector row names ITS OWN config location. If these
+        // ever collapse to one string, the menu has stopped being per-provider.
+        AssertDetail("Grok", PlusMenuKind.Connector, "~/.grok/config.toml");
+        AssertDetail("Gemini", PlusMenuKind.Connector, "~/.gemini/settings.json");
+        AssertDetail("Claude", PlusMenuKind.Connector, ".mcp.json");
+        AssertDetail("OpenAI", PlusMenuKind.Connector, "~/.codex/config.toml");
+        checks += 4;
+
+        AssertDetail("Grok", PlusMenuKind.Skill, "~/.grok/skills/");
+        AssertDetail("Gemini", PlusMenuKind.Skill, "~/.gemini/skills/");
+        AssertDetail("Claude", PlusMenuKind.Skill, "~/.claude/skills/");
+        AssertDetail("OpenAI", PlusMenuKind.Skill, ".agents/skills");
+        checks += 4;
+
+        // THE ASYMMETRY THAT COSTS AN HOUR IF NOBODY SAYS IT. Claude Code's @
+        // inlines the file's CONTENTS; Codex's @ inserts the PATH. Same symbol,
+        // opposite behaviour, both documented.
+        AssertDetail("Claude", PlusMenuKind.Upload, "INLINES THE FILE'S CONTENTS");
+        AssertDetail("OpenAI", PlusMenuKind.Upload, "not its contents");
+        // Grok is the only one of the four with a line-range form.
+        AssertDetail("Grok", PlusMenuKind.Upload, ":10-50");
+        // Grok gates plugin installs behind an explicit trust flag; Gemini does not.
+        AssertDetail("Grok", PlusMenuKind.Plugin, "--trust");
+        // Gemini calls them extensions, not plugins, and the menu uses its word.
+        Assert(ProviderCapabilityCatalog.For("Gemini")!
+                .First(c => c.Kind == PlusMenuKind.Plugin).Label == "Extensions",
+            "Gemini's row is labelled Extensions, because that is what Gemini calls them");
+        checks += 5;
+
+        // Aliases resolve to the same menu.
+        Assert(ReferenceEquals(ProviderCapabilityCatalog.For("codex"), ProviderCapabilityCatalog.For("OpenAI")),
+            "the Codex CLI and the OpenAI coordinator are the same menu");
+        Assert(ReferenceEquals(ProviderCapabilityCatalog.For("claude code"), ProviderCapabilityCatalog.For("Claude")),
+            "a coordinator named for the CLI resolves to the same menu");
+        Assert(MaestroKey.Normalize("  GROK  ") == MaestroKey.Grok, "normalisation trims and folds case");
+        checks += 3;
+
+        // AN UNMAPPED PROVIDER RETURNS NOTHING AND DOES NOT BORROW.
+        foreach (var unknown in new[] { "MyLocalLlama", "", "   ", null })
+        {
+            Assert(ProviderCapabilityCatalog.For(unknown) is null,
+                $"an unmapped coordinator ('{unknown}') has no menu rather than someone else's");
+            Assert(!ProviderCapabilityCatalog.IsMapped(unknown), $"'{unknown}' reports itself unmapped");
+            checks += 2;
+        }
+        Assert(MaestroKey.DisplayName("MyLocalLlama") == "MyLocalLlama",
+            "a custom provider is still named on screen even though its menu is empty");
+        Assert(MaestroKey.DisplayName(null) == "no Maestro selected",
+            "no coordinator selected says so rather than naming a default");
+        checks += 2;
+
+        // An unsupported capability is still SHOWN, dimmed, with a reason - never
+        // hidden. Nothing is unsupported today; this pins the behaviour for when
+        // something is.
+        var refused = new ProviderCapability(
+            PlusMenuKind.Plugin, false, "Plugins", "one line", "how", "This CLI has no plugin system.");
+        Assert(refused.Detail == "This CLI has no plugin system.", "an unsupported row shows the reason, not the syntax");
+        Assert(refused.Opacity < 1.0, "an unsupported row is dimmed");
+        var noReason = new ProviderCapability(PlusMenuKind.Plugin, false, "Plugins", "one line", "how");
+        Assert(noReason.Detail.Length > 0, "an unsupported row with no stated reason still says something");
+        checks += 3;
+
         Console.WriteLine($"Helmion plus-menu checks passed ({checks} checks).");
+
+        void AssertDetail(string maestro, PlusMenuKind kind, string mustContain)
+        {
+            var cap = ProviderCapabilityCatalog.For(maestro)!.First(c => c.Kind == kind);
+            Assert(cap.Detail.Contains(mustContain, StringComparison.Ordinal),
+                $"{maestro}/{kind} must name '{mustContain}' — that is what makes this menu {maestro}'s and not a generic one");
+        }
     }
 
     private static void Assert(bool condition, string what)

@@ -2213,39 +2213,59 @@
                               BorderThickness="1"
                               CornerRadius="12"
                               Padding="6"
-                              MaxWidth="440">
-                        <ItemsControl x:Name="ConsolePlusItems">
-                          <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                              <Button Click="ConsolePlusItem_Click"
-                                      Tag="{Binding Kind}"
-                                      HorizontalContentAlignment="Stretch"
-                                      Background="Transparent"
-                                      BorderThickness="0"
-                                      Padding="10,8"
-                                      Cursor="Hand">
-                                <StackPanel Orientation="Horizontal">
-                                  <TextBlock Text="{Binding Icon}"
-                                             FontSize="17"
-                                             Width="28"
-                                             VerticalAlignment="Top"
-                                             Foreground="#7FE3FF" />
-                                  <StackPanel Width="370">
-                                    <TextBlock Text="{Binding Label}"
-                                               FontSize="14"
-                                               FontWeight="SemiBold"
-                                               Foreground="#F2FBFF" />
-                                    <TextBlock Text="{Binding OneLiner}"
-                                               FontSize="12"
-                                               Margin="0,2,0,0"
-                                               TextWrapping="Wrap"
-                                               Foreground="#9FB6C6" />
+                              MaxWidth="520">
+                        <StackPanel>
+                          <!-- Which Maestro this menu belongs to. The list below is
+                               THAT provider's own CLI surface, not a generic one. -->
+                          <TextBlock x:Name="ConsolePlusHeader"
+                                     Margin="10,6,10,8"
+                                     FontSize="12"
+                                     TextWrapping="Wrap"
+                                     Foreground="#7FE3FF" />
+
+                          <ItemsControl x:Name="ConsolePlusItems">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate>
+                                <Button Click="ConsolePlusItem_Click"
+                                        Tag="{Binding Kind}"
+                                        IsEnabled="{Binding Supported}"
+                                        Opacity="{Binding Opacity}"
+                                        HorizontalContentAlignment="Stretch"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Padding="10,8"
+                                        Cursor="Hand">
+                                  <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Icon}"
+                                               FontSize="17"
+                                               Width="28"
+                                               VerticalAlignment="Top"
+                                               Foreground="#7FE3FF" />
+                                    <StackPanel Width="440">
+                                      <TextBlock Text="{Binding Label}"
+                                                 FontSize="14"
+                                                 FontWeight="SemiBold"
+                                                 Foreground="#F2FBFF" />
+                                      <TextBlock Text="{Binding OneLiner}"
+                                                 FontSize="12"
+                                                 Margin="0,2,0,0"
+                                                 TextWrapping="Wrap"
+                                                 Foreground="#9FB6C6" />
+                                      <!-- The provider's REAL syntax and paths. This is
+                                           the line that makes the menu match the CLI. -->
+                                      <TextBlock Text="{Binding Detail}"
+                                                 FontSize="11"
+                                                 Margin="0,4,0,0"
+                                                 TextWrapping="Wrap"
+                                                 FontFamily="Cascadia Mono, Consolas"
+                                                 Foreground="#6E8697" />
+                                    </StackPanel>
                                   </StackPanel>
-                                </StackPanel>
-                              </Button>
-                            </DataTemplate>
-                          </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                                </Button>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </StackPanel>
                       </Border>
                     </Popup>
 

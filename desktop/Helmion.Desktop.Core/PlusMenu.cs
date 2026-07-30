@@ -28,6 +28,53 @@ public sealed record PlusMenuEntry(
     string Label,
     string OneLiner);
 
+/// <summary>
+/// Which Maestro the + menu is currently speaking for.
+///
+/// THE MENU IS NOT ONE FIXED LIST. Troy's correction, 2026-07-30: "depending on
+/// the agent, meaning the API… I want that plus button to be identical to what it
+/// would be if I was on [that provider's] CLI. So whoever the Maestro is, that's
+/// whose skills, connectors, plugins, all that, exact copied and populated and
+/// working."
+///
+/// So every lookup in this file takes a maestro key. The built-in coordinators are
+/// OpenAI, Claude, Gemini and Grok (MainWindow.xaml.cs:29 BuiltInCoordinators),
+/// plus any custom provider the operator has added by name.
+/// </summary>
+public static class MaestroKey
+{
+    public const string OpenAi = "OpenAI";
+    public const string Claude = "Claude";
+    public const string Gemini = "Gemini";
+    public const string Grok = "Grok";
+
+    /// <summary>
+    /// The canonical key for a coordinator name, or null when it is a custom
+    /// provider this catalog knows nothing about.
+    ///
+    /// Null is a real answer, not a failure to be defaulted away. Falling back to
+    /// a known provider's capability list would show a user a menu of features
+    /// their actual model does not have — which is the same lie as a red card over
+    /// healthy text, one screen further along.
+    /// </summary>
+    public static string? Normalize(string? maestro)
+    {
+        var m = (maestro ?? string.Empty).Trim().ToLowerInvariant();
+        return m switch
+        {
+            "openai" or "chatgpt" or "codex" or "codex cli" or "gpt" => OpenAi,
+            "claude" or "claude code" or "claude code cli" or "anthropic" => Claude,
+            "gemini" or "gemini cli" or "google" => Gemini,
+            "grok" or "xai" or "x.ai" or "grok cli" => Grok,
+            _ => null,
+        };
+    }
+
+    /// <summary>What to call it on screen, custom providers included.</summary>
+    public static string DisplayName(string? maestro) =>
+        Normalize(maestro) ?? (string.IsNullOrWhiteSpace(maestro) ? "no Maestro selected" : maestro.Trim());
+}
+
 /// <summary>The four rows, in the order they appear.</summary>
 public static class PlusMenuCatalog
 {
