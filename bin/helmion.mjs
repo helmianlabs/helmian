@@ -386,8 +386,9 @@ async function advisory() {
         process.stdout.write(
           '\n  Note: this database has no review_decision column yet, so only the\n'
           + '  promoted boolean is tracked on the row. Attribution still goes to\n'
-          + '  bigsister.agent_logs. Apply sql/bigsister/001_advisory_output_review_state.sql\n'
-          + '  (Tier B — needs Troy) for full review state.\n',
+          + '  bigsister.agent_logs. The migration that adds full review state has\n'
+          + '  not been written — it is a schema change and needs Troy. The DDL is in\n'
+          + '  docs/FLYWHEEL_AUDIT_2026-07-28.md section 6.5.\n',
         );
       }
       process.stdout.write(
