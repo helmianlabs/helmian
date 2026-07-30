@@ -76,6 +76,46 @@ try
     Check(
         DesktopSettingsStore.Load(settingsPath).ColorTheme == ColorThemeCatalog.DefaultThemeId,
         "unknown persisted themes fail safely to the Helmion default");
+
+    // --- TEXT SIZE ---------------------------------------------------------
+    // Troy could not read the app at all, so the scale is the fix; these pin the
+    // two ways the fix could itself become unreadable.
+
+    DesktopSettingsStore.Save(
+        DesktopSettings.Default with { TextScale = 1.6 }, settingsPath);
+    Check(
+        Math.Abs(DesktopSettingsStore.Load(settingsPath).ResolvedTextScale - 1.6) < 0.001,
+        "a chosen text size survives a restart");
+
+    // THE ONE THAT MATTERS MOST. A settings file written by a build that predates
+    // this feature has no TextScale property at all. If that deserialized to 0.0
+    // the shell would scale to nothing and the window would render blank — and a
+    // user who cannot see the screen cannot reach the control that would undo it.
+    File.WriteAllText(settingsPath, """{"Version":1,"ColorTheme":"ocean-blue"}""");
+    Check(
+        DesktopSettingsStore.Load(settingsPath).ResolvedTextScale == TextScaleRange.Default,
+        "a settings file with no TextScale loads at 100%, never at zero");
+
+    // A hand-edited or corrupt value is clamped rather than obeyed.
+    foreach (var absurd in new[] { 0.0, -4.0, 99.0, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+    {
+        var resolved = (DesktopSettings.Default with { TextScale = absurd }).ResolvedTextScale;
+        Check(
+            resolved >= TextScaleRange.Min && resolved <= TextScaleRange.Max,
+            $"a text scale of {absurd} is clamped into the readable range, not applied");
+    }
+
+    // The ladder terminates at both ends instead of walking off.
+    Check(
+        TextScaleRange.Larger(TextScaleRange.Max) == TextScaleRange.Max
+        && TextScaleRange.Smaller(TextScaleRange.Min) == TextScaleRange.Min,
+        "Ctrl+= at the largest size and Ctrl+- at the smallest stay put rather than overshooting");
+    Check(
+        TextScaleRange.Larger(1.0) > 1.0 && TextScaleRange.Smaller(1.0) < 1.0,
+        "each keypress actually changes the size");
+    Check(
+        TextScaleRange.Describe(1.25) == "125%",
+        "the readout states the size as a percentage the user can act on");
 }
 finally
 {
@@ -85,7 +125,7 @@ finally
     }
 }
 
-Console.WriteLine("Helmion desktop smoke tests passed (23 checks).");
+Console.WriteLine("Helmion desktop smoke tests passed (34 checks).");
 
 var workspaceRoot = Path.Combine(
     Path.GetTempPath(),
@@ -867,6 +907,8 @@ VoiceSmokeChecks.Run();
 
 VoiceBackendSmokeChecks.Run();
 
+VoiceHostSmokeChecks.Run();
+
 ProfileInstallerGuardChecks.Run();
 
 GuardEscalationChecks.Run();
@@ -879,9 +921,13 @@ PlusMenuChecks.Run();
 
 ProjectShelfChecks.Run();
 
+SessionShelfChecks.Run();
+
 GuardLivenessChecks.Run();
 
 LivingDocumentVaultChecks.Run();
+
+FreshWorkspaceChecks.Run();
 return;
 
 /// <summary>
