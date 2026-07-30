@@ -880,6 +880,8 @@ PlusMenuChecks.Run();
 ProjectShelfChecks.Run();
 
 GuardLivenessChecks.Run();
+
+LivingDocumentVaultChecks.Run();
 return;
 
 /// <summary>
