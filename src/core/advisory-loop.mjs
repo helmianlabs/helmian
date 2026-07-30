@@ -17,21 +17,37 @@
 // published work INTO the lane, and nothing on the push path ever asked whether
 // a review had happened.
 //
-// THREE RULES THIS FILE ENFORCES, and they are the whole point:
+// IT IS A TRIPWIRE, NOT A VOTE. Corrected by Troy, 2026-07-30, after the first
+// version got this backwards:
 //
-//   1. AN ADVISOR CANNOT APPROVE ITSELF. A review is only counted when it names
-//      an advisor from the known set and carries a verdict and a reason. A blank
-//      verdict is not an approval, and neither is silence.
+//   "that is not the way that it worked, it is not a voting — it was to be a
+//    catch for anything Claude Code did as a mistake. Anything you were pushing,
+//    any code, any pull requests, any coding, was live real-time communicated
+//    into the database so if you were wrong at least one of the other three AIs
+//    would catch it and then stop it."
 //
-//   2. SILENCE IS NOT CONSENT. If an advisor is unreachable, its review is
-//      MISSING, not APPROVED. `gate()` reports missing advisors by name rather
-//      than counting a smaller quorum, because the failure mode of an advisory
-//      system is that it degrades quietly into an empty ritual.
+// The first version required all three to approve and blocked when one did not
+// answer. That is a quorum, and it makes work wait on consensus. It also failed
+// exactly as you would predict: Gemini went quiet and the gate halted a change
+// nobody had objected to.
 //
-//   3. THE GATE ANSWERS, IT DOES NOT ACT. This module never commits, never
-//      pushes and never writes to the trusted lane. It returns a verdict and the
-//      caller decides. Rule 0.27: advisory output is low-trust and NEVER
-//      auto-promotes.
+// THE FOUR RULES THAT ACTUALLY APPLY:
+//
+//   1. ONE CATCH IS ENOUGH. A single advisor spotting a real mistake stops the
+//      change. It does not need a second opinion and it does not need a majority.
+//
+//   2. A CATCH NEEDS A REASON. Troy: "that needs to be reasons." A verdict with
+//      no usable reason is not a catch, it is a rubber stamp in reverse, and
+//      parseReview refuses it before it can stop anything.
+//
+//   3. SILENCE IS NOT A VETO. An advisor that did not answer caught nothing.
+//      Work proceeds — but the gap is RECORDED and named, because "two looked
+//      and found nothing" is a weaker statement than three, and the caller must
+//      be able to see which one it got.
+//
+//   4. THE GATE ANSWERS, IT DOES NOT ACT. This module never commits, never
+//      pushes and never writes to the trusted lane. Rule 0.27: advisory output
+//      is low-trust and NEVER auto-promotes.
 
 import { classifyOperation } from './governance.mjs';
 
@@ -245,54 +261,54 @@ export function parseReview(advisor, raw) {
 export function gate({ proposal, reviews = [], required = ADVISORS } = {}) {
   const counted = reviews.filter((r) => r?.counted);
   const byAdvisor = new Map(counted.map((r) => [r.advisor, r]));
-  const missing = required.filter((name) => !byAdvisor.has(name));
+  const silent = required.filter((name) => !byAdvisor.has(name));
 
   const blocks = counted.filter((r) => r.verdict === 'BLOCK');
   const concerns = counted.filter((r) => r.verdict === 'CONCERN');
   const approvals = counted.filter((r) => r.verdict === 'APPROVED');
+
+  // Anything an advisor actually CAUGHT, with a reason attached.
+  const catches = [...blocks, ...concerns];
 
   if (proposal?.tier === 'B') {
     return {
       allowed: false,
       reason: 'TIER B — a human decides this one. '
         + `Reasons: ${(proposal.tierReasons ?? []).join('; ')}. `
-        + 'Advisory votes do not clear a schema, production-data, authentication '
-        + 'or cross-project change.',
-      blocks, concerns, approvals, missing, counted: counted.length,
+        + 'No advisor can clear a schema, production-data, authentication or '
+        + 'cross-project change.',
+      blocks, concerns, approvals, silent, missing: silent, catches, counted: counted.length,
+      coverage: `${counted.length}/${required.length}`,
     };
   }
 
-  if (blocks.length > 0) {
+  // ONE CATCH IS ENOUGH. This is a tripwire, not a quorum — the whole point is
+  // that a single advisor spotting a real mistake stops it, without waiting for
+  // anyone to agree.
+  if (catches.length > 0) {
     return {
       allowed: false,
-      reason: `${blocks.length} advisor(s) said BLOCK: `
-        + blocks.map((b) => `${b.advisor} — ${b.reason}`).join(' | '),
-      blocks, concerns, approvals, missing, counted: counted.length,
+      reason: `CAUGHT by ${catches.map((c) => c.advisor).join(', ')}: `
+        + catches.map((c) => `${c.advisor} (${c.verdict}) — ${c.reason}`).join(' | '),
+      blocks, concerns, approvals, silent, missing: silent, catches, counted: counted.length,
+      coverage: `${counted.length}/${required.length}`,
     };
   }
 
-  if (missing.length > 0) {
-    // SILENCE IS NOT CONSENT. Named, not quietly excluded from the quorum.
-    return {
-      allowed: false,
-      reason: `no usable review from: ${missing.join(', ')}. `
-        + 'An advisor that did not answer has not approved anything.',
-      blocks, concerns, approvals, missing, counted: counted.length,
-    };
-  }
-
-  if (concerns.length > 0) {
-    return {
-      allowed: false,
-      reason: `${concerns.length} advisor(s) raised a concern: `
-        + concerns.map((c) => `${c.advisor} — ${c.reason}`).join(' | '),
-      blocks, concerns, approvals, missing, counted: counted.length,
-    };
-  }
-
+  // SILENCE IS NOT A VETO. An advisor that did not answer caught nothing, and
+  // work does not wait on it. It IS recorded as a gap in coverage, because
+  // "two advisors looked and found nothing" is a weaker statement than three,
+  // and the caller should be able to see which it got.
   return {
     allowed: true,
-    reason: `${approvals.length} advisor(s) approved with a stated reason, none blocked, none missing.`,
-    blocks, concerns, approvals, missing, counted: counted.length,
+    reason: counted.length === 0
+      ? 'No advisor was reachable. Nothing was caught, and nothing was checked — '
+        + `${silent.join(', ')} did not answer.`
+      : `${counted.length} advisor(s) looked and caught nothing`
+        + (silent.length > 0
+          ? `. NOT CHECKED BY: ${silent.join(', ')} — coverage was ${counted.length}/${required.length}, not full.`
+          : ' — all three checked it.'),
+    blocks, concerns, approvals, silent, missing: silent, catches, counted: counted.length,
+    coverage: `${counted.length}/${required.length}`,
   };
 }
