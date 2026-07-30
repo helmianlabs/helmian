@@ -366,7 +366,12 @@
 
     for (const block of pending) {
       const result = byId.get(block.id);
+      // Both, explicitly. A block can be dangerous, part-unchecked, both or
+      // neither, and resetting it means resetting whichever it currently is.
+      // clearWarning deliberately no longer clears the unchecked notice for it
+      // — see the note on it in content/ui.js.
       HelmionUI.clearWarning(block.element);
+      HelmionUI.clearUnchecked(block.element);
       state.dangerousIds.delete(block.id);
 
       // Lines the scanner could not examine. Not a match, and not a clean

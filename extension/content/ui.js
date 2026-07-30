@@ -54,6 +54,19 @@
 
   // ---------------------------------------------------------------- warnings
 
+  // Clears the RED WARNING and nothing else.
+  //
+  // It used to clear the amber "part of this block was not checked" notice as
+  // well, and that made the two impossible to have at once. warnBlock starts by
+  // calling this, so on a block that was both dangerous AND part-unchecked the
+  // notice was drawn by guard.js and then destroyed a line later, inside the
+  // same pass. The page showed a red panel, which reads as "I examined this
+  // block", over a block part of which nobody had examined.
+  //
+  // The two states are independent — a block can be either, both or neither —
+  // so their teardown is independent too. That is stronger than fixing the call
+  // order, which the next person to touch applyResults could undo without
+  // noticing. Whoever resets a block resets both, explicitly.
   function clearWarning(blockElement) {
     if (!blockElement) return;
     var id = blockElement.getAttribute('data-helmion-warning-id');
@@ -62,7 +75,6 @@
       if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
       blockElement.removeAttribute('data-helmion-warning-id');
     }
-    clearUnchecked(blockElement);
     blockElement.classList.remove(MASK_CLASS);
   }
 
