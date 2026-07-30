@@ -17,6 +17,8 @@
         'Get-HelmionDictationProcess'
         'Register-HelmionVoiceHotkey'
         'Unregister-HelmionVoiceHotkey'
+        'Start-HelmionConversation'
+        'Stop-HelmionConversation'
         'Get-HelmionVoiceStatus'
         'Get-HelmionVoiceHostPath'
         'Get-HelmionVoiceLogPath'

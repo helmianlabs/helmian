@@ -51,6 +51,7 @@ internal static class Program
                 "listen" => Listen(rest, typeIntoFocusedWindow: false),
                 "type" => Listen(rest, typeIntoFocusedWindow: true),
                 "hotkey" => Hotkey(rest),
+                "converse" => Converse(rest),
                 "transcribe" => Transcribe(rest),
                 "probe" => Probe(),
                 "selftest" => SelfTest(),
@@ -101,6 +102,15 @@ internal static class Program
                 $"helmion-voice speak: {endpoints.Warning ?? "TTS is not available."}");
             return ExitDegraded;
         }
+
+        // Raise the machine-wide speaking flag for the duration. A `converse`
+        // host is a DIFFERENT process and has no other way to know the speakers
+        // are live; without this it keeps capturing and transcribes this very
+        // sentence back into whatever Troy is typing in. See SpeechFloor.
+        //
+        // Claim can return null when the kernel object is unavailable. That costs
+        // echo suppression, never the voice itself, so it is not an error here.
+        using var floor = SpeechFloor.Claim(spoken);
 
         engine.Speak(spoken);
         return engine.State == VoiceState.Degraded ? ExitDegraded : ExitOk;
@@ -298,6 +308,273 @@ internal static class Program
         }
     }
 
+    // ---- converse ----------------------------------------------------------
+
+    /// <summary>How often the speaking flag is sampled, in milliseconds.</summary>
+    /// <remarks>
+    /// The flag is a kernel event, so a zero-timeout wait on it is cheap; 50 ms
+    /// costs nothing measurable and bounds how late capture resumes after a reply
+    /// to one poll interval. That interval lands ON TOP of the configured tail,
+    /// so the real gap after playback is the tail plus up to 50 ms — stated here
+    /// rather than hidden, because it means the effective default is 250-300 ms.
+    /// </remarks>
+    private const int FloorPollMs = 50;
+
+    /// <summary>
+    /// Continuous conversation. One key press starts it and one stops it; in
+    /// between, speak normally and each finished sentence is typed and submitted
+    /// by itself.
+    /// </summary>
+    /// <remarks>
+    /// HALF-DUPLEX. While a reply is playing, the microphone's frames are thrown
+    /// away, so Troy cannot interrupt mid-sentence — he has to let a reply finish.
+    /// That is the deliberate trade documented on ConversationTurnPolicy: real
+    /// barge-in needs acoustic echo cancellation or a full-duplex model, and this
+    /// machine has neither. What it buys is that the assistant stops transcribing
+    /// its own voice, which is the difference between the mode working and the
+    /// mode being unusable.
+    ///
+    /// Device state has exactly one writer. The hotkey callback and the recognizer
+    /// callback only ever flip flags; the poll loop below is the only code that
+    /// starts or pauses capture. Two threads racing to open and close a capture
+    /// device is how a microphone ends up dead with the UI still saying
+    /// "listening" (see WhisperSpeechRecognizer.cs:549-572 for the shape of that
+    /// bug when it happens by accident).
+    /// </remarks>
+    private static int Converse(string[] args)
+    {
+        var chordText = ValueOf(args, "--chord") ?? HotkeyChord.DefaultChord;
+        if (!HotkeyChord.TryParse(chordText, out var chord, out var parseError))
+        {
+            Console.Error.WriteLine($"helmion-voice converse: {parseError}");
+            return ExitUsage;
+        }
+
+        var tailMs = IntValueOf(args, "--tail-ms") ?? ConversationTurnPolicy.DefaultSuppressionTailMs;
+        var autoSend = !HasFlag(args, "--no-auto-send");
+
+        using var guard = SingleInstanceGuard.TryAcquire(out var busyReason);
+        if (guard is null)
+        {
+            HostLog.Status($"helmion-voice: {busyReason}");
+            return ExitAlreadyRunning;
+        }
+
+        using var listener = new GlobalHotkeyListener(chord);
+        if (!listener.TryRegister(out var registerError))
+        {
+            HostLog.Status($"helmion-voice converse: {registerError}");
+            return ExitFailed;
+        }
+
+        var typist = new DictationTypist(appendSpace: !HasFlag(args, "--no-space"));
+        var policy = new ConversationTurnPolicy(autoSend, tailMs);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        using var shutdown = new ShutdownSignal();
+        using var engine = new LocalVoiceEngine();
+        using var floorWatch = SpeechFloor.TryOpenForWatching();
+
+        engine.Error += (_, message) => HostLog.Status(message);
+
+        var lastForeground = IntPtr.Zero;
+        var conversing = false;
+
+        engine.SpeechRecognized += (_, transcript) =>
+        {
+            if (!Volatile.Read(ref conversing))
+            {
+                return;
+            }
+
+            var decision = policy.Evaluate(transcript, clock.ElapsedMilliseconds);
+
+            if (decision.Outcome == TurnOutcome.DroppedAsEcho)
+            {
+                // Logged rather than swallowed. A silently discarded utterance and
+                // a microphone that stopped working look identical from Troy's
+                // chair, and he needs to be able to tell them apart.
+                HostLog.Status($"helmion-voice: ignored \"{transcript}\" — {decision.Reason}.");
+                return;
+            }
+
+            if (decision.Outcome == TurnOutcome.Ignore)
+            {
+                return;
+            }
+
+            // Focus moved since the last chunk? Then the caret is no longer after
+            // our text and "scratch that" must not backspace through whatever is
+            // there now.
+            var foreground = KeyboardInjector.ForegroundWindow;
+            if (foreground != lastForeground)
+            {
+                typist.ForgetTypedHistory();
+                lastForeground = foreground;
+            }
+
+            // The typist stays the single source of keystrokes. It re-classifies
+            // the transcript through the same DictationCommands.Detect the policy
+            // used, so the two cannot disagree about what was said — and every
+            // destructive rule it enforces (the scratch bound above all) keeps
+            // applying here exactly as it does in press-to-talk dictation.
+            foreach (var action in typist.Translate(transcript))
+            {
+                if (action.Kind == DictationActionKind.StopDictation)
+                {
+                    Volatile.Write(ref conversing, false);
+                    HostLog.Status("helmion-voice: conversation OFF (heard \"stop dictation\").");
+                    return;
+                }
+
+                if (!KeyboardInjector.Perform(action))
+                {
+                    HostLog.Status(
+                        "helmion-voice: the OS refused the keystrokes. A window running as "
+                        + "administrator, or a secure desktop prompt, has focus.");
+                    return;
+                }
+            }
+
+            if (decision.Outcome != TurnOutcome.TypeAndSend)
+            {
+                return;
+            }
+
+            // The one line that makes this continuous rather than press-to-talk.
+            // Note what it is NOT: it is not reachable from a command, because the
+            // policy only ever returns TypeAndSend for literal speech.
+            if (KeyboardInjector.Perform(DictationAction.Press(DictationKeyChord.Enter)))
+            {
+                // Submitted. Those characters are no longer to the left of the
+                // caret, so "scratch that" must not try to erase them out of the
+                // next message.
+                typist.ForgetTypedHistory();
+            }
+        };
+
+        VoiceHostSignals.WritePidFile();
+        HostLog.Status(
+            $"helmion-voice: {chord.Display} starts and stops a conversation. Auto-send is "
+            + $"{(autoSend ? "ON" : "OFF")}; echo suppression holds the microphone closed while a "
+            + $"reply plays and for {policy.SuppressionTailMs} ms after. The microphone stays "
+            + "CLOSED until you press the key.");
+
+        // The single writer for capture state. Runs until shutdown.
+        var poller = new Thread(() => PollSpeechFloor(engine, policy, floorWatch, clock, shutdown, () => Volatile.Read(ref conversing)))
+        {
+            IsBackground = true,
+            Name = "helmion-voice speech floor",
+        };
+
+        try
+        {
+            poller.Start();
+
+            listener.Run(shutdown.Handle, () =>
+            {
+                var next = !Volatile.Read(ref conversing);
+                Volatile.Write(ref conversing, next);
+
+                if (next)
+                {
+                    typist.ForgetTypedHistory();
+                    HostLog.Status("helmion-voice: conversation ON — just talk.");
+                }
+                else
+                {
+                    HostLog.Status("helmion-voice: conversation OFF.");
+                }
+            });
+
+            return ExitOk;
+        }
+        finally
+        {
+            Volatile.Write(ref conversing, false);
+            poller.Join(TimeSpan.FromSeconds(2));
+            engine.StopDictation();
+            VoiceHostSignals.DeletePidFile();
+        }
+    }
+
+    /// <summary>
+    /// Track the machine-wide speaking flag and open or close the microphone to
+    /// match. The ONLY place capture is started or paused in conversation mode.
+    /// </summary>
+    private static void PollSpeechFloor(
+        LocalVoiceEngine engine,
+        ConversationTurnPolicy policy,
+        EventWaitHandle? floorWatch,
+        System.Diagnostics.Stopwatch clock,
+        ShutdownSignal shutdown,
+        Func<bool> isConversing)
+    {
+        var floorWasHeld = false;
+        var capturing = false;
+        var reportedStale = false;
+        var reportedMicFailure = false;
+
+        // WaitOne on the shutdown handle IS the sleep: it returns true the instant
+        // a stop is requested, so tearing down never waits out a poll interval.
+        while (!shutdown.Handle.WaitOne(FloorPollMs))
+        {
+            var now = clock.ElapsedMilliseconds;
+            var floorHeld = floorWatch is not null && floorWatch.WaitOne(0);
+
+            if (floorHeld && !floorWasHeld)
+            {
+                policy.NoteSpeechStarted(now);
+                reportedStale = false;
+            }
+            else if (!floorHeld && floorWasHeld)
+            {
+                // Read the words only now. The speaker wrote them before raising
+                // the flag, so by the time it drops they are certainly on disk.
+                policy.NoteSpeechFinished(now, SpeechFloor.ReadSpokenText());
+            }
+
+            floorWasHeld = floorHeld;
+
+            if (policy.IsSpeakingFlagStale(now) && !reportedStale)
+            {
+                reportedStale = true;
+                HostLog.Status(
+                    "helmion-voice: the speaking flag has been set for minutes, which means a "
+                    + "speak process was killed mid-playback. Ignoring it and listening again.");
+            }
+
+            var shouldCapture = isConversing() && !policy.IsSuppressed(now);
+            if (shouldCapture == capturing)
+            {
+                continue;
+            }
+
+            if (shouldCapture)
+            {
+                engine.StartDictation();
+                capturing = engine.IsDictationRunning;
+
+                if (!capturing && !reportedMicFailure)
+                {
+                    reportedMicFailure = true;
+                    HostLog.Status("helmion-voice: the microphone could not be opened.");
+                }
+                else if (capturing)
+                {
+                    reportedMicFailure = false;
+                }
+
+                continue;
+            }
+
+            // Pause rather than stop: the device stays open, so resuming after a
+            // reply is instant and does not re-run device acquisition every turn.
+            engine.PauseDictation();
+            capturing = false;
+        }
+    }
+
     // ---- transcribe / probe / selftest -------------------------------------
 
     private static int Transcribe(string[] args)
@@ -457,6 +734,14 @@ internal static class Program
         return null;
     }
 
+    /// <summary>
+    /// Read a numeric option. A missing or unparseable value yields null so the
+    /// caller falls back to its default — a typo in --tail-ms must not take the
+    /// microphone down, and a zero tail would silently disable echo suppression.
+    /// </summary>
+    private static int? IntValueOf(string[] args, string name) =>
+        int.TryParse(ValueOf(args, name), out var value) ? value : null;
+
     private static int UnknownVerb(string verb)
     {
         Console.Error.WriteLine($"helmion-voice: unknown command '{verb}'.");
@@ -475,6 +760,10 @@ internal static class Program
               type   [--no-space]             Dictate into whatever window has focus.
               hotkey [--chord "ctrl+shift+alt+h"] [--no-space]
                                               Hold a global hotkey that toggles `type`.
+              converse [--chord "..."] [--tail-ms 250] [--no-auto-send] [--no-space]
+                                              Continuous conversation: one key press starts it,
+                                              each finished sentence submits by itself, and the
+                                              microphone is closed while a reply is playing.
               transcribe <file.wav>           Transcribe an existing WAV.
               probe                           Report readiness. Makes no sound.
               selftest                        Synthesize, transcribe, compare. Makes no sound.
@@ -482,6 +771,12 @@ internal static class Program
             Dictation commands, spoken as the whole utterance:
               "new line"      insert a line break        "send it"        submit
               "scratch that"  erase the last chunk       "stop dictation" finish
+
+            In `converse`, speech submits on its own and "send it" is no longer required
+            (it still works). "new line" holds auto-send until you say "send it", so a
+            multi-line message is still possible. Commands are never submitted as text.
+
+            `converse` is HALF-duplex: you cannot interrupt a reply while it is playing.
 
             On any command:
               --quiet                         Write no status to the console.
