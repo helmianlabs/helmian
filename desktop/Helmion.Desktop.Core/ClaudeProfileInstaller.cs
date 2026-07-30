@@ -119,6 +119,19 @@ public static class ClaudeProfileInstaller
     {
         var claudeDir = targetDirectory ?? ClaudeDir;
         var sourceDir = carryForwardFrom ?? ClaudeDir;
+
+        // A NET UNDER THE GUARDS, taken before anything below runs.
+        //
+        // The guards in this file are correct and they are guards on ONE code
+        // path. These three files have been destroyed three times and the fourth
+        // loss went unnoticed for days. So a dated copy is taken first, every
+        // time, and the next regression — here, or in a script, or in something
+        // nobody has written yet — costs a restore instead of the work.
+        //
+        // Content-addressed, so repeated runs do not fill the disk, and it never
+        // throws: a backup that takes the installer down with it is worse than no
+        // backup.
+        LivingDocumentVault.Snapshot(claudeDir);
         if (targetDirectory is null && !IsClaudePresent())
         {
             return new InstallResult(false, "~/.claude directory not found. Install Claude Code first.", []);
