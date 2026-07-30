@@ -53,6 +53,15 @@ public static class ClaudeProfileInstaller
     /// <summary>True when Helmion must never author over this path.</summary>
     public static bool IsLivingDocument(string relPath) => LivingDocuments.Contains(relPath);
 
+    /// <summary>
+    /// The shipped starter text for a template path, or null if the path is not
+    /// one Helmion ships. Exposed so a caller — and the smoke suite — can tell a
+    /// real document apart from the blank template that once replaced it.
+    /// </summary>
+    public static string? TemplateFor(string relPath) => TemplateFiles()
+        .FirstOrDefault(entry => string.Equals(entry.RelPath, relPath, StringComparison.OrdinalIgnoreCase))
+        .Content;
+
     /// <summary>Returns true if the ~/.claude directory exists (Claude Code is installed).</summary>
     public static bool IsClaudePresent() => Directory.Exists(ClaudeDir);
 
@@ -121,6 +130,7 @@ public static class ClaudeProfileInstaller
         var skipped = new List<string>();
         var preserved = new List<string>();
         var carriedForward = new List<string>();
+        var restored = new List<string>();
 
         foreach (var (relPath, content) in TemplateFiles())
         {
@@ -166,6 +176,30 @@ public static class ClaudeProfileInstaller
                     payload = carried;
                     carriedForward.Add(relPath);
                 }
+                else
+                {
+                    // THE LAST WAY THIS BUTTON COULD STILL DESTROY HIS WRITING.
+                    //
+                    // The preserve guard above is nested inside File.Exists, so a
+                    // living document that is MISSING gets no protection at all and
+                    // lands here, where the template would be written straight over
+                    // its path. On a genuinely new machine that is correct — it is
+                    // seeding. After a deletion it is a silent stub that looks
+                    // exactly like a successful restore, which is the failure that
+                    // cost him three days: BASE_RULES.md came back as 1,635 bytes of
+                    // shipped starter text and nothing said so.
+                    //
+                    // A backup sitting beside the path is proof the file existed and
+                    // is now gone. That is a loss to be recovered from, not a fresh
+                    // machine to be seeded — so recover, and never from a copy that
+                    // is itself the template.
+                    var rescued = await TryRescueFromBackupAsync(relPath, claudeDir, content, cancellationToken);
+                    if (rescued is not null)
+                    {
+                        payload = rescued.Value.Content;
+                        restored.Add($"{relPath} (from {rescued.Value.BackupName})");
+                    }
+                }
             }
 
             await File.WriteAllTextAsync(targetPath, payload, cancellationToken);
@@ -173,6 +207,13 @@ public static class ClaudeProfileInstaller
         }
 
         var message = $"Installed {written.Count} files. Skipped {skipped.Count}.";
+        if (restored.Count > 0)
+        {
+            // Said out loud, because the whole point is that a silent stub used to
+            // be indistinguishable from a successful restore.
+            message += $" RECOVERED {restored.Count} missing document(s) from backup instead of "
+                + $"seeding a blank template: {string.Join(", ", restored)}.";
+        }
         if (carriedForward.Count > 0)
         {
             message += $" Copied {carriedForward.Count} existing document(s) forward unchanged: "
@@ -223,6 +264,83 @@ public static class ClaudeProfileInstaller
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Recovers a living document that has gone MISSING, from the newest backup
+    /// beside it that is not itself a template.
+    ///
+    /// WHY IT REFUSES A TEMPLATE-SHAPED BACKUP. The failure this exists to stop
+    /// produced its own backups. On 2026-07-29 the button wrote 1,635 bytes of
+    /// shipped starter text over BASE_RULES.md and left
+    /// <c>BASE_RULES.STUB-20260729-162821.bak</c> beside it — a backup whose
+    /// contents are the template. Restoring from that would launder the original
+    /// loss into something that looks like a recovery, so any candidate matching
+    /// the shipped template byte-for-byte (ignoring surrounding whitespace and
+    /// line endings, which differ between a compiled constant and a file on disk)
+    /// is skipped.
+    ///
+    /// Newest-real wins, not largest: size is a proxy, mtime is the fact.
+    ///
+    /// Returns null when there is nothing to recover — no backups, or every
+    /// backup is a template or empty — in which case the caller seeds the
+    /// template, which for a genuinely new machine is the right answer.
+    /// </summary>
+    private static async Task<(string Content, string BackupName)?> TryRescueFromBackupAsync(
+        string relPath,
+        string claudeDir,
+        string templateContent,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var stem = Path.GetFileNameWithoutExtension(relPath);
+            if (string.IsNullOrEmpty(stem)) return null;
+
+            // Covers both shapes seen on disk: NAME.md.<stamp>.bak and
+            // NAME.STUB-<stamp>.bak.
+            var candidates = Directory
+                .EnumerateFiles(claudeDir, $"{stem}*.bak", SearchOption.TopDirectoryOnly)
+                .Select(path => new FileInfo(path))
+                .OrderByDescending(info => info.LastWriteTimeUtc)
+                .ToList();
+
+            var normalizedTemplate = Normalize(templateContent);
+
+            foreach (var candidate in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string body;
+                try
+                {
+                    body = await File.ReadAllTextAsync(candidate.FullName, cancellationToken);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception) { continue; }
+
+                if (string.IsNullOrWhiteSpace(body)) continue;
+                if (Normalize(body) == normalizedTemplate) continue;
+
+                return (body, candidate.Name);
+            }
+
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // Recovery is best-effort. A failure here must never abort the install
+            // and must never write a partial file — the caller falls back to the
+            // template, which is the pre-existing behaviour.
+            return null;
+        }
+
+        static string Normalize(string text) =>
+            text.Replace("\r\n", "\n").Trim();
     }
 
     // ── Template content ───────────────────────────────────────────────────────
