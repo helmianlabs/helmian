@@ -95,6 +95,11 @@ public partial class MainWindow : Window
                 _ =>
                     $"Read-only chat · Maestro={maestro} · no tools until you raise permissions."
             };
+
+            // The permission mode is this window's own execution posture and the one
+            // execution-side fact it genuinely knows. Full permissions gets a red,
+            // pulsing card.
+            PublishPermissionPostureCard();
         }
         catch
         {
@@ -174,6 +179,15 @@ public partial class MainWindow : Window
 
         ConsoleApprovalPanel.Visibility = Visibility.Visible;
 
+        // Mirror the same question into the always-visible guard panel with inline
+        // A/B/C options, wired to this same CompleteApproval. Answering from the panel
+        // and answering from the strip below the console do the identical thing.
+        PublishApprovalCard(
+            tool,
+            request.Summary ?? tool,
+            request.Workspace ?? "?",
+            seconds);
+
         // Focus used to jump to "Allow once" unconditionally. Two problems with
         // that: it eats the characters of whoever was mid-sentence in the
         // composer, and the next stray Space or Enter APPROVES a tool call the
@@ -224,6 +238,7 @@ public partial class MainWindow : Window
         _pendingApproval = null;
         _pendingApprovalId = null;
         HideApprovalPanel();
+        ResolveApprovalCard(string.Empty);
         pending?.TrySetResult(string.Empty);
     }
 
@@ -241,6 +256,7 @@ public partial class MainWindow : Window
         _pendingApproval = null;
         _pendingApprovalId = null;
         HideApprovalPanel();
+        ResolveApprovalCard(decision);
         pending?.TrySetResult(decision);
     }
 
@@ -282,10 +298,11 @@ public partial class MainWindow : Window
 
     private void UpdateSnapshot()
     {
+        PilotSnapshot snapshot;
         try
         {
             var settings = EnvironmentSettingsStore.Load();
-            DataContext = PilotSnapshot.CreateLive(
+            snapshot = PilotSnapshot.CreateLive(
                 _serviceConnected,
                 _currentWorkspaceInspection,
                 settings.DatabaseUrl ?? "",
@@ -295,7 +312,7 @@ public partial class MainWindow : Window
         }
         catch
         {
-            DataContext = PilotSnapshot.CreateLive(
+            snapshot = PilotSnapshot.CreateLive(
                 _serviceConnected,
                 _currentWorkspaceInspection,
                 "",
@@ -303,6 +320,12 @@ public partial class MainWindow : Window
                 "",
                 "Codex");
         }
+
+        DataContext = snapshot;
+        // Every count and badge that used to be a hardcoded literal is set from this
+        // snapshot, in one place, so a label can never describe a state the snapshot
+        // does not hold. See MainWindow.GuardPanel.cs.
+        ApplyDerivedSnapshotLabels(snapshot);
         UpdateConsoleExecutionState();
     }
 
@@ -319,6 +342,8 @@ public partial class MainWindow : Window
         _serviceConnector = LocalServiceHost.Connector;
 
         InitializeComponent();
+        // Before the first UpdateSnapshot: the derived labels read the feed.
+        InitializeGuardPanel();
         SetServiceStatus("Starting…", "Waiting for local loopback service", connected: false);
         UpdateSnapshot();
         ThemeSelector.ItemsSource = ColorThemeCatalog.All;
@@ -1388,8 +1413,17 @@ public partial class MainWindow : Window
         WorkspaceLeaseDetailText.Text = inspection.Lease.Detail;
         WorkspaceCountText.Text = "1";
         WorkspaceMetricDetail.Text = inspection.ProjectName;
-        LeaseMetricText.Text = "Unknown";
-        LeaseMetricDetail.Text = "Durable state not queried";
+        // 2026-07-29: these two used to be overwritten with the literals "Unknown" and
+        // "Durable state not queried" immediately after the bindings had been given the
+        // real values — so the card could never show the lease even once the lease
+        // existed. The real status now comes from LeaseInspector via the snapshot, and
+        // ApplyLeasePosture colours it.
+        LeaseMetricText.Text = inspection.Lease.Status;
+        LeaseMetricDetail.Text = inspection.Lease.Detail;
+
+        // Re-read the block ledger and the lease for this workspace. On demand, here —
+        // not on a timer.
+        RefreshGuardFeedFromDisk(inspection);
 
         MigrationInventoryList.ItemsSource = inspection.Migrations;
         MigrationInventoryState.Text = inspection.MigrationStateLabel;
@@ -1413,6 +1447,7 @@ public partial class MainWindow : Window
         LocalServiceDot.Fill = connected
             ? (Brush)FindResource("AccentBrush")
             : (Brush)FindResource("AmberBrush");
+        PublishServicePostureCard();
     }
     private async void ConsoleSendButton_Click(object sender, RoutedEventArgs e)
     {

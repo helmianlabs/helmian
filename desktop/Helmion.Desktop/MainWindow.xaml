@@ -1,6 +1,7 @@
 <Window x:Class="Helmion.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Helmion.Desktop"
         Title="Helmion Personal Pilot"
         Width="1440"
         Height="900"
@@ -14,6 +15,12 @@
         UseLayoutRounding="True"
         PreviewKeyDown="MainWindow_PreviewKeyDown">
   <Window.Resources>
+    <!-- Declared first: StaticResource cannot resolve forward references inside
+         the same dictionary. See GuardValueConverters.cs. -->
+    <local:GuardTrueToVisibleConverter x:Key="GuardBoolHides" />
+    <local:GuardNonZeroToVisibleConverter x:Key="GuardZeroHides" />
+    <local:GuardInvertBooleanConverter x:Key="GuardBoolInvert" />
+
     <Style x:Key="NavButtonStyle" TargetType="Button">
       <Setter Property="Height" Value="48" />
       <Setter Property="Margin" Value="0,3" />
@@ -123,15 +130,22 @@
                      Style="{StaticResource MutedStyle}"
                      Margin="0,4,18,0" />
         </StackPanel>
-        <Border Grid.Column="2"
-                Style="{StaticResource PillStyle}"
-                Padding="8,3"
-                VerticalAlignment="Top">
-          <TextBlock Text="{Binding Kind}"
-                     Foreground="{DynamicResource AccentBrush}"
-                     FontSize="10"
-                     FontWeight="Bold" />
-        </Border>
+        <StackPanel Grid.Column="2" VerticalAlignment="Top">
+          <Border Style="{StaticResource PillStyle}" Padding="8,3">
+            <TextBlock Text="{Binding Kind}"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontSize="10"
+                       FontWeight="Bold" />
+          </Border>
+          <!-- 2026-07-29: ActivityEvidence.IsDemo existed and no xaml read it, while
+               the card above this list printed "LIVE" over every row. Bound now. -->
+          <TextBlock Text="{Binding ProvenanceLabel}"
+                     Foreground="{DynamicResource MutedTextBrush}"
+                     FontSize="9"
+                     FontWeight="Bold"
+                     HorizontalAlignment="Right"
+                     Margin="0,4,0,0" />
+        </StackPanel>
       </Grid>
     </DataTemplate>
 
@@ -154,10 +168,15 @@
                        Foreground="{DynamicResource AccentBrush}"
                        FontSize="11"
                        FontWeight="Bold" />
-            <TextBlock Text="LIVE EVENT"
+            <!-- 2026-07-29: was the literal "LIVE EVENT" on every row, while
+                 OrchestrationEvent.IsDemo and .IsEvidenceBacked existed in the model
+                 and NO xaml read either one. Now bound: a demo row says DEMO EVENT,
+                 and a live row with nothing linked says NO EVIDENCE LINK. -->
+            <TextBlock Text="{Binding ProvenanceLabel}"
                        Foreground="{DynamicResource AccentBrush}"
                        FontSize="9"
                        FontWeight="Bold"
+                       TextWrapping="Wrap"
                        Margin="0,5,0,0" />
           </StackPanel>
           <StackPanel Grid.Column="2" Margin="0,0,22,0">
@@ -220,7 +239,9 @@
                        Foreground="{DynamicResource AccentBrush}"
                        FontSize="15"
                        FontWeight="Bold" />
-            <TextBlock Text="LIVE"
+            <!-- 2026-07-29: was the literal "LIVE" on every handoff row while
+                 HandoffEvidence.IsDemo went unread. -->
+            <TextBlock Text="{Binding ProvenanceLabel}"
                        Foreground="{DynamicResource AccentBrush}"
                        FontSize="10"
                        FontWeight="Bold"
@@ -270,7 +291,10 @@
                            FontSize="10"
                            FontWeight="Bold" />
               </Border>
-              <TextBlock Text="PENDING APPROVAL"
+              <!-- 2026-07-29: was the literal "PENDING APPROVAL" on every row, while
+                   ApprovalPreview.IsActionable and .IsDemo were bound by nothing. A
+                   row nobody can act on now says PREVIEW ONLY · NOT ACTIONABLE. -->
+              <TextBlock Text="{Binding ProvenanceLabel}"
                          Foreground="{DynamicResource MutedTextBrush}"
                          FontSize="10"
                          FontWeight="Bold"
@@ -298,7 +322,7 @@
                   Padding="14,9"
                   VerticalAlignment="Center"
                   Margin="24,0,0,0">
-            <TextBlock Text="Preview only"
+            <TextBlock Text="{Binding ActionabilityLabel}"
                        Foreground="{DynamicResource MutedTextBrush}"
                        FontWeight="SemiBold"
                        FontSize="12" />
@@ -544,12 +568,417 @@
         </Grid>
       </Border>
     </DataTemplate>
+
+    <!--
+      ================================================================
+      GUARD FEED  ·  the escalating side panel
+      ================================================================
+      A DASHBOARD, NOT A DETECTOR. Every card rendered below was handed to
+      GuardFeed by something that already existed: the browser pattern match and
+      the execution guard (through the block ledger at
+      <workspace>\.helmion\audit\blocks-YYYY-MM-DD.jsonl, written by
+      src/core/audit-log.mjs), the real write lease (src/core/lease.mjs via
+      LeaseInspector.cs), and the local named-pipe service. Nothing here invents a
+      finding, and nothing here shows green for a state it could not compute.
+
+      COLOUR IS NEVER THE ONLY CHANNEL. Every card carries, in addition to its
+      colour: the level as a word (UNKNOWN / OK / WARNING / CRITICAL), an icon
+      (? / ✓ / ! / ✖), a state sentence that names the motion in words
+      ("escalating toward critical"), and the reason with the threshold number in
+      it. Turn the colour and the motion off entirely and the card still reads.
+
+      THE SAFETY PALETTE IS FIXED, NOT THEMED. A red that becomes a different red
+      when the user picks another colour theme is a red somebody can mis-learn.
+      These five brushes are the same in every theme, and their ink colours are
+      chosen against their own fill rather than against the page.
+    -->
+    <SolidColorBrush x:Key="GuardUnknownBrush" Color="#7A8290" />
+    <SolidColorBrush x:Key="GuardUnknownInkBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="GuardNormalBrush" Color="#55606E" />
+    <SolidColorBrush x:Key="GuardNormalInkBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="GuardWarningBrush" Color="#D8A013" />
+    <SolidColorBrush x:Key="GuardWarningInkBrush" Color="#1C1403" />
+    <SolidColorBrush x:Key="GuardCriticalBrush" Color="#C62828" />
+    <SolidColorBrush x:Key="GuardCriticalInkBrush" Color="#FFFFFF" />
+
+    <!-- The level chip's fill. Unknown is the default, so a binding that fails
+         renders grey and says UNKNOWN rather than inheriting a confident colour. -->
+    <Style x:Key="GuardChipStyle" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource GuardUnknownBrush}" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Padding" Value="7,2" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Normal">
+          <Setter Property="Background" Value="{StaticResource GuardNormalBrush}" />
+        </DataTrigger>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Warning">
+          <Setter Property="Background" Value="{StaticResource GuardWarningBrush}" />
+        </DataTrigger>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Critical">
+          <Setter Property="Background" Value="{StaticResource GuardCriticalBrush}" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GuardChipTextStyle" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource GuardUnknownInkBrush}" />
+      <Setter Property="FontSize" Value="10" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Warning">
+          <Setter Property="Foreground" Value="{StaticResource GuardWarningInkBrush}" />
+        </DataTrigger>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Critical">
+          <Setter Property="Foreground" Value="{StaticResource GuardCriticalInkBrush}" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- The 4px edge bar: a second colour channel, and a shape an assistive
+         reader can be told about. Unknown is dashed so it differs from Normal by
+         more than a shade of grey. -->
+    <Style x:Key="GuardEdgeBarStyle" TargetType="Border">
+      <Setter Property="Width" Value="4" />
+      <Setter Property="CornerRadius" Value="2" />
+      <Setter Property="Background" Value="{StaticResource GuardUnknownBrush}" />
+      <Setter Property="Opacity" Value="0.55" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Normal">
+          <Setter Property="Background" Value="{StaticResource GuardNormalBrush}" />
+          <Setter Property="Opacity" Value="1" />
+        </DataTrigger>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Warning">
+          <Setter Property="Background" Value="{StaticResource GuardWarningBrush}" />
+          <Setter Property="Opacity" Value="1" />
+        </DataTrigger>
+        <DataTrigger Binding="{Binding LevelKey}" Value="Critical">
+          <Setter Property="Background" Value="{StaticResource GuardCriticalBrush}" />
+          <Setter Property="Opacity" Value="1" />
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <!--
+      THE PULSE. Driven by AnimatePulse, which is ShouldPulse AND the OS allows
+      motion (GuardFeed.AnimationsEnabled ← SystemParameters.ClientAreaAnimation).
+      ShouldPulse stays true when motion is suppressed, so the words on the card
+      still say "escalating" — the escalation is never carried by movement alone.
+
+      0.55s each way is roughly 0.9 Hz, deliberately far below the 3 Hz
+      photosensitivity ceiling, and it animates opacity only: nothing moves
+      position, nothing resizes, and no text ever fades below 0.45.
+    -->
+    <Style x:Key="GuardPulseStyle" TargetType="Border">
+      <Setter Property="Opacity" Value="1" />
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding AnimatePulse}" Value="True">
+          <DataTrigger.EnterActions>
+            <BeginStoryboard Name="GuardPulseRun">
+              <Storyboard>
+                <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                 From="1.0"
+                                 To="0.45"
+                                 Duration="0:0:0.55"
+                                 AutoReverse="True"
+                                 RepeatBehavior="Forever"
+                                 FillBehavior="Stop" />
+              </Storyboard>
+            </BeginStoryboard>
+          </DataTrigger.EnterActions>
+          <DataTrigger.ExitActions>
+            <StopStoryboard BeginStoryboardName="GuardPulseRun" />
+          </DataTrigger.ExitActions>
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GuardOptionButtonStyle" TargetType="Button">
+      <Setter Property="Background" Value="{DynamicResource PanelSubtleBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="9,6" />
+      <Setter Property="Margin" Value="0,0,0,5" />
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="OptionChrome"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{DynamicResource StrokeBrush}"
+                    BorderThickness="1"
+                    CornerRadius="7"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="OptionChrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="OptionChrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="OptionChrome" Property="BorderThickness" Value="2" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="GuardFooterButtonStyle" TargetType="Button" BasedOn="{StaticResource GuardOptionButtonStyle}">
+      <Setter Property="Margin" Value="0,0,0,6" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontSize" Value="11" />
+    </Style>
+
+    <DataTemplate x:Key="GuardOptionTemplate">
+      <Button Style="{StaticResource GuardOptionButtonStyle}"
+              Tag="{Binding}"
+              Click="GuardOption_Click"
+              ToolTip="{Binding Detail}">
+        <Button.CommandParameter>
+          <Binding RelativeSource="{RelativeSource AncestorType=ItemsControl}" Path="Tag" />
+        </Button.CommandParameter>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="26" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Background="{DynamicResource AccentPanelBrush}"
+                  BorderBrush="{DynamicResource AccentStrokeBrush}"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="0,1"
+                  VerticalAlignment="Top">
+            <TextBlock Text="{Binding Key}"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontWeight="Bold"
+                       FontSize="11"
+                       HorizontalAlignment="Center" />
+          </Border>
+          <StackPanel Grid.Column="1" Margin="8,0,0,0">
+            <TextBlock Text="{Binding Label}"
+                       Foreground="{DynamicResource TextBrush}"
+                       FontSize="12"
+                       FontWeight="SemiBold"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="{Binding Detail}"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       Margin="0,2,0,0" />
+          </StackPanel>
+        </Grid>
+      </Button>
+    </DataTemplate>
+
+    <DataTemplate x:Key="GuardTabTemplate">
+      <Button Tag="{Binding Name}"
+              Click="GuardTab_Click"
+              Margin="0,0,5,5"
+              Padding="9,4"
+              Cursor="Hand"
+              BorderThickness="0"
+              Background="Transparent">
+        <Button.Template>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="TabChrome"
+                    Background="{DynamicResource PanelSubtleBrush}"
+                    BorderBrush="{DynamicResource StrokeBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter />
+            </Border>
+            <ControlTemplate.Triggers>
+              <DataTrigger Binding="{Binding IsActive}" Value="True">
+                <Setter TargetName="TabChrome" Property="Background" Value="{DynamicResource AccentPanelBrush}" />
+                <Setter TargetName="TabChrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+              </DataTrigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="TabChrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Button.Template>
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="{Binding Label}"
+                     Foreground="{DynamicResource TextBrush}"
+                     FontSize="11"
+                     FontWeight="SemiBold" />
+          <!-- Counts per level, so the tab strip is not a single opaque badge. -->
+          <TextBlock Text="{Binding Criticals, StringFormat=✖{0}}"
+                     Foreground="{StaticResource GuardCriticalBrush}"
+                     FontSize="10"
+                     FontWeight="Bold"
+                     Margin="6,0,0,0"
+                     Visibility="{Binding Criticals, Converter={StaticResource GuardZeroHides}}" />
+          <TextBlock Text="{Binding Warnings, StringFormat=!{0}}"
+                     Foreground="{StaticResource GuardWarningBrush}"
+                     FontSize="10"
+                     FontWeight="Bold"
+                     Margin="5,0,0,0"
+                     Visibility="{Binding Warnings, Converter={StaticResource GuardZeroHides}}" />
+          <TextBlock Text="{Binding Unknowns, StringFormat=?{0}}"
+                     Foreground="{StaticResource GuardUnknownBrush}"
+                     FontSize="10"
+                     FontWeight="Bold"
+                     Margin="5,0,0,0"
+                     Visibility="{Binding Unknowns, Converter={StaticResource GuardZeroHides}}" />
+        </StackPanel>
+      </Button>
+    </DataTemplate>
+
+    <!--
+      THE CARD. Dynamically sized: a one-line flag is compact, and a card carrying
+      options grows to render them clickable inline (HasOptions drives both the
+      detail's height cap and the options panel's visibility), so a decision can be
+      answered from the panel without leaving the console.
+    -->
+    <DataTemplate x:Key="GuardCardTemplate">
+      <Border Background="{DynamicResource SurfaceBrush}"
+              BorderBrush="{DynamicResource StrokeBrush}"
+              BorderThickness="1"
+              CornerRadius="10"
+              Padding="10"
+              Margin="0,0,0,7">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Border Style="{StaticResource GuardEdgeBarStyle}" Margin="0,0,9,0" />
+          <StackPanel Grid.Column="1">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <!-- The chip is the only thing that pulses. -->
+              <Border Style="{StaticResource GuardPulseStyle}">
+                <Border Style="{StaticResource GuardChipStyle}">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Icon}"
+                               Style="{StaticResource GuardChipTextStyle}"
+                               Margin="0,0,5,0" />
+                    <TextBlock Text="{Binding LevelText}"
+                               Style="{StaticResource GuardChipTextStyle}" />
+                  </StackPanel>
+                </Border>
+              </Border>
+              <TextBlock Grid.Column="1"
+                         Text="{Binding OccurrenceText}"
+                         Foreground="{DynamicResource MutedTextBrush}"
+                         FontSize="10"
+                         FontWeight="Bold"
+                         VerticalAlignment="Center"
+                         Margin="7,0,0,0" />
+              <TextBlock Grid.Column="2"
+                         Text="{Binding TimeText}"
+                         Foreground="{DynamicResource FaintTextBrush}"
+                         FontFamily="Consolas"
+                         FontSize="10"
+                         VerticalAlignment="Center" />
+            </Grid>
+            <TextBlock Text="{Binding Title}"
+                       Foreground="{DynamicResource TextBrush}"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       TextWrapping="Wrap"
+                       Margin="0,7,0,0" />
+            <TextBlock Text="{Binding OriginText}"
+                       Foreground="{DynamicResource FaintTextBrush}"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       Margin="0,3,0,0" />
+            <!-- Level and motion in words. This is what carries the escalation when
+                 colour is unavailable or reduced motion is on. -->
+            <TextBlock Text="{Binding StateText}"
+                       Foreground="{DynamicResource SoftTextBrush}"
+                       FontSize="11"
+                       FontWeight="SemiBold"
+                       TextWrapping="Wrap"
+                       Margin="0,5,0,0" />
+            <TextBlock Text="{Binding Detail}"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Margin="0,5,0,0">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                  <!-- Compact: two lines, trimmed. This is the "small" card. -->
+                  <Setter Property="MaxHeight" Value="32" />
+                  <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding HasOptions}" Value="True">
+                      <Setter Property="MaxHeight" Value="240" />
+                      <Setter Property="TextTrimming" Value="None" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
+            <!-- The threshold that fired, with its number in it. -->
+            <TextBlock Text="{Binding Reason}"
+                       Foreground="{DynamicResource FaintTextBrush}"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       Margin="0,5,0,0" />
+            <StackPanel Margin="0,9,0,0"
+                        Visibility="{Binding HasOptions, Converter={StaticResource GuardBoolHides}}">
+              <TextBlock Text="CHOOSE ONE"
+                         Foreground="{DynamicResource FaintTextBrush}"
+                         FontSize="9"
+                         FontWeight="Bold"
+                         Margin="0,0,0,5" />
+              <ItemsControl ItemsSource="{Binding Options}"
+                            Tag="{Binding}"
+                            ItemTemplate="{StaticResource GuardOptionTemplate}" />
+              <!-- A card whose options nothing would act on says so rather than
+                   offering a button that quietly does nothing. -->
+              <TextBlock Text="No handler is registered for these options in this build, so clicking one records the choice on this card and does nothing else."
+                         Foreground="{StaticResource GuardWarningBrush}"
+                         FontSize="10"
+                         TextWrapping="Wrap"
+                         Visibility="{Binding OptionsAreInert, Converter={StaticResource GuardBoolHides}}" />
+            </StackPanel>
+            <Grid Margin="0,8,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="{Binding AcknowledgementText}"
+                         Foreground="{DynamicResource FaintTextBrush}"
+                         FontSize="10"
+                         VerticalAlignment="Center"
+                         TextWrapping="Wrap" />
+              <Button Grid.Column="1"
+                      Content="Acknowledge"
+                      Tag="{Binding}"
+                      Click="GuardAcknowledge_Click"
+                      Style="{StaticResource GuardOptionButtonStyle}"
+                      Padding="8,3"
+                      Margin="8,0,0,0"
+                      FontSize="10"
+                      IsEnabled="{Binding IsAcknowledged, Converter={StaticResource GuardBoolInvert}}" />
+            </Grid>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </DataTemplate>
   </Window.Resources>
 
   <Grid>
     <Grid.ColumnDefinitions>
       <ColumnDefinition x:Name="SidebarColumn" Width="248" />
       <ColumnDefinition Width="*" />
+      <!-- The guard feed. A fixed third column rather than a flyout, because Troy
+           asked for a persistent, always-visible feed — not a badge count you have
+           to go and open. It sits outside ContentHost so every page has it. -->
+      <ColumnDefinition x:Name="GuardPanelColumn" Width="336" MinWidth="300" />
     </Grid.ColumnDefinitions>
 
     <Border x:Name="SidebarChrome"
@@ -816,7 +1245,15 @@
                         <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
                       <TextBlock Text="Local guardrails" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" />
-                      <TextBlock Grid.Column="1" Text="Ready" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" />
+                      <!-- 2026-07-29: was the literal "Ready" in accent green, with no
+                           x:Name, so nothing could ever change it. Now driven from the
+                           guard feed's headline level, and it reads "Unknown" in grey
+                           until a detection layer has actually reported. -->
+                      <TextBlock x:Name="OverviewGuardrailStateText"
+                                 Grid.Column="1"
+                                 Text="Unknown"
+                                 Foreground="{StaticResource GuardUnknownBrush}"
+                                 FontWeight="SemiBold" />
                     </Grid>
                     <Grid Margin="0,12,0,0">
                       <Grid.ColumnDefinitions>
@@ -857,22 +1294,37 @@
               <Border Style="{StaticResource CardStyle}" Margin="0,0,12,0">
                 <StackPanel>
                   <TextBlock Text="WORKSPACES" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
-                  <TextBlock x:Name="WorkspaceCountText" Text="1" FontSize="28" FontWeight="SemiBold" Margin="0,10,0,0" />
-                  <TextBlock x:Name="WorkspaceMetricDetail" Text="Helmion · local pilot" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                  <!-- 2026-07-29: shipped reading "1" and "Helmion · local pilot"
+                       before any workspace had been registered. Zero registered
+                       workspaces now reads 0. -->
+                  <TextBlock x:Name="WorkspaceCountText" Text="0" FontSize="28" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock x:Name="WorkspaceMetricDetail" Text="None registered yet" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
                 </StackPanel>
               </Border>
               <Border Style="{StaticResource CardStyle}" Margin="6,0">
                 <StackPanel>
                   <TextBlock Text="LEASE POSTURE" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
-                  <TextBlock x:Name="LeaseMetricText" Text="{Binding Workspace.LeaseHolder}" Foreground="{DynamicResource AccentBrush}" FontSize="25" FontWeight="SemiBold" Margin="0,10,0,0" />
-                  <TextBlock x:Name="LeaseMetricDetail" Text="{Binding Workspace.LeaseState}" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                  <!-- 2026-07-29: these two were crossed over — LeaseHolder held the
+                       LABEL and LeaseState held the DETAIL — and painted in the accent
+                       colour whatever the state was. They now show the real status
+                       word from src/core/lease.mjs (ACTIVE / STALE / NONE / UNREADABLE
+                       / UNKNOWN) and its detail, and the colour is set from the status
+                       in ApplyLeasePosture. -->
+                  <TextBlock x:Name="LeaseMetricText" Text="{Binding Workspace.LeaseStatusText}" Foreground="{StaticResource GuardUnknownBrush}" FontSize="25" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock x:Name="LeaseMetricDetail" Text="{Binding Workspace.LeaseDetail}" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
                 </StackPanel>
               </Border>
               <Border Style="{StaticResource CardStyle}" Margin="12,0,0,0">
                 <StackPanel>
                   <TextBlock Text="OPEN DECISIONS" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
-                  <TextBlock Text="0" FontSize="28" FontWeight="SemiBold" Margin="0,10,0,0" />
-                  <TextBlock Text="Durable decision queue is active" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
+                  <!-- 2026-07-29: was a hardcoded "0" with no x:Name under the claim
+                       "Durable decision queue is active" — a count nothing could ever
+                       update, over a queue that is not durable. Both now derived:
+                       the number counts the approval queue plus unacknowledged guard
+                       cards carrying options, and the caption states where it came
+                       from. -->
+                  <TextBlock x:Name="OpenDecisionsCountText" Text="0" FontSize="28" FontWeight="SemiBold" Margin="0,10,0,0" />
+                  <TextBlock x:Name="OpenDecisionsDetailText" Text="Counted from the approval queue and the guard feed" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
                 </StackPanel>
               </Border>
             </UniformGrid>
@@ -890,7 +1342,15 @@
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Recent pilot evidence" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Grid.Column="1" Text="LIVE" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" VerticalAlignment="Center" />
+                    <!-- 2026-07-29: was the literal "LIVE" in accent green over a list
+                         that is empty until a workspace is inspected. Derived now. -->
+                    <TextBlock x:Name="RecentEvidenceStateText"
+                               Grid.Column="1"
+                               Text="NO ROWS"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontWeight="Bold"
+                               FontSize="10"
+                               VerticalAlignment="Center" />
                   </Grid>
                   <ItemsControl ItemsSource="{Binding RecentActivity}"
                                 ItemTemplate="{StaticResource ActivityTemplate}" />
@@ -1085,22 +1545,46 @@
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Lease status" Style="{StaticResource SectionTitleStyle}" />
-                    <Ellipse Grid.Column="1" Width="9" Height="9" Fill="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+                    <!-- 2026-07-29: this dot was a hardcoded accent-green Ellipse with
+                         no x:Name, sitting beside a lease status that was itself a
+                         hardcoded "UNAVAILABLE". It said "healthy" no matter what. Now
+                         named, driven from the real status, and followed by the status
+                         WORD so the dot is never the only signal. -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                      <Ellipse x:Name="WorkspaceLeaseDot"
+                               Width="9"
+                               Height="9"
+                               Fill="{StaticResource GuardUnknownBrush}"
+                               VerticalAlignment="Center" />
+                      <TextBlock x:Name="WorkspaceLeaseStatusWordText"
+                                 Text="UNKNOWN"
+                                 Foreground="{StaticResource GuardUnknownBrush}"
+                                 FontSize="10"
+                                 FontWeight="Bold"
+                                 VerticalAlignment="Center"
+                                 Margin="6,0,0,0" />
+                    </StackPanel>
                   </Grid>
                   <TextBlock x:Name="WorkspaceLeaseStateText"
-                             Text="{Binding Workspace.LeaseState}"
-                             Foreground="{DynamicResource AccentBrush}"
+                             Text="{Binding Workspace.LeaseLabel}"
+                             Foreground="{StaticResource GuardUnknownBrush}"
                              FontSize="20"
                              FontWeight="SemiBold"
                              Margin="0,20,0,0" />
                   <TextBlock x:Name="WorkspaceLeaseDetailText"
-                             Text="{Binding Workspace.LeaseHolder}"
+                             Text="{Binding Workspace.LeaseDetail}"
                              Style="{StaticResource MutedStyle}"
                              Margin="0,5,0,0" />
                   <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,17,0,0">
                     <StackPanel>
                       <TextBlock Text="Lease invariant" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
-                      <TextBlock Text="At most one active writer per project. This local slice does not connect a durable lease provider, so it reports that state as unavailable."
+                      <!-- 2026-07-29: this said the state was reported as "unavailable"
+                           because no durable provider was connected. That is no longer
+                           what happens: src/core/lease.mjs enforces the invariant with
+                           an exclusive-create file lease at
+                           <workspace>\.helmion\lease.json, and LeaseInspector reads it. -->
+                      <TextBlock x:Name="WorkspaceLeaseInvariantText"
+                                 Text="At most one active writer per project, enforced locally by an exclusive-create lease file at .helmion\lease.json. Four states are reported and none is inferred: ACTIVE, STALE, NONE, and UNREADABLE. UNREADABLE is never shown as NONE — a lease that cannot be read may still be held."
                                  Style="{StaticResource MutedStyle}"
                                  Margin="0,6,0,0" />
                     </StackPanel>
@@ -1710,13 +2194,20 @@
                            Style="{StaticResource MutedStyle}"
                            Margin="0,6,0,0" />
               </StackPanel>
-              <Border Grid.Column="1"
+              <!-- 2026-07-29: this pill read "ORCHESTRATION ACTIVE" in accent green
+                   directly above an ItemsControl bound to OrchestrationEvents, which
+                   PilotSnapshot.CreateLive fills with an empty list. A badge claiming
+                   a live subsystem over a list that is structurally empty is the
+                   clearest kind of false label. Now named and derived from the count. -->
+              <Border x:Name="OrchestrationBadgePill"
+                      Grid.Column="1"
                       Style="{StaticResource PillStyle}"
-                      Background="{DynamicResource AccentDarkBrush}"
-                      BorderBrush="{DynamicResource AccentStrokeStrongBrush}"
+                      Background="{DynamicResource PanelSubtleBrush}"
+                      BorderBrush="{DynamicResource StrokeBrush}"
                       VerticalAlignment="Center">
-                <TextBlock Text="ORCHESTRATION ACTIVE"
-                           Foreground="{DynamicResource AccentBrush}"
+                <TextBlock x:Name="OrchestrationBadgeText"
+                           Text="NO EVENTS"
+                           Foreground="{DynamicResource MutedTextBrush}"
                            FontSize="10"
                            FontWeight="Bold" />
               </Border>
@@ -1779,8 +2270,10 @@
                            Style="{StaticResource MutedStyle}"
                            Margin="0,6,0,0" />
               </StackPanel>
-              <Border Grid.Column="1" Style="{StaticResource PillStyle}" Background="{DynamicResource AccentDarkBrush}" BorderBrush="{DynamicResource AccentStrokeStrongBrush}" VerticalAlignment="Center">
-                <TextBlock Text="LIVE TIMELINE" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
+              <!-- 2026-07-29: read "LIVE TIMELINE" above an ItemsControl bound to
+                   Handoffs, which CreateLive fills with an empty list. Derived now. -->
+              <Border x:Name="HandoffTimelinePill" Grid.Column="1" Style="{StaticResource PillStyle}" Background="{DynamicResource PanelSubtleBrush}" BorderBrush="{DynamicResource StrokeBrush}" VerticalAlignment="Center">
+                <TextBlock x:Name="HandoffTimelineBadgeText" Text="NO HANDOFFS" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" />
               </Border>
             </Grid>
             <ItemsControl ItemsSource="{Binding Handoffs}"
@@ -2012,7 +2505,11 @@
               <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
                 <StackPanel>
                   <TextBlock Text="Active coordinator" Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="None selected" Foreground="{DynamicResource AmberBrush}" FontSize="20" FontWeight="SemiBold" Margin="0,15,0,0" />
+                  <!-- 2026-07-29: was the literal "None selected" with no x:Name, in an
+                       app that stores the selection in settings and carries it on the
+                       snapshot as SelectedCoordinatorLabel. It said "None selected"
+                       while a coordinator was selected. Bound now. -->
+                  <TextBlock x:Name="ActiveCoordinatorText" Text="{Binding SelectedCoordinatorLabel}" Foreground="{DynamicResource AmberBrush}" FontSize="20" FontWeight="SemiBold" Margin="0,15,0,0" />
                   <TextBlock Text="The user will select one eligible, documented CLI or API adapter per session. That changes coordination—not Maestro policy, lease, confirmation, or audit authority."
                              Style="{StaticResource MutedStyle}"
                              Margin="0,7,0,0" />
@@ -2768,5 +3265,228 @@
         </Grid>
       </Border>
     </Grid>
+
+    <!--
+      ================================================================
+      THE GUARD FEED PANEL
+      ================================================================
+      Reads top to bottom: headline level, provider/site tabs, the stated
+      escalation rule, the running list of events, then the footer actions.
+
+      Nothing in it is a literal. The headline chip, every tab count, the retention
+      line and the source line are all computed by GuardFeed from the cards it was
+      given; where a state cannot be computed the panel says UNKNOWN in grey with
+      the word on its face, and the headline is UNKNOWN — not OK — until a
+      detection layer has actually reported.
+    -->
+    <Border x:Name="GuardPanelChrome"
+            Grid.Column="2"
+            Background="{DynamicResource SidebarBrush}"
+            BorderBrush="{DynamicResource StrokeBrush}"
+            BorderThickness="1,0,0,0">
+      <Grid Margin="14,16,14,14">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 1. Headline -->
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="GUARD FEED"
+                       FontWeight="Bold"
+                       FontSize="13" />
+            <TextBlock x:Name="GuardHeadlineCountsText"
+                       Text="No events"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontSize="10"
+                       Margin="0,3,0,0"
+                       TextWrapping="Wrap" />
+          </StackPanel>
+          <Border x:Name="GuardHeadlinePulse"
+                  Grid.Column="1"
+                  VerticalAlignment="Center">
+            <Border x:Name="GuardHeadlineChip"
+                    Background="{StaticResource GuardUnknownBrush}"
+                    CornerRadius="5"
+                    Padding="9,4">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="GuardHeadlineIconText"
+                           Text="?"
+                           Foreground="{StaticResource GuardUnknownInkBrush}"
+                           FontWeight="Bold"
+                           FontSize="11"
+                           Margin="0,0,6,0" />
+                <TextBlock x:Name="GuardHeadlineLevelText"
+                           Text="UNKNOWN"
+                           Foreground="{StaticResource GuardUnknownInkBrush}"
+                           FontWeight="Bold"
+                           FontSize="11" />
+              </StackPanel>
+            </Border>
+          </Border>
+        </Grid>
+
+        <!-- 2. Provider / site tabs -->
+        <ItemsControl x:Name="GuardTabStrip"
+                      Grid.Row="1"
+                      ItemTemplate="{StaticResource GuardTabTemplate}"
+                      Margin="0,0,0,6">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+        </ItemsControl>
+
+        <!-- 3. What is feeding this panel, and the stated rule -->
+        <Border Grid.Row="2"
+                Background="{DynamicResource PanelSubtleBrush}"
+                BorderBrush="{DynamicResource StrokeBrush}"
+                BorderThickness="1"
+                CornerRadius="9"
+                Padding="10"
+                Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock x:Name="GuardSourceText"
+                       Text="No detection layer has reported to this panel."
+                       Foreground="{DynamicResource SoftTextBrush}"
+                       FontSize="10"
+                       TextWrapping="Wrap" />
+            <Expander Margin="0,7,0,0">
+              <Expander.Header>
+                <TextBlock Text="Escalation rule and retention"
+                           Foreground="{DynamicResource AccentBrush}"
+                           FontSize="10"
+                           FontWeight="Bold" />
+              </Expander.Header>
+              <StackPanel Margin="0,6,0,0">
+                <!-- The threshold, in words, built from the same constants the state
+                     machine obeys (GuardEscalationRule.StatedRule). Troy's
+                     requirement: the point where yellow becomes red is stated and
+                     visible, not magic. -->
+                <TextBlock x:Name="GuardRuleText"
+                           Foreground="{DynamicResource MutedTextBrush}"
+                           FontSize="10"
+                           TextWrapping="Wrap" />
+                <TextBlock x:Name="GuardRetentionText"
+                           Foreground="{DynamicResource FaintTextBrush}"
+                           FontSize="10"
+                           TextWrapping="Wrap"
+                           Margin="0,6,0,0" />
+                <TextBlock x:Name="GuardGroupingText"
+                           Text="Grouping: events sharing provider, layer and pattern are one card; the ×N count is the group size and drives the escalation."
+                           Foreground="{DynamicResource FaintTextBrush}"
+                           FontSize="10"
+                           TextWrapping="Wrap"
+                           Margin="0,4,0,0" />
+                <TextBlock x:Name="GuardMotionPolicyText"
+                           Foreground="{DynamicResource FaintTextBrush}"
+                           FontSize="10"
+                           TextWrapping="Wrap"
+                           Margin="0,4,0,0" />
+              </StackPanel>
+            </Expander>
+          </StackPanel>
+        </Border>
+
+        <!-- 4. Empty state. Says WHY it is empty, so an empty safety panel is never
+                mistaken for an all-clear. -->
+        <Border x:Name="GuardEmptyPanel"
+                Grid.Row="3"
+                Background="{DynamicResource PanelBrush}"
+                BorderBrush="{DynamicResource StrokeBrush}"
+                BorderThickness="1"
+                CornerRadius="9"
+                Padding="12"
+                Margin="0,0,0,8"
+                Visibility="Collapsed">
+          <StackPanel>
+            <TextBlock Text="? NO EVENTS"
+                       Foreground="{StaticResource GuardUnknownBrush}"
+                       FontWeight="Bold"
+                       FontSize="11" />
+            <TextBlock x:Name="GuardEmptyDetailText"
+                       Text="Nothing has been reported. An empty feed is not an all-clear."
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       Margin="0,5,0,0" />
+          </StackPanel>
+        </Border>
+
+        <!-- 5. The running list -->
+        <ScrollViewer Grid.Row="4"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+          <ItemsControl x:Name="GuardCardList"
+                        ItemTemplate="{StaticResource GuardCardTemplate}" />
+        </ScrollViewer>
+
+        <!-- 6. Footer actions -->
+        <StackPanel Grid.Row="5" Margin="0,10,0,0">
+          <Border x:Name="GuardSettingsPanel"
+                  Background="{DynamicResource PanelSubtleBrush}"
+                  BorderBrush="{DynamicResource StrokeBrush}"
+                  BorderThickness="1"
+                  CornerRadius="9"
+                  Padding="10"
+                  Margin="0,0,0,8"
+                  Visibility="Collapsed">
+            <StackPanel>
+              <TextBlock Text="GUARD SETTINGS"
+                         Foreground="{DynamicResource FaintTextBrush}"
+                         FontSize="9"
+                         FontWeight="Bold" />
+              <TextBlock x:Name="GuardSettingsText"
+                         Foreground="{DynamicResource SoftTextBrush}"
+                         FontSize="10"
+                         TextWrapping="Wrap"
+                         Margin="0,6,0,0" />
+              <CheckBox x:Name="GuardMotionCheckBox"
+                        Content="Allow pulsing animations"
+                        Foreground="{DynamicResource SoftTextBrush}"
+                        FontSize="11"
+                        Margin="0,9,0,0"
+                        Click="GuardMotionToggle_Click" />
+              <TextBlock Text="Turning motion off never changes a level or hides an escalation — the level word, the icon and the reason still carry it."
+                         Foreground="{DynamicResource FaintTextBrush}"
+                         FontSize="10"
+                         TextWrapping="Wrap"
+                         Margin="0,5,0,0" />
+            </StackPanel>
+          </Border>
+
+          <TextBlock x:Name="GuardFooterOutputText"
+                     Foreground="{DynamicResource MutedTextBrush}"
+                     FontSize="10"
+                     TextWrapping="Wrap"
+                     Margin="0,0,0,7"
+                     Visibility="Collapsed" />
+
+          <Button x:Name="GuardQuarantineButton"
+                  Content="View quarantine log"
+                  Style="{StaticResource GuardFooterButtonStyle}"
+                  Click="GuardViewQuarantineLog_Click" />
+          <Button x:Name="GuardTestSuiteButton"
+                  Content="Run test suite"
+                  Style="{StaticResource GuardFooterButtonStyle}"
+                  Click="GuardRunTestSuite_Click" />
+          <Button x:Name="GuardSettingsButton"
+                  Content="Guard settings"
+                  Style="{StaticResource GuardFooterButtonStyle}"
+                  Margin="0"
+                  Click="GuardSettings_Click" />
+        </StackPanel>
+      </Grid>
+    </Border>
   </Grid>
 </Window>

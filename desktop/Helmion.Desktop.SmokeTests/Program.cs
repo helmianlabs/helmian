@@ -150,11 +150,20 @@ try
         && inspected.Migrations[0].Name == "001_fixture.sql"
         && inspected.Migrations[0].Sha256.Length == 64,
         "service inventories and checksums local migration sources");
+    // 2026-07-29: this check used to assert Status == "UNAVAILABLE", which was one of
+    // four hardcoded literals WorkspaceInspector returned no matter what was on disk.
+    // The literals are gone (WorkspaceInspector.cs:56-63), so the old assertion was
+    // pinning a lie in place. The honest posture for a workspace with no lease file is
+    // NONE, and asserting that the detail names the path proves the inspector actually
+    // looked rather than returning a fresh constant.
     Check(
         inspected.Evidence.Count == 3
-        && inspected.Lease.Status == "UNAVAILABLE"
-        && !inspected.Lease.IsLive,
-        "service inventories local evidence without inventing durable lease state");
+        && inspected.Lease.Status == LeaseInspector.StatusNone
+        && !inspected.Lease.IsLive
+        && inspected.Lease.Detail.Contains(
+            LeaseInspector.LeaseFilePath(inspected.ProjectPath),
+            StringComparison.Ordinal),
+        "service inventories local evidence and reads the real lease state off disk");
     Check(
         !inspected.ProjectWasModified
         && before.SequenceEqual(SnapshotFiles(workspaceRoot)),
@@ -859,6 +868,12 @@ VoiceSmokeChecks.Run();
 VoiceBackendSmokeChecks.Run();
 
 ProfileInstallerGuardChecks.Run();
+
+GuardEscalationChecks.Run();
+
+GuardFeedChecks.Run();
+
+LeaseInspectorChecks.Run();
 return;
 
 /// <summary>
