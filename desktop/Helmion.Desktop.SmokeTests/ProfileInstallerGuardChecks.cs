@@ -190,6 +190,75 @@ internal static class ProfileInstallerGuardChecks
             try { Directory.Delete(sandbox, recursive: true); } catch { /* temp dir */ }
         }
 
+        // --- A MISSING LIVING DOCUMENT IS RECOVERED, NOT STUBBED ---------------
+        //
+        // The last way this button could still destroy his writing. Every guard
+        // above is nested inside `if (File.Exists(targetPath))`, so a living
+        // document that has been DELETED gets no protection at all: the template
+        // is written straight over its path, and a 1,635-byte stub is
+        // indistinguishable from a successful restore. That is exactly what he
+        // spent three days chasing.
+        var gone = Path.Combine(Path.GetTempPath(), $"helmion-gone-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(gone);
+        try
+        {
+            const string real = "# BASE RULES — read first, every session, no exceptions\n\nTroy's own 5,512 bytes live here.\n";
+
+            // Two backups beside a MISSING BASE_RULES.md. The NEWER one is a stub
+            // the broken button itself produced — recovering from that would
+            // launder the original loss into something that looks like a fix.
+            var older = Path.Combine(gone, "BASE_RULES.md.20260728-212459.bak");
+            var newerStub = Path.Combine(gone, "BASE_RULES.STUB-20260729-162821.bak");
+            File.WriteAllText(older, real);
+            File.WriteAllText(newerStub, ClaudeProfileInstaller.TemplateFor("BASE_RULES.md")!);
+            File.SetLastWriteTimeUtc(older, DateTime.UtcNow.AddHours(-2));
+            File.SetLastWriteTimeUtc(newerStub, DateTime.UtcNow);
+
+            Assert(!File.Exists(Path.Combine(gone, "BASE_RULES.md")),
+                "precondition: BASE_RULES.md is missing, which is the case with no protection");
+
+            var result = ClaudeProfileInstaller.InstallAsync(
+                new HashSet<string> { "BASE_RULES.md" },
+                CancellationToken.None,
+                overwriteExisting: false,
+                targetDirectory: gone,
+                carryForwardFrom: gone).GetAwaiter().GetResult();
+
+            var landed = File.ReadAllText(Path.Combine(gone, "BASE_RULES.md"));
+            Assert(landed == real,
+                "a missing living document is recovered from its newest REAL backup, not seeded with the template");
+            Assert(landed != ClaudeProfileInstaller.TemplateFor("BASE_RULES.md")!,
+                "the recovered file is not the shipped starter text");
+            Assert(result.Message.Contains("RECOVERED", StringComparison.Ordinal),
+                "the recovery is stated out loud — a silent stub is what made this invisible for three days");
+            checks += 4;
+
+            // And with NOTHING to recover from, seeding the template is still the
+            // right answer — that is a genuinely new machine, not a loss.
+            var fresh = Path.Combine(Path.GetTempPath(), $"helmion-fresh-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(fresh);
+            try
+            {
+                ClaudeProfileInstaller.InstallAsync(
+                    new HashSet<string> { "BASE_RULES.md" },
+                    CancellationToken.None,
+                    overwriteExisting: false,
+                    targetDirectory: fresh,
+                    carryForwardFrom: fresh).GetAwaiter().GetResult();
+                Assert(File.ReadAllText(Path.Combine(fresh, "BASE_RULES.md")) == ClaudeProfileInstaller.TemplateFor("BASE_RULES.md")!,
+                    "a machine with no file and no backup is still seeded with the template");
+                checks += 1;
+            }
+            finally
+            {
+                try { Directory.Delete(fresh, recursive: true); } catch { /* temp dir */ }
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(gone, recursive: true); } catch { /* temp dir */ }
+        }
+
         Console.WriteLine($"Helmion profile installer guard checks passed ({checks} checks).");
     }
 
