@@ -4,8 +4,21 @@ Helmion is an early, local governance kernel for coding agents. It contains
 deterministic policy functions, PostgreSQL/Neon persistence, MCP adapters, and
 tests. It is not yet a vendor-neutral enterprise control plane.
 
-This repository contains no customer credentials and does not install or
-modify anything under `~/.claude`.
+This repository contains no customer credentials.
+
+**Two features DO write outside the repository, on purpose, and only when you
+ask.** Nothing writes there on clone, on install, or on `helmion init`.
+
+| What | Writes where | Triggered by |
+|---|---|---|
+| `helmion agent-os install` | the target's context and companion files under `~/.claude`, `~/.codex` or `~/.gemini` | you run it — and `--yes` is required before anything is applied |
+| Desktop Pilot → **Sync Profile** | `~/.claude`, `~/.claude.json`, `~/.gemini/GEMINI.md`, `%APPDATA%\Claude\` | you click the button |
+
+`BASE_RULES.md`, `LEARNINGS.md` and `LESSONS.md` are treated as **living
+documents**: an existing one is never overwritten by any flag or code path, and a
+new profile receives a byte-for-byte copy of yours instead of a blank template.
+No settings file is edited automatically — hook configuration is printed for you
+to merge yourself.
 
 ## Phase One: Maestro and Codex
 
