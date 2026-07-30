@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { detectDestructiveOperation, evaluateRules } from './governance.mjs';
+import { verifyLeaseHeld } from './lease.mjs';
 
 /**
  * The seam between the governance kernel and anything that actually executes.
@@ -25,6 +26,40 @@ import { detectDestructiveOperation, evaluateRules } from './governance.mjs';
 
 /** Marker every refusal carries, so callers and tests can recognise one. */
 export const GOVERNANCE_BLOCK_MARKER = 'BLOCKED by Helmion governance';
+
+/**
+ * The tools that MUTATE, and therefore the tools that need the project's write
+ * lease.
+ *
+ * WHY THIS EXISTS. `README.md:19` advertises "a database-enforced single active
+ * write lease per project" and the desktop UI repeats it as a "Lease invariant".
+ * Measured 2026-07-29, neither was true of a file write:
+ *
+ *   - `requireActiveLease` (src/adapters/neon.mjs:151) had exactly four callers
+ *     — :736, :875, :923, :978 — and every one is a Postgres write to Helmion's
+ *     own coordination tables. Not one guards a file write.
+ *   - `grep -c lease` over src/agent/tools.mjs and this file returned 0 and 0.
+ *
+ * So the invariant was a sentence. This set is where it becomes a mechanism.
+ *
+ * It deliberately mirrors `src/agent/tools.mjs:22` WRITE_TOOLS, which until now
+ * was a dead policy table kept alive by a `void WRITE_TOOLS;` statement at :492
+ * purely so lint would not drop it. Read tools are absent on purpose: reading a
+ * file cannot conflict with another writer, and requiring a lease to read would
+ * make a second session useless rather than safe.
+ *
+ * NOT included: Claude Code's own tool names (Write, Edit, Bash). The
+ * `helmion guard` hook path shares this evaluator, and adding those would make
+ * every Claude Code write in every workspace require a Helmion lease. That is a
+ * deliberate scope line, not an oversight — the agent runtime is governed, the
+ * host harness is not, and enabling it needs a decision rather than a commit.
+ */
+export const LEASE_REQUIRED_TOOLS = new Set(['write_file', 'run_command']);
+
+/** True when this tool may not proceed without a held write lease. */
+export function requiresWriteLease(tool) {
+  return LEASE_REQUIRED_TOOLS.has(String(tool ?? ''));
+}
 
 /**
  * Same resolution order as `bin/helmion.mjs` loadRules: an explicit
@@ -106,7 +141,17 @@ function refuse(reason, extra = {}) {
  * @returns {{allowed: boolean, reason: string, hits: string[], blocks: object[],
  *            flags: object[], failedClosed: boolean}}
  */
-export function evaluateToolCall({ tool, args, workspace, projectSlug = null } = {}) {
+export function evaluateToolCall({
+  tool,
+  args,
+  workspace,
+  projectSlug = null,
+  // The write lease this session believes it holds. Absent means "this session
+  // holds no lease", which refuses every mutating tool — see LEASE_REQUIRED_TOOLS.
+  // The `helmion guard` hook path passes nothing and is unaffected, because the
+  // tool names it sees are not in that set.
+  leaseToken = null,
+} = {}) {
   const payload = {
     tool_name: tool ?? null,
     tool_input: args ?? {},
@@ -180,6 +225,26 @@ export function evaluateToolCall({ tool, args, workspace, projectSlug = null } =
       flags: verdict.flags ?? [],
       failedClosed: false,
     };
+  }
+
+  // 3. THE WRITE LEASE. Last, and only for mutating tools.
+  //
+  // Ordering is deliberate. A destructive command is refused whether or not this
+  // session holds the lease, because holding a lease is permission to be the one
+  // writer — never permission to do something the kernel forbids. Putting the
+  // lease first would let "I hold the lease" read as an authorization.
+  //
+  // A missing lease REFUSES. It does not fall through to "no lease file, so
+  // nobody is holding it, carry on" — that reading is how a single-writer
+  // guarantee becomes decoration.
+  if (requiresWriteLease(tool)) {
+    const lease = verifyLeaseHeld(workspace, { leaseToken });
+    if (!lease.held) {
+      return refuse(
+        `it needs the project's write lease and this session does not hold it: ${lease.reason}`,
+        { failedClosed: Boolean(lease.failedClosed) },
+      );
+    }
   }
 
   return {
