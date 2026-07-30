@@ -122,6 +122,87 @@ internal static class GuardFeedChecks
             "a fresh sighting clears the acknowledgement — new information is not covered by an old click");
         checks += 4;
 
+        // --- 5b. ACKNOWLEDGING TAKES THE CARD OFF THE BOARD --------------------
+        // Before this, Acknowledge only stamped a time and stopped the pulse. The
+        // row stayed, so the board could never empty and clearing a card visibly
+        // accomplished nothing.
+        var board = new GuardFeed();
+        var hushed = board.Report(Warning("Claude", "Browser pattern match", "one"), T0);
+        board.Report(Warning("Claude", "Browser pattern match", "two"), T0);
+        Assert(board.Visible.Count == 2, "both warnings are listed before anything is acknowledged");
+
+        board.Acknowledge(hushed, T0.AddSeconds(1));
+        Assert(board.Visible.Count == 1 && !board.Visible.Contains(hushed),
+            "acknowledging a warning removes it from the list");
+        Assert(board.DismissedCount == 1, "and it is counted as hidden");
+        checks += 3;
+
+        // NOTHING IS DELETED. Retention, the totals and the headline still see it.
+        Assert(board.TotalCards == 2, "the dismissed card is still retained");
+        Assert(board.WarningCount == 2, "and still counted — acknowledging clears the list, not the problem");
+        Assert(board.WorstLevel == GuardLevel.Warning,
+            "so the headline does not go quiet just because a card was clicked");
+        Assert(board.DismissedText.Contains("still counted", StringComparison.Ordinal),
+            "and the panel says in words that hidden cards still count");
+        checks += 4;
+
+        // THERE IS A WAY TO SEE THEM.
+        board.ShowDismissed = true;
+        Assert(board.Visible.Count == 2 && board.Visible.Contains(hushed),
+            "showing acknowledged cards brings the dismissed one back into the list");
+        board.ShowDismissed = false;
+        Assert(!board.Visible.Contains(hushed), "and turning it off hides it again");
+        checks += 2;
+
+        // A FRESH SIGHTING BRINGS IT BACK, UNACKNOWLEDGED, with nothing toggled.
+        board.Report(Warning("Claude", "Browser pattern match", "one"), T0.AddSeconds(3));
+        Assert(board.Visible.Contains(hushed),
+            "a fresh sighting puts the dismissed card back on the board on its own");
+        Assert(!hushed.IsAcknowledged && !hushed.IsDismissed,
+            "and it comes back unacknowledged, so the old click does not cover the new sighting");
+        Assert(board.DismissedCount == 0, "nothing is left hidden");
+        checks += 3;
+
+        // A CRITICAL IS THE EXCEPTION. One click must never make a real red vanish.
+        var reds = new GuardFeed();
+        var red = reds.Report(
+            new GuardObservation("Claude", "Execution guard", "sig", "t", "d", GuardLevel.Critical), T0);
+        reds.Acknowledge(red, T0.AddSeconds(1));
+        Assert(red.IsAcknowledged, "a critical can still be acknowledged");
+        Assert(!red.IsDismissed && reds.Visible.Contains(red),
+            "but acknowledging a CRITICAL leaves it on the board — one click cannot vanish a real red");
+        Assert(!red.ShouldPulse, "acknowledging it does stop the motion, which is what the click is for");
+        Assert(reds.DismissalRuleText.Contains("CRITICAL", StringComparison.Ordinal),
+            "and the rule text on the panel states that exception rather than leaving it a surprise");
+        checks += 4;
+
+        // A WARNING THAT HAS ESCALATED TO RED IS ALSO A RED, and equally undismissable.
+        var escalated = new GuardFeed();
+        var climbing = escalated.Report(Warning("Claude", "Browser pattern match", "climb"), T0);
+        for (var i = 1; i < GuardEscalationRule.CriticalAfterOccurrences; i++)
+        {
+            escalated.Report(Warning("Claude", "Browser pattern match", "climb"), T0.AddSeconds(i));
+        }
+
+        Assert(climbing.Level == GuardLevel.Critical, "five sightings escalate the warning to red");
+        escalated.Acknowledge(climbing, T0.AddSeconds(30));
+        Assert(!climbing.IsDismissed && escalated.Visible.Contains(climbing),
+            "a warning that escalated into a critical does not become dismissable because of where it started");
+        checks += 2;
+
+        // UNDO EXISTS. A card you cannot get back has been deleted in every sense
+        // that matters to the person looking at the screen.
+        var undo = new GuardFeed();
+        var mistake = undo.Report(Warning("Claude", "Browser pattern match", "oops"), T0);
+        undo.Acknowledge(mistake, T0.AddSeconds(1));
+        Assert(!undo.Visible.Contains(mistake), "the misclicked card is gone from the list");
+        Assert(undo.Unacknowledge(mistake, T0.AddSeconds(2)), "and it can be put back");
+        Assert(undo.Visible.Contains(mistake) && !mistake.IsAcknowledged,
+            "restoring it returns it to the board, unacknowledged");
+        Assert(!undo.Unacknowledge(mistake, T0.AddSeconds(3)),
+            "restoring an already-live card reports that it changed nothing");
+        checks += 4;
+
         // --- 6. A LEVEL MAY BE RAISED BY A REPEAT, NEVER LOWERED ---------------
         var raise = new GuardFeed();
         var raised = raise.Report(

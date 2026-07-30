@@ -182,7 +182,7 @@ public partial class MainWindow
                 GuardLevel.Unknown,
                 "Browser layer could not be checked",
                 $"Reading the browser profile threw: {ex.Message}. Could not compute — not an all-clear.",
-                false, false, null);
+                false, BrowserExtensionEnablement.NotRecorded, null);
         }
 
         _guardFeed.Report(
