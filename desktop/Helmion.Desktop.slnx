@@ -4,5 +4,6 @@
   <Project Path="Helmion.LocalService.Security/Helmion.LocalService.Security.csproj" />
   <Project Path="Helmion.LocalService/Helmion.LocalService.csproj" />
   <Project Path="Helmion.Desktop/Helmion.Desktop.csproj" />
+  <Project Path="Helmion.Voice.Host/Helmion.Voice.Host.csproj" />
   <Project Path="Helmion.Desktop.SmokeTests/Helmion.Desktop.SmokeTests.csproj" />
 </Solution>
