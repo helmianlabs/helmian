@@ -8,6 +8,7 @@ import { createToolRuntime } from './tools.mjs';
 import { redactSecrets } from './redact.mjs';
 import { readEnvTier, resolveTurnModel } from './model-router.mjs';
 import { resolveLocalProvider, withLocalBrevity } from './local-provider.mjs';
+import { processSessionId } from '../core/provenance-log.mjs';
 
 /** Default cap for tool↔model rounds per user message (was 12; too low for real coding). */
 export const MAX_TOOL_ROUNDS_DEFAULT = 48;
@@ -47,6 +48,11 @@ export async function runAgentTurn({
   // Local-model routing. Null disables it entirely; the default reads env, so a
   // machine without a local runtime simply never qualifies.
   localProvider = resolveLocalProvider(),
+  // Groups this turn's provenance rows with the rest of its conversation. The
+  // default identifies the running agent process, which IS the session for both
+  // callers: the bridge is one process per app run (bridge.mjs) and the CLI REPL
+  // is one process per sitting. Passed explicitly by anything that knows better.
+  sessionId = processSessionId(),
 }) {
   const toolDefs = runtime.definitionsForOpenAi();
   const limit = resolveMaxToolRounds(maxToolRounds);
@@ -78,11 +84,28 @@ export async function runAgentTurn({
 
   // One call against whichever provider the router chose for this round. Local
   // calls carry a timeout so an Ollama box that has wedged cannot hang the turn.
-  const callProvider = (choice) => {
+  const callProvider = (choice, round) => {
     const active = choice.provider || provider;
     return chatWithTools({
       providerId: active.id,
       apiKey: active.key,
+      // Context for the provenance ledger. NOT the record itself — the record is
+      // written inside chatWithTools once the response has arrived, so that a
+      // fallback cannot leave a row naming the model that failed. What travels
+      // here is only what that write site cannot see for itself: which workspace
+      // the turn belongs to, and what the router was thinking.
+      provenance: {
+        // The workspace the turn actually ran against. The bridge changes this
+        // per turn (bridge.mjs:322-325) while the node process's cwd never
+        // moves, so the evidence has to follow the runtime, not the process.
+        workspace: runtime?.root,
+        sessionId,
+        providerLabel: active.label,
+        tier: choice.tier,
+        reason: choice.reason,
+        round,
+        routedLocal: Boolean(choice.isLocal),
+      },
       // Custom OpenAI-compatible endpoints carry their own URL + model id.
       url: active.url,
       model: choice.model,
@@ -100,6 +123,45 @@ export async function runAgentTurn({
       signal: choice.isLocal && active.timeoutMs
         ? AbortSignal.timeout(active.timeoutMs)
         : undefined,
+    });
+  };
+
+  /**
+   * What the ledger RECORDED, announced after the fact.
+   *
+   * `announce` below fires BEFORE the request goes out, so it can only ever
+   * report an intention — and on 2026-07-30 an intention is exactly what was on
+   * screen while a different model did the answering. This event carries the row
+   * that was actually written, so a UI showing it is showing evidence.
+   *
+   * A recording failure is announced too. "The model answered but nothing
+   * recorded which one" has to be visible; it is the state this whole feature
+   * exists to make impossible to reach silently.
+   */
+  const announceProvenance = (reply, round) => {
+    const written = reply?.provenance;
+    if (!written) return;
+    if (!written.logged) {
+      onEvent({
+        type: 'status',
+        message: `answer received but its provenance was NOT recorded — ${written.reason}`,
+      });
+      return;
+    }
+    const entry = written.entry;
+    onEvent({
+      type: 'provenance',
+      provider: entry.provider,
+      providerId: entry.providerId,
+      providerLabel: entry.providerLabel ?? null,
+      model: entry.model,
+      endpointHost: entry.endpointHost,
+      isLocal: entry.isLocal,
+      tier: entry.tier ?? null,
+      timestamp: entry.timestamp,
+      sessionId: entry.sessionId,
+      round,
+      file: written.file,
     });
   };
 
@@ -129,9 +191,11 @@ export async function runAgentTurn({
 
     let reply;
     try {
-      reply = await callProvider(choice);
+      reply = await callProvider(choice, round);
     } catch (err) {
       // A local failure must never fail the turn. Anything else propagates.
+      // Nothing was recorded for the failed attempt, and that is correct: no
+      // completion arrived, so no model answered.
       if (!choice.isLocal) throw err;
       onEvent({
         type: 'status',
@@ -139,8 +203,10 @@ export async function runAgentTurn({
       });
       choice = pickModel(round, { allowLocal: false });
       announce(choice, round);
-      reply = await callProvider(choice);
+      reply = await callProvider(choice, round);
     }
+    // After the reply, never before: this reports the row on disk.
+    announceProvenance(reply, round);
 
     if (!reply.toolCalls?.length) {
       // Redact secrets from final assistant response before showing to user
@@ -210,6 +276,10 @@ export async function runAgentTurn({
         + '(2) what is still open, (3) the single next step. '
         + 'The user can reply "continue" to keep going with a fresh tool budget.',
     });
+    // The wrap-up is a completion like any other and is recorded like any
+    // other. It is the LAST thing the user reads at the end of a capped turn,
+    // so an unrecorded one would leave the most visible answer of the turn
+    // unattributed.
     const wrap = await chatWithTools({
       providerId: provider.id,
       apiKey: provider.key,
@@ -217,7 +287,17 @@ export async function runAgentTurn({
       model: wrapChoice.model,
       messages,
       toolDefs: [], // force text-only wrap-up
+      provenance: {
+        workspace: runtime?.root,
+        sessionId,
+        providerLabel: provider.label,
+        tier: wrapChoice.tier,
+        reason: `${wrapChoice.reason} (wrap-up after ${limit} tool rounds)`,
+        round: limit,
+        routedLocal: false,
+      },
     });
+    announceProvenance(wrap, limit);
     // Redact secrets from wrap-up response
     wrapText = redactSecrets((wrap.content || '').trim());
     if (wrapText) {

@@ -6,10 +6,12 @@
  */
 
 import { redactSecrets } from './redact.mjs';
+import { recordCompletion } from '../core/provenance-log.mjs';
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const XAI_URL = 'https://api.x.ai/v1/chat/completions';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+const GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
  * Second redaction layer at the outbound request boundary — the last point
@@ -40,6 +42,62 @@ Rules:
 }
 
 /**
+ * THE PROVENANCE WRITE SITE.
+ *
+ * This runs after a provider's response has been received and parsed, using the
+ * URL that was actually fetched and the model id that was actually sent — both
+ * read back off the reply, not off the request that was planned.
+ *
+ * IT IS HERE, AND NOT IN THE ROUTER, ON PURPOSE. model-router.mjs decides which
+ * model SHOULD answer; loop.mjs then calls, and on a local failure calls again
+ * against a different provider (loop.mjs:133-143). A record written where the
+ * decision was made is therefore wrong precisely when a fallback fires, and a
+ * fallback is the case this ledger exists for: the turn Troy saw was answered by
+ * a model nobody announced. Written here, a local attempt that throws produces
+ * NO row (nothing answered) and the frontier retry produces its own row naming
+ * itself, with no bookkeeping in between that could disagree.
+ *
+ * Never throws and never changes the reply. recordCompletion returns its failure
+ * rather than raising, and the outcome is attached to the reply as
+ * `reply.provenance` so the caller can put "answered but not recorded" on
+ * screen. A caller that ignores it is the bug this codebase already made once,
+ * where a `skipped` flag was returned and dropped on the floor.
+ */
+function recordTurnProvenance(reply, {
+  providerId, model, url, isLocal, provenance, startedAt,
+}) {
+  const context = provenance || {};
+  const written = recordCompletion(
+    // A turn runs against a workspace; the bridge changes it per turn
+    // (bridge.mjs:322-325) and the node process's cwd is not it. The caller
+    // passes the workspace the turn actually ran in; cwd is the last resort so
+    // that a completion is never unrecorded merely because nobody threaded a
+    // path — this ledger's whole failure mode is a silent absence.
+    context.workspace || process.cwd(),
+    {
+      providerId,
+      model,
+      url,
+      isLocal,
+      sessionId: context.sessionId,
+      providerLabel: context.providerLabel,
+      tier: context.tier,
+      reason: context.reason,
+      round: context.round,
+      // The ROUTER's claim, kept next to the endpoint-derived truth above so a
+      // reader can tell "Helmion chose to go local" from "the bytes came from
+      // this machine". They are normally the same; when they are not, that
+      // difference is the finding.
+      routedLocal: context.routedLocal,
+      latencyMs: Number.isFinite(startedAt) ? Date.now() - startedAt : undefined,
+      toolCalls: Array.isArray(reply?.toolCalls) ? reply.toolCalls.length : undefined,
+      contentChars: typeof reply?.content === 'string' ? reply.content.length : undefined,
+    },
+  );
+  return { ...reply, provenance: written };
+}
+
+/**
  * @param {boolean} [reasoningEffortNone]
  *   Opt-in: send `reasoning_effort: 'none'` on a tool-bearing turn. Set ONLY by
  *   callers that have verified their endpoint supports the field. Measured on
@@ -52,6 +110,15 @@ Rules:
  *   It is deliberately NOT inferred from providerId 'custom': LM Studio, vLLM
  *   and DeepSeek were never tested and may reject the unknown field.
  */
+/**
+ * @param {object} [provenance]
+ *   Context for the provenance ledger: `{workspace, sessionId, providerLabel,
+ *   tier, reason, round}`. Every field is optional — a completion is recorded
+ *   whether or not a caller supplies any of it, because the one thing this
+ *   ledger must never do is go quiet when somebody forgets to pass something.
+ *   `isLocal` is deliberately NOT taken from here: it is derived below from the
+ *   endpoint that was actually called.
+ */
 export async function chatWithTools({
   providerId,
   apiKey,
@@ -61,10 +128,13 @@ export async function chatWithTools({
   signal,
   url,
   reasoningEffortNone = false,
+  provenance = null,
 }) {
   if (!apiKey) {
     throw new Error(`No API key configured for provider ${providerId}`);
   }
+
+  const startedAt = Date.now();
 
   // User-defined OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, DeepSeek, …).
   // Same wire format as OpenAI; only the base URL and model differ.
@@ -72,52 +142,124 @@ export async function chatWithTools({
     if (!url) {
       throw new Error('Custom provider is missing its endpoint URL');
     }
-    return openAiCompatibleTurn({
+    const resolvedModel = model || 'default';
+    const reply = await openAiCompatibleTurn({
       url,
       apiKey,
-      model: model || 'default',
+      model: resolvedModel,
       messages,
       toolDefs,
       signal,
       reasoningEffortNone,
     });
+    return recordTurnProvenance(reply, {
+      providerId,
+      model: resolvedModel,
+      url,
+      // PRIMARILY DERIVED FROM THE ENDPOINT, NOT DECLARED BY THE CALLER. Every
+      // local runtime reaches this branch as providerId 'custom'
+      // (local-provider.mjs:162), so a caller that simply omitted a flag would
+      // file a qwen answer as an ordinary remote one — the exact confusion this
+      // ledger was built to end. The host is what was dialled; it cannot lie.
+      //
+      // The router's own verdict is OR-ed in rather than trusted alone, so that
+      // an Ollama box reachable at a LAN address still reports LOCAL. The two
+      // inputs fail in opposite directions and the row records both plus the
+      // host, so a disagreement is visible instead of silently resolved.
+      isLocal: isLoopbackEndpoint(url) || provenance?.routedLocal === true,
+      provenance,
+      startedAt,
+    });
   }
 
   if (providerId === 'openai' || providerId === 'xai') {
-    return openAiCompatibleTurn({
-      url: providerId === 'xai' ? XAI_URL : OPENAI_URL,
+    const resolvedUrl = providerId === 'xai' ? XAI_URL : OPENAI_URL;
+    // Fallback fires only when no model was routed (unrecognized caller path).
+    // Keep in sync with the standard tier in model-router.mjs.
+    const resolvedModel = model || (providerId === 'xai' ? 'grok-4.3' : 'gpt-5.6-terra');
+    const reply = await openAiCompatibleTurn({
+      url: resolvedUrl,
       apiKey,
-      // Fallback fires only when no model was routed (unrecognized caller path).
-      // Keep in sync with the standard tier in model-router.mjs.
-      model: model || (providerId === 'xai' ? 'grok-4.3' : 'gpt-5.6-terra'),
+      model: resolvedModel,
       messages,
       toolDefs,
       signal,
       providerId,
     });
+    return recordTurnProvenance(reply, {
+      providerId, model: resolvedModel, url: resolvedUrl, isLocal: false, provenance, startedAt,
+    });
   }
 
   if (providerId === 'anthropic') {
-    return anthropicTurn({
+    const resolvedModel = model || 'claude-sonnet-5';
+    const reply = await anthropicTurn({
       apiKey,
-      model: model || 'claude-sonnet-5',
+      model: resolvedModel,
       messages,
       toolDefs,
       signal,
+    });
+    return recordTurnProvenance(reply, {
+      providerId, model: resolvedModel, url: ANTHROPIC_URL, isLocal: false, provenance, startedAt,
     });
   }
 
   if (providerId === 'gemini') {
-    return geminiTurn({
+    const resolvedModel = model || 'gemini-2.5-flash';
+    const reply = await geminiTurn({
       apiKey,
-      model: model || 'gemini-2.5-flash',
+      model: resolvedModel,
       messages,
       toolDefs,
       signal,
     });
+    return recordTurnProvenance(reply, {
+      providerId,
+      model: resolvedModel,
+      // The key-bearing query string is NOT passed to the ledger. geminiTurn
+      // authenticates with `?key=…`; endpointParts drops any query it is given,
+      // but not handing it over in the first place means no future change to
+      // that helper can leak the credential.
+      url: geminiEndpoint(resolvedModel),
+      isLocal: false,
+      provenance,
+      startedAt,
+    });
   }
 
   throw new Error(`Unsupported provider: ${providerId}`);
+}
+
+/** The Gemini endpoint for a model, without the `?key=` the request adds. */
+function geminiEndpoint(model) {
+  return `${GEMINI_URL_BASE}/${model}:generateContent`;
+}
+
+/**
+ * Is this endpoint a model running on this machine?
+ *
+ * Loopback is the honest test. src/agent/local-provider.mjs binds only to
+ * loopback and says so ("Loopback only — never bind this off-box",
+ * local-provider.mjs:34), and no remote vendor is ever reachable at 127.0.0.1.
+ * A user-configured LM Studio or vLLM on this box therefore reports LOCAL too,
+ * which is correct: Troy's question is whether the answer came from his own
+ * machine, not whether Helmion's own local-routing feature was the thing that
+ * sent it there.
+ *
+ * A LAN endpoint (192.168.x.x) is NOT counted as local. It is somebody else's
+ * machine, and calling it local would overstate what the row proves.
+ */
+export function isLoopbackEndpoint(url) {
+  try {
+    const host = new URL(String(url)).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return host === 'localhost'
+      || host === '::1'
+      || host === '0.0.0.0'
+      || /^127\./.test(host);
+  } catch {
+    return false;
+  }
 }
 
 async function openAiCompatibleTurn({
