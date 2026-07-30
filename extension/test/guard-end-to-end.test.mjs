@@ -382,6 +382,30 @@ test('A LINE TOO LONG TO CHECK IS SAID OUT LOUD, NOT PASSED OFF AS CLEAN', async
   assert.equal(panels(doc).length, 0, 'a skipped line must not be reported as a match either');
 });
 
+test('A BLOCK THAT IS BOTH DANGEROUS AND PART-UNCHECKED SAYS BOTH THINGS', async () => {
+  // Found 2026-07-29 while verifying the 2935ab2 repairs. The skipped-line fix
+  // was real but only half-wired: content/guard.js drew the amber "did not
+  // check line N" notice and THEN called warnBlock, whose first act is
+  // clearWarning, whose last act is clearUnchecked. The notice was created and
+  // destroyed inside the same pass.
+  //
+  // It only showed up on a block that trips both paths at once — which is the
+  // worst case, not an edge case. A red panel implies the block was examined,
+  // and here part of it was not.
+  const monster = 'a'.repeat(1000001);
+  const { doc } = await runExtension([codeBlock(`rm -rf /\n${monster}`)]);
+  await wait(200);
+
+  assert.equal(panels(doc).length, 1, 'the destructive line was not warned about');
+  const notices = doc.querySelectorAll('.helmion-guard-unchecked');
+  assert.equal(
+    notices.length,
+    1,
+    'the red warning swallowed the notice that part of this block was never checked',
+  );
+  assert.match(notices[0].textContent, /did not check line 2/);
+});
+
 test('THE STOP BUTTON IS ACTUALLY WIRED: the end of streaming forces a re-check', async () => {
   // Both callbacks received { streaming } and both discarded it, so the signal
   // stream-watch.js calls "primary" was computed on every tick and never acted
