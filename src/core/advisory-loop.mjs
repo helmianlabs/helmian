@@ -130,6 +130,52 @@ export function reviewPrompt(proposal) {
  * nicely for JSON. The failure it must never make is reading a mess as an
  * approval — so anything it cannot parse becomes MISSING, never APPROVED.
  */
+/**
+ * Finds the object carrying a verdict inside whatever the advisor wrote.
+ *
+ * WHY THIS IS NOT `text.indexOf('{')` TO `text.lastIndexOf('}')`. Measured live
+ * on 2026-07-30: Gemini answered with prose containing braces around a JSON
+ * block, and that naive slice produced a syntactically valid object with no
+ * `verdict` field. The gate correctly refused it — but it refused a REVIEW THAT
+ * EXISTED, and reported the advisor as silent. Refusing is the safe direction;
+ * being unable to read an answer that was given is still a defect.
+ *
+ * So: scan every balanced brace span, parse each, and prefer one that actually
+ * carries a verdict. Still returns null when there is genuinely nothing, because
+ * an unreadable answer must never become an approval.
+ */
+export function findVerdictObject(text) {
+  const source = String(text ?? '');
+  const candidates = [];
+
+  for (let start = source.indexOf('{'); start !== -1; start = source.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < source.length; i += 1) {
+      const ch = source[i];
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const value = JSON.parse(source.slice(start, i + 1));
+            if (value && typeof value === 'object') candidates.push(value);
+          } catch { /* not an object */ }
+          break;
+        }
+      }
+    }
+  }
+
+  return candidates.find((c) => c.verdict !== undefined) ?? candidates[0] ?? null;
+}
+
 export function parseReview(advisor, raw) {
   const name = String(advisor ?? '').trim().toLowerCase();
   if (!ADVISORS.includes(name)) {
@@ -141,11 +187,7 @@ export function parseReview(advisor, raw) {
     return { advisor: name, counted: false, verdict: null, reason: 'the advisor returned nothing' };
   }
 
-  let parsed = null;
-  const candidate = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
-  if (candidate.startsWith('{')) {
-    try { parsed = JSON.parse(candidate); } catch { parsed = null; }
-  }
+  const parsed = findVerdictObject(text);
 
   if (!parsed || typeof parsed !== 'object') {
     return {

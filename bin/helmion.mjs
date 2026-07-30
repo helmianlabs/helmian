@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeFile, mkdir, copyFile } from 'node:fs/promises';
+import { writeFile, mkdir, copyFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -498,6 +498,79 @@ function guardAuditEvent(payload, result) {
   });
 }
 
+// The advisory review, run from the command line so it can sit on the push path.
+//
+// `helmion review --summary "..." [--diff-file <path>] [--files a,b] [--schema]`
+//
+// Reads the diff from --diff-file, or from stdin when it is piped — which is what
+// makes `git diff | helmion review --summary "..."` work as a pre-commit step.
+//
+// EXIT CODE 2 WHEN REFUSED, matching `helmion guard`, so a hook or a shell `&&`
+// chain stops. Exit 1 is reserved for the command itself failing, because a
+// PreToolUse hook treats 1 as a non-blocking error and a refusal must never be
+// mistaken for one.
+async function review() {
+  const { runAdvisoryReview } = await import('../src/core/advisory-runner.mjs');
+
+  const summary = option('--summary', null);
+  if (!summary) {
+    throw new Error('review requires --summary "what this change does"');
+  }
+
+  const diffFile = option('--diff-file', null);
+  let diff = '';
+  if (diffFile) {
+    diff = await readFile(diffFile, 'utf8');
+  } else if (!process.stdin.isTTY) {
+    diff = await new Promise((resolve) => {
+      let text = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (chunk) => { text += chunk; });
+      process.stdin.on('end', () => resolve(text));
+    });
+  }
+
+  const result = await runAdvisoryReview({
+    workspace: process.cwd(),
+    projectSlug: option('--project', null),
+    summary,
+    intent: option('--intent', ''),
+    files: (option('--files', '') || '').split(',').map((f) => f.trim()).filter(Boolean),
+    citation: option('--citation', ''),
+    diff,
+    operation: {
+      schemaChange: hasFlag('--schema'),
+      migration: hasFlag('--migration'),
+      productionDataAccess: hasFlag('--production'),
+      authenticationChange: hasFlag('--auth'),
+      crossProjectContract: hasFlag('--cross-project'),
+    },
+  });
+
+  if (hasFlag('--json')) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    process.stdout.write(`\nADVISORY REVIEW — ${result.proposal.summary}\n`);
+    process.stdout.write(`Tier ${result.proposal.tier}: ${result.proposal.tierReasons.join('; ')}\n\n`);
+    for (const r of result.reviews) {
+      const mark = r.counted ? (r.verdict === 'APPROVED' ? ' ok ' : 'FLAG') : ' -- ';
+      process.stdout.write(`  [${mark}] ${r.advisor.padEnd(8)} ${r.verdict ?? 'no verdict'}\n`);
+      process.stdout.write(`         ${String(r.reason).slice(0, 300)}\n`);
+      if (r.citation) process.stdout.write(`         cite: ${r.citation}\n`);
+    }
+    process.stdout.write(`\n${result.decision.allowed ? 'ALLOWED' : 'REFUSED'} — ${result.decision.reason}\n`);
+    if (result.published.logged) {
+      process.stdout.write(`Recorded: ${result.published.file}\n`);
+    } else {
+      // A review nobody could record is still a review, and the gap is stated
+      // rather than swallowed.
+      process.stdout.write(`NOT RECORDED: ${result.published.reason}\n`);
+    }
+  }
+
+  if (!result.decision.allowed) process.exitCode = 2;
+}
+
 async function guard() {
   const payload = await stdinJson();
   let result;
@@ -908,6 +981,7 @@ if (command === 'agent' || command === 'chat' || command === 'code') {
   const { runAgentBridge } = await import('../src/agent/bridge.mjs');
   await runAgentBridge();
 } else if (command === 'guard') await guard();
+else if (command === 'review') await review();
 else if (command === 'audit') await auditLedger();
 else if (command === 'agent-os') await agentOs();
 else if (command === 'project') await projectCommand();
