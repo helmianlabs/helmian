@@ -259,6 +259,31 @@ export function acquireLease(workspace, {
     return acquireLease(workspace, { projectSlug, coordinatorId, instanceId, ttlMs, now });
   }
 
+  // SAME WRITER, DIFFERENT OBJECT. A lease already held by this process on this
+  // machine is ours — adopt it and hand back the existing token.
+  //
+  // The invariant is "at most one active WRITER per project", and a writer is a
+  // process, not an object. Two tool runtimes inside one Node process are the
+  // same writer: `src/agent/tools.mjs` builds a fresh runtime every time the
+  // permission mode changes (bridge.mjs does exactly this on a dropdown change)
+  // and on every session reset. Treating that as a conflict deadlocked a session
+  // against itself — caught by test/ask-permission.test.mjs "a permission change
+  // clears session grants", which went red the moment the lease was wired in.
+  //
+  // A genuinely separate session is a different pid and is still refused below;
+  // test/lease.test.mjs "THE RACE" proves that with twelve real processes.
+  // Only a LIVE lease of ours is adopted. One of ours that has expired falls
+  // through to the takeover path below, which rewrites it with a fresh expiry —
+  // adopting an expired token would hand back something verifyLeaseHeld then
+  // refuses, which is worse than not having it.
+  if (!existing.expired && existing.pid === process.pid && existing.host === hostname()) {
+    const adopted = { ...existing };
+    for (const derived of ['expiresAtMs', 'expired', 'sameHost', 'holderAlive', 'takeable', 'file']) {
+      delete adopted[derived];
+    }
+    return { record: adopted, tookOverFrom: null, reused: true };
+  }
+
   if (!existing.takeable) {
     throw new LeaseHeldError(
       `another writer holds the lease on ${existing.projectSlug}: `

@@ -7,8 +7,9 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { redactSecrets } from './redact.mjs';
+import { acquireLease, renewLease, verifyLeaseHeld } from '../core/lease.mjs';
 import {
   ALLOW_SESSION,
   DENY,
@@ -16,7 +17,11 @@ import {
   normalizeDecision,
   resolveAskTimeoutMs,
 } from './approval.mjs';
-import { evaluateToolCall, governanceRefusalMessage } from '../core/governance-gate.mjs';
+import {
+  evaluateToolCall,
+  governanceRefusalMessage,
+  requiresWriteLease,
+} from '../core/governance-gate.mjs';
 
 const READ_TOOLS = new Set(['read_file', 'list_dir', 'search_text']);
 const WRITE_TOOLS = new Set(['write_file', 'run_command']);
@@ -206,6 +211,61 @@ export function createToolRuntime(workspaceRoot, options = {}) {
 
   /** Tool names the user approved for the rest of THIS runtime's life. */
   const sessionGrants = new Set();
+
+  // ── THE WRITE LEASE ────────────────────────────────────────────────────────
+  //
+  // At most one active writer per project, which is what README.md:19 has always
+  // advertised and what nothing enforced until now.
+  //
+  // Acquisition lives HERE and not in the gate, because a gate must stay a pure
+  // evaluator — a check with a side effect is a check you cannot reason about.
+  // The gate verifies; this acquires.
+  //
+  // It is acquired LAZILY, on the first mutating call, not at construction.
+  // A read-only session must not take a project's write lease and block a real
+  // writer for ninety seconds, and constructing a runtime is not a statement of
+  // intent to write.
+  let leaseToken = options.leaseToken ?? null;
+  const leaseSlug = projectSlug ?? basename(root) ?? 'workspace';
+
+  /**
+   * Make sure this session holds the lease, renewing or re-taking as needed.
+   * Never throws. Returns {ok, reason} — a refusal reason the caller surfaces.
+   */
+  function ensureWriteLease() {
+    // Already ours and still valid? Push the expiry out and carry on. Renewing
+    // per mutating call is what stops a long think between two writes from
+    // silently losing the project to a takeover.
+    if (leaseToken) {
+      const held = verifyLeaseHeld(root, { leaseToken });
+      if (held.held) {
+        try {
+          renewLease(root, { leaseToken });
+          return { ok: true, reason: '' };
+        } catch (err) {
+          // Lost it mid-renew. Fall through and try to take it cleanly rather
+          // than proceeding on a lease we no longer hold.
+          leaseToken = null;
+          void err;
+        }
+      } else if (held.failedClosed) {
+        // Unreadable lease file. "Cannot tell" is never "carry on".
+        return { ok: false, reason: held.reason };
+      } else {
+        leaseToken = null;
+      }
+    }
+
+    try {
+      const { record } = acquireLease(root, { projectSlug: leaseSlug });
+      leaseToken = record.leaseToken;
+      return { ok: true, reason: '' };
+    } catch (err) {
+      // LeaseHeldError means somebody else is genuinely writing. Anything else
+      // means we could not establish the invariant, and both refuse.
+      return { ok: false, reason: err.message };
+    }
+  }
 
   function noteDecision(tool, decision, source) {
     try {
@@ -444,6 +504,19 @@ export function createToolRuntime(workspaceRoot, options = {}) {
       // half only inspects `command` (governance.mjs:52-53) so for a write it
       // is the promoted rules that decide, matched against the path AND the
       // content.
+      // Take the write lease BEFORE asking the gate, so the gate has a token to
+      // verify. A failure to establish it is reported through the same refusal
+      // path as any other governance refusal — the model must be told the
+      // project has another writer, not left guessing why a write did nothing.
+      if (requiresWriteLease(name)) {
+        const lease = ensureWriteLease();
+        if (!lease.ok) {
+          return redactSecrets(governanceRefusalMessage(name, {
+            reason: `it needs the project's write lease and this session could not take it: ${lease.reason}`,
+          }));
+        }
+      }
+
       let governance;
       try {
         governance = evaluateToolCall({
@@ -451,6 +524,7 @@ export function createToolRuntime(workspaceRoot, options = {}) {
           args: callArgs,
           workspace: root,
           projectSlug,
+          leaseToken,
         });
       } catch (err) {
         // The gate is written not to throw. If it ever does, that is exactly

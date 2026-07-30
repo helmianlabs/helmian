@@ -59,21 +59,57 @@ test('a fresh workspace has no lease, and that is not the same as holding one', 
 });
 
 test('THE INVARIANT: a second writer cannot take a lease that is live', () => {
+  // The incumbent is a FOREIGN writer — another machine — because that is what a
+  // second writer actually is. A lease held by this very process is the SAME
+  // writer and is deliberately adopted rather than refused; see the
+  // same-process test below for why that distinction has to exist.
   const dir = workspace();
   try {
-    const first = acquireLease(dir, { projectSlug: 'helmion', instanceId: 'writer-one' });
-    assert.ok(first.record.leaseToken);
-    assert.equal(first.tookOverFrom, null);
+    const foreignToken = 'foreign-live-token';
+    writeRawLease(dir, JSON.stringify({
+      version: 1,
+      projectSlug: 'helmion',
+      leaseToken: foreignToken,
+      coordinatorId: 'claude-code',
+      instanceId: 'writer-one-elsewhere',
+      pid: 4242,
+      host: 'some-other-machine',
+      acquiredAt: new Date(Date.now() - 1000).toISOString(),
+      renewedAt: new Date(Date.now() - 1000).toISOString(),
+      expiresAt: new Date(Date.now() + DEFAULT_TTL_MS).toISOString(),
+      ttlMs: DEFAULT_TTL_MS,
+      tookOverFrom: null,
+    }));
 
     assert.throws(
       () => acquireLease(dir, { projectSlug: 'helmion', instanceId: 'writer-two' }),
       (err) => err instanceof LeaseHeldError && /another writer holds the lease/.test(err.message),
-      'a second acquire against a live lease must be refused',
+      'a second acquire against a live foreign lease must be refused',
     );
 
-    // And the first holder still holds it — a refused attempt must not disturb it.
-    const verdict = verifyLeaseHeld(dir, { leaseToken: first.record.leaseToken });
+    // And the incumbent still holds it — a refused attempt must not disturb it.
+    const verdict = verifyLeaseHeld(dir, { leaseToken: foreignToken });
     assert.equal(verdict.held, true, 'the refused attempt damaged the incumbent lease');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SAME PROCESS, SECOND RUNTIME: the lease is ADOPTED, not refused', () => {
+  // A writer is a PROCESS, not an object. src/agent/tools.mjs builds a fresh
+  // runtime every time the permission mode changes and on every session reset,
+  // so treating a second runtime as a rival deadlocked a session against itself.
+  // Caught by test/ask-permission.test.mjs the moment the lease was wired in.
+  const dir = workspace();
+  try {
+    const first = acquireLease(dir, { projectSlug: 'helmion', instanceId: 'runtime-one' });
+    const second = acquireLease(dir, { projectSlug: 'helmion', instanceId: 'runtime-two' });
+
+    assert.equal(second.reused, true, 'a second runtime in this process must adopt, not conflict');
+    assert.equal(second.record.leaseToken, first.record.leaseToken, 'it must be the SAME token');
+    assert.equal(second.tookOverFrom, null, 'adoption is not a takeover');
+    // Both "runtimes" therefore verify as holders, because they are one writer.
+    assert.equal(verifyLeaseHeld(dir, { leaseToken: first.record.leaseToken }).held, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
