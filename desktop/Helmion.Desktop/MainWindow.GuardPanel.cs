@@ -195,37 +195,21 @@ public partial class MainWindow
             return;
         }
 
+        // The mapping lives in Helmion.Desktop.Core.GuardPermissionPosture as a
+        // pure function so the smoke suite can prove it. It used to be the switch
+        // that sat here, untested, rendering the safest setting yellow and a
+        // setting the user deliberately picked from a dropdown critical red.
         var mode = CurrentPermissionMode;
-        var (level, title, detail) = mode switch
-        {
-            AgentPermission.Full => (
-                GuardLevel.Critical,
-                "Full tool permissions are ON",
-                "write_file and run_command are allowed with no per-call approval. Every provider "
-                + "in this window can write files and run shell commands in the registered workspace."),
-            AgentPermission.Ask => (
-                GuardLevel.Warning,
-                "Every tool call needs your approval",
-                "Ask mode: each call waits for a click, and an unanswered call is denied "
-                + "(AgentApprovalDecision.Normalize defaults to deny)."),
-            AgentPermission.ReadTools => (
-                GuardLevel.Normal,
-                "Read tools only",
-                "Reads are allowed; writes and shell are refused by ToolDispatcher."),
-            _ => (
-                GuardLevel.Normal,
-                "Read-only chat",
-                "No tools are available until permissions are raised.")
-        };
+        var card = GuardPermissionPosture.Describe(mode);
 
         _guardFeed.Report(
             new GuardObservation(
                 "Console",
                 PermissionSource,
-                "desktop-permission-mode",
-                title,
-                $"{detail} · mode: {mode}",
-                level),
+                GuardPermissionPosture.Signature,
+                card.Title,
+                $"{card.Detail} · mode: {mode}",
+                card.Level),
             DateTimeOffset.Now);
         RefreshGuardChrome();
     }

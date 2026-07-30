@@ -25,7 +25,19 @@ public static class AgentPermission
         (Full, "Full tools (no ask)", "Full control — write_file + run_command without asking.")
     ];
 
-    public static string Normalize(string? mode)
+    /// <summary>
+    /// The recognised mode, or null when the string means nothing here.
+    /// <para>
+    /// <see cref="Normalize"/> folds an unrecognised value into
+    /// <see cref="ReadOnly"/>, which is the right default for a GATE — an
+    /// unreadable setting must not grant tools. It is the wrong answer for a
+    /// STATUS PANEL, which would then state, in a confident colour, that the
+    /// session is in read-only chat when nobody actually knows what it is in.
+    /// Callers that report state use this and render Unknown; callers that
+    /// enforce keep using Normalize and fail closed.
+    /// </para>
+    /// </summary>
+    public static string? TryNormalize(string? mode)
     {
         var m = (mode ?? string.Empty).Trim().ToLowerInvariant();
         return m switch
@@ -34,9 +46,11 @@ public static class AgentPermission
             "ask" or "always-ask" or "always_ask" or "ask-each" or "approve" or "prompt" or "confirm" => Ask,
             "read-tools" or "read" or "tools-read" or "readonly-tools" => ReadTools,
             "read-only" or "readonly" or "chat" or "off" or "none" or "" => ReadOnly,
-            _ => ReadOnly
+            _ => null
         };
     }
+
+    public static string Normalize(string? mode) => TryNormalize(mode) ?? ReadOnly;
 
     /// <summary>
     /// True when the mode can reach a tool at all — read-tools, ask, or full.
