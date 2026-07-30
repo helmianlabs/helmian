@@ -909,6 +909,8 @@ VoiceBackendSmokeChecks.Run();
 
 VoiceHostSmokeChecks.Run();
 
+ConversationModeChecks.Run();
+
 ProfileInstallerGuardChecks.Run();
 
 GuardEscalationChecks.Run();
