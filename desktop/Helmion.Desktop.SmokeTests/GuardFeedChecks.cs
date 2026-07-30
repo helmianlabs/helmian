@@ -133,6 +133,57 @@ internal static class GuardFeedChecks
             "a milder repeat never erases the worst thing the detection layer ever said");
         checks += 1;
 
+        // --- 6b. RECOVERY IS NOT A MILDER REPEAT -------------------------------
+        // Found on the live panel, 2026-07-29, and it is the reason this section
+        // exists twice. The local-service card was reported Warning while the
+        // named pipe was down, hit the 5-sighting threshold and turned red. The
+        // pipe then came up. Title and detail updated to "Local service
+        // connected · the named pipe answered" — but the level could only ever
+        // be raised, so the card kept rendering CRITICAL, and every refresh bumped
+        // the count higher: observed at ×6, then ×7, while the service was
+        // healthy the whole time.
+        //
+        // A card whose words say fine and whose colour says emergency is worse
+        // than no card. The distinction that fixes it: Normal means the layer
+        // COMPUTED the state and found nothing wrong — the condition cleared.
+        // That is different information from a milder repeat of a live problem,
+        // and it must be allowed to bring the card down.
+        var recover = new GuardFeed();
+        var down = new GuardObservation(
+            "Local", "Local service", "local-service-state",
+            "Local service not connected", "the named pipe is not answering", GuardLevel.Warning);
+        var up = new GuardObservation(
+            "Local", "Local service", "local-service-state",
+            "Local service connected", "the named pipe answered", GuardLevel.Normal);
+
+        var serviceCard = recover.Report(down, T0);
+        for (var i = 1; i < GuardEscalationRule.CriticalAfterOccurrences; i += 1)
+        {
+            recover.Report(down, T0.AddSeconds(i));
+        }
+        Assert(serviceCard.Level == GuardLevel.Critical,
+            "the precondition for this check: repeated warnings do escalate to red");
+
+        recover.Report(up, T0.AddSeconds(30));
+        Assert(serviceCard.ReportedLevel == GuardLevel.Normal,
+            "a layer reporting the condition CLEARED lowers the card — recovery is not a milder repeat");
+        Assert(serviceCard.Level == GuardLevel.Normal,
+            "a recovered card must stop rendering red while its own text says it is connected");
+        Assert(serviceCard.Occurrences == 1,
+            "recovery restarts the count, so old sightings cannot instantly re-escalate the healthy state");
+
+        // Unknown is NOT recovery. A state nobody could compute must never clear
+        // a real flag — that would be the panel going quiet because it went blind.
+        var blindAfterFlag = new GuardFeed();
+        var flagged = blindAfterFlag.Report(down, T0);
+        blindAfterFlag.Report(
+            new GuardObservation("Local", "Local service", "local-service-state",
+                "Local service state unknown", "the probe did not answer", GuardLevel.Unknown),
+            T0.AddSeconds(1));
+        Assert(flagged.ReportedLevel == GuardLevel.Warning,
+            "an Unknown repeat does not clear a warning — could-not-tell is not all-clear");
+        checks += 5;
+
         // --- 7. GROUPING: TABS ARE COUNTED, NEVER LITERAL ----------------------
         var grouped = new GuardFeed();
         grouped.Report(Warning("Claude", "Browser pattern match", "a"), T0);

@@ -210,6 +210,56 @@ internal static class GuardEscalationChecks
             "a negative option count does not grow the card");
         checks += 3;
 
+        // --- A DELIBERATE SETTING IS A STATE, NOT AN ALARM ---------------------
+        // Troy's ruling, 2026-07-29: full permissions "is a choice that the user
+        // makes so I don't think that needs to be red because that is something
+        // they have to physically choose through the drop down."
+        //
+        // This mapping lived inside a private method of MainWindow where nothing
+        // could reach it, and it was wrong in BOTH directions: Full rendered
+        // critical red, and Ask — the safest setting that still runs tools, where
+        // every call waits for a click — rendered yellow, louder than the
+        // stricter read-tools-only mode beside it.
+        foreach (var mode in new[]
+                 {
+                     AgentPermission.Full, AgentPermission.Ask,
+                     AgentPermission.ReadTools, AgentPermission.ReadOnly
+                 })
+        {
+            var card = GuardPermissionPosture.Describe(mode);
+            Assert(card.Level == GuardLevel.Normal,
+                $"permission mode '{mode}' is a deliberate dropdown choice and must not raise a flag");
+            Assert(card.Level != GuardLevel.Critical,
+                $"permission mode '{mode}' must never render red");
+            Assert(card.Title.Length > 0 && card.Detail.Length > 0,
+                $"permission mode '{mode}' still states what it permits, in words");
+        }
+        checks += 12;
+
+        // Full is quiet, but it must not be VAGUE. The card is the only place the
+        // panel says shell commands can run unattended.
+        var full = GuardPermissionPosture.Describe(AgentPermission.Full);
+        Assert(full.Detail.Contains("run_command", StringComparison.Ordinal)
+            && full.Detail.Contains("without stopping to ask", StringComparison.Ordinal),
+            "the full-permission card names exactly what it allows, even though it is not an alarm");
+
+        // Aliases resolve. "on" is a real value AgentPermission.Normalize accepts.
+        Assert(GuardPermissionPosture.Describe("on").Title
+            == GuardPermissionPosture.Describe(AgentPermission.Full).Title,
+            "a recognised alias produces the same card as its canonical mode");
+
+        // An unrecognised mode is Unknown, NOT a confident "read-only chat".
+        // The gate folds unknown into read-only and fails closed, which is right
+        // for a gate and a lie on a panel.
+        var junk = GuardPermissionPosture.Describe("banana");
+        Assert(junk.Level == GuardLevel.Unknown,
+            "a permission mode nobody recognises is Unknown on the panel, never a confident colour");
+        Assert(AgentPermission.Normalize("banana") == AgentPermission.ReadOnly,
+            "the ENFORCEMENT path still fails closed on an unrecognised mode — panels and gates differ on purpose");
+        Assert(junk.Detail.Contains("banana", StringComparison.Ordinal),
+            "the unknown card quotes the value it could not parse, so it can be chased down");
+        checks += 5;
+
         Console.WriteLine($"Helmion guard escalation checks passed ({checks} checks).");
     }
 

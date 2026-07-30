@@ -161,7 +161,32 @@ public sealed class GuardCard : INotifyPropertyChanged
         // A level may only be raised by a repeat, never lowered. A flag that was
         // critical once does not become a warning because the next report was
         // milder — that would erase the worst thing the layer ever said.
-        if (observation.Level > ReportedLevel)
+        //
+        // RECOVERY IS THE ONE EXCEPTION, AND IT IS NOT A MILDER REPEAT.
+        //
+        // Normal does not mean "less bad this time". It means the layer COMPUTED
+        // the state and found nothing wrong — the condition has cleared. Ratchet
+        // through that and the card lies: measured on the live panel 2026-07-29,
+        // the local-service card read "Local service connected · the named pipe
+        // answered" in CRITICAL red, escalated from a warning that had stopped
+        // being true, with the sighting count still climbing on every refresh —
+        // ×6, then ×7, while the service was up the whole time. Words saying fine
+        // over a colour saying emergency is worse than no card at all.
+        //
+        // The count restarts too. Keeping seven stale sightings would send the
+        // very next warning straight past the five-sighting threshold into red
+        // without it ever having been seen five times.
+        //
+        // UNKNOWN IS NOT RECOVERY. Unknown means the layer could not tell, and a
+        // state nobody could compute must never clear a real flag — that is the
+        // panel going quiet because it went blind, which is the exact failure
+        // this whole file exists to prevent (see WorstLevel below).
+        if (observation.Level == GuardLevel.Normal && ReportedLevel != GuardLevel.Normal)
+        {
+            ReportedLevel = GuardLevel.Normal;
+            Occurrences = 1;
+        }
+        else if (observation.Level > ReportedLevel)
         {
             ReportedLevel = observation.Level;
         }
