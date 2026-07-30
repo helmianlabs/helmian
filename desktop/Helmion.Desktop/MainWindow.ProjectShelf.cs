@@ -43,7 +43,8 @@ public partial class MainWindow
         if (ProjectShelfList is null) return;
 
         var root = ResolveProjectRoot();
-        var projects = ProjectShelf.Discover(root);
+        var filter = ProjectSearchBox?.Text ?? string.Empty;
+        var projects = ProjectShelf.Discover(root, PinnedSlugs(), filter);
         ProjectShelfList.ItemsSource = projects;
 
         if (ProjectShelfEmpty is null) return;
@@ -51,6 +52,16 @@ public partial class MainWindow
         if (projects.Count > 0)
         {
             ProjectShelfEmpty.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // A filter that matched nothing is a DIFFERENT state from having no
+        // projects, and saying "no projects" here would send somebody hunting for
+        // a bug that is really just a typo in the search box.
+        if (!string.IsNullOrWhiteSpace(filter))
+        {
+            ProjectShelfEmpty.Visibility = Visibility.Visible;
+            ProjectShelfEmpty.Text = $"No project matches \"{filter.Trim()}\". Clear the box to see them all.";
             return;
         }
 
@@ -76,6 +87,55 @@ public partial class MainWindow
         {
             return null;
         }
+    }
+
+    private void ProjectSearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshProjectShelf();
+
+    private IReadOnlyList<string> PinnedSlugs()
+    {
+        try
+        {
+            return _desktopSettings.PinnedProjects ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Pin or unpin, and persist it.
+    ///
+    /// A pin is a PREFERENCE and lives in desktop settings; the project list
+    /// itself still comes off the disk every refresh. So a pin naming a folder
+    /// that has since been renamed or deleted simply never matches and costs
+    /// nothing — which is exactly why this may be stored while the project list
+    /// may not.
+    /// </summary>
+    private void ProjectPin_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string slug } || string.IsNullOrWhiteSpace(slug)) return;
+
+        var pins = new List<string>(PinnedSlugs());
+        if (pins.RemoveAll(existing => string.Equals(existing, slug, StringComparison.OrdinalIgnoreCase)) == 0)
+        {
+            pins.Add(slug);
+        }
+
+        try
+        {
+            _desktopSettings = _desktopSettings with { PinnedProjects = pins };
+            DesktopSettingsStore.Save(_desktopSettings);
+        }
+        catch (Exception ex)
+        {
+            // A pin that could not be saved must not silently look saved.
+            _plusMenu.Fail(
+                _plusMenu.Begin(PlusMenuKind.Skill, "Pin project", "Saving the pin…"),
+                $"The pin could not be saved: {ex.Message}");
+        }
+
+        RefreshProjectShelf();
     }
 
     private void ProjectShelfItem_Click(object sender, RoutedEventArgs e)

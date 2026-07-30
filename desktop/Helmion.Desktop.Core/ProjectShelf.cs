@@ -14,12 +14,20 @@ public sealed record ProjectSummary(
     string Directory,
     IReadOnlyList<string> Parts,
     int SprintCount,
-    DateTime LastWriteUtc)
+    DateTime LastWriteUtc,
+    bool IsPinned = false)
 {
     /// <summary>The second line in the panel. Never empty.</summary>
     public string PartsText => Parts.Count == 0
         ? "PROJECT.md only — no planning folder yet"
         : string.Join(" · ", Parts) + (SprintCount > 0 ? $" · {SprintCount} sprint{(SprintCount == 1 ? "" : "s")}" : string.Empty);
+
+    /// <summary>A filled star when pinned, a hollow one when not. Both are clickable.</summary>
+    public string PinGlyph => IsPinned ? "★" : "☆";
+
+    public string PinTooltip => IsPinned
+        ? "Pinned to the top. Click to unpin."
+        : "Pin this project to the top of the panel.";
 }
 
 /// <summary>
@@ -55,7 +63,41 @@ public static class ProjectShelf
     /// folder is a normal state for a new machine, and the panel says "no projects
     /// yet" rather than showing an error nobody can act on.
     /// </summary>
-    public static IReadOnlyList<ProjectSummary> Discover(string? root)
+    /// <param name="pinned">
+    /// Slugs pinned to the top. Every AI side panel worth copying puts pinned
+    /// items above recents — Claude, ChatGPT and Gemini all do — so a pin here
+    /// sorts, it does not filter.
+    /// </param>
+    /// <param name="filter">
+    /// Free text. Matches the title OR the slug, case-insensitively, so both
+    /// "Invoice Importer" and "invoice-imp" find the same project. A filter that
+    /// matches nothing returns an empty list; the caller says so in words rather
+    /// than showing a blank panel.
+    /// </param>
+    public static IReadOnlyList<ProjectSummary> Discover(
+        string? root,
+        IReadOnlyCollection<string>? pinned = null,
+        string? filter = null)
+    {
+        var pins = new HashSet<string>(pinned ?? [], StringComparer.OrdinalIgnoreCase);
+        var needle = (filter ?? string.Empty).Trim();
+
+        return DiscoverAll(root)
+            .Select(project => project with { IsPinned = pins.Contains(project.Slug) })
+            .Where(project => Matches(project, needle))
+            // Pinned first, then most recently touched. Two keys, both stated:
+            // a pin is a deliberate choice and outranks recency, which is a guess.
+            .OrderByDescending(project => project.IsPinned)
+            .ThenByDescending(project => project.LastWriteUtc)
+            .ToList();
+    }
+
+    private static bool Matches(ProjectSummary project, string needle) =>
+        needle.Length == 0
+        || project.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+        || project.Slug.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<ProjectSummary> DiscoverAll(string? root)
     {
         if (string.IsNullOrWhiteSpace(root) || !System.IO.Directory.Exists(root))
         {
@@ -90,7 +132,7 @@ public static class ProjectShelf
             // blank the panel over one unreadable subfolder.
         }
 
-        return found.OrderByDescending(project => project.LastWriteUtc).ToList();
+        return found;
     }
 
     /// <summary>Reads one project folder. Null when it cannot be read at all.</summary>
