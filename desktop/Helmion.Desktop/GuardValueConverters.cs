@@ -71,6 +71,11 @@ public sealed class PlusStateBrushConverter : IValueConverter
                 System.Windows.Media.Color.FromRgb(0xE0, 0x6C, 0x60)),   // red — failed
             "Removed" => new System.Windows.Media.SolidColorBrush(
                 System.Windows.Media.Color.FromRgb(0x7A, 0x82, 0x90)),   // grey — removed
+            // Grey, and listed EXPLICITLY rather than left to the fallback: an
+            // empty result is a normal outcome, and the next person to add a state
+            // should have to think about its colour instead of inheriting one.
+            "Empty" => new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x7A, 0x82, 0x90)),   // grey — nothing there yet
             _ => new System.Windows.Media.SolidColorBrush(
                 System.Windows.Media.Color.FromRgb(0x7A, 0x82, 0x90)),
         };

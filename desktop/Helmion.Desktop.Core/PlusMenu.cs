@@ -98,11 +98,19 @@ public static class PlusMenuCatalog
 }
 
 /// <summary>
-/// The four states every + action must be able to show.
+/// The states every + action must be able to show.
 /// <para>
 /// <see cref="Removed"/> is a real state rather than a deletion because Troy's
 /// fourth requirement is "remove / undo" — an item you can put back has to still
 /// exist somewhere to be put back from.
+/// </para>
+/// <para>
+/// <see cref="Empty"/> exists because NOTHING FOUND IS NOT AN ERROR. A fresh
+/// workspace has no plugins.json, no connector need typed yet, nothing pinned —
+/// and reporting that in red made the one part of the screen that was working
+/// correctly look like the broken one. An empty state is calm, grey, and still
+/// says what to do next; a failure means something was attempted and did not
+/// work. Collapsing the two teaches the user to ignore red.
 /// </para>
 /// </summary>
 public enum PlusActionState
@@ -111,6 +119,7 @@ public enum PlusActionState
     Succeeded = 1,
     Failed = 2,
     Removed = 3,
+    Empty = 4,
 }
 
 /// <summary>
@@ -186,6 +195,7 @@ public sealed class PlusActionItem : INotifyPropertyChanged
         PlusActionState.Succeeded => "Added",
         PlusActionState.Failed => "Failed",
         PlusActionState.Removed => "Removed",
+        PlusActionState.Empty => "Nothing yet",
         _ => "Unknown",
     };
 
@@ -196,19 +206,27 @@ public sealed class PlusActionItem : INotifyPropertyChanged
         PlusActionState.Succeeded => "Ok",
         PlusActionState.Failed => "Failed",
         PlusActionState.Removed => "Removed",
+        PlusActionState.Empty => "Empty",
         _ => "Unknown",
     };
 
     public bool IsBusy => State == PlusActionState.InProgress;
 
-    /// <summary>Removable once it has settled. You cannot remove something mid-flight.</summary>
-    public bool CanRemove => State is PlusActionState.Succeeded or PlusActionState.Failed;
+    /// <summary>
+    /// Removable once it has settled. You cannot remove something mid-flight.
+    /// An empty row is settled too — the user has read "nothing yet" and is
+    /// entitled to clear it off the list.
+    /// </summary>
+    public bool CanRemove =>
+        State is PlusActionState.Succeeded or PlusActionState.Failed or PlusActionState.Empty;
 
     public bool CanUndo => State == PlusActionState.Removed;
 
     internal void Succeed(string message) { State = PlusActionState.Succeeded; Message = message; }
 
     internal void Fail(string message) { State = PlusActionState.Failed; Message = message; }
+
+    internal void MarkEmpty(string message) { State = PlusActionState.Empty; Message = message; }
 
     internal void MarkRemoved(string message)
     {
@@ -285,6 +303,53 @@ public sealed class PlusMenuController
             ? "It failed, and the reason was not reported. That is a bug in Helmion, not in what you tried to add."
             : message);
         return item;
+    }
+
+    /// <summary>
+    /// Settles a row as EMPTY — the thing was looked for and is not there yet.
+    ///
+    /// Not a failure, and deliberately not a success either: "Added" over an empty
+    /// registry would be its own small lie. The message is still mandatory, on the
+    /// same reasoning as <see cref="Fail"/>, because an empty state that does not
+    /// say what to do next is just a dead end with better manners.
+    /// </summary>
+    public PlusActionItem Empty(PlusActionItem item, string message)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        item.MarkEmpty(string.IsNullOrWhiteSpace(message)
+            ? "There is nothing here yet, and Helmion did not say what would put something here. That is a bug in Helmion."
+            : message);
+        return item;
+    }
+
+    /// <summary>
+    /// Applies an outcome decided by <see cref="FirstRunStates"/>.
+    ///
+    /// THE POINT OF THIS METHOD is that the level and the row are set from the SAME
+    /// object the smoke suite asserts on. Before, the window decided the level at
+    /// the call site, so a headless test could prove the classifier said "empty"
+    /// while the window still drew red — the two could drift and nothing would
+    /// catch it. Routing both through here makes the tested value and the rendered
+    /// value the same value.
+    /// </summary>
+    public PlusActionItem Settle(PlusActionItem item, PlusOutcome outcome)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        return outcome.State switch
+        {
+            PlusActionState.Succeeded => Succeed(item, outcome.Message),
+            PlusActionState.Empty => Empty(item, outcome.Message),
+            PlusActionState.Failed => Fail(item, outcome.Message),
+
+            // InProgress and Removed are not outcomes, and a state this method does
+            // not recognise must not be silently rendered as success.
+            _ => Fail(item,
+                $"Helmion could not settle this row: it produced the state "
+                + $"\"{outcome.State}\", which is not an outcome. That is a bug in Helmion. "
+                + $"The underlying message was: {outcome.Message}"),
+        };
     }
 
     /// <summary>

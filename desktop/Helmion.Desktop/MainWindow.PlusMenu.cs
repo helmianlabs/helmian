@@ -188,11 +188,11 @@ public partial class MainWindow
         var need = (ConsoleInputBox?.Text ?? string.Empty).Trim();
         var row = _plusMenu.Begin(PlusMenuKind.Connector, "Connectors");
 
-        if (need.Length == 0)
+        // Non-null means the search was never started — an empty box is a step not
+        // taken yet, not a search that failed.
+        if (FirstRunStates.ConnectorNeed(need) is { } notYet)
         {
-            _plusMenu.Fail(row,
-                "Type what you need it to reach into the box first — for example "
-                + "\"read local sqlite\" or \"post to Slack\" — then press + › Connectors.");
+            _plusMenu.Settle(row, notYet);
             return;
         }
 
@@ -225,28 +225,11 @@ public partial class MainWindow
         var row = _plusMenu.Begin(PlusMenuKind.Plugin, "Plugins");
         try
         {
-            var workspace = ResolveAgentWorkspace();
-            if (string.IsNullOrWhiteSpace(workspace) || !Directory.Exists(workspace))
-            {
-                _plusMenu.Fail(row,
-                    "No workspace is registered, so there is nowhere to read plugins from. "
-                    + "Pick a workspace on the Workspace tab first.");
-                return Task.CompletedTask;
-            }
-
-            var registry = Path.Combine(workspace, ".helmion", "plugins.json");
-            if (!File.Exists(registry))
-            {
-                _plusMenu.Fail(row,
-                    $"No plugins are installed in this workspace yet — {registry} does not exist. "
-                    + "Install one with: helmion plugin add <path>");
-                return Task.CompletedTask;
-            }
-
-            var bytes = new FileInfo(registry).Length;
-            _plusMenu.Succeed(row,
-                $"Plugin registry read from {registry} ({AttachmentPolicy.DescribeSize(bytes)}). "
-                + "Run: helmion plugin commands — to see what they add.");
+            // Empty-vs-failed is decided in Core, not here. That is what lets the
+            // headless suite prove "a fresh empty workspace produces zero red
+            // banners" against a real temporary folder — the old proof needed a
+            // WPF window and so could not be run at all.
+            _plusMenu.Settle(row, FirstRunStates.Plugins(ResolveAgentWorkspace()));
         }
         catch (Exception ex)
         {
