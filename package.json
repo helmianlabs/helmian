@@ -43,6 +43,6 @@
   "dependencies": {
     "pg": "^8.22.0"
   },
-  "license": "UNLICENSED",
+  "license": "BUSL-1.1",
   "private": true
 }

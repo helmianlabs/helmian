@@ -2708,8 +2708,14 @@
               <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
                 <StackPanel>
                   <TextBlock Text="Safety defaults" Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="✓  No credentials loaded by the desktop shell" Foreground="{DynamicResource SoftTextBrush}" Margin="0,18,0,0" />
-                  <TextBlock Text="✓  No agent configuration discovery" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
+                  <!-- 2026-07-29: these two read "✓ No credentials loaded by the
+                       desktop shell" and "✓ No agent configuration discovery",
+                       twenty lines below the card that loads and saves those
+                       credentials, in an app whose ProfileSyncEngine reads and
+                       rewrites ~/.claude.json, %APPDATA%\Claude\ and
+                       ~/.gemini/. Replaced with what is actually true. -->
+                  <TextBlock Text="•  Provider keys are loaded from your .env and stay on this machine" Foreground="{DynamicResource SoftTextBrush}" Margin="0,18,0,0" />
+                  <TextBlock Text="•  Agent configuration is written only when you click Sync Profile" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
                   <TextBlock Text="✓  System operations require explicit owner signature" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
                   <TextBlock Text="✓  Advisor consensus stays advisory" Foreground="{DynamicResource SoftTextBrush}" Margin="0,11,0,0" />
                 </StackPanel>
@@ -2741,7 +2747,16 @@
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
-          <TextBlock Text="No network connections · No credentials loaded · No external authority"
+          <!-- 2026-07-29: this read "No network connections · No credentials
+               loaded · No external authority" on EVERY page and all three were
+               false. Five HttpClients call api.openai.com, api.anthropic.com,
+               api.x.ai and generativelanguage.googleapis.com
+               (OpenAiChatSession.cs:15, ClaudeChatSession.cs:14,
+               GrokChatSession.cs:16, GeminiChatSession.cs:15), and
+               MainWindow.xaml.cs:674-704 loads five provider keys plus the
+               database URL into this renderer. A footer a buyer reads on every
+               screen is the last place to overstate a boundary. -->
+          <TextBlock Text="Calls provider APIs directly · Provider keys loaded from your .env · Local named-pipe service"
                      Foreground="{DynamicResource FaintTextBrush}"
                      FontSize="10"
                      VerticalAlignment="Center" />

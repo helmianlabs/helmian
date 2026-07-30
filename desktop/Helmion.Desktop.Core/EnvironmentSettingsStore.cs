@@ -25,9 +25,18 @@ public static class EnvironmentSettingsStore
             return Path.GetFullPath(customPath);
         }
 
-        // Prefer explicit workspace roots first. Single-file Pilot extracts under
-        // %TEMP%\.net\… so walking only AppContext.BaseDirectory often misses
-        // E:\Helmion\.env and the Console ends up with no/stale keys.
+        // Prefer explicit workspace roots first. A single-file Pilot extracts
+        // under %TEMP%\.net\… so walking only AppContext.BaseDirectory often
+        // misses the workspace's own .env and the Console ends up with no keys.
+        //
+        // 2026-07-29: this list used to contain the literal `@"E:\Helmion"`,
+        // ranked ABOVE AppContext.BaseDirectory. On any machine where that path
+        // happened to exist it WON the search that decides where every API key
+        // and the database URL are read from and written to — one developer's
+        // drive letter hardcoded into a shipping product. HELMION_ENV_ROOT is the
+        // configurable replacement, and it is ranked BELOW the install directory
+        // so a stale environment variable cannot outrank the exe the user
+        // actually launched.
         var searchRoots = new List<string>();
         var workspace = Environment.GetEnvironmentVariable("WORKSPACE_PATH")
             ?? Environment.GetEnvironmentVariable("HELMION_WORKSPACE_PATH");
@@ -35,7 +44,6 @@ public static class EnvironmentSettingsStore
         {
             searchRoots.Add(workspace);
         }
-        searchRoots.Add(@"E:\Helmion");
         searchRoots.Add(AppContext.BaseDirectory);
         try
         {
@@ -48,6 +56,12 @@ public static class EnvironmentSettingsStore
         catch
         {
             // ProcessPath unavailable — ignore.
+        }
+
+        var envRoot = Environment.GetEnvironmentVariable("HELMION_ENV_ROOT");
+        if (!string.IsNullOrWhiteSpace(envRoot))
+        {
+            searchRoots.Add(envRoot);
         }
 
         foreach (var root in searchRoots.Distinct(StringComparer.OrdinalIgnoreCase))
