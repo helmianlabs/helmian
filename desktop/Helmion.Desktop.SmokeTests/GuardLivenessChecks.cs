@@ -166,7 +166,46 @@ internal static class GuardLivenessChecks
             Assert(blind.Detail.Contains("not an all-clear", StringComparison.Ordinal), "and it says so");
             checks += 2;
 
-            WritePreferences(profileRoot, "Default", extensionDir, state: 1);
+            // ── THE RECORD LIVES IN ONE OF TWO FILES, AND EITHER COUNTS. ───────
+            //
+            // This is the bug that shipped: the probe read only "Preferences", and
+            // Chrome writes UNPACKED developer-mode extensions to "Secure
+            // Preferences" instead. Measured on the author's machine 2026-07-30
+            // (Chrome 150.0.7871.100, profile "Default"): extensions.settings is
+            // ABSENT from Preferences and present in Secure Preferences carrying
+            // "path":"E:\\Helmion\\extension". The extension was loaded correctly
+            // and the card said CRITICAL. Both fixtures below exist so neither
+            // file can quietly stop being read again.
+
+            // ONLY in Secure Preferences — the developer-mode case, the one that
+            // used to fail. This is the single most important assertion here.
+            WriteChromeProfile(profileRoot, "Default", "Secure Preferences", extensionDir, disableReasons: []);
+            var secureOnly = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
+            Assert(secureOnly.Installed,
+                $"an extension recorded ONLY in Secure Preferences reads as INSTALLED (got: {secureOnly.Title})");
+            Assert(secureOnly.Level == GuardLevel.Normal
+                && secureOnly.Enablement == BrowserExtensionEnablement.Enabled,
+                "and an empty disable_reasons array is read as enabled, not as a missing value");
+            Assert(secureOnly.RecordFile == "Secure Preferences"
+                && secureOnly.Detail.Contains("Secure Preferences", StringComparison.Ordinal),
+                "and the card names WHICH file the record came from");
+            checks += 3;
+
+            // ONLY in plain Preferences — the store-install case, kept so the fix
+            // for one file cannot break the other.
+            ResetChromeProfile(profileRoot, "Default");
+            WriteChromeProfile(profileRoot, "Default", "Preferences", extensionDir, disableReasons: []);
+            var plainOnly = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
+            Assert(plainOnly.Installed && plainOnly.Level == GuardLevel.Normal,
+                $"an extension recorded ONLY in plain Preferences still reads as installed (got: {plainOnly.Title})");
+            Assert(plainOnly.RecordFile == "Preferences"
+                && plainOnly.Detail.Contains("\"Preferences\"", StringComparison.Ordinal),
+                "and that card names Preferences as the file that answered");
+            checks += 2;
+
+            // The legacy key still works where a browser still writes it.
+            ResetChromeProfile(profileRoot, "Default");
+            WriteChromeProfile(profileRoot, "Default", "Preferences", extensionDir, state: 1);
 
             var live = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
             Assert(live.Level == GuardLevel.Normal && live.Installed && live.Enabled,
@@ -179,24 +218,71 @@ internal static class GuardLivenessChecks
             checks += 3;
 
             // Disabled is its own state, NOT the same as absent.
-            WritePreferences(profileRoot, "Default", extensionDir, state: 0);
+            ResetChromeProfile(profileRoot, "Default");
+            WriteChromeProfile(profileRoot, "Default", "Preferences", extensionDir, state: 0);
             var off = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
             Assert(off.Installed && !off.Enabled && off.Level == GuardLevel.Warning,
                 "an installed-but-disabled extension is its own state, not 'missing'");
             Assert(off.Title.Contains("SWITCHED OFF", StringComparison.Ordinal), "and the card says switched off");
             checks += 2;
 
+            // A NON-EMPTY disable_reasons array is the modern way of saying off.
+            // The empty-array case above is only meaningful because this one is
+            // distinguishable from it — that is the positive control, and it comes
+            // straight from the measured file (Adblock Plus carried [1] while every
+            // enabled extension carried []).
+            ResetChromeProfile(profileRoot, "Default");
+            WriteChromeProfile(profileRoot, "Default", "Secure Preferences", extensionDir, disableReasons: [1]);
+            var reasoned = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
+            Assert(reasoned.Installed && reasoned.Enablement == BrowserExtensionEnablement.Disabled,
+                "a non-empty disable_reasons array reads as switched off");
+            Assert(reasoned.Level == GuardLevel.Warning,
+                "and that is a warning, because something IS known to be wrong");
+            checks += 2;
+
+            // NEITHER key present: installed, but enabled-ness genuinely unknown.
+            // The value of this case is what it must NOT do — a missing value is
+            // never rounded up to enabled just because nothing said otherwise.
+            ResetChromeProfile(profileRoot, "Default");
+            WriteChromeProfile(profileRoot, "Default", "Secure Preferences", extensionDir);
+            var silent = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
+            Assert(silent.Installed && silent.Enablement == BrowserExtensionEnablement.NotRecorded,
+                "with neither disable_reasons nor state, the extension is installed and enabled-ness is NOT recorded");
+            Assert(!silent.Enabled && silent.Level == GuardLevel.Unknown,
+                "an unrecorded switch is never reported as enabled, and never renders as an all-clear");
+            Assert(silent.Detail.Contains("not recorded", StringComparison.OrdinalIgnoreCase)
+                && silent.Detail.Contains("not an all-clear", StringComparison.Ordinal),
+                "and the card says in words that it could not tell");
+            checks += 3;
+
+            // Both files present and disagreeing: enabled wins, and the card says
+            // which file it believed, so the operator can check it.
+            ResetChromeProfile(profileRoot, "Default");
+            WriteChromeProfile(profileRoot, "Default", "Preferences", extensionDir, disableReasons: [1]);
+            WriteChromeProfile(profileRoot, "Default", "Secure Preferences", extensionDir, disableReasons: []);
+            var disagree = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
+            Assert(disagree.Enablement == BrowserExtensionEnablement.Enabled
+                && disagree.RecordFile == "Secure Preferences",
+                "when the two files disagree the enabled record wins and the card names it");
+            checks += 1;
+
             // A profile that has extensions, but not ours.
-            WritePreferences(profileRoot, "Default", Path.Combine(Path.GetTempPath(), "someone-elses-ext"), state: 1);
+            ResetChromeProfile(profileRoot, "Default");
+            WriteChromeProfile(profileRoot, "Default", "Preferences",
+                Path.Combine(Path.GetTempPath(), "someone-elses-ext"), state: 1);
             var absent = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
             Assert(!absent.Installed && absent.Level == GuardLevel.Warning,
                 "an extension that is not loaded reads as NOT installed — a warning, not an unknown");
             Assert(absent.Detail.Contains("chrome://extensions", StringComparison.Ordinal),
                 "and tells the operator how to fix it");
-            checks += 2;
+            Assert(absent.Detail.Contains("Secure Preferences", StringComparison.Ordinal),
+                "and the not-installed message states that BOTH files were searched, not just one");
+            checks += 3;
 
             // Path comparison must survive separators and case.
-            WritePreferences(profileRoot, "Default", extensionDir.Replace('\\', '/').ToUpperInvariant(), state: 1);
+            ResetChromeProfile(profileRoot, "Default");
+            WriteChromeProfile(profileRoot, "Default", "Secure Preferences",
+                extensionDir.Replace('\\', '/').ToUpperInvariant(), disableReasons: []);
             var normalized = BrowserExtensionProbe.Inspect(extensionDir, [profileRoot]);
             Assert(normalized.Installed,
                 "the path match survives forward slashes and different casing, as Chrome writes them");
@@ -221,10 +307,37 @@ internal static class GuardLivenessChecks
     /// in the same hour. Hand-assembling JSON in an interpolated string is the
     /// bug; the serializer is the fix, in both places.
     /// </summary>
-    private static void WritePreferences(string root, string profile, string extensionPath, int state)
+    /// <param name="fileName">
+    /// "Preferences" or "Secure Preferences". WHICH FILE IS THE POINT of several of
+    /// these fixtures, so it is a required argument with no default — a caller must
+    /// state it and cannot drift back into testing only one of them.
+    /// </param>
+    /// <param name="state">Legacy Extension::State. Omit to leave the key absent.</param>
+    /// <param name="disableReasons">
+    /// Modern Chrome's array. Empty array = recorded as enabled; non-empty =
+    /// recorded as disabled; omit entirely to leave the key absent, which is the
+    /// third case the probe has to be able to say "not recorded" about.
+    /// </param>
+    private static void WriteChromeProfile(
+        string root,
+        string profile,
+        string fileName,
+        string extensionPath,
+        int? state = null,
+        int[]? disableReasons = null)
     {
         var dir = Path.Combine(root, profile);
         Directory.CreateDirectory(dir);
+
+        var record = new Dictionary<string, object>
+        {
+            ["path"] = extensionPath,
+        };
+
+        // Written only when asked. A fixture for "the key is absent" is worthless if
+        // the helper helpfully supplies a default.
+        if (state is not null) record["state"] = state.Value;
+        if (disableReasons is not null) record["disable_reasons"] = disableReasons;
 
         var document = new Dictionary<string, object>
         {
@@ -232,16 +345,32 @@ internal static class GuardLivenessChecks
             {
                 ["settings"] = new Dictionary<string, object>
                 {
-                    ["abcdefghijklmnopabcdefghijklmnop"] = new Dictionary<string, object>
-                    {
-                        ["path"] = extensionPath,
-                        ["state"] = state,
-                    },
+                    ["abcdefghijklmnopabcdefghijklmnop"] = record,
                 },
             },
         };
 
-        File.WriteAllText(Path.Combine(dir, "Preferences"), System.Text.Json.JsonSerializer.Serialize(document));
+        File.WriteAllText(Path.Combine(dir, fileName), System.Text.Json.JsonSerializer.Serialize(document));
+    }
+
+    /// <summary>
+    /// Deletes BOTH preference files for a profile.
+    ///
+    /// Necessary because these fixtures reuse one profile folder: without it, a file
+    /// written by an earlier case survives into the next one and the probe answers
+    /// from the leftover. A test that passes because of a stale file is worse than
+    /// no test — it would report the two-file fix as working while reading one file.
+    /// </summary>
+    private static void ResetChromeProfile(string root, string profile)
+    {
+        var dir = Path.Combine(root, profile);
+        if (!Directory.Exists(dir)) return;
+
+        foreach (var name in BrowserExtensionProbe.PreferenceFileNames)
+        {
+            var file = Path.Combine(dir, name);
+            if (File.Exists(file)) File.Delete(file);
+        }
     }
 
     private static int CountLedgerLines(string auditDirectory)

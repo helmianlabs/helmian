@@ -117,6 +117,23 @@ public sealed class GuardCard : INotifyPropertyChanged
 
     public bool IsAcknowledged => AcknowledgedAt is not null;
 
+    /// <summary>
+    /// Whether acknowledging this card takes it off the board.
+    ///
+    /// A CRITICAL IS DELIBERATELY EXCLUDED. Acknowledging is one click, and one
+    /// click that makes a real critical disappear turns the guard into a
+    /// nuisance-dismissal machine — the fastest way to clear a red would be to
+    /// stop looking at it. So a critical stays on the board when acknowledged and
+    /// only its motion stops (GuardEscalationRule.Evaluate keeps the level and
+    /// returns Steady). Everything quieter — warning, OK, unknown — hides.
+    ///
+    /// Note this reads <see cref="Level"/>, the escalated level, not
+    /// <see cref="ReportedLevel"/>: a warning that has already crossed the
+    /// five-sighting or five-minute threshold IS a critical by then, and it does
+    /// not become dismissable just because of where it started.
+    /// </summary>
+    public bool IsDismissed => AcknowledgedAt is not null && Level != GuardLevel.Critical;
+
     public string AcknowledgementText => AcknowledgedAt is null
         ? "Not acknowledged"
         : $"Acknowledged {AcknowledgedAt.Value:h:mm:ss tt}";
@@ -206,6 +223,21 @@ public sealed class GuardCard : INotifyPropertyChanged
         RaiseAll();
     }
 
+    /// <summary>
+    /// Undoes an acknowledgement, putting the card back in the state it would be in
+    /// had nobody clicked. LastSeen is reset to now so the age-based escalation
+    /// restarts from this moment rather than instantly re-escalating on the time
+    /// that passed while the card was dismissed — the operator was not ignoring it
+    /// during that window, they had answered it.
+    /// </summary>
+    internal void ClearAcknowledgement(DateTimeOffset now)
+    {
+        AcknowledgedAt = null;
+        LastSeen = now;
+        Reevaluate(now);
+        RaiseAll();
+    }
+
     /// <summary>Re-run the rule against the clock. Age alone can escalate a card.</summary>
     internal bool Reevaluate(DateTimeOffset now)
     {
@@ -232,7 +264,7 @@ public sealed class GuardCard : INotifyPropertyChanged
                      nameof(Title), nameof(Detail), nameof(Level), nameof(Motion),
                      nameof(LevelText), nameof(StateText), nameof(Icon), nameof(Reason),
                      nameof(LevelKey), nameof(ShouldPulse), nameof(AnimatePulse),
-                     nameof(IsAcknowledged), nameof(AcknowledgementText),
+                     nameof(IsAcknowledged), nameof(IsDismissed), nameof(AcknowledgementText),
                      nameof(Occurrences), nameof(OccurrenceText), nameof(TimeText),
                      nameof(OriginText), nameof(Options), nameof(HasOptions),
                      nameof(Size), nameof(OptionsAreInert)
@@ -284,6 +316,7 @@ public sealed class GuardFeed : INotifyPropertyChanged
     private readonly HashSet<string> _registeredSources = new(StringComparer.OrdinalIgnoreCase);
     private string _activeTab = AllTab;
     private bool _animationsEnabled = true;
+    private bool _showDismissed;
     private int _droppedByRetention;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -337,6 +370,70 @@ public sealed class GuardFeed : INotifyPropertyChanged
     public string MotionPolicyText => _animationsEnabled
         ? "Motion ON · pulsing animations play"
         : "Reduced motion ON · nothing animates; escalation is carried by the level word, the icon and the reason";
+
+    /// <summary>
+    /// Whether acknowledged cards are shown alongside the live ones. False by
+    /// default — acknowledging is meant to clear the board — but this is what makes
+    /// the hiding honest: nothing is deleted, and there is always a way back to it.
+    /// </summary>
+    public bool ShowDismissed
+    {
+        get => _showDismissed;
+        set
+        {
+            if (_showDismissed == value)
+            {
+                return;
+            }
+
+            _showDismissed = value;
+            Rebuild();
+            Raise(nameof(ShowDismissed));
+        }
+    }
+
+    /// <summary>How many cards are currently hidden because they were acknowledged.</summary>
+    public int DismissedCount => _cards.Count(card => card.IsDismissed);
+
+    /// <summary>
+    /// States plainly that hidden cards still count. The headline, the tab numbers
+    /// and the totals are all computed over every retained card, INCLUDING the
+    /// acknowledged ones — an acknowledged warning is still an unresolved warning,
+    /// and letting a click turn the headline green would be the panel lying to make
+    /// itself look better. So the hiding is a change to what is LISTED, never to
+    /// what is COUNTED, and this sentence says so rather than leaving the operator
+    /// to work out why the total did not move.
+    /// </summary>
+    public string DismissedText
+    {
+        get
+        {
+            var hidden = DismissedCount;
+            if (hidden == 0)
+            {
+                return "No acknowledged cards are hidden.";
+            }
+
+            return $"{hidden} acknowledged card{(hidden == 1 ? " is" : "s are")} hidden from the list. "
+                + $"{(hidden == 1 ? "It is" : "They are")} still retained and still counted in the "
+                + "totals and the headline above — acknowledging clears the list, not the problem.";
+        }
+    }
+
+    /// <summary>
+    /// The dismissal contract, on the panel's face.
+    ///
+    /// Deliberately NOT added to GuardEscalationRule.StatedRule: escalation is a
+    /// pure, verified rule about levels and motion, and what the FEED chooses to
+    /// list is not part of it. Keeping them separate is why the escalation rule
+    /// could stay untouched while this behaviour changed.
+    /// </summary>
+    public string DismissalRuleText =>
+        "Acknowledging a card takes it off the list. Nothing is deleted: it stays retained, "
+        + "it still counts toward the totals and the headline, and \"Show acknowledged\" brings "
+        + "it back. If the same flag is seen again the card returns on its own, unacknowledged "
+        + "and in motion. A CRITICAL is the exception — acknowledging a red stops its motion but "
+        + "leaves it on the board, because one click must never make a real critical disappear.";
 
     public int DroppedByRetention => _droppedByRetention;
 
@@ -483,6 +580,26 @@ public sealed class GuardFeed : INotifyPropertyChanged
         return true;
     }
 
+    /// <summary>
+    /// Puts an acknowledged card back on the board, unacknowledged.
+    ///
+    /// The undo for a misclick. Without it the only way back to a dismissed card is
+    /// to wait for the flag to fire again, which for a condition that has stopped
+    /// recurring is never — and a card you cannot get back has been deleted in
+    /// every sense that matters to the person looking at the screen.
+    /// </summary>
+    public bool Unacknowledge(GuardCard card, DateTimeOffset now)
+    {
+        if (card is null || !_cards.Contains(card) || !card.IsAcknowledged)
+        {
+            return false;
+        }
+
+        card.ClearAcknowledgement(now);
+        Rebuild();
+        return true;
+    }
+
     public int AcknowledgeAll(DateTimeOffset now)
     {
         var acknowledged = 0;
@@ -568,6 +685,17 @@ public sealed class GuardFeed : INotifyPropertyChanged
         var wanted = _cards
             .Where(card => string.Equals(_activeTab, AllTab, StringComparison.Ordinal)
                 || string.Equals(card.Provider, _activeTab, StringComparison.OrdinalIgnoreCase))
+            // ACKNOWLEDGING TAKES A CARD OFF THE BOARD. Before this, acknowledging
+            // only stamped a time and stopped the pulse, so the row stayed and the
+            // board could never empty — which taught the operator that clearing a
+            // card does nothing and is not worth doing.
+            //
+            // The card is only HIDDEN. It stays in _cards, so retention, the
+            // counts, the headline and the quarantine log are all unchanged, and
+            // ShowDismissed brings it straight back. A fresh sighting clears the
+            // acknowledgement in GuardCard.Observe and the row returns on its own,
+            // unacknowledged — which is what the panel already promised.
+            .Where(card => _showDismissed || !card.IsDismissed)
             // Loudest first, then most recent. A red never sits below a grey, and an
             // uncomputable card never sits below an OK one — same Rank as the headline.
             .OrderByDescending(card => Rank(card.Level))
@@ -623,7 +751,8 @@ public sealed class GuardFeed : INotifyPropertyChanged
                      nameof(TotalCards), nameof(CriticalCount), nameof(WarningCount),
                      nameof(UnknownCount), nameof(WorstLevel), nameof(WorstLevelText),
                      nameof(WorstLevelKey), nameof(RetentionText), nameof(DroppedByRetention),
-                     nameof(SourceText), nameof(ActiveTab)
+                     nameof(SourceText), nameof(ActiveTab),
+                     nameof(DismissedCount), nameof(DismissedText)
                  })
         {
             Raise(name);
