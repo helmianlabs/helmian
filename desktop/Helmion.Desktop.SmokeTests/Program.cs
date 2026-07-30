@@ -928,6 +928,8 @@ GuardLivenessChecks.Run();
 LivingDocumentVaultChecks.Run();
 
 FreshWorkspaceChecks.Run();
+
+OffscreenWindowChecks.Run();
 return;
 
 /// <summary>
