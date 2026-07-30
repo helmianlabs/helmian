@@ -1,4 +1,4 @@
-// Pulls code blocks out of an assistant reply.
+// Pulls an assistant reply apart into its two halves: code blocks, and prose.
 //
 // THIS FILE IS THE WHOLE REASON THE TOOL DOES NOT CRY WOLF.
 //
@@ -125,10 +125,126 @@
     return { tier: 0, tierName: 'nothing matched', blocks: [] };
   }
 
+  // ─── PROSE, WHICH IS THE OTHER LANE'S ENTIRE INPUT ────────────────────────
+  //
+  // Everything above exists to keep prose AWAY from the destructive-command
+  // kernel. Everything below exists to hand prose, and only prose, to the
+  // unsourced-claim detector. The two lanes read the same page and must never
+  // read the same text.
+  //
+  // Semantic, meaning-first, for the same reason the code selectors start at
+  // <pre>: a redesign renames CSS classes, it does not stop rendering a
+  // paragraph as <p>. Markdown — which is what all three sites render a reply
+  // from — produces exactly these elements.
+
+  var PROSE_SELECTORS = [
+    {
+      tier: 1,
+      name: 'semantic prose elements',
+      selector: 'p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, td',
+      // A candidate that contains another candidate is a wrapper, not a
+      // passage. Taking both would report the same sentence twice.
+      nesting: 'p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, td',
+    },
+    {
+      tier: 2,
+      name: 'block-level text leaves',
+      // Only reached when a site stops using semantic markup altogether. A
+      // <div> holding text and nothing block-level is that site's paragraph.
+      selector: 'div',
+      nesting: 'div, p, li, blockquote, pre, table, ul, ol',
+    },
+  ];
+
+  // Never read from, in either tier.
+  //
+  //   pre   rendered fenced code. The other lane owns it.
+  //   code  inline code. src/core/unverified-claims.mjs strips inline spans in
+  //         its own stripCode, so leaving them in here would make the extension
+  //         disagree with the module it copies — and the module is the source
+  //         of truth. It is stated as a limitation, not hidden: "it's called
+  //         `flushSync()` I think" carries its referent inside the span and is
+  //         therefore not flagged, in the CLI and here alike.
+  //   textarea / script / style   not reply text at all.
+  //   [data-helmion-ui]  our own notes. Reading them would let the extension
+  //         flag its own output and then flag that.
+  var PROSE_SKIP_TAGS = ['PRE', 'CODE', 'SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT'];
+
+  function isSkippedForProse(node) {
+    if (PROSE_SKIP_TAGS.indexOf(String(node.tagName || '').toUpperCase()) !== -1) return true;
+    return Boolean(node.getAttribute && node.getAttribute('data-helmion-ui'));
+  }
+
+  // Mirrors src/core/unverified-claims.mjs stripCode against a rendered tree
+  // rather than raw markdown: a fenced block becomes a newline, an inline span
+  // becomes a space. Same substitutions, so sentence splitting downstream lands
+  // in the same places for the same reply.
+  function proseText(element) {
+    var out = '';
+    var children = element.childNodes || [];
+    for (var i = 0; i < children.length; i += 1) {
+      var node = children[i];
+      if (node.nodeType === 3) {
+        out += String(node.data == null ? '' : node.data);
+        continue;
+      }
+      if (node.nodeType !== 1) continue;
+      var tag = String(node.tagName || '').toUpperCase();
+      if (tag === 'PRE') { out += '\n'; continue; }
+      if (isSkippedForProse(node)) { out += ' '; continue; }
+      out += proseText(node);
+    }
+    return out;
+  }
+
+  function insideSkippedRegion(element) {
+    if (typeof element.closest !== 'function') return false;
+    return Boolean(element.closest('pre, code, textarea, [data-helmion-ui]'));
+  }
+
+  function hasNestedCandidate(element, nestingSelector) {
+    if (typeof element.querySelector !== 'function') return false;
+    return Boolean(element.querySelector(nestingSelector));
+  }
+
+  // Rendered-DOM prose scanner. Returns { tier, tierName, passages }, shaped
+  // like collectCodeBlocks so guard.js can treat a broken anchor the same way in
+  // both lanes.
+  function collectProse(root) {
+    var scope = root || (typeof document !== 'undefined' ? document : null);
+    if (!scope || typeof scope.querySelectorAll !== 'function') {
+      throw new Error('HelmionExtract.collectProse needs a DOM node to search');
+    }
+
+    for (var i = 0; i < PROSE_SELECTORS.length; i += 1) {
+      var entry = PROSE_SELECTORS[i];
+      var found = Array.prototype.slice.call(scope.querySelectorAll(entry.selector));
+      var passages = [];
+
+      for (var j = 0; j < found.length; j += 1) {
+        var element = found[j];
+        if (insideSkippedRegion(element)) continue;
+        if (hasNestedCandidate(element, entry.nesting)) continue;
+        var value = proseText(element).replace(/[ \t]+/g, ' ').trim();
+        if (!value) continue;
+        passages.push({ element: element, text: value });
+      }
+
+      if (passages.length > 0) {
+        return { tier: entry.tier, tierName: entry.name, passages: passages };
+      }
+    }
+
+    return { tier: 0, tierName: 'nothing matched', passages: [] };
+  }
+
   var api = {
     BLOCK_SELECTORS: BLOCK_SELECTORS,
+    PROSE_SELECTORS: PROSE_SELECTORS,
     extractFencedBlocks: extractFencedBlocks,
     collectCodeBlocks: collectCodeBlocks,
+    collectProse: collectProse,
+    proseText: proseText,
     blockText: blockText,
   };
 

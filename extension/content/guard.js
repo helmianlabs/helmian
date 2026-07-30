@@ -1,9 +1,20 @@
 // The content script that ties everything together.
 //
-// It runs on claude.ai, chatgpt.com and gemini.google.com. On every settled
-// change to the page it pulls the code blocks out of the conversation, sends
-// them to the background worker, and draws a red warning on any block whose
-// lines match Helmion's destructive-command patterns. Prose is never sent.
+// It runs on claude.ai, chatgpt.com and gemini.google.com, and it makes TWO
+// passes over every settled change to the page.
+//
+//   THE CODE LANE, and it is the one that matters. Pulls the code blocks out of
+//   the conversation, sends them to the background worker, and draws a red
+//   warning on any block whose lines match Helmion's destructive-command
+//   patterns. Prose is never sent to it.
+//
+//   THE CLAIM LANE, which is a reading aid. Pulls the PROSE out — never the code
+//   — and notes any sentence that welds a hedge onto a checkable fact. It flags,
+//   it never blocks, it never masks, and it never touches the red badge.
+//
+// The two share a page and a worker and nothing else: separate state, separate
+// self-tests, separate banners, separate failure counters. Either can be broken
+// while the other keeps working, and the page has to be able to say which.
 //
 // It fails loud. Every path that can break — the worker not answering, the page
 // never changing, the code-block anchor no longer matching, an exception
@@ -45,6 +56,16 @@
   const PROBE_DANGEROUS = 'rm -rf /helmion-selftest-probe';
   const PROBE_CLEAN = 'echo helmion-selftest-probe';
 
+  // The same idea for the claim lane, and it takes three probes rather than two
+  // because that lane fires on TWO signals and either one missing must silence
+  // it. One string proves it still detects; the other two prove it still
+  // refuses, once for a missing marker and once for a missing referent. Two
+  // probes could not tell "the detector is stuck flagging everything" apart
+  // from "the two-signal rule is intact".
+  const PROBE_UNSOURCED = 'The retry limit is probably set in helmion-selftest.json somewhere.';
+  const PROBE_MARKER_ONLY = 'I think we should take the second route through the woods.';
+  const PROBE_REFERENT_ONLY = 'The retry limit is set in helmion-selftest.json.';
+
   // Where a block came from, for the block ledger's `source` field. Every real
   // scan names it; the self-test probes above deliberately do NOT, which is what
   // keeps them out of the ledger — see background/scan.js scanBlocks. The
@@ -71,6 +92,20 @@
     lastTier: null,
     lastStreaming: false,
     nextId: 1,
+
+    // ─── the claim lane, tracked entirely separately ───────────────────────
+    //
+    // Not one shared "broken" flag, not one shared counter, not one shared
+    // banner. The two lanes answer different questions and fail for different
+    // reasons, and folding them together would mean either a dead reading aid
+    // claiming the guard had stopped watching, or a dead guard hiding behind a
+    // working reading aid. Both are lies, so the state is kept apart.
+    claimIds: new Set(),
+    claimsBroken: false,
+    claimsDegraded: false,
+    claimsHealthFailures: 0,
+    lastProseTier: null,
+    nextProseId: 1,
   };
 
   // ------------------------------------------------------------------- fatal
@@ -192,16 +227,23 @@
     return `${text.length}:${hash.toString(36)}`;
   }
 
-  function hasChanged(element, text) {
-    return element.getAttribute('data-helmion-seen') !== fingerprint(text);
+  // The attribute is a parameter because the two lanes read DIFFERENT text off
+  // the same page and must not share a fingerprint: a paragraph's prose and a
+  // code block's contents change independently, and one lane marking an element
+  // seen would stop the other from ever looking at it.
+  const SEEN_ATTR = 'data-helmion-seen';
+  const PROSE_SEEN_ATTR = 'data-helmion-prose-seen';
+
+  function hasChanged(element, text, attribute) {
+    return element.getAttribute(attribute || SEEN_ATTR) !== fingerprint(text);
   }
 
-  function markSeen(element, text) {
-    element.setAttribute('data-helmion-seen', fingerprint(text));
+  function markSeen(element, text, attribute) {
+    element.setAttribute(attribute || SEEN_ATTR, fingerprint(text));
   }
 
-  function forgetSeen(element) {
-    element.removeAttribute('data-helmion-seen');
+  function forgetSeen(element, attribute) {
+    element.removeAttribute(attribute || SEEN_ATTR);
   }
 
   // A flagged block can leave the page without us ever seeing it again — the
@@ -356,6 +398,155 @@
     sendBadge();
   }
 
+  // ------------------------------------------------------------ claims lane
+
+  // Everything below reads PROSE and produces a footnote. It cannot mask
+  // anything, it cannot add to state.dangerousIds, and it never calls fail() or
+  // sendBadge(). Those are the guarantees that keep an advisory feature from
+  // eroding a safety one, and they are held here structurally — by this section
+  // simply not containing the calls — rather than by a flag somebody could flip.
+
+  function claimsFail(message, detail) {
+    state.claimsBroken = true;
+    try {
+      HelmionUI.showAdvisoryBanner(message, detail);
+    } catch (uiError) {
+      console.error('[Helmion Guard] could not draw the advisory banner:', uiError);
+    }
+    console.error('[Helmion Guard] claim checking is not running:', message, detail || '');
+  }
+
+  function claimsRecover() {
+    if (!state.claimsBroken) return;
+    state.claimsBroken = false;
+    state.claimsHealthFailures = 0;
+    HelmionUI.hideAdvisoryBanner();
+    if (state.claimsDegraded) {
+      HelmionUI.showAdvisoryBanner(
+        'the usual paragraph anchor no longer matches this site.',
+        'Reading prose from a fallback. Claim checking still works, but this needs looking at.',
+      );
+    }
+  }
+
+  function proseId(element) {
+    let id = element.getAttribute('data-helmion-prose-id');
+    if (!id) {
+      id = `hp-${state.nextProseId}`;
+      state.nextProseId += 1;
+      element.setAttribute('data-helmion-prose-id', id);
+    }
+    return id;
+  }
+
+  function pruneDetachedClaims() {
+    for (const id of [...state.claimIds]) {
+      if (!document.querySelector(`[data-helmion-prose-id="${id}"]`)) state.claimIds.delete(id);
+    }
+  }
+
+  async function runClaimsPass(options) {
+    let collected;
+    try {
+      collected = HelmionExtract.collectProse(document);
+    } catch (error) {
+      claimsFail('the extension could not read the prose on this page.', error.message);
+      return;
+    }
+
+    // Same degraded-anchor logic as the code lane, in its own state and its own
+    // banner. Tier 1 is semantic markup; anything lower means this site stopped
+    // rendering paragraphs as paragraphs.
+    if (collected.tier > 1 && collected.tier !== state.lastProseTier) {
+      state.claimsDegraded = true;
+      HelmionUI.showAdvisoryBanner(
+        'the usual paragraph anchor no longer matches this site.',
+        `Reading prose from a fallback (${collected.tierName}). Claim checking still works, but this needs looking at.`,
+      );
+    } else if (collected.tier === 1 && state.claimsDegraded) {
+      state.claimsDegraded = false;
+      HelmionUI.hideAdvisoryBanner();
+    }
+    state.lastProseTier = collected.tier;
+
+    const force = Boolean(options && options.force);
+    const pending = [];
+    for (const passage of collected.passages) {
+      const element = passage.element;
+      const id = proseId(element);
+      if (!force && !hasChanged(element, passage.text, PROSE_SEEN_ATTR)) continue;
+      markSeen(element, passage.text, PROSE_SEEN_ATTR);
+      pending.push({ id, element, text: passage.text });
+    }
+
+    if (pending.length === 0) {
+      pruneDetachedClaims();
+      return;
+    }
+
+    let response;
+    try {
+      response = await askWorker({
+        type: 'helmion:claims',
+        passages: pending.map((passage) => ({ id: passage.id, text: passage.text })),
+      });
+    } catch (error) {
+      pending.forEach((passage) => forgetSeen(passage.element, PROSE_SEEN_ATTR));
+      claimsFail('the claim check is not running.', error.message);
+      return;
+    }
+
+    claimsRecover();
+    applyClaimResults(pending, response.results || []);
+  }
+
+  function applyClaimResults(pending, results) {
+    const byId = new Map(results.map((result) => [result.id, result]));
+    pruneDetachedClaims();
+    const before = state.claimIds.size;
+
+    for (const passage of pending) {
+      const result = byId.get(passage.id);
+      HelmionUI.clearClaims(passage.element);
+      state.claimIds.delete(passage.id);
+
+      // A passage the scanner refused to look at is neither flagged nor clear.
+      // It is rarer here than in the code lane — a paragraph a million
+      // characters long is not a paragraph — so it is a console line rather
+      // than page furniture, but it is never nothing.
+      if (result && result.skipped) {
+        console.warn('[Helmion Guard] a passage was not checked for claims:', result.skipped);
+        continue;
+      }
+
+      if (!result || !result.flagged) continue;
+
+      // Belt and braces across the message boundary. The lane has no masking
+      // code at all, but if a future worker ever answered `blocked:true` this
+      // says out loud that something upstream changed shape, rather than
+      // quietly acting on it.
+      if (result.blocked === true) {
+        console.error(
+          '[Helmion Guard] the claim lane answered blocked:true — it is advisory and must never block. '
+          + 'Ignoring the flag and showing the note only.',
+        );
+      }
+
+      HelmionUI.noteClaims(passage.element, result);
+      state.claimIds.add(passage.id);
+    }
+
+    // The tally lives in the console and nowhere else. It is the only aggregate
+    // this lane gets: the toolbar badge counts destructive code blocks, and
+    // letting an advisory number share it would blunt the one indicator that has
+    // to mean something.
+    if (state.claimIds.size !== before) {
+      console.info(
+        `[Helmion Guard] paragraphs carrying an unsourced claim on this page: ${state.claimIds.size}`,
+      );
+    }
+  }
+
   // ------------------------------------------------------------------ health
 
   // Positive control. Do not ask "did the check find nothing?" — nothing is also
@@ -382,6 +573,54 @@
       throw new Error(`a known harmless command ("${PROBE_CLEAN}") was flagged`);
     }
     return true;
+  }
+
+  // The claim lane's own positive control, run through the real message path.
+  // Three probes, because two signals have to be proven present AND proven
+  // required — see the constants at the top of this file.
+  async function claimsSelfTest() {
+    const response = await askWorker({
+      type: 'helmion:claims',
+      passages: [
+        { id: 'selftest-unsourced', text: PROBE_UNSOURCED },
+        { id: 'selftest-marker-only', text: PROBE_MARKER_ONLY },
+        { id: 'selftest-referent-only', text: PROBE_REFERENT_ONLY },
+      ],
+    });
+
+    const results = new Map((response.results || []).map((r) => [r.id, r]));
+    const unsourced = results.get('selftest-unsourced');
+    const markerOnly = results.get('selftest-marker-only');
+    const referentOnly = results.get('selftest-referent-only');
+
+    if (!unsourced || unsourced.flagged !== true) {
+      throw new Error(`a known unsourced claim ("${PROBE_UNSOURCED}") was not flagged`);
+    }
+    if (!markerOnly || markerOnly.flagged !== false) {
+      throw new Error('a hedge with nothing checkable in it was flagged — the two-signal rule is gone');
+    }
+    if (!referentOnly || referentOnly.flagged !== false) {
+      throw new Error('a sourced statement with no hedge was flagged — the two-signal rule is gone');
+    }
+    // The one thing this lane must never do, checked every single time.
+    if (unsourced.blocked !== false) {
+      throw new Error('the claim lane reported blocked — it is advisory and must never block');
+    }
+    return true;
+  }
+
+  async function claimsHealthCheck() {
+    try {
+      await claimsSelfTest();
+    } catch (error) {
+      state.claimsHealthFailures += 1;
+      if (state.claimsHealthFailures >= FAILURES_BEFORE_BANNER) {
+        claimsFail(`the claim check failed its own test: ${error.message}`);
+      }
+      return;
+    }
+    state.claimsHealthFailures = 0;
+    claimsRecover();
   }
 
   async function healthCheck(watch) {
@@ -431,6 +670,10 @@
       const finished = state.lastStreaming && !streaming;
       state.lastStreaming = streaming;
       runPass({ force: finished });
+      // The claim lane rides the same signal and is deliberately NOT awaited
+      // behind the code lane. A slow or broken reading aid must not delay the
+      // check that stops somebody pasting a destructive command.
+      runClaimsPass({ force: finished });
     };
 
     const watch = HelmionStreamWatch.createStreamWatch({
@@ -450,6 +693,13 @@
       (error) => fail('the detection chain failed its own test on load.', error.message),
     );
 
+    // And the reading aid proves itself separately, so a failure in one is
+    // never reported as a failure in the other.
+    claimsSelfTest().then(
+      () => console.info('[Helmion Guard] claim self-test passed — reading this page for unsourced claims.'),
+      (error) => claimsFail('the claim check failed its own test on load.', error.message),
+    );
+
     try {
       watch.start();
     } catch (error) {
@@ -457,7 +707,10 @@
       return;
     }
 
-    setInterval(() => { healthCheck(watch); }, HEALTH_INTERVAL_MS);
+    setInterval(() => {
+      healthCheck(watch);
+      claimsHealthCheck();
+    }, HEALTH_INTERVAL_MS);
 
     window.addEventListener('error', (event) => {
       if (!event || !event.filename || event.filename.indexOf('chrome-extension://') !== 0) return;

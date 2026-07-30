@@ -1,6 +1,6 @@
 // GENERATED FILE — DO NOT EDIT.
 //
-// Byte-for-byte copy of E:\Helmion\src\core\governance.mjs.
+// Byte-for-byte copy of src/core/governance.mjs.
 // Produced by extension/tools/sync-kernel.mjs. Edit the original, then run:
 //     node extension/tools/sync-kernel.mjs
 //

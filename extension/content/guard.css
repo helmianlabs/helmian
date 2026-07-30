@@ -154,6 +154,133 @@
   word-break: break-word !important;
 }
 
+/* ─── THE QUIET CHANNEL ─────────────────────────────────────────────────────
+ *
+ * An unsourced claim. Slate blue, never red, never amber: red is "this deletes
+ * things" and amber is "this was not checked", and a reading aid that borrows
+ * either of those colours teaches the eye to discount all three. There is also
+ * no display:none anywhere below — nothing in this channel hides page text. */
+
+.helmion-guard-claims {
+  all: initial !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  margin: 8px 0 !important;
+  padding: 9px 13px !important;
+  border-left: 4px solid #4a5b7a !important;
+  border-radius: 5px !important;
+  background: #f2f5fa !important;
+  color: #23324b !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+.helmion-guard-claims-header {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.helmion-guard-claims-badge {
+  display: inline-block !important;
+  padding: 2px 7px !important;
+  border-radius: 3px !important;
+  background: #4a5b7a !important;
+  color: #ffffff !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+
+.helmion-guard-claims-headline {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #23324b !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+
+.helmion-guard-claims-list {
+  display: block !important;
+  margin: 6px 0 0 0 !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+
+.helmion-guard-claims-item {
+  display: block !important;
+  margin: 0 0 4px 0 !important;
+  padding: 0 0 0 10px !important;
+  border-left: 2px solid #9aa9c2 !important;
+  color: #34455f !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  word-break: break-word !important;
+}
+
+.helmion-guard-claims-footer {
+  display: block !important;
+  margin-top: 6px !important;
+  font-size: 12px !important;
+  color: #5c6b85 !important;
+  font-style: italic !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+
+/* The paragraph itself. A dotted underline, and that is the entire effect —
+ * the text stays selectable, copyable and fully visible. */
+.helmion-guard-claim-marked {
+  text-decoration: underline dotted #4a5b7a !important;
+  text-underline-offset: 3px !important;
+}
+
+/* The reading aid stopped. Its own banner, below the red one's z-index and in
+ * its own colour, because "the guard is not watching" and "the footnotes
+ * stopped" are different sentences and only one of them is an emergency. */
+.helmion-guard-advisory-banner {
+  all: initial !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 2147483645 !important;
+  padding: 9px 18px !important;
+  background: #23324b !important;
+  color: #ffffff !important;
+  border-top: 3px solid #9aa9c2 !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  font-size: 13px !important;
+  text-align: center !important;
+}
+
+.helmion-guard-advisory-banner-title {
+  display: block !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  color: #cfd9ea !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+
+.helmion-guard-advisory-banner-message {
+  display: block !important;
+  margin-top: 3px !important;
+  color: #ffffff !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+
+.helmion-guard-advisory-banner-detail {
+  display: block !important;
+  margin-top: 3px !important;
+  color: #b9c6dc !important;
+  font-size: 12px !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  word-break: break-word !important;
+}
+
 .helmion-guard-toast {
   all: initial !important;
   display: block !important;

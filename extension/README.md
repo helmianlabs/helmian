@@ -1,13 +1,25 @@
 # Helmion Guard — browser extension, phase 1
 
-It watches the AI's reply as it types. It pulls the code blocks out of that
-reply. It checks those code blocks against Helmion's 15 destructive-command
-patterns. If one matches, it hides the block behind a red warning that names the
-exact line.
+It watches the AI's reply as it types, and it reads that reply twice.
+
+**The code blocks** are checked against Helmion's 15 destructive-command
+patterns. If one matches, the block is hidden behind a red warning that names the
+exact line. That is the safety half.
+
+**The prose** is checked for facts stated without a source — a hedge welded to
+something checkable, like "the setting is probably under Preferences > Advanced"
+or "it's called flushSync() I think". Those get a quiet note beside them saying
+what to go and verify. Nothing is hidden and nothing is blocked. That is the
+reading half.
+
+The two never see each other's input, and that is the whole reason neither one
+cries wolf. Feed prose to the command patterns and "never run rm -rf on a
+production server" comes back as a destructive command. Feed a code block to the
+claim detector and every comment in it looks like an unsourced fact.
 
 It works on three sites: claude.ai, chatgpt.com, gemini.google.com.
 
-No model. No network. No account. It is a regular expression running on your own
+No model. No network. No account. It is regular expressions running on your own
 machine, and nothing leaves the browser.
 
 ---
@@ -49,6 +61,34 @@ Then do the same on `https://chatgpt.com` and `https://gemini.google.com`.
 
 ---
 
+## See the quiet half fire
+
+Ask any of the three sites this:
+
+> In one sentence and no code block, tell me where React's flushSync is exported
+> from, but hedge it — say you think that is where it is.
+
+When the answer arrives the sentence is still there, still readable, still
+copyable. Above it sits a small slate-blue note:
+
+**UNVERIFIED CLAIM — A fact here is stated without a source.**
+
+underneath it, what to go and check, and then the line that matters:
+
+> Helmion checked whether this was sourced, not whether it is true.
+
+The paragraph gets a dotted underline. Nothing is hidden, no red panel appears,
+no corner box appears, and the toolbar badge does not move. That separation is
+deliberate: red means somebody handed you a command that destroys something, and
+an unsourced sentence is not that.
+
+It takes **two** signals and never fires on one. "I'm not sure, let me check" is
+honest uncertainty and is left alone. "That design is probably cleaner" is an
+opinion about `config.json` and is left alone. It is the pairing — a hedge and
+something you could go and look up — that gets the note.
+
+---
+
 ## See it stay quiet
 
 This is the half that matters just as much. A warning that fires on ordinary
@@ -76,13 +116,24 @@ tab, and look for this line:
 
 ```
 [Helmion Guard] self-test passed — watching this page.
+[Helmion Guard] claim self-test passed — reading this page for unsourced claims.
 ```
 
-That line means more than it looks like. On every page load the extension pushes
-two strings through its own detection chain: one it knows is destructive, one it
-knows is harmless. It only prints that line if the first came back flagged and
-the second came back clean. So the line is proof the checking works, not just
-proof the code loaded.
+Those lines mean more than they look like. On every page load, and again every
+60 seconds, the extension pushes known strings through its own detection chains
+and checks the answers.
+
+The first line needs two: a string it knows is destructive must come back
+flagged, and a string it knows is harmless must come back clean.
+
+The second needs three, because that lane fires on two signals and either one
+going missing has to silence it. A hedge welded to a file path must be flagged;
+a hedge with nothing checkable must not be; and a plain sourced statement must
+not be. Two probes could not tell "still working" apart from "now flagging
+everything".
+
+So the lines are proof the checking works, not just proof the code loaded. You
+get one line per lane because the two lanes can fail separately.
 
 ---
 
@@ -111,6 +162,19 @@ You get that bar when:
 If you see that bar, the extension is not protecting you. Reload the tab first.
 If it comes back, that is a real bug worth reporting.
 
+**The reading half has its own bar, and it says something different.** A dark
+slate bar along the **bottom** of the page:
+
+**HELMION GUARD IS NOT READING THIS PAGE FOR UNSOURCED CLAIMS**
+
+followed by what failed, and then, in plain words, *"Destructive-command checking
+is unaffected and still running."*
+
+That is not a softer version of the red bar. The two lanes fail independently,
+and telling you the guard had stopped watching because a reading aid broke would
+be false. Red bar at the top: the safety check is down. Slate bar at the bottom:
+only the footnotes are down.
+
 ---
 
 ## What it does NOT do
@@ -129,28 +193,45 @@ Read this bit. It is short and it matters.
 | A line over a million characters is not checked | It says so on the page, in amber, naming the line. It is never reported as clean. The cap used to be 4,000 characters and the skip was silent — a command padded past 4,000 went unchecked and unmentioned. Measured cost at the new cap: under 4 ms. |
 | Nobody has run it on the live sites yet | It is proven by tests, not by clicking. You are the first person to open it in a browser. |
 
+### And what the claim half does not do
+
+| Limitation | Why |
+|---|---|
+| It says **unsourced**, never **wrong** | It cannot tell a true hedged claim from a false one. It reports that a fact arrived without evidence. Checking whether the fact is *right* needs a real documentation or filesystem lookup, which is phase 2 — every finding already carries the extracted referent so that lookup runs against one claim instead of a whole reply. |
+| **Inline code is not read** | "It's called `flushSync()` I think" is not flagged, because the symbol lives inside the backticks. `src/core/unverified-claims.mjs` strips inline spans before it looks at anything, and the extension does the same so the browser and the CLI never disagree about the same sentence. |
+| Talking **about** hedging is flagged | A sentence like "never write 'probably' next to a file path" carries both signals and gets a note. Cheap to ignore, expensive to fix properly, and the failure direction is the safe one. |
+| Quoting somebody else is flagged | "He said it's probably in config.json" reads the same as asserting it. |
+| **English only** | The confidence markers are an English list. |
+| It reads **your** messages too | It does not try to work out which paragraph is the assistant's — that guess is the fragile part of every extension like this. So a hedge you typed yourself gets a note as well. |
+| There is **no badge, no toast, no count** | On purpose. The badge is reserved for destructive commands. An advisory finding that lit the same indicator would teach you to discount it, and then the red one goes with it. |
+
 ---
 
 ## Where the patterns come from
 
-There is one list of destructive-command patterns and it lives in
-`E:\Helmion\src\core\governance.mjs`. The extension does not have its own copy
-that somebody typed out by hand — two hand-maintained lists would drift apart,
-and a safety tool whose two halves disagree is worse than one half on its own.
+Two files under `src/core/` do the actual thinking, and the extension has a copy
+of each — never one somebody typed out by hand. Two hand-maintained lists drift
+apart, and a safety tool whose halves disagree is worse than one half alone.
 
-Instead `extension/tools/sync-kernel.mjs` copies that file, byte for byte, into
-`extension/generated/helmion-governance.generated.js`. The extension imports the
-copy. So the extension runs the identical code, not just the identical patterns.
+| The one source of truth | The copy the extension imports |
+|---|---|
+| `src/core/governance.mjs` — the 15 destructive-command patterns | `extension/generated/helmion-governance.generated.js` |
+| `src/core/unverified-claims.mjs` — confidence markers and checkable referents | `extension/generated/helmion-unverified-claims.generated.js` |
 
-If you change `governance.mjs`, run this:
+`extension/tools/sync-kernel.mjs` writes both, byte for byte. The extension runs
+the identical code, not just the identical patterns, so a sentence gets the same
+verdict in Chrome as it does in the CLI and the desktop pilot.
+
+If you change either original, run this:
 
 ```
 node extension/tools/sync-kernel.mjs
 ```
 
-If you forget, `npm test` goes red and tells you. That check is in
-`extension/test/kernel-sync.test.mjs`, and it has a positive control that
-corrupts the copy on purpose to prove the check really catches it.
+If you forget, `npm test` goes red and tells you which copy is stale. Those
+checks are in `extension/test/kernel-sync.test.mjs`, and each has a positive
+control that corrupts a throwaway copy on purpose to prove the check really
+catches it.
 
 ---
 
@@ -176,16 +257,18 @@ inserts its warning, corner box and banner into the page.
 | File | What it does |
 |---|---|
 | `manifest.json` | Tells Chrome what to load and where to run |
-| `content/extract.js` | Pulls code blocks out of the reply. Prose never gets past here |
+| `content/extract.js` | Splits the reply in two: code blocks for one lane, prose for the other. Neither ever gets the other's text |
 | `content/stream-watch.js` | Knows when the assistant is typing and when it stopped |
-| `content/ui.js` | Draws the warning, the corner box and the broken banner |
+| `content/ui.js` | Draws all of it — red warning, corner box, broken banner, and the quiet claim note that never hides anything |
 | `content/guard.css` | Styles for all of the above, namespaced so the page cannot bend them |
-| `content/guard.js` | Ties it together, and fails loud when anything breaks |
-| `background/scan.js` | Runs the kernel, one line of one code block at a time |
+| `content/guard.js` | Runs both lanes, keeps their state apart, and fails loud when either breaks |
+| `background/scan.js` | Runs the destructive-command kernel, one line of one code block at a time |
+| `background/claims.js` | Runs the claim detector over one passage of prose at a time. Cannot block; the literal `false` is tested |
 | `background/worker.js` | The background service worker, the only place that can load modules |
 | `generated/helmion-governance.generated.js` | The copied kernel. Do not edit |
-| `tools/sync-kernel.mjs` | Makes that copy |
-| `test/` | 90 tests. Run them with `npm test` from `E:\Helmion` |
+| `generated/helmion-unverified-claims.generated.js` | The copied claim detector. Do not edit |
+| `tools/sync-kernel.mjs` | Makes both copies |
+| `test/` | 134 tests. Run them with `npm test` from `E:\Helmion` |
 | `test-support/` | A tiny fake DOM and a fake `chrome` API, so the tests run the real files |
 
 ---
@@ -198,12 +281,15 @@ From `E:\Helmion`:
 npm test
 ```
 
-The extension's tests run as part of the repo's suite — 514 tests total, 90 of
+The extension's tests run as part of the repo's suite — 687 tests total, 134 of
 them the extension's. The ones that matter most are in
 `extension/test/reply-cases.test.mjs`, which holds the sentence that must stay
-quiet and the commands that must be caught, and
+quiet and the commands that must be caught;
 `extension/test/guard-end-to-end.test.mjs`, which loads all four content scripts
-against a page and checks what actually gets drawn.
+against a page and checks what actually gets drawn; and
+`extension/test/claims-end-to-end.test.mjs`, which does the same for the quiet
+lane and pins the thing it must never do — mask, count, or borrow the red
+channel.
 
 `npm run check` does not cover the extension's files. It does not need to:
 `extension/test/package.test.mjs` runs `node --check` over every one of them, so

@@ -1,6 +1,8 @@
 // Everything the extension draws on the page.
 //
-// Three things, and only three:
+// Two channels, kept apart on purpose.
+//
+// RED — a destructive command. Somebody handed you something that deletes.
 //
 //   1. A warning attached to a code block that matched a destructive pattern.
 //      Red, named pattern, exact offending line quoted. The block itself is
@@ -11,6 +13,15 @@
 //      A safety tool that quietly stops working looks exactly like one that
 //      found nothing wrong. When anything in this extension fails, the page
 //      says so.
+//
+// QUIET — an unsourced claim. Somebody stated a checkable fact and did not say
+// where it came from. It is a reading aid, it is wrong often enough that its own
+// source file lists the ways, and it is never allowed to borrow the red channel:
+//
+//   4. A note beside the paragraph, and a dotted underline on the paragraph.
+//      Nothing is hidden, nothing is masked, and it never touches the badge.
+//   5. Its own banner, saying only that the reading aid stopped — never that the
+//      guard stopped watching, because that would be false.
 //
 // Every element carries data-helmion-ui, which is how stream-watch.js tells our
 // own page changes apart from the site's and does not re-trigger itself.
@@ -23,6 +34,10 @@
 
   var PREFIX = 'helmion-guard';
   var MASK_CLASS = PREFIX + '-masked';
+  // Marks a paragraph that carries an unsourced claim. A dotted underline and
+  // nothing else — it is deliberately NOT MASK_CLASS, and the two must never be
+  // used interchangeably.
+  var CLAIM_CLASS = PREFIX + '-claim-marked';
 
   function host() {
     if (typeof document === 'undefined') return null;
@@ -160,6 +175,80 @@
     return panel;
   }
 
+  // ------------------------------------------------------- unverified claims
+
+  // The advisory lane's only visible output.
+  //
+  // IT NEVER MASKS AND IT NEVER HIDES ANYTHING. warnBlock above puts a code
+  // block behind a cover because a destructive command is worth an extra
+  // deliberate click. A sentence is not: the finding here is "this fact was
+  // stated without a source", the detector's own source file lists four ways it
+  // can be wrong, and covering a paragraph over a machine's opinion about
+  // English would make the tool something Troy switches off. There is no mask
+  // class in this section and there must never be one.
+  //
+  // It is also kept out of the red channel entirely — no toast, no badge count.
+  // Red means somebody handed you a command that destroys something.
+
+  function clearClaims(element) {
+    if (!element) return;
+    var id = element.getAttribute('data-helmion-claims-id');
+    if (!id) return;
+    var existing = document.querySelector('[data-helmion-claims-for="' + id + '"]');
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    element.removeAttribute('data-helmion-claims-id');
+    element.classList.remove(CLAIM_CLASS);
+  }
+
+  // result: { claims: [{ sentence, marker, referentKind, referent, reason }] }
+  function noteClaims(element, result) {
+    if (!element) return null;
+    var claims = (result && result.claims) || [];
+    clearClaims(element);
+    if (claims.length === 0) return null;
+
+    var id = (result && result.id) ? String(result.id) : ('helmion-c-' + Date.now());
+    element.setAttribute('data-helmion-claims-id', id);
+    element.classList.add(CLAIM_CLASS);
+
+    var note = make('div', PREFIX + '-claims');
+    note.setAttribute('data-helmion-claims-for', id);
+    // role=note, not role=alert. An alert interrupts a screen reader mid
+    // sentence, and this is a footnote, not an emergency.
+    note.setAttribute('role', 'note');
+
+    var header = make('div', PREFIX + '-claims-header');
+    header.appendChild(make('span', PREFIX + '-claims-badge', 'UNVERIFIED CLAIM'));
+    header.appendChild(make(
+      'span',
+      PREFIX + '-claims-headline',
+      claims.length === 1
+        ? 'A fact here is stated without a source.'
+        : claims.length + ' facts here are stated without a source.',
+    ));
+    note.appendChild(header);
+
+    var list = make('ul', PREFIX + '-claims-list');
+    for (var i = 0; i < claims.length; i += 1) {
+      var item = make('li', PREFIX + '-claims-item', claims[i].reason);
+      // The kind travels onto the element so a later phase can style or filter
+      // by it without re-parsing the sentence.
+      item.setAttribute('data-helmion-referent-kind', String(claims[i].referentKind || ''));
+      list.appendChild(item);
+    }
+    note.appendChild(list);
+
+    note.appendChild(make(
+      'span',
+      PREFIX + '-claims-footer',
+      'Helmion checked whether this was sourced, not whether it is true.',
+    ));
+
+    var anchor = element.parentNode;
+    if (anchor) anchor.insertBefore(note, element);
+    return note;
+  }
+
   // ------------------------------------------------------------------- toast
 
   var toastElement = null;
@@ -219,16 +308,65 @@
     return bannerElement;
   }
 
+  // ------------------------------------------------------- advisory banner
+
+  // The claim lane's version of showBanner, and it says something different on
+  // purpose. showBanner claims the guard is not watching the page, which is
+  // about destructive commands and would be a lie if only the reading aid had
+  // failed. Two lanes, two honest sentences.
+
+  var advisoryBannerElement = null;
+
+  function hideAdvisoryBanner() {
+    if (advisoryBannerElement && advisoryBannerElement.parentNode) {
+      advisoryBannerElement.parentNode.removeChild(advisoryBannerElement);
+    }
+    advisoryBannerElement = null;
+  }
+
+  function showAdvisoryBanner(message, detail) {
+    var parent = host();
+    if (!parent) return null;
+    hideAdvisoryBanner();
+
+    advisoryBannerElement = make('div', PREFIX + '-advisory-banner');
+    advisoryBannerElement.setAttribute('role', 'status');
+    advisoryBannerElement.appendChild(make(
+      'strong',
+      PREFIX + '-advisory-banner-title',
+      'HELMION GUARD IS NOT READING THIS PAGE FOR UNSOURCED CLAIMS',
+    ));
+    advisoryBannerElement.appendChild(make('span', PREFIX + '-advisory-banner-message', message));
+    if (detail) {
+      advisoryBannerElement.appendChild(make('span', PREFIX + '-advisory-banner-detail', detail));
+    }
+    // Said plainly, because the two lanes fail independently and a reader who
+    // sees this needs to know which half is still working.
+    advisoryBannerElement.appendChild(make(
+      'span',
+      PREFIX + '-advisory-banner-detail',
+      'Destructive-command checking is unaffected and still running.',
+    ));
+
+    parent.appendChild(advisoryBannerElement);
+    return advisoryBannerElement;
+  }
+
   root.HelmionUI = {
     PREFIX: PREFIX,
     MASK_CLASS: MASK_CLASS,
+    CLAIM_CLASS: CLAIM_CLASS,
     warnBlock: warnBlock,
     clearWarning: clearWarning,
     noteUnchecked: noteUnchecked,
     clearUnchecked: clearUnchecked,
+    noteClaims: noteClaims,
+    clearClaims: clearClaims,
     showToast: showToast,
     hideToast: hideToast,
     showBanner: showBanner,
     hideBanner: hideBanner,
+    showAdvisoryBanner: showAdvisoryBanner,
+    hideAdvisoryBanner: hideAdvisoryBanner,
   };
 }(typeof globalThis !== 'undefined' ? globalThis : this));

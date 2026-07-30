@@ -2,18 +2,29 @@
 //
 // It exists because the checking has to happen somewhere that can load ES
 // modules, and a Chrome content script cannot. The worker imports the copied
-// Helmion kernel and answers two messages:
+// Helmion modules and answers three messages:
 //
-//   helmion:scan   code blocks in, per-block verdicts out
-//   helmion:badge  set the toolbar badge for the tab that asked
+//   helmion:scan    code blocks in, per-block destructive-command verdicts out
+//   helmion:claims  prose in, per-passage unsourced-claim findings out
+//   helmion:badge   set the toolbar badge for the tab that asked
+//
+// THE BADGE BELONGS TO helmion:scan ALONE. A red count means somebody handed
+// Troy a command that would destroy something. Unsourced claims are advisory,
+// they are wrong often enough that their own source file lists the ways, and
+// letting them light the same indicator would teach him to ignore it. They are
+// drawn beside the sentence they are about and nowhere else.
 //
 // Nothing here touches the network and nothing here calls a model. Phase 1 is a
 // regular expression run against text, on this machine, and that is all.
 //
 // It is also the seam for later phases: when the local model verifier arrives,
-// it plugs in here and the content script does not change.
+// it plugs in here and the content script does not change. The claim detector's
+// own two-stage design expects exactly that — every finding it returns carries
+// `needsLookup` and the extracted referent so a stage two can check ONE claim
+// instead of a whole reply.
 
 import { scanBlocks } from './scan.js';
+import { scanProse } from './claims.js';
 
 const RED = '#b3261e';
 const AMBER = '#c77700';
@@ -51,6 +62,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (type === 'helmion:scan') {
       const results = scanBlocks(message.blocks || []);
+      sendResponse({ ok: true, results });
+      return false;
+    }
+
+    if (type === 'helmion:claims') {
+      const results = scanProse(message.passages || []);
       sendResponse({ ok: true, results });
       return false;
     }
