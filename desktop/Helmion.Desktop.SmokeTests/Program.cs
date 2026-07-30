@@ -930,6 +930,8 @@ LivingDocumentVaultChecks.Run();
 FreshWorkspaceChecks.Run();
 
 OffscreenWindowChecks.Run();
+
+ModelProvenanceLabelChecks.Run();
 return;
 
 /// <summary>

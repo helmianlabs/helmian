@@ -371,6 +371,138 @@ function Unregister-HelmionVoiceHotkey {
 }
 
 # --------------------------------------------------------------------------
+# Continuous conversation
+# --------------------------------------------------------------------------
+
+function Start-HelmionConversation {
+    <#
+    .SYNOPSIS
+        Press one key, then just talk back and forth.
+    .DESCRIPTION
+        Continuous conversation mode. Press the key once to start; every sentence
+        you finish is typed where your cursor is and submitted by itself, with no
+        "send it" needed. Press the key again to stop.
+
+        THIS IS HALF-DUPLEX. YOU CANNOT INTERRUPT A REPLY WHILE IT IS PLAYING.
+        While the speakers are live the microphone's audio is thrown away, and it
+        stays closed for a short tail afterwards so the decay does not leak in.
+        That is what stops the assistant transcribing its own voice, answering
+        itself, and looping. Talking over a reply means those words are lost, not
+        queued — wait for it to finish. True barge-in needs acoustic echo
+        cancellation or a full-duplex model such as Moshi; neither is installed.
+
+        The suppression works ACROSS PROCESSES, which is the part that was
+        missing: Invoke-HelmionSpeak runs in its own process, so a dictation host
+        had no way to know audio was playing. Both sides now share a machine-wide
+        flag.
+
+        Spoken commands still work and are never submitted as text:
+            "new line"       break the line AND hold auto-send until you say
+                             "send it" — this is how you dictate a multi-line
+                             message when every sentence would otherwise submit
+            "scratch that"   erase the last thing dictated
+            "send it"        submit now (no longer required, still works)
+            "stop dictation" end the conversation
+
+        Runs in the background with no console window. Status goes to the log
+        file; see Get-HelmionVoiceLogPath.
+    .PARAMETER Chord
+        The single key that starts and stops it. Defaults to the tilde/backtick
+        key with no modifiers, which is what Troy asked for. A global hotkey is
+        exclusive machine-wide: while this is armed, nothing else can receive it.
+    .PARAMETER TailMs
+        How long the microphone stays closed after a reply ends, in milliseconds.
+        Default 250. Raise it if you still hear the assistant quoting itself —
+        that is the number to turn, and it needs no rebuild.
+    .PARAMETER NoAutoSend
+        Type but never submit, exactly like Start-HelmionDictation. Echo
+        suppression still applies.
+    .PARAMETER NoSpace
+        Do not append a space after each dictated chunk.
+    .PARAMETER PassThru
+        Return the host process object.
+    .EXAMPLE
+        Start-HelmionConversation
+    .EXAMPLE
+        Start-HelmionConversation -TailMs 400
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([System.Diagnostics.Process])]
+    param(
+        [string] $Chord = 'grave',
+
+        [ValidateRange(0, 5000)]
+        [int] $TailMs = 250,
+
+        [switch] $NoAutoSend,
+        [switch] $NoSpace,
+        [switch] $PassThru
+    )
+
+    if (Test-HelmionDictationRunning) {
+        Write-Error ('A helmion-voice host is already running. Stop it first with ' +
+                     'Stop-HelmionConversation.')
+        return
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($Chord, 'start a continuous voice conversation')) { return }
+
+    $arguments = @(
+        'converse'
+        '--chord', $Chord
+        '--tail-ms', $TailMs.ToString()
+        '--quiet'
+        '--log', (Get-HelmionVoiceLogPath)
+    )
+    if ($NoAutoSend) { $arguments += '--no-auto-send' }
+    if ($NoSpace) { $arguments += '--no-space' }
+
+    $process = Start-HelmionVoiceHost -ArgumentList $arguments
+
+    # A bad chord, or one another process already owns, makes the host exit at
+    # once. Catch that here rather than reporting a key that is not armed.
+    if ($process.WaitForExit(1500)) {
+        $log = Get-HelmionVoiceLogPath
+        $tail = if (Test-Path -LiteralPath $log) { (Get-Content -LiteralPath $log -Tail 3) -join "`n" } else { '' }
+        Write-Error "helmion-voice could not arm $Chord (exit code $($process.ExitCode)).`n$tail"
+        return
+    }
+
+    $script:HostProcess = $process
+
+    Write-Host "$Chord starts and stops the conversation. Press it once, then just talk."
+    if ($NoAutoSend) {
+        Write-Host 'Auto-send is OFF — say "send it" to submit.'
+    }
+    else {
+        Write-Host 'Each finished sentence submits by itself. Say "new line" to compose a longer message.'
+    }
+    Write-Host "Half-duplex: you cannot interrupt a reply while it plays. Mic reopens ${TailMs} ms after it ends."
+    Write-Host 'The microphone stays closed until you press the key. Stop-HelmionConversation ends it.'
+
+    if ($PassThru) { return $process }
+}
+
+function Stop-HelmionConversation {
+    <#
+    .SYNOPSIS
+        End the conversation and release both the hotkey and the microphone.
+    .DESCRIPTION
+        The same clean shutdown Stop-HelmionDictation performs — the host is
+        signalled through its named event so it can close the capture device
+        rather than being killed out from under it.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [ValidateRange(1, 60)]
+        [int] $TimeoutSeconds = 5
+    )
+
+    if (-not $PSCmdlet.ShouldProcess('the helmion-voice conversation', 'stop')) { return }
+    Stop-HelmionDictation -TimeoutSeconds $TimeoutSeconds -Confirm:$false
+}
+
+# --------------------------------------------------------------------------
 # Status
 # --------------------------------------------------------------------------
 
@@ -419,6 +551,8 @@ Export-ModuleMember -Function @(
     'Get-HelmionDictationProcess'
     'Register-HelmionVoiceHotkey'
     'Unregister-HelmionVoiceHotkey'
+    'Start-HelmionConversation'
+    'Stop-HelmionConversation'
     'Get-HelmionVoiceStatus'
     'Get-HelmionVoiceHostPath'
     'Get-HelmionVoiceLogPath'
