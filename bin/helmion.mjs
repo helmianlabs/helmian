@@ -606,6 +606,58 @@ async function herald() {
   await new Promise(() => {}); // run until interrupted
 }
 
+async function relayByPolling({ origin, key, channel }) {
+  const { createRelayPoller, COLD_INTERVAL_MS } = await import('../src/relay/poller.mjs');
+  const endpoint = new URL('/api/relay-http', origin).toString();
+
+  process.stdout.write(`  Polling ${endpoint}\n`);
+  process.stdout.write(`  Quiet: every ${COLD_INTERVAL_MS / 1000}s. It goes responsive by itself while you are talking.\n\n`);
+
+  let sawPhone = null;
+  const poller = createRelayPoller({
+    baseUrl: endpoint,
+    key,
+    channel,
+    role: 'desktop',
+    onMessage: (m) => {
+      const when = m.at ? new Date(m.at).toLocaleTimeString() : new Date().toLocaleTimeString();
+      process.stdout.write(`  [${when}] ${m.from}: ${m.body}\n`);
+    },
+    onStatus: (s) => {
+      if (s.terminal) { process.stdout.write(`  · STOPPED: ${s.reason}\n`); return; }
+      if (s.error) { process.stdout.write(`  · ${s.error} — retrying in ${Math.round(s.retryInMs / 1000)}s\n`); return; }
+      if (s.rejected) { process.stdout.write(`  · ${s.rejected}\n`); return; }
+      // Announce the phone arriving and leaving, and nothing in between — a
+      // line every thirty seconds saying "still nothing" is noise that trains
+      // you to stop reading it.
+      const here = Boolean(s.presence?.phone?.present);
+      if (here !== sawPhone) {
+        sawPhone = here;
+        process.stdout.write(here ? '  · the phone is here\n' : '  · the phone is not connected\n');
+      }
+    },
+  });
+
+  process.on('SIGINT', () => { poller.stop(); process.exit(0); });
+  await poller.start();
+
+  process.stdin.setEncoding('utf8');
+  let buffer = '';
+  process.stdin.on('data', (chunk) => {
+    buffer += chunk;
+    let cut;
+    while ((cut = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 1);
+      const result = poller.send(line);
+      if (result.queued) poller.wake(); // go now, do not wait out the interval
+      else if (result.reason !== 'nothing to send') process.stdout.write(`  · not sent: ${result.reason}\n`);
+    }
+  });
+
+  await new Promise(() => {}); // run until interrupted
+}
+
 async function relay() {
   const { createRelayClient } = await import('../src/relay/client.mjs');
 
@@ -621,19 +673,40 @@ async function relay() {
     process.exit(2);
   }
 
-  const url = option('--url', process.env.HELMION_RELAY_URL || '');
-  if (!url) {
-    process.stderr.write('Pass --url wss://<your-app>/api/relay (or set HELMION_RELAY_URL).\n');
+  const origin = option('--url', process.env.HELMION_RELAY_URL || '');
+  if (!origin) {
+    process.stderr.write('Pass --url https://<your-app> (or set HELMION_RELAY_URL).\n');
     process.exit(2);
   }
 
   const channel = option('--channel', process.env.HELMION_RELAY_CHANNEL || 'troy');
 
+  // POLLING IS THE DEFAULT, AND --live IS THE EXCEPTION, ON COST GROUNDS.
+  // Vercel bills Fluid compute on Provisioned Memory for an instance's entire
+  // life and only pauses CPU billing during I/O, so a held-open WebSocket is
+  // nearly free on CPU and expensive on memory: 2 GB x 24h = 48 GB-hrs a day
+  // against a 360 GB-hr monthly Hobby allowance — the whole month in about a
+  // week, on the same plan as the live ThinkinBuddy app. Polling holds an
+  // instance for one small query and costs a couple of percent of that, so it
+  // is what can simply stay on.
+  const live = hasFlag('--live');
+
   process.stdout.write('\nHELMION RELAY — this connection carries TEXT.\n');
   process.stdout.write('It dials out; nothing listens on this machine. It cannot run anything.\n\n');
 
+  if (!live) {
+    await relayByPolling({ origin, key, channel });
+    return;
+  }
+
+  const wsUrl = new URL('/api/relay', origin);
+  wsUrl.protocol = wsUrl.protocol === 'http:' ? 'ws:' : 'wss:';
+  process.stdout.write(`  LIVE MODE — a held-open socket to ${wsUrl.host}.\n`);
+  process.stdout.write('  This reserves memory on Vercel the whole time it is open. Use it for a\n');
+  process.stdout.write('  conversation, then Ctrl+C. Plain `helmion relay` polls instead and is cheap.\n\n');
+
   const client = createRelayClient({
-    url,
+    url: wsUrl.toString(),
     key,
     channel,
     role: 'desktop',
