@@ -149,38 +149,83 @@ public partial class MainWindow
     {
         var now = DateTimeOffset.Now;
 
-        // The browser extension runs in Chrome. Nothing in desktop/ has a channel to
-        // it — grep for "guard", "quarantine" or "extension" across desktop/**/*.cs
-        // returns nothing. So its live status is not observable from here.
-        _guardFeed.Report(
-            new GuardObservation(
-                "Browser",
-                BrowserLayerSource,
-                "browser-layer-live-status",
-                "Browser layer live status unknown",
-                "The pattern-match guard runs inside Chrome (extension/content/guard.js). "
-                + "This window has no channel to it, so whether it is watching right now "
-                + "cannot be determined here. Its past blocks still appear below, read from "
-                + "the block ledger.",
-                GuardLevel.Unknown),
-            now);
-
-        // The governance gate runs in the Node agent process, not in this renderer.
-        _guardFeed.Report(
-            new GuardObservation(
-                "Local",
-                ExecutionLayerSource,
-                "execution-layer-live-status",
-                "Execution guard live status unknown",
-                "The destructive-pattern gate is src/core/governance-gate.mjs, which runs in "
-                + "the Node agent process. This window does not host it and cannot report "
-                + "whether it is active in the current session. Its past blocks appear below, "
-                + "read from the block ledger.",
-                GuardLevel.Unknown),
-            now);
+        // Both of these used to be hardcoded Unknown, and the reasons given were
+        // true: neither layer runs in this window. Reporting Unknown was correct
+        // and is NOT being softened — what changed is that both are now actually
+        // computed, so Unknown is reserved for the case where the check itself
+        // could not run.
+        PublishBrowserLayerCard(now);
+        _ = PublishExecutionGuardCardAsync();
 
         PublishPermissionPostureCard();
         PublishServicePostureCard();
+    }
+
+    /// <summary>
+    /// Reads Chrome's own profile record for the extension. Installed and enabled
+    /// is a fact; "watching this tab right now" is not knowable from here and the
+    /// card does not claim it.
+    /// </summary>
+    private void PublishBrowserLayerCard(DateTimeOffset now)
+    {
+        if (!_guardPanelReady) return;
+
+        BrowserExtensionState state;
+        try
+        {
+            var extensionDir = Path.Combine(HelmionRootPath(), "extension");
+            state = BrowserExtensionProbe.Inspect(extensionDir);
+        }
+        catch (Exception ex)
+        {
+            state = new BrowserExtensionState(
+                GuardLevel.Unknown,
+                "Browser layer could not be checked",
+                $"Reading the browser profile threw: {ex.Message}. Could not compute — not an all-clear.",
+                false, false, null);
+        }
+
+        _guardFeed.Report(
+            new GuardObservation("Browser", BrowserLayerSource, "browser-layer-live-status",
+                state.Title, state.Detail, state.Level),
+            now);
+        RefreshGuardChrome();
+    }
+
+    /// <summary>
+    /// Asks the execution guard to refuse something, and watches whether it does.
+    ///
+    /// Async and fire-and-forget: it spawns node twice and takes a moment, and a
+    /// status panel must not freeze the window to find out it is healthy. The
+    /// card is published when the answer arrives.
+    /// </summary>
+    private async Task PublishExecutionGuardCardAsync()
+    {
+        if (!_guardPanelReady) return;
+
+        GuardProbeResult probe;
+        try
+        {
+            probe = await ExecutionGuardProbe.RunAsync(HelmionRootPath());
+        }
+        catch (Exception ex)
+        {
+            probe = new GuardProbeResult(
+                GuardLevel.Unknown,
+                "Execution guard could not be probed",
+                $"The probe threw: {ex.Message}. Could not compute — not an all-clear.",
+                false, false, TimeSpan.Zero);
+        }
+
+        Dispatcher.Invoke(() =>
+        {
+            if (!_guardPanelReady) return;
+            _guardFeed.Report(
+                new GuardObservation("Local", ExecutionLayerSource, "execution-layer-live-status",
+                    probe.Title, probe.Detail, probe.Level),
+                DateTimeOffset.Now);
+            RefreshGuardChrome();
+        });
     }
 
     /// <summary>
@@ -300,6 +345,12 @@ public partial class MainWindow
         GuardAuditRead read;
         try
         {
+            // Start the ledger if it has never been started. Without this the
+            // card can only say "not created yet" — which cannot distinguish
+            // "nothing was blocked" from "nobody was recording", and that
+            // ambiguity is precisely why it reported Unknown. Creating it makes
+            // an empty ledger mean something: recording since this moment.
+            GuardAuditLog.EnsureLedger(inspection.ProjectPath);
             read = GuardAuditLog.Read(inspection.ProjectPath);
         }
         catch (Exception error) when (
