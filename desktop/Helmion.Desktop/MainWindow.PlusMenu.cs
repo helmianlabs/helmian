@@ -34,25 +34,59 @@ public partial class MainWindow
         {
             rows.ItemsSource = _plusMenu.Items;
         }
+    }
 
-        // The popup's four rows come from the catalog, so the menu and the
-        // descriptions can never drift apart.
-        if (ConsolePlusItems is not null)
+    /// <summary>
+    /// The current Maestro, read fresh from settings every time the menu opens.
+    ///
+    /// Read at OPEN rather than cached at startup because the coordinator is a
+    /// dropdown the operator changes mid-session, and a menu that still shows the
+    /// previous provider's syntax after the switch is worse than no menu.
+    /// </summary>
+    private static string? CurrentMaestro()
+    {
+        try
         {
-            ConsolePlusItems.ItemsSource = PlusMenuCatalog.Entries;
+            return EnvironmentSettingsStore.Load().MaestroCoordinator;
+        }
+        catch
+        {
+            return null;
         }
     }
 
     private void ConsolePlusButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ConsolePlusItems is not null && ConsolePlusItems.ItemsSource is null)
+        if (ConsolePlusPopup is null) return;
+
+        if (ConsolePlusPopup.IsOpen)
         {
-            ConsolePlusItems.ItemsSource = PlusMenuCatalog.Entries;
+            ConsolePlusPopup.IsOpen = false;
+            return;
         }
-        if (ConsolePlusPopup is not null)
+
+        var maestro = CurrentMaestro();
+        var display = MaestroKey.DisplayName(maestro);
+        var capabilities = ProviderCapabilityCatalog.For(maestro);
+
+        if (ConsolePlusItems is not null)
         {
-            ConsolePlusPopup.IsOpen = !ConsolePlusPopup.IsOpen;
+            // An unmapped Maestro shows an EMPTY list and a header that says so.
+            // It deliberately does not fall back to another provider's menu —
+            // offering Claude's plugin command while Grok is driving would be a
+            // confident answer to a question nobody asked.
+            ConsolePlusItems.ItemsSource = capabilities;
         }
+
+        if (ConsolePlusHeader is not null)
+        {
+            ConsolePlusHeader.Text = capabilities is null
+                ? $"Maestro: {display} — Helmion has not mapped this provider's CLI yet, so there is "
+                  + "nothing to show. It will not guess at another provider's features."
+                : $"Maestro: {display} · this is {display}'s own CLI surface, with its real syntax.";
+        }
+
+        ConsolePlusPopup.IsOpen = true;
     }
 
     private async void ConsolePlusItem_Click(object sender, RoutedEventArgs e)
