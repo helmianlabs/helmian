@@ -26,7 +26,7 @@ namespace Helmion.Desktop.Core;
 public sealed class WhisperSpeechRecognizer : IDisposable
 {
     /// <summary>Quiet time that closes an utterance. Matches the old EndSilenceTimeout.</summary>
-    public const int EndSilenceMs = 750;
+    public const int EndSilenceMs = 420;
 
     private const int FrameMs = 20;
     private const int FrameSamples = VoiceAudio.WhisperSampleRate * FrameMs / 1000;
@@ -44,6 +44,44 @@ public sealed class WhisperSpeechRecognizer : IDisposable
     private readonly List<float> _utterance = new();
     private readonly Queue<float[]> _preRoll = new();
     private readonly BlockingCollection<float[]> _toTranscribe = new(new ConcurrentQueue<float[]>());
+
+    /// <summary>
+    /// Words Whisper is told to expect before it hears anything.
+    ///
+    /// <para>
+    /// Whisper takes an "initial prompt" that biases decoding toward words it
+    /// would otherwise never guess, because they are not English. Without it,
+    /// 2026-07-30: Troy dictated for hours and got "Hellmian" for Helmion,
+    /// "Krakora" for Kokoro, "boys" for voice and "Caroco" for Kokoro again.
+    /// Upgrading the model from base.en to small.en did NOT fix those, which is
+    /// what proved the model was never the problem. This recognizer had no prompt
+    /// at all - the word "Helmion" did not appear anywhere in this file.
+    /// </para>
+    /// <para>
+    /// A sibling tool (tools/voice-dictation) already had a vocabulary list, which
+    /// is why this looked covered. It is a DIFFERENT PROGRAM and Troy does not run
+    /// it. The list here is the one that reaches his microphone.
+    /// </para>
+    /// <para>
+    /// Whisper only reads roughly the last 224 tokens of the prompt and weights
+    /// later terms more heavily, so the words he says most often go LAST.
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// MEASURED 2026-07-30, live, by the operator dictating into it: with this
+    /// prompt "Helmion" came out correct first try, having been "Hellmian" without
+    /// it. "Kokoro" landed once then came back as "Kokoroar", so it appears TWICE
+    /// and in a full sentence — a bare comma list gives Whisper no grammar to
+    /// settle a word ending into, and the tail of the prompt is what it weights
+    /// most. The two words he says constantly are last on purpose.
+    /// </remarks>
+    public const string VocabularyPrompt =
+        "Glanbia, Chobani, Lactalis, DFA, Caldmere, SiteVector, Vercel, Fly.io, "
+        + "Neon, Clerk, Ollama, ONNX, WASAPI, MCP, LLM, repo, commit, hook, "
+        + "Whisper, Qwen, Gemini, ChatGPT, Codex, Maestro, DairyForge, AimForge, "
+        + "ThinkinBuddy, Claude, Grok. "
+        + "Helmion uses Kokoro for speech and Whisper for listening. "
+        + "We are talking about Helmion and Kokoro.";
 
     private readonly string _modelPath;
     private WhisperFactory? _factory;
@@ -334,6 +372,7 @@ public sealed class WhisperSpeechRecognizer : IDisposable
                 .WithLanguage("en")
                 .WithNoContext()          // each utterance stands alone
                 .WithSingleSegment()      // one utterance in, one transcript out
+                .WithPrompt(VocabularyPrompt)
                 .Build();
 
             lock (_gate)
