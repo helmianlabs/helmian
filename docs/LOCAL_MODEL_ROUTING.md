@@ -2,6 +2,13 @@
 
 Written 2026-07-28 by `f3673e34/agent-O-local-model-routing`.
 
+> **Current release boundary (2026-07-30):** the interactive agent loop does
+> not resolve or automatically fall back to a local provider. Qwen/Ollama is
+> permitted only through the schema-validated, no-tools micro-task runner
+> documented in `LOCAL_JOBS.md`. The measurements and design below describe
+> the earlier interactive-routing experiment and are retained as historical
+> evidence, not as the active user-reply policy.
+
 Goal: stop paying a frontier API for turns a model on this machine can answer.
 
 Every number below was measured on this box today. Nothing here is inherited
@@ -260,9 +267,11 @@ model with a whole tool chain: what was proven is that it emits *valid* calls an
 picks a sane *first* action. Completing a multi-round chain correctly was not
 tested, which is exactly why local is round-0 only.
 
-## 6. Turning it on — and why it ships OFF
+## 6. Historical interactive activation — now removed
 
-Local routing is **disabled by default**. To enable, add to `E:\Helmion\.env`:
+The original experiment used this setting to enable interactive routing. That
+production path has been removed. The setting now authorizes only the
+schema-validated jobs in `LOCAL_JOBS.md`; it cannot route a user reply:
 
 ```
 HELMION_LOCAL_ENABLED=1
@@ -270,10 +279,10 @@ HELMION_LOCAL_ENABLED=1
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `HELMION_LOCAL_ENABLED` | *(off)* | Master switch |
-| `HELMION_LOCAL_URL` | `http://127.0.0.1:11434/v1` | Endpoint |
-| `HELMION_LOCAL_MODEL` | `qwen3.5:4b` | Model tag |
-| `HELMION_LOCAL_TIMEOUT_MS` | `45000` | Falls back to frontier on expiry |
+| `HELMION_LOCAL_ENABLED` | *(off)* | Enables approved local micro-jobs only |
+| `HELMION_LOCAL_URL` | `http://127.0.0.1:11434/v1` | Micro-job endpoint |
+| `HELMION_LOCAL_MODEL` | `qwen3.5:4b` | Micro-job model tag |
+| `HELMION_LOCAL_TIMEOUT_MS` | `45000` | Micro-job timeout; invalid output is discarded |
 
 > **Why opt-in.** The first cut defaulted to ON and immediately broke three
 > unrelated bridge tests: Ollama was listening, so their turns were silently
@@ -396,13 +405,13 @@ chars). The tail is the whole point, so the longer wording stayed.
 `LOCAL_DEFAULT_TIMEOUT_MS` **stays 45000.** Dropping it to 20 s would abort the
 tail this change did not eliminate and force a pointless double wait.
 
-### 🔴 Recommendation: still do NOT enable it for speed
+### Historical interactive-performance conclusion
 
 A frontier fast tier answers these same turns in ~1–3 s. Local is **3.12 s warm
 median, 4.82 s p90, ~10 s cold**. Brevity closed the worst of the gap but did
-not close it. Enable `HELMION_LOCAL_ENABLED=1` if the goal is **zero API spend
-and a prompt that never leaves the machine** — not if the goal is a faster
-answer. That remains Troy's call, with the real numbers in front of him.
+not close it. In the current release, `HELMION_LOCAL_ENABLED=1` can reduce API
+spend only for the four approved background micro-jobs. It never makes an
+interactive prompt local and never answers the user.
 
 One caveat that bounds all of the above: qwen3.5:4b does not obey the
 instruction reliably. In one run a prompt answered in 133 chars without brevity

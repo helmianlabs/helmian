@@ -247,6 +247,60 @@ const fakeRuntime = {
   root: sharedProvenanceWorkspace('helmion-local-routing-'),
 };
 
+test('PRODUCTION BOUNDARY: enabling local jobs cannot route an interactive reply to Qwen', async () => {
+  await withStub(async ({ port, seen }) => {
+    const localSeen = [];
+    const localServer = createStubServer({ onRequest: (r) => localSeen.push(r) });
+    localServer.listen(0, '127.0.0.1');
+    await once(localServer, 'listening');
+    const localPort = localServer.address().port;
+    const beforeEnabled = process.env.HELMION_LOCAL_ENABLED;
+    const beforeUrl = process.env.HELMION_LOCAL_URL;
+
+    try {
+      // This flag is allowed to enable the schema-validated, no-tools jobs in
+      // src/jobs/local-job.mjs. It must have no effect on runAgentTurn.
+      process.env.HELMION_LOCAL_ENABLED = '1';
+      process.env.HELMION_LOCAL_URL = `http://127.0.0.1:${localPort}/v1`;
+
+      const frontier = {
+        id: 'custom',
+        key: 'frontier-key',
+        label: 'SelectedCloudStub',
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        url: `http://127.0.0.1:${port}/v1/chat/completions`,
+        model: 'selected-cloud-model',
+      };
+      const events = [];
+      const result = await runAgentTurn({
+        userText: 'What does the acronym API stand for?',
+        messages: [],
+        provider: frontier,
+        runtime: fakeRuntime,
+        onEvent: (event) => events.push(event),
+        // Deliberately omit localProvider: this is the production call shape.
+      });
+
+      assert.ok(result.text.length > 0);
+      assert.equal(localSeen.length, 0, 'the interactive turn must never reach Ollama');
+      assert.equal(seen.length, 1, 'the selected provider must receive the turn');
+      assert.equal(seen[0].model, 'selected-cloud-model');
+      assert.equal(
+        events.some((event) => event.type === 'model' && event.isLocal === true),
+        false,
+        'the interactive route must never announce or attempt a local model',
+      );
+    } finally {
+      if (beforeEnabled === undefined) delete process.env.HELMION_LOCAL_ENABLED;
+      else process.env.HELMION_LOCAL_ENABLED = beforeEnabled;
+      if (beforeUrl === undefined) delete process.env.HELMION_LOCAL_URL;
+      else process.env.HELMION_LOCAL_URL = beforeUrl;
+      localServer.close();
+      await once(localServer, 'close');
+    }
+  });
+});
+
 test('a DEAD local endpoint falls back to the frontier — the turn still succeeds', async () => {
   await withStub(async ({ port, seen }) => {
     // Port 9 is the discard port: nothing listens, so the connection is refused
