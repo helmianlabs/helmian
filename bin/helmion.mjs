@@ -606,12 +606,30 @@ async function herald() {
   await new Promise(() => {}); // run until interrupted
 }
 
-async function relayByPolling({ origin, key, channel }) {
+async function relayByPolling({ origin, key, channel, handsRoot }) {
   const { createRelayPoller, COLD_INTERVAL_MS } = await import('../src/relay/poller.mjs');
   const endpoint = new URL('/api/relay-http', origin).toString();
 
   process.stdout.write(`  Polling ${endpoint}\n`);
   process.stdout.write(`  Quiet: every ${COLD_INTERVAL_MS / 1000}s. It goes responsive by itself while you are talking.\n\n`);
+
+  // HANDS ARE OFF UNLESS ASKED FOR. Without --hands this prints and nothing
+  // else, exactly as it always has. With it, a phone message can cause real work
+  // inside ONE named folder, still governed by the ordinary guard. See
+  // src/relay/hands.mjs for what was traded and why.
+  let hands = null;
+  if (handsRoot) {
+    const { createHands } = await import('../src/relay/hands.mjs');
+    hands = createHands({
+      root: handsRoot,
+      say: (line) => { try { poller.send(line); poller.wake(); } catch { /* offline */ } },
+      log: (line) => process.stdout.write(`${line}\n`),
+    });
+    process.stdout.write(`  HANDS ON — messages from the phone will do real work in:\n`);
+    process.stdout.write(`    ${hands.workspace}\n`);
+    process.stdout.write(`  Nothing outside that folder is reachable, and every tool call still\n`);
+    process.stdout.write(`  passes the guard. Ctrl+C to stop.\n\n`);
+  }
 
   let sawPhone = null;
   const poller = createRelayPoller({
@@ -622,6 +640,7 @@ async function relayByPolling({ origin, key, channel }) {
     onMessage: (m) => {
       const when = m.at ? new Date(m.at).toLocaleTimeString() : new Date().toLocaleTimeString();
       process.stdout.write(`  [${when}] ${m.from}: ${m.body}\n`);
+      if (hands && m.from === 'phone') hands.handle(m.body);
     },
     onStatus: (s) => {
       if (s.terminal) { process.stdout.write(`  · STOPPED: ${s.reason}\n`); return; }
@@ -679,7 +698,11 @@ async function relay() {
     process.exit(2);
   }
 
-  const channel = option('--channel', process.env.HELMION_RELAY_CHANNEL || 'troy');
+  const channel = option('--channel', process.env.HELMION_RELAY_CHANNEL || 'pilot');
+
+  // --hands <folder> lets a phone message do real work, confined to that folder
+  // and still governed by the ordinary guard. Absent, this only ever prints.
+  const handsRoot = option('--hands', '');
 
   // POLLING IS THE DEFAULT, AND --live IS THE EXCEPTION, ON COST GROUNDS.
   // Vercel bills Fluid compute on Provisioned Memory for an instance's entire
@@ -692,10 +715,13 @@ async function relay() {
   const live = hasFlag('--live');
 
   process.stdout.write('\nHELMION RELAY — this connection carries TEXT.\n');
-  process.stdout.write('It dials out; nothing listens on this machine. It cannot run anything.\n\n');
+  process.stdout.write('It dials out; nothing listens on this machine.\n');
+  process.stdout.write(handsRoot
+    ? 'HANDS ARE ON: a phone message can do real work in the folder named below.\n\n'
+    : 'It cannot run anything. Pass --hands <folder> to change that.\n\n');
 
   if (!live) {
-    await relayByPolling({ origin, key, channel });
+    await relayByPolling({ origin, key, channel, handsRoot });
     return;
   }
 
