@@ -73,3 +73,7 @@ planning/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Scratch projects created by clicking + New in the Pilot while testing.
+fuck-claude/
+
