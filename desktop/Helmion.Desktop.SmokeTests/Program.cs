@@ -463,10 +463,43 @@ try
     Check(File.Exists(Path.Combine(sandboxUserProfile, ".gemini", "GEMINI.md")), "Gemini rules file is created");
     Check(File.Exists(Path.Combine(sandboxUserProfile, ".claude", "HELMION_CLAUDE.md")), "Claude rules file is created");
 
+    // THESE TWO ASSERT AGAINST FILES GIT CAN NEVER HAVE, AND USED TO ABORT THE
+    // WHOLE SUITE ON ANY CLEAN CLONE.
+    //
+    // They resolve the project root through FindEnvPath(), which anchors on
+    // `.env` — and .gitignore ignores both `.env` and `.helmion/`. So on a fresh
+    // clone or a detached worktree the root resolves elsewhere, the first Check
+    // throws, and EVERY suite registered after this line runs ZERO times. It
+    // aborted at roughly check 53 of ~900. Measured: `dotnet run` on this
+    // project in a detached worktree at HEAD exits 127 here.
+    //
+    // The damage was not the missing coverage, it was the CLAIM. "Desktop smoke
+    // suite green" was written into four separate reports tonight as though it
+    // described the committed code; it only ever described one developer's
+    // working tree. Two sessions independently conflated "the registration line
+    // is committed" with "the check executed".
+    //
+    // SKIP, NOT WEAKEN. Where the sync's own inputs are present the assertions
+    // are unchanged and still fail loudly. Where `.env` was never checked out
+    // there is nothing for the sync to have copied, so asserting it copied
+    // something is a statement about the machine rather than the code. The skip
+    // PRINTS, because a silently-skipped check is how a suite starts lying
+    // politely.
     var envPathLoc = EnvironmentSettingsStore.FindEnvPath();
     var projectRootLoc = Path.GetDirectoryName(envPathLoc)!;
-    Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "autonomy_rules.json")), "Codex rules file is created/updated");
-    Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "hooks", "pretooluse.ps1")), "Codex pretooluse hook script is copied");
+    var codexInputsPresent = File.Exists(envPathLoc)
+        && Directory.Exists(Path.Combine(projectRootLoc, "hooks"));
+    if (codexInputsPresent)
+    {
+        Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "autonomy_rules.json")), "Codex rules file is created/updated");
+        Check(File.Exists(Path.Combine(projectRootLoc, ".helmion", "hooks", "pretooluse.ps1")), "Codex pretooluse hook script is copied");
+    }
+    else
+    {
+        Console.WriteLine(
+            "  SKIPPED (2 checks): Codex rules + pretooluse hook — no .env in this checkout, "
+            + "so the sync had no project root to copy into. Not a pass.");
+    }
 
     var neonLine = syncResult.SyncedItems.FirstOrDefault(item =>
         item.Contains("Neon autonomy rules", StringComparison.OrdinalIgnoreCase));
