@@ -1,0 +1,114 @@
+{
+  "$comment": [
+    "HELMION RULE MANIFEST. Every rule the operator has written down, with an honest",
+    "statement of whether a machine can enforce it.",
+    "",
+    "WHY THIS FILE EXISTS. Before it, the rules lived in one markdown file that only",
+    "the model read. An audit on 2026-07-30 found 25 rules and TWO with any code",
+    "behind them; every rule about HONESTY had none. That is backwards for a product",
+    "whose whole premise is that a session can drift and no session can tell. The",
+    "rules have to be DATA that ships, not prose one tool happens to load.",
+    "",
+    "THE THREE CLASSES ARE THE POINT. A manifest claiming all 26 are enforced would",
+    "be the exact failure this is meant to stop, so each rule declares which it is:",
+    "",
+    "  gate       a hook observes it and blocks or flags it. Real enforcement.",
+    "  observable a hook can see the evidence AFTER the fact and record a breach,",
+    "             but cannot prevent it. Makes drift visible.",
+    "  judgment   no hook can decide it without either firing constantly or never.",
+    "             Named honestly here so nobody wonders why it has no gate.",
+    "",
+    "'gate' entries name the script that enforces them. 'installed: false' means the",
+    "script exists and is proven but is not registered in a settings file yet."
+  ],
+
+  "version": 1,
+  "source": "operator CLAUDE.md",
+  "generated": "2026-07-30",
+
+  "rules": [
+    { "id": "0",      "title": "Honesty overrides everything",              "class": "judgment",   "gate": null,
+      "note": "The parent rule. Enforced in practice by 0.001, 0.002 and 0.16, which are its checkable parts." },
+
+    { "id": "0.001",  "title": "Source of truth and full tracing",          "class": "observable", "gate": null,
+      "note": "A hook can see whether a file was READ before a claim was made about it, because the read is a tool call." },
+
+    { "id": "0.002",  "title": "Cite or shut up",                           "class": "gate",
+      "gate": "hooks/agent-os/cite-or-shut-up.ps1", "event": "Stop", "installed": false,
+      "note": "Flags hedging with no evidence. Passes a sentence carrying file:line, an exit code, a measured number, a URL, or an explicit UNVERIFIED stamp. Proven both directions 2026-07-30." },
+
+    { "id": "0.003",  "title": "Parallel by default",                       "class": "observable", "gate": null,
+      "note": "Countable: independent tool calls issued one per turn instead of batched." },
+
+    { "id": "0.0123", "title": "Voice reads everything in the reply",       "class": "judgment",   "gate": null },
+
+    { "id": "0.0124", "title": "Voice must be short",                       "class": "retired",    "gate": null,
+      "note": "RETIRED 2026-07-30 by the operator. Being made to wait between short clips was worse for him than one long clip. Do not reinstate a word cap." },
+
+    { "id": "0.1",    "title": "No guessing, research first",               "class": "observable", "gate": null },
+
+    { "id": "0.1.9",  "title": "Voice mode protocol",                       "class": "gate",
+      "gate": "hooks/agent-os/ping-before-voice.ps1", "event": "PreToolUse", "installed": false,
+      "note": "Same rule as 0.19. Needs a marker written when the notification fires; a gate that reads a marker nothing writes is unsatisfiable." },
+
+    { "id": "0.11",   "title": "Forensic audit after every handoff",        "class": "observable", "gate": null },
+
+    { "id": "0.13",   "title": "Time-capped handoff",                       "class": "retired",    "gate": null },
+
+    { "id": "0.15",   "title": "Post-push visual ping",                     "class": "gate",
+      "gate": "hooks/agent-os/post-push-ping.ps1", "event": "PostToolUse", "installed": false,
+      "note": "A push is a visible tool call, so requiring the ping after it is decidable." },
+
+    { "id": "0.16",   "title": "Done means verified end to end",            "class": "gate",
+      "gate": "hooks/agent-os/cite-or-shut-up.ps1", "event": "Stop", "installed": false,
+      "note": "Shares the 0.002 gate: 'done', 'fixed' and 'works' are claims, and the gate asks for the evidence." },
+
+    { "id": "0.19",   "title": "Ping before voice, every time",             "class": "gate",
+      "gate": "hooks/agent-os/ping-before-voice.ps1", "event": "PreToolUse", "installed": false },
+
+    { "id": "0.25",   "title": "Never remove the operator's ability to stop", "class": "gate",
+      "gate": "hooks/agent-os/stop-voice.ps1", "event": "UserPromptSubmit", "installed": true,
+      "note": "Already live on the operator's machine: submitting anything writes a STOP sentinel and kills playback." },
+
+    { "id": "0.26",   "title": "Voice on until voice off",                  "class": "gate",
+      "gate": "voice_enabled.txt", "event": "Stop", "installed": true },
+
+    { "id": "0.27",   "title": "Advisory lane writes only to the low-trust table", "class": "gate",
+      "gate": "hooks/agent-os/autonomy-boundary.ps1", "event": "PreToolUse", "installed": true },
+
+    { "id": "0.28",   "title": "Every session records its failures and successes", "class": "gate",
+      "gate": "hooks/agent-os/session-end.sh", "event": "SessionEnd", "installed": true },
+
+    { "id": "0.29",   "title": "A lesson names a number and a file:line",   "class": "gate",
+      "gate": "hooks/agent-os/lesson-shape.ps1", "event": "PreToolUse", "installed": false,
+      "note": "Decidable: a lesson entry either contains a citation and a number or it does not." },
+
+    { "id": "0.5",    "title": "Never present option lists",                "class": "gate",
+      "gate": "hooks/agent-os/no-option-menus.ps1", "event": "Stop", "installed": false },
+
+    { "id": "0.6",    "title": "Verified auto-push with an escape hatch",   "class": "gate",
+      "gate": "hooks/agent-os/commit-qa.ps1", "event": "PreToolUse", "installed": true,
+      "note": "Live and repeatedly effective: it blocked two commits on 2026-07-30, once for missing QA evidence and once for undeclared file deletions." },
+
+    { "id": "0.7",    "title": "Results in table format",                   "class": "observable", "gate": null },
+
+    { "id": "0.8",    "title": "Paranoid full-tool posture",                "class": "judgment",   "gate": null },
+
+    { "id": "0.9",    "title": "One agent per issue",                       "class": "judgment",   "gate": null },
+
+    { "id": "1",      "title": "Never make the operator do what the agent can do", "class": "judgment", "gate": null,
+      "note": "Requires knowing what the agent COULD have done, which is the thing in question." },
+
+    { "id": "2",      "title": "Never exaggerate capability",               "class": "judgment",   "gate": null },
+
+    { "id": "3",      "title": "Never change the plan without saying so",   "class": "judgment",   "gate": null }
+  ],
+
+  "destructive_gates": {
+    "$comment": "Already live and proven. These are why the honesty gap stood out: the rules that stop damage had teeth, the rules that stop lying had none.",
+    "hooks": [
+      { "gate": "hooks/agent-os/block-destructive.ps1", "event": "PreToolUse", "blocks": "rm -rf, Remove-Item -Recurse, git reset --hard, git clean -f, force push, DROP, TRUNCATE, dd, mkfs", "installed": true },
+      { "gate": "hooks/agent-os/autonomy-boundary.ps1", "event": "PreToolUse", "blocks": "schema changes, auth surfaces, production database writes, cross-project edits", "installed": true }
+    ]
+  }
+}
