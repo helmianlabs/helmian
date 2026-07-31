@@ -54,6 +54,48 @@ Two specific traps behind this, both real:
 
 ---
 
+## THE DESKTOP SMOKE SUITE CANNOT RUN FROM A CLEAN CHECKOUT — it dies at check ~53 of ~900
+
+Measured 2026-07-30 in a detached worktree at HEAD, independently by two
+sessions. **Every "desktop smoke suite green" claim in this repo is a statement
+about Troy's working tree, not about the committed code.** That is legitimate,
+but it has to be said precisely, because the two are not the same claim.
+
+What happens:
+
+```
+dotnet run --project desktop/Helmion.Desktop.SmokeTests -c Release
+  -> Unhandled exception. System.InvalidOperationException:
+     Desktop smoke check failed: Codex pretooluse hook script is copied
+     at Program.<Main>$ ... Program.cs:line 469
+  -> EXIT 127, after only 3 suites (~53 checks) have run
+```
+
+Why, cited:
+
+- `desktop/Helmion.Desktop.SmokeTests/Program.cs:468-469` assert that
+  `.helmion/autonomy_rules.json` and `.helmion/hooks/pretooluse.ps1` exist,
+  resolving the root through `EnvironmentSettingsStore.FindEnvPath()`, which
+  anchors on `.env`.
+- `.gitignore:2` ignores `.env`; `.gitignore:3` ignores `.helmion/`.
+  `git ls-files --error-unmatch` fails on both. They exist only in Troy's
+  working tree, so **no clone and no worktree can ever have them.**
+- The check predates all of tonight's work — introduced 2026-07-27 in `607eddc`
+  ("feat(desktop): implement Profile Translator & Claude MCP Auto-Installer").
+
+**The consequence that matters: every suite registered after line 469 runs ZERO
+times outside Troy's machine.** That is most of them. Two sessions each assumed
+their newly registered checks "run from a clean clone" because the registration
+line was committed — but a committed registration and an executed check are
+different claims, and only the first was ever established.
+
+If you make a throwaway worktree to test something, copy `.env` and `.helmion/`
+into it or you will debug a phantom. Better: fix the check to SKIP when those
+files are absent rather than abort, so a clean checkout runs the other ~850.
+Nobody has done that; it is unowned and outside every current lane.
+
+---
+
 | session_id | repo | branch | scope_paths | claimed_files | started_at | status |
 |---|---|---|---|---|---|---|
 | f3673e34-e670-4092-8cbd-4c8b3ce23f2d (orchestrator) | E:\Helmion | main | leak fix + orchestration | src/agent/providers.mjs; docs/*; SESSION_BOARD.md | 2026-07-28 12:20 -06:00 | active (reopened ~13:00) |
