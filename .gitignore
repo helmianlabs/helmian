@@ -1,6 +1,24 @@
 node_modules/
 .env
+# 2026-07-30: the bare `.env` above matches a file named EXACTLY .env and nothing
+# else. Measured, not assumed: `git check-ignore -v .env.2026-07-30-pre-local-off.bak`
+# returned EMPTY, and `git status` showed it as `??` — so the next `git add -A`
+# would have committed a file holding live HELMION_DATABASE_URL, GEMINI_API_KEY,
+# GROK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY and XAI_API_KEY. That is not
+# hypothetical: it already happened once tonight and landed in stash@{0}.
+# Every .env VARIANT is ignored; .env.example is re-allowed because it is the
+# placeholder file people are meant to copy.
+.env.*
+!.env.example
 .helmion/
+
+# Session scratch and restore snapshots. These carry real credentials — the
+# claude.json under _restore/ holds the Neon password five times and the xAI key
+# four. They are untracked today only by luck; nothing was stopping them.
+_restore/
+_review_export_*/
+guard_lab/
+guard_test.txt
 coverage/
 *.log
 *.tgz
@@ -29,3 +47,29 @@ tools/**/obj/
 
 # Local voice models (~470MB) - fetch with desktop/scripts/get-voice-models.ps1
 desktop/models/
+
+# Backups and merge leftovers. Git already holds every prior version of a tracked
+# file, so a `.bak` beside it is redundant — and five of them reached this repo's
+# history, which reads to a stranger as not trusting version control. Those five
+# are already tracked, so this rule does not remove them; it only stops the next.
+*.bak
+*.orig
+*.rej
+*~
+
+# The remaining scratch directories. `_restore/`, `_review_export_*/` and
+# `guard_lab/` are covered above; these are the two that were still exposed.
+# Ignoring them matters beyond `git add -A`: `git stash -u` skips ignored paths
+# too, and on 2026-07-30 a `stash -u` swept `_restore/` into stash@{0}, carrying a
+# live Neon password into the object database where nobody was looking for it.
+_snapshots/
+planning/
+
+# Test droppings
+**/disposable.*
+**/disposable_*
+
+# OS noise
+Thumbs.db
+Desktop.ini
+.DS_Store

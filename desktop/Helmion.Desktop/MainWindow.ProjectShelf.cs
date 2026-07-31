@@ -75,13 +75,30 @@ public partial class MainWindow
               + "press + New, or run: helmion project init \"Name\" --yes";
     }
 
-    /// <summary>Where projects live: the registered workspace.</summary>
+    /// <summary>
+    /// The folder the shelf is listing. Sticky across a drill-in: see
+    /// <see cref="ProjectShelfRoot"/> for why this is not simply the agent
+    /// workspace.
+    /// </summary>
+    private string? _projectShelfRoot;
+
+    /// <summary>
+    /// Where projects live.
+    ///
+    /// Starts from the registered workspace, but a workspace at or beneath the
+    /// root already being shown does NOT move the shelf — that is somebody
+    /// opening a project, and following them into it would hide every sibling
+    /// project on the panel.
+    /// </summary>
     private string? ResolveProjectRoot()
     {
         try
         {
             var workspace = ResolveAgentWorkspace();
-            return string.IsNullOrWhiteSpace(workspace) || !Directory.Exists(workspace) ? null : workspace;
+            _projectShelfRoot = ProjectShelfRoot.Resolve(_projectShelfRoot, workspace);
+            return string.IsNullOrWhiteSpace(_projectShelfRoot) || !Directory.Exists(_projectShelfRoot)
+                ? null
+                : _projectShelfRoot;
         }
         catch
         {
@@ -138,7 +155,7 @@ public partial class MainWindow
         RefreshProjectShelf();
     }
 
-    private void ProjectShelfItem_Click(object sender, RoutedEventArgs e)
+    private async void ProjectShelfItem_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string directory } || !Directory.Exists(directory)) return;
 
@@ -146,7 +163,29 @@ public partial class MainWindow
         // this goes. It does NOT launch a file explorer window — Troy's standing
         // correction is that Helmion must not auto-open things on his desktop.
         _registeredWorkspacePath = directory;
+
+        // The shelf is re-read, not left showing whatever it had before this
+        // click. It does NOT follow us into the project — ProjectShelfRoot keeps
+        // it on the parent, so the sibling projects stay on the panel.
+        RefreshProjectShelf();
         NavigateTo("Workspace");
+
+        // Opening a project LAYS DOWN ITS STRUCTURE. Before this line, opening a
+        // project was two statements — set a field, change page — and created
+        // nothing, so the folder tree a zero-context session is supposed to read
+        // never existed unless someone ran the CLI by hand.
+        //
+        // Safe on EVERY click, verified in the scaffolder rather than assumed:
+        // project-scaffold.mjs:189-193 emits only create|preserve — there is no
+        // update, append or overwrite action — and :213-218 writes with flag 'wx',
+        // so a file that appears between plan and write is downgraded to preserve
+        // instead of clobbered. Troy's own edits to planning/requirements.md
+        // survive re-opening the project every day; that is pinned by a check that
+        // compares the bytes before and after.
+        //
+        // It shells out to the SAME `helmion project init` the CLI runs. A second
+        // implementation writing similar-looking files would drift from it.
+        await ProjectOpenScaffold.EnsureStructureAsync(HelmionRootPath(), directory);
     }
 
     private void PilotPagesToggle_Changed(object sender, RoutedEventArgs e)

@@ -308,6 +308,178 @@ internal static class PlusMenuChecks
         Assert(noReason.Detail.Length > 0, "an unsupported row with no stated reason still says something");
         checks += 3;
 
+        // --- 6. THE ATTACHMENT ACTUALLY REACHES THE MODEL ----------------------
+        //
+        // THE DEFECT THIS SECTION EXISTS FOR. Upload was decorative. The picked
+        // file's path was destroyed at MainWindow.PlusMenu.cs:139, which kept only
+        // Path.GetFileName; PlusMenuController.ActiveAttachments had ZERO
+        // production readers; and the send seam passed the typed text alone. The
+        // user saw a green "attached" row and the model received nothing. Silent,
+        // and shaped exactly like success.
+        //
+        // WHY THESE ASSERTIONS LOOK DIFFERENT FROM THE ONES ABOVE. Section 5 of
+        // this file asserts that hardcoded strings contain hardcoded substrings —
+        // it cannot fail unless someone edits both halves. Nothing below does
+        // that. Every file's contents are a GUID generated at RUN TIME, so no
+        // assertion here can pass by matching a literal written in this file, and
+        // every assertion is about the OUTGOING PAYLOAD rather than a list count.
+        // The old ActiveAttachments checks counted a collection nothing read.
+        var sendDir = Path.Combine(Path.GetTempPath(), $"helmion-send-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sendDir);
+        try
+        {
+            var headMarker = $"HEAD-{Guid.NewGuid():N}";
+            var tailMarker = $"TAIL-{Guid.NewGuid():N}";
+            var attached = Path.Combine(sendDir, "payload.md");
+            File.WriteAllText(attached, $"# notes\n{headMarker}\nmiddle\n{tailMarker}\n");
+
+            var send = new PlusMenuController();
+            var row = send.Begin(PlusMenuKind.Upload, Path.GetFileName(attached), null, attached);
+            send.Succeed(row, AttachmentPolicy.Validate(attached).Message);
+
+            // THE PATH SURVIVES. Without this the file can never be reopened and
+            // an attachment is only ever a label.
+            Assert(row.SourcePath == attached,
+                "an upload row remembers the REAL path on disk, not just the file name");
+            Assert(send.ActiveAttachments.Count == 1, "the accepted upload is live");
+            checks += 2;
+
+            // THE FIX ITSELF: content on the wire.
+            var prompt = PromptAttachments.Compose("summarise this", send.ActiveAttachments);
+            Assert(prompt.Text.Contains(headMarker, StringComparison.Ordinal),
+                "the attached file's ACTUAL CONTENT is in the text that goes to the model");
+            Assert(prompt.Text.Contains(tailMarker, StringComparison.Ordinal),
+                "the WHOLE file goes, not a truncated head of it");
+            Assert(prompt.Text.Contains("summarise this", StringComparison.Ordinal),
+                "the user's typed words survive alongside the attachment");
+            Assert(prompt.Text.Contains(Path.GetFileName(attached), StringComparison.Ordinal),
+                "the payload names the file, so the model knows what it is reading");
+            Assert(prompt.Included.Count == 1 && !prompt.AnyRefused,
+                "exactly one file went and nothing was refused");
+            checks += 5;
+
+            // NOTHING ATTACHED MUST CHANGE NOTHING. A session that never touches
+            // the + button has to send byte-for-byte what it sent before.
+            var bare = PromptAttachments.Compose("just a question", new List<PlusActionItem>());
+            Assert(bare.Text == "just a question",
+                "with nothing attached the payload is exactly what the user typed");
+            Assert(bare.Inclusions.Count == 0, "and nothing is reported as having been attached");
+            checks += 2;
+
+            // A REFUSED UPLOAD MUST NOT RIDE ALONG. Written as text inside an .exe
+            // so the assertion is about the CONTENT, not the extension.
+            var refusedMarker = $"REFUSED-{Guid.NewGuid():N}";
+            var refusedFile = Path.Combine(sendDir, "tool.exe");
+            File.WriteAllText(refusedFile, refusedMarker);
+            var refusedRow = send.Begin(
+                PlusMenuKind.Upload, Path.GetFileName(refusedFile), null, refusedFile);
+            send.Fail(refusedRow, AttachmentPolicy.Validate(refusedFile).Message);
+
+            var afterRefusal = PromptAttachments.Compose("go", send.ActiveAttachments);
+            Assert(!afterRefusal.Text.Contains(refusedMarker, StringComparison.Ordinal),
+                "a REFUSED upload's content never reaches the model");
+            Assert(afterRefusal.Text.Contains(headMarker, StringComparison.Ordinal),
+                "and refusing one file does not drop the one that was accepted");
+            checks += 2;
+
+            // REMOVE / UNDO, ASSERTED ON THE PAYLOAD. The pre-existing checks for
+            // this only counted ActiveAttachments — a list no production code read,
+            // so the count could be right while the model still got nothing.
+            send.Remove(row);
+            var afterRemove = PromptAttachments.Compose("go", send.ActiveAttachments);
+            Assert(!afterRemove.Text.Contains(headMarker, StringComparison.Ordinal),
+                "removing an attachment takes its CONTENT out of the outgoing payload");
+            send.Undo(row);
+            var afterUndo = PromptAttachments.Compose("go", send.ActiveAttachments);
+            Assert(afterUndo.Text.Contains(headMarker, StringComparison.Ordinal),
+                "undo puts the content back into the outgoing payload");
+            checks += 2;
+
+            // DELETED BETWEEN ATTACH AND SEND. The row said "Added" minutes ago;
+            // the file is gone now. It must be reported, not silently skipped.
+            var vanishMarker = $"VANISH-{Guid.NewGuid():N}";
+            var vanishing = Path.Combine(sendDir, "gone.md");
+            File.WriteAllText(vanishing, vanishMarker);
+            var vanishSend = new PlusMenuController();
+            var vanishRow = vanishSend.Begin(
+                PlusMenuKind.Upload, Path.GetFileName(vanishing), null, vanishing);
+            vanishSend.Succeed(vanishRow, AttachmentPolicy.Validate(vanishing).Message);
+            File.Delete(vanishing);
+
+            var afterDelete = PromptAttachments.Compose("go", vanishSend.ActiveAttachments);
+            Assert(afterDelete.AnyRefused,
+                "a file deleted between attach and send is REPORTED, not silently skipped");
+            Assert(afterDelete.Refused.Any(r =>
+                    string.Equals(r.FileName, "gone.md", StringComparison.Ordinal)),
+                "the send-time refusal names the file that vanished");
+            Assert(!string.IsNullOrWhiteSpace(afterDelete.Refused[0].Message),
+                "and carries a readable reason, never an empty failure");
+            Assert(!afterDelete.Text.Contains(vanishMarker, StringComparison.Ordinal),
+                "no stale copy of a deleted file's content is sent");
+            checks += 4;
+
+            // GREW PAST THE LIMIT BETWEEN ATTACH AND SEND. Proves the policy is
+            // re-run at send time rather than trusted from pick time.
+            var growMarker = $"GROW-{Guid.NewGuid():N}";
+            var grower = Path.Combine(sendDir, "grower.txt");
+            File.WriteAllText(grower, growMarker);
+            var growSend = new PlusMenuController();
+            var growRow = growSend.Begin(
+                PlusMenuKind.Upload, Path.GetFileName(grower), null, grower);
+            growSend.Succeed(growRow, AttachmentPolicy.Validate(grower).Message);
+
+            using (var fs = new FileStream(grower, FileMode.Create, FileAccess.Write))
+            {
+                fs.SetLength(AttachmentPolicy.MaxBytes + 1024);
+            }
+
+            var afterGrowth = PromptAttachments.Compose("go", growSend.ActiveAttachments);
+            Assert(afterGrowth.AnyRefused && afterGrowth.Included.Count == 0,
+                "a file that grew past the size limit after being attached is refused AT SEND TIME");
+            Assert(!afterGrowth.Text.Contains(growMarker, StringComparison.Ordinal),
+                "and its earlier, smaller content is not sent from a stale copy");
+            checks += 2;
+
+            // TWO FILES BOTH ARRIVE, each distinguishable.
+            var firstMarker = $"ONE-{Guid.NewGuid():N}";
+            var secondMarker = $"TWO-{Guid.NewGuid():N}";
+            var first = Path.Combine(sendDir, "first.json");
+            var second = Path.Combine(sendDir, "second.csv");
+            File.WriteAllText(first, firstMarker);
+            File.WriteAllText(second, secondMarker);
+
+            var pair = new PlusMenuController();
+            var firstRow = pair.Begin(PlusMenuKind.Upload, Path.GetFileName(first), null, first);
+            pair.Succeed(firstRow, AttachmentPolicy.Validate(first).Message);
+            var secondRow = pair.Begin(PlusMenuKind.Upload, Path.GetFileName(second), null, second);
+            pair.Succeed(secondRow, AttachmentPolicy.Validate(second).Message);
+
+            var both = PromptAttachments.Compose("compare these", pair.ActiveAttachments);
+            Assert(both.Text.Contains(firstMarker, StringComparison.Ordinal)
+                && both.Text.Contains(secondMarker, StringComparison.Ordinal),
+                "two attachments both reach the model");
+            Assert(both.Included.Count == 2, "and both are accounted for as included");
+            Assert(both.Text.IndexOf(firstMarker, StringComparison.Ordinal)
+                < both.Text.IndexOf(secondMarker, StringComparison.Ordinal),
+                "attachments keep the order they were added in");
+            checks += 3;
+
+            // A NON-UPLOAD ROW IS NOT AN ATTACHMENT. A succeeded Plugins or
+            // Connectors row has no file behind it and must never be opened as one.
+            var mixed = new PlusMenuController();
+            var pluginRow = mixed.Begin(PlusMenuKind.Plugin, "Plugins");
+            mixed.Succeed(pluginRow, "read the registry");
+            Assert(pluginRow.SourcePath is null, "a non-upload row has no file behind it");
+            Assert(mixed.ActiveAttachments.Count == 0, "and is not counted as an attachment");
+            var noFiles = PromptAttachments.Compose("hello", mixed.ActiveAttachments);
+            Assert(noFiles.Text == "hello", "so the payload is untouched by it");
+            checks += 3;
+        }
+        finally
+        {
+            try { Directory.Delete(sendDir, recursive: true); } catch { /* temp dir */ }
+        }
+
         Console.WriteLine($"Helmion plus-menu checks passed ({checks} checks).");
 
         void AssertDetail(string maestro, PlusMenuKind kind, string mustContain)

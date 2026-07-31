@@ -185,10 +185,11 @@ test('installing all targets into one directory keeps them separated', async () 
   const dir = await scratch();
   const report = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], dir, apply: true });
 
-  assert.equal(report.targets.length, 3);
+  assert.equal(report.targets.length, AGENT_OS_TARGETS.length);
   assert.ok(existsSync(join(dir, '.claude', 'CLAUDE.md')));
   assert.ok(existsSync(join(dir, '.codex', 'AGENTS.md')));
   assert.ok(existsSync(join(dir, '.gemini', 'GEMINI.md')));
+  assert.ok(existsSync(join(dir, '.grok', 'AGENTS.md')));
 
   await rm(dir, { recursive: true, force: true });
 });
@@ -201,7 +202,16 @@ test('each hook snippet is valid JSON using that tool own event names', async ()
     claude: { turnEnd: 'Stop', settings: 'settings.json' },
     codex: { turnEnd: 'Stop', settings: 'hooks.json' },
     gemini: { turnEnd: 'AfterAgent', settings: 'settings.json' },
+    grok: { turnEnd: 'Stop', settings: 'hooks/agent-os.json' },
   };
+
+  // A target with no expectation row would otherwise throw a confusing
+  // "cannot read properties of undefined" instead of naming what is missing.
+  assert.deepEqual(
+    Object.keys(expectations).sort(),
+    [...AGENT_OS_TARGETS].sort(),
+    'every target needs a documented turn-end event and settings file',
+  );
 
   for (const target of AGENT_OS_TARGETS) {
     const targetDir = join(dir, target);
@@ -446,4 +456,96 @@ test('the CLI rejects an unknown target', async () => {
     run(process.execPath, [join(repoRoot, 'bin', 'helmion.mjs'), 'agent-os', 'install', '--target', 'nope']),
     /Unknown target "nope"/,
   );
+});
+
+// ── Grok: the fourth target ──────────────────────────────────────────────────
+//
+// Troy named four LLMs. Until 2026-07-30 AGENT_OS_TARGETS held three, so a Grok
+// session was the one that opened with no rules file at all — the installer did
+// not merely skip it, `resolveTargets` THREW on the name.
+//
+// Every fact in the grok spec is cited, because a template that ships to
+// strangers may not carry a guess:
+//   directory   ~/.grok — xAI Grok Build stores config at ~/.grok/config.toml
+//               and skills at ~/.grok/skills/, already documented in this repo
+//               at desktop/Helmion.Desktop.Core/ProviderCapabilities.cs:104,118.
+//   context     AGENTS.md — xai-org/grok-build's own subagent prompt template
+//               says "Repos often contain project instruction files named
+//               AGENTS.md, Agents.md, Claude.md, or AGENT.md". Grok Build has
+//               NO file of its own name, so inventing GROK.md would have
+//               produced a file nothing reads — the exact write-only defect
+//               this work exists to remove.
+//   hooks       ~/.grok/hooks/ holds individual JSON files with the same nested
+//               {hooks:{Event:[{hooks:[{type,command}]}]}} shape as Claude
+//               Code, and Stop + SessionStart are both supported events.
+test('grok is a supported target and lands AGENTS.md in ~/.grok', async () => {
+  assert.ok(AGENT_OS_TARGETS.includes('grok'), 'grok must be one of the targets');
+  assert.deepEqual(resolveTargets('grok'), ['grok']);
+  assert.deepEqual(resolveTargets(), [...AGENT_OS_TARGETS], 'the default must include grok');
+
+  const spec = TARGET_SPECS.grok;
+  assert.equal(spec.directoryName, '.grok');
+  assert.equal(spec.contextFile, 'AGENTS.md');
+  assert.equal(
+    defaultTargetDirectory('grok', '/home/x'),
+    join('/home/x', '.grok'),
+    'grok installs beside the other three, under the home directory',
+  );
+});
+
+test('a grok install writes the rules file and the companion set', async () => {
+  const dir = await scratch();
+  const report = await installAgentOs({ target: 'grok', dir, apply: true });
+
+  assert.equal(report.target, 'grok');
+  assert.equal(report.applied, true);
+  assert.equal(report.hooksWired, false, 'this installer never edits a settings file');
+
+  // The rules actually reached the file a Grok session reads.
+  const context = await readFile(join(dir, 'AGENTS.md'), 'utf8');
+  assert.match(context, /Cite or say nothing/);
+  assert.match(context, /Source of truth/);
+  assert.ok(context.includes(AGENT_OS_MARKER_BEGIN), 'must carry the reinstall marker');
+  assert.ok(!/\{\{[A-Z0-9_]+\}\}/.test(context), 'no unresolved placeholder may ship');
+
+  for (const companion of ['LESSONS.md', 'LEARNINGS.md', 'BLOCKERS.md', 'WINS.md']) {
+    assert.ok(existsSync(join(dir, companion)), `grok is missing ${companion}`);
+  }
+  assert.ok(existsSync(join(dir, 'agent-os', 'hooks', 'session-start-context.mjs')));
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('the grok hook snippet uses grok own event names and is valid JSON', async () => {
+  const dir = await scratch();
+  await installAgentOs({ target: 'grok', dir, apply: true });
+
+  const snippet = JSON.parse(await readFile(join(dir, 'agent-os', 'hooks.json'), 'utf8'));
+  assert.ok(snippet.hooks.SessionStart, 'SessionStart is a documented Grok Build event');
+  assert.ok(snippet.hooks.Stop, 'Stop is a documented Grok Build event');
+
+  // The command must point at the hook this same install actually wrote, or the
+  // snippet is instructions to run a file that is not there.
+  const command = snippet.hooks.SessionStart[0].hooks[0].command;
+  const hookPath = command.match(/"([^"]+)"/)[1];
+  assert.ok(existsSync(hookPath), `snippet points at a missing hook: ${hookPath}`);
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('installing all four targets into one directory keeps grok separate from codex', async () => {
+  // grok and codex BOTH use AGENTS.md. Without per-target subdirectories the
+  // second install would overwrite the first one's rules file.
+  const dir = await scratch();
+  const report = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], dir, apply: true });
+
+  assert.equal(report.targets.length, 4);
+  assert.ok(existsSync(join(dir, '.grok', 'AGENTS.md')), 'grok rules file');
+  assert.ok(existsSync(join(dir, '.codex', 'AGENTS.md')), 'codex rules file');
+
+  const grokRules = await readFile(join(dir, '.grok', 'AGENTS.md'), 'utf8');
+  const codexRules = await readFile(join(dir, '.codex', 'AGENTS.md'), 'utf8');
+  assert.notEqual(grokRules, codexRules, 'each target must get its own rendered file');
+
+  await rm(dir, { recursive: true, force: true });
 });

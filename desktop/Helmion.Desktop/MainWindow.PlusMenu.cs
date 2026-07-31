@@ -136,7 +136,14 @@ public partial class MainWindow
         // Cancelling is not a failure and must not leave a row behind.
         if (dialog.ShowDialog(this) != true) return Task.CompletedTask;
 
-        var row = _plusMenu.Begin(PlusMenuKind.Upload, Path.GetFileName(dialog.FileName));
+        // THE FULL PATH IS KEPT, not just the name. Keeping only the name is what
+        // made this whole feature decorative: the row said "Added" and nothing
+        // downstream could ever reopen the file the user picked.
+        var row = _plusMenu.Begin(
+            PlusMenuKind.Upload,
+            Path.GetFileName(dialog.FileName),
+            message: null,
+            sourcePath: dialog.FileName);
         var decision = AttachmentPolicy.Validate(dialog.FileName);
 
         if (!decision.Accepted)

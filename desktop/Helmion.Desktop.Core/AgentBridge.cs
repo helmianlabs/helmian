@@ -233,17 +233,39 @@ public sealed class AgentBridge : IDisposable
     /// the command directories before answering, so a file added since startup
     /// shows up without a restart.
     /// </summary>
+    /// <param name="workspace">
+    /// The folder to scan. PASS THIS — without it the bridge answers about
+    /// whatever directory it started in, which is the Helmion repo root
+    /// (<c>WORKSPACE_PATH</c> is stamped to it in <see cref="EnsureStartedAsync"/>),
+    /// not the workspace the user registered. The result then lists commands
+    /// from a project they are not working in.
+    ///
+    /// Optional only so existing zero-argument callers keep compiling; a null
+    /// here preserves the old, wrong-folder behaviour.
+    /// </param>
     /// <returns>
     /// The <c>commands</c> event, or an <c>error</c> event describing why the
-    /// listing failed. Never null — a caller can always render something.
+    /// listing failed. Never null — a caller can always render something. The
+    /// event's <c>workspace</c> is the folder actually scanned, so a caller can
+    /// always say which folder it is describing.
     /// </returns>
     public async Task<AgentBridgeEvent> ListCommandsAsync(
+        string? workspace = null,
         CancellationToken cancellationToken = default)
     {
         await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
 
+        // Sent as a plain field on the `commands` request rather than through
+        // ConfigureAsync: `configure` calls the bridge's reconfigure(), which
+        // throws when the selected provider has no API key (src/agent/bridge.mjs
+        // reconfigure). Listing command files needs no model, and must not start
+        // needing a key.
+        object request = string.IsNullOrWhiteSpace(workspace)
+            ? new { cmd = "commands" }
+            : new { cmd = "commands", workspace };
+
         AgentBridgeEvent? last = null;
-        await foreach (var ev in RequestAsync(new { cmd = "commands" }, cancellationToken)
+        await foreach (var ev in RequestAsync(request, cancellationToken)
                            .ConfigureAwait(false))
         {
             last = ev;

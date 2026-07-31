@@ -1,6 +1,6 @@
 // Positive controls for the Tier-B advisory consensus gate.
 //
-// docs/FLYWHEEL_AUDIT_2026-07-28.md finding #3: helmion.advisory_reviews.action_hash
+// docs/archive/FLYWHEEL_AUDIT_2026-07-28.md finding #3: helmion.advisory_reviews.action_hash
 // is `not null references helmion.governance_actions(action_hash)`
 // (sql/001_helmion.sql:83), but nothing in src/ ever inserted a governance_actions
 // row. Every real helmion_record_review call therefore raised a foreign-key

@@ -1,6 +1,6 @@
 // The advisory lane read path and its human-approval gate.
 //
-// docs/FLYWHEEL_AUDIT_2026-07-28.md finding #2. CLAUDE.md Rule 0.27: advisory
+// docs/archive/FLYWHEEL_AUDIT_2026-07-28.md finding #2. CLAUDE.md Rule 0.27: advisory
 // output is low-trust and NEVER auto-promotes into the trusted layer. These
 // tests exist to make that rule fail loudly if someone later adds a shortcut.
 
@@ -290,7 +290,7 @@ test('the pre-migration error still tells the reader where the DDL actually is',
     (error) => {
       assert.ok(error instanceof AdvisoryApprovalError);
       assert.match(error.message, /no review_decision column yet/i);
-      assert.match(error.message, /docs\/FLYWHEEL_AUDIT_2026-07-28\.md/);
+      assert.match(error.message, /docs\/archive\/FLYWHEEL_AUDIT_2026-07-28\.md/);
       assert.match(error.message, /has not been written/i, 'it still implies the migration is sitting there');
       return true;
     },

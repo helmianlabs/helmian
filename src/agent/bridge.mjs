@@ -95,14 +95,19 @@ export async function runAgentBridge() {
   // refused here for the same reason it is refused there.
   let commandRegistry = null;
   let loadedPlugins = [];
-  const refreshCommands = async () => {
-    const { plugins } = await loadEnabledPlugins({ workspace: state.runtime.root });
+  // The folder the current registry describes. Emitted with every listing so the
+  // caller can tell whether the answer is about the folder it meant.
+  let commandsRoot = state.runtime.root;
+  const refreshCommands = async (root = state.runtime.root) => {
+    const scanRoot = root || state.runtime.root;
+    const { plugins } = await loadEnabledPlugins({ workspace: scanRoot });
     loadedPlugins = plugins;
     commandRegistry = await discoverCommands({
-      workspace: state.runtime.root,
+      workspace: scanRoot,
       builtins: [],
       plugins,
     });
+    commandsRoot = scanRoot;
     return commandRegistry;
   };
   await refreshCommands().catch(() => { commandRegistry = null; });
@@ -282,11 +287,24 @@ export async function runAgentBridge() {
         return;
       }
       if (cmd === 'commands') {
+        // SCAN THE FOLDER THE CALLER MEANT, not the one this process happens to
+        // have started in. The bridge begins at `env.workspace || process.cwd()`
+        // (:62) and only adopted the desktop's workspace on a `configure` (:247)
+        // or a `turn` (:313) — so a listing taken before the first turn described
+        // the Helmion repo root while the user was working somewhere else
+        // entirely, and every command in their actual project was missing from a
+        // list that claimed to be "the slash commands available in this
+        // workspace".
+        //
+        // Deliberately NOT routed through `configure`: that calls reconfigure(),
+        // which THROWS when the selected provider has no API key (:255). Listing
+        // command files needs no model and must not start needing a key.
+        const listRoot = req.workspace ? String(req.workspace) : state.runtime.root;
         // Listing must never be stale: the Pilot may be showing a picker.
-        await refreshCommands();
+        await refreshCommands(listRoot);
         emit({
           event: 'commands',
-          workspace: state.runtime.root,
+          workspace: commandsRoot,
           ...serializeRegistry(commandRegistry),
           plugins: loadedPlugins.map((p) => ({
             name: p.name,

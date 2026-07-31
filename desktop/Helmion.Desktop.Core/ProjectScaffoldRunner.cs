@@ -30,10 +30,22 @@ public static class ProjectScaffoldRunner
     /// <summary>A scaffold is small and local; anything longer than this has hung.</summary>
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
 
+    /// <param name="directory">
+    /// An EXACT destination, passed straight through as the CLI's <c>--dir</c>
+    /// (bin/helmion.mjs:308). Null keeps the original behaviour: the CLI derives
+    /// the folder from the name, as `+ New` wants.
+    ///
+    /// Opening an EXISTING project needs the opposite. Its folder is already
+    /// named, and re-deriving the location from a slug would put the structure
+    /// somewhere else the moment the folder name is not already slug-shaped —
+    /// "My Project" slugifies to "my-project", so a scaffold aimed at the open
+    /// project would silently create a SECOND folder beside it.
+    /// </param>
     public static async Task<ProjectScaffoldResult> InitAsync(
         string helmionRoot,
         string projectRoot,
         string projectName,
+        string? directory = null,
         CancellationToken cancellationToken = default)
     {
         var name = (projectName ?? string.Empty).Trim();
@@ -71,6 +83,11 @@ public static class ProjectScaffoldRunner
         psi.ArgumentList.Add("project");
         psi.ArgumentList.Add("init");
         psi.ArgumentList.Add(name);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            psi.ArgumentList.Add("--dir");
+            psi.ArgumentList.Add(directory);
+        }
         psi.ArgumentList.Add("--yes");
         psi.ArgumentList.Add("--json");
 
@@ -111,11 +128,11 @@ public static class ProjectScaffoldRunner
                 return new ProjectScaffoldResult(false, process.ExitCode, $"Project not created: {why}", null);
             }
 
-            var directory = ExtractDirectory(stdout.ToString());
-            var summary = directory is null
+            var reportedDirectory = ExtractDirectory(stdout.ToString());
+            var summary = reportedDirectory is null
                 ? $"\"{name}\" created."
-                : $"\"{name}\" created at {directory}.";
-            return new ProjectScaffoldResult(true, 0, summary, directory);
+                : $"\"{name}\" created at {reportedDirectory}.";
+            return new ProjectScaffoldResult(true, 0, summary, reportedDirectory);
         }
         catch (Exception ex)
         {
