@@ -1,6 +1,13 @@
 /**
- * Local-model routing: send the cheap turns to a model running on this machine
- * instead of paying a frontier API for them.
+ * Local-model selection helpers retained for the schema-validated micro-task
+ * runner and for regression tests of the former interactive-routing design.
+ *
+ * CURRENT PRODUCTION BOUNDARY
+ * ---------------------------
+ * The interactive agent loop does not call `resolveLocalProvider()` and its
+ * local-provider dependency defaults to null. Qwen/Ollama may run narrowly
+ * scoped, no-tools local jobs, but it must never answer an interactive turn or
+ * become an automatic fallback for a selected cloud provider.
  *
  * WHY THIS IS NOT A FOURTH ENTRY IN `TIERS`
  * ----------------------------------------

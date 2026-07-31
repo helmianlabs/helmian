@@ -7,7 +7,7 @@ import {
 import { createToolRuntime } from './tools.mjs';
 import { redactSecrets } from './redact.mjs';
 import { readEnvTier, resolveTurnModel } from './model-router.mjs';
-import { resolveLocalProvider, withLocalBrevity } from './local-provider.mjs';
+import { withLocalBrevity } from './local-provider.mjs';
 import { processSessionId } from '../core/provenance-log.mjs';
 
 /** Default cap for tool↔model rounds per user message (was 12; too low for real coding). */
@@ -45,9 +45,14 @@ export async function runAgentTurn({
   tier: explicitTier = null,
   modelOverride = null,
   envTier = readEnvTier(),
-  // Local-model routing. Null disables it entirely; the default reads env, so a
-  // machine without a local runtime simply never qualifies.
-  localProvider = resolveLocalProvider(),
+  // Interactive replies fail closed to the selected provider. Local Qwen is
+  // reserved for the schema-validated, no-tools micro-task runner under
+  // src/jobs/local-job.mjs; HELMION_LOCAL_ENABLED must never make it speak as
+  // a selected cloud provider merely because an Ollama process is available.
+  //
+  // Tests may still inject a localProvider to exercise the legacy routing and
+  // provenance machinery, but no production caller supplies one.
+  localProvider = null,
   // Groups this turn's provenance rows with the rest of its conversation. The
   // default identifies the running agent process, which IS the session for both
   // callers: the bridge is one process per app run (bridge.mjs) and the CLI REPL
