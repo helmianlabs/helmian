@@ -31,8 +31,8 @@
   "//maxRecordingSeconds": "Hard stop so a forgotten hotkey cannot record forever.",
   "maxRecordingSeconds": 300,
 
-  "//modelPath": "Empty = resolve automatically: HELMION_VOICE_MODELS env var, then models/ beside the exe, then walk up to desktop/models/ggml-base.en.bin.",
-  "modelPath": "",
+  "//modelPath": "Empty = resolve automatically: HELMION_VOICE_MODELS env var, then models/ beside the exe, then walk up to desktop/models/ggml-base.en.bin. SET EXPLICITLY 2026-07-30: the automatic path hardcodes base.en, which is the FAST model, not the accurate one. Troy was getting 'boys' for 'voice' and 'Hellman' for 'Helmion' even though both Helmion and Kokoro are in the vocabulary list below, because a 141 MB model cannot use the hint well. small.en is 465 MB and about three times slower per clip, which is the right trade when the alternative is retyping every second sentence. Set this back to \"\" to go back to the fast model.",
+  "modelPath": "E:\\Helmion\\desktop\\models\\ggml-small.en.bin",
 
   "//showTrayIcon": "Small coloured dot near the clock: grey idle, red recording, amber transcribing, dark red error. No console, no taskbar entry, no popups.",
   "showTrayIcon": true,

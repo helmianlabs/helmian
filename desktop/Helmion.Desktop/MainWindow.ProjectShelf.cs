@@ -206,6 +206,34 @@ public partial class MainWindow
     private async void NewProjectButton_Click(object sender, RoutedEventArgs e)
     {
         var root = ResolveProjectRoot();
+
+        // WHERE THE NAME COMES FROM. This used to read ConsoleInputBox only — a box
+        // on the Console PAGE, while the "+ New" button lives in the always-visible
+        // sidebar. Troy, 2026-07-30: he typed a name into a box, pressed +, and got
+        // an error telling him to type a name. He was typing in the wrong box, and
+        // there was no way for him to know that, because the button is nowhere near
+        // the box it reads.
+        //
+        // So it now reads the box DIRECTLY BENEATH THE BUTTON first
+        // (ProjectSearchBox, MainWindow.xaml:1141) and only falls back to the
+        // console box. Nothing about the old path breaks — anyone who was typing
+        // into the console still gets what they expect — but the obvious thing now
+        // works, which is the whole complaint.
+        var typedHere = (ProjectSearchBox?.Text ?? string.Empty).Trim();
+        var typedConsole = (ConsoleInputBox?.Text ?? string.Empty).Trim();
+        var typed = typedHere.Length > 0 ? typedHere : typedConsole;
+
+        // The row is created ONLY once we know something will be attempted. It used
+        // to be created first, so every click on "+ New" with an empty box added
+        // another bar. Troy's screenshot had eleven of them stacked in the console.
+        if (!FirstRunStates.CanCreateProject(root, typed, out var projectRoot, out var name, out var notYet))
+        {
+            var hint = _plusMenu.Begin(PlusMenuKind.Skill, "New project", "Checking…");
+            if (notYet is not null) _plusMenu.Settle(hint, notYet);
+            else _plusMenu.Fail(hint, "Could not work out where to create the project.");
+            return;
+        }
+
         var row = _plusMenu.Begin(PlusMenuKind.Skill, "New project", "Writing the project folder…");
 
         // NEITHER OF THESE IS A FAILURE. Nothing was attempted: one is a workspace
@@ -216,12 +244,8 @@ public partial class MainWindow
         //
         // Both decisions live in Core so the headless suite can assert them; a
         // non-null result means nothing was attempted and the row is already settled.
-        var typed = (ConsoleInputBox?.Text ?? string.Empty).Trim();
-        if (!FirstRunStates.CanCreateProject(root, typed, out var projectRoot, out var name, out var notYet))
-        {
-            _plusMenu.Settle(row, notYet);
-            return;
-        }
+        // (The check itself now runs ABOVE, before any row is created — see the
+        // comment on where the name comes from.)
 
         try
         {

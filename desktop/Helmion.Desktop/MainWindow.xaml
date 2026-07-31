@@ -1884,12 +1884,23 @@
                       <ColumnDefinition Width="*" />
                       <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Migration source inventory" Style="{StaticResource SectionTitleStyle}" />
+                    <!-- The title is in a * column and the status in an Auto one, so
+                         a narrow card used to let the title run straight underneath
+                         the status text. Troy sent a screenshot of "Migration so"
+                         with "3 local source migrations" printed on top of it.
+                         TextTrimming cuts the title short instead of overlapping,
+                         and the margin keeps the two from ever touching. -->
+                    <TextBlock Text="Migration source inventory"
+                               Style="{StaticResource SectionTitleStyle}"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="Migration source inventory"
+                               Margin="0,0,12,0" />
                     <TextBlock x:Name="MigrationInventoryState"
                                Grid.Column="1"
                                Text="No workspace loaded"
                                Foreground="{DynamicResource MutedTextBrush}"
                                FontSize="10"
+                               TextTrimming="CharacterEllipsis"
                                VerticalAlignment="Center" />
                   </Grid>
                   <TextBlock x:Name="EmptyMigrationMessage"
