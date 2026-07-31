@@ -288,9 +288,30 @@ public sealed record GuardTab(
     int Warnings,
     int Criticals,
     int Unknowns,
-    bool IsActive)
+    bool IsActive,
+    int Hidden = 0)
 {
-    public string Label => $"{Name} ({Total})";
+    /// <summary>
+    /// THE NUMBER MUST MATCH WHAT CLICKING THE TAB SHOWS YOU.
+    ///
+    /// <para>
+    /// Until 2026-07-30 this was <c>Name (Total)</c>, where Total counted every
+    /// retained card INCLUDING the acknowledged ones the list no longer shows.
+    /// The intent was honesty: an acknowledged flag has not stopped being true.
+    /// The effect was a tab reading "Local (4)" that opened onto "NO EVENTS".
+    /// Troy sent a screenshot of exactly that. A number that disagrees with the
+    /// screen does not read as honest, it reads as broken, and it teaches you to
+    /// distrust every other number on the panel.
+    /// </para>
+    /// <para>
+    /// So the headline number is now what you will actually see, and anything
+    /// acknowledged is named beside it rather than folded silently into the same
+    /// figure. Nothing is hidden and nothing is contradicted.
+    /// </para>
+    /// </summary>
+    public string Label => Hidden > 0
+        ? $"{Name} ({Total}, {Hidden} acknowledged)"
+        : $"{Name} ({Total})";
 }
 
 /// <summary>
@@ -713,28 +734,38 @@ public sealed class GuardFeed : INotifyPropertyChanged
 
     private void RebuildTabs()
     {
+        // COUNT WHAT THE LIST WILL SHOW. Acknowledged cards are counted separately
+        // and named in the label, rather than being added into the same number as
+        // the cards you can see. See GuardTab.Label for why.
+        var shown = _cards.Where(card => !card.IsDismissed).ToList();
+
         var tabs = new List<GuardTab>
         {
             new(
                 AllTab,
-                _cards.Count,
-                _cards.Count(card => card.Level == GuardLevel.Warning),
-                _cards.Count(card => card.Level == GuardLevel.Critical),
-                _cards.Count(card => card.Level == GuardLevel.Unknown),
-                string.Equals(_activeTab, AllTab, StringComparison.Ordinal))
+                shown.Count,
+                shown.Count(card => card.Level == GuardLevel.Warning),
+                shown.Count(card => card.Level == GuardLevel.Critical),
+                shown.Count(card => card.Level == GuardLevel.Unknown),
+                string.Equals(_activeTab, AllTab, StringComparison.Ordinal),
+                _cards.Count - shown.Count)
         };
 
+        // Grouped over ALL cards, so a provider whose every card is acknowledged
+        // keeps its tab and can say so, instead of vanishing from the strip.
         foreach (var group in _cards
                      .GroupBy(card => card.Provider, StringComparer.OrdinalIgnoreCase)
                      .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
         {
+            var visible = group.Where(card => !card.IsDismissed).ToList();
             tabs.Add(new GuardTab(
                 group.Key,
-                group.Count(),
-                group.Count(card => card.Level == GuardLevel.Warning),
-                group.Count(card => card.Level == GuardLevel.Critical),
-                group.Count(card => card.Level == GuardLevel.Unknown),
-                string.Equals(_activeTab, group.Key, StringComparison.OrdinalIgnoreCase)));
+                visible.Count,
+                visible.Count(card => card.Level == GuardLevel.Warning),
+                visible.Count(card => card.Level == GuardLevel.Critical),
+                visible.Count(card => card.Level == GuardLevel.Unknown),
+                string.Equals(_activeTab, group.Key, StringComparison.OrdinalIgnoreCase),
+                group.Count() - visible.Count));
         }
 
         Tabs.Clear();

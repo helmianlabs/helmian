@@ -377,28 +377,74 @@ public sealed class PlusMenuController
     }
 
     /// <summary>
-    /// Removes a settled row. The row stays in the list in the Removed state so
-    /// it can be undone; it is not deleted until <see cref="Discard"/>.
+    /// Where a removed row was sitting, so Undo can put it back in its own place
+    /// rather than at the bottom. Keyed by identity, not by value.
+    /// </summary>
+    private readonly Dictionary<PlusActionItem, int> _removedFrom = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Removes a settled row — and TAKES IT OFF THE LIST.
+    ///
+    /// <para>
+    /// This used to only flip the state to Removed and leave the row sitting
+    /// there with an Undo button on it. Troy, 2026-07-30, with a screenshot of
+    /// eleven stacked "New project — Removed" bars: "When you hit Remove, those
+    /// need to go away." He is right. A row whose entire content is a note that
+    /// it is gone is worse than no row: it takes the same space as real output
+    /// and it is what the console fills up with.
+    /// </para>
+    /// <para>
+    /// Undo still works. The row is held here with the index it came from, so
+    /// <see cref="Undo"/> puts it back exactly where it was — which is why this
+    /// remembers a position rather than just appending on restore.
+    /// </para>
     /// </summary>
     public bool Remove(PlusActionItem item)
     {
         if (item is null || !item.CanRemove) return false;
         item.MarkRemoved($"{item.Title} removed. Undo puts it back.");
+
+        var at = Items.IndexOf(item);
+        if (at >= 0)
+        {
+            _removedFrom[item] = at;
+            Items.RemoveAt(at);
+        }
         return true;
     }
 
+    /// <summary>
+    /// Puts a removed row back, in its original position.
+    ///
+    /// Re-inserting is what makes removal safe to make invisible: an upload that
+    /// was taken off the list stops riding along with the next prompt, and comes
+    /// back attached when it is restored. <see cref="ActiveAttachments"/> reads
+    /// <see cref="Items"/>, so membership IS the attachment.
+    /// </summary>
     public bool Undo(PlusActionItem item)
     {
         if (item is null || !item.CanUndo) return false;
         item.Restore($"{item.Title} restored.");
+
+        if (!Items.Contains(item))
+        {
+            var at = _removedFrom.TryGetValue(item, out var was) ? was : Items.Count;
+            Items.Insert(Math.Clamp(at, 0, Items.Count), item);
+        }
+        _removedFrom.Remove(item);
         return true;
     }
 
-    /// <summary>Drops a removed row for good. Nothing else deletes.</summary>
+    /// <summary>
+    /// Drops a removed row for good — forgets its undo position so it cannot come
+    /// back. Since Remove now takes the row off Items itself, this is about giving
+    /// up the ability to restore, not about the row disappearing.
+    /// </summary>
     public bool Discard(PlusActionItem item)
     {
         if (item is null || item.State != PlusActionState.Removed) return false;
-        return Items.Remove(item);
+        Items.Remove(item);
+        return _removedFrom.Remove(item) || true;
     }
 
     public void Clear() => Items.Clear();

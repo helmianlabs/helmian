@@ -66,11 +66,27 @@ internal static class PlusMenuChecks
             // remove / undo
             Assert(controller.Remove(item), $"{kind}: a settled row removes");
             Assert(item.State == PlusActionState.Removed && item.StateText == "Removed", $"{kind}: removed state");
-            Assert(controller.Items.Count == 1, $"{kind}: a removed row is still present so undo has something to restore");
+            // REMOVE TAKES THE ROW OFF THE LIST. This assertion is the REVERSE of
+            // what it was until 2026-07-30, and the reversal is deliberate.
+            //
+            // It used to require Items.Count == 1 after a remove — the row had to
+            // stay visible so undo had something to restore. Troy sent a screenshot
+            // of eleven stacked "New project — Removed" bars filling his console and
+            // said: "When you hit Remove, those need to go away." The old assertion
+            // was pinning the exact behaviour he was complaining about, which is why
+            // 267 green checks never caught it: the suite agreed with the defect.
+            //
+            // Undo still works, and the two checks below prove it — the row comes
+            // back into Items, in its original position. Membership in Items is what
+            // ActiveAttachments reads, so removal genuinely detaches an upload and
+            // undo genuinely re-attaches it.
+            Assert(controller.Items.Count == 0, $"{kind}: remove takes the row OFF the list");
             Assert(item.CanUndo, $"{kind}: removed offers undo");
             Assert(controller.Undo(item), $"{kind}: undo works");
             Assert(item.State == PlusActionState.Succeeded, $"{kind}: undo restores the state it had before removal");
-            checks += 6;
+            Assert(controller.Items.Count == 1 && ReferenceEquals(controller.Items[0], item),
+                $"{kind}: undo puts the row back on the list, not just the state");
+            checks += 7;
 
             // failure — the state Troy called out as the one that gets skipped
             var failed = controller.Begin(kind, $"failing {kind}");
@@ -115,11 +131,17 @@ internal static class PlusMenuChecks
                 $"{kind}: an empty row with no guidance names itself a Helmion bug rather than sitting there blank");
             checks += 1;
 
-            // Discard is the only thing that deletes, and only from Removed.
+            // Discard drops a removed row for good — no undo left. Since 2026-07-30
+            // Remove already takes the row OUT of Items, so Discard's job is now to
+            // make that permanent by forgetting the undo position, and it returns
+            // false for a row that is not in the Removed state.
             Assert(!controller.Discard(failed), $"{kind}: a failed row is not discarded without being removed first");
             controller.Remove(failed);
+            Assert(failed.State == PlusActionState.Removed && !controller.Items.Contains(failed),
+                $"{kind}: remove already took the failed row off the list");
             Assert(controller.Discard(failed), $"{kind}: a removed row can be discarded for good");
-            checks += 2;
+            Assert(!controller.Items.Contains(failed), $"{kind}: a discarded row is not on the list");
+            checks += 4;
         }
 
         // --- 3. UPLOAD, AGAINST REAL FILES ON DISK -----------------------------
