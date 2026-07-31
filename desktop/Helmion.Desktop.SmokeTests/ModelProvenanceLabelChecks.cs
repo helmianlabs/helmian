@@ -123,6 +123,66 @@ public static class ModelProvenanceLabelChecks
             "but a local answer earlier in the turn is not erased — it did happen");
         checks += 2;
 
+        // ── 6b. THE NEGATIVE CONTROL ─────────────────────────────────────────
+        //
+        // Everything above proves the check PASSES on the fixed code. None of it
+        // proves the check would have CAUGHT the bug, and a test that passes on
+        // broken and fixed code alike proves nothing. So the pre-fix header is
+        // reconstructed here and fed the same turns, and the SAME check must
+        // fail on it.
+        //
+        // HeaderAnswers is written once and used by both halves deliberately. A
+        // hand-rolled assertion in the negative half could quietly be weaker
+        // than the positive one, which is how a control ends up controlling
+        // nothing.
+
+        // The turn Troy actually had on 2026-07-30: the router picked the local
+        // qwen model, and the local qwen model answered.
+        var localTurn = new[]
+        {
+            Chosen("qwen3.5:4b", "local"),
+            Answered("local", "qwen3.5:4b", true, "127.0.0.1:11434"),
+        };
+
+        var fixedHeader = new ModelProvenanceLabel.HeaderState();
+        foreach (var ev in localTurn) fixedHeader.Observe(ev);
+
+        Assert(HeaderAnswers(fixedHeader.Header, "qwen3.5:4b", expectLocal: true),
+            "POSITIVE: the answer-driven header names the model AND says it was local");
+        Assert(!HeaderAnswers(IntentionHeader(localTurn), "qwen3.5:4b", expectLocal: true),
+            "NEGATIVE CONTROL: THE SAME CHECK FAILS on a header fed the router's intention. "
+            + "This is the 2026-07-30 defect exactly — the screen named a model and never "
+            + "said it was running on his own machine.");
+        checks += 2;
+
+        // A second divergence, from a different cause: when the router has no
+        // tier table for a provider it hands back model=null (model-router.mjs
+        // modelForTier), and chatWithTools then substitutes its own default
+        // (providers.mjs, `model || 'claude-sonnet-5'`). The intention names
+        // nothing; the answer names sonnet.
+        var defaultedTurn = new[]
+        {
+            new AgentBridgeEvent("model", Model: null, Tier: "standard"),
+            Answered("claude", "claude-sonnet-5", false, "api.anthropic.com"),
+        };
+
+        var fixedDefaulted = new ModelProvenanceLabel.HeaderState();
+        foreach (var ev in defaultedTurn) fixedDefaulted.Observe(ev);
+
+        Assert(HeaderAnswers(fixedDefaulted.Header, "claude-sonnet-5", expectLocal: false),
+            "POSITIVE: the header names the model the provider actually defaulted to");
+        Assert(!HeaderAnswers(IntentionHeader(defaultedTurn), "claude-sonnet-5", expectLocal: false),
+            "NEGATIVE CONTROL: an intention-driven header cannot name a model the router "
+            + "never chose, so the same check fails on it");
+        checks += 2;
+
+        // And the control must not be vacuous — IntentionHeader has to be
+        // capable of passing the check, or "it failed" would mean nothing.
+        Assert(HeaderAnswers(IntentionHeader(new[] { Chosen("grok-4.5", "deep") }), "grok-4.5", false),
+            "the reconstructed pre-fix header CAN satisfy the check when intention and "
+            + "answer happen to agree — so its failures above are real, not vacuous");
+        checks += 1;
+
         // ── 7. WHAT MUST PRODUCE NOTHING ─────────────────────────────────────
         Assert(ModelProvenanceLabel.ForAnswer(null!) is null, "a null event renders nothing");
         Assert(ModelProvenanceLabel.ForAnswer(new AgentBridgeEvent("assistant", Text: "hi")) is null,
@@ -144,6 +204,42 @@ public static class ModelProvenanceLabelChecks
         checks += 2;
 
         Console.WriteLine($"Helmion model-provenance label checks passed ({checks} checks).");
+    }
+
+    /// <summary>
+    /// THE CHECK, in one place. "Does this header name the model that answered,
+    /// and does it say so when the answer came from this machine?"
+    ///
+    /// Used by both the positive assertions and the negative control, so the
+    /// control cannot be weaker than the thing it is controlling.
+    /// </summary>
+    private static bool HeaderAnswers(string header, string expectedModel, bool expectLocal)
+    {
+        if (!header.Contains(expectedModel, StringComparison.Ordinal)) return false;
+        return header.Contains("LOCAL", StringComparison.Ordinal) == expectLocal;
+    }
+
+    /// <summary>
+    /// THE PRE-FIX HEADER, RECONSTRUCTED. This is what MainWindow.xaml.cs did
+    /// before 2026-07-30: it wrote the label from the router's `model` event.
+    ///
+    /// src/agent/loop.mjs emits that event BEFORE the request goes out, and it
+    /// carries no local flag into the label — so this header can name a model
+    /// nobody ever called, and can never say an answer came from this machine.
+    /// It exists only to be failed by <see cref="HeaderAnswers"/>.
+    /// </summary>
+    private static string IntentionHeader(IEnumerable<AgentBridgeEvent> turn)
+    {
+        var header = ModelProvenanceLabel.PendingHeader;
+        foreach (var ev in turn)
+        {
+            if (!string.Equals(ev.Event, "model", StringComparison.Ordinal)) continue;
+            if (string.IsNullOrWhiteSpace(ev.Model)) continue;
+            var tier = string.IsNullOrWhiteSpace(ev.Tier) ? null : ev.Tier;
+            header = tier is null ? $"model: {ev.Model}" : $"model: {tier} · {ev.Model}";
+        }
+
+        return header;
     }
 
     private static void Assert(bool condition, string message)

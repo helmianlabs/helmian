@@ -2176,34 +2176,28 @@ public partial class MainWindow : Window
     /// </summary>
     private void ShowAnsweringModel(AgentBridgeEvent ev)
     {
-        var model = ev.Model;
-        if (string.IsNullOrWhiteSpace(model)) return;
-
-        var provider = string.IsNullOrWhiteSpace(ev.Provider) ? null : ev.Provider;
-        var label = provider is null ? model! : $"{provider} · {model}";
-        if (ev.IsLocal) label = $"LOCAL · {label}";
+        // EVERY DECISION LIVES IN Core, and nothing is duplicated here. This
+        // method paints and does nothing else.
+        //
+        // The reason is not tidiness. The SmokeTests console project references
+        // Helmion.Desktop.Core but NOT this WPF project, and nothing may appear
+        // on Troy's screen — so any rule written inline here can only ever be
+        // shown to COMPILE, never to be correct. That is precisely how the
+        // header came to assert something the code did not know. A second copy
+        // of the rule sitting here would be the untested one, and it is the copy
+        // that paints his screen.
+        var rendering = ModelProvenanceLabel.ForAnswer(ev);
+        if (rendering is null) return;
 
         if (ConsoleModelLabel is not null)
         {
-            ConsoleModelLabel.Text = $"model: {label}";
-            var host = string.IsNullOrWhiteSpace(ev.EndpointHost) ? "an unrecorded host" : ev.EndpointHost;
-            ConsoleModelLabel.ToolTip =
-                $"{label} answered the last turn, from {host}."
-                + (ev.IsLocal
-                    ? "\nThis ran on THIS MACHINE, not a frontier provider."
-                    : string.Empty)
-                + $"\nRecorded in .helmion\\audit\\provenance-*.jsonl (session {ev.SessionId ?? "unknown"})."
-                + "\nRun: helmion provenance last";
+            ConsoleModelLabel.Text = rendering.HeaderText;
+            ConsoleModelLabel.ToolTip = rendering.ToolTip;
         }
 
-        // Only the local case earns a transcript line. A frontier answer is
-        // already described by the ◆ line above it, and repeating every turn
-        // would bury the one case that matters.
-        if (ev.IsLocal)
+        if (rendering.TranscriptLine is not null)
         {
-            AppendConsoleLine(
-                $"  ⚑ answered by a LOCAL model on this machine: {model}"
-                + (string.IsNullOrWhiteSpace(ev.EndpointHost) ? "" : $" ({ev.EndpointHost})"));
+            AppendConsoleLine(rendering.TranscriptLine);
         }
     }
 
