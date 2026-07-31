@@ -328,7 +328,7 @@ async function projectCommand() {
   );
 }
 
-// Advisory lane read path — docs/FLYWHEEL_AUDIT_2026-07-28.md finding #2.
+// Advisory lane read path — docs/archive/FLYWHEEL_AUDIT_2026-07-28.md finding #2.
 //
 // bigsister.advisory_outputs lives on a DIFFERENT Neon endpoint from
 // HELMION_DATABASE_URL (audit finding #19: bigsister ep-dry-fog-aku9i5gq vs
@@ -388,7 +388,7 @@ async function advisory() {
           + '  promoted boolean is tracked on the row. Attribution still goes to\n'
           + '  bigsister.agent_logs. The migration that adds full review state has\n'
           + '  not been written — it is a schema change and needs Troy. The DDL is in\n'
-          + '  docs/FLYWHEEL_AUDIT_2026-07-28.md section 6.5.\n',
+          + '  docs/archive/FLYWHEEL_AUDIT_2026-07-28.md section 6.5.\n',
         );
       }
       process.stdout.write(

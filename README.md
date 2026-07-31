@@ -1,13 +1,82 @@
-# Helmion Agent Governance Kernel
+# Helmion
 
-Helmion is an early, local governance kernel for coding agents. It contains
-deterministic policy functions, PostgreSQL/Neon persistence, MCP adapters, and
-tests. It is not yet a vendor-neutral enterprise control plane.
+**A local governance kernel for coding agents.** Helmion sits between an AI coding
+agent and the things it is able to change, and makes the risky steps
+deterministic: which actions run unattended, which pause for a human, which are
+refused outright, what lands in a durable audit trail, and which single session
+holds the write lease on a project.
 
-This repository contains no customer credentials.
+It is deliberately early — a working local prototype with real tests, not a
+hardened multi-tenant product. [Honest boundary](#honest-boundary) at the end of
+this file states exactly what it does and does not do yet, in plain terms.
 
-**Two features DO write outside the repository, on purpose, and only when you
-ask.** Nothing writes there on clone, on install, or on `helmion init`.
+Helmion runs entirely on your machine. Its durable state lives in a
+PostgreSQL/Neon database **you own**, reached through your own environment (see
+[`.env.example`](.env.example)). Nothing is sent to a Helmion service, because
+there is no such service.
+
+## Quick start
+
+Requires **Node.js 20 or newer**. The desktop Pilot additionally needs the **.NET
+SDK** and is Windows-only; everything else is cross-platform.
+
+```powershell
+npm install
+npm run verify
+```
+
+`npm run verify` runs `node --check` over every module and then the full test
+suite. It needs **no database, no API key, and no network** — if it passes, the
+kernel is sound on your machine. That is the fastest way to judge this repo.
+
+To use the CLI anywhere:
+
+```powershell
+npm link
+helmion --help
+helmion init <path-to-workspace>
+```
+
+`helmion init` scaffolds an isolated workspace and writes only inside the
+directory you name:
+
+```text
+<workspace>\.helmion\
+  config.json
+  autonomy_rules.json
+  hooks\pretooluse.ps1
+```
+
+Nothing above contacts a database. Database commands are opt-in and refuse to run
+without an explicitly named endpoint — see
+[Database migrations](#database-migrations).
+
+To run the Windows desktop Pilot:
+
+```powershell
+npm run desktop:verify   # build + smoke tests
+npm run desktop:run
+```
+
+## What is in the box
+
+| Component | Entry point | What it does |
+|---|---|---|
+| Governance kernel | `src/core/` | policy, blockers, leases, audit and provenance logs |
+| `helmion` CLI | `bin/helmion.mjs` | `init`, `migrate`, `db-inspect`, `agent`, `agent-os`, `advisory` |
+| Background jobs | `bin/helmion-jobs.mjs` | triage, commit-message, log-monitor, dictation-summary |
+| MCP servers (4) | `bin/mcp-helmion-*.mjs` | context, flywheel, advisory, codex |
+| Desktop Pilot | `desktop/` | Windows WPF control centre |
+| Migrations | `sql/NNN_*.sql` | checksum-verified, advisory-locked runner |
+
+Tests live in `test/` — 45 suites, run by `npm test`. Documentation for each
+subsystem is in [`docs/`](docs/); dated session notes and superseded audits are
+kept out of the way in [`docs/archive/`](docs/archive/).
+
+## What writes outside this repository
+
+**Two features write outside the repo, on purpose, and only when you ask.**
+Nothing writes there on clone, on install, or on `helmion init`.
 
 | What | Writes where | Triggered by |
 |---|---|---|
@@ -111,33 +180,12 @@ action-bound assertion.
 - EDI 204 L3-over-AT8 weight precedence and the AS2 997/990 delivery state
   machine remain covered by tests.
 
-## Local verification
+## Workspace initialization
 
-```powershell
-cd E:\Helmion
-npm run verify
-```
-
-## Initialize an isolated workspace
-
-```powershell
-cd E:\Helmion
-npm install
-npm link
-helmion init C:\path\to\workspace
-```
-
-Initialization creates only:
-
-```text
-<workspace>\.helmion\
-  config.json
-  autonomy_rules.json
-  hooks\pretooluse.ps1
-```
-
-The generated config records `codexAdapterMode: read-only`. Existing
-home-directory hooks are not replaced.
+Verification and `helmion init` are covered in [Quick start](#quick-start). Two
+details worth stating explicitly: the generated config records
+`codexAdapterMode: read-only`, and existing home-directory hooks are never
+replaced.
 
 ## Agent OS
 

@@ -956,6 +956,8 @@ PlusMenuChecks.Run();
 
 ProjectShelfChecks.Run();
 
+ProjectOpenScaffoldChecks.Run();
+
 SessionShelfChecks.Run();
 
 GuardLivenessChecks.Run();
@@ -967,6 +969,8 @@ FreshWorkspaceChecks.Run();
 OffscreenWindowChecks.Run();
 
 ModelProvenanceLabelChecks.Run();
+
+TopBarChecks.Run();
 return;
 
 /// <summary>

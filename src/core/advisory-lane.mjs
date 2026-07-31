@@ -1,6 +1,6 @@
 // The advisory lane's READ path.
 //
-// docs/FLYWHEEL_AUDIT_2026-07-28.md finding #2: bigsister.advisory_outputs gets
+// docs/archive/FLYWHEEL_AUDIT_2026-07-28.md finding #2: bigsister.advisory_outputs gets
 // rows (bigsister_neon_log.mjs:48-51) and nothing consumes them. The only reader
 // on disk, scripts/neon/_verify_advisory.mjs, has no caller. A store nothing
 // reads is a diary.
@@ -106,7 +106,7 @@ export function summarizeRow(row, width = 96) {
 // instruction went looking for a file nobody had written. Naming a remediation
 // that does not exist is worse than naming none — it costs the reader the trip.
 //
-// The DDL text is real and it is written down: docs/FLYWHEEL_AUDIT_2026-07-28.md
+// The DDL text is real and it is written down: docs/archive/FLYWHEEL_AUDIT_2026-07-28.md
 // section 6.5. It was not turned into a migration file because
 // hook_autonomy_boundary.ps1 classifies that as a Tier B schema change needing
 // Troy, and that gate has not been bypassed.
@@ -143,7 +143,7 @@ export function buildListQuery({ state, projectSlug = null, limit = 20, capabili
       'This database has no review_decision column yet, so rejections are not '
       + 'recorded on the row. The migration that adds it has not been written — it is '
       + 'a schema change and needs Troy. The exact DDL is in '
-      + 'docs/FLYWHEEL_AUDIT_2026-07-28.md section 6.5. Until it is applied, list with '
+      + 'docs/archive/FLYWHEEL_AUDIT_2026-07-28.md section 6.5. Until it is applied, list with '
       + '--state unreviewed.',
     );
   }

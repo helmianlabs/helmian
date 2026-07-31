@@ -33,7 +33,7 @@ export const AGENT_OS_MARKER_END = '<!-- END AGENT OS -->';
 /** Directory the installer owns outright and may rewrite on reinstall. */
 export const MANAGED_DIR = 'agent-os';
 
-export const AGENT_OS_TARGETS = Object.freeze(['claude', 'codex', 'gemini']);
+export const AGENT_OS_TARGETS = Object.freeze(['claude', 'codex', 'gemini', 'grok']);
 
 // Per-tool facts, each from that tool's own documentation:
 //
@@ -56,6 +56,15 @@ export const AGENT_OS_TARGETS = Object.freeze(['claude', 'codex', 'gemini']);
 //           "AfterAgent"; timeout is in MILLISECONDS.
 //           https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md
 //           https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md
+//
+//   grok    ~/.grok/AGENTS.md is the GLOBAL rules file, read at session start;
+//           a repo-level or deeper AGENTS.md wins where they disagree. Grok
+//           Build has no file of its own name — it reads the AGENTS.md family
+//           (and CLAUDE.md) — so a "GROK.md" would be a file nothing loads.
+//           Hooks are discovered as individual JSON files under ~/.grok/hooks/,
+//           in the same nested shape Claude Code uses; turn end is "Stop".
+//           https://docs.x.ai/build/features/project-rules
+//           https://github.com/xai-org/grok-build
 export const TARGET_SPECS = Object.freeze({
   claude: Object.freeze({
     id: 'claude',
@@ -92,6 +101,24 @@ export const TARGET_SPECS = Object.freeze({
     snippetTemplate: 'targets/gemini/settings.hooks.json',
     turnEndEvent: 'AfterAgent',
     appendMode: 'import',
+  }),
+  grok: Object.freeze({
+    id: 'grok',
+    label: 'Grok Build',
+    directoryName: '.grok',
+    contextFile: 'AGENTS.md',
+    // Hooks are read from individual files in ~/.grok/hooks/, so unlike the
+    // other three there is no shared settings file to merge INTO — the snippet
+    // is dropped in under its own name and nothing of the user's is touched.
+    settingsFile: 'hooks/agent-os.json',
+    snippetFile: 'hooks.json',
+    contextTemplate: 'targets/grok/AGENTS.md',
+    snippetTemplate: 'targets/grok/hooks.json',
+    turnEndEvent: 'Stop',
+    // Inline, like codex: Grok reads the AGENTS.md family, and no @import
+    // syntax is documented for it. Pointing at a file it may not follow would
+    // append four lines that silently carry nothing.
+    appendMode: 'inline',
   }),
 });
 

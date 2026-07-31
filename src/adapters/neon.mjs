@@ -442,7 +442,7 @@ export async function createNeonStore(
 
     // The missing writer for helmion.governance_actions. Without it the NOT NULL
     // foreign key at sql/001_helmion.sql:83 made every recordReview call fail
-    // 23503 and roll back (docs/FLYWHEEL_AUDIT_2026-07-28.md finding #3).
+    // 23503 and roll back (docs/archive/FLYWHEEL_AUDIT_2026-07-28.md finding #3).
     //
     // The hash is derived from the operation, never supplied, so re-registering
     // the same operation is a no-op and a different operation is a different

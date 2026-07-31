@@ -476,59 +476,92 @@ public partial class MainWindow : Window
         SetConsoleFullScreen(!_consoleFullScreen);
     }
 
+    /// <summary>
+    /// Handled in PreviewKeyDown so every chord works on every page, including
+    /// while the console input box has focus.
+    ///
+    /// The chord TABLE lives in Core (<see cref="ShellShortcuts.Resolve"/>) and
+    /// this method only carries out the answer. That split is not decoration: a
+    /// WPF key handler cannot be driven from the headless suite, so while the
+    /// table was inline here nothing could prove that a shortcut the UI
+    /// advertises is actually bound — and Ctrl+K, promised by the search box's
+    /// own tooltip, turned out never to have been.
+    /// </summary>
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        // Ctrl+= / Ctrl+- / Ctrl+0 — the browser convention, so nobody has to be
-        // taught it. Handled here in PreviewKeyDown so it works on every page,
-        // including while the console input box has focus.
-        if ((System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control)
-            == System.Windows.Input.ModifierKeys.Control)
+        var control = (System.Windows.Input.Keyboard.Modifiers
+                       & System.Windows.Input.ModifierKeys.Control)
+                      == System.Windows.Input.ModifierKeys.Control;
+
+        switch (ShellShortcuts.Resolve(control, ToShellKey(e.Key), _consoleFullScreen))
         {
-            // OemPlus/OemMinus are the main row; Add/Subtract are the numeric pad.
-            switch (e.Key)
-            {
-                case System.Windows.Input.Key.OemPlus:
-                case System.Windows.Input.Key.Add:
-                    ApplyTextScale(TextScaleRange.Larger(_desktopSettings.ResolvedTextScale));
-                    e.Handled = true;
-                    return;
+            case ShellShortcut.TextLarger:
+                ApplyTextScale(TextScaleRange.Larger(_desktopSettings.ResolvedTextScale));
+                break;
 
-                case System.Windows.Input.Key.OemMinus:
-                case System.Windows.Input.Key.Subtract:
-                    ApplyTextScale(TextScaleRange.Smaller(_desktopSettings.ResolvedTextScale));
-                    e.Handled = true;
-                    return;
+            case ShellShortcut.TextSmaller:
+                ApplyTextScale(TextScaleRange.Smaller(_desktopSettings.ResolvedTextScale));
+                break;
 
-                case System.Windows.Input.Key.D0:
-                case System.Windows.Input.Key.NumPad0:
-                    ApplyTextScale(TextScaleRange.Default);
-                    e.Handled = true;
-                    return;
-            }
-        }
+            case ShellShortcut.TextDefault:
+                ApplyTextScale(TextScaleRange.Default);
+                break;
 
-        if (e.Key == System.Windows.Input.Key.F11)
-        {
-            // F11 toggles console immersive mode (navigates to Console if needed).
-            if (!_consoleFullScreen)
-            {
-                NavigateTo("Console");
-                SetConsoleFullScreen(true);
-            }
-            else
-            {
+            case ShellShortcut.FocusProjectSearch:
+                FocusProjectSearch();
+                break;
+
+            case ShellShortcut.ToggleConsoleFullScreen:
+                // Navigates to Console first when entering, so the chord works
+                // from any page.
+                if (!_consoleFullScreen)
+                {
+                    NavigateTo("Console");
+                    SetConsoleFullScreen(true);
+                }
+                else
+                {
+                    SetConsoleFullScreen(false);
+                }
+
+                break;
+
+            case ShellShortcut.ExitConsoleFullScreen:
                 SetConsoleFullScreen(false);
-            }
+                break;
 
-            e.Handled = true;
-            return;
+            default:
+                return;
         }
 
-        if (e.Key == System.Windows.Input.Key.Escape && _consoleFullScreen)
-        {
-            SetConsoleFullScreen(false);
-            e.Handled = true;
-        }
+        e.Handled = true;
+    }
+
+    private static ShellKey ToShellKey(System.Windows.Input.Key key) => key switch
+    {
+        System.Windows.Input.Key.OemPlus => ShellKey.OemPlus,
+        System.Windows.Input.Key.Add => ShellKey.Add,
+        System.Windows.Input.Key.OemMinus => ShellKey.OemMinus,
+        System.Windows.Input.Key.Subtract => ShellKey.Subtract,
+        System.Windows.Input.Key.D0 => ShellKey.D0,
+        System.Windows.Input.Key.NumPad0 => ShellKey.NumPad0,
+        System.Windows.Input.Key.K => ShellKey.K,
+        System.Windows.Input.Key.F11 => ShellKey.F11,
+        System.Windows.Input.Key.Escape => ShellKey.Escape,
+        _ => ShellKey.Other,
+    };
+
+    /// <summary>
+    /// Ctrl+K. Selects what is already there so the next keystroke replaces the
+    /// old filter rather than appending to it — pressing it twice in a row is
+    /// how somebody starts a NEW search, not how they extend the last one.
+    /// </summary>
+    private void FocusProjectSearch()
+    {
+        if (ProjectSearchBox is null) return;
+
+        ProjectSearchBox.Focus();
+        ProjectSearchBox.SelectAll();
     }
 
     /// <summary>
@@ -1602,6 +1635,11 @@ public partial class MainWindow : Window
 
             _registeredWorkspacePath = inspection.ProjectPath;
             UpdateConsoleWorkspaceLabel(_registeredWorkspacePath);
+
+            // Registering a workspace changes which projects exist. Without this
+            // the panel kept listing the PREVIOUS workspace's projects until the
+            // window was reopened, and the search box then filtered a stale list.
+            RefreshProjectShelf();
             if (persistSelection)
             {
                 _desktopSettings = _desktopSettings with
@@ -1938,9 +1976,43 @@ public partial class MainWindow : Window
                     + "\"Ask before each tool\"; for no prompts at all, choose Full tools.");
             }
 
+            // THE + MENU'S ATTACHMENTS ACTUALLY GO NOW.
+            //
+            // This used to pass `text` alone while the composer showed a green
+            // "attached" row, so the user was told the model had their file and it
+            // did not. Composition lives in Core (PromptAttachments) so the smoke
+            // suite can prove the file's real contents land in this payload with no
+            // window open — the seam it could not reach before.
+            //
+            // Every attachment is RE-VALIDATED against AttachmentPolicy in there,
+            // because a file can be deleted or grown past the cap between the file
+            // dialog and this line. A refusal turns the row red with the reason and
+            // says so in the transcript; it is never dropped in silence.
+            var outgoing = PromptAttachments.Compose(text, _plusMenu.ActiveAttachments);
+
+            foreach (var refused in outgoing.Refused)
+            {
+                var stale = _plusMenu.ActiveAttachments.FirstOrDefault(
+                    a => string.Equals(a.SourcePath, refused.Path, StringComparison.OrdinalIgnoreCase));
+                if (stale is not null) _plusMenu.Fail(stale, refused.Message);
+                AppendConsoleLine($"[Attachment NOT sent — {refused.Message}]");
+            }
+
+            // Consumed by the message they were attached to, so a file does not
+            // silently ride along with every later turn. The row stays on screen in
+            // the Removed state, so Undo puts it back for the next message.
+            foreach (var sent in outgoing.Included)
+            {
+                AppendConsoleLine(
+                    $"  📎 {sent.FileName} sent with this message ({sent.Message})");
+                var done = _plusMenu.ActiveAttachments.FirstOrDefault(
+                    a => string.Equals(a.SourcePath, sent.Path, StringComparison.OrdinalIgnoreCase));
+                if (done is not null) _plusMenu.Remove(done);
+            }
+
             var turnFailed = (string?)null;
             await foreach (var ev in bridge.TurnAsync(
-                               text,
+                               outgoing.Text,
                                workspace,
                                provider,
                                permission,
@@ -2232,7 +2304,12 @@ public partial class MainWindow : Window
         try
         {
             _agentBridge ??= new AgentBridge();
-            var ev = await _agentBridge.ListCommandsAsync();
+
+            // Scanned at the REGISTERED workspace. Left to itself the bridge
+            // answers about the folder it started in — the Helmion repo root —
+            // so this button used to list a different project's commands than
+            // the one the next turn would run in.
+            var ev = await _agentBridge.ListCommandsAsync(ResolveAgentWorkspace());
             _commandsListed = true;
 
             if (ev.Event != "commands")

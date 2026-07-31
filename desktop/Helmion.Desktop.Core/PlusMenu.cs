@@ -137,7 +137,7 @@ public sealed class PlusActionItem : INotifyPropertyChanged
     private string _message;
     private PlusActionState? _stateBeforeRemoval;
 
-    public PlusActionItem(PlusMenuKind kind, string title, string message)
+    public PlusActionItem(PlusMenuKind kind, string title, string message, string? sourcePath = null)
     {
         Kind = kind;
         Entry = PlusMenuCatalog.For(kind);
@@ -145,7 +145,19 @@ public sealed class PlusActionItem : INotifyPropertyChanged
         _state = PlusActionState.InProgress;
         _message = string.IsNullOrWhiteSpace(message) ? "Working…" : message;
         StartedAt = DateTimeOffset.Now;
+        SourcePath = string.IsNullOrWhiteSpace(sourcePath) ? null : sourcePath;
     }
+
+    /// <summary>
+    /// The file on disk this row stands for, for an Upload. Null for every other
+    /// kind, which have no file behind them.
+    ///
+    /// WITHOUT THIS THE UPLOAD IS DECORATIVE. The row used to keep only
+    /// <see cref="Title"/> — the bare file NAME — so nothing downstream could
+    /// ever open the file the user picked. A green "attached" row and no way to
+    /// read what was attached is the silent lie this field exists to end.
+    /// </summary>
+    public string? SourcePath { get; }
 
     public PlusMenuKind Kind { get; }
 
@@ -265,8 +277,19 @@ public sealed class PlusMenuController
 
     public IReadOnlyList<PlusMenuEntry> Entries => PlusMenuCatalog.Entries;
 
-    /// <summary>Starts a row in the in-progress state and returns it.</summary>
-    public PlusActionItem Begin(PlusMenuKind kind, string title, string? message = null)
+    /// <summary>
+    /// Starts a row in the in-progress state and returns it.
+    /// </summary>
+    /// <param name="sourcePath">
+    /// For an Upload, the FULL path of the file the user picked — not the name.
+    /// This is what lets <see cref="PromptAttachments"/> reopen the file at send
+    /// time; without it an attachment can only ever be a label.
+    /// </param>
+    public PlusActionItem Begin(
+        PlusMenuKind kind,
+        string title,
+        string? message = null,
+        string? sourcePath = null)
     {
         var entry = PlusMenuCatalog.For(kind);
         var item = new PlusActionItem(
@@ -279,7 +302,8 @@ public sealed class PlusMenuController
                 PlusMenuKind.Skill => "Loading the skills this session can use…",
                 PlusMenuKind.Upload => "Checking the file…",
                 _ => $"Working on {entry.Label}…",
-            });
+            },
+            sourcePath);
         Items.Add(item);
         return item;
     }
