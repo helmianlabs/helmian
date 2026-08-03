@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AimForge — Freight Control Tower with Cora</title>
+<style>
+  :root{
+    --canvas:#0b0d10;
+    --panel:#12151a;
+    --rim: rgba(255,255,255,0.06);
+    --accent:#e0a13a;
+    --accent-2:#3ae0c4;
+    --text:#e8e6e1;
+    --muted:#9aa0a6;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--canvas);
+    color:var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    line-height:1.5;
+  }
+  .wrap{max-width:1100px;margin:0 auto;padding:0 24px;}
+  header{
+    padding:22px 0;
+    display:flex;align-items:center;justify-content:space-between;
+    border-bottom:1px solid var(--rim);
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:0.02em;}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);}
+  nav a{color:var(--muted);text-decoration:none;margin-left:22px;font-size:14px;}
+  nav a:hover{color:var(--text);}
+
+  .hero{padding:80px 0 60px;text-align:left;}
+  .kicker{
+    display:inline-block;font-family:var(--mono);font-size:12px;color:var(--accent-2);
+    background:rgba(58,224,196,0.08); border:1px solid rgba(58,224,196,0.25);
+    padding:4px 10px;border-radius:12px;margin-bottom:18px;
+  }
+  h1{font-size:44px;line-height:1.15;margin:0 0 18px;max-width:780px;}
+  h1 span{color:var(--accent);}
+  .sub{color:var(--muted);font-size:18px;max-width:640px;margin:0 0 30px;}
+  .cta-row{display:flex;gap:14px;flex-wrap:wrap;}
+  .btn{
+    padding:11px 20px;border-radius:14px;font-size:14px;font-weight:600;
+    border:1px solid var(--rim); cursor:pointer; text-decoration:none;display:inline-block;
+  }
+  .btn-primary{background:var(--accent);color:#1a1200;border-color:var(--accent);}
+  .btn-ghost{background:transparent;color:var(--text);}
+
+  section{padding:52px 0;border-top:1px solid var(--rim);}
+  .section-title{font-size:13px;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted);margin-bottom:8px;}
+  h2{font-size:26px;margin:0 0 18px;}
+
+  .surfaces{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+  .card{
+    background:var(--panel);border:1px solid var(--rim);border-radius:16px;padding:22px;
+  }
+  .card h3{margin:0 0 10px;font-size:16px;}
+  .card p{color:var(--muted);font-size:14px;margin:0;}
+  .card .tag{
+    display:inline-block;font-family:var(--mono);font-size:11px;color:var(--accent);
+    margin-bottom:12px;
+  }
+
+  .cora{
+    display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:center;
+  }
+  .cora .panel{
+    background:var(--panel);border:1px solid var(--rim);border-radius:16px;padding:22px;
+  }
+  .rule-list{list-style:none;padding:0;margin:0;}
+  .rule-list li{
+    display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--rim);font-size:14px;color:var(--text);
+  }
+  .rule-list li:last-child{border-bottom:none;}
+  .rule-list b{color:var(--accent-2);font-family:var(--mono);font-size:12px;min-width:76px;}
+
+  .personas{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+  .persona{background:var(--panel);border:1px solid var(--rim);border-radius:16px;padding:20px;}
+  .persona h4{margin:0 0 8px;font-size:15px;}
+  .money{font-family:var(--mono);font-size:12px;padding:3px 8px;border-radius:8px;display:inline-block;margin-bottom:10px;}
+  .money.yes{background:rgba(58,224,196,0.1);color:var(--accent-2);border:1px solid rgba(58,224,196,0.3);}
+  .money.no{background:rgba(255,255,255,0.05);color:var(--muted);border:1px solid var(--rim);}
+
+  .honesty{background:var(--panel);border:1px solid var(--rim);border-radius:16px;padding:22px;}
+  .honesty ul{margin:0;padding-left:18px;color:var(--muted);font-size:14px;}
+  .honesty li{margin-bottom:8px;}
+
+  footer{padding:30px 0 60px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;border-top:1px solid var(--rim);}
+  footer .who{font-family:var(--mono);color:var(--accent-2);}
+
+  @media (max-width:820px){
+    .surfaces, .cora, .personas{grid-template-columns:1fr;}
+    h1{font-size:32px;}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand"><span class="dot"></span> AimForge</div>
+      <nav>
+        <a href="#surfaces">Surfaces</a>
+        <a href="#cora">Cora</a>
+        <a href="#personas">Personas</a>
+        <a href="#honesty">Honesty</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="kicker">FREIGHT CONTROL TOWER · NOT DAIRY</div>
+      <h1>Move freight for money.<br>Talk to it if you want — <span>Cora</span> is optional.</h1>
+      <p class="sub">AimForge is the ops desk and driver phone for owner-operators, small fleets, and company drivers. Every screen works with buttons alone. Cora is a short, dry, load-forward voice shortcut on top — never the whole product.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#surfaces">See the three surfaces</a>
+        <a class="btn btn-ghost" href="#cora">How Cora works</a>
+      </div>
+    </section>
+
+    <section id="surfaces">
+      <div class="section-title">01 · Three surfaces, one API</div>
+      <h2>Console, driver app, ops desk</h2>
+      <div class="surfaces">
+        <div class="card">
+          <div class="tag">WEB CONSOLE</div>
+          <h3>Run the business</h3>
+          <p>Board, dispatch, detention clocks, factoring status, EDI/AS2 — for the owner or dispatcher. Independent sees dollars; company driver never lands here.</p>
+        </div>
+        <div class="card">
+          <div class="tag">DRIVER APP + CORA</div>
+          <h3>Run the trip</h3>
+          <p>Pre-trip → drive → dock-in → free time → deliver → get paid. Fully clickable. Cora's spoken actions always light up a matching button.</p>
+        </div>
+        <div class="card">
+          <div class="tag">DESKTOP OPS PILOT</div>
+          <h3>Desk, always on</h3>
+          <p>Same ops as console, native-feeling: multi-monitor map, panel discipline, honest offline banner. No dual sidebars, no white menu chrome.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="cora">
+      <div class="section-title">02 · Cora, the voice shortcut</div>
+      <h2>Joe Friday, not a chatbot mascot</h2>
+      <div class="cora">
+        <div class="panel">
+          <ul class="rule-list">
+            <li><b>OPTIONAL</b> On/off switch. App is complete with Cora off.</li>
+            <li><b>DUAL</b> Every spoken action lights the same UI control a click would.</li>
+            <li><b>VOICE</b> Short, dry, load-forward lines only. No chit-chat.</li>
+            <li><b>CONFIG</b> Freight Hume config only — never touches dairy config.</li>
+            <li><b>SILENCE</b> No two-minute hangup on quiet cabs.</li>
+            <li><b>LABELS</b> Freight words on screen and in voice. No milk hoses.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <p style="color:var(--muted);font-size:14px;margin:0 0 12px;">Sample trip line, driver app on:</p>
+          <p style="font-family:var(--mono);font-size:14px;color:var(--text);margin:0 0 6px;">"Dock's clear, load 40217, free time started."</p>
+          <p style="color:var(--muted);font-size:13px;margin:0;">→ Arrive button activates on screen at the same moment. Detention clock starts underneath — dollars shown only if the persona allows it.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="personas">
+      <div class="section-title">03 · Same spine, honest differences</div>
+      <h2>Who sees the money</h2>
+      <div class="personas">
+        <div class="persona">
+          <span class="money yes">DETENTION $ · YES</span>
+          <h4>Independent / owner-op</h4>
+          <p style="color:var(--muted);font-size:13px;margin:0;">Board + factoring + detention dollars, ticking live.</p>
+        </div>
+        <div class="persona">
+          <span class="money yes">DETENTION $ · OWNER VIEW</span>
+          <h4>Small fleet owner</h4>
+          <p style="color:var(--muted);font-size:13px;margin:0;">Same ops plus fleet-wide owner rollup.</p>
+        </div>
+        <div class="persona">
+          <span class="money no">DETENTION $ · HIDDEN</span>
+          <h4>Company driver</h4>
+          <p style="color:var(--muted);font-size:13px;margin:0;">Pre-trip · HOS · dock · deliver. Timer runs for the fleet only — never shown on the driver's phone.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="honesty">
+      <div class="section-title">04 · Definition of ready</div>
+      <h2>No invented numbers, no fake green</h2>
+      <div class="honesty">
+        <ul>
+          <li>Simulated demo data is labeled REAL vs simulated — never presented as live.</li>
+          <li>Connect cards show honest integration status; no green light without a real handshake.</li>
+          <li>Every dollar figure on screen is countable from the API/DB, not decorative.</li>
+          <li>AimForge credentials, driver JWT secret, and package IDs are isolated from DairyForge — no shared config, ever.</li>
+        </ul>
+      </div>
+    </section>
+
+    <footer>
+      <span>AimForge — freight control tower · Cora voice, optional</span>
+      <span class="who">page owner: Claude1 / Helm</span>
+    </footer>
+  </div>
+</body>
+</html>

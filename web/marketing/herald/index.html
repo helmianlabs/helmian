@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1018">
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="manifest" href="/herald/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
+  <link rel="stylesheet" href="/herald/styles.css">
+  <script src="/herald/shell.js?v=18" type="module"></script>
+  <title>Helmian</title>
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <header class="menu-bar">
+      <button class="brand-button" data-command="toggle-rail" aria-label="Expand navigation" title="Expand navigation">
+        <img src="/assets/helmian-logo.png" alt="">
+        <span>Helmian</span>
+      </button>
+      <nav class="menu-list" aria-label="Application menu">
+        <button data-menu-trigger="file" aria-haspopup="menu" aria-expanded="false">File</button>
+        <button data-menu-trigger="edit" aria-haspopup="menu" aria-expanded="false">Edit</button>
+        <button data-menu-trigger="view" aria-haspopup="menu" aria-expanded="false">View</button>
+        <button data-menu-trigger="help" aria-haspopup="menu" aria-expanded="false">Help</button>
+      </nav>
+      <div class="project-crumb" aria-label="Current project">
+        <span class="project-dot"></span>
+        <span>Workspace</span>
+        <strong id="selectedProjectName">No project open</strong>
+      </div>
+      <div class="top-actions">
+        <span class="connection-state" id="connectionState"><span></span>Desktop not connected</span>
+        <button class="text-button" id="accountButton" data-action="account">Sign in</button>
+        <button class="icon-button theme-button" data-menu-trigger="theme" aria-label="Choose theme" aria-haspopup="menu" aria-expanded="false" title="Theme">
+          <svg aria-hidden="true"><use href="/herald/icons.svg#sun"></use></svg>
+        </button>
+      </div>
+
+      <div class="app-menu" data-menu="file" role="menu" hidden>
+        <button role="menuitem" data-open-drawer="projects"><svg><use href="/herald/icons.svg#folder"></use></svg><span>Open project…<small>Choose from the real endpoint when available</small></span></button>
+        <button role="menuitem" data-action="new-project"><svg><use href="/herald/icons.svg#plus"></use></svg><span>New project…<small>Not available in presentation mode</small></span></button>
+        <div class="menu-separator"></div>
+        <p class="menu-label">Recent projects</p>
+        <p class="menu-empty">No project history on this device</p>
+      </div>
+      <div class="app-menu" data-menu="edit" role="menu" hidden>
+        <button role="menuitem" disabled><span>Undo</span><kbd>Ctrl Z</kbd></button>
+        <button role="menuitem" disabled><span>Redo</span><kbd>Ctrl Shift Z</kbd></button>
+        <div class="menu-separator"></div>
+        <button role="menuitem" data-action="focus-composer"><span>Focus message</span><kbd>Ctrl K</kbd></button>
+        <button role="menuitem" data-action="clear-draft"><span>Clear local draft</span></button>
+      </div>
+      <div class="app-menu" data-menu="view" role="menu" hidden>
+        <button role="menuitemcheckbox" data-action="toggle-team" aria-checked="true"><span>Team collaboration</span><kbd>Ctrl 1</kbd></button>
+        <button role="menuitemcheckbox" data-action="toggle-conversation" aria-checked="true"><span>Console</span><kbd>Ctrl 2</kbd></button>
+        <button role="menuitemcheckbox" data-action="toggle-drawer" aria-checked="false"><span>Context drawer</span><kbd>Ctrl 3</kbd></button>
+        <div class="menu-separator"></div>
+        <button role="menuitem" data-action="fullscreen"><span>Enter fullscreen</span><kbd>F11</kbd></button>
+      </div>
+      <div class="app-menu" data-menu="help" role="menu" hidden>
+        <button role="menuitem" data-open-drawer="help"><svg><use href="/herald/icons.svg#book"></use></svg><span>Documentation</span></button>
+        <button role="menuitem" data-action="shortcuts"><svg><use href="/herald/icons.svg#command"></use></svg><span>Keyboard shortcuts</span></button>
+        <button role="menuitem" data-open-drawer="troubleshooting"><svg><use href="/herald/icons.svg#life-ring"></use></svg><span>Troubleshooting</span></button>
+      </div>
+      <div class="app-menu theme-menu" data-menu="theme" role="menu" hidden>
+        <p class="menu-label">Appearance</p>
+        <button role="menuitemradio" data-theme-choice="midnight" aria-checked="true"><span class="theme-swatch midnight"></span><span>Midnight<small>Deep navy and cool blue</small></span></button>
+        <button role="menuitemradio" data-theme-choice="black" aria-checked="false"><span class="theme-swatch black"></span><span>Black<small>Near-black charcoal</small></span></button>
+        <button role="menuitemradio" data-theme-choice="glass" aria-checked="false"><span class="theme-swatch glass"></span><span>Glass<small>Frosted dark panels</small></span></button>
+        <button role="menuitemradio" data-theme-choice="ocean" aria-checked="false"><span class="theme-swatch ocean"></span><span>Ocean<small>Blue instrument panel</small></span></button>
+        <button role="menuitemradio" data-theme-choice="forest" aria-checked="false"><span class="theme-swatch forest"></span><span>Forest<small>Green pilot surface</small></span></button>
+        <button role="menuitemradio" data-theme-choice="warm" aria-checked="false"><span class="theme-swatch warm"></span><span>Warm<small>Earth brown cockpit</small></span></button>
+        <button role="menuitemradio" data-theme-choice="white" aria-checked="false"><span class="theme-swatch white"></span><span>White<small>Clean light work surface</small></span></button>
+        <button role="menuitemradio" data-theme-choice="paper" aria-checked="false"><span class="theme-swatch paper"></span><span>Paper<small>Warm light parchment</small></span></button>
+      </div>
+    </header>
+
+    <aside class="icon-rail" aria-label="Workspace navigation">
+      <div class="rail-main">
+        <button class="rail-item" data-open-drawer="projects" data-label="Projects" title="Projects"><svg><use href="/herald/icons.svg#folder"></use></svg><span>Projects</span></button>
+        <button class="rail-item active" data-view="console" data-label="Console" title="Console"><svg><use href="/herald/icons.svg#console"></use></svg><span>Console</span></button>
+        <button class="rail-item" data-open-drawer="browser" data-label="Browser" title="Browser"><svg><use href="/herald/icons.svg#globe"></use></svg><span>Browser</span></button>
+        <button class="rail-item" data-open-drawer="canvas" data-label="Canvas" title="Canvas"><svg><use href="/herald/icons.svg#canvas"></use></svg><span>Canvas</span></button>
+        <button class="rail-item" data-open-drawer="preview" data-label="Preview" title="Preview"><svg><use href="/herald/icons.svg#preview"></use></svg><span>Preview</span></button>
+        <button class="rail-item" data-open-drawer="create" data-label="Create" title="Create"><svg><use href="/herald/icons.svg#plus-square"></use></svg><span>Create</span></button>
+        <button class="rail-item" data-open-drawer="integrations" data-label="Integrations" title="Integrations"><svg><use href="/herald/icons.svg#plug"></use></svg><span>Integrations</span></button>
+        <button class="rail-item" data-open-drawer="guard" data-label="Guard" title="Guard"><svg><use href="/herald/icons.svg#shield"></use></svg><span>Guard</span></button>
+        <button class="rail-item" data-open-drawer="history" data-label="Review &amp; History" title="Review &amp; History"><svg><use href="/herald/icons.svg#history"></use></svg><span>Review &amp; History</span></button>
+      </div>
+      <button class="rail-collapse" data-command="toggle-rail" aria-label="Expand navigation"><svg><use href="/herald/icons.svg#chevron"></use></svg><span>Collapse</span></button>
+    </aside>
+
+    <main class="workspace" id="workspace">
+      <div class="honesty-banner" id="remoteStatusBanner" role="status">
+        <svg aria-hidden="true"><use href="/herald/icons.svg#info"></use></svg>
+        <span id="remoteStatusText"><strong>Disconnected</strong> — sign in to see only the Helmian Desktops owned by your account. No desktop control is active yet.</span>
+        <button data-action="dismiss-banner" aria-label="Dismiss status message"><svg><use href="/herald/icons.svg#close"></use></svg></button>
+      </div>
+
+      <div class="mobile-pane-switch" role="tablist" aria-label="Workspace pane">
+        <button role="tab" data-mobile-pane="team" aria-selected="true">Team</button>
+        <button role="tab" data-mobile-pane="conversation" aria-selected="false">Console</button>
+      </div>
+
+      <div class="pane-grid">
+        <section class="workspace-pane team-pane" data-pane="team" aria-label="Team collaboration">
+          <header class="pane-header">
+            <div>
+              <p class="eyebrow">TEAM COLLABORATION</p>
+              <h1>Project room</h1>
+            </div>
+            <div class="pane-actions">
+              <span class="quiet-status">Team providers not connected</span>
+              <button class="icon-button" data-open-drawer="integrations" aria-label="Open integrations" title="Integrations"><svg><use href="/herald/icons.svg#plug"></use></svg></button>
+            </div>
+          </header>
+          <div class="pane-scroll">
+            <section class="empty-hero">
+              <div class="empty-icon"><svg><use href="/herald/icons.svg#users"></use></svg></div>
+              <p class="eyebrow">READY WHEN YOU CONNECT</p>
+              <h2>Bring the project conversation into focus</h2>
+              <p>Helmian will place one relevant project thread here without channel sprawl, reactions, agent avatars, or agent chatter.</p>
+              <button class="secondary-button" data-open-drawer="integrations">View connection options</button>
+            </section>
+            <section class="local-card">
+              <div class="card-heading"><span>Local project brief</span><span class="local-tag">Presentation</span></div>
+              <h3>Nothing has been imported</h3>
+              <p>Open a project to show its purpose, current decisions, and team context in this pane.</p>
+              <button class="text-button" data-open-drawer="projects">Choose a project</button>
+            </section>
+          </div>
+          <footer class="pane-footer">
+            <span><svg><use href="/herald/icons.svg#lock"></use></svg>No messages loaded</span>
+            <div class="provider-actions" aria-label="Future team provider choices">
+              <button class="text-button" data-action="provider-required" data-provider="Slack">Connect Slack</button>
+              <button class="text-button" data-action="provider-required" data-provider="Discord">Connect Discord</button>
+            </div>
+          </footer>
+        </section>
+
+        <section class="workspace-pane conversation-pane" data-pane="conversation" aria-label="Helmian Desktop console">
+          <header class="pane-header">
+            <div>
+              <p class="eyebrow">MAESTRO</p>
+              <h1>Conversation</h1>
+            </div>
+            <div class="pane-actions">
+              <span class="quiet-status">Desktop offline</span>
+              <button class="icon-button" data-open-drawer="history" aria-label="Open review and history" title="Review and history"><svg><use href="/herald/icons.svg#history"></use></svg></button>
+            </div>
+          </header>
+          <div class="conversation-scroll" id="conversation" aria-live="polite">
+            <div class="day-divider"><span>Live console</span></div>
+            <article class="message helmian-message" id="desktopControlIntro">
+              <div class="message-body">
+                <div class="message-meta"><strong id="desktopControlTitle">Helmian Console</strong><span id="desktopControlState">Waiting</span></div>
+                <p id="desktopControlMessage">Connecting to Helmian.</p>
+              </div>
+            </article>
+          </div>
+          <form class="composer" id="composer">
+            <div class="draft-notice" id="draftNotice">Drafts stay on this device until a desktop is connected.</div>
+            <div class="composer-box">
+              <textarea id="messageInput" rows="2" maxlength="2800" placeholder="Send a reviewed instruction to the selected Helmian console…" aria-label="Send instruction to Helmian Desktop"></textarea>
+              <div class="composer-toolbar">
+                <div>
+                  <button type="button" class="icon-button" data-open-drawer="create" aria-label="Add context" title="Add context"><svg><use href="/herald/icons.svg#plus"></use></svg></button>
+                  <button type="button" class="composer-mode" data-open-drawer="guard"><svg><use href="/herald/icons.svg#shield"></use></svg>Guard on</button>
+                </div>
+                <button class="send-button" type="submit" aria-label="Send message"><svg><use href="/herald/icons.svg#arrow-up"></use></svg></button>
+              </div>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <aside class="context-drawer" id="contextDrawer" aria-label="Context drawer" aria-hidden="true">
+        <header class="drawer-header">
+          <div><p class="eyebrow" id="drawerEyebrow">CONTEXT</p><h2 id="drawerTitle">Guard</h2></div>
+          <button class="icon-button" data-action="close-drawer" aria-label="Close drawer"><svg><use href="/herald/icons.svg#close"></use></svg></button>
+        </header>
+        <div class="drawer-scroll">
+          <section class="drawer-panel" data-drawer-panel="projects" data-title="Projects" data-eyebrow="FILE">
+            <div class="drawer-empty" id="desktopEmpty"><svg><use href="/herald/icons.svg#desktop"></use></svg><h3>No connected Desktop</h3><p>Sign in to list account-owned Desktops. Offline or stale sessions are not selectable.</p></div>
+            <div class="choice-list" id="desktopList" aria-live="polite"></div>
+            <form id="enrollmentForm" class="local-card">
+              <div class="card-heading"><span>Enroll a Desktop</span><span class="local-tag">One time</span></div>
+              <p>Enter the eight-digit code shown by Helmian Desktop. The code never becomes a Desktop credential.</p>
+              <input id="enrollmentCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{8}" placeholder="12345678" aria-label="Desktop enrollment code">
+              <button class="secondary-button" type="submit">Confirm Desktop</button>
+            </form>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="browser" data-title="Browser context" data-eyebrow="BROWSER">
+            <div class="browser-bar"><svg><use href="/herald/icons.svg#lock"></use></svg><span>No page selected</span><button aria-label="Refresh" disabled><svg><use href="/herald/icons.svg#refresh"></use></svg></button></div>
+            <div class="drawer-empty"><svg><use href="/herald/icons.svg#globe"></use></svg><h3>Browser context is empty</h3><p>When connected, explicitly shared pages and research context can appear here. Helmian has not opened or read a browser.</p></div>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="canvas" data-title="Canvas" data-eyebrow="CANVAS">
+            <div class="canvas-grid"><div></div><div></div><div></div><div></div></div>
+            <div class="drawer-empty compact-empty"><svg><use href="/herald/icons.svg#canvas"></use></svg><h3>A clear space for thinking</h3><p>Diagrams, plans, and visual working notes will collect here when created.</p></div>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="preview" data-title="Preview" data-eyebrow="PREVIEW">
+            <div class="preview-frame"><div class="preview-toolbar"><span></span><span></span><span></span></div><div class="preview-body"><svg><use href="/herald/icons.svg#preview"></use></svg><span>Nothing to preview</span></div></div>
+            <p class="drawer-note">Select a local artifact to preview it here. No live website or deployment is shown.</p>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="create" data-title="Create" data-eyebrow="ARTIFACTS">
+            <p class="drawer-intro">Choose a format. Creation remains local until the appropriate connection and explicit action are available.</p>
+            <div class="choice-list">
+              <button data-action="create-local"><svg><use href="/herald/icons.svg#document"></use></svg><span><strong>Document</strong><small>Plan, brief, or polished writing</small></span></button>
+              <button data-action="create-local"><svg><use href="/herald/icons.svg#canvas"></use></svg><span><strong>Canvas</strong><small>Diagram or visual exploration</small></span></button>
+              <button data-action="create-local"><svg><use href="/herald/icons.svg#code"></use></svg><span><strong>Web preview</strong><small>Interactive local prototype</small></span></button>
+            </div>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="integrations" data-title="Integrations" data-eyebrow="CONNECTIONS">
+            <p class="drawer-intro">Slack and Discord are future providers for the same Team pane. Connections are intentionally inactive in this presentation shell.</p>
+            <div class="integration-list">
+              <article class="provider-choice"><span class="integration-mark">S</span><div><strong>Slack</strong><small>Team conversation provider</small></div><span class="not-connected">Not connected</span><button class="provider-connect" data-action="provider-required" data-provider="Slack">Connect</button></article>
+              <article class="provider-choice"><span class="integration-mark">D</span><div><strong>Discord</strong><small>Team conversation provider</small></div><span class="not-connected">Not connected</span><button class="provider-connect" data-action="provider-required" data-provider="Discord">Connect</button></article>
+              <article><span class="integration-mark">GH</span><div><strong>GitHub</strong><small>Code and reviews</small></div><span class="not-connected">Not connected</span></article>
+              <article><span class="integration-mark desktop-mark"><svg><use href="/herald/icons.svg#desktop"></use></svg></span><div><strong>Helmian Desktop</strong><small>Local execution and context</small></div><span class="not-connected">Offline</span></article>
+            </div>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="guard" data-title="Guard" data-eyebrow="SAFETY">
+            <div class="guard-state"><div class="guard-orbit"><svg><use href="/herald/icons.svg#shield"></use></svg></div><div><span>Current evidence</span><strong>Unknown, not safe</strong><p>No live project, desktop, or action evidence is available.</p></div></div>
+            <div class="guard-section"><h3>Pending approvals <span>0</span></h3><p>There are no source-backed approval requests. Presentation controls cannot approve real actions.</p></div>
+            <div class="guard-section"><h3>Protected boundaries</h3><ul><li>External messages require review</li><li>Provider actions require a live connection</li><li>Desktop execution requires verified evidence</li></ul></div>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="history" data-title="Review &amp; History" data-eyebrow="RECORD">
+            <div class="history-filters"><button class="active">All</button><button>Requests</button><button>Results</button></div>
+            <div id="remoteHistory" class="drawer-empty compact-empty"><svg><use href="/herald/icons.svg#history"></use></svg><h3>No activity recorded</h3><p>Accepted requests and Desktop acknowledgements will appear here. Relay acceptance is not shown as completed work.</p></div>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="help" data-title="Documentation" data-eyebrow="HELP">
+            <div class="help-list"><article><h3>Start with a project</h3><p>Use File → Open project to choose from the project service when it becomes available.</p></article><article><h3>Keep actions deliberate</h3><p>Draft freely. Helmian asks for a required connection only when an action actually needs it.</p></article><article><h3>Review the record</h3><p>Plain-language progress stays in the conversation. Technical evidence belongs under Details.</p></article></div>
+          </section>
+          <section class="drawer-panel" data-drawer-panel="troubleshooting" data-title="Troubleshooting" data-eyebrow="HELP">
+            <div class="help-list"><article><h3>Desktop not connected</h3><p>The visual shell remains available. Sending and desktop-backed actions will pause at the moment they need a connection.</p></article><article><h3>No team messages</h3><p>Neither Slack nor Discord is connected in this shell; no team workspace has been read.</p></article><article><h3>No project list</h3><p>The real project endpoint is the next external prerequisite for File → Open project.</p></article></div>
+          </section>
+        </div>
+      </aside>
+
+      <nav class="drawer-dock" aria-label="Context shortcuts">
+        <button data-open-drawer="guard" aria-label="Open Guard" title="Guard"><svg><use href="/herald/icons.svg#shield"></use></svg><span>Guard</span></button>
+        <button data-open-drawer="history" aria-label="Open approvals and history" title="Review and history"><svg><use href="/herald/icons.svg#history"></use></svg><span>Review</span></button>
+        <button data-open-drawer="create" aria-label="Open artifacts" title="Artifacts"><svg><use href="/herald/icons.svg#document"></use></svg><span>Artifacts</span></button>
+      </nav>
+    </main>
+  </div>
+
+  <dialog id="shortcutsDialog" class="shortcuts-dialog">
+    <div class="dialog-heading"><div><p class="eyebrow">HELP</p><h2>Keyboard shortcuts</h2></div><button class="icon-button" data-action="close-shortcuts" aria-label="Close shortcuts"><svg><use href="/herald/icons.svg#close"></use></svg></button></div>
+    <dl><div><dt>Focus message</dt><dd><kbd>Ctrl K</kbd></dd></div><div><dt>Team pane</dt><dd><kbd>Ctrl 1</kbd></dd></div><div><dt>Maestro pane</dt><dd><kbd>Ctrl 2</kbd></dd></div><div><dt>Context drawer</dt><dd><kbd>Ctrl 3</kbd></dd></div><div><dt>Close menus or drawer</dt><dd><kbd>Esc</kbd></dd></div></dl>
+  </dialog>
+  <dialog id="accountDialog" class="shortcuts-dialog">
+    <div class="dialog-heading"><div><p class="eyebrow">HELMAN ACCOUNT</p><h2>Sign in</h2></div><button class="icon-button" data-action="close-account" aria-label="Close sign in"><svg><use href="/herald/icons.svg#close"></use></svg></button></div>
+    <div id="clerkMount"><p>Account sign-in is loading…</p></div>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
