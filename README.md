@@ -1,5 +1,7 @@
 # Helmion
 
+![Helmian Pilot orchestrating four AI providers in parallel, live browser preview building out alongside](docs/assets/hero.gif)
+
 **A local governance kernel for coding agents.** Helmion sits between an AI coding
 agent and the things it is able to change, and makes the risky steps
 deterministic: which actions run unattended, which pause for a human, which are
@@ -67,9 +69,11 @@ npm run desktop:run
 | Background jobs | `bin/helmion-jobs.mjs` | triage, commit-message, log-monitor, dictation-summary |
 | MCP servers (4) | `bin/mcp-helmion-*.mjs` | context, flywheel, advisory, codex |
 | Desktop Pilot | `desktop/` | Windows WPF control centre |
+| Herald | `src/herald/`, `desktop/Helmion.Desktop.Core/Herald/` | phone-paired companion — approve/deny and monitor a running desktop session from your phone |
 | Migrations | `sql/NNN_*.sql` | checksum-verified, advisory-locked runner |
 
-Tests live in `test/` — 45 suites, run by `npm test`. Documentation for each
+Tests live in `test/` — 51 files, 943 tests, run by `npm test` (verified this
+session: 943 pass, 0 fail, 23s). Documentation for each
 subsystem is in [`docs/`](docs/); dated session notes and superseded audits are
 kept out of the way in [`docs/archive/`](docs/archive/).
 
@@ -179,6 +183,35 @@ action-bound assertion.
   They are not a human approval.
 - EDI 204 L3-over-AT8 weight precedence and the AS2 997/990 delivery state
   machine remain covered by tests.
+- The tool-call gate (`evaluateToolCall`, `src/core/governance-gate.mjs`) is
+  fail-closed regex-rule evaluation, not a model call: an unreadable rule set,
+  a bad pattern, or an internal error all refuse rather than let a call
+  through unevaluated. Measured on this machine, 2,000 warmed-up calls
+  averaged **0.11ms each**.
+
+## Herald: the phone companion
+
+Herald pairs one phone to one running desktop session — a scoped, deliberate
+input surface, not a terminal or file browser. From the phone you get session
+and agent status, a Guard digest, and the ability to approve or deny pending
+actions; nothing else is reachable.
+
+- One-time enrollment: the desktop generates a random proof secret and an
+  8-digit confirmation code, you confirm from your signed-in web account, the
+  desktop redeems the code for a registration token stored under Windows
+  CurrentUser DPAPI.
+- Every request after that carries a single-use nonce; a reused nonce is
+  rejected outright (`401 replay_denied`), not merely logged.
+- Data sent to the phone is sanitized before it leaves the desktop — workspace
+  paths, transcript contents, provider credentials, and tool payloads are
+  never included, only session state and a Guard status.
+- Revoking a device takes effect on its next status check or heartbeat, not
+  eventually.
+- Verified working end-to-end on this machine, phone → relay → desktop →
+  agent, logged in `.helmion/audit/herald-*.jsonl` and
+  `%LOCALAPPDATA%\Helmion\remote-control-realtime.log`.
+
+Full wire contract: [`docs/herald/REMOTE_CONTROL_V1.md`](docs/herald/REMOTE_CONTROL_V1.md).
 
 ## Workspace initialization
 
