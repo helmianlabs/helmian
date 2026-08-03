@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Helmian logo" width="120">
+</p>
+
 # Helmion
 
 ![Helmian Pilot orchestrating four AI providers in parallel, live browser preview building out alongside](docs/assets/hero.gif)
