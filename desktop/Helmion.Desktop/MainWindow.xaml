@@ -3597,8 +3597,89 @@
                              AutomationProperties.Name="Gemini API Key"
                              AutomationProperties.HelpText="Enter your Google Gemini API key" />
 
-                <!-- xAI Grok API Key (not Groq) -->
-                <TextBlock Text="XAI GROK API KEY (api.x.ai — starts with xai- ; not Groq gsk_)" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+                <!-- ============ xAI Grok: SuperGrok subscription (preferred) ============ -->
+                <Border Background="{DynamicResource SurfaceRaisedBrush}"
+                        BorderBrush="{DynamicResource StrokeBrush}"
+                        BorderThickness="1"
+                        Padding="14"
+                        Margin="0,0,0,14">
+                  <StackPanel>
+                    <TextBlock Text="XAI GROK — SIGN IN WITH YOUR SUPERGROK SUBSCRIPTION"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="10"
+                               FontWeight="Bold"
+                               Margin="0,0,0,6" />
+                    <TextBlock Text="Signing in uses your SuperGrok plan instead of paying per API call. Helmion never sees your password — xAI shows you a code, you approve it in your browser. The API key below stays as a fallback."
+                               Style="{StaticResource MutedStyle}"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,10" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                      <Button x:Name="SuperGrokLoginButton"
+                              Content="Login with SuperGrok"
+                              Click="SuperGrokLogin_Click"
+                              Style="{StaticResource PrimaryButtonStyle}"
+                              Padding="16,10"
+                              AutomationProperties.Name="Login with SuperGrok"
+                              AutomationProperties.HelpText="Start the xAI device sign-in. A code appears here and your browser opens so you can approve it." />
+                      <Button x:Name="SuperGrokUseCliButton"
+                              Content="Use existing Grok CLI session"
+                              Click="SuperGrokUseCli_Click"
+                              Margin="10,0,0,0"
+                              Padding="16,10"
+                              AutomationProperties.Name="Use existing Grok CLI session"
+                              AutomationProperties.HelpText="Reuse the sign-in from the official Grok CLI on this machine instead of approving a new code." />
+                      <Button x:Name="SuperGrokSignOutButton"
+                              Content="Sign out"
+                              Click="SuperGrokSignOut_Click"
+                              Margin="10,0,0,0"
+                              Padding="16,10"
+                              AutomationProperties.Name="Sign out of SuperGrok" />
+                    </StackPanel>
+
+                    <!-- Device code panel: hidden until a sign-in is actually in flight. -->
+                    <Border x:Name="SuperGrokCodePanel"
+                            Visibility="Collapsed"
+                            Background="{DynamicResource SurfaceBrush}"
+                            BorderBrush="{DynamicResource AccentBrush}"
+                            BorderThickness="1"
+                            Padding="12"
+                            Margin="0,0,0,10">
+                      <StackPanel>
+                        <TextBlock Text="ENTER THIS CODE IN YOUR BROWSER"
+                                   Foreground="{DynamicResource MutedTextBrush}"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,6" />
+                        <TextBox x:Name="SuperGrokUserCodeText"
+                                 Text=""
+                                 IsReadOnly="True"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Foreground="{DynamicResource AccentBrush}"
+                                 FontSize="26"
+                                 FontWeight="Bold"
+                                 FontFamily="Consolas"
+                                 Margin="0,0,0,6"
+                                 AutomationProperties.Name="SuperGrok device code" />
+                        <TextBlock x:Name="SuperGrokVerificationUriText"
+                                   Text=""
+                                   Style="{StaticResource MutedStyle}"
+                                   TextWrapping="Wrap" />
+                      </StackPanel>
+                    </Border>
+
+                    <TextBlock x:Name="SuperGrokStatusLabel"
+                               Text="Checking…"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               AutomationProperties.Name="SuperGrok sign-in status" />
+                  </StackPanel>
+                </Border>
+
+                <!-- xAI Grok API Key (not Groq) — fallback used when not signed in -->
+                <TextBlock Text="XAI GROK API KEY (fallback · api.x.ai — starts with xai- ; not Groq gsk_)" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
                 <PasswordBox x:Name="GrokApiKeyInput"
                              Height="38"
                              Padding="10,8"

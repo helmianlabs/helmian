@@ -875,6 +875,7 @@ public partial class MainWindow : Window
     protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
+        DisposeSuperGrok();
         _consoleSession?.Dispose();
         // The selector disposes the session it built; disposing both is safe
         // (VoiceSession.Dispose is idempotent) and covers the pre-selector path.
@@ -923,6 +924,9 @@ public partial class MainWindow : Window
         _consoleSession = new ConsoleSession();
         _consoleSession.PermissionMode = _desktopSettings.ResolvedPermissionMode;
         SelectPermissionInCombo(_consoleSession.PermissionMode);
+        // Before ConfigureMaestro below, so a stored SuperGrok session is already attached
+        // when the Grok route is built rather than only after the first settings save.
+        InitializeSuperGrok();
         try
         {
             Environment.SetEnvironmentVariable(
@@ -1073,6 +1077,7 @@ public partial class MainWindow : Window
 
             EnvironmentSettingsStore.Save(updatedSettings);
             _consoleSession ??= new ConsoleSession();
+            ApplySuperGrokToConsole();
             _consoleSession.ConfigureMaestro(
                 maestroCoordinator,
                 updatedSettings,

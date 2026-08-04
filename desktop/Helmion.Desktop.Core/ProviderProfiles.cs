@@ -107,15 +107,18 @@ public static class ProviderProfileCatalog
             new(
                 "grok",
                 "Grok",
-                "Coordinator candidate · docs gate",
-                "Adapter surface not selected",
+                "Coordinator candidate",
+                "Direct API adapter",
                 "Not checked",
-                "Design-only",
-                "Authentication not verified in this slice",
-                "No auth or capability parity is assumed from other providers.",
-                "Supported documented API/CLI/local endpoint review required",
-                "No consumer UI automation or credential discovery.",
-                "Documentation → adapter contract → identity test → read-only canary",
+                "Not configured",
+                "SuperGrok account sign-in (OAuth device code) or xAI API key",
+                "Provider-owned browser approval; Helmion receives no xAI password. The resulting "
+                + "token is encrypted with Windows CurrentUser DPAPI and never written to .env.",
+                "xAI device authorization + token endpoints verified live 2026-08-04 · "
+                + "RFC 8628 device grant",
+                "Reads the Grok CLI's auth file only on explicit request, read-only; that CLI's "
+                + "own state is never modified.",
+                "Device sign-in (or adopt Grok CLI session) → DPAPI storage → API-key fallback",
                 "grok-cli",
                 false,
                 false),

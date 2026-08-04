@@ -971,6 +971,8 @@ OffscreenWindowChecks.Run();
 ModelProvenanceLabelChecks.Run();
 
 TopBarChecks.Run();
+
+SuperGrokOAuthChecks.Run();
 return;
 
 /// <summary>

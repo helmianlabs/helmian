@@ -18,6 +18,8 @@
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <PackageReference Include="KokoroSharp.CPU" Version="0.8.0" />
     <PackageReference Include="NAudio" Version="2.3.0" />
+    <!-- Windows DPAPI, used only by SuperGrokTokenStore to encrypt the OAuth session. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Helmion.LocalService.Protocol\Helmion.LocalService.Protocol.csproj" />

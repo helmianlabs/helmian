@@ -24,8 +24,23 @@ public sealed class ConsoleSession : IDisposable
     private OpenAiChatSession? _openAiSession;
     private ClaudeChatSession? _claudeSession;
     private CustomChatSession? _customSession;
+    private SuperGrokCredentialProvider? _superGrok;
 
     public bool IsRunning => _process is { HasExited: false };
+
+    /// <summary>
+    /// SuperGrok subscription credentials for the Grok route. Set once at startup by the
+    /// window; when null, Grok falls back to the API key exactly as it did before.
+    /// </summary>
+    public SuperGrokCredentialProvider? SuperGrok
+    {
+        get => _superGrok;
+        set
+        {
+            _superGrok = value;
+            _grokSession?.UpdateSuperGrok(value);
+        }
+    }
 
     /// <summary>
     /// When false, console is read-only chat: tool side effects are refused.
@@ -86,12 +101,13 @@ public sealed class ConsoleSession : IDisposable
         ActiveCustomProviderName = null;
 
         _geminiSession ??= new GeminiChatSession(settings.GeminiApiKey ?? "");
-        _grokSession ??= new GrokChatSession(settings.GrokApiKey ?? "");
+        _grokSession ??= new GrokChatSession(settings.GrokApiKey ?? "", _superGrok);
         _openAiSession ??= new OpenAiChatSession(settings.OpenAiApiKey ?? "");
         _claudeSession ??= new ClaudeChatSession(settings.AnthropicApiKey ?? "");
 
         _geminiSession.UpdateApiKey(settings.GeminiApiKey ?? "");
         _grokSession.UpdateApiKey(settings.GrokApiKey ?? "");
+        _grokSession.UpdateSuperGrok(_superGrok);
         _openAiSession.UpdateApiKey(settings.OpenAiApiKey ?? "");
         _claudeSession.UpdateApiKey(settings.AnthropicApiKey ?? "");
 
@@ -221,7 +237,9 @@ public sealed class ConsoleSession : IDisposable
         {
             if (_grokSession is null || !_grokSession.HasKey)
             {
-                yield return "[No xAI Grok API key configured — enter XAI/Grok key in Settings (not Groq)]";
+                yield return
+                    "[No xAI Grok credential — press \"Login with SuperGrok\" in Settings, "
+                    + "or enter an XAI/Grok API key there (not Groq)]";
                 yield break;
             }
 
