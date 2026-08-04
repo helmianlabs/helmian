@@ -6,6 +6,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const html = await readFile(resolve(root, 'index.html'), 'utf8');
 const css = await readFile(resolve(root, 'styles.css'), 'utf8');
 const config = await readFile(resolve(root, 'site-config.js'), 'utf8');
+const guardHtml = await readFile(resolve(root, 'guard.html'), 'utf8');
 const heraldHtml = await readFile(resolve(root, 'herald/index.html'), 'utf8');
 const heraldManifestText = await readFile(resolve(root, 'herald/manifest.webmanifest'), 'utf8');
 const heraldWorker = await readFile(resolve(root, 'herald/sw.js'), 'utf8');
@@ -94,6 +95,24 @@ for (const path of new Set(localReferences)) {
   const relative = path.replace(/^\/+/, '');
   try { await access(resolve(root, relative)); }
   catch { failures.push(`missing local asset: /${relative}`); }
+}
+
+const guardDownload = '/downloads/helmian-guard-0.2.3.zip';
+expect(guardHtml.includes(`href="${guardDownload}" download`), 'Guard download link is missing');
+const installSection = guardHtml.match(/<section id="install">[\s\S]*?<\/section>/)?.[0] ?? '';
+expect(installSection.includes(guardDownload), 'the install steps must carry their own download link, not point at the hero');
+
+// A class the stylesheet never defines renders as an unstyled inline link, so
+// the download reads as body text rather than a button.
+for (const className of new Set([...guardHtml.matchAll(/class="([^"]*\bbutton\b[^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)))) {
+  expect(css.includes(`.${className}`), `guard.html uses undefined button class: .${className}`);
+}
+
+const guardReferences = [...guardHtml.matchAll(/(?:href|src)="(?!https?:|#|\/\/)([^"#?]+)"/g)].map((match) => match[1]);
+for (const path of new Set(guardReferences)) {
+  const relative = path.replace(/^\/+/, '');
+  try { await access(resolve(root, relative)); }
+  catch { failures.push(`missing Guard asset: /${relative}`); }
 }
 
 const heraldReferences = [...heraldHtml.matchAll(/(?:href|src)="(?!https?:|#|\/\/)([^"#?]+)"/g)]
