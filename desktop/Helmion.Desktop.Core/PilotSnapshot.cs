@@ -235,7 +235,18 @@ public sealed class PilotSnapshot
                 hasKeys
                     ? "API keys are saved locally. No request has been made to confirm they are valid."
                     : "API keys are not configured. Enter keys on the Settings page.",
-                "API credentials are saved locally in Windows CurrentUser storage.",
+                // Corrected 2026-08-03. This said "saved locally in Windows
+                // CurrentUser storage", which reads as DPAPI CurrentUser
+                // protection. It is not. EnvironmentSettingsStore.Save writes
+                // KEY=value lines with File.WriteAllLines
+                // (EnvironmentSettingsStore.cs:186) into a plain .env file. Real
+                // DPAPI code does exist in ProtectedProviderProfileStore, but
+                // nothing on this path calls it.
+                //
+                // A safety product does not get to describe its own credential
+                // storage as more protected than it is. The accurate string costs
+                // nothing and tells the user what to actually guard.
+                "API credentials are saved as plain text in a local .env file. They are not encrypted.",
                 hasKeys ? "SAVED · UNVERIFIED" : "NOT LIVE",
                 true,
                 false)

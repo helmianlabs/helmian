@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -229,6 +230,28 @@ export function createToolRuntime(workspaceRoot, options = {}) {
   /** Tool names the user approved for the rest of THIS runtime's life. */
   const sessionGrants = new Set();
 
+  // OPEN QUESTION FOR THE OWNER — deliberately NOT changed here.
+  //
+  // A session grant is keyed on the tool NAME and nothing else: not the command,
+  // not the path, not a hash of the arguments (see requestApproval below). For
+  // `write_file` or `list_dir` that is a reasonable trade, because workspace
+  // confinement still bounds what they can touch. For `run_command` the "tool"
+  // is the entire shell, so approving `git status` once turns ask mode into full
+  // mode for every command that follows in that runtime.
+  //
+  // What still protects the user, verified rather than assumed: the governance
+  // kernel runs BEFORE the approval tier, so a held grant cannot launder a
+  // destructive command. test/governance-wiring.test.mjs pins exactly that, and
+  // it passes. The residual exposure is commands the deny-list does not name —
+  // which is the same exposure a full-mode user accepts.
+  //
+  // Scoping the grant to run_command was tried during this audit and reverted:
+  // that test also pins `grantedTools === ['run_command']` as intended
+  // behaviour, so the feature is deliberate, and narrowing it changes what a
+  // button in the UI does. That is the owner's call, not an auditor's. The two
+  // candidate fixes are (a) key the grant on tool + a hash of the arguments, or
+  // (b) offer only allow-once for run_command and relabel the button.
+
   // ── THE WRITE LEASE ────────────────────────────────────────────────────────
   //
   // At most one active writer per project, which is what README.md:19 has always
@@ -332,6 +355,23 @@ export function createToolRuntime(workspaceRoot, options = {}) {
     };
   }
 
+  /**
+   * The deepest ancestor of `target` that exists on disk, with every symlink
+   * along the way resolved. Needed because a write may name a file that is not
+   * there yet — realpathSync on the target itself would just throw ENOENT and
+   * tell us nothing about where the path really lands.
+   */
+  function realpathOfNearestExistingAncestor(target) {
+    let candidate = target;
+    for (;;) {
+      if (existsSync(candidate)) return realpathSync(candidate);
+      const parent = dirname(candidate);
+      // dirname of a root returns the root, which would loop forever.
+      if (parent === candidate) return realpathSync(parent);
+      candidate = parent;
+    }
+  }
+
   function resolveInWorkspace(userPath) {
     const raw = (userPath || '.').trim() || '.';
     const full = resolve(root, raw);
@@ -343,6 +383,36 @@ export function createToolRuntime(workspaceRoot, options = {}) {
     if (!full.toLowerCase().startsWith(root.toLowerCase())) {
       throw new Error(`Path outside workspace: ${userPath}`);
     }
+
+    // BOTH CHECKS ABOVE ARE LEXICAL, and resolve() does not follow links.
+    //
+    // A symlink or junction INSIDE the workspace that points anywhere on disk
+    // keeps a textual path under root, satisfies both checks, and then
+    // readFileSync/writeFileSync follow it to the real target. On Windows the
+    // agent can create one itself with `mklink /J` through run_command and then
+    // read or overwrite outside the workspace using ordinary read_file and
+    // write_file — which in read-tools mode are not even gated.
+    //
+    // So the containment is re-checked against the REAL path. Note the codebase
+    // already does this kind of check elsewhere
+    // (ProtectedProviderProfileStore.RejectReparsePoint) — it was simply never
+    // applied to the agent's own file tools.
+    let realFull;
+    let realRoot;
+    try {
+      realRoot = realpathSync(root);
+      realFull = realpathOfNearestExistingAncestor(full);
+    } catch {
+      // If the real path cannot be determined, do not guess. Refusing a legal
+      // path is recoverable; allowing an escape is not.
+      throw new Error(`Path could not be verified against the workspace: ${userPath}`);
+    }
+
+    const realRel = relative(realRoot, realFull);
+    if (realRel && (realRel.startsWith('..') || realRel.includes(`..${sep}`))) {
+      throw new Error(`Path escapes workspace through a symlink: ${userPath}`);
+    }
+
     return full;
   }
 
