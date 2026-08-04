@@ -25,7 +25,7 @@ import {
   KERNEL_SOURCE,
   CLAIMS_GENERATED_FILE,
   CLAIMS_SOURCE,
-  HEADER_END,
+  HEADER_END_TEXT,
   buildGeneratedFile,
   stripHeader,
   assertBrowserSafe,
@@ -59,7 +59,10 @@ test('the generated file says, in its own text, not to edit it', async () => {
   const onDisk = await readFile(GENERATED_FILE, 'utf8');
   assert.match(onDisk, /GENERATED FILE — DO NOT EDIT/);
   assert.match(onDisk, /node extension\/tools\/sync-kernel\.mjs/);
-  assert.ok(onDisk.includes(HEADER_END));
+  // Matched without the trailing line break so this holds on a CRLF checkout
+  // too. The marker's own text is the assertion; which newline follows it is
+  // git's business, not a tamper signal.
+  assert.ok(onDisk.includes(HEADER_END_TEXT));
 });
 
 test('POSITIVE CONTROL: the drift test really fails when the copy is edited', async () => {
@@ -247,7 +250,7 @@ test('no generated header carries an absolute path, so a clone anywhere still pa
   // checkout; a repo-relative label is the same text on every machine.
   for (const entry of COPIES) {
     const built = await buildGeneratedFile(entry);
-    const header = built.slice(0, built.indexOf(HEADER_END));
+    const header = built.slice(0, built.indexOf(HEADER_END_TEXT));
     assert.ok(!/[A-Za-z]:\\/.test(header), `${entry.name} header carries a Windows absolute path`);
     assert.ok(header.includes(entry.label), `${entry.name} header does not name its source`);
   }

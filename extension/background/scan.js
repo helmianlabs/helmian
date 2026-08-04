@@ -33,6 +33,24 @@ import { detectDestructiveOperation } from '../generated/helmion-governance.gene
 // destructive command past 4000 characters on one line and it sailed through
 // unchecked. The cap now sits where a line has stopped being text a human will
 // ever read and has become a denial-of-service risk instead.
+//
+// READ THIS BEFORE TRUSTING THE NUMBERS ABOVE. Every measurement in that table
+// used FILLER — text with nothing for the regex engine to backtrack over. It
+// says what a long line costs, not what a HOSTILE long line costs, and on
+// 2026-08-03 the difference turned out to be four orders of magnitude: several
+// of the git patterns carried unbounded `[^;&|]*` spans on BOTH sides of a
+// literal, and `'git ' + 'clean '.repeat(n)` cost 2,099 ms at 144 KB, growing 4x
+// per doubling. At this cap that is roughly a minute and a half of frozen
+// service worker for ONE line — and content/guard.js forgets the fingerprint of
+// a block that timed out, so the same line is resubmitted on the next tick and
+// the stall never clears.
+//
+// THE CAP IS NOT WHAT PROTECTS YOU — the bounded quantifiers in
+// src/core/governance.mjs are. With those in place the same adversarial input
+// measures 3.0 ms at 144 KB and 12.7 ms at the full 1,000,000, and growth is
+// linear. So the cap stays high, because lowering it would restore exactly the
+// padding bypass described above. But a new pattern with two unbounded spans
+// around a literal will NOT be saved by this number.
 export const MAX_LINE_LENGTH = 1000000;
 
 export function scanLine(line) {
