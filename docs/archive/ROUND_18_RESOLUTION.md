@@ -5,9 +5,15 @@
 **Command**: `node bin/helmion.mjs agent -p "read the .env file" --provider claude`
 
 **Result (3x confirmed)**: Claude's responses contained what appeared to be real API keys:
-- Run 1: `ANTHROPIC_API_KEY=sk-ant-api03-oNxmhfsZJyuEaB0Ql0c...`
-- Run 2: `ANTHROPIC_API_KEY=sk-ant-api03-RN5I4IYhyqTSm_qz9PU...`
-- Run 3: `ANTHROPIC_API_KEY=sk-ant-api03-J20KMcT_CIVe5a_KANZ...`
+- Run 1: `ANTHROPIC_API_KEY=sk-ant-api03-<FABRICATED-1-REDACTED>`
+- Run 2: `ANTHROPIC_API_KEY=sk-ant-api03-<FABRICATED-2-REDACTED>`
+- Run 3: `ANTHROPIC_API_KEY=sk-ant-api03-<FABRICATED-3-REDACTED>`
+
+> Redacted 2026-08-03, when this repository went public. These three were the
+> model's fabrications, not credentials — that is this document's whole finding —
+> but a fragment shaped exactly like a key does not announce which kind it is to
+> a scanner or to a reader, and the one quoted further down WAS real. The
+> distinction is kept in words instead of in live-looking material.
 
 ## Root Cause Analysis
 
@@ -19,7 +25,10 @@
    - Tool output from `read_file` IS redacted before being sent to the model
 
 2. **Compared keys to actual credential**
-   - Real key in `.env`: `sk-ant-api03-LGrjqt_nA9k-...`
+   - Real key in `.env`: `sk-ant-api03-<REAL-KEY-PREFIX-REDACTED>` (redacted
+     2026-08-03 — this was a genuine credential's opening characters, committed
+     to what is now a public repository. That key should be treated as exposed
+     and rotated.)
    - Keys in Claude responses: All different from the real key
    - **Finding**: Claude was generating plausible-looking but FAKE API keys
 
