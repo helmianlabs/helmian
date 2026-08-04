@@ -6,7 +6,28 @@ let pool;
 export function database() {
   const connectionString = String(process.env.HELMION_HERALD_DATABASE_URL ?? '').trim();
   if (!connectionString) throw new Error('HELMION_HERALD_DATABASE_URL is not configured');
-  pool ??= new pg.Pool({ connectionString, max: 3, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 5_000 });
+  pool ??= new pg.Pool({
+    connectionString,
+    max: 3,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 5_000,
+    // Added 2026-08-03. There was no `ssl` key here at all, and node-postgres
+    // does NOT imply TLS — so if HELMION_HERALD_DATABASE_URL were ever set
+    // without `sslmode=require`, device token hashes, pairing nonces and control
+    // grants would cross the network in clear text and nothing in the code could
+    // notice. TLS is the default now rather than a property of a connection
+    // string somebody has to remember to get right.
+    //
+    // `rejectUnauthorized: false` deliberately MATCHES the sibling pool in
+    // _team-oauth-store.js and is not tightened here. Turning full verification
+    // on against a live hosted database can only be validated against the real
+    // endpoint and its CA bundle, not from a test run, and doing it blind on a
+    // running service is how a site goes down overnight. It is written up for
+    // the owner to decide instead.
+    ssl: connectionString.includes('sslmode=disable')
+      ? undefined
+      : { rejectUnauthorized: false },
+  });
   return pool;
 }
 

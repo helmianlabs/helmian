@@ -95,11 +95,25 @@ public sealed class ReadOnlyPipeServer(string pipeName)
                     request.Id,
                     true,
                     SchemaProvisioning: ProvisionSchema(request.DatabaseUrl, request.EndpointId, request.WorkspacePath)),
+                // This message used to say the service exposes "only hello,
+                // workspace.inspect, and capabilities.detect" — which the Hello
+                // response above contradicts, because it also advertises
+                // schema.provision. The rejection text is the accurate list now.
+                //
+                // NOTE FOR REVIEW, not something to silently settle in code:
+                // schema.provision runs Node and applies migrations, while this
+                // same handshake reports WritesEnabled: false, and BOTH
+                // App.xaml.cs:196 and LocalServiceConnector.cs:217 refuse to talk
+                // to a server that reports writes are enabled. So the flag cannot
+                // simply be flipped to true — the honest description and the
+                // client's own invariant point in opposite directions. Whether
+                // schema provisioning belongs on a service called "read-only" at
+                // all is a design call for the owner.
                 _ => new PipeResponse(
                     request.Id,
                     false,
                     "read_only_command_rejected",
-                    "The local service exposes only hello, workspace.inspect, and capabilities.detect")
+                    "The local service exposes only hello, workspace.inspect, capabilities.detect and schema.provision")
             };
         }
         catch (Exception error) when (
@@ -124,15 +138,65 @@ public sealed class ReadOnlyPipeServer(string pipeName)
 
         try
         {
-            var scriptPath = Path.Combine(workspacePath, "src", "core", "schema-provisioner.mjs");
-            if (!File.Exists(scriptPath))
+            // The workspace path arrives OVER THE WIRE. The legitimate caller
+            // (MainWindow.xaml.cs) always sends its own registered workspace, but
+            // this server has never checked that, and any process running as this
+            // user can open the pipe — the name is derived deterministically from
+            // the SID, so it is not a secret.
+            //
+            // Scope, stated honestly so nobody over- or under-reads it: the pipe
+            // is PipeOptions.CurrentUserOnly and this service runs as the ordinary
+            // user with no elevation, so an attacker who can reach it can already
+            // run code as that user. This is NOT a privilege escalation, and it
+            // leaks no credential — DatabaseUrl is supplied BY the caller, it is
+            // not server state. What the checks below remove is the ability to
+            // point a trusted, long-lived service process at an arbitrary
+            // directory and have it execute code from there.
+            if (!Path.IsPathRooted(workspacePath))
+            {
+                return new SchemaProvisioningResult(false, 0, "Workspace path must be absolute.");
+            }
+
+            var workspaceRoot = Path.GetFullPath(workspacePath);
+            if (!Directory.Exists(workspaceRoot) || IsReparsePoint(workspaceRoot))
+            {
+                return new SchemaProvisioningResult(
+                    false,
+                    0,
+                    "Workspace path must be an existing directory and must not be a symlink or junction.");
+            }
+
+            var scriptPath = Path.GetFullPath(Path.Combine(workspaceRoot, "src", "core", "schema-provisioner.mjs"));
+
+            // Belt and braces on the combine: a workspace path carrying traversal
+            // segments must not be able to walk the script out of its own root.
+            var rootPrefix = workspaceRoot.EndsWith(Path.DirectorySeparatorChar)
+                ? workspaceRoot
+                : workspaceRoot + Path.DirectorySeparatorChar;
+            if (!scriptPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return new SchemaProvisioningResult(false, 0, "Resolved script path escaped the workspace.");
+            }
+
+            if (!File.Exists(scriptPath) || IsReparsePoint(scriptPath))
             {
                 return new SchemaProvisioningResult(false, 0, "schema-provisioner.mjs not found.");
             }
 
+            // FileName was the bare string "node". With UseShellExecute = false
+            // that goes through CreateProcess, whose search order starts with the
+            // DIRECTORY OF THE CALLING PROCESS — so a node.exe dropped beside this
+            // service is preferred over the real one on PATH. Resolve it once,
+            // against PATH only, and hand Process.Start an absolute path.
+            var nodeExecutable = ResolveExecutableOnPath("node");
+            if (nodeExecutable is null)
+            {
+                return new SchemaProvisioningResult(false, 0, "node was not found on PATH.");
+            }
+
             var processStartInfo = new ProcessStartInfo
             {
-                FileName = "node",
+                FileName = nodeExecutable,
                 Arguments = $"\"{scriptPath}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -170,5 +234,65 @@ public sealed class ReadOnlyPipeServer(string pipeName)
         {
             return new SchemaProvisioningResult(false, 0, ex.Message);
         }
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception error) when (
+            error is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Cannot tell. Treat it as a reparse point, because the caller uses
+            // this to decide whether to EXECUTE something out of that path.
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Finds an executable by walking PATH only, deliberately excluding the
+    /// current process directory and the working directory that CreateProcess
+    /// would otherwise search first.
+    /// </summary>
+    private static string? ResolveExecutableOnPath(string executable)
+    {
+        var pathVariable = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathVariable))
+        {
+            return null;
+        }
+
+        var extensions = OperatingSystem.IsWindows()
+            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.CMD;.BAT")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [string.Empty];
+
+        foreach (var directory in pathVariable.Split(
+            Path.PathSeparator,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (var extension in extensions)
+            {
+                string candidate;
+                try
+                {
+                    candidate = Path.GetFullPath(Path.Combine(directory, executable + extension));
+                }
+                catch (ArgumentException)
+                {
+                    // A malformed PATH entry is not worth aborting the search for.
+                    continue;
+                }
+
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        return null;
     }
 }
