@@ -15,12 +15,21 @@ const DESTRUCTIVE_PATTERNS = [
   ['Remove-Item -Recurse/-Force', /\bRemove-Item\b[^;&|]*\s-(?:Rec|Forc)[a-z]*\b/i],
   ['rmdir /S', /\b(?:rmdir|rd)\b[^;&|]*\s\/s\b/i],
   ['cmd del /F, /Q, or /S', /(?:^|[;&|`(\s])del\s+[^;&|]*\/[fqs]\b/i],
-  ['git reset discard', /\bgit\b[^;&|]*\breset\b[^;&|]*--(?:hard|merge|keep)\b/i],
-  ['git clean', /\bgit\b[^;&|]*\bclean\b[^;&|]*\s-[A-Za-z]*[fdx]/i],
-  ['git force push', /\bgit\b[^;&|]*\bpush\b[^;&|]*(?:--force(?:-with-lease)?|\s-f\b)/i],
-  ['git branch force delete', /\bgit\b[^;&|]*\bbranch\b[^;&|]*\s-D\b/i],
-  ['git checkout/restore discard', /\bgit\b[^;&|]*\b(?:checkout|restore)\b[^;&|]*\s--\s/i],
-  ['git worktree remove', /\bgit\b[^;&|]*\bworktree\b[^;&|]*\bremove\b/i],
+  // The git patterns carry TWO `[^;&|]` spans around a literal, and an unbounded
+  // `*` on both sides of a literal backtracks quadratically. Measured 2026-08-03
+  // on `'git ' + 'clean '.repeat(n) + 'X'`: 18 KB → 35 ms, 36 KB → 135 ms,
+  // 72 KB → 530 ms, 144 KB → 2,099 ms — a clean 4× per doubling. Against
+  // background/scan.js's line cap that is roughly a minute and a half of frozen
+  // service worker for ONE line, and the guard resubmits a timed-out block, so
+  // the stall is permanent rather than transient. The spans are bounded to 200
+  // characters, which is far longer than any real `git clean -fdx` and no longer
+  // enough runway for the blowup to matter.
+  ['git reset discard', /\bgit\b[^;&|]{0,200}\breset\b[^;&|]{0,200}--(?:hard|merge|keep)\b/i],
+  ['git clean', /\bgit\b[^;&|]{0,200}\bclean\b[^;&|]{0,200}\s-[A-Za-z]*[fdx]/i],
+  ['git force push', /\bgit\b[^;&|]{0,200}\bpush\b[^;&|]{0,200}(?:--force(?:-with-lease)?|\s-f\b)/i],
+  ['git branch force delete', /\bgit\b[^;&|]{0,200}\bbranch\b[^;&|]{0,200}\s-D\b/i],
+  ['git checkout/restore discard', /\bgit\b[^;&|]{0,200}\b(?:checkout|restore)\b[^;&|]{0,200}\s--\s/i],
+  ['git worktree remove', /\bgit\b[^;&|]{0,200}\bworktree\b[^;&|]{0,200}\bremove\b/i],
   ['Clear-Content', /\bClear-Content\b/i],
   ['direct SQL DDL', /\b(?:DROP\s+(?:TABLE|DATABASE|SCHEMA)|TRUNCATE\s+TABLE)\b/i],
   ['SQL TRUNCATE', /\bTRUNCATE\s+(?:TABLE\b|(?:ONLY\s+)?[A-Za-z_"`[])/i],
@@ -69,7 +78,42 @@ const COMMENT_PATTERNS = [
 ];
 
 const SQL_DDL = /\b(?:DROP\s+(?:TABLE|DATABASE|SCHEMA)|TRUNCATE\s+TABLE|ALTER\s+TABLE\b[^;]*\bDROP\b)\b/i;
-const SQL_EXECUTION_CONTEXT = /\b(?:query|execute|exec|raw|psql|sqlcmd)\b|(?:\bnode\b[^;&|]*\s-e\b)|(?:\bpython(?:\d+(?:\.\d+)?)?\b[^;&|]*\s-c\b)/i;
+const SQL_EXECUTION_CONTEXT = /\b(?:query|execute|exec|raw|psql|sqlcmd)\b|(?:\bnode\b[^;&|]{0,200}\s-e\b)|(?:\bpython(?:\d+(?:\.\d+)?)?\b[^;&|]{0,200}\s-c\b)/i;
+
+// A command that hands a quoted string to ANOTHER shell to run.
+//
+// commandSkeleton replaces every quoted string with <STR> before the patterns
+// run, which is right for prose — it is what stops a log message that merely
+// mentions `rm -rf` from firing. But when the quoted string is not prose, it is
+// the payload. Measured 2026-08-03, all four returning blocked:false:
+//
+//     bash -c "rm -rf /data"            skeleton: `bash -c  <STR> `
+//     sh -c 'rm -rf ~'                  skeleton: `sh -c  <STR> `
+//     ssh host "rm -rf /var/www"        skeleton: `ssh host  <STR> `
+//     docker run img sh -c "rm -rf /app"  skeleton: `docker run img sh -c  <STR> `
+//
+// while the bare `rm -rf /data` was blocked. The quotes alone were the bypass,
+// and every one of those pastes and runs verbatim.
+//
+// The fix mirrors what SQL_EXECUTION_CONTEXT already does a few lines below:
+// re-inspect the quoted contents, but ONLY when the command has a sink that
+// would actually execute them. Prose keeps its false-positive protection.
+// It is tested against the SKELETON, not the raw command, and that is
+// load-bearing. The skeleton has already had quoted strings replaced, so
+// `echo "ssh to the box and rm -rf it"` reduces to `echo <STR>` — no sink, no
+// re-inspection, and the prose keeps the false-positive protection the skeleton
+// exists to provide. Only a sink that survives OUTSIDE the quotes counts.
+const SHELL_EXECUTION_SINK = new RegExp(
+  '\\b(?:bash|sh|zsh|dash|ksh|docker|kubectl|podman|xargs|su|sudo|env|nohup|timeout'
+  + '|pwsh|powershell|cmd)\\b[^;&|]{0,200}?(?:\\s-{1,2}(?:c|command|exec)\\b|\\s/c\\b)'
+  // ssh and `docker/kubectl exec` take the command as a BARE argument with no
+  // -c flag at all, so `ssh host "rm -rf /var/www"` has no flag to match on.
+  + '|\\bssh\\b'
+  + '|\\b(?:docker|kubectl)\\b[^;&|]{0,200}?\\bexec\\b'
+  + '|\\bos\\s*\\.\\s*system\\s*\\('
+  + '|\\bsubprocess\\s*\\.\\s*(?:run|call|check_call|check_output|Popen)\\s*\\(',
+  'i',
+);
 
 export { ADVISORS };
 
@@ -123,6 +167,19 @@ export function detectDestructiveOperation(payload) {
   if (SQL_EXECUTION_CONTEXT.test(command)) {
     const quotedDdl = quotedStrings(command).some((value) => SQL_DDL.test(value));
     if (quotedDdl) hits.push('indirect SQL DDL');
+  }
+
+  // Same rule, applied to shell payloads: `bash -c "rm -rf /data"` is the same
+  // delete as `rm -rf /data`, one quote away from being invisible. The whole
+  // pattern list is re-run against the quoted contents, so anything that would
+  // be caught unquoted is caught here too — including a future pattern nobody
+  // remembers to add in two places.
+  if (SHELL_EXECUTION_SINK.test(skeleton)) {
+    for (const value of quotedStrings(command)) {
+      for (const [label, pattern] of DESTRUCTIVE_PATTERNS) {
+        if (pattern.test(value)) hits.push(`${label} (inside a quoted shell payload)`);
+      }
+    }
   }
 
   const uniqueHits = [...new Set(hits)];

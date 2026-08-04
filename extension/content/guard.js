@@ -84,7 +84,10 @@
   const state = {
     broken: false,
     degraded: false,
-    dangerousIds: new Set(),
+    // id -> element, not a bare Set of ids. Pruning needs the element itself so
+    // it can ask `isConnected` instead of looking the id up with a selector
+    // built by string concatenation — see pruneDetached.
+    dangerousIds: new Map(),
     promptRiskActive: false,
     lastPromptFingerprint: '',
     lastPromptBlockedAt: 0,
@@ -107,7 +110,7 @@
     // reasons, and folding them together would mean either a dead reading aid
     // claiming the guard had stopped watching, or a dead guard hiding behind a
     // working reading aid. Both are lies, so the state is kept apart.
-    claimIds: new Set(),
+    claimIds: new Map(),
     claimsBroken: false,
     claimsDegraded: false,
     claimsHealthFailures: 0,
@@ -215,11 +218,30 @@
 
   // ------------------------------------------------------------------- scan
 
+  // THE PAGE DOES NOT GET TO NAME ITS OWN BLOCKS.
+  //
+  // Until 2026-08-03 this read `data-helmion-id` back off the element and only
+  // minted a new id when the attribute was absent — so a page could choose the
+  // id, and choose the SAME id for two blocks. applyResults builds
+  // `new Map(results.map(r => [r.id, r]))`, where last-wins, so a harmless block
+  // sharing an id with a dangerous one handed its clean verdict to both and the
+  // warning was never drawn. Reproduced against the real worker: a `rm -rf /data`
+  // block followed by an `echo hello` block carrying the same forged id produced
+  // zero panels, no mask, an empty badge — while the self-test still logged
+  // "watching this page". That is exactly the silent-failure mode this file's
+  // own header forbids.
+  //
+  // Identity now lives in a WeakMap, which is unreachable from page script and
+  // dies with the element. The attribute is still WRITTEN, because ui.js and
+  // guard.css key off it — but it is never READ as authority again.
+  const blockIds = new WeakMap();
+
   function blockId(element) {
-    let id = element.getAttribute('data-helmion-id');
+    let id = blockIds.get(element);
     if (!id) {
       id = `hg-${state.nextId}`;
       state.nextId += 1;
+      blockIds.set(element, id);
       element.setAttribute('data-helmion-id', id);
     }
     return id;
@@ -239,23 +261,40 @@
     return `${text.length}:${hash.toString(36)}`;
   }
 
-  // The attribute is a parameter because the two lanes read DIFFERENT text off
-  // the same page and must not share a fingerprint: a paragraph's prose and a
-  // code block's contents change independently, and one lane marking an element
-  // seen would stop the other from ever looking at it.
-  const SEEN_ATTR = 'data-helmion-seen';
-  const PROSE_SEEN_ATTR = 'data-helmion-prose-seen';
+  // The seen-fingerprint is kept in a WeakMap per lane, NOT in a DOM attribute.
+  //
+  // It lived in `data-helmion-seen` until 2026-08-03. fingerprint() above is a
+  // plain djb2 over the block's own text — fully deterministic, so any page can
+  // compute it — and hasChanged() trusted whatever the attribute said. A page
+  // that pre-stamped the correct fingerprint onto its own <pre> was recorded as
+  // already-checked and never scanned once. Reproduced: zero panels, no mask,
+  // empty badge, and the force rescan does not save it, because state.lastStreaming
+  // starts false so `lastStreaming && !streaming` never fires on a freshly opened
+  // conversation. A shared conversation link was a complete, silent bypass.
+  //
+  // Two maps, not one, for the reason the old comment gives: the two lanes read
+  // DIFFERENT text off the same element and must not share a fingerprint, or one
+  // lane marking an element seen stops the other from ever looking at it.
+  const seenCode = new WeakMap();
+  const seenProse = new WeakMap();
 
-  function hasChanged(element, text, attribute) {
-    return element.getAttribute(attribute || SEEN_ATTR) !== fingerprint(text);
+  const SEEN_ATTR = 'code';
+  const PROSE_SEEN_ATTR = 'prose';
+
+  function seenMapFor(lane) {
+    return lane === PROSE_SEEN_ATTR ? seenProse : seenCode;
   }
 
-  function markSeen(element, text, attribute) {
-    element.setAttribute(attribute || SEEN_ATTR, fingerprint(text));
+  function hasChanged(element, text, lane) {
+    return seenMapFor(lane).get(element) !== fingerprint(text);
   }
 
-  function forgetSeen(element, attribute) {
-    element.removeAttribute(attribute || SEEN_ATTR);
+  function markSeen(element, text, lane) {
+    seenMapFor(lane).set(element, fingerprint(text));
+  }
+
+  function forgetSeen(element, lane) {
+    seenMapFor(lane).delete(element);
   }
 
   // A flagged block can leave the page without us ever seeing it again — the
@@ -263,10 +302,17 @@
   // dangerousIds forever, so the red count only ever climbed and the toast
   // could never clear (that path needs size === 0). Drop ids whose element is
   // no longer in the document.
+  // Asks the ELEMENT whether it is still in the document. This used to build
+  // `[data-helmion-id="${id}"]` and hand it to querySelector — which, when the
+  // page chose the id (it could, until 2026-08-03), let a value like `a"]` throw
+  // a SyntaxError per the DOM spec. Nothing here is inside a try, and runPass is
+  // called un-awaited, so the throw became an unhandled rejection that only
+  // console.error'd: state.broken stayed false, no banner drew, the badge stayed
+  // clean, and the whole pass died quietly. isConnected needs no selector at all.
   function pruneDetached() {
     const before = state.dangerousIds.size;
-    for (const id of [...state.dangerousIds]) {
-      if (!document.querySelector(`[data-helmion-id="${id}"]`)) state.dangerousIds.delete(id);
+    for (const [id, element] of [...state.dangerousIds]) {
+      if (!element || !element.isConnected) state.dangerousIds.delete(id);
     }
     if (state.dangerousIds.size === before) return false;
     if (state.dangerousIds.size === 0) HelmionUI.hideToast();
@@ -584,7 +630,7 @@
       if (!result || !result.blocked) continue;
 
       HelmionUI.warnBlock(block.element, result, { mask: MASK_DANGEROUS_BLOCKS });
-      state.dangerousIds.add(block.id);
+      state.dangerousIds.set(block.id, block.element);
       if (!newlyDangerous) newlyDangerous = result;
       noteAudit(result);
 
@@ -643,19 +689,23 @@
     sendStatus();
   }
 
+  // Same rule as blockId: the page does not get to name its own paragraphs.
+  const proseIds = new WeakMap();
+
   function proseId(element) {
-    let id = element.getAttribute('data-helmion-prose-id');
+    let id = proseIds.get(element);
     if (!id) {
       id = `hp-${state.nextProseId}`;
       state.nextProseId += 1;
+      proseIds.set(element, id);
       element.setAttribute('data-helmion-prose-id', id);
     }
     return id;
   }
 
   function pruneDetachedClaims() {
-    for (const id of [...state.claimIds]) {
-      if (!document.querySelector(`[data-helmion-prose-id="${id}"]`)) state.claimIds.delete(id);
+    for (const [id, element] of [...state.claimIds]) {
+      if (!element || !element.isConnected) state.claimIds.delete(id);
     }
   }
 
@@ -744,7 +794,7 @@
       }
 
       HelmionUI.noteClaims(passage.element, result);
-      state.claimIds.add(passage.id);
+      state.claimIds.set(passage.id, passage.element);
 
       // Unsourced claims are logged too. This reverses a decision made in
       // background/claims.js on 2026-07-29 — that a machine's opinion about
