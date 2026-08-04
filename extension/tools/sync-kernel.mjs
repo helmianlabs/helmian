@@ -76,7 +76,20 @@ export const CLAIMS_GENERATED_FILE = CLAIMS.generated;
 // timestamp, no hash, no version, no machine-specific path — so regenerating an
 // unchanged source produces a byte-identical file and the drift test stays
 // honest.
-export function headerFor(copy) {
+//
+// The header's LINE ENDING is taken from the body rather than hardcoded. It was
+// hardcoded to '\n' until 2026-08-03, and that silently broke the drift gate on
+// every Windows clone: git's core.autocrlf checks the sources out as CRLF, so the
+// body was CRLF while the header this script produced was LF. Regenerating never
+// reproduced the file on disk, and 7 of the suite's tests — the drift tests AND
+// their positive controls — failed on a clean clone for a reason that had nothing
+// to do with tampering. A tamper-detection gate that is red by default detects
+// nothing, because nobody can tell a real edit from the usual noise.
+function lineEndingOf(text) {
+  return /\r\n/.test(text) ? '\r\n' : '\n';
+}
+
+export function headerFor(copy, eol = '\n') {
   return [
     '// GENERATED FILE — DO NOT EDIT.',
     '//',
@@ -87,12 +100,14 @@ export function headerFor(copy) {
     '// extension/test/kernel-sync.test.mjs fails if this file and the original',
     '// ever differ, so the two can never drift apart quietly.',
     '',
-  ].join('\n');
+  ].join(eol);
 }
 
 export const HEADER = headerFor(KERNEL);
 
-export const HEADER_END = '// ==== END OF GENERATED HEADER — verbatim copy starts on the next line ====\n';
+export const HEADER_END_TEXT = '// ==== END OF GENERATED HEADER — verbatim copy starts on the next line ====';
+
+export const HEADER_END = `${HEADER_END_TEXT}\n`;
 
 // A browser cannot run Node code. If a copied source ever grows an import or
 // reaches for a Node built-in, copying it would ship an extension that breaks
@@ -133,15 +148,20 @@ export async function readKernelSource() {
 export async function buildGeneratedFile(copy = KERNEL) {
   const text = await readCopySource(copy);
   assertBrowserSafe(text, copy.label);
-  return `${headerFor(copy)}${HEADER_END}${text}`;
+  const eol = lineEndingOf(text);
+  return `${headerFor(copy, eol)}${HEADER_END_TEXT}${eol}${text}`;
 }
 
 // Returns the verbatim copy with the generated header removed, or null when the
-// header is missing (which means somebody replaced the file by hand).
+// header is missing (which means somebody replaced the file by hand). The end
+// marker is matched WITHOUT its line break so a CRLF checkout is stripped the
+// same as an LF one — matching on `====\n` skipped straight past a `====\r\n`
+// file and returned null, which read as "somebody replaced this by hand".
 export function stripHeader(text) {
-  const index = String(text).indexOf(HEADER_END);
+  const body = String(text);
+  const index = body.indexOf(HEADER_END_TEXT);
   if (index === -1) return null;
-  return String(text).slice(index + HEADER_END.length);
+  return body.slice(index + HEADER_END_TEXT.length).replace(/^\r?\n/, '');
 }
 
 export async function syncOne(copy) {

@@ -68,9 +68,44 @@ function setBadge(tabId, info) {
   }
 }
 
+// Three messages hand back, or destroy, the whole conversation ledger — the
+// excerpts of the user's chats this extension keeps as evidence. Everything else
+// here is stateless pattern-matching on text the caller already had.
+//
+// manifest.json declares no `externally_connectable`, so a web page cannot reach
+// this listener today, and that is the real protection. This is the second lock:
+// before 2026-08-03 the sender was not examined at ALL (it was read once, for a
+// tab id), so the day someone adds externally_connectable — or a content script
+// on one of the four matched origins is compromised — the ledger reads out to
+// whoever asks and clears with no confirmation. Only the popup needs these.
+const PRIVILEGED_TYPES = new Set([
+  'helmion:ledger',
+  'helmion:ledger-export',
+  'helmion:ledger-clear',
+]);
+
+function isFromOwnPopup(sender) {
+  if (!sender || sender.tab) return false;
+  if (sender.id !== chrome.runtime.id) return false;
+  try {
+    return String(sender.url || '').startsWith(chrome.runtime.getURL('popup/'));
+  } catch {
+    // getURL unavailable. Fail CLOSED — an unverifiable sender does not get the
+    // ledger. A safety tool's evidence log is the last thing to hand out on a
+    // maybe.
+    return false;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
     const type = message && message.type;
+
+    if (PRIVILEGED_TYPES.has(type) && !isFromOwnPopup(sender)) {
+      console.warn('[Helmion Guard] refused a privileged ledger message from an unexpected sender:', type);
+      sendResponse({ ok: false, error: 'this message is only accepted from the extension popup' });
+      return false;
+    }
 
     if (type === 'helmion:scan') {
       const results = scanBlocks(message.blocks || []);
