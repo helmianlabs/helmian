@@ -2,7 +2,9 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Helmion.Desktop.Core;
 using Helmion.LocalService.Protocol;
 using Microsoft.Win32;
@@ -29,7 +31,9 @@ public partial class MainWindow : Window
     private static readonly string[] BuiltInCoordinators = ["OpenAI", "Claude", "Gemini", "Grok"];
 
     private bool _themeSelectorReady;
+    private bool _syncingThemeSelectors;
     private string? _registeredWorkspacePath;
+    private string? _agentConfirmedWorkspacePath;
     private ConsoleSession? _consoleSession;
 
     /// <summary>
@@ -45,9 +49,26 @@ public partial class MainWindow : Window
     private bool _choosingWorkspace;
     private bool _refreshingWorkspace;
     private bool _voiceTurnBusy;
-    private bool _agentBusy;
-    private bool _consoleFullScreen;
+    /// <summary>Shared (no-session) bridge: still one turn. Named sessions run in parallel.</summary>
+    private bool _sharedBridgeBusy;
+    /// <summary>Per-session / shared turn cancel tokens. Esc cancels the selected session's turn.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> _activeTurnCts = new(StringComparer.Ordinal);
+    /// <summary>Output ownership for concurrent turns (AsyncLocal so two sessions never cross-wire).</summary>
+    private readonly System.Threading.AsyncLocal<AgentSession?> _asyncTurnSession = new();
+    private string? _lastBusyMessage;
+    private DateTimeOffset _lastBusyMessageAt;
+    private bool _initializingPermissionSelection;
+    private ShellLayoutState _shellLayout = ShellLayoutState.Default;
+    private bool _consoleFullScreen => _shellLayout.IsFullScreen;
+    // Claude Desktop (Troy's 03.43 recording): collapsed = top panel toggle only.
+    // Expanded (hover top / pin) = full labeled sidebar. No permanent icon strip.
+    private bool _sidebarPinnedOpen = false;
+    private readonly GridLength _sidebarCollapsedWidth = new(48);
+    private readonly GridLength _sidebarExpandedWidth = new(260);
+    private DispatcherTimer? _sidebarCollapseTimer;
     private WindowState _restoreWindowState = WindowState.Normal;
+    private WindowStyle _restoreWindowStyle = WindowStyle.SingleBorderWindow;
+    private ResizeMode _restoreResizeMode = ResizeMode.CanResize;
     private double _restoreLeft;
     private double _restoreTop;
     private double _restoreWidth;
@@ -78,23 +99,33 @@ public partial class MainWindow : Window
                 _consoleSession.PermissionMode = mode;
             }
 
-            ConsoleExecutionBadgeText.Text = AgentPermission.BadgeLabel(mode);
+            ConsoleExecutionBadgeText.Text = mode switch
+            {
+                AgentPermission.Full => "Full",
+                AgentPermission.Ask => "Accept",
+                AgentPermission.ReadTools => "Read",
+                _ => "Plan"
+            };
+            // Access is a capability label, not a success signal. Full access in
+            // particular must not read as a green "all clear" badge.
             ConsoleExecutionBadgeText.Foreground = mode == AgentPermission.ReadOnly
                 ? (Brush)FindResource("AmberBrush")
-                : (Brush)FindResource("AccentBrush");
+                : new SolidColorBrush(Color.FromRgb(0xB9, 0xC8, 0xD1));
 
-            var maestro = _consoleSession?.ActiveCoordinator ?? "?";
-            ConsoleServiceSessionText.Text = mode switch
+            ConsolePermissionInfoText.Text = mode switch
             {
                 AgentPermission.Full =>
-                    $"Full tools ON for every LLM · Maestro={maestro} · write_file + run_command allowed.",
+                    "Full — create/edit files, run declared tasks, open local previews without asking.",
                 AgentPermission.Ask =>
-                    $"Ask before each tool · Maestro={maestro} · every call waits for your approval; no answer = denied.",
+                    "Accept — tools run only after you approve each call (Allow once / session / Deny).",
                 AgentPermission.ReadTools =>
-                    $"Read tools ON for every LLM · Maestro={maestro} · writes/shell blocked.",
+                    "Read — inspect and search the project; no writes or task runs.",
                 _ =>
-                    $"Read-only chat · Maestro={maestro} · no tools until you raise permissions."
+                    "Plan — chat only. File and command tools stay off."
             };
+
+            HighlightPermissionChips(mode);
+            UpdateClaudeModeLine(mode);
 
             // The permission mode is this window's own execution posture and the one
             // execution-side fact it genuinely knows. Full permissions gets a red,
@@ -105,6 +136,141 @@ public partial class MainWindow : Window
         {
             // Ignore UI update exceptions
         }
+    }
+
+    /// <summary>
+    /// Claude Code CLI mode line: amber mode name + gray "Shift+Tab to …" hint.
+    /// Primary source: screenshot Claude composer + <see cref="AgentPermission"/>.
+    /// </summary>
+    private void UpdateClaudeModeLine(string? mode = null)
+    {
+        mode ??= CurrentPermissionMode;
+        if (ClaudeModeLabel is null || ClaudeModeHint is null)
+            return;
+
+        // Three-way Claude surface: plan / accept / auto-accept.
+        // Read-tools maps to a distinct line so chips still show truth.
+        var (label, hint, brush) = mode switch
+        {
+            AgentPermission.Full => (
+                "auto-accept edits",
+                "  Shift+Tab to plan",
+                new SolidColorBrush(Color.FromRgb(0xE5, 0xA5, 0x4B))),
+            AgentPermission.Ask => (
+                "accept edits",
+                "  Shift+Tab to auto-accept",
+                new SolidColorBrush(Color.FromRgb(0xE5, 0xA5, 0x4B))),
+            AgentPermission.ReadTools => (
+                "read only",
+                "  Shift+Tab to accept",
+                new SolidColorBrush(Color.FromRgb(0x9C, 0xA3, 0xAF))),
+            _ => (
+                "plan mode",
+                "  Shift+Tab to accept",
+                new SolidColorBrush(Color.FromRgb(0xE5, 0xA5, 0x4B)))
+        };
+
+        ClaudeModeLabel.Text = label;
+        ClaudeModeLabel.Foreground = brush;
+        ClaudeModeHint.Text = hint;
+    }
+
+    /// <summary>
+    /// Click the Claude mode label — cycle plan → accept → auto-accept → plan.
+    /// Full still requires the auto-mode confirm dialog.
+    /// </summary>
+    private void ClaudeModeLabel_Click(object sender, MouseButtonEventArgs e)
+    {
+        CycleClaudePermissionMode();
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Claude-style cycle: plan (read-only) → accept (ask) → auto-accept (full) → plan.
+    /// Read-tools is skipped so Shift+Tab matches Claude's three-step surface.
+    /// </summary>
+    private void CycleClaudePermissionMode()
+    {
+        var current = CurrentPermissionMode;
+        var next = current switch
+        {
+            AgentPermission.ReadOnly => AgentPermission.Ask,
+            AgentPermission.ReadTools => AgentPermission.Ask,
+            AgentPermission.Ask => AgentPermission.Full,
+            AgentPermission.Full => AgentPermission.ReadOnly,
+            _ => AgentPermission.Ask
+        };
+
+        if (next == AgentPermission.Full && current != AgentPermission.Full)
+        {
+            if (!ConfirmEnableFullPermissions())
+                return;
+        }
+
+        SelectPermissionInCombo(next);
+    }
+
+    private void PermissionChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string tag }) return;
+        var next = AgentPermission.Normalize(tag);
+        // Full = Claude "auto mode": confirm once before tools run without asking.
+        if (next == AgentPermission.Full && CurrentPermissionMode != AgentPermission.Full)
+        {
+            if (!ConfirmEnableFullPermissions())
+                return;
+        }
+        SelectPermissionInCombo(next);
+        // SelectionChanged persists mode + refreshes badge/chips.
+    }
+
+    /// <summary>
+    /// Claude-style "Enable auto mode?" gate for Full permissions.
+    /// Cancel keeps the previous mode. Primary source: AgentPermission.Full.
+    /// </summary>
+    private bool ConfirmEnableFullPermissions()
+    {
+        var workspace = _registeredWorkspacePath
+            ?? _currentWorkspaceInspection?.ProjectPath
+            ?? _desktopSettings.LastWorkspacePath
+            ?? "(no workspace selected)";
+        var shortPath = workspace.Length > 72 ? "…" + workspace[^68..] : workspace;
+
+        // Claude Desktop "Enable auto mode?" shape — confirm before tools run without asking.
+        var result = MessageBox.Show(
+            this,
+            "Helmian will run workspace actions without asking first.\n" +
+            "Longer tasks can continue uninterrupted. Guard still blocks destructive commands.\n\n" +
+            $"Workspace: {shortPath}\n\n" +
+            "You can switch back to Plan, Read, or Accept anytime.\n\n" +
+            "Enable full permissions?",
+            "Enable full permissions?",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Warning);
+
+        return result == MessageBoxResult.OK;
+    }
+
+    private void HighlightPermissionChips(string mode)
+    {
+        void StyleChip(Button? chip, string chipMode)
+        {
+            if (chip is null) return;
+            var on = string.Equals(mode, chipMode, StringComparison.Ordinal);
+            chip.Opacity = on ? 1.0 : 0.72;
+            chip.FontWeight = on ? FontWeights.Bold : FontWeights.SemiBold;
+            chip.BorderBrush = on
+                ? (Brush)FindResource("AccentBrush")
+                : (Brush)FindResource("GlassStrokeBrush");
+            chip.Foreground = on
+                ? (Brush)FindResource("TextBrush")
+                : (Brush)FindResource("SoftTextBrush");
+        }
+
+        StyleChip(PermissionChipReadOnly, AgentPermission.ReadOnly);
+        StyleChip(PermissionChipReadTools, AgentPermission.ReadTools);
+        StyleChip(PermissionChipAsk, AgentPermission.Ask);
+        StyleChip(PermissionChipFull, AgentPermission.Full);
     }
 
     private void ConsolePermissionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -120,7 +286,33 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_initializingPermissionSelection)
+        {
+            return;
+        }
+
         var mode = CurrentPermissionMode;
+
+        // Combo path to Full also needs the auto-mode confirm (chip path does its own).
+        if (mode == AgentPermission.Full
+            && e.RemovedItems.OfType<ComboBoxItem>().FirstOrDefault()?.Tag is string prevTag
+            && AgentPermission.Normalize(prevTag) != AgentPermission.Full)
+        {
+            if (!ConfirmEnableFullPermissions())
+            {
+                _initializingPermissionSelection = true;
+                try
+                {
+                    SelectPermissionInCombo(AgentPermission.Normalize(prevTag));
+                }
+                finally
+                {
+                    _initializingPermissionSelection = false;
+                }
+                return;
+            }
+        }
+
         if (_consoleSession is not null)
         {
             _consoleSession.PermissionMode = mode;
@@ -142,7 +334,32 @@ public partial class MainWindow : Window
         }
 
         UpdateConsoleExecutionState();
-        AppendConsoleLine($"[Permissions → {mode} · applies to OpenAI, Claude, Gemini, Grok]");
+        // Do not spam the transcript with [Access → …] on every chip click (ship polish).
+        if (ConsoleServiceSessionText is not null)
+            ConsoleServiceSessionText.Text = $"Access · {ConsoleExecutionBadgeText.Text}";
+    }
+
+    private void ConsolePermissionInfoButton_Click(object sender, RoutedEventArgs e)
+    {
+        ConsolePermissionPopup.IsOpen = !ConsolePermissionPopup.IsOpen;
+    }
+
+    private void ConsoleInputBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        ConsolePasteHint.Visibility = Visibility.Visible;
+        if (ConsoleComposerBorder is not null)
+        {
+            ConsoleComposerBorder.BorderBrush = (Brush)FindResource("AccentStrokeStrongBrush");
+        }
+    }
+
+    private void ConsoleInputBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        ConsolePasteHint.Visibility = Visibility.Collapsed;
+        if (ConsoleComposerBorder is not null)
+        {
+            ConsoleComposerBorder.BorderBrush = (Brush)FindResource("StrokeBrush");
+        }
     }
 
     /// <summary>
@@ -289,8 +506,14 @@ public partial class MainWindow : Window
         // The ownership rule itself lives in Core (SessionShelf.cs, SessionOutputRouting)
         // so the smoke suite can drive it — this project is not referenced by the test
         // project, and inline the rule was untestable.
-        var destination = SessionOutputRouting.ForLine(_turnSession, _sessions.Selected);
-        destination.Owner?.Transcript.Append(text);
+        // Prefer AsyncLocal owner so concurrent multi-agent turns keep transcripts separate.
+        var turnOwner = _asyncTurnSession.Value ?? _turnSession;
+        var destination = SessionOutputRouting.ForLine(turnOwner, _sessions.Selected);
+        if (destination.Owner is not null)
+        {
+            destination.Owner.Transcript.Append(text);
+            destination.Owner.NotifyTranscriptChanged();
+        }
 
         if (!destination.ShowOnScreen)
         {
@@ -305,6 +528,20 @@ public partial class MainWindow : Window
         ConsoleOutputText.AppendText(text);
         ConsoleOutputText.CaretIndex = ConsoleOutputText.Text.Length;
         ConsoleOutputText.ScrollToEnd();
+    }
+
+    private void ConsoleClearOutputButton_Click(object sender, RoutedEventArgs e)
+    {
+        // The bridge owns the conversation. The transcript buffer is display-only,
+        // so clearing it cannot reset the model, permissions, settings or workspace.
+        if (_sessions.Selected is { } cleared)
+        {
+            cleared.Transcript.Clear();
+            cleared.NotifyTranscriptChanged();
+        }
+        ConsoleOutputText.Clear();
+        ConsoleServiceSessionText.Text = "Output cleared · conversation preserved";
+        ConsoleInputBox.Focus();
     }
 
     private void SelectPermissionInCombo(string? mode)
@@ -370,10 +607,17 @@ public partial class MainWindow : Window
         InitializeComponent();
         // Before the first UpdateSnapshot: the derived labels read the feed.
         InitializeGuardPanel();
+        // Read-only summary only. This deliberately does not populate the fresh
+        // launch decision used by the detailed consent flow.
+        RefreshSandboxSummaryCard();
         SetServiceStatus("Starting…", "Waiting for local loopback service", connected: false);
         UpdateSnapshot();
         ThemeSelector.ItemsSource = ColorThemeCatalog.All;
         ThemeSelector.SelectedValue = initialTheme.Id;
+        QuickThemeSelector.ItemsSource = ColorThemeCatalog.All;
+        QuickThemeSelector.SelectedValue = initialTheme.Id;
+        RailThemeSelector.ItemsSource = ColorThemeCatalog.All;
+        RailThemeSelector.SelectedValue = initialTheme.Id;
         ThemeDescription.Text = initialTheme.Description;
         ThemePersistenceLabel.Text = persistTheme
             ? "Saved locally for this Windows user"
@@ -381,6 +625,8 @@ public partial class MainWindow : Window
         // Restore the saved text size. save:false — reapplying what we just read
         // would rewrite the settings file on every launch for no reason.
         ApplyTextScale(_desktopSettings.ResolvedTextScale, save: false);
+        // Herald pane sizes / QR / log font from the same desktop-settings file.
+        ApplyHeraldLayoutFromSettings(saveLabel: false);
 
         _pages = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal)
         {
@@ -398,7 +644,7 @@ public partial class MainWindow : Window
         {
             ["Overview"] = OverviewNav,
             ["Workspace"] = WorkspaceNav,
-            ["Console"] = ConsoleNav,
+            ["Console"] = ConsoleNavPrimary,
             ["Activity"] = ActivityNav,
             ["Evidence"] = EvidenceNav,
             ["Approvals"] = ApprovalsNav,
@@ -410,7 +656,9 @@ public partial class MainWindow : Window
         RepopulateMaestroCoordinators();
 
         _themeSelectorReady = true;
-        NavigateTo("Overview");
+        ApplyShellPanelVisibility();
+        // Console is the cockpit desk (Room + Maestro). Overview is a status page, not home.
+        NavigateTo("Console");
         if (persistTheme)
         {
             Loaded += MainWindow_Loaded;
@@ -447,33 +695,273 @@ public partial class MainWindow : Window
         foreach (var button in _navigationButtons.Values)
         {
             button.Background = Brushes.Transparent;
-            button.Foreground = (Brush)FindResource("MutedTextBrush");
+            button.Foreground = (Brush)FindResource("TextBrush");
         }
 
         _pages[pageName].Visibility = Visibility.Visible;
+        if (string.Equals(pageName, "Overview", StringComparison.Ordinal)
+            && DataContext is PilotSnapshot currentSnapshot)
+        {
+            ApplyDerivedSnapshotLabels(currentSnapshot);
+        }
+        if (string.Equals(pageName, "Integrations", StringComparison.Ordinal))
+        {
+            RefreshHeraldPrerequisiteUi();
+            UpdateMediaProviderCapabilities();
+        }
         var activeButton = _navigationButtons[pageName];
         activeButton.Background = (Brush)FindResource("AccentDarkBrush");
         activeButton.Foreground = (Brush)FindResource("TextBrush");
 
-        PageTitle.Text = pageName;
-        PageContext.Text = pageName switch
+        var isConsole = string.Equals(pageName, "Console", StringComparison.Ordinal);
+        HeaderChrome.Visibility = isConsole ? Visibility.Collapsed : Visibility.Visible;
+        HeaderRow.Height = isConsole ? new GridLength(0) : new GridLength(58);
+
+        if (!isConsole)
         {
-            "Overview" => "A calm view of the local pilot",
-            "Workspace" => "Project and lease posture",
-            "Console" => "Modern CLI · permissions · voice · full screen (F11)",
-            "Activity" => "Live Activity Stream · Orchestration Timeline",
-            "Evidence" => "Handoffs, checkpoints, and durable proof",
-            "Approvals" => "Optional advanced owner decisions",
-            "Integrations" => "Safe connection boundaries",
-            "Release" => "The path from pilot to multi-user product",
-            "Settings" => "Personal pilot preferences",
-            _ => "Helmion personal pilot"
-        };
+            PageTitle.Text = pageName is "Activity" or "Evidence" or "Approvals"
+                ? "Review & History"
+                : pageName;
+            PageContext.Text = pageName switch
+            {
+                "Overview" => "Actions and recent results",
+                "Workspace" => "Project details",
+                "Activity" => "Search recorded actions and results",
+                "Evidence" => "Evidence and handoffs",
+                "Approvals" => "Items that need attention",
+                "Integrations" => "Connections and remote access",
+                "Release" => "Internal release reference",
+                "Settings" => "Appearance and advanced details",
+                _ => "Helmian"
+            };
+        }
     }
 
     private void ConsoleFullScreenButton_Click(object sender, RoutedEventArgs e)
     {
         SetConsoleFullScreen(!_consoleFullScreen);
+    }
+
+    private void LeftPanelToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Hamburger cycles: unpinned strip → pinned open → unpinned strip.
+        // (Full hide still available from View menu / restore edge button path.)
+        if (!_shellLayout.LeftPanelVisible)
+        {
+            _shellLayout = _shellLayout.ToggleLeftPanel();
+            _sidebarPinnedOpen = true;
+            ApplyShellPanelVisibility();
+            if (SidebarRailGlyphButton is not null)
+                SidebarRailGlyphButton.ToolTip = "Pinned open · click to unpin (hover again)";
+            return;
+        }
+
+        if (_sidebarPinnedOpen)
+        {
+            _sidebarPinnedOpen = false;
+            CollapseSidebarHoverVisual();
+            if (SidebarRailGlyphButton is not null)
+                SidebarRailGlyphButton.ToolTip = "Hover to expand · click to pin open";
+            if (LeftPanelCollapseButton is not null)
+                LeftPanelCollapseButton.ToolTip = "Pin closed completely (edge restore)";
+            return;
+        }
+
+        // Unpinned + glyph click → pin open (labels stay).
+        _sidebarPinnedOpen = true;
+        ExpandSidebarHoverVisual();
+        if (SidebarRailGlyphButton is not null)
+            SidebarRailGlyphButton.ToolTip = "Pinned open · click to unpin (hover again)";
+    }
+
+    /// <summary>
+    /// Hover the top panel toggle (or open sidebar body) → full labeled menu.
+    /// Leave the sidebar → collapse to toggle-only (unless pinned).
+    /// </summary>
+    private void SidebarHeaderHoverZone_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        EnsureSidebarHoverTimer();
+        _sidebarCollapseTimer?.Stop();
+        if (!_shellLayout.LeftPanelVisible) return;
+        ExpandSidebarHoverVisual();
+    }
+
+    private void SidebarChrome_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        // Keep open while moving from toggle into the labeled list.
+        EnsureSidebarHoverTimer();
+        _sidebarCollapseTimer?.Stop();
+    }
+
+    private void SidebarChrome_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_sidebarPinnedOpen || !_shellLayout.LeftPanelVisible) return;
+        EnsureSidebarHoverTimer();
+        _sidebarCollapseTimer?.Stop();
+        _sidebarCollapseTimer?.Start();
+    }
+
+    private void EnsureSidebarHoverTimer()
+    {
+        if (_sidebarCollapseTimer is not null) return;
+        _sidebarCollapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(280) };
+        _sidebarCollapseTimer.Tick += (_, _) =>
+        {
+            _sidebarCollapseTimer.Stop();
+            if (_sidebarPinnedOpen || !_shellLayout.LeftPanelVisible) return;
+            if (SidebarChrome?.IsMouseOver == true) return;
+            CollapseSidebarHoverVisual();
+        };
+    }
+
+    private void ExpandSidebarHoverVisual()
+    {
+        SidebarColumn.Width = _sidebarExpandedWidth;
+        // Restore frosted glass panel only when the menu is open.
+        if (SidebarChrome is not null)
+        {
+            SidebarChrome.Background = TryFindResource("GlassPanelBrush") as System.Windows.Media.Brush
+                ?? SidebarChrome.Background;
+            SidebarChrome.BorderThickness = new Thickness(0, 0, 1, 0);
+        }
+        if (SidebarBrandCopy is not null) SidebarBrandCopy.Visibility = Visibility.Visible;
+        if (LeftPanelCollapseButton is not null) LeftPanelCollapseButton.Visibility = Visibility.Visible;
+        if (SidebarExpandedBody is not null) SidebarExpandedBody.Visibility = Visibility.Visible;
+        if (SidebarStatusDotButton is not null) SidebarStatusDotButton.Visibility = Visibility.Visible;
+        if (SidebarRailGlyphButton is not null)
+            SidebarRailGlyphButton.ToolTip = _sidebarPinnedOpen
+                ? "Pinned open · click to unpin"
+                : "Hover open · click to pin · leave to hide";
+    }
+
+    private void CollapseSidebarHoverVisual()
+    {
+        // Claude collapsed: only the top panel toggle — no tall glass strip, no "H" clip, no ghost chrome.
+        SidebarColumn.Width = _sidebarCollapsedWidth;
+        if (SidebarChrome is not null)
+        {
+            SidebarChrome.Background = System.Windows.Media.Brushes.Transparent;
+            SidebarChrome.BorderThickness = new Thickness(0);
+        }
+        if (SidebarBrandCopy is not null) SidebarBrandCopy.Visibility = Visibility.Collapsed;
+        if (LeftPanelCollapseButton is not null) LeftPanelCollapseButton.Visibility = Visibility.Collapsed;
+        if (SidebarExpandedBody is not null) SidebarExpandedBody.Visibility = Visibility.Collapsed;
+        if (SidebarStatusDotButton is not null) SidebarStatusDotButton.Visibility = Visibility.Collapsed;
+        if (SidebarRailGlyphButton is not null)
+            SidebarRailGlyphButton.ToolTip = "Open sidebar · click to pin";
+    }
+
+    /// <summary>Width remembered when Guard fully slides off to the right.</summary>
+    private GridLength _guardColumnWidthBeforeCollapse = new(360);
+
+    private void RightPanelToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Capture width before hide so restore feels like a slide, not a jump.
+        if (_shellLayout.RightPanelVisible
+            && GuardPanelColumn is not null
+            && GuardPanelColumn.Width.IsAbsolute
+            && GuardPanelColumn.Width.Value >= 120)
+        {
+            _guardColumnWidthBeforeCollapse = GuardPanelColumn.Width;
+        }
+
+        _shellLayout = _shellLayout.ToggleRightPanel();
+        ApplyShellPanelVisibility();
+    }
+
+    /// <summary>
+    /// Drag Guard fully right (narrower than snap threshold) → same full collapse
+    /// as the › button, with the edge restore strip. Room already does this on the left.
+    /// </summary>
+    private void ContentGuardSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
+    {
+        if (GuardPanelColumn is null || !_shellLayout.RightPanelVisible)
+            return;
+
+        var width = GuardPanelChrome?.ActualWidth
+            ?? (GuardPanelColumn.Width.IsAbsolute ? GuardPanelColumn.Width.Value : 0);
+        // Still a usable panel — keep whatever they dragged to.
+        if (width > 96)
+        {
+            if (width >= 200)
+                _guardColumnWidthBeforeCollapse = new GridLength(width);
+            return;
+        }
+
+        // Fully slid off right → collapse + edge strip.
+        if (_shellLayout.RightPanelVisible)
+        {
+            _shellLayout = _shellLayout.ToggleRightPanel();
+            ApplyShellPanelVisibility();
+        }
+    }
+
+    private void ApplyShellPanelVisibility()
+    {
+        if (_shellLayout.LeftPanelVisible)
+        {
+            SidebarChrome.Visibility = Visibility.Visible;
+            LeftPanelRestoreButton.Visibility = Visibility.Collapsed;
+            if (_sidebarPinnedOpen)
+                ExpandSidebarHoverVisual();
+            else
+                CollapseSidebarHoverVisual();
+        }
+        else
+        {
+            SidebarColumn.Width = new GridLength(0);
+            SidebarChrome.Visibility = Visibility.Collapsed;
+            LeftPanelRestoreButton.Visibility = Visibility.Visible;
+        }
+
+        // Splitter rails collapse with their panel so Create/Preview can drag on both ends.
+        if (SidebarContentSplitColDef is not null)
+        {
+            SidebarContentSplitColDef.Width = _shellLayout.LeftPanelVisible
+                ? new GridLength(10)
+                : new GridLength(0);
+        }
+
+        if (ContentGuardSplitColDef is not null)
+        {
+            ContentGuardSplitColDef.Width = _shellLayout.RightPanelVisible
+                ? new GridLength(10)
+                : new GridLength(0);
+        }
+
+        if (SidebarContentSplitter is not null)
+            SidebarContentSplitter.Visibility = _shellLayout.LeftPanelVisible
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        if (ContentGuardSplitter is not null)
+            ContentGuardSplitter.Visibility = _shellLayout.RightPanelVisible
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        // MinWidth 0 always — full slide-off to the right (was stuck at 280 before).
+        GuardPanelColumn.MinWidth = 0;
+        GuardPanelColumn.MaxWidth = _shellLayout.RightPanelVisible ? 900 : 0;
+        if (_shellLayout.RightPanelVisible)
+        {
+            var restore = _guardColumnWidthBeforeCollapse;
+            if (!restore.IsAbsolute || restore.Value < 200)
+                restore = new GridLength(360);
+            GuardPanelColumn.Width = restore;
+        }
+        else
+        {
+            GuardPanelColumn.Width = new GridLength(0);
+        }
+
+        GuardPanelChrome.Visibility = _shellLayout.RightPanelVisible
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        // Edge strip on the right when Guard is fully off (Room-style).
+        RightPanelRestoreButton.Visibility = _shellLayout.RightPanelVisible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        if (ViewSidebarMenuItem is not null) ViewSidebarMenuItem.IsChecked = _shellLayout.LeftPanelVisible;
+        if (ViewDetailsMenuItem is not null) ViewDetailsMenuItem.IsChecked = _shellLayout.RightPanelVisible;
     }
 
     /// <summary>
@@ -489,11 +977,24 @@ public partial class MainWindow : Window
     /// </summary>
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        // Esc cancels the selected session's mid-turn (or shared console turn).
+        if (e.Key == System.Windows.Input.Key.Escape
+            && (_sharedBridgeBusy || (_sessions.Selected?.IsBusy == true) || !_activeTurnCts.IsEmpty))
+        {
+            CancelActiveAgentTurn();
+            AppendConsoleLine("[Turn cancelled (Esc) — you can send again.]");
+            e.Handled = true;
+            return;
+        }
+
         var control = (System.Windows.Input.Keyboard.Modifiers
                        & System.Windows.Input.ModifierKeys.Control)
                       == System.Windows.Input.ModifierKeys.Control;
+        var shift = (System.Windows.Input.Keyboard.Modifiers
+                     & System.Windows.Input.ModifierKeys.Shift)
+                    == System.Windows.Input.ModifierKeys.Shift;
 
-        switch (ShellShortcuts.Resolve(control, ToShellKey(e.Key), _consoleFullScreen))
+        switch (ShellShortcuts.Resolve(control, ToShellKey(e.Key), _consoleFullScreen, shift))
         {
             case ShellShortcut.TextLarger:
                 ApplyTextScale(TextScaleRange.Larger(_desktopSettings.ResolvedTextScale));
@@ -509,6 +1010,30 @@ public partial class MainWindow : Window
 
             case ShellShortcut.FocusProjectSearch:
                 FocusProjectSearch();
+                break;
+
+            case ShellShortcut.NewProject:
+                MenuNewProject_Click(this, new RoutedEventArgs());
+                break;
+
+            case ShellShortcut.OpenProject:
+                MenuOpenProject_Click(this, new RoutedEventArgs());
+                break;
+
+            case ShellShortcut.OpenSettings:
+                NavigateTo("Settings");
+                break;
+
+            case ShellShortcut.ToggleSidebar:
+                MenuToggleSidebar_Click(this, new RoutedEventArgs());
+                break;
+
+            case ShellShortcut.ToggleDetails:
+                MenuToggleDetails_Click(this, new RoutedEventArgs());
+                break;
+
+            case ShellShortcut.ToggleBottomPanel:
+                MenuToggleBottomPanel_Click(this, new RoutedEventArgs());
                 break;
 
             case ShellShortcut.ToggleConsoleFullScreen:
@@ -546,6 +1071,12 @@ public partial class MainWindow : Window
         System.Windows.Input.Key.D0 => ShellKey.D0,
         System.Windows.Input.Key.NumPad0 => ShellKey.NumPad0,
         System.Windows.Input.Key.K => ShellKey.K,
+        System.Windows.Input.Key.B => ShellKey.B,
+        System.Windows.Input.Key.D => ShellKey.D,
+        System.Windows.Input.Key.J => ShellKey.J,
+        System.Windows.Input.Key.N => ShellKey.N,
+        System.Windows.Input.Key.O => ShellKey.O,
+        System.Windows.Input.Key.OemComma => ShellKey.OemComma,
         System.Windows.Input.Key.F11 => ShellKey.F11,
         System.Windows.Input.Key.Escape => ShellKey.Escape,
         _ => ShellKey.Other,
@@ -615,37 +1146,51 @@ public partial class MainWindow : Window
             }
 
             _restoreWindowState = WindowState;
+            _restoreWindowStyle = WindowStyle;
+            _restoreResizeMode = ResizeMode;
             _restoreLeft = Left;
             _restoreTop = Top;
             _restoreWidth = Width;
             _restoreHeight = Height;
 
-            SidebarColumn.Width = new GridLength(0);
-            SidebarChrome.Visibility = Visibility.Collapsed;
+            // This is true Windows full screen: caption and resize chrome are
+            // removed. Each side panel keeps the user's independent choice.
+            ApplyShellPanelVisibility();
             HeaderChrome.Visibility = Visibility.Collapsed;
             FooterChrome.Visibility = Visibility.Collapsed;
+            ApplicationMenu.Visibility = Visibility.Collapsed;
             HeaderRow.Height = new GridLength(0);
             FooterRow.Height = new GridLength(0);
 
+            WindowState = WindowState.Normal;
+            WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.NoResize;
             WindowState = WindowState.Maximized;
-            _consoleFullScreen = true;
-            ConsoleFullScreenButton.Content = "⛶  Exit full screen";
-            ConsoleFullScreenButton.ToolTip = "Exit full-screen console (Esc or F11)";
+            _shellLayout = _shellLayout.WithFullScreen(true);
+            ConsoleFullScreenButton.Content = "⛶";
+            ConsoleFullScreenButton.ToolTip =
+                "Exit full screen (Escape or F11). Sidebar and Details keep their independent state.";
             if (ConsoleLiveLabel is not null)
             {
                 ConsoleLiveLabel.Text = "FULL SCREEN";
             }
 
-            AppendConsoleLine("[Full screen ON — Esc or F11 to exit]");
         }
         else
         {
-            SidebarColumn.Width = new GridLength(248);
-            SidebarChrome.Visibility = Visibility.Visible;
-            HeaderChrome.Visibility = Visibility.Visible;
-            FooterChrome.Visibility = Visibility.Visible;
-            HeaderRow.Height = new GridLength(88);
-            FooterRow.Height = new GridLength(38);
+            WindowState = WindowState.Normal;
+            WindowStyle = WindowStyle.SingleBorderWindow;
+            // Always re-enable resize when leaving full screen (never stick on NoResize).
+            ResizeMode = ResizeMode.CanResize;
+            _restoreResizeMode = ResizeMode.CanResize;
+            ApplyShellPanelVisibility();
+            ApplicationMenu.Visibility = Visibility.Visible;
+            var consoleVisible = ConsolePage.Visibility == Visibility.Visible;
+            HeaderChrome.Visibility = consoleVisible ? Visibility.Collapsed : Visibility.Visible;
+            var showBottomPanel = ViewBottomPanelMenuItem.IsChecked;
+            FooterChrome.Visibility = showBottomPanel ? Visibility.Visible : Visibility.Collapsed;
+            HeaderRow.Height = consoleVisible ? new GridLength(0) : new GridLength(58);
+            FooterRow.Height = showBottomPanel ? new GridLength(38) : new GridLength(0);
 
             WindowState = _restoreWindowState == WindowState.Minimized
                 ? WindowState.Normal
@@ -660,22 +1205,21 @@ public partial class MainWindow : Window
                 Height = _restoreHeight;
             }
 
-            _consoleFullScreen = false;
-            ConsoleFullScreenButton.Content = "⛶  Full screen";
-            ConsoleFullScreenButton.ToolTip = "Toggle full-screen console (F11). Esc exits.";
+            _shellLayout = _shellLayout.WithFullScreen(false);
+            ConsoleFullScreenButton.Content = "⛶";
+            ConsoleFullScreenButton.ToolTip = "Enter full-screen Console (F11). Press Escape or F11 to return.";
             if (ConsoleLiveLabel is not null)
             {
                 ConsoleLiveLabel.Text = "LIVE";
             }
 
-            AppendConsoleLine("[Full screen OFF]");
         }
     }
 
     public void ApplyThemeForPreview(string themeId)
     {
         ApplyTheme(themeId, save: false);
-        ThemeSelector.SelectedValue = ColorThemeCatalog.Get(themeId).Id;
+        SyncThemeSelectors(themeId);
     }
 
     /// <summary>
@@ -690,6 +1234,38 @@ public partial class MainWindow : Window
     {
         NavigateTo("Console");
         ConsoleMcpPanel.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Photographs the Antigravity settings panel with a REAL status, not the "Checking…"
+    /// placeholder. RefreshAntigravityStatus is re-run here because the preview path renders
+    /// before MainWindow_Loaded's async body has finished, so an unassisted shot proves only
+    /// that the XAML parsed — not what the panel actually says about this machine.
+    /// </summary>
+    public void RevealAntigravityPanelForPreview()
+    {
+        NavigateTo("Settings");
+        RefreshAntigravityStatus();
+
+        // BringIntoView alone does nothing here: it defers to a later layout pass that the
+        // preview path never runs, so the shot came back showing the top of Settings and
+        // proved only that the XAML parsed. Measure first, then scroll the containing
+        // ScrollViewer by the panel's own offset within it.
+        UpdateLayout();
+        DependencyObject? node = AntigravityStatusLabel;
+        while (node is not null && node is not ScrollViewer)
+        {
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        if (node is ScrollViewer scroller)
+        {
+            var offset = AntigravityStatusLabel
+                .TransformToAncestor(scroller)
+                .Transform(new Point(0, 0)).Y;
+            scroller.ScrollToVerticalOffset(scroller.VerticalOffset + offset - 320);
+            UpdateLayout();
+        }
     }
 
     /// <summary>
@@ -737,12 +1313,64 @@ public partial class MainWindow : Window
 
     private void ThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_themeSelectorReady || ThemeSelector.SelectedValue is not string themeId)
+        if (!_themeSelectorReady || _syncingThemeSelectors
+            || ThemeSelector.SelectedValue is not string themeId)
         {
             return;
         }
 
+        SyncThemeSelectors(themeId);
         ApplyTheme(themeId, _persistTheme);
+    }
+
+    private void QuickThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_themeSelectorReady || _syncingThemeSelectors
+            || QuickThemeSelector.SelectedValue is not string themeId)
+        {
+            return;
+        }
+
+        SyncThemeSelectors(themeId);
+        ApplyTheme(themeId, _persistTheme);
+    }
+
+    private void RailThemeSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_themeSelectorReady || _syncingThemeSelectors
+            || RailThemeSelector.SelectedValue is not string themeId)
+        {
+            return;
+        }
+
+        SyncThemeSelectors(themeId);
+        ApplyTheme(themeId, _persistTheme);
+    }
+
+    private void SyncThemeSelectors(string themeId)
+    {
+        var selected = ColorThemeCatalog.Get(themeId);
+        _syncingThemeSelectors = true;
+        try
+        {
+            ThemeSelector.SelectedValue = selected.Id;
+            QuickThemeSelector.SelectedValue = selected.Id;
+            RailThemeSelector.SelectedValue = selected.Id;
+            if (ThemeCycleButton is not null) ThemeCycleButton.Content = $"Theme · {selected.Name}";
+        }
+        finally
+        {
+            _syncingThemeSelectors = false;
+        }
+    }
+
+    private void ThemeCycleButton_Click(object sender, RoutedEventArgs e)
+    {
+        var current = ColorThemeCatalog.Get(_desktopSettings.ColorTheme);
+        var index = ColorThemeCatalog.All.ToList().FindIndex(option => option.Id == current.Id);
+        var next = ColorThemeCatalog.All[(index + 1 + ColorThemeCatalog.All.Count) % ColorThemeCatalog.All.Count];
+        SyncThemeSelectors(next.Id);
+        ApplyTheme(next.Id, save: true);
     }
 
     private void ApplyTheme(string themeId, bool save)
@@ -781,8 +1409,9 @@ public partial class MainWindow : Window
     /// overwrites those, and a minimum derived from an already-scaled minimum
     /// ratchets upward every time the user presses Ctrl+=.
     /// </summary>
-    private const double BaseMinWidth = 1120;
-    private const double BaseMinHeight = 720;
+    // Soft floors so the window stays resizable on smaller monitors (was 1120×720).
+    private const double BaseMinWidth = 900;
+    private const double BaseMinHeight = 560;
 
     private void TextScaleSmallerButton_Click(object sender, RoutedEventArgs e) =>
         ApplyTextScale(TextScaleRange.Smaller(_desktopSettings.ResolvedTextScale));
@@ -875,6 +1504,11 @@ public partial class MainWindow : Window
     protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
+        StopRemoteControlDesktopGateway();
+        DisposeSuperGrok();
+        DisposeChatGpt();
+        DisposeGeminiSubscription();
+        DisposeAntigravity();
         _consoleSession?.Dispose();
         // The selector disposes the session it built; disposing both is safe
         // (VoiceSession.Dispose is idempotent) and covers the pre-selector path.
@@ -891,6 +1525,10 @@ public partial class MainWindow : Window
     public void NotifyLocalServiceOnline(string detail)
     {
         _serviceConnected = true;
+        // A REAL ANSWER HAS NOW ARRIVED. Until this flips, the guard card says "I
+        // have not checked yet" rather than reporting the bool's false default as a
+        // failed check — see PublishServicePostureCard.
+        _serviceEverChecked = true;
         SetServiceStatus("ONLINE", detail, connected: true);
         OverviewServiceStateText.Text = "Connected";
         OverviewServiceStateText.Foreground = (Brush)FindResource("AccentBrush");
@@ -905,6 +1543,7 @@ public partial class MainWindow : Window
     public void NotifyLocalServiceUnavailable(string detail)
     {
         _serviceConnected = false;
+        _serviceEverChecked = true;
         SetServiceStatus("Unavailable", detail, connected: false);
         OverviewServiceStateText.Text = "Offline";
         OverviewServiceStateText.Foreground = (Brush)FindResource("AmberBrush");
@@ -918,11 +1557,33 @@ public partial class MainWindow : Window
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         Loaded -= MainWindow_Loaded;
+        // Guarantee drag-resize unless true console full screen (F11).
+        if (!_consoleFullScreen)
+        {
+            ResizeMode = ResizeMode.CanResize;
+            WindowStyle = WindowStyle.SingleBorderWindow;
+        }
+        EnsureRemoteControlDesktopGatewayStarted();
         LoadApiKeysToInputs();
 
         _consoleSession = new ConsoleSession();
         _consoleSession.PermissionMode = _desktopSettings.ResolvedPermissionMode;
-        SelectPermissionInCombo(_consoleSession.PermissionMode);
+        // Before ConfigureMaestro below, so a stored SuperGrok session is already attached
+        // when the Grok route is built rather than only after the first settings save.
+        InitializeSuperGrok();
+        InitializeChatGpt();
+        InitializeGeminiSubscription();
+        InitializeClaudeSubscription();
+        InitializeAntigravity();
+        _initializingPermissionSelection = true;
+        try
+        {
+            SelectPermissionInCombo(_consoleSession.PermissionMode);
+        }
+        finally
+        {
+            _initializingPermissionSelection = false;
+        }
         try
         {
             Environment.SetEnvironmentVariable(
@@ -934,19 +1595,19 @@ public partial class MainWindow : Window
             // ignore
         }
 
-        // Voice goes through the backend selector rather than newing a VoiceSession
-        // here, so the app can say which backend is live instead of assuming.
-        // duplexFactory is deliberately null: Moshi needs ~14 GB of VRAM and this
-        // box measured 6 GB, so the honest resolution is Whisper+Kokoro. A fake
-        // duplex adapter would only move the lie into the UI.
-        _voiceSelector = new VoiceBackendSelector(CreateVoiceSession);
+        // Local voice only: Whisper STT + Kokoro TTS. No Moshi / duplex factory.
+        _voiceSelector = new VoiceBackendSelector(
+            CreateVoiceSession,
+            duplexFactory: null,
+            preferred: VoiceBackend.WhisperKokoro);
         _voiceSelector.StatusChanged += (_, status) =>
             Dispatcher.Invoke(() => ApplyVoiceBackendStatus(status));
         _voiceSelector.Error += (_, msg) =>
             Dispatcher.Invoke(() =>
             {
-                AppendConsoleLine($"\n[Voice] {msg}");
-                ConsoleServiceSessionText.Text = msg;
+                // Status strip only — do not spam the transcript with model-path walls.
+                if (ConsoleServiceSessionText is not null)
+                    ConsoleServiceSessionText.Text = "Voice · " + (msg.Length > 96 ? msg[..96] + "…" : msg);
             });
         var envSettings = EnvironmentSettingsStore.Load();
         _consoleSession.ConfigureMaestro(
@@ -954,8 +1615,6 @@ public partial class MainWindow : Window
             envSettings,
             _desktopSettings.CustomProviders);
         UpdateConsoleExecutionState();
-        AppendConsoleLine(
-            "[Console ready · paste multi-line with Ctrl+V · permissions apply to every LLM]");
         UpdateConsoleWorkspaceLabel();
         ApplyConsoleInputContrast();
 
@@ -963,13 +1622,39 @@ public partial class MainWindow : Window
         DataObject.AddPastingHandler(ConsoleInputBox, ConsoleInputBox_OnPaste);
 
         await ConnectServiceAsync(restoreWorkspace: true);
+        // The first remote-control sync can run before the local service is
+        // available during a cold desktop start. Run it again after the
+        // service handshake so an already-paired phone always receives a
+        // live session without requiring the operator to reopen anything.
+        await SyncRemoteControlSessionAsync();
+        try
+        {
+            // Fill Team dropdowns with Discord servers and GitHub repos so the
+            // panel is useful after login without another Connect click.
+            await RefreshTeamConversationAsync();
+        }
+        catch
+        {
+            // Team is optional at boot; Connect buttons still work later.
+        }
         UpdateConsoleWorkspaceLabel();
         ApplyConsoleInputContrast();
     }
 
     /// <summary>
-    /// Keep composer text bright on the dark terminal chrome.
-    /// Theme TextBrush is dark on clean-light — that made typed text invisible.
+    /// Keeps render/layout smoke windows from starting the live pipe service or
+    /// restoring a user's workspace. Other Loaded handlers still run, so the
+    /// visual tree is wired exactly as it is in the real desktop.
+    /// </summary>
+    public void DisableRuntimeStartupForPreview()
+    {
+        Loaded -= MainWindow_Loaded;
+    }
+
+    /// <summary>
+    /// Keep the composer as one theme-cohesive surface. The TextBox is
+    /// transparent so its rectangular background cannot show through the rounded
+    /// parent; ink, caret and selection come from the active palette.
     /// </summary>
     private void ApplyConsoleInputContrast()
     {
@@ -978,11 +1663,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Local brushes so theme swaps cannot repaint us dark-on-dark.
-        ConsoleInputBox.Background = new SolidColorBrush(Color.FromRgb(0x0A, 0x12, 0x18));
-        ConsoleInputBox.Foreground = new SolidColorBrush(Color.FromRgb(0xF2, 0xFB, 0xFF));
-        ConsoleInputBox.CaretBrush = new SolidColorBrush(Color.FromRgb(0x7F, 0xE3, 0xFF));
-        ConsoleInputBox.SelectionBrush = new SolidColorBrush(Color.FromRgb(0x2A, 0x6F, 0x8F));
+        ConsoleInputBox.Background = Brushes.Transparent;
+        ConsoleInputBox.Foreground = (Brush)FindResource("TextBrush");
+        ConsoleInputBox.CaretBrush = (Brush)FindResource("AccentBrush");
+        ConsoleInputBox.SelectionBrush = (Brush)FindResource("AccentStrokeStrongBrush");
+        if (ConsoleComposerBorder is not null)
+        {
+            ConsoleComposerBorder.Background = (Brush)FindResource("PanelInsetBrush");
+            ConsoleComposerBorder.BorderBrush = ConsoleInputBox.IsKeyboardFocusWithin
+                ? (Brush)FindResource("AccentStrokeStrongBrush")
+                : (Brush)FindResource("StrokeBrush");
+        }
         ConsoleInputBox.Opacity = 1.0;
         ConsoleInputBox.Visibility = Visibility.Visible;
     }
@@ -1073,6 +1764,7 @@ public partial class MainWindow : Window
 
             EnvironmentSettingsStore.Save(updatedSettings);
             _consoleSession ??= new ConsoleSession();
+            ApplySuperGrokToConsole();
             _consoleSession.ConfigureMaestro(
                 maestroCoordinator,
                 updatedSettings,
@@ -1411,9 +2103,13 @@ public partial class MainWindow : Window
             {
                 dialog.InitialDirectory = _desktopSettings.LastWorkspacePath;
             }
-            else if (Directory.Exists(@"E:\Helmion"))
+            else
             {
-                dialog.InitialDirectory = @"E:\Helmion";
+                var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                var customerRoot = ProjectWorkspaceDefaults.CustomerRoot(documents);
+                dialog.InitialDirectory = Directory.Exists(customerRoot)
+                    ? customerRoot
+                    : documents;
             }
 
             // Show picker immediately on the UI thread — no awaits above this line.
@@ -1603,6 +2299,7 @@ public partial class MainWindow : Window
                     workspacePath,
                     timeout.Token);
                 _serviceConnected = true;
+                _serviceEverChecked = true;
             }
             catch (Exception serviceError) when (
                 serviceError is IOException
@@ -1618,6 +2315,7 @@ public partial class MainWindow : Window
                 inspection = await Task.Run(() => WorkspaceInspector.Inspect(workspacePath));
                 usedFallback = true;
                 _serviceConnected = false;
+                _serviceEverChecked = true;
             }
 
             ApplyWorkspaceInspection(inspection);
@@ -1635,11 +2333,13 @@ public partial class MainWindow : Window
 
             _registeredWorkspacePath = inspection.ProjectPath;
             UpdateConsoleWorkspaceLabel(_registeredWorkspacePath);
+            NotifyProjectScopedPanelsChanged();
 
             // Registering a workspace changes which projects exist. Without this
             // the panel kept listing the PREVIOUS workspace's projects until the
             // window was reopened, and the search box then filtered a stale list.
             RefreshProjectShelf();
+            RefreshProjectWorkbench(forceCanvasReload: true);
             if (persistSelection)
             {
                 _desktopSettings = _desktopSettings with
@@ -1755,6 +2455,38 @@ public partial class MainWindow : Window
     /// </summary>
     private async void ConsoleInputBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        // Claude Code: Shift+Tab cycles plan / accept / auto-accept on the mode line.
+        if (e.Key == System.Windows.Input.Key.Tab
+            && System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift)
+            && !System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control)
+            && !System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Alt))
+        {
+            CycleClaudePermissionMode();
+            e.Handled = true;
+            return;
+        }
+
+        // TYPING "/" LISTS THE COMMANDS, which is what the app has been telling
+        // people to do while doing nothing. The Skills row says "Type / in the box
+        // to see them" and typing / did exactly nothing — Troy typed "/////" and
+        // sat there. Same class of defect as the Ctrl+K tooltip: the UI made a
+        // promise the code did not keep.
+        //
+        // Only fires on the FIRST character, so "/deploy staging" types normally
+        // and a / inside a sentence is untouched.
+        if ((e.Key == System.Windows.Input.Key.Oem2 || e.Key == System.Windows.Input.Key.Divide)
+            && ConsoleInputBox is not null
+            && ConsoleInputBox.Text.Length == 0)
+        {
+            // Fetch quietly, then OPEN THE PICKER. Quiet because the picker is the
+            // answer now — printing the same list into the transcript as well would
+            // be the app saying the same thing twice, which is the noise Troy has
+            // been cutting out of this panel all night.
+            await ListSlashCommandsAsync(quiet: true);
+            ShowSlashPicker();
+            return;   // NOT handled — the "/" still lands in the box so he can keep typing.
+        }
+
         if (e.Key != System.Windows.Input.Key.Enter)
         {
             return;
@@ -1818,18 +2550,149 @@ public partial class MainWindow : Window
         box.ScrollToEnd();
     }
 
-    private async Task SendConsoleInputAsync(string? overrideText = null)
+    /// <summary>
+    /// Fan-out: each @agent (or @all) gets a coordination prompt on its own bridge.
+    /// Manager session is optional — console dispatch works without creating Maestro first.
+    /// </summary>
+    private async Task DispatchMaestroMentionsAsync(
+        AgentSession? manager,
+        MaestroMentions.ParseResult parse,
+        string originalText)
+    {
+        var workers = MaestroMentions.ResolveWorkers(parse, _sessions.Sessions, manager);
+        if (workers.Count == 0)
+        {
+            var known = _sessions.Sessions
+                .Where(s => !s.IsManager)
+                .Select(s => s.Name)
+                .ToArray();
+            var hint = known.Length == 0
+                ? "Start agents with Claude / ChatGPT / Grok / Gemini first."
+                : "Known agents: " + string.Join(", ", known.Select(n => "@" + CompactMentionName(n)))
+                  + " — or @all.";
+            AppendConsoleLine(
+                "No matching agents for those @mentions. " + hint);
+            return;
+        }
+
+        var busy = workers.Where(w => w.IsBusy).Select(w => w.Name).ToArray();
+        var ready = workers.Where(w => !w.IsBusy).ToList();
+        if (busy.Length > 0)
+        {
+            AppendConsoleLine(
+                $"[Skipped busy: {string.Join(", ", busy)}. Wait for them or Esc their turn.]");
+        }
+
+        if (ready.Count == 0)
+        {
+            AppendConsoleLine("[All mentioned agents are busy — nothing dispatched.]");
+            return;
+        }
+
+        var managerName = manager?.Name ?? "Console";
+        var previous = _sessions.Selected;
+        if (manager is not null)
+            _sessions.Select(manager);
+
+        AppendConsoleLine(
+            $"{(manager is null ? "Dispatch" : $"Maestro \"{managerName}\"")} → " +
+            $"{string.Join(", ", ready.Select(w => w.Name))}" +
+            (parse.MentionsAll ? " (@all)" : "") + "\n" +
+            "Each agent claims a distinct slice so they do not step on each other.");
+
+        if (manager is not null)
+            manager.IsBusy = true;
+        try
+        {
+            var tasks = ready.Select(async worker =>
+            {
+                var peers = ready.Where(w => !ReferenceEquals(w, worker)).ToList();
+                var prompt = MaestroMentions.BuildWorkerPrompt(
+                    managerName,
+                    worker,
+                    peers,
+                    parse.BodyWithoutMentions);
+
+                AppendConsoleLine($"→ @{worker.Name}");
+
+                try
+                {
+                    await SendConsoleInputAsync(
+                        overrideText: prompt,
+                        includeStagedAttachments: false,
+                        allowConsoleControls: false,
+                        forceSession: worker);
+
+                    var preview = worker.ChatPreview;
+                    if (manager is not null)
+                        _asyncTurnSession.Value = manager;
+                    else
+                        _asyncTurnSession.Value = null;
+                    AppendConsoleLine($"← @{worker.Name}: {preview}");
+                    ReportReplyContentPolicy(worker, preview, worker.Name);
+                }
+                catch (Exception ex)
+                {
+                    if (manager is not null)
+                        _asyncTurnSession.Value = manager;
+                    else
+                        _asyncTurnSession.Value = null;
+                    AppendConsoleLine($"← @{worker.Name} failed: {ex.Message}");
+                }
+                finally
+                {
+                    _asyncTurnSession.Value = null;
+                }
+            });
+
+            await Task.WhenAll(tasks);
+            AppendConsoleLine(
+                "Dispatch finished. Read each agent card for full chat; " +
+                "claims should not overlap if they followed coordination rules.");
+        }
+        finally
+        {
+            if (manager is not null)
+            {
+                manager.IsBusy = false;
+                manager.NotifyTranscriptChanged();
+            }
+            if (previous is not null)
+                _sessions.Select(previous);
+            else if (manager is not null)
+                _sessions.Select(manager);
+            ShowSessionTranscript(_sessions.Selected);
+        }
+    }
+
+    private static string CompactMentionName(string name) =>
+        string.Concat(name.Where(c => !char.IsWhiteSpace(c)));
+
+    private async Task SendConsoleInputAsync(
+        string? overrideText = null,
+        bool includeStagedAttachments = true,
+        bool allowConsoleControls = true,
+        AgentSession? forceSession = null)
     {
         var text = (overrideText ?? ConsoleInputBox.Text).Trim();
         if (string.IsNullOrEmpty(text)) return;
-        if (_agentBusy)
+        // MULTI-AGENT: each named session can run its own turn at once (own bridge).
+        // Block only when THIS target is already mid-turn, or Ask-mode has an open approval.
+        var sessionForGate = forceSession ?? _sessions.Selected;
+        if (sessionForGate is not null && sessionForGate.IsBusy)
         {
-            // Name the session that is holding the line. One turn runs at a time
-            // because the ask-mode approval strip is a single slot — see the class
-            // note in MainWindow.Sessions.cs — so this can be a different session
-            // than the one you are looking at, and saying which one is the
-            // difference between a wait and a mystery.
-            AppendConsoleLine(SessionTurnRouting.BusyMessage(_turnSession));
+            ReportBusyGate(sessionForGate);
+            return;
+        }
+        if (sessionForGate is null && _sharedBridgeBusy)
+        {
+            ReportBusyGate(null);
+            return;
+        }
+        if (AgentPermission.RequiresApproval(CurrentPermissionMode)
+            && !string.IsNullOrEmpty(_pendingApprovalId))
+        {
+            AppendConsoleLine("[Busy — answer Allow once / Allow for session / Deny first, or Esc.]");
             return;
         }
 
@@ -1838,8 +2701,14 @@ public partial class MainWindow : Window
             // Nothing was dispatched, so the text stays in the composer to be retried.
             ConsoleInputBox.Text = text;
             ConsoleInputBox.CaretIndex = text.Length;
-            AppendConsoleLine($"\n> {text}");
-            AppendConsoleLine("[Console session not ready]");
+            AppendConsoleLine($"\nRequest\n{text}");
+            AppendConsoleLine("Action needed — the Console is not ready yet. Open Troubleshooting & Status for details.");
+            return;
+        }
+
+        if (!allowConsoleControls && (text.StartsWith('!') || text.StartsWith('/')))
+        {
+            AppendConsoleLine("[Herald refused a shell escape or slash control. Nothing was sent.]");
             return;
         }
 
@@ -1856,7 +2725,38 @@ public partial class MainWindow : Window
             ConsoleInputBox.Clear();
         }
 
-        AppendConsoleLine($"\n> {text}");
+        var session = forceSession ?? _sessions.Selected;
+
+        // Worker dispatches log under manager; still stamp the assignment onto the worker card.
+        if (forceSession is null)
+            AppendConsoleLine($"\nYou\n{text}");
+        else
+        {
+            forceSession.Transcript.Append($"\nManager → you\n{text}\n");
+            forceSession.NotifyTranscriptChanged();
+        }
+
+        // Maestro @dispatch only for human-typed lines (not internal worker prompts).
+        if (forceSession is null)
+        {
+            var mentionParse = MaestroMentions.Parse(text);
+            if (mentionParse.HasMentions)
+            {
+                // Manager is optional: @agent / @all dispatch from console without creating Maestro first.
+                var manager = session is { IsManager: true }
+                    ? session
+                    : _sessions.Manager;
+
+                if (manager is { IsBusy: true })
+                {
+                    AppendConsoleLine($"[Manager \"{manager.Name}\" is still dispatching — wait or Esc.]");
+                    return;
+                }
+
+                await DispatchMaestroMentionsAsync(manager, mentionParse, text);
+                return;
+            }
+        }
 
         // "/reset" is a console control, not a command file — handle it before anything else.
         if (text.Equals("/reset", StringComparison.OrdinalIgnoreCase))
@@ -1864,11 +2764,11 @@ public partial class MainWindow : Window
             try
             {
                 if (_agentBridge is not null) await _agentBridge.ResetAsync();
-                AppendConsoleLine("[Agent conversation reset]");
+                AppendConsoleLine("Result\nConversation reset.");
             }
             catch (Exception ex)
             {
-                AppendConsoleLine($"[Agent reset failed: {ex.Message}]");
+                AppendConsoleLine($"Action needed — the conversation could not be reset: {ex.Message}");
             }
             return;
         }
@@ -1923,20 +2823,32 @@ public partial class MainWindow : Window
             }
         }
 
-        // Full coding agent (same engine as `helmion agent` CLI) via Node bridge.
-        // Permissions + provider apply to every LLM the same way.
-        //
-        // ROUTED AT THE SELECTED SESSION. With a session selected the turn runs on
-        // THAT session's provider and THAT session's own bridge process, and its
-        // output is tagged with the session's name. With no sessions started,
-        // `session` is null and every line below is exactly what it was before:
-        // the Maestro coordinator from settings, on the shared bridge.
-        var session = _sessions.Selected;
-        _turnSession = session;
-        if (session is not null) session.IsBusy = true;
-        _agentBusy = true;
-        var spoken = new System.Text.StringBuilder();
+        // A tool-enabled model turn must be bound to a project the user selected
+        // in this app. ResolveAgentWorkspace has useful read-only fallbacks for
+        // status and chat, but a fallback must never silently become the folder
+        // where a provider can read, write, run, or preview.
         var permission = CurrentPermissionMode;
+        if (AgentPermission.AllowsExecution(permission)
+            && (string.IsNullOrWhiteSpace(_registeredWorkspacePath)
+                || !Directory.Exists(_registeredWorkspacePath)))
+        {
+            AppendConsoleLine(
+                "Action needed — choose a project on the Workspace page before enabling workspace actions. Nothing was sent and nothing ran.");
+            return;
+        }
+
+        // Full coding agent (same engine as `helmion agent` CLI) via Node bridge.
+        // Named sessions run CONCURRENTLY (each own bridge). Shared console is one-at-a-time.
+        var turnKey = session?.Id ?? "__shared__";
+        _turnSession = session;
+        _asyncTurnSession.Value = session;
+        if (session is not null) session.IsBusy = true;
+        else _sharedBridgeBusy = true;
+
+        var turnCts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        _activeTurnCts[turnKey] = turnCts;
+        var turnToken = turnCts.Token;
+        var spoken = new System.Text.StringBuilder();
         try
         {
             var settings = EnvironmentSettingsStore.Load();
@@ -1953,28 +2865,14 @@ public partial class MainWindow : Window
                 _desktopSettings.CustomProviders);
             _consoleSession.PermissionMode = permission;
 
-            var workspace = ResolveAgentWorkspace();
+            var workspace = AgentPermission.AllowsExecution(permission)
+                ? Path.GetFullPath(_registeredWorkspacePath!)
+                : ResolveAgentWorkspace();
             UpdateConsoleWorkspaceLabel(workspace);
 
             var bridge = route.Session is null
                 ? (_agentBridge ??= new AgentBridge())
                 : ResolveSessionBridge(route.Session);
-
-            AppendConsoleLine(session is null
-                ? $"[Agent · {provider} · {permission} · workspace {workspace}]"
-                : $"[Session \"{session.Name}\" · {provider} · {permission} · workspace {workspace}]");
-            if (permission == AgentPermission.Ask)
-            {
-                AppendConsoleLine(
-                    "[Ask mode] Every tool call stops here for your approval: Allow once, "
-                    + "Allow for session, or Deny. Anything you do not answer is denied.");
-            }
-            else if (permission != AgentPermission.Full)
-            {
-                AppendConsoleLine(
-                    $"[Tip] Permissions={permission}. To approve tools one at a time, choose "
-                    + "\"Ask before each tool\"; for no prompts at all, choose Full tools.");
-            }
 
             // THE + MENU'S ATTACHMENTS ACTUALLY GO NOW.
             //
@@ -1988,14 +2886,17 @@ public partial class MainWindow : Window
             // because a file can be deleted or grown past the cap between the file
             // dialog and this line. A refusal turns the row red with the reason and
             // says so in the transcript; it is never dropped in silence.
-            var outgoing = PromptAttachments.Compose(text, _plusMenu.ActiveAttachments);
+            var stagedAttachments = includeStagedAttachments
+                ? _plusMenu.ActiveAttachments
+                : Array.Empty<PlusActionItem>();
+            var outgoing = PromptAttachments.Compose(text, stagedAttachments, provider);
 
             foreach (var refused in outgoing.Refused)
             {
                 var stale = _plusMenu.ActiveAttachments.FirstOrDefault(
                     a => string.Equals(a.SourcePath, refused.Path, StringComparison.OrdinalIgnoreCase));
                 if (stale is not null) _plusMenu.Fail(stale, refused.Message);
-                AppendConsoleLine($"[Attachment NOT sent — {refused.Message}]");
+                AppendConsoleLine($"Action needed — attachment not included: {refused.Message}");
             }
 
             // Consumed by the message they were attached to, so a file does not
@@ -2003,25 +2904,28 @@ public partial class MainWindow : Window
             // the Removed state, so Undo puts it back for the next message.
             foreach (var sent in outgoing.Included)
             {
-                AppendConsoleLine(
-                    $"  📎 {sent.FileName} sent with this message ({sent.Message})");
                 var done = _plusMenu.ActiveAttachments.FirstOrDefault(
                     a => string.Equals(a.SourcePath, sent.Path, StringComparison.OrdinalIgnoreCase));
                 if (done is not null) _plusMenu.Remove(done);
             }
 
             var turnFailed = (string?)null;
+            var resultStarted = false;
             await foreach (var ev in bridge.TurnAsync(
                                outgoing.Text,
                                workspace,
                                provider,
                                permission,
-                               _desktopSettings.CustomProviders))
+                               _desktopSettings.CustomProviders,
+                               session?.TierOverride,
+                               session?.ModelOverride,
+                               outgoing.Images,
+                               turnToken))
             {
                 switch (ev.Event)
                 {
                     case "status":
-                        AppendConsoleLine($"… {ev.Message}");
+                        // Progress belongs in compact session details, not chat.
                         break;
                     case "model":
                         // Which model the per-task router picked for this round, and why.
@@ -2035,15 +2939,15 @@ public partial class MainWindow : Window
                         ShowAnsweringModel(ev);
                         break;
                     case "command":
-                        // A slash command was expanded before the model saw it.
-                        AppendConsoleLine(
-                            $"  ⌘ /{ev.Name} expanded from {ev.CommandPath ?? "a command file"}");
+                        // Command expansion detail is retained by the audit path, not the main transcript.
                         break;
                     case "tool":
-                        AppendConsoleLine($"  → {ev.Name}({Truncate(ev.ArgsJson, 100)})");
+                        // Tool arguments are diagnostic detail and do not belong in the main transcript.
                         break;
                     case "tool_result":
-                        AppendConsoleLine($"  ← {Truncate(ev.Preview, 160)}");
+                        // Raw provider tool output remains hidden; a typed, bounded
+                        // workbench status is safe to surface and audit separately.
+                        ApplyAgentWorkbenchResult(ev);
                         break;
                     case "permission_request":
                     {
@@ -2084,7 +2988,7 @@ public partial class MainWindow : Window
                             "shutdown" or "reset" => " (session ended before you answered)",
                             _ => ""
                         };
-                        AppendConsoleLine($"  ⇢ {verdict}: {ev.Tool ?? ev.Name ?? "tool"}{by}");
+                        AppendConsoleLine($"Review result — {verdict.ToLowerInvariant()}: {ev.Tool ?? ev.Name ?? "action"}{by}");
                         break;
                     }
                     case "permission_unknown":
@@ -2093,12 +2997,17 @@ public partial class MainWindow : Window
                     case "assistant":
                         if (!string.IsNullOrWhiteSpace(ev.Text))
                         {
+                            if (!resultStarted)
+                            {
+                                AppendConsoleLine(session?.Name ?? "Maestro");
+                                resultStarted = true;
+                            }
                             AppendConsoleLine(ev.Text);
                             if (!ev.Partial) spoken.Append(ev.Text).Append(' ');
                         }
                         break;
                     case "error":
-                        AppendConsoleLine($"[Agent error] {ev.Message}");
+                        AppendConsoleLine($"Action needed — {ev.Message}");
                         turnFailed = ev.Message ?? "The bridge reported an error with no message.";
                         if (spoken.Length == 0)
                         {
@@ -2107,6 +3016,12 @@ public partial class MainWindow : Window
                         break;
                     case "hello":
                     case "ready":
+                        if (!string.IsNullOrWhiteSpace(ev.Workspace))
+                        {
+                            UpdateConsoleWorkspaceLabel(
+                                ev.Workspace,
+                                agentConfirmed: true);
+                        }
                         ConsoleServiceSessionText.Text =
                             $"Agent ready · {ev.Provider ?? provider} · {permission} · {ev.Workspace ?? workspace}";
                         break;
@@ -2130,6 +3045,11 @@ public partial class MainWindow : Window
                         $"\"{session.Name}\" completed a turn",
                         $"The last turn on {provider} finished without the bridge reporting an "
                         + "error. This says the turn completed — not that the answer was correct.");
+                    // Content policy on the full spoken reply (not streaming partials).
+                    if (spoken.Length > 0)
+                    {
+                        ReportReplyContentPolicy(session, spoken.ToString());
+                    }
                 }
                 else
                 {
@@ -2154,6 +3074,12 @@ public partial class MainWindow : Window
                     AppendConsoleLine($"[Voice TTS error: {voiceEx.Message}]");
                 }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            AppendConsoleLine("[Turn cancelled — you can send again.]");
+            if (ConsoleServiceSessionText is not null)
+                ConsoleServiceSessionText.Text = "Turn cancelled";
         }
         catch (Exception ex)
         {
@@ -2189,18 +3115,95 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _agentBusy = false;
             if (session is not null) session.IsBusy = false;
-            // Output stops belonging to this session the moment its turn ends, so
-            // anything printed afterwards follows the selection again.
-            _turnSession = null;
-            // A question can only be answered while its turn is running, so never
-            // leave one on screen after the turn ends.
+            else _sharedBridgeBusy = false;
+            if (ReferenceEquals(_turnSession, session))
+                _turnSession = null;
+            if (ReferenceEquals(_asyncTurnSession.Value, session))
+                _asyncTurnSession.Value = null;
+            if (_activeTurnCts.TryRemove(turnKey, out var doneCts))
+            {
+                try { doneCts.Dispose(); } catch { /* ignore */ }
+            }
+            _lastBusyMessage = null;
+            // Only clear the global approval strip if this turn owned it.
+            // Concurrent non-Ask turns leave another session's approval alone.
             CancelPendingApproval();
-            // Composer was already cleared at dispatch; anything typed during the turn
-            // is the user's next message and must survive.
         }
     }
+
+    private void ReportBusyGate(AgentSession? busySession)
+    {
+        var busy = SessionTurnRouting.BusyMessage(busySession)
+            + " Other sessions can still run. Esc cancels THIS session's turn.";
+        var now = DateTimeOffset.UtcNow;
+        // Longer debounce — rapid retries used to flood the transcript with the same Busy line.
+        if (!string.Equals(busy, _lastBusyMessage, StringComparison.Ordinal)
+            || (now - _lastBusyMessageAt) > TimeSpan.FromSeconds(12))
+        {
+            AppendConsoleLine(busy);
+            _lastBusyMessage = busy;
+            _lastBusyMessageAt = now;
+        }
+        if (ConsoleServiceSessionText is not null)
+            ConsoleServiceSessionText.Text = "Busy · Esc cancels · Esc×2 clears all · other agents free";
+    }
+
+    /// <summary>
+    /// Abort the selected session's mid-turn (or shared console). Other agents keep running
+    /// unless their token is cancelled. Always clears stuck IsBusy flags that have no live CTS
+    /// so a dead mid-turn cannot trap the console (Esc spam).
+    /// </summary>
+    private void CancelActiveAgentTurn()
+    {
+        var key = _sessions.Selected?.Id ?? "__shared__";
+        if (_activeTurnCts.TryGetValue(key, out var cts))
+        {
+            try { cts.Cancel(); } catch { /* ignore */ }
+        }
+        else
+        {
+            // No live token for selection — cancel everything and clear all busy flags.
+            foreach (var pair in _activeTurnCts)
+            {
+                try { pair.Value.Cancel(); } catch { /* ignore */ }
+            }
+        }
+
+        if (_sessions.Selected is not null)
+            _sessions.Selected.IsBusy = false;
+        else
+            _sharedBridgeBusy = false;
+
+        // Stuck busy without a cancellation token (bridge hung / crashed mid-turn).
+        foreach (var session in _sessions.Sessions)
+        {
+            if (session.IsBusy && !_activeTurnCts.ContainsKey(session.Id))
+                session.IsBusy = false;
+        }
+
+        // Second Esc within 2s while anything still busy → hard clear every session.
+        var now = DateTimeOffset.UtcNow;
+        if ((now - _lastCancelAllAt).TotalSeconds < 2)
+        {
+            foreach (var pair in _activeTurnCts)
+            {
+                try { pair.Value.Cancel(); } catch { /* ignore */ }
+            }
+            foreach (var session in _sessions.Sessions)
+                session.IsBusy = false;
+            _sharedBridgeBusy = false;
+            AppendConsoleLine("[All agent turns cancelled (Esc×2).]");
+        }
+
+        _lastCancelAllAt = now;
+        CancelPendingApproval();
+        _lastBusyMessage = null;
+        if (ConsoleServiceSessionText is not null)
+            ConsoleServiceSessionText.Text = "Turn cancelled · ready";
+    }
+
+    private DateTimeOffset _lastCancelAllAt = DateTimeOffset.MinValue;
 
     private static string Truncate(string? value, int max)
     {
@@ -2222,14 +3225,11 @@ public partial class MainWindow : Window
     {
         var model = ev.Model;
         if (string.IsNullOrWhiteSpace(model)) return;
-
-        var tier = string.IsNullOrWhiteSpace(ev.Tier) ? null : ev.Tier;
-        var label = tier is null ? model! : $"{tier} · {model}";
-
-        var line = $"  ◆ {label}";
-        if (!string.IsNullOrWhiteSpace(ev.Reason)) line += $" — {ev.Reason}";
-        if (ev.Round is > 1) line += $"  (round {ev.Round})";
-        AppendConsoleLine(line);
+        if (ConsoleModelLabel is not null)
+        {
+            ConsoleModelLabel.ToolTip = $"Planned route: {ev.Tier ?? "auto"} · {model}"
+                + (string.IsNullOrWhiteSpace(ev.Reason) ? "" : $" — {ev.Reason}");
+        }
     }
 
     /// <summary>
@@ -2267,10 +3267,8 @@ public partial class MainWindow : Window
             ConsoleModelLabel.ToolTip = rendering.ToolTip;
         }
 
-        if (rendering.TranscriptLine is not null)
-        {
-            AppendConsoleLine(rendering.TranscriptLine);
-        }
+        // The transcript is deliberately conversational. Provenance remains in
+        // this compact inspector label and the durable audit ledger.
     }
 
     /// <summary>
@@ -2279,6 +3277,13 @@ public partial class MainWindow : Window
     /// rather than letting it go to the model unremarked.
     /// </summary>
     private readonly HashSet<string> _knownCommands = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Command name -> the one-line description the picker shows beside it.
+    /// Populated from the same bridge payload as <see cref="_knownCommands"/>, so
+    /// the picker can never show a command the bridge did not report.
+    /// </summary>
+    private readonly Dictionary<string, string> _knownCommandDetails = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The workspace the bridge actually scanned to produce <see cref="_knownCommands"/>.
@@ -2319,9 +3324,17 @@ public partial class MainWindow : Window
             }
 
             _knownCommands.Clear();
+            _knownCommandDetails.Clear();
             foreach (var cmd in ev.Commands ?? [])
             {
                 _knownCommands.Add(cmd.Name);
+
+                // The picker shows the description beside the name, so it is kept
+                // here rather than only printed to the transcript. The argument hint
+                // rides along because "/ship [what changed]" tells you how to use it
+                // and "/ship" does not.
+                var hint = string.IsNullOrWhiteSpace(cmd.ArgumentHint) ? string.Empty : $"{cmd.ArgumentHint}  ";
+                _knownCommandDetails[cmd.Name] = (hint + (cmd.Description ?? string.Empty)).Trim();
             }
 
             _knownCommandsWorkspace = ev.Workspace;
@@ -2373,12 +3386,12 @@ public partial class MainWindow : Window
         if (!showing)
         {
             AppendConsoleLine(
-                "\n[MCP install security] Stage 1 (discover) and stage 2 (audit) run from here. "
-                + "Approval, sandbox and install stay on the command line: approving requires typing "
-                + "a freshly generated challenge phrase into a real terminal, and a window cannot "
-                + "stand in for that.");
+                "\n[MCP security · read-only] Discover searches; Browse selects a local folder; "
+                + "Audit reads source. This interface cannot approve or install anything.");
         }
     }
+
+    private string? _lastMcpAuditRawJson;
 
     private void McpBrowseButton_Click(object sender, RoutedEventArgs e)
     {
@@ -2406,19 +3419,35 @@ public partial class MainWindow : Window
         await RunMcpStageAsync(
             "audit",
             McpAuditButton,
-            () => McpSecurityRunner.AuditAsync(McpAuditPathInput.Text));
+            () => McpSecurityRunner.AuditAsync(McpAuditPathInput.Text),
+            result =>
+            {
+                if (!string.IsNullOrWhiteSpace(result.RawJson))
+                {
+                    _lastMcpAuditRawJson = result.RawJson;
+                }
+            });
+    }
+
+    private void McpAuditSearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        AppendConsoleLine(McpSecurityRunner.SearchAuditFindings(
+            _lastMcpAuditRawJson,
+            McpAuditSearchInput.Text));
     }
 
     private async Task RunMcpStageAsync(
         string stage,
         Button button,
-        Func<Task<McpSecurityResult>> run)
+        Func<Task<McpSecurityResult>> run,
+        Action<McpSecurityResult>? completed = null)
     {
         button.IsEnabled = false;
-        AppendConsoleLine($"\n[mcp-install {stage}] running…");
+        AppendConsoleLine($"\n[MCP read-only · {stage}] running…");
         try
         {
             var result = await run();
+            completed?.Invoke(result);
             AppendConsoleLine(result.Summary);
             if (!string.IsNullOrWhiteSpace(result.Stderr))
             {
@@ -2427,7 +3456,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AppendConsoleLine($"[mcp-install {stage} failed] {ex.Message}");
+            AppendConsoleLine($"[MCP read-only · {stage} failed] {ex.Message}");
         }
         finally
         {
@@ -2442,37 +3471,47 @@ public partial class MainWindow : Window
     /// </summary>
     private bool _dictateMode;
 
-    private void ConsoleDictateButton_Click(object sender, RoutedEventArgs e)
+    private async void ConsoleDictateButton_Click(object sender, RoutedEventArgs e)
     {
-        SetDictateMode(!_dictateMode);
+        var enabling = !_dictateMode;
+        SetDictateMode(enabling);
+
+        // Dictate is an input mode, not a second prerequisite.  Requiring the
+        // operator to discover and click Voice chat after enabling Dictate left
+        // the composer visibly ready but with no microphone running.  Start the
+        // same live voice session here; SetDictateMode makes it input-only, so
+        // recognized speech is inserted into the composer instead of sent.
+        if (enabling && _voiceSession is not { IsVoiceModeActive: true })
+        {
+            await StartConsoleVoiceAsync();
+        }
     }
 
     private void SetDictateMode(bool on)
     {
         _dictateMode = on;
-        ConsoleDictateButton.Background = on
-            ? (Brush)FindResource("AmberBrush")
-            : (Brush)FindResource("AccentBrush");
+        ConsoleDictateButton.IsChecked = on;
 
         if (on)
         {
             ConsoleInputBox.Focus();
-            AppendConsoleLine(
-                "\n[Dictate ON — what you say is typed into the box, not sent. "
-                + "Say \"send it\" to submit, \"new line\", \"scratch that\", or \"stop dictation\".]");
-            ConsoleServiceSessionText.Text = "Dictate mode — speech goes to the composer";
+            ConsoleServiceSessionText.Text = _voiceSession is { IsVoiceModeActive: true }
+                ? "Dictate on · microphone input only · spoken replies off"
+                : "Dictate ready · start Voice chat to turn on the microphone";
 
             if (_voiceSession is not { IsVoiceModeActive: true })
             {
-                AppendConsoleLine("[Dictate needs the mic — click 🎙 to start listening.]");
+                ConsoleMicButton.ToolTip = "Voice mic · Dictate on (type only, no TTS)";
             }
         }
         else
         {
-            AppendConsoleLine("\n[Dictate OFF — speech goes to the agent again]");
             ConsoleServiceSessionText.Text = _voiceSession is { IsVoiceModeActive: true }
                 ? "Voice mode on — listening (two-way)"
                 : "Voice mode off";
+            ConsoleMicButton.ToolTip = _voiceSession is { IsVoiceModeActive: true }
+                ? "Stop Voice chat"
+                : "Voice chat: microphone input goes to the selected agent and Helmian speaks the reply. Click again to stop.";
         }
     }
 
@@ -2577,8 +3616,9 @@ public partial class MainWindow : Window
         session.OnError += (_, msg) =>
             Dispatcher.Invoke(() =>
             {
-                AppendConsoleLine($"\n[Voice] {msg}");
-                ConsoleServiceSessionText.Text = msg;
+                // Status only — transcript walls of [Voice warning] feel broken.
+                if (ConsoleServiceSessionText is not null)
+                    ConsoleServiceSessionText.Text = "Voice · " + (msg.Length > 100 ? msg[..100] + "…" : msg);
             });
         session.OnStatus += (_, msg) =>
             Dispatcher.Invoke(() =>
@@ -2593,62 +3633,98 @@ public partial class MainWindow : Window
     /// <summary>Show which speech backend is actually live. Never asserts more than the selector reported.</summary>
     private void ApplyVoiceBackendStatus(VoiceBackendStatus status)
     {
-        if (ConsoleVoiceBackendLabel is null) return;
-
         var degraded = status.State == VoiceState.Degraded;
-        ConsoleVoiceBackendLabel.Text = status.Backend switch
+        var label = status.Backend switch
         {
             VoiceBackend.None when !degraded => "voice: off",
             _ => $"voice: {status.Display}",
         };
-        ConsoleVoiceBackendLabel.Foreground = degraded
-            ? (Brush)FindResource("AmberBrush")
-            : (Brush)FindResource("MutedTextBrush");
-        ConsoleVoiceBackendLabel.ToolTip = string.IsNullOrWhiteSpace(status.Detail)
+        var tip = string.IsNullOrWhiteSpace(status.Detail)
             ? status.Display
             : $"{status.Display} — {status.Detail}";
+        var brush = degraded
+            ? (Brush)FindResource("AmberBrush")
+            : (Brush)FindResource("MutedTextBrush");
+
+        // Status strip (transcript header) + pill beside Voice/Dictate (S7 always visible).
+        if (ConsoleVoiceBackendLabel is not null)
+        {
+            ConsoleVoiceBackendLabel.Text = label;
+            ConsoleVoiceBackendLabel.Foreground = brush;
+            ConsoleVoiceBackendLabel.ToolTip = tip;
+            ConsoleVoiceBackendLabel.Visibility = Visibility.Visible;
+        }
+
+        if (ConsoleVoicePill is not null)
+        {
+            ConsoleVoicePill.Text = label;
+            ConsoleVoicePill.Foreground = brush;
+            ConsoleVoicePill.ToolTip = tip;
+            ConsoleVoicePill.Visibility = Visibility.Visible;
+        }
     }
 
     private async void ConsoleMicButton_Click(object sender, RoutedEventArgs e)
     {
         if (_voiceSelector is null) return;
 
-        ConsoleMicButton.IsEnabled = false;
-        try
+        if (_voiceSession is { IsVoiceModeActive: true })
         {
-            if (_voiceSession is { IsVoiceModeActive: true })
+            ConsoleMicButton.IsEnabled = false;
+            try
             {
                 await _voiceSelector.StopAsync();
                 // The selector owns and disposes the session it built.
                 _voiceSession = null;
                 if (_dictateMode) SetDictateMode(false);
-                ConsoleMicButton.Background = (Brush)FindResource("AccentBrush");
-                ConsoleMicButton.ToolTip =
-                    "Start two-way voice (listen + speak). Works with every LLM.";
-                AppendConsoleLine("\n[Voice mode OFF]");
+                ConsoleMicButton.IsChecked = false;
+                ConsoleMicButton.ToolTip = "Voice: hear you + speak agent replies";
                 ConsoleServiceSessionText.Text = "Voice mode off";
-                return;
+            }
+            finally
+            {
+                ConsoleMicButton.IsEnabled = true;
             }
 
+            return;
+        }
+
+        await StartConsoleVoiceAsync();
+    }
+
+    /// <summary>Start the one live microphone session used by both Voice chat and Dictate.</summary>
+    private async Task StartConsoleVoiceAsync()
+    {
+        if (_voiceSelector is null || _voiceSession is { IsVoiceModeActive: true })
+        {
+            return;
+        }
+
+        ConsoleMicButton.IsEnabled = false;
+        try
+        {
             var backend = await _voiceSelector.StartAsync();
             if (backend == VoiceBackend.None || _voiceSession is not { IsVoiceModeActive: true })
             {
-                ConsoleMicButton.Background = (Brush)FindResource("AccentBrush");
-                AppendConsoleLine("[Voice] Mic failed to start — see message above.");
+                ConsoleMicButton.IsChecked = false;
+                if (ConsoleServiceSessionText is not null)
+                {
+                    var detail = _voiceSelector?.Status.Detail;
+                    ConsoleServiceSessionText.Text = string.IsNullOrWhiteSpace(detail)
+                        ? "Voice · could not start (check mic privacy + models beside Helmian.exe)"
+                        : "Voice · " + (detail.Length > 100 ? detail[..100] + "…" : detail);
+                }
                 return;
             }
 
-            ConsoleMicButton.Background = (Brush)FindResource("AmberBrush");
-            ConsoleMicButton.ToolTip = "Stop two-way voice";
-            AppendConsoleLine(
-                "\n[Voice mode ON — two-way: speak, wait for the reply, speak again. Click mic to stop.]");
-            AppendConsoleLine($"[Speech backend: {_voiceSelector.Status.Display}"
-                              + (string.IsNullOrWhiteSpace(_voiceSelector.Status.Detail)
-                                  ? "]"
-                                  : $" — {_voiceSelector.Status.Detail}]"));
-            AppendConsoleLine(
-                "[Voice uses the selected Maestro LLM + permissions dropdown for tools.]");
-            ConsoleServiceSessionText.Text = "Voice mode on — listening (two-way)";
+            ConsoleMicButton.IsChecked = true;
+            ConsoleMicButton.ToolTip = _dictateMode
+                ? "Stop the microphone. Dictate is on, so speech is typed and replies are not spoken."
+                : "Stop Voice chat";
+            var backendLabel = backend == VoiceBackend.WhisperKokoro ? "Whisper+Kokoro" : backend.ToString();
+            ConsoleServiceSessionText.Text = _dictateMode
+                ? $"Dictate on · {backendLabel} · type only"
+                : $"Voice chat on · {backendLabel} · listening";
         }
         catch (Exception ex)
         {
@@ -2658,6 +3734,10 @@ public partial class MainWindow : Window
         finally
         {
             ConsoleMicButton.IsEnabled = true;
+            if (_voiceSession is not { IsVoiceModeActive: true })
+            {
+                ConsoleMicButton.IsChecked = false;
+            }
         }
     }
 
@@ -2692,7 +3772,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_voiceTurnBusy || _agentBusy) return;
+        if (_voiceTurnBusy) return;
+        var voiceTarget = _sessions.Selected;
+        if (voiceTarget is { IsBusy: true } || (voiceTarget is null && _sharedBridgeBusy))
+        {
+            if (ConsoleServiceSessionText is not null)
+            {
+                ConsoleServiceSessionText.Text =
+                    $"Voice held · \"{voiceTarget?.Name ?? "console"}\" mid-turn · Esc or pick another agent";
+            }
+            return;
+        }
 
         _voiceTurnBusy = true;
         try
@@ -2719,24 +3809,56 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UpdateConsoleWorkspaceLabel(string? workspace = null)
+    private void UpdateConsoleWorkspaceLabel(
+        string? workspace = null,
+        bool agentConfirmed = false)
     {
         try
         {
-            var path = workspace ?? ResolveAgentWorkspace();
+            var selectedPath = agentConfirmed
+                ? ResolveAgentWorkspace()
+                : workspace ?? ResolveAgentWorkspace();
+            if (agentConfirmed && !string.IsNullOrWhiteSpace(workspace))
+            {
+                _agentConfirmedWorkspacePath = Path.GetFullPath(workspace);
+            }
+
+            var display = AgentWorkspaceScopeIndicator.Describe(
+                selectedPath,
+                _agentConfirmedWorkspacePath);
             if (ConsoleWorkspaceLabel is not null)
             {
-                ConsoleWorkspaceLabel.Text = $"workspace: {path}";
-                ConsoleWorkspaceLabel.ToolTip =
-                    "Tools can only touch files under this folder.\n"
-                    + "Change it: Workspace page → Choose workspace.\n"
-                    + "Point it at DairyForge, Helmion, or any project — not a whole drive.";
+                ConsoleWorkspaceLabel.Text = display.Text;
+                ConsoleWorkspaceLabel.ToolTip = display.ToolTip;
+            }
+
+            // Claude Code footer: "workspace (/directory)" under the > prompt.
+            if (ClaudeWorkspacePathLabel is not null)
+            {
+                var path = selectedPath;
+                var shortPath = path.Length > 64 ? "…" + path[^60..] : path;
+                ClaudeWorkspacePathLabel.Text = string.IsNullOrWhiteSpace(path)
+                    ? "workspace (~)"
+                    : $"workspace ({shortPath})";
+                ClaudeWorkspacePathLabel.ToolTip = display.ToolTip;
             }
         }
         catch
         {
             // ignore UI races
         }
+    }
+
+    /// <summary>
+    /// Show/hide the Claude-style ghost placeholder when the composer is empty.
+    /// </summary>
+    private void UpdateConsoleInputPlaceholderVisibility()
+    {
+        if (ConsoleInputPlaceholder is null || ConsoleInputBox is null)
+            return;
+        ConsoleInputPlaceholder.Visibility = string.IsNullOrEmpty(ConsoleInputBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     /// <summary>

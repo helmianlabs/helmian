@@ -10,7 +10,7 @@ namespace Helmion.Desktop;
 
 public partial class App : Application
 {
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
@@ -25,20 +25,59 @@ public partial class App : Application
 
         if (e.Args.Contains("--smoke-test", StringComparer.Ordinal))
         {
+            SmokeTrace("smoke:start");
             var smokeWindow = CreateLaidOutWindow(
                 ColorThemeCatalog.DefaultThemeId,
                 persistTheme: false);
+            SmokeTrace("smoke:window-ready");
             foreach (var theme in ColorThemeCatalog.All)
             {
+                SmokeTrace($"smoke:theme:{theme.Id}");
                 smokeWindow.ApplyThemeForPreview(theme.Id);
                 foreach (var pageName in PilotSnapshot.CreateLive(true, null, "", "", "", "Codex").NavigationItems)
                 {
+                    SmokeTrace($"smoke:page:{pageName}");
                     smokeWindow.NavigateTo(pageName);
                     smokeWindow.UpdateLayout();
                 }
             }
+            SmokeTrace("smoke:closing");
             smokeWindow.Close();
+            SmokeTrace("smoke:closed");
             ExitWith(0);
+            return;
+        }
+
+        var browserRenderIndex = Array.IndexOf(e.Args, "--browser-render-smoke");
+        if (browserRenderIndex >= 0)
+        {
+            if (browserRenderIndex + 2 >= e.Args.Length)
+            {
+                throw new ArgumentException(
+                    "--browser-render-smoke requires an HTTPS address and output PNG path");
+            }
+
+            var browserWindow = CreateLaidOutWindow(
+                ColorThemeCatalog.DefaultThemeId,
+                persistTheme: false,
+                width: 1100,
+                height: 760);
+            try
+            {
+                var result = await browserWindow.RunEmbeddedBrowserRenderSmokeAsync(
+                    e.Args[browserRenderIndex + 1],
+                    e.Args[browserRenderIndex + 2]);
+                Console.WriteLine(
+                    $"Embedded browser render passed: {result.Title} · {result.Address} · {result.PngBytes} PNG bytes.");
+                browserWindow.Close();
+                ExitWith(0);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Embedded browser render FAILED: {ex.Message}");
+                browserWindow.Close();
+                ExitWith(4);
+            }
             return;
         }
 
@@ -97,9 +136,18 @@ public partial class App : Application
                     WorkspaceInspector.Inspect(e.Args[workspaceIndex + 1]));
             }
             previewWindow.NavigateTo(pageName);
+            var workbenchIndex = Array.IndexOf(e.Args, "--workbench");
+            if (workbenchIndex >= 0 && workbenchIndex + 1 < e.Args.Length)
+            {
+                previewWindow.SelectWorkbenchSurfaceForPreview(e.Args[workbenchIndex + 1]);
+            }
             if (e.Args.Contains("--reveal-mcp", StringComparer.Ordinal))
             {
                 previewWindow.RevealMcpPanelForPreview();
+            }
+            if (e.Args.Contains("--reveal-antigravity", StringComparer.Ordinal))
+            {
+                previewWindow.RevealAntigravityPanelForPreview();
             }
             if (e.Args.Contains("--demo-plugins", StringComparer.Ordinal))
             {
@@ -182,24 +230,50 @@ public partial class App : Application
     {
         Environment.ExitCode = exitCode;
         Shutdown(exitCode);
+        // Headless package checks can load libraries that leave foreground
+        // worker threads behind even after WPF's dispatcher has shut down.
+        // The test window and owned service have already been closed above;
+        // terminate the check process so callers receive the result promptly.
+        Environment.Exit(exitCode);
+    }
+
+    private static void SmokeTrace(string message)
+    {
+        var path = Environment.GetEnvironmentVariable("HELMION_SMOKE_TRACE_PATH");
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} {message}{Environment.NewLine}");
+        }
     }
 
     private static async Task<bool> RunServiceSmokeAsync()
     {
         var connector = new LocalServiceConnector();
+        var smokeWorkspace = Path.Combine(
+            Path.GetTempPath(),
+            $"helmion-packaged-service-smoke-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(smokeWorkspace);
         try
         {
             var hello = await connector.EnsureConnectedAsync();
             var capabilities = await connector.DetectCapabilitiesAsync();
-            var inspection = await connector.InspectWorkspaceAsync(AppContext.BaseDirectory);
-            return hello.ProtocolVersion == 1
-                && !hello.WritesEnabled
+            var inspection = await connector.InspectWorkspaceAsync(smokeWorkspace);
+            var governedGeneration = hello.Capabilities.Contains(
+                ReadOnlyServiceContract.GenerateApprovedArtifactCommand,
+                StringComparer.Ordinal);
+            return hello.ProtocolVersion == ReadOnlyServiceContract.ProtocolVersion
+                && hello.Mode is "read-only" or "governed-local"
+                && hello.Capabilities.Contains(
+                    ReadOnlyServiceContract.InspectWorkspaceCommand,
+                    StringComparer.Ordinal)
+                && hello.WritesEnabled == governedGeneration
                 && capabilities.Count == 6
                 && !inspection.ProjectWasModified;
         }
         finally
         {
             await connector.StopStartedProcessAsync();
+            Directory.Delete(smokeWorkspace, recursive: true);
         }
     }
 
@@ -293,6 +367,7 @@ public partial class App : Application
             // keystroke of a sales call is its own kind of harm.
             ShowActivated = false
         };
+        window.DisableRuntimeStartupForPreview();
         window.Show();
         window.UpdateLayout();
         return window;
