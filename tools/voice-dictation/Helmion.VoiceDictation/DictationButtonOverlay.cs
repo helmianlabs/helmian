@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 
 namespace Helmion.VoiceDictation;
 
@@ -28,6 +29,7 @@ public sealed class DictationButtonOverlay : Form
     private const int EdgeMargin = 24;
 
     private readonly Action _onClick;
+    private readonly System.Windows.Forms.Timer _stayOnTopTimer = new();
     private DictationState _state = DictationState.Idle;
     private bool _dragging;
     private Point _dragStart;
@@ -71,6 +73,30 @@ public sealed class DictationButtonOverlay : Form
 
         var tip = new ToolTip();
         tip.SetToolTip(this, "Helmion dictation — click to talk");
+
+        // VERIFIED 2026-08-08 — Troy: "whenever I tab over to another screen,
+        // it disappears." TopMost alone does not survive every Alt-Tab / focus
+        // change on Windows — some app or window-manager actions silently
+        // demote a topmost window's z-order without ever telling this process.
+        // Re-asserting it on a short timer (rather than trusting the flag to
+        // hold) is the reliable fix: SWP_NOACTIVATE means this never steals
+        // focus back while doing it.
+        _stayOnTopTimer.Interval = 1000;
+        _stayOnTopTimer.Tick += (_, _) => ReassertTopMost();
+        _stayOnTopTimer.Start();
+    }
+
+    private void ReassertTopMost()
+    {
+        if (!IsHandleCreated)
+        {
+            return;
+        }
+
+        const uint SwpNoMove = 0x0002;
+        const uint SwpNoSize = 0x0001;
+        const uint SwpNoActivate = 0x0010;
+        SetWindowPos(Handle, HwndTopMost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
     }
 
     /// <summary>Mirrors <see cref="TrayIndicator.Show"/> so both stay in sync.</summary>
@@ -182,4 +208,21 @@ public sealed class DictationButtonOverlay : Form
     }
 
     protected override bool ShowWithoutActivation => true;
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _stayOnTopTimer.Stop();
+            _stayOnTopTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    private static readonly IntPtr HwndTopMost = new(-1);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(
+        IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 }
