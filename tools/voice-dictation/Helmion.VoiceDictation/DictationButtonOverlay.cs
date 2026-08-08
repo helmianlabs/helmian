@@ -42,14 +42,27 @@ public sealed class DictationButtonOverlay : Form
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
         Size = new Size(Diameter, Diameter);
-        BackColor = Color.Magenta;
-        TransparencyKey = Color.Magenta;
+        // VERIFIED 2026-08-08 — TransparencyKey color-keying (the original
+        // approach) reported as IsWindowVisible=true with the correct on-screen
+        // rect via direct Win32 EnumWindows/GetWindowRect, yet Troy could not
+        // see it at all. Color-keyed layered windows are known to render
+        // unreliably on some DWM/GPU combos. Switched to a Region-clipped
+        // OPAQUE window instead — no color key, no WS_EX_LAYERED dependency,
+        // just a real circular window with a real background, which is the
+        // simplest thing that can't silently fail to composite.
+        BackColor = Color.FromArgb(30, 30, 34);
         DoubleBuffered = true;
 
         // TROY-APPROVED 2026-08-08 — left side, not right. Draggable afterward if
         // he ever wants it somewhere else; this is just where it starts.
         var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
         Location = new Point(area.Left + EdgeMargin, area.Bottom - Diameter - EdgeMargin);
+
+        using (var path = new GraphicsPath())
+        {
+            path.AddEllipse(0, 0, Diameter, Diameter);
+            Region = new Region(path);
+        }
 
         MouseDown += OnMouseDown;
         MouseMove += OnMouseMove;
@@ -118,7 +131,7 @@ public sealed class DictationButtonOverlay : Form
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.Clear(Color.Magenta);
+        g.Clear(BackColor);
 
         var color = _state switch
         {
@@ -150,7 +163,6 @@ public sealed class DictationButtonOverlay : Form
         get
         {
             const int WS_EX_TOOLWINDOW = 0x80;
-            const int WS_EX_LAYERED = 0x80000;
             // TROY-APPROVED 2026-08-08 — bugfix, same night. Without this, being
             // TopMost let this window steal the foreground/keyboard focus, which
             // meant Ctrl+V (the dictation paste) landed IN THIS BUTTON instead of
@@ -164,7 +176,7 @@ public sealed class DictationButtonOverlay : Form
             var cp = base.CreateParams;
             // WS_EX_TOOLWINDOW keeps it out of the taskbar and Alt+Tab, same
             // intent as ShowInTaskbar=false but also hides it from Alt+Tab.
-            cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE;
+            cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
             return cp;
         }
     }
