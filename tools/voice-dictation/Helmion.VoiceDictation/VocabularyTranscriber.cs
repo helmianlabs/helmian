@@ -259,8 +259,17 @@ public sealed class VocabularyTranscriber : IDisposable
 
             try
             {
+                // Measured on this box (GTX 1660 Ti, 16 logical cores): whisper.cpp's
+                // own default thread count (4) decoded a 14 s clip in 5.24 s; forcing
+                // ProcessorCount (16) cut that to 3.11 s on the SAME clip. CUDA was
+                // tried and rejected — Whisper.net.Runtime.Cuda's ggml-cuda-whisper.dll
+                // hard-crashes at native init on this Turing card
+                // (GGML_ASSERT(prev != ggml_uncaught_exception), ggml.cpp:22) even with
+                // Ollama's own cudart64_12.dll/cublas64_12.dll made available — not a
+                // safe path here. Threads is the real, measured win.
                 var builder = _factory.CreateBuilder()
                     .WithLanguage("en")
+                    .WithThreads(Environment.ProcessorCount)
                     .WithNoContext();
 
                 if (!string.IsNullOrWhiteSpace(key))

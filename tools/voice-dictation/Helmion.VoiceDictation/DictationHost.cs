@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Media;
 using System.Runtime.InteropServices;
 
 namespace Helmion.VoiceDictation;
@@ -36,9 +37,17 @@ public sealed class DictationHost : Form
     private readonly MicRecorder _recorder = new();
     private readonly VocabularyTranscriber _transcriber;
     private readonly System.Windows.Forms.Timer _capTimer = new();
+    private readonly System.Windows.Forms.Timer _silenceTimer = new();
 
     private TrayIndicator? _tray;
+    private DictationButtonOverlay? _button;
     private bool _busy;
+
+    // "send it" checkpoint state — see OnSilencePoll/HandleSendItCheck.
+    private int _lastSubmitSampleIndex;
+    private bool _checkingSendIt;
+    private bool _checkedThisPause;
+    private double _prevSilenceMs;
 
     public DictationHost(
         DictationConfig config,
@@ -64,6 +73,14 @@ public sealed class DictationHost : Form
 
         _capTimer.Interval = Math.Max(1, _config.MaxRecordingSeconds) * 1000;
         _capTimer.Tick += OnRecordingCapReached;
+
+        // Polls rather than a callback from MicRecorder itself: the recorder's
+        // audio-thread lock is held for microseconds at a time and has no
+        // business also deciding UI-facing policy. Runs the whole time the mic
+        // is open, checking for a spoken "send it" after every pause — it never
+        // stops the recording, only the hotkey does that.
+        _silenceTimer.Interval = 150;
+        _silenceTimer.Tick += OnSilencePoll;
     }
 
     /// <summary>
@@ -91,6 +108,15 @@ public sealed class DictationHost : Form
             onQuit: () => Close(),
             onOpenLog: OpenLog);
 
+        // TROY-APPROVED 2026-08-08 — a second, more visible way to see the same
+        // state and trigger the same toggle as the hotkey. Click behaves
+        // identically to pressing _dictateHotkey; both call ToggleDictation().
+        if (_config.ShowFloatingButton)
+        {
+            _button = new DictationButtonOverlay(ToggleDictation);
+            _button.Show();
+        }
+
         RegisterHotkeys();
 
         // Conversation mode survives a restart, because the switch is a file. Show
@@ -116,7 +142,7 @@ public sealed class DictationHost : Form
             else
             {
                 DictationLog.Error("Whisper model did not load; dictation will produce no text.");
-                BeginInvoke(() => _tray?.Show(DictationState.Error, "Whisper model failed to load"));
+                BeginInvoke(() => SetState(DictationState.Error, "Whisper model failed to load"));
             }
         });
     }
@@ -157,18 +183,33 @@ public sealed class DictationHost : Form
         UnregisterHotKey(Handle, ConversationHotkeyId);
 
         _capTimer.Stop();
+        _silenceTimer.Stop();
         _recorder.Dispose();
         _transcriber.Dispose();
         _tray?.Dispose();
+        _button?.Close();
+        _button?.Dispose();
 
         DictationLog.Info("Dictation stopped.");
+    }
+
+    /// <summary>
+    /// The one place that updates BOTH the tray dot and the floating button, so
+    /// they can never drift out of sync with each other.
+    /// </summary>
+    private void SetState(DictationState state, string? detail = null)
+    {
+        _tray?.Show(state, detail);
+        _button?.Show(state);
     }
 
     private void RegisterHotkeys()
     {
         if (RegisterHotKey(Handle, DictateHotkeyId, _dictateHotkey.Modifiers, _dictateHotkey.VirtualKey))
         {
-            DictationLog.Info($"Hotkey registered: {_dictateHotkey.Text} (press to start, press again to send).");
+            DictationLog.Info(
+                $"Hotkey registered: {_dictateHotkey.Text} — pure on/off for the mic. "
+                + "Say \"send it\" any time while it's open to submit without closing it.");
         }
         else
         {
@@ -179,7 +220,7 @@ public sealed class DictationHost : Form
                 $"Could not register {_dictateHotkey.Text} — Win32 error {Marshal.GetLastWin32Error()} "
                 + "(1409 means another application already owns that combination). "
                 + "Edit \"hotkey\" in voice-dictation.config.json and restart.");
-            _tray?.Show(DictationState.Error, $"{_dictateHotkey.Text} is taken by another app");
+            SetState(DictationState.Error, $"{_dictateHotkey.Text} is taken by another app");
         }
 
         if (_cancelHotkey is { } cancel
@@ -221,11 +262,27 @@ public sealed class DictationHost : Form
         if (_busy)
         {
             DictationLog.Warn("Hotkey ignored — still transcribing the previous recording.");
+            // TROY-APPROVED 2026-08-08 — this used to be completely silent (only a
+            // log line and the tray dot's colour), which is exactly why Troy
+            // couldn't tell whether a press had registered while a slow
+            // transcription (small.en model, up to ~80s for a full 300s
+            // recording) was still running. SystemSounds.Play() is fire-and
+            // -forget/non-blocking, so it doesn't violate this app's "never
+            // block the hotkey thread" requirement — it just gives an audible
+            // "that didn't count, try again in a moment" instead of silence.
+            SystemSounds.Asterisk.Play();
             return;
         }
 
         if (_recorder.IsRecording)
         {
+            // TROY-APPROVED 2026-08-08 — the stop press had no audible confirmation
+            // at all, so a missed/late press was indistinguishable from "still
+            // recording, I just haven't said anything." A distinct tone here (not
+            // the same one as the busy-ignored beep above) means every successful
+            // stop is heard the instant it registers, not inferred later from how
+            // long the mic seemed to stay open.
+            SystemSounds.Question.Play();
             StopAndTranscribe();
             return;
         }
@@ -233,19 +290,28 @@ public sealed class DictationHost : Form
         if (_transcriber.LoadFailed)
         {
             DictationLog.Error("Refusing to record: the Whisper model is not loaded.");
-            _tray?.Show(DictationState.Error, "Whisper model failed to load");
+            SetState(DictationState.Error, "Whisper model failed to load");
             return;
         }
 
         if (_recorder.Start())
         {
+            _lastSubmitSampleIndex = 0;
+            _checkedThisPause = false;
+            _prevSilenceMs = 0;
+
             _capTimer.Start();
-            _tray?.Show(DictationState.Recording);
-            DictationLog.Info("Recording started.");
+            _silenceTimer.Start();
+
+            SetState(DictationState.Recording);
+            DictationLog.Info("Recording started — mic stays open until the hotkey is pressed again.");
+            // Same reasoning as the stop tone above: a third distinct sound so
+            // "started" is never confused with "stopped" or "ignored, still busy."
+            SystemSounds.Beep.Play();
         }
         else
         {
-            _tray?.Show(DictationState.Error, "Microphone unavailable");
+            SetState(DictationState.Error, "Microphone unavailable");
         }
     }
 
@@ -257,8 +323,9 @@ public sealed class DictationHost : Form
         }
 
         _capTimer.Stop();
+        _silenceTimer.Stop();
         _recorder.Cancel();
-        _tray?.Show(DictationState.Idle);
+        SetState(DictationState.Idle);
         DictationLog.Info("Recording discarded by the cancel hotkey.");
     }
 
@@ -284,7 +351,7 @@ public sealed class DictationHost : Form
         if (problem is not null)
         {
             DictationLog.Error(problem);
-            _tray?.Show(DictationState.Error, "Could not switch conversation mode");
+            SetState(DictationState.Error, "Could not switch conversation mode");
             return;
         }
 
@@ -317,23 +384,121 @@ public sealed class DictationHost : Form
         StopAndTranscribe();
     }
 
+    /// <summary>
+    /// Polled the entire time the mic is open. NEVER stops the recording —
+    /// that is the hotkey's job alone. All this does is notice a pause, peek at
+    /// the audio since the last submit, and see whether Troy just said "send
+    /// it". Fires at most once per distinct pause (<see cref="_checkedThisPause"/>
+    /// resets the moment new speech is heard), so a long silence does not spam
+    /// Whisper every 150 ms.
+    /// </summary>
+    private void OnSilencePoll(object? sender, EventArgs e)
+    {
+        if (!_recorder.IsRecording)
+        {
+            _silenceTimer.Stop();
+            return;
+        }
+
+        var silentFor = _recorder.SilenceElapsedMs;
+        if (silentFor is null)
+        {
+            // No speech heard yet at all this recording — nothing to check.
+            _prevSilenceMs = 0;
+            _checkedThisPause = false;
+            return;
+        }
+
+        if (silentFor.Value < _prevSilenceMs)
+        {
+            // Silence clock reset under us, meaning he started talking again.
+            _checkedThisPause = false;
+        }
+
+        _prevSilenceMs = silentFor.Value;
+
+        if (_checkedThisPause || _checkingSendIt || silentFor.Value < _config.SendItCheckSilenceMs)
+        {
+            return;
+        }
+
+        var currentCount = _recorder.SampleCount;
+        var newSeconds = (currentCount - _lastSubmitSampleIndex) / (double)MicRecorder.SampleRate;
+        if (newSeconds < 0.4d)
+        {
+            // Nothing meaningfully new since the last submit — nothing to check.
+            return;
+        }
+
+        _checkedThisPause = true;
+        _checkingSendIt = true;
+        var segment = _recorder.SamplesSince(_lastSubmitSampleIndex);
+
+        Task.Run(() =>
+        {
+            var text = _transcriber.Transcribe(segment);
+            BeginInvoke(() => HandleSendItCheck(text, currentCount));
+        });
+    }
+
+    /// <summary>
+    /// Result of a mid-recording checkpoint. TROY-APPROVED 2026-08-08 (final
+    /// correction) — this injects on EVERY pause, not only when "send it" is
+    /// heard. The mic opening is supposed to put words on the screen as he
+    /// talks; "send it" only additionally presses Enter. The mic is never
+    /// stopped for any of this — only the hotkey does that.
+    /// </summary>
+    private void HandleSendItCheck(string text, int checkpointSampleCount)
+    {
+        _checkingSendIt = false;
+        _lastSubmitSampleIndex = checkpointSampleCount;
+
+        if (!_recorder.IsRecording)
+        {
+            // Hotkey closed the mic while this check was still decoding;
+            // StopAndTranscribe already owns flushing whatever is left.
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        var forceSubmit = TextInjector.TryStripTrailingSendIt(text, out var toInject);
+        DictationLog.Info(
+            $"Live chunk ({(forceSubmit ? "ends in \"send it\"" : "mid-dictation")}): {text}");
+
+        if (forceSubmit)
+        {
+            SystemSounds.Question.Play();
+        }
+
+        TextInjector.Inject(toInject, _config, forceSubmit);
+    }
+
     private void StopAndTranscribe()
     {
         _capTimer.Stop();
+        _silenceTimer.Stop();
 
-        var samples = _recorder.Stop();
+        var all = _recorder.Stop();
+        // Only what has not already gone out via a mid-recording "send it" —
+        // that audio was submitted the moment it was heard, not held for here.
+        var pendingStart = Math.Min(_lastSubmitSampleIndex, all.Length);
+        var samples = all[pendingStart..];
         var seconds = samples.Length / (double)MicRecorder.SampleRate;
 
         if (samples.Length == 0 || seconds < 0.25d)
         {
-            DictationLog.Warn($"Nothing usable recorded ({seconds:F2}s); doing nothing.");
-            _tray?.Show(DictationState.Idle);
+            DictationLog.Info("Mic closed — nothing pending beyond what was already submitted.");
+            SetState(DictationState.Idle);
             return;
         }
 
         _busy = true;
-        _tray?.Show(DictationState.Transcribing);
-        DictationLog.Info($"Recording stopped: {seconds:F2}s captured. Transcribing…");
+        SetState(DictationState.Transcribing);
+        DictationLog.Info($"Mic closed: {seconds:F2}s pending. Transcribing…");
 
         // Off the UI thread: a decode takes seconds and would freeze the message
         // pump, which is the thread the hotkey itself is delivered on.
@@ -357,21 +522,28 @@ public sealed class DictationHost : Form
             {
                 DictationLog.Warn(
                     $"Transcript was empty after {decodeSeconds:F2}s of decoding on {audioSeconds:F2}s of audio.");
-                _tray?.Show(DictationState.Idle);
+                SetState(DictationState.Idle);
                 return;
             }
 
             DictationLog.Info(
                 $"Transcript ({decodeSeconds:F2}s decode, {audioSeconds:F2}s audio): {text}");
 
-            TextInjector.Inject(text, _config);
-            _tray?.Show(DictationState.Idle);
+            // TROY-APPROVED 2026-08-08 — TextInjector.TryStripTrailingSendIt and
+            // Inject's forceSubmit parameter were both already fully built and
+            // documented, but nothing ever called them: FinishDictation always
+            // passed the raw transcript straight through with no submit. Ending a
+            // dictation with "send it" now strips that phrase and presses Enter
+            // right after the paste, same as if Troy had pressed Enter himself.
+            var forceSubmit = TextInjector.TryStripTrailingSendIt(text, out var toInject);
+            TextInjector.Inject(toInject, _config, forceSubmit);
+            SetState(DictationState.Idle);
         }
         catch (Exception ex)
         {
             // Nothing in a dictation is worth taking the process down for.
             DictationLog.Error("Finishing the dictation failed", ex);
-            _tray?.Show(DictationState.Error, "Injection failed — see the log");
+            SetState(DictationState.Error, "Injection failed — see the log");
         }
         finally
         {
@@ -385,7 +557,7 @@ public sealed class DictationHost : Form
 
         if (IsHandleCreated)
         {
-            BeginInvoke(() => _tray?.Show(DictationState.Error, "Microphone problem"));
+            BeginInvoke(() => SetState(DictationState.Error, "Microphone problem"));
         }
     }
 

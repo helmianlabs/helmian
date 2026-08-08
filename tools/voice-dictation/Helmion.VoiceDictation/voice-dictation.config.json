@@ -1,8 +1,8 @@
 {
   "//": "Helmion Voice Dictation. Edit this file, then restart the app (stop-dictation.ps1 then start-dictation.ps1). Nothing here is compiled in.",
 
-  "//hotkey": "Press once to start recording, press again to stop, transcribe and inject. Modifiers: ctrl, alt, shift, win. Chosen default avoids Grok Build's ctrl+space and F8 — RegisterHotKey matches modifiers EXACTLY, so ctrl+alt+space never steals plain ctrl+space.",
-  "hotkey": "ctrl+alt+space",
+  "//hotkey": "Press once to start recording, press again to stop, transcribe and inject. Modifiers: ctrl, alt, shift, win. Troy asked for a bare tilde/backtick; HotkeySpec.TryParse refuses any hotkey with zero modifiers (would swallow that key in every app), so this pairs it with Alt instead of Ctrl to avoid stealing VS Code/Windows Terminal's Ctrl+` toggle-terminal binding.",
+  "hotkey": "backtick",
 
   "//cancelHotkey": "Throws away the current recording without transcribing or typing anything. Leave empty to disable.",
   "cancelHotkey": "ctrl+alt+x",
@@ -31,11 +31,17 @@
   "//maxRecordingSeconds": "Hard stop so a forgotten hotkey cannot record forever.",
   "maxRecordingSeconds": 300,
 
+  "//sendItCheckSilenceMs": "FINAL DESIGN 2026-08-08. The hotkey ONLY opens/closes the mic — it never auto-stops and is never involved in submitting. The mic stays open indefinitely across as many sentences as Troy wants. Saying 'send it' out loud injects the text and presses Enter WITHOUT closing the mic, checked every time he pauses for this many ms — short, so it feels instant, not a real cutoff since the mic never closes from it.",
+  "sendItCheckSilenceMs": 700,
+
   "//modelPath": "Empty = resolve automatically: HELMION_VOICE_MODELS env var, then models/ beside the exe, then walk up to desktop/models/ggml-base.en.bin. SET EXPLICITLY 2026-07-30: the automatic path hardcodes base.en, which is the FAST model, not the accurate one. Troy was getting 'boys' for 'voice' and 'Hellman' for 'Helmion' even though both Helmion and Kokoro are in the vocabulary list below, because a 141 MB model cannot use the hint well. small.en is 465 MB and about three times slower per clip, which is the right trade when the alternative is retyping every second sentence. Set this back to \"\" to go back to the fast model.",
-  "modelPath": "E:\\Helmion\\desktop\\models\\ggml-small.en.bin",
+  "modelPath": "",
 
   "//showTrayIcon": "Small coloured dot near the clock: grey idle, red recording, amber transcribing, dark red error. No console, no taskbar entry, no popups.",
   "showTrayIcon": true,
+
+  "//showFloatingButton": "A small always-on-top round button (bottom-right corner by default, drag it anywhere) showing the SAME colours as the tray dot, that can be CLICKED to toggle dictation instead of the hotkey. Set false to go back to tray-only.",
+  "showFloatingButton": true,
 
   "//logPath": "Empty = %LOCALAPPDATA%\\Helmion\\voice-dictation.log",
   "logPath": "",

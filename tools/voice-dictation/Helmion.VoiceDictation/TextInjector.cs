@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Helmion.VoiceDictation;
 
@@ -48,14 +49,56 @@ public static class TextInjector
         { VkControl, VkShift, VkMenu, VkLWin, VkRWin };
 
     /// <summary>
+    /// Matches a trailing, spoken "send it" so Troy can end a dictation with a
+    /// phrase instead of a second hotkey press. Anchored to the END only —
+    /// "send it to Bryce" mid-sentence must never submit early. Whisper renders
+    /// this with a leading space and sometimes trailing punctuation
+    /// ("... send it.", "...send it!"), both stripped by the pattern.
+    /// </summary>
+    private static readonly Regex TrailingSendIt = new(
+        @"[\s,]*send\s+it[\s.!?]*$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// If <paramref name="text"/> ends with the spoken phrase "send it", returns
+    /// the text with that phrase removed and <c>true</c>. Otherwise returns the
+    /// text unchanged and <c>false</c>. Pure text logic — no injection, so it is
+    /// trivially unit-testable and keeps <see cref="Inject"/> as the only place
+    /// that touches Win32.
+    /// </summary>
+    public static bool TryStripTrailingSendIt(string text, out string stripped)
+    {
+        var match = TrailingSendIt.Match(text);
+        if (!match.Success)
+        {
+            stripped = text;
+            return false;
+        }
+
+        stripped = text[..match.Index].TrimEnd();
+        return true;
+    }
+
+    /// <summary>
     /// Send <paramref name="text"/> to the foreground window. Returns false and
     /// logs on failure; it never throws and never shows a dialog.
     /// </summary>
-    public static bool Inject(string text, DictationConfig config)
+    /// <param name="forceSubmit">
+    /// Press Enter after injecting regardless of <see cref="DictationConfig.AutoSubmit"/>.
+    /// Set by the caller when Troy spoke the "send it" phrase — an explicit,
+    /// per-utterance opt-in that does not weaken the config default (which stays
+    /// off so a plain mis-hear can never submit for him).
+    /// </param>
+    public static bool Inject(string text, DictationConfig config, bool forceSubmit = false)
     {
         if (string.IsNullOrEmpty(text))
         {
-            return false;
+            if (forceSubmit)
+            {
+                TapKey(VkReturn);
+            }
+
+            return forceSubmit;
         }
 
         // A newline in dictated text would submit the prompt in Claude Code
@@ -69,7 +112,12 @@ public static class TextInjector
 
         if (payload.Length == 0)
         {
-            return false;
+            if (forceSubmit)
+            {
+                TapKey(VkReturn);
+            }
+
+            return forceSubmit;
         }
 
         if (config.AppendTrailingSpace)
@@ -89,14 +137,15 @@ public static class TextInjector
             ? InjectByPaste(payload, config)
             : InjectByTyping(payload);
 
-        if (ok && config.AutoSubmit)
+        if (ok && (config.AutoSubmit || forceSubmit))
         {
             TapKey(VkReturn);
         }
 
         DictationLog.Info(
             $"Injected {payload.Length} chars via {(config.UsesPasteInjection ? "paste" : "typing")} "
-            + $"into {target} — {(ok ? "ok" : "FAILED")}");
+            + $"into {target} — {(ok ? "ok" : "FAILED")}"
+            + (forceSubmit ? " (submitted: \"send it\")" : string.Empty));
 
         return ok;
     }
