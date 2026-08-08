@@ -80,9 +80,33 @@ public sealed class DictationConfig
 
     public int MaxRecordingSeconds { get; init; } = 300;
 
+    /// <summary>
+    /// TROY-APPROVED 2026-08-08 (final design, stated explicitly after two wrong
+    /// builds) — the hotkey is a PURE on/off switch for the mic and nothing
+    /// else. It never auto-stops, never times out early, never has anything to
+    /// do with submitting. The mic stays open across as many sentences as he
+    /// wants until he presses the hotkey again to close it. The ONLY thing that
+    /// injects text and presses Enter mid-recording is saying "send it" out
+    /// loud — detected by re-checking the tail of the still-open recording
+    /// after every pause, per <see cref="SendItCheckSilenceMs"/>, WITHOUT
+    /// stopping the microphone. Closing the mic separately flushes whatever was
+    /// said since the last "send it" as a normal (non-submitted) injection, so
+    /// nothing said is ever silently lost.
+    /// </summary>
+    public int SendItCheckSilenceMs { get; init; } = 700;
+
     public string ModelPath { get; init; } = string.Empty;
 
     public bool ShowTrayIcon { get; init; } = true;
+
+    /// <summary>
+    /// TROY-APPROVED 2026-08-08 — a small always-on-top round button, separate
+    /// from the tray dot, that shows the same idle/recording/transcribing/error
+    /// colours AND can be clicked to toggle dictation instead of the hotkey.
+    /// Troy asked for something visible on screen, not just a dot next to the
+    /// clock he has to go look for.
+    /// </summary>
+    public bool ShowFloatingButton { get; init; } = true;
 
     public string LogPath { get; init; } = string.Empty;
 

@@ -86,7 +86,15 @@ public readonly record struct HotkeySpec(uint Modifiers, uint VirtualKey, string
             return false;
         }
 
-        if (modifiers == 0)
+        // Troy explicitly asked twice (2026-08-02) for a bare backtick/tilde toggle
+        // and was told the trade-off: Helmion now takes that keypress in every app,
+        // so he cannot type a literal ` or ~ character anywhere while dictation is
+        // running. Carved out for backtick only — every other key still refuses a
+        // modifier-less binding below, so a config typo can't hijack e.g. space or
+        // enter machine-wide.
+        var isBareBacktickException = modifiers == 0 && (keyToken is "backtick" or "grave" or "oemtilde" or "`");
+
+        if (modifiers == 0 && !isBareBacktickException)
         {
             // A bare key as a system-wide hotkey would swallow that key in every
             // application on the machine. Refuse rather than hijack his keyboard.
