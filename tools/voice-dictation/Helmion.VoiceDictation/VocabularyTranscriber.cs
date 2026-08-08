@@ -163,7 +163,30 @@ public sealed class VocabularyTranscriber : IDisposable
                 }
             });
 
-            task.GetAwaiter().GetResult();
+            // TROY-APPROVED 2026-08-08 — VERIFIED 2026-08-08: a real 193.80s
+            // recording hung mid-decode past 76+ seconds with no error and no
+            // way out except manually killing the process; the hotkey just
+            // logged "ignored — still transcribing" forever. whisper.net's
+            // ProcessAsync exposes no cancellation token this build can pass
+            // in, so this cannot make the native decode actually stop — but it
+            // guarantees THIS CALL returns, which frees _busy in DictationHost
+            // so the next hotkey press works again instead of needing a kill.
+            // Budget is generous (60s floor, or 3x the measured worst case of
+            // ~1s decode per 20s audio) because a real long dictation must
+            // still be allowed to finish normally.
+            var budget = TimeSpan.FromSeconds(Math.Max(60, samples.Length / (double)MicRecorder.SampleRate * 3));
+            var winner = Task.WhenAny(task, Task.Delay(budget)).GetAwaiter().GetResult();
+
+            if (winner != task)
+            {
+                DictationLog.Error(
+                    $"Transcription did not finish within {budget.TotalSeconds:F0}s "
+                    + $"({samples.Length / (double)MicRecorder.SampleRate:F1}s of audio) — "
+                    + "abandoning this decode so the app stays usable. The stuck native "
+                    + "call keeps running in the background and its output is discarded.");
+                return string.Empty;
+            }
+
             return Clean(text.ToString());
         }
         catch (Exception ex)
