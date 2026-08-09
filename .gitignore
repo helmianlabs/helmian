@@ -77,3 +77,15 @@ Desktop.ini
 # Scratch projects created by clicking + New in the Pilot while testing.
 fuck-claude/
 
+# 2026-08-09: provisioning output for the team OAuth / Herald work. Measured, not
+# assumed: `git check-ignore -v .team-oauth-provisioning/production.env` returned
+# EMPTY and `git status` showed BOTH files as `??`, so the next `git add -A` would
+# have committed them. handoff-secrets.env holds a live 32-byte
+# HELMION_TEAM_OAUTH_ENCRYPTION_KEY plus the Slack and Discord handoff tokens, and
+# its own first line already says "LOCAL ONLY, not for git". production.env holds a
+# 1,202-character live VERCEL_OIDC_TOKEN (the other four values are Vercel's
+# "[SENSITIVE]" placeholder, but that one is not). This repo is PUBLIC
+# (api.github.com/repos/helmianlabs/helmian answers 200 unauthenticated), so a
+# sweep would have published them.
+.team-oauth-provisioning/
+
