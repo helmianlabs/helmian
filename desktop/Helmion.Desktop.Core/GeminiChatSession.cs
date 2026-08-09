@@ -7,12 +7,12 @@ using System.Text.Json.Serialization;
 namespace Helmion.Desktop.Core;
 
 /// <summary>
-/// Sends one user turn to Gemini 2.0 Flash and streams the text response back
+/// Sends one user turn to Google's current stable Gemini Flash alias and streams the text response back
 /// using the Gemini generateContent REST API. No SDK dependency required.
 /// </summary>
 public sealed class GeminiChatSession : IDisposable
 {
-    private const string ApiBase = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent";
+    private const string ApiBase = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:streamGenerateContent";
     private readonly HttpClient _http;
     private readonly List<GeminiMessage> _history = [];
     private string _apiKey;
@@ -76,7 +76,17 @@ public sealed class GeminiChatSession : IDisposable
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            yield return $"[Gemini API error {(int)response.StatusCode}: {body[..Math.Min(200, body.Length)]}]";
+            var detail = (int)response.StatusCode switch
+            {
+                404 => "The selected Gemini model is unavailable for this API version/project. "
+                    + "Google received the key; this is not proof that the key is missing.",
+                401 or 403 => "Google rejected the Gemini key or its project permissions. Check the saved key and API restrictions.",
+                429 => "The Gemini project reached a rate, token, daily, or spend limit.",
+                _ when body.Contains("FAILED_PRECONDITION", StringComparison.OrdinalIgnoreCase)
+                    => "The Gemini project requires billing or another Google AI Studio project precondition.",
+                _ => body[..Math.Min(200, body.Length)]
+            };
+            yield return $"[Gemini API error {(int)response.StatusCode}: {detail}]";
             yield break;
         }
 

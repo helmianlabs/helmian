@@ -107,15 +107,18 @@ public static class ProviderProfileCatalog
             new(
                 "grok",
                 "Grok",
-                "Coordinator candidate · docs gate",
-                "Adapter surface not selected",
+                "Coordinator candidate",
+                "Direct API adapter",
                 "Not checked",
-                "Design-only",
-                "Authentication not verified in this slice",
-                "No auth or capability parity is assumed from other providers.",
-                "Supported documented API/CLI/local endpoint review required",
-                "No consumer UI automation or credential discovery.",
-                "Documentation → adapter contract → identity test → read-only canary",
+                "Not configured",
+                "SuperGrok account sign-in (OAuth device code) or xAI API key",
+                "Provider-owned browser approval; Helmion receives no xAI password. The resulting "
+                + "token is encrypted with Windows CurrentUser DPAPI and never written to .env.",
+                "xAI device authorization + token endpoints verified live 2026-08-04 · "
+                + "RFC 8628 device grant",
+                "Reads the Grok CLI's auth file only on explicit request, read-only; that CLI's "
+                + "own state is never modified.",
+                "Device sign-in (or adopt Grok CLI session) → DPAPI storage → API-key fallback",
                 "grok-cli",
                 false,
                 false),
@@ -129,7 +132,13 @@ public static class ProviderProfileCatalog
                 "Database credential",
                 "Future value is encrypted with Windows CurrentUser DPAPI by the local service.",
                 "Official Neon direct-vs-pooled endpoint docs verified",
-                "Helmion Development · ep-divine-leaf-ay38p1af · neondb · direct only",
+                // MASKED 2026-07-30. This printed the full endpoint id on screen, and
+                // Troy saw it sitting there in plain text. An endpoint id is the
+                // ADDRESS of the database, not the key to it - but it is half of a
+                // login, and there is no reason to show all of it. Enough is kept to
+                // tell two databases apart at a glance, which is the only job this
+                // line has. The real value still lives in .env and is never rendered.
+                "Helmion Development · ep-divine-…-ay38 · neondb · direct only",
                 "Protected enrollment → exact-target read-only inspect → isolated canary",
                 null,
                 false,

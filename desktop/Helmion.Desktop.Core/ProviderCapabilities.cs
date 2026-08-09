@@ -31,11 +31,12 @@ public sealed record ProviderCapability(
 
     /// <summary>
     /// The second line under the label. For a supported capability that is the
-    /// provider's real syntax; for an unsupported one it is the reason, so the
-    /// row is never blank and never silently missing.
+    /// provider's real syntax, FOLLOWED BY what pressing this row does in Helmion;
+    /// for an unsupported one it is the reason, so the row is never blank and never
+    /// silently missing.
     /// </summary>
     public string Detail => Supported
-        ? HowItWorks
+        ? $"{HowItWorks}  {PlusMenuCatalog.WhatPressingItDoes(Kind)}"
         : (WhyNot ?? "This Maestro's CLI does not have this.");
 }
 
@@ -117,6 +118,11 @@ public static class ProviderCapabilityCatalog
             "A skill is a folder holding a SKILL.md with name and description in its "
             + "frontmatter, at ~/.grok/skills/<name>/ or ./.grok/skills/. Invoke it as "
             + "/<skill-name>; Grok may also reach for it on its own."),
+
+        new(PlusMenuKind.Permission, true,
+            "Permissions",
+            "How much Helmian lets this agent do in the scoped folder.",
+            "Helmian-owned: read-only, read tools, ask before each action, or full workspace actions."),
     ];
 
     // ── Gemini ────────────────────────────────────────────────────────────────
@@ -158,6 +164,11 @@ public static class ProviderCapabilityCatalog
             + "~/.gemini/skills/ or .gemini/skills/, listed with /skills list. Separately, "
             + "custom commands are TOML files under ~/.gemini/commands/ or "
             + "<project>/.gemini/commands/, reloaded with /commands reload."),
+
+        new(PlusMenuKind.Permission, true,
+            "Permissions",
+            "How much Helmian lets this agent do in the scoped folder.",
+            "Helmian-owned: read-only, read tools, ask before each action, or full workspace actions."),
     ];
 
     // ── Claude ────────────────────────────────────────────────────────────────
@@ -202,6 +213,11 @@ public static class ProviderCapabilityCatalog
             + "Invoke it as /<skill-name>. Worth knowing: custom commands were MERGED into "
             + "skills — an old .claude/commands/deploy.md and a new .claude/skills/deploy/SKILL.md "
             + "both give you /deploy, and existing command files keep working."),
+
+        new(PlusMenuKind.Permission, true,
+            "Permissions",
+            "How much Helmian lets this agent do in the scoped folder.",
+            "Helmian-owned: read-only, read tools, ask before each action, or full workspace actions."),
     ];
 
     // ── OpenAI / Codex ────────────────────────────────────────────────────────
@@ -249,5 +265,10 @@ public static class ProviderCapabilityCatalog
             + "$HOME/.agents/skills, then /etc/codex/skills. Run /skills, or type $ to mention "
             + "one. Careful: ~/.codex/skills is repeated all over the web and is NOT in OpenAI's "
             + "own docs — treat it as unconfirmed."),
+
+        new(PlusMenuKind.Permission, true,
+            "Permissions",
+            "How much Helmian lets this agent do in the scoped folder.",
+            "Helmian-owned: read-only, read tools, ask before each action, or full workspace actions."),
     ];
 }
