@@ -181,19 +181,86 @@ can be invented from here:
    loopback address is not reachable from Hume. Phase 1 is local by definition,
    so no tunnel or public endpoint was set up.
 
-**To finish it, Troy needs to hand over three things:**
+### The target config has been identified — but not its ID
+
+Troy has a config named **"Big Sister (Troy desktop)"** in his Hume dashboard
+(Claude Sonnet 4.5, "Warm Female Assistant" voice, EVI 4-mini). Searching the
+machine found what created it:
+
+**`C:\Users\troyh\gauge-sandbox\scripts\_create_bigsister_config.mjs`** — every
+attribute matches, four for four:
+
+| Dashboard shows | Script line |
+|---|---|
+| name "Big Sister (Troy desktop)" | `:30 name: "Big Sister (Troy desktop)"` |
+| EVI 4-mini | `:29 evi_version: "4-mini"` |
+| "Warm Female Assistant" voice | `:32 voice: { provider: "HUME_AI", name: "Warm Female Assistant Voice" }` |
+| Claude Sonnet 4.5 | `:33 language_model: { model_provider: "ANTHROPIC", model_resource: "claude-sonnet-4-5-20250929", temperature: 0.6 }` |
+
+Three things follow, and each one is a decision rather than a detail.
+
+**1. This is not a CLM config, and pointing it here is not a URL tweak.** Line 33
+gives it a *hosted* Anthropic brain — Hume calls Anthropic itself. Using this
+server means **replacing** that `language_model` field with Hume's
+custom-language-model setting. The config's brain gets swapped, not extended.
+
+**2. The config ID is recorded nowhere on this machine.** The script prints it
+(`:36 console.log("BIGSISTER_CONFIG_ID=" + cfg.id)`) and never saves it.
+`BIGSISTER_CONFIG_ID` appears in exactly one place across `gauge-sandbox`,
+`aimforge`, `aimforge-mobile` and `E:\Helmion`: that `console.log`. Every UUID
+recorded in the planning docs and scripts was enumerated and identified —
+`8ef07029` (dairy driver), `9dd7f607` (freight mobile), `7f5aaef6` (a conflicting
+freight claim), and four others that turned out to be EAS build IDs and Claude
+session IDs. None is Big Sister. The canonical planning doc admits the same gap
+in its own matrix: *"(id not re-verified this session)"*. **No ID is guessed
+here.**
+
+**3. There is already a governance doc for exactly this question**, and it
+constrains the answer:
+`C:\Users\troyh\aimforge\planning\CORA_DESKTOP_VS_MOBILE_SPLIT.md` (365 lines)
+holds a four-config matrix. Big Sister is row **D**: *"Troy personal / separate
+use · Local voice tooling only — **not** product env · Tools: **None** · temp
+0.6"*. And §6 rules that *"if a Helmion voice surface exists later, it either
+uses Cora Desktop or a fifth named config — never config B."*
+
+Row D matches this Phase 1 brief exactly — Troy's own desk, not a product
+surface. But the matrix says row D has **no tools**, and this server gives it
+real tools on his disk. The `helmion:` session marking is the lever that keeps
+that opt-in, but the line in that matrix is Troy's to move, not mine.
+
+### What Troy needs to hand over
 
 | # | What | Why |
 |---|---|---|
-| 1 | A **Hume API key**, and *which account* it belongs to | There are at least two Hume-adjacent products in play. `MEMORY.md` records that Gauge's fatigue scoring rides Cora's Hume socket (`gaugeContext.tsx:330` → `humeClient.ts:3367`), so pointing the wrong account's config at this server would change behaviour in a shipping product. |
-| 2 | **Which EVI config** to modify, or permission to create a new one | Same reason. A new config dedicated to Helmion is the safer option and keeps Cora's existing config untouched. |
-| 3 | A decision on **how Hume reaches this machine** | A tunnel for testing, or a small hosted relay. This is the first thing in this feature that stops being local, so it is Troy's call, not an implementation detail. |
+| 1 | A **Hume API key for the account that owns "Big Sister (Troy desktop)"** | Then `GET https://api.hume.ai/v0/evi/configs` returns the ID in one call and nobody has to guess it. The key already in play is scoped to the AimForge freight project and confirmed unable to see this config, so it is a *different* key. The creator script takes `HUME_API_KEY` from the environment at run time and `gauge-sandbox/.env.local` declares only `EXPO_PUBLIC_HUME_CONFIG_ID` — so the key used was passed inline and is not recorded anywhere. Which account owns row D is therefore **unknown from disk**, and is not assumed here. |
+| 2 | **Yes or no: swap row D's hosted Anthropic brain for this CLM** | It is a replacement, not an addition (see 1 above). Creating a fifth config instead leaves Big Sister exactly as it is today, which is the safer option. |
+| 3 | **Yes or no: row D gains tools** | The matrix currently says None. |
+| 4 | A decision on **how Hume reaches this machine** | A loopback URL is not dialable from Hume's servers. A tunnel for testing, or a small hosted relay. This is the first thing in this feature that stops being local, so it is Troy's call. |
 
-Once those exist, the remaining work is: set the config's CLM URL to the
+Why the account question is not pedantry: `docs/VOICE_VENDOR_REPLACEMENT_PLAN.md:14-34`
+proves, A→H with no uncited gap, that **Gauge's fatigue scoring rides Cora's Hume
+socket** (`gaugeContext.tsx:330` → `humeClient.ts:3286, 3346, 3367`). That is
+config **A**, not D, so nothing in this feature touches it — but it is why
+"which account" gets answered before anyone edits a config.
+
+Once those are settled the remaining work is: point the config's CLM URL at the
 tunnelled address, set `custom_session_id` to `helmion:<something>` when starting
-the chat, and run `npm run cora --token <secret> --host 0.0.0.0`. No code change
-is expected — but "no code change is expected" is a prediction, and it will be
-verified against a live socket before anyone says it works.
+the chat, and run `npm run cora -- --token <secret> --host 0.0.0.0`. No code
+change is expected — but "no code change is expected" is a prediction, and it
+gets verified against a live socket before anyone says it works.
+
+### Helmion already has a second, unrelated voice path
+
+`docs/archive/VOICE_PHASE1_WIRING_TODO.md` is about a **different** stack: a
+local Whisper + Kokoro engine behind `ISpeechEngine` in the WPF desktop app,
+which replaced SAPI. No Hume, no EVI, no config. Its engine layer is done and
+proven headlessly; its remaining work is MainWindow UI wiring.
+
+So the desktop already has a working local voice front door — mic button →
+Whisper → agent → Kokoro. Cora-via-Hume is a **parallel** path, not a
+continuation of that one. Whether Hume replaces it, or the two coexist (local
+for offline and dictation, Hume when prosody and a natural interrupt matter), is
+an open product question nobody has answered. It is not answered here either.
 
 ## Out of scope, explicitly
 
