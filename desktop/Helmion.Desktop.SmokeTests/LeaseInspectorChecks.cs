@@ -64,9 +64,25 @@ internal static class LeaseInspectorChecks
             Assert(expired.Status == LeaseInspector.StatusStale,
                 "an expired lease is STALE even when its holder is still running");
             Assert(!expired.IsLive, "a STALE lease is not live");
-            Assert(expired.Detail.Contains("expired", StringComparison.OrdinalIgnoreCase),
-                "the STALE detail says it expired rather than only showing a colour");
-            checks += 3;
+            // The REQUIREMENT is that the card explains itself instead of being a
+            // colour with an id next to it. It is NOT that the card contains the
+            // word "expired" — that word is jargon, and pinning it here is what made
+            // the panel read like a stack trace. Troy, 2026-07-30, on the old text:
+            // he had to ask what a lease even was before he could tell whether
+            // anything was wrong.
+            //
+            // So this now asserts what the reader actually needs: that the lock ran
+            // out or was dropped, that someone else can take it, and - critically -
+            // whether he has to do anything. The wording is free to be human.
+            Assert(expired.Detail.Contains("run out", StringComparison.OrdinalIgnoreCase)
+                || expired.Detail.Contains("ran out", StringComparison.OrdinalIgnoreCase)
+                || expired.Detail.Contains("expired", StringComparison.OrdinalIgnoreCase),
+                "the STALE detail says the lock is no longer held, rather than only showing a colour");
+            Assert(expired.Detail.Contains("take it", StringComparison.OrdinalIgnoreCase),
+                "and says the next agent can take it, so the reader knows it resolves itself");
+            Assert(expired.Detail.Contains("Nothing is wrong", StringComparison.OrdinalIgnoreCase),
+                "and says plainly whether this needs the reader to act");
+            checks += 5;
 
             // The boundary: expiry is <=, so a lease expiring exactly now is already
             // takeable. Tested on the instant and one tick either side.
@@ -84,9 +100,19 @@ internal static class LeaseInspectorChecks
             var dead = LeaseInspector.Inspect(root, now);
             Assert(dead.Status == LeaseInspector.StatusStale,
                 "an unexpired lease whose holder process is gone is STALE, so a crash does not park the project");
-            Assert(dead.Detail.Contains("no longer running", StringComparison.OrdinalIgnoreCase),
-                "the STALE detail says the holder process is gone");
-            checks += 2;
+            // Same reasoning as the expiry check above: the REQUIREMENT is that the
+            // card explains the holder is gone, not that it uses one particular
+            // phrase. "no longer running" was the old wording; it now says "died
+            // without giving it back" and "process N is gone", which is plainer and
+            // still says the same fact. Pinning the exact sentence is what turned
+            // this panel into something Troy had to decode.
+            Assert(dead.Detail.Contains("is gone", StringComparison.OrdinalIgnoreCase)
+                || dead.Detail.Contains("died", StringComparison.OrdinalIgnoreCase)
+                || dead.Detail.Contains("no longer running", StringComparison.OrdinalIgnoreCase),
+                "the STALE detail says the holder is gone");
+            Assert(dead.Detail.Contains("take it", StringComparison.OrdinalIgnoreCase),
+                "and says the next agent can take the lock, so a crash reads as self-healing");
+            checks += 3;
 
             // --- 5. ANOTHER MACHINE IS JUDGED ON EXPIRY ALONE -------------------
             // A pid on another host says nothing about liveness here, so probing it

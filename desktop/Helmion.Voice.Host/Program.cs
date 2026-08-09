@@ -260,8 +260,13 @@ internal static class Program
                 if (action.Kind == DictationActionKind.StopDictation)
                 {
                     Volatile.Write(ref dictating, false);
-                    engine.PauseDictation();
-                    HostLog.Status("helmion-voice: dictation OFF (heard \"stop dictation\").");
+                    // Hotkey OFF must release the capture device. PauseDictation
+                    // intentionally keeps WaveInEvent open for same-session TTS
+                    // resume, which prevented Helmian Desktop Voice chat from
+                    // opening the microphone while this background host was idle.
+                    engine.StopDictation();
+                    HostLog.Status(
+                        "helmion-voice: dictation OFF (heard \"stop dictation\") — microphone released.");
                     return;
                 }
 
@@ -282,21 +287,51 @@ internal static class Program
                 if (Volatile.Read(ref dictating))
                 {
                     Volatile.Write(ref dictating, false);
-                    engine.PauseDictation();
-                    HostLog.Status("helmion-voice: dictation OFF.");
+                    // This host coexists with Helmian Desktop. OFF is a device
+                    // boundary, not only a transcription state: release capture
+                    // so Voice chat can acquire the microphone.
+                    engine.StopDictation();
+                    KeyboardInjector.ClearStickyTarget();
+                    HostLog.Status("helmion-voice: dictation OFF — microphone released.");
                     return;
                 }
 
                 typist.ForgetTypedHistory();
+
+                // DISABLED 2026-07-30, minutes after it shipped, and this is why.
+                //
+                // The idea was right: lock on to the window he is dictating into so he
+                // can tab away and keep talking. The implementation was not. Making it
+                // work means calling SetForegroundWindow, and that YANKS HIS SCREEN
+                // BACK every time he tries to look at something else. He tabbed to
+                // another session and the display started jumping around under him.
+                //
+                // Stealing focus to deliver text is worse than delivering it to the
+                // wrong window, because it fights him while he is using the machine.
+                // The right answer is to deliver WITHOUT taking focus at all, which
+                // SendInput cannot do - it posts to the focus queue by definition.
+                // That needs a different delivery path, not a focus grab, and it needs
+                // building carefully rather than at speed.
+                //
+                // Left in place and unused: KeyboardInjector.CaptureStickyTarget() and
+                // the retarget logic still exist and are inert while StickyTarget is
+                // IntPtr.Zero. Re-enable ONLY with a delivery method that does not
+                // touch the foreground window.
+                //
+                // KeyboardInjector.CaptureStickyTarget();
+
                 engine.StartDictation();
                 if (!engine.IsDictationRunning)
                 {
+                    KeyboardInjector.ClearStickyTarget();
                     HostLog.Status("helmion-voice: the microphone could not be opened.");
                     return;
                 }
 
                 Volatile.Write(ref dictating, true);
-                HostLog.Status("helmion-voice: dictation ON — speak.");
+                HostLog.Status(
+                    "helmion-voice: dictation ON — speak. Locked on to this window; you can "
+                    + "tab away and your words still land here.");
             });
 
             return ExitOk;

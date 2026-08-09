@@ -24,11 +24,11 @@ internal static class PlusMenuChecks
         // "Do not assume the user knows the difference between a connector, a
         // plugin, and a skill." Three words that sound identical to a new user.
         var entries = PlusMenuCatalog.Entries;
-        Assert(entries.Count == 4, "the menu has exactly the four items asked for");
+        Assert(entries.Count == 5, "the menu has Connectors, Plugins, Skills, Upload, Permissions");
         Assert(
             entries.Select(e => e.Kind).SequenceEqual(
-                [PlusMenuKind.Connector, PlusMenuKind.Plugin, PlusMenuKind.Skill, PlusMenuKind.Upload]),
-            "the four items appear in the order Connectors, Plugins, Skills, Upload");
+                [PlusMenuKind.Connector, PlusMenuKind.Plugin, PlusMenuKind.Skill, PlusMenuKind.Upload, PlusMenuKind.Permission]),
+            "items appear in order Connectors, Plugins, Skills, Upload, Permissions");
         checks += 2;
 
         foreach (var entry in entries)
@@ -257,8 +257,8 @@ internal static class PlusMenuChecks
         {
             var caps = ProviderCapabilityCatalog.For(name);
             Assert(caps is not null, $"{name} is a built-in coordinator and must have a mapped menu");
-            Assert(caps!.Count == 4, $"{name} exposes all four kinds");
-            Assert(caps.Select(c => c.Kind).Distinct().Count() == 4, $"{name} has no duplicate kinds");
+            Assert(caps!.Count == 5, $"{name} exposes five kinds (connectors/plugins/skills/upload/permissions)");
+            Assert(caps.Select(c => c.Kind).Distinct().Count() == 5, $"{name} has no duplicate kinds");
             foreach (var cap in caps)
             {
                 Assert(cap.Label.Length > 0 && cap.OneLiner.Length > 0, $"{name}/{cap.Kind} is labelled and explained");
@@ -388,6 +388,23 @@ internal static class PlusMenuChecks
             Assert(bare.Inclusions.Count == 0, "and nothing is reported as having been attached");
             checks += 2;
 
+            var imagePath = Path.Combine(sendDir, "vision.png");
+            File.WriteAllBytes(imagePath, Convert.FromBase64String(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="));
+            var imageSend = new PlusMenuController();
+            var imageRow = imageSend.Begin(PlusMenuKind.Upload, "vision.png", null, imagePath);
+            imageSend.Succeed(imageRow, AttachmentPolicy.Validate(imagePath).Message);
+            var geminiImage = PromptAttachments.Compose("describe this", imageSend.ActiveAttachments, "Gemini");
+            Assert(geminiImage.Images.Count == 1
+                && geminiImage.Images[0].MediaType == "image/png"
+                && geminiImage.Images[0].Base64Data.Length > 0,
+                "a real PNG becomes bounded base64 vision input for Gemini");
+            var grokImage = PromptAttachments.Compose("describe this", imageSend.ActiveAttachments, "Grok");
+            Assert(grokImage.Images.Count == 0 && grokImage.AnyRefused
+                && grokImage.Refused[0].Message.Contains("no approved Helmion vision adapter", StringComparison.Ordinal),
+                "a provider without an approved vision adapter is refused truthfully");
+            checks += 2;
+
             // A REFUSED UPLOAD MUST NOT RIDE ALONG. Written as text inside an .exe
             // so the assertion is about the CONTENT, not the extension.
             var refusedMarker = $"REFUSED-{Guid.NewGuid():N}";
@@ -500,6 +517,267 @@ internal static class PlusMenuChecks
         finally
         {
             try { Directory.Delete(sendDir, recursive: true); } catch { /* temp dir */ }
+        }
+
+        // --- 7. SKILLS AND PLUGINS USE THE PAYLOAD THEY FETCH ------------------
+        //
+        // THE DEFECT THIS SECTION EXISTS FOR, and it is the same shape as the
+        // Upload defect one section above: the row does real work, throws the
+        // result away, and shows a sentence written at compile time.
+        //
+        //   Skills  — MainWindow.PlusMenu.cs:169 called ListCommandsAsync() with NO
+        //             workspace, so the bridge answered about the Helmion repo root
+        //             rather than the registered workspace (AgentBridge.cs:236-245
+        //             says so in its own docs, and the other caller at
+        //             MainWindow.xaml.cs:2328 already passed it). Then :171-181 read
+        //             ONLY ev.Event and emitted a fixed string. ev.Commands — the
+        //             real, freshly re-scanned command list — was never touched, so
+        //             an empty workspace and a workspace with fifty skills produced
+        //             byte-identical output.
+        //
+        //   Plugins — FirstRunStates.cs:78-95 stat()ed .helmion/plugins.json and
+        //             printed its SIZE IN BYTES. It never parsed the file, never
+        //             named a plugin, and never showed which MCP servers the install
+        //             gate refused — the one fact on the whole screen that is a
+        //             security decision.
+        //
+        // WHY THESE ASSERTIONS CANNOT PASS BY ACCIDENT. Every name asserted below is
+        // a GUID generated at run time, so nothing here can be satisfied by a
+        // literal written into the product. An assertion passes only if the value
+        // travelled from the event into the sentence the operator reads.
+        var skillName = $"deploy-{Guid.NewGuid():N}";
+        var otherSkill = $"rollback-{Guid.NewGuid():N}";
+        var scanned = Path.Combine(Path.GetTempPath(), $"ws-{Guid.NewGuid():N}");
+
+        var listed = new AgentBridgeEvent(
+            "commands",
+            Workspace: scanned,
+            Commands:
+            [
+                new AgentSlashCommand(skillName, "ship it", null, "project", "a.md", true),
+                new AgentSlashCommand(otherSkill, null, null, "user", "b.md", true),
+            ]);
+
+        var skills = BridgeCapabilitySummary.Skills(listed, scanned);
+        Assert(skills.State == PlusActionState.Succeeded, "a workspace with commands settles as a success");
+        Assert(skills.Message.Contains(skillName, StringComparison.Ordinal),
+            "the skills row names an ACTUAL command from the payload, not a fixed sentence");
+        Assert(skills.Message.Contains(otherSkill, StringComparison.Ordinal),
+            "and does not stop at the first one");
+        Assert(skills.Message.Contains("2", StringComparison.Ordinal),
+            "the skills row states how many were found, so the number is checkable");
+        Assert(skills.Message.Contains(scanned, StringComparison.Ordinal),
+            "the skills row names the FOLDER that was scanned — the D2 bug was a listing "
+            + "that described a different project than the next turn would run in");
+        checks += 5;
+
+        // A command the bridge marks non-invocable is not offered as one to type.
+        var hidden = $"internal-{Guid.NewGuid():N}";
+        var withHidden = new AgentBridgeEvent(
+            "commands",
+            Workspace: scanned,
+            Commands:
+            [
+                new AgentSlashCommand(skillName, null, null, "project", "a.md", true),
+                new AgentSlashCommand(hidden, null, null, "project", "h.md", false),
+            ]);
+        var visible = BridgeCapabilitySummary.Skills(withHidden, scanned);
+        Assert(!visible.Message.Contains(hidden, StringComparison.Ordinal),
+            "a command the bridge marks non-invocable is not offered to the user as typeable");
+        checks += 1;
+
+        // ZERO COMMANDS IS EMPTY, NOT "Skills loaded". The old fixed string claimed
+        // success over an empty registry, which is the same small lie the Empty
+        // state was introduced to stop everywhere else on this menu.
+        var noneListed = new AgentBridgeEvent("commands", Workspace: scanned, Commands: []);
+        var emptySkills = BridgeCapabilitySummary.Skills(noneListed, scanned);
+        Assert(emptySkills.State == PlusActionState.Empty,
+            "a workspace with no commands is EMPTY, not a success claiming skills loaded");
+        Assert(!emptySkills.IsRed, "and an empty command list draws no red");
+        Assert(emptySkills.Message.Contains("SKILL.md", StringComparison.Ordinal),
+            "the empty skills row still says what would put something there");
+        checks += 3;
+
+        // THE BRIDGE ANSWERED ABOUT A DIFFERENT FOLDER THAN THE ONE ASKED FOR.
+        // Silently rendering that as success is how a listing describes the wrong
+        // project while looking perfectly healthy.
+        var elsewhere = Path.Combine(Path.GetTempPath(), $"other-{Guid.NewGuid():N}");
+        var wrongFolder = new AgentBridgeEvent(
+            "commands",
+            Workspace: elsewhere,
+            Commands: [new AgentSlashCommand(skillName, null, null, "project", "a.md", true)]);
+        var mismatch = BridgeCapabilitySummary.Skills(wrongFolder, scanned);
+        Assert(mismatch.Message.Contains(elsewhere, StringComparison.Ordinal)
+            && mismatch.Message.Contains(scanned, StringComparison.Ordinal),
+            "when the bridge answers about a different folder than the one asked for, the row names BOTH");
+        checks += 1;
+
+        // A non-commands answer is a real failure and keeps carrying its reason.
+        var broke = BridgeCapabilitySummary.Skills(
+            new AgentBridgeEvent("error", Message: "spawn ENOENT"), scanned);
+        Assert(broke.State == PlusActionState.Failed, "a bridge error is a genuine failure");
+        Assert(broke.Message.Contains("spawn ENOENT", StringComparison.Ordinal),
+            "and the bridge's own words survive into the row instead of a generic sentence");
+        checks += 2;
+
+        // --- PLUGINS: THE REFUSALS ARE THE POINT -------------------------------
+        var pluginName = $"acme-{Guid.NewGuid():N}";
+        var approvedServer = $"sqlite-{Guid.NewGuid():N}";
+        var refusedServer = $"scraper-{Guid.NewGuid():N}";
+        var refusalReason = $"never approved: no baseline {Guid.NewGuid():N}";
+        var warning = $"commands/ is in the wrong place {Guid.NewGuid():N}";
+
+        var loaded = new AgentBridgeEvent(
+            "commands",
+            Workspace: scanned,
+            PluginDetails:
+            [
+                new AgentPluginInfo(
+                    pluginName,
+                    Root: @"C:\plugins\acme",
+                    Version: "2.1.0",
+                    HasCommands: true,
+                    ApprovedMcpServers: [approvedServer],
+                    RefusedMcpServers: [new AgentMcpRefusal(refusedServer, refusalReason)],
+                    Warnings: [warning]),
+            ]);
+
+        var plugins = BridgeCapabilitySummary.Plugins(loaded, scanned);
+        Assert(plugins.Message.Contains(pluginName, StringComparison.Ordinal),
+            "the plugins row NAMES the installed plugin instead of reporting a file size");
+        Assert(plugins.Message.Contains("2.1.0", StringComparison.Ordinal),
+            "and its version");
+        Assert(plugins.Message.Contains(refusedServer, StringComparison.Ordinal),
+            "the MCP server the install gate REFUSED is named on screen");
+        Assert(plugins.Message.Contains(refusalReason, StringComparison.Ordinal),
+            "with the gate's own reason — a refusal with no reason teaches nobody why");
+        Assert(plugins.Message.Contains(approvedServer, StringComparison.Ordinal),
+            "an approved server is named too, so approved and refused are distinguishable");
+        Assert(plugins.Message.Contains(warning, StringComparison.Ordinal),
+            "and the loader's warnings are surfaced rather than swallowed");
+        checks += 6;
+
+        // A refusal must never be reported as a plain success. Something the user
+        // installed is not running, and the row has to say so in words.
+        Assert(plugins.Message.Contains("REFUSED", StringComparison.Ordinal),
+            "the row uses the word REFUSED, so the security decision is readable at a glance");
+        checks += 1;
+
+        // NO PLUGINS IS EMPTY, and still says what would put one there.
+        var noPlugins = new AgentBridgeEvent("commands", Workspace: scanned, PluginDetails: []);
+        var emptyPlugins = BridgeCapabilitySummary.Plugins(noPlugins, scanned);
+        Assert(emptyPlugins.State == PlusActionState.Empty,
+            "a workspace with no plugins is EMPTY, not a success over an empty registry");
+        Assert(!emptyPlugins.IsRed, "and draws no red on a fresh workspace");
+        Assert(emptyPlugins.Message.Contains("helmion plugin add", StringComparison.Ordinal),
+            "the empty plugins row still names the command that installs one");
+        checks += 3;
+
+        var pluginError = BridgeCapabilitySummary.Plugins(
+            new AgentBridgeEvent("error", Message: "bridge closed stdout"), scanned);
+        Assert(pluginError.State == PlusActionState.Failed
+            && pluginError.Message.Contains("bridge closed stdout", StringComparison.Ordinal),
+            "a bridge error while listing plugins is a failure carrying the bridge's own words");
+        checks += 1;
+
+        // --- 7b. THE ROW SAYS WHAT PRESSING IT DOES ----------------------------
+        //
+        // A row headed "Connectors (MCP)" over the line `claude mcp add <name> --
+        // <command>` reads as a button that adds a connector. It is not one. It runs
+        // a GitHub search and CANNOT install anything, because approval needs a
+        // human at a real terminal (src/core/mcp-approval.mjs:80-89) and a window has
+        // none. That gate is a decision, not a gap — so the row has to stop
+        // advertising a capability it will never have.
+        foreach (var name in builtIns)
+        {
+            foreach (var cap in ProviderCapabilityCatalog.For(name)!)
+            {
+                Assert(cap.Detail.Contains("PRESSING THIS ROW", StringComparison.Ordinal),
+                    $"{name}/{cap.Kind} states what pressing it does, not only what that CLI can do");
+                checks += 1;
+            }
+
+            var connector = ProviderCapabilityCatalog.For(name)!.First(c => c.Kind == PlusMenuKind.Connector);
+            Assert(connector.Detail.Contains("does NOT install or connect", StringComparison.Ordinal),
+                $"{name}'s connector row says plainly that pressing it does not connect anything");
+            Assert(connector.Detail.Contains("helmion mcp-install", StringComparison.Ordinal),
+                $"{name}'s connector row names where approval actually happens instead of leaving a dead end");
+
+            var plugin = ProviderCapabilityCatalog.For(name)!.First(c => c.Kind == PlusMenuKind.Plugin);
+            Assert(plugin.Detail.Contains("does not install one", StringComparison.Ordinal)
+                && plugin.Detail.Contains("helmion plugin add", StringComparison.Ordinal),
+                $"{name}'s plugin row says it lists rather than installs, and names the command that installs");
+
+            var skill = ProviderCapabilityCatalog.For(name)!.First(c => c.Kind == PlusMenuKind.Skill);
+            Assert(skill.Detail.Contains("does not create one", StringComparison.Ordinal),
+                $"{name}'s skills row says it lists rather than creates");
+            checks += 4;
+
+            // The provider's own documented syntax must SURVIVE the addition. If
+            // appending Helmion's sentence ever displaces it, the menu has stopped
+            // being that provider's menu, which was the whole requirement.
+            Assert(connector.Detail.Contains(connector.HowItWorks, StringComparison.Ordinal),
+                $"{name}'s connector row still carries that CLI's own syntax verbatim");
+            checks += 1;
+        }
+
+        // AND THE STATE CHIP STOPS SAYING "Added" OVER THINGS NOTHING WAS ADDED TO.
+        // The chip is the first thing read on a settled row; "Added" over a list of
+        // GitHub search results is a lie in the one place meant to report the truth.
+        var words = new PlusMenuController();
+        var searched = words.Begin(PlusMenuKind.Connector, "Connector search", successWord: "Found");
+        words.Succeed(searched, "five candidates on GitHub");
+        Assert(searched.StateText == "Found",
+            "a connector SEARCH settles as Found — nothing was added, so it must not say Added");
+        var listedRow = words.Begin(PlusMenuKind.Skill, "Skills", successWord: "Listed");
+        words.Succeed(listedRow, "three skills");
+        Assert(listedRow.StateText == "Listed", "a skills LISTING settles as Listed");
+        var uploaded = words.Begin(PlusMenuKind.Upload, "notes.md");
+        words.Succeed(uploaded, "attached");
+        Assert(uploaded.StateText == "Added",
+            "an upload still says Added, because that one genuinely does add something");
+        var blankWord = words.Begin(PlusMenuKind.Plugin, "p", successWord: "   ");
+        words.Succeed(blankWord, "x");
+        Assert(blankWord.StateText == "Added", "a blank success word falls back rather than rendering empty");
+        checks += 4;
+
+        // --- 8. END TO END, THROUGH THE REAL NODE BRIDGE -----------------------
+        //
+        // Everything above proves the SUMMARY is honest about an event it is
+        // handed. This proves the EVENT is real: a command file written to disk
+        // here, discovered by the actual `helmion agent-bridge` node process, and
+        // arriving in the sentence the operator reads. Disk → node → C# → row.
+        //
+        // No API key is involved: bridge.mjs:299-301 deliberately keeps `commands`
+        // off the configure path precisely so listing needs no model.
+        var liveRoot = Path.Combine(Path.GetTempPath(), $"helmion-live-{Guid.NewGuid():N}");
+        var liveCommand = $"e2e-{Guid.NewGuid():N}";
+        Directory.CreateDirectory(Path.Combine(liveRoot, ".helmion", "commands"));
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(liveRoot, ".helmion", "commands", $"{liveCommand}.md"),
+                "---\ndescription: written by the smoke suite\n---\nrun the thing\n");
+
+            using var bridge = new AgentBridge();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            var ev = bridge.ListCommandsAsync(liveRoot, cts.Token).GetAwaiter().GetResult();
+
+            Assert(ev.Event == "commands",
+                $"the real agent-bridge answers a commands request (got '{ev.Event}': {ev.Message})");
+            Assert(ev.Commands is not null && ev.Commands.Any(c =>
+                    string.Equals(c.Name, liveCommand, StringComparison.Ordinal)),
+                "a command file written to disk a moment ago comes back from the REAL bridge");
+
+            var live = BridgeCapabilitySummary.Skills(ev, liveRoot);
+            Assert(live.Message.Contains(liveCommand, StringComparison.Ordinal),
+                "and its name reaches the sentence the operator actually reads — disk to screen");
+            Assert(live.State == PlusActionState.Succeeded, "a workspace with a real command is a success");
+            checks += 4;
+        }
+        finally
+        {
+            try { Directory.Delete(liveRoot, recursive: true); } catch { /* temp dir */ }
         }
 
         Console.WriteLine($"Helmion plus-menu checks passed ({checks} checks).");

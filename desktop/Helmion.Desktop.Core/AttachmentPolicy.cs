@@ -71,6 +71,7 @@ public static class AttachmentPolicy
             ".c", ".h", ".cpp", ".hpp", ".sql", ".sh", ".ps1", ".bat", ".psm1",
             ".xaml", ".razor", ".vue", ".svelte", ".graphql", ".proto",
             ".gitignore", ".gitattributes", ".editorconfig", ".dockerfile",
+            ".png", ".jpg", ".jpeg", ".webp",
         };
 
     /// <summary>A human-readable size. Used in the refusal sentences.</summary>
@@ -83,7 +84,23 @@ public static class AttachmentPolicy
 
     /// <summary>A short, readable list of what IS allowed, for the refusal message.</summary>
     public static string AllowedSummary =>
-        "text and code files — .txt, .md, .json, .csv, .log, .yaml, and common source files";
+        "text/code files such as .md, .txt, .json and source files, plus bounded PNG, JPEG, and WebP images when the selected provider supports vision";
+
+    public static bool IsImage(string? path) =>
+        Path.GetExtension(path ?? string.Empty).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp";
+
+    public static string? ImageMediaType(string? path) =>
+        Path.GetExtension(path ?? string.Empty).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            _ => null,
+        };
+
+    public static bool ProviderSupportsImages(string? provider) =>
+        (provider ?? string.Empty).Trim().ToLowerInvariant() is
+            "openai" or "chatgpt" or "claude" or "anthropic" or "gemini";
 
     public static AttachmentDecision Validate(string? path)
     {

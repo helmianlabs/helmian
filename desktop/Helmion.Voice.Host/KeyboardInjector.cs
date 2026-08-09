@@ -42,12 +42,43 @@ internal static class KeyboardInjector
     public static IntPtr ForegroundWindow => GetForegroundWindow();
 
     /// <summary>
+    /// The window dictated text belongs to, regardless of what the mouse wandered
+    /// onto afterwards. IntPtr.Zero means "wherever focus happens to be", which was
+    /// the only behaviour before 2026-07-30.
+    ///
+    /// <para>
+    /// WHY. SendInput delivers to the FOREGROUND window - that is the whole reason
+    /// this host needs no cooperation from the target app. The cost is that tabbing
+    /// away mid-thought sends your next sentence into a browser, a game, or a chat
+    /// box. Troy asked for this repeatedly: he wants to look something up while he
+    /// keeps talking, and have the words still land where he was working.
+    /// </para>
+    /// <para>
+    /// It is a HANDLE, not a process. If he opens a second terminal the words go to
+    /// the one that was focused when he armed dictation, which is the one he meant.
+    /// </para>
+    /// </summary>
+    public static IntPtr StickyTarget { get; set; } = IntPtr.Zero;
+
+    /// <summary>Remember the current foreground window as the delivery target.</summary>
+    public static void CaptureStickyTarget() => StickyTarget = GetForegroundWindow();
+
+    /// <summary>Stop redirecting; deliver to whatever has focus.</summary>
+    public static void ClearStickyTarget() => StickyTarget = IntPtr.Zero;
+
+    /// <summary>
     /// Perform one action. Returns false when the OS refused the injection, which
     /// happens when a higher-integrity window (UAC prompt, secure desktop) has
     /// focus — the caller reports it rather than silently losing the words.
     /// </summary>
     public static bool Perform(DictationAction action)
     {
+        // Put focus back on the target first, if it has drifted. Restoring focus
+        // afterwards is deliberately NOT done: Troy is dictating INTO that window,
+        // so leaving him there is what he wants, and yanking focus back and forth
+        // twice per utterance is how you get characters split across two windows.
+        RetargetIfNeeded();
+
         return action.Kind switch
         {
             DictationActionKind.TypeText => TypeText(action.Text),
@@ -55,6 +86,71 @@ internal static class KeyboardInjector
             _ => true,
         };
     }
+
+    private static void RetargetIfNeeded()
+    {
+        var target = StickyTarget;
+        if (target == IntPtr.Zero) return;
+
+        // The window can be closed between arming and speaking. Delivering to a
+        // dead handle would silently drop the words, so fall back to normal
+        // behaviour rather than lose them.
+        if (!IsWindow(target))
+        {
+            StickyTarget = IntPtr.Zero;
+            return;
+        }
+
+        if (GetForegroundWindow() == target) return;
+
+        if (IsIconic(target))
+        {
+            ShowWindow(target, SwRestore);
+        }
+
+        // Windows refuses SetForegroundWindow from a process that does not own the
+        // foreground, unless it attaches to that thread's input queue first. This
+        // is the documented way, and it is why a bare SetForegroundWindow call
+        // silently does nothing in exactly this situation.
+        var targetThread = GetWindowThreadProcessId(target, IntPtr.Zero);
+        var currentThread = GetCurrentThreadId();
+        var attached = targetThread != currentThread
+                       && AttachThreadInput(currentThread, targetThread, true);
+        try
+        {
+            SetForegroundWindow(target);
+        }
+        finally
+        {
+            if (attached)
+            {
+                AttachThreadInput(currentThread, targetThread, false);
+            }
+        }
+    }
+
+    private const int SwRestore = 9;
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
     private static bool TypeText(string text)
     {

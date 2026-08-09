@@ -58,12 +58,12 @@ public sealed class VoiceBackendSelector : IDisposable
     /// turn-based only and says so, rather than pretending a duplex backend exists.
     /// </param>
     /// <param name="probe">Answers whether the duplex host is reachable. Null uses a live TCP probe.</param>
-    /// <param name="preferred">Which backend to try first. Defaults to Moshi.</param>
+    /// <param name="preferred">Which backend to try first. Defaults to Whisper+Kokoro (no Moshi).</param>
     public VoiceBackendSelector(
         Func<VoiceSession> turnBasedFactory,
         Func<IDuplexVoiceSession>? duplexFactory = null,
         IMoshiAvailabilityProbe? probe = null,
-        VoiceBackend preferred = VoiceBackend.Moshi)
+        VoiceBackend preferred = VoiceBackend.WhisperKokoro)
     {
         _turnBasedFactory = turnBasedFactory ?? throw new ArgumentNullException(nameof(turnBasedFactory));
         _duplexFactory = duplexFactory;

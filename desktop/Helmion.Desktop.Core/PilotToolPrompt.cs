@@ -3,7 +3,7 @@ namespace Helmion.Desktop.Core;
 internal static class PilotToolPrompt
 {
     public static string ForProvider(string providerName) =>
-        $"You are {providerName}, running as the Helmion Personal Pilot. Be concise. " +
+        $"You are {providerName}, assisting in Helmian. Be concise. " +
         "IMPORTANT: If the user asks you to open or run an application, run a command, or read/write workspace files, " +
         "you must output EXACTLY: [CMD: <verb> <argument>] and nothing else. Available C# tools:\n" +
         "- [CMD: LaunchProcess <name_or_path>]\n" +

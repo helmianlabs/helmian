@@ -4,13 +4,14 @@ using System.Runtime.CompilerServices;
 
 namespace Helmion.Desktop.Core;
 
-/// <summary>The four things the + button in the composer can add.</summary>
+/// <summary>Things the + button in the composer can open.</summary>
 public enum PlusMenuKind
 {
     Connector = 0,
     Plugin = 1,
     Skill = 2,
     Upload = 3,
+    Permission = 4,
 }
 
 /// <summary>
@@ -80,21 +81,75 @@ public static class PlusMenuCatalog
 {
     public static IReadOnlyList<PlusMenuEntry> Entries { get; } =
     [
+        // THESE DESCRIBE THE THING, NOT A PROMISE ABOUT THE BUTTON. What pressing
+        // the row does is a separate sentence — see WhatPressingItDoes below — because
+        // three of these four rows LIST or SEARCH and none of them install.
         new(PlusMenuKind.Connector, "⇄", "Connectors",
-            "Let Helmion reach an outside service — a database, GitHub, your calendar. Checked before it is trusted."),
+            "A way for Helmion to reach an outside service — a database, GitHub, your calendar. Vetted before it is trusted."),
 
         new(PlusMenuKind.Plugin, "🧩", "Plugins",
-            "Add a bundle someone else built: commands, tools and settings in one folder."),
+            "A bundle someone else built: commands, tools and settings in one folder, registered per workspace."),
 
         new(PlusMenuKind.Skill, "📘", "Skills",
-            "Teach this session a repeatable procedure of your own, and call it by name with a slash command."),
+            "A repeatable procedure of your own, saved in this workspace and called by name with a slash command."),
 
         new(PlusMenuKind.Upload, "📎", "Upload",
             "Attach a text or code file to your next message so the model can read it."),
+
+        new(PlusMenuKind.Permission, "🛡", "Permissions",
+            "How much this agent may do: read-only, read tools, ask first, or full workspace actions."),
     ];
 
     public static PlusMenuEntry For(PlusMenuKind kind) =>
         Entries.First(entry => entry.Kind == kind);
+
+    /// <summary>
+    /// WHAT PRESSING THE ROW ACTUALLY DOES IN HELMION — as distinct from what that
+    /// Maestro's own CLI can do, which is what the rest of the row describes.
+    ///
+    /// <para>
+    /// THE TWO ARE NOT THE SAME AND THE MENU USED TO IMPLY THEY WERE. A row headed
+    /// "Connectors (MCP)" over the line <c>claude mcp add &lt;name&gt; -- &lt;command&gt;</c>
+    /// reads as a button that adds a connector. It is not: it runs a GitHub search
+    /// (McpSecurityRunner.cs:42-60) and cannot install anything, because approval
+    /// requires a human at a real terminal (src/core/mcp-approval.mjs:80-89) and a
+    /// window has none. Likewise the Plugins and Skills rows LIST what is already
+    /// here; neither installs.
+    /// </para>
+    /// <para>
+    /// Keyed by kind rather than by provider because it describes Helmion's own
+    /// behaviour, which is the same whoever the Maestro is. That also keeps the
+    /// per-provider text underneath it purely the provider's documentation, which
+    /// is what Troy asked for.
+    /// </para>
+    /// </summary>
+    public static string WhatPressingItDoes(PlusMenuKind kind) => kind switch
+    {
+        PlusMenuKind.Upload =>
+            "PRESSING THIS ROW opens a file picker and attaches the file's contents to your "
+            + "next message.",
+
+        PlusMenuKind.Skill =>
+            "PRESSING THIS ROW lists the slash commands already defined in your registered "
+            + "workspace, by name. It does not create one.",
+
+        PlusMenuKind.Plugin =>
+            "PRESSING THIS ROW lists what is already registered here and which of their MCP "
+            + "servers were approved or refused. It does not install one — that is "
+            + "helmion plugin add <local-path>, and remote sources are refused on purpose.",
+
+        PlusMenuKind.Connector =>
+            "PRESSING THIS ROW searches GitHub for candidate servers matching what you typed "
+            + "in the box. It does NOT install or connect one: approving a server needs a "
+            + "human at a real terminal, so it stays on the command line "
+            + "(helmion mcp-install --root <path>).",
+
+        PlusMenuKind.Permission =>
+            "PRESSING THIS ROW opens the permission picker for this console session "
+            + "(read-only, read tools, ask first, or full).",
+
+        _ => "PRESSING THIS ROW does something Helmion has not described. That is a bug in Helmion.",
+    };
 }
 
 /// <summary>
@@ -137,7 +192,14 @@ public sealed class PlusActionItem : INotifyPropertyChanged
     private string _message;
     private PlusActionState? _stateBeforeRemoval;
 
-    public PlusActionItem(PlusMenuKind kind, string title, string message, string? sourcePath = null)
+    private readonly string _successWord;
+
+    public PlusActionItem(
+        PlusMenuKind kind,
+        string title,
+        string message,
+        string? sourcePath = null,
+        string? successWord = null)
     {
         Kind = kind;
         Entry = PlusMenuCatalog.For(kind);
@@ -146,6 +208,7 @@ public sealed class PlusActionItem : INotifyPropertyChanged
         _message = string.IsNullOrWhiteSpace(message) ? "Working…" : message;
         StartedAt = DateTimeOffset.Now;
         SourcePath = string.IsNullOrWhiteSpace(sourcePath) ? null : sourcePath;
+        _successWord = string.IsNullOrWhiteSpace(successWord) ? "Added" : successWord.Trim();
     }
 
     /// <summary>
@@ -204,7 +267,13 @@ public sealed class PlusActionItem : INotifyPropertyChanged
     public string StateText => State switch
     {
         PlusActionState.InProgress => "Connecting…",
-        PlusActionState.Succeeded => "Added",
+
+        // NOT ALWAYS "Added". Three of the four rows do not add anything: Skills
+        // LISTS what this workspace already has, Plugins LISTS what is registered,
+        // and Connectors SEARCHES GitHub for candidates it is not allowed to
+        // install. Stamping "Added" on a search result is a small lie in the one
+        // place the operator looks to find out what just happened.
+        PlusActionState.Succeeded => _successWord,
         PlusActionState.Failed => "Failed",
         PlusActionState.Removed => "Removed",
         PlusActionState.Empty => "Nothing yet",
@@ -285,11 +354,16 @@ public sealed class PlusMenuController
     /// This is what lets <see cref="PromptAttachments"/> reopen the file at send
     /// time; without it an attachment can only ever be a label.
     /// </param>
+    /// <param name="successWord">
+    /// The word the row shows when it settles successfully. Defaults to "Added",
+    /// which is only true for an Upload — see <see cref="PlusActionItem.StateText"/>.
+    /// </param>
     public PlusActionItem Begin(
         PlusMenuKind kind,
         string title,
         string? message = null,
-        string? sourcePath = null)
+        string? sourcePath = null,
+        string? successWord = null)
     {
         var entry = PlusMenuCatalog.For(kind);
         var item = new PlusActionItem(
@@ -303,7 +377,8 @@ public sealed class PlusMenuController
                 PlusMenuKind.Upload => "Checking the file…",
                 _ => $"Working on {entry.Label}…",
             },
-            sourcePath);
+            sourcePath,
+            successWord);
         Items.Add(item);
         return item;
     }

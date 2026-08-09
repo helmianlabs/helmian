@@ -25,16 +25,19 @@ namespace Helmion.Desktop.Core;
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class WhisperSpeechRecognizer : IDisposable
 {
-    /// <summary>Quiet time that closes an utterance. Matches the old EndSilenceTimeout.</summary>
-    public const int EndSilenceMs = 420;
+    /// <summary>
+    /// Quiet time that closes an utterance. Lower = snappier end-of-phrase (less lag after you stop talking).
+    /// Was 420 ms; 280 ms still avoids cutting most words while shaving ~140 ms off every turn.
+    /// </summary>
+    public const int EndSilenceMs = 280;
 
     private const int FrameMs = 20;
     private const int FrameSamples = VoiceAudio.WhisperSampleRate * FrameMs / 1000;
-    private const int OnsetFrames = 3;                 // 60 ms above the floor before we believe it
+    private const int OnsetFrames = 2;                 // 40 ms above the floor before we believe it
     private const int EndSilenceFrames = EndSilenceMs / FrameMs;
-    private const int PreRollFrames = 15;              // 300 ms kept so word onsets are not clipped
-    private const int MinUtteranceMs = 250;            // shorter than this is a click or a cough
-    private const int MaxUtteranceMs = 25_000;         // whisper's window is 30 s; close early
+    private const int PreRollFrames = 12;              // 240 ms kept so word onsets are not clipped
+    private const int MinUtteranceMs = 200;            // shorter than this is a click or a cough
+    private const int MaxUtteranceMs = 20_000;         // cap long monologues for faster decode
     private const double MinSpeechThresholdDb = -45d;  // never trust a floor quieter than this
     private const double SpeechMarginDb = 10d;         // speech sits ~10 dB over room tone
 
@@ -77,9 +80,10 @@ public sealed class WhisperSpeechRecognizer : IDisposable
     /// </remarks>
     public const string VocabularyPrompt =
         "Glanbia, Chobani, Lactalis, DFA, Caldmere, SiteVector, Vercel, Fly.io, "
-        + "Neon, Clerk, Ollama, ONNX, WASAPI, MCP, LLM, repo, commit, hook, "
-        + "Whisper, Qwen, Gemini, ChatGPT, Codex, Maestro, DairyForge, AimForge, "
-        + "ThinkinBuddy, Claude, Grok. "
+        + "Neon, Clerk, Ollama, ONNX, WASAPI, MCP, LLM, Ably, Herald, Discord, Slack, "
+        + "GitHub, Whisper, Qwen, Gemini, ChatGPT, Codex, Maestro, DairyForge, AimForge, "
+        + "ThinkinBuddy, Claude, Grok, Cora, Brandon. "
+        + "Helmian Room is local chat. Guard blocks destructive commands. "
         + "Helmion uses Kokoro for speech and Whisper for listening. "
         + "We are talking about Helmion and Kokoro.";
 
@@ -258,6 +262,12 @@ public sealed class WhisperSpeechRecognizer : IDisposable
     }
 
     /// <summary>
+    /// Load Whisper on a background path so the first spoken phrase is not stalled
+    /// by model I/O. Safe to call repeatedly; failures set Degraded via Error.
+    /// </summary>
+    public void Warmup() => EnsureModelLoaded();
+
+    /// <summary>
     /// Transcribe a WAV file through the same model and processor the microphone
     /// uses. This is the headless test entry point — it exists so the STT path can
     /// be proven without a human at a microphone.
@@ -368,10 +378,13 @@ public sealed class WhisperSpeechRecognizer : IDisposable
             }
 
             var factory = WhisperFactory.FromPath(_modelPath);
+            // Latency: English-only, no cross-utterance context, single segment.
+            // Prompt stays — accuracy fix for Helmion/Kokoro names (2026-07-30).
             var processor = factory.CreateBuilder()
                 .WithLanguage("en")
-                .WithNoContext()          // each utterance stands alone
-                .WithSingleSegment()      // one utterance in, one transcript out
+                .WithNoContext()
+                .WithSingleSegment()
+                .WithTemperature(0f)
                 .WithPrompt(VocabularyPrompt)
                 .Build();
 

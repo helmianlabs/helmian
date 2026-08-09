@@ -18,12 +18,29 @@ public sealed class ReadOnlyPipeClient : IAsyncDisposable
         _pipe = pipe;
     }
 
-    public static string PipeNameForCurrentUser()
+    public static string PipeNameForCurrentUser(string? servicePath = null)
     {
         var identity = WindowsIdentity.GetCurrent().User?.Value
             ?? Environment.UserName;
         var digest = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity));
-        return $"helmion-pilot-readonly-{Convert.ToHexString(digest)[..16].ToLowerInvariant()}";
+        var userPipe = $"helmion-pilot-readonly-{Convert.ToHexString(digest)[..16].ToLowerInvariant()}";
+        if (string.IsNullOrWhiteSpace(servicePath))
+        {
+            return userPipe;
+        }
+
+        // Multiple Helmion builds can legitimately run side-by-side while a new
+        // package is being verified. They must not compete for one global pipe:
+        // the first service to bind it would make every other desktop validate a
+        // server from the wrong install path and report itself offline. Scope the
+        // pipe to the exact service binary the desktop resolved. The short hash
+        // keeps the pipe name bounded and discloses no installation path.
+        var normalizedPath = Path.GetFullPath(servicePath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .ToUpperInvariant();
+        var installDigest = SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(normalizedPath));
+        return $"{userPipe}-{Convert.ToHexString(installDigest)[..16].ToLowerInvariant()}";
     }
 
     public static async Task<ReadOnlyPipeClient> ConnectAsync(
@@ -108,6 +125,134 @@ public sealed class ReadOnlyPipeClient : IAsyncDisposable
             ?? throw new InvalidDataException("Local service omitted schema provisioning result");
     }
 
+    public async Task<ArtifactProviderStatus> GetArtifactProviderStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            new PipeRequest(
+                Guid.NewGuid().ToString("N"),
+                ReadOnlyServiceContract.ArtifactProviderStatusCommand),
+            cancellationToken);
+        return response.ArtifactProvider
+            ?? throw new InvalidDataException("Local service omitted artifact provider status");
+    }
+
+    public async Task<ArtifactGenerationResult> GenerateApprovedArtifactAsync(
+        string projectRoot,
+        string requestId,
+        string evidenceHash,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            new PipeRequest(
+                Guid.NewGuid().ToString("N"),
+                ReadOnlyServiceContract.GenerateApprovedArtifactCommand,
+                WorkspacePath: projectRoot,
+                ArtifactRequestId: requestId,
+                EvidenceHash: evidenceHash),
+            cancellationToken);
+        return response.ArtifactGeneration
+            ?? throw new InvalidDataException("Local service omitted artifact generation result");
+    }
+
+    public async Task<TeamConnectionState> GetTeamConnectionAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        TeamConnectorContract.RequireProvider(providerId);
+        var response = await SendAsync(
+            new PipeRequest(
+                Guid.NewGuid().ToString("N"),
+                TeamConnectorContract.StatusCommand,
+                TeamConnector: new TeamConnectorPipeInput(providerId)),
+            cancellationToken);
+        return response.TeamConnection
+            ?? throw new InvalidDataException("Local service omitted Team connection state");
+    }
+
+    public async Task<TeamAuthorizationLaunch> BeginTeamAuthorizationAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        TeamConnectorContract.RequireProvider(providerId);
+        var response = await SendAsync(
+            new PipeRequest(
+                Guid.NewGuid().ToString("N"),
+                TeamConnectorContract.BeginAuthorizationCommand,
+                TeamConnector: new TeamConnectorPipeInput(providerId)),
+            cancellationToken);
+        return response.TeamAuthorization
+            ?? throw new InvalidDataException("Local service omitted Team authorization state");
+    }
+
+    public async Task<TeamConversationSnapshot> ReadTeamConversationAsync(
+        string? providerId = null,
+        string? scopeId = null,
+        string? channelId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (providerId is not null) TeamConnectorContract.RequireProvider(providerId);
+        var response = await SendAsync(
+            new PipeRequest(
+                Guid.NewGuid().ToString("N"),
+                TeamConnectorContract.ReadConversationCommand,
+                TeamConnector: new TeamConnectorPipeInput(providerId, scopeId, channelId)),
+            cancellationToken);
+        return response.TeamConversation
+            ?? throw new InvalidDataException("Local service omitted Team conversation state");
+    }
+
+    public async Task<RemoteControlLocalStatus> GetRemoteControlStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(new PipeRequest(
+            Guid.NewGuid().ToString("N"), ReadOnlyServiceContract.RemoteStatusCommand), cancellationToken);
+        return response.RemoteControl
+            ?? throw new InvalidDataException("Local service omitted Remote Control state");
+    }
+
+    public async Task<(RemoteControlLocalStatus Status, RemoteEnrollmentChallenge Challenge)>
+        RequestRemoteControlEnrollmentAsync(
+            string installationId, string desktopDisplayName,
+            CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(new PipeRequest(
+            Guid.NewGuid().ToString("N"), ReadOnlyServiceContract.RemoteEnrollCommand,
+            InstallationId: installationId, DesktopDisplayName: desktopDisplayName), cancellationToken);
+        return (
+            response.RemoteControl ?? throw new InvalidDataException("Local service omitted Remote Control state"),
+            response.EnrollmentChallenge ?? throw new InvalidDataException("Local service omitted enrollment challenge"));
+    }
+
+    public async Task<RemoteControlLocalStatus> RedeemRemoteControlEnrollmentAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(new PipeRequest(
+            Guid.NewGuid().ToString("N"), ReadOnlyServiceContract.RemoteRedeemCommand), cancellationToken);
+        return response.RemoteControl
+            ?? throw new InvalidDataException("Local service omitted Remote Control state");
+    }
+
+    public async Task<RemoteControlLocalStatus> PublishRemoteControlSessionAsync(
+        RemoteSelectedSessionMetadata session,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(new PipeRequest(
+            Guid.NewGuid().ToString("N"), ReadOnlyServiceContract.RemoteSessionPublishCommand,
+            RemoteSession: session), cancellationToken);
+        return response.RemoteControl
+            ?? throw new InvalidDataException("Local service omitted Remote Control state");
+    }
+
+    public async Task<RemoteControlLocalStatus> ClearRemoteControlSessionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(new PipeRequest(
+            Guid.NewGuid().ToString("N"), ReadOnlyServiceContract.RemoteSessionClearCommand), cancellationToken);
+        return response.RemoteControl
+            ?? throw new InvalidDataException("Local service omitted Remote Control state");
+    }
+
     public async Task<PipeResponse> SendForTestAsync(
         string command,
         string? workspacePath = null,
@@ -171,21 +316,25 @@ public sealed class ReadOnlyPipeClient : IAsyncDisposable
                 "Could not resolve the named-pipe server executable path");
         }
 
-        // Accept any Helmion Local Service binary (Debug vs Release vs publish paths differ).
-        // Full-path equality was rejecting a healthy service started from another output folder.
-        var actualName = Path.GetFileName(actualPath);
-        var expectedName = Path.GetFileName(expectedServerPath);
-        var isHelmionService =
-            actualName.Equals("Helmion Local Service.exe", StringComparison.OrdinalIgnoreCase)
-            || actualName.Equals("Helmion.LocalService.exe", StringComparison.OrdinalIgnoreCase)
-            || actualName.Equals(expectedName, StringComparison.OrdinalIgnoreCase)
-            || actualName.Contains("Helmion", StringComparison.OrdinalIgnoreCase)
-                && actualName.Contains("Service", StringComparison.OrdinalIgnoreCase);
+        var expectedFullPath = Path.GetFullPath(expectedServerPath);
+        var actualFullPath = Path.GetFullPath(actualPath);
+        var expectedIsDll = expectedFullPath.EndsWith(
+            ".dll",
+            StringComparison.OrdinalIgnoreCase);
+        var isExpectedServer = expectedIsDll
+            ? Path.GetFileName(actualFullPath).Equals(
+                "dotnet.exe",
+                StringComparison.OrdinalIgnoreCase)
+            : string.Equals(
+                actualFullPath,
+                expectedFullPath,
+                StringComparison.OrdinalIgnoreCase);
 
-        if (!isHelmionService)
+        if (!isExpectedServer)
         {
             throw new UnauthorizedAccessException(
-                $"Named-pipe server is not a Helmion local service executable (got '{actualName}')");
+                "Named-pipe server executable did not match the Helmion Local Service "
+                + $"selected by this desktop (got '{actualFullPath}')");
         }
     }
 

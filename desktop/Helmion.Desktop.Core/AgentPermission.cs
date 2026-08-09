@@ -20,9 +20,9 @@ public static class AgentPermission
     public static IReadOnlyList<(string Id, string Label, string Description)> Options { get; } =
     [
         (ReadOnly, "Read-only chat", "No tools. Text-only conversation with the selected LLM."),
-        (ReadTools, "Read tools", "Allow read_file, list_dir, search_text. Block writes and shell."),
-        (Ask, "Ask before each tool", "Every tool available, but you approve each call before it runs."),
-        (Full, "Full tools (no ask)", "Full control — write_file + run_command without asking.")
+        (ReadTools, "Read workspace", "Allow bounded context, file reads, directory lists, and text search in the selected project."),
+        (Ask, "Ask before each action", "Workspace actions are available, but you approve each call before it runs."),
+        (Full, "Workspace actions (no ask)", "Create or exactly edit files, run declared project tasks, and open loopback static previews without asking.")
     ];
 
     /// <summary>

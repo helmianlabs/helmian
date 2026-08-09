@@ -29,7 +29,10 @@ namespace Helmion.Desktop.Core;
 public sealed class KokoroSpeechSynthesizer : IDisposable
 {
     private const string DefaultVoiceName = "af_heart";
-    private const int PlaybackLatencyMs = 150;
+    /// <summary>WASAPI buffer latency. Lower = sooner first audio; too low can underrun.</summary>
+    private const int PlaybackLatencyMs = 50;
+    /// <summary>Kokoro infer speed (&gt;1 = slightly faster speech, shorter wall time).</summary>
+    private const float SynthesisSpeed = 1.12f;
 
     private readonly object _gate = new();
     private readonly object _loadGate = new();
@@ -225,7 +228,7 @@ public sealed class KokoroSpeechSynthesizer : IDisposable
                 float[] samples;
                 try
                 {
-                    samples = model.Infer(segment, voice.Features, 1.0f);
+                    samples = model.Infer(segment, voice.Features, SynthesisSpeed);
                 }
                 catch (Exception ex)
                 {

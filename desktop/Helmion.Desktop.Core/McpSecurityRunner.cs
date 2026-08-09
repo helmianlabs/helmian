@@ -307,6 +307,89 @@ public static class McpSecurityRunner
         return sb.ToString().TrimEnd();
     }
 
+    /// <summary>
+    /// Searches the findings from a completed static audit. This never re-opens the
+    /// candidate folder and never calls the network; its only data source is the
+    /// audit JSON already returned to the desktop.
+    /// </summary>
+    public static string SearchAuditFindings(string? rawJson, string? query)
+    {
+        if (string.IsNullOrWhiteSpace(rawJson))
+        {
+            return "[MCP audit search] Run Audit first. Search reads only the findings from the most recent audit.";
+        }
+
+        var term = query?.Trim() ?? string.Empty;
+        if (term.Length == 0)
+        {
+            return "[MCP audit search] Enter a finding category or phrase, such as secret / token access, network, file, or process.";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawJson);
+            if (!document.RootElement.TryGetProperty("findings", out var findings)
+                || findings.ValueKind != JsonValueKind.Array)
+            {
+                return "[MCP audit search] The most recent audit JSON has no findings array, so nothing can be searched.";
+            }
+
+            var secretTokenSearch = term.Contains("token", StringComparison.OrdinalIgnoreCase)
+                || term.Contains("secret", StringComparison.OrdinalIgnoreCase)
+                || term.Contains("credential", StringComparison.OrdinalIgnoreCase);
+            var matches = new List<JsonElement>();
+
+            foreach (var finding in findings.EnumerateArray())
+            {
+                var rule = Str(finding, "rule") ?? string.Empty;
+                var searchable = string.Join(" ",
+                    rule,
+                    Str(finding, "message") ?? string.Empty,
+                    Str(finding, "citation") ?? string.Empty,
+                    Str(finding, "evidence") ?? string.Empty);
+
+                var matchesTerm = secretTokenSearch
+                    ? rule.StartsWith("credential/", StringComparison.OrdinalIgnoreCase)
+                      || rule.StartsWith("env/", StringComparison.OrdinalIgnoreCase)
+                      || searchable.Contains("token", StringComparison.OrdinalIgnoreCase)
+                      || searchable.Contains("secret", StringComparison.OrdinalIgnoreCase)
+                      || searchable.Contains("credential", StringComparison.OrdinalIgnoreCase)
+                      || searchable.Contains("authorization", StringComparison.OrdinalIgnoreCase)
+                      || searchable.Contains("bearer", StringComparison.OrdinalIgnoreCase)
+                    : searchable.Contains(term, StringComparison.OrdinalIgnoreCase);
+
+                if (matchesTerm)
+                {
+                    matches.Add(finding.Clone());
+                }
+            }
+
+            var label = secretTokenSearch ? "Secret / token access" : term;
+            var output = new StringBuilder();
+            output.AppendLine($"MCP AUDIT SEARCH — {label}");
+            output.AppendLine($"  source: {matches.Count} matching finding(s) in the most recent static-audit JSON");
+            if (matches.Count == 0)
+            {
+                output.AppendLine("  No matching static evidence was found. This is not a runtime-usage measurement.");
+            }
+            else
+            {
+                foreach (var finding in matches)
+                {
+                    output.AppendLine($"  [{(Str(finding, "severity") ?? "?").ToUpperInvariant()}] {Str(finding, "rule")}");
+                    output.AppendLine($"      {Str(finding, "message")}");
+                    output.AppendLine($"      {Str(finding, "citation")}");
+                }
+            }
+
+            return output.ToString().TrimEnd();
+        }
+        catch (JsonException error)
+        {
+            return $"[MCP audit search] The most recent audit JSON could not be read ({error.Message}).";
+        }
+    }
+
     private static string? Str(JsonElement el, string name) =>
         el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
 

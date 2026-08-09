@@ -109,6 +109,18 @@ public static class OffscreenWindowChecks
             "and it is handled BEFORE any window is built, so it returns without one");
         checks += 4;
 
+        // Protocol revisions are shared by the client and service. A literal here
+        // made every packaged service smoke return exit 2 after the contract moved
+        // from v1 to v2, even though the pipe was healthy.
+        var serviceSmoke = ExtractMember(source, "RunServiceSmokeAsync(");
+        Assert(serviceSmoke is not null, "RunServiceSmokeAsync's body could be read");
+        Assert(serviceSmoke!.Contains(
+                "ReadOnlyServiceContract.ProtocolVersion",
+                StringComparison.Ordinal)
+            && !serviceSmoke.Contains("ProtocolVersion == 1", StringComparison.Ordinal),
+            "the packaged service smoke follows the shared protocol version instead of a stale literal");
+        checks += 2;
+
         // ── POSITIVE CONTROL: the scanner must reject a file that regressed ──
         var regressed = StripCommentsAndStrings(@"
             public partial class App : Application

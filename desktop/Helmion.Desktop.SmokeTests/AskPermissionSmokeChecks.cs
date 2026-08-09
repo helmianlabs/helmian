@@ -54,7 +54,7 @@ internal static class AskPermissionSmokeChecks
                 [AgentPermission.ReadOnly, AgentPermission.ReadTools, AgentPermission.Ask, AgentPermission.Full]),
             "dropdown order runs read-only → read-tools → ask → full");
         var askOption = AgentPermission.Options.Single(option => option.Id == AgentPermission.Ask);
-        Check(askOption.Label == "Ask before each tool", "the ask option is labelled for a human");
+        Check(askOption.Label == "Ask before each action", "the ask option is labelled for a human");
         Check(
             askOption.Description.Contains("approve", StringComparison.OrdinalIgnoreCase),
             "the ask description says you approve each call");

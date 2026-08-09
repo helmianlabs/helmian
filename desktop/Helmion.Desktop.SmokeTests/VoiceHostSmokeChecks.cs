@@ -40,11 +40,34 @@ internal static class VoiceHostSmokeChecks
         CheckTypistTypesButNeverSends();
         CheckScratchCannotEatUserTypedText();
         CheckHotkeyChordParsing();
+        CheckHotkeyOffReleasesMicrophone();
         CheckVoiceStackCannotMuteTheMicrophone();
 
         Console.WriteLine($"Helmion voice host smoke tests passed ({_checks} checks).");
 
         CheckConsoleHostRoundTrip();
+    }
+
+    /// <summary>
+    /// The always-running hotkey host and Desktop Voice chat share one capture
+    /// device. Hotkey OFF must therefore stop capture, not merely suspend
+    /// transcription while retaining the WaveInEvent handle.
+    /// </summary>
+    private static void CheckHotkeyOffReleasesMicrophone()
+    {
+        var source = FindRepositoryFile(
+            "desktop", "Helmion.Voice.Host", "Program.cs");
+        var text = File.ReadAllText(source);
+        var hotkeyStart = text.IndexOf("private static int Hotkey", StringComparison.Ordinal);
+        var converseStart = text.IndexOf("// ---- converse", hotkeyStart, StringComparison.Ordinal);
+        Check(hotkeyStart >= 0 && converseStart > hotkeyStart,
+            "voice-host source exposes a bounded hotkey section");
+
+        var hotkey = text[hotkeyStart..converseStart];
+        Check(!hotkey.Contains("engine.PauseDictation()", StringComparison.Ordinal),
+            "hotkey OFF never retains the microphone through PauseDictation");
+        Check(CountOccurrences(hotkey, "engine.StopDictation()") >= 3,
+            "spoken stop, key-toggle OFF, and shutdown all release the microphone");
     }
 
     /// <summary>
@@ -177,8 +200,13 @@ internal static class VoiceHostSmokeChecks
         Check((helmion.ModifiersForRegistration & HotkeyChord.ModNoRepeat) != 0,
             "registration suppresses auto-repeat, so a held key cannot fire a toggle storm");
 
-        Check(HotkeyChord.DefaultChord == "ctrl+shift+alt+h",
-            "the shipped default is the chord that was probed, not Ctrl+Shift+C");
+        Check(HotkeyChord.DefaultChord == "grave",
+            "the shipped default is Tilde/backquote, per Troy's 2026-08-04 direction");
+
+        Check(HotkeyChord.TryParse(HotkeyChord.DefaultChord, out var tilde, out _),
+            "the default chord (Tilde) parses");
+        Check(tilde.Modifiers == 0, "Tilde is a bare key with no modifiers");
+        Check(tilde.VirtualKey == 0xC0, "Tilde resolves to VK_OEM_3");
 
         Check(HotkeyChord.TryParse("CTRL + ALT + F12", out var fkey, out _)
             && fkey.VirtualKey == 0x7B
@@ -562,6 +590,38 @@ internal static class VoiceHostSmokeChecks
         // The suite is also run with the repo root as the working directory.
         var fromCurrent = Path.Combine([Environment.CurrentDirectory, .. segments]);
         return Directory.Exists(fromCurrent) ? fromCurrent : null;
+    }
+
+    private static string FindRepositoryFile(params string[] segments)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        for (var depth = 0; directory is not null && depth < 10; depth++, directory = directory.Parent)
+        {
+            var candidate = Path.Combine([directory.FullName, .. segments]);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        var fromCurrent = Path.Combine([Environment.CurrentDirectory, .. segments]);
+        return File.Exists(fromCurrent)
+            ? fromCurrent
+            : throw new FileNotFoundException(
+                $"Could not locate repository file '{Path.Combine(segments)}'.");
+    }
+
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = source.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
     }
 
     private static void Check(bool condition, string description)

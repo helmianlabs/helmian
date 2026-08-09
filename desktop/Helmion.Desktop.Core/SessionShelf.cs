@@ -195,19 +195,23 @@ public sealed class AgentSession : INotifyPropertyChanged
 
     private bool _isSelected;
     private bool _isBusy;
+    private string _tierOverride = "auto";
+    private string? _modelOverride;
 
     internal AgentSession(
         string id,
         string name,
         string? providerKey,
         string pillLabel,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        bool isManager = false)
     {
         Id = id;
         Name = name;
         ProviderKey = providerKey;
         PillLabel = pillLabel;
         CreatedAt = createdAt;
+        IsManager = isManager;
     }
 
     public string Id { get; }
@@ -228,13 +232,77 @@ public sealed class AgentSession : INotifyPropertyChanged
     /// </summary>
     public string PillLabel { get; }
 
+    /// <summary>
+    /// Maestro manager: dispatches @mentions to worker agents and receives their replies.
+    /// </summary>
+    public bool IsManager { get; }
+
     public DateTimeOffset CreatedAt { get; }
+
+    public string TierOverride
+    {
+        get => _tierOverride;
+        set => _tierOverride = string.IsNullOrWhiteSpace(value) ? "auto" : value.Trim().ToLowerInvariant();
+    }
+
+    public string? ModelOverride
+    {
+        get => _modelOverride;
+        set => _modelOverride = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
 
     /// <summary>
     /// This session's own transcript. Sessions do not share the console buffer —
     /// output from a session you are not looking at goes here and stays here.
     /// </summary>
     public StringBuilder Transcript { get; } = new();
+
+    /// <summary>
+    /// Last meaningful chat lines for the Agents shelf card (message-style preview).
+    /// Updated when the window appends to <see cref="Transcript"/>.
+    /// </summary>
+    public string ChatPreview
+    {
+        get
+        {
+            if (Transcript.Length == 0)
+                return IsBusy ? "Working…" : "No messages yet — send from Maestro while this agent is selected.";
+
+            // Prefer last non-empty lines; collapse whitespace so the card stays sleek.
+            var lines = Transcript.ToString()
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length == 0)
+                return IsBusy ? "Working…" : "No messages yet.";
+
+            // Skip pure labels like "You" / "Result" if followed by content.
+            var pick = new List<string>(2);
+            for (var i = lines.Length - 1; i >= 0 && pick.Count < 2; i--)
+            {
+                var line = lines[i];
+                if (line.Length is 0 or > 280)
+                    line = line.Length > 280 ? line[..277] + "…" : line;
+                if (line is "You" or "Result" or "Request" or "Action needed")
+                    continue;
+                if (line.StartsWith('[') && line.EndsWith(']'))
+                    continue;
+                pick.Add(line);
+            }
+
+            if (pick.Count == 0)
+                return lines[^1].Length > 120 ? lines[^1][..117] + "…" : lines[^1];
+
+            pick.Reverse();
+            var joined = string.Join(" · ", pick);
+            return joined.Length > 160 ? joined[..157] + "…" : joined;
+        }
+    }
+
+    /// <summary>Call after Transcript is mutated so Agents cards refresh the preview.</summary>
+    public void NotifyTranscriptChanged()
+    {
+        Raise(nameof(ChatPreview));
+    }
 
     /// <summary>
     /// The <c>Provider</c> value every guard card belonging to this session carries.
@@ -280,6 +348,7 @@ public sealed class AgentSession : INotifyPropertyChanged
             _isBusy = value;
             Raise(nameof(IsBusy));
             Raise(nameof(SubtitleText));
+            Raise(nameof(ChatPreview));
             Raise(nameof(AccessibleName));
         }
     }
@@ -294,9 +363,15 @@ public sealed class AgentSession : INotifyPropertyChanged
     {
         get
         {
+            if (IsManager)
+            {
+                var managerState = IsBusy ? "dispatching" : LevelText;
+                return $"Maestro · manager · {managerState}";
+            }
+
             var provider = ProviderKey ?? $"{PillLabel} · no route";
-            var state = IsBusy ? "working" : LevelText;
-            return $"{provider} · {state}";
+            var workerState = IsBusy ? "working" : LevelText;
+            return $"{provider} · {workerState}";
         }
     }
 
@@ -313,6 +388,17 @@ public sealed class AgentSession : INotifyPropertyChanged
         + (IsSelected ? ", selected" : string.Empty);
 
     public string CloseAccessibleName => $"Close session {Name}";
+
+    /// <summary>Single letter for the sleek Agents avatar chip.</summary>
+    public string AvatarInitial
+    {
+        get
+        {
+            var s = Name.Trim();
+            if (s.Length == 0) s = PillLabel;
+            return s.Length == 0 ? "?" : char.ToUpperInvariant(s[0]).ToString();
+        }
+    }
 
     /// <summary>
     /// Move the dot. The caller passes the levels it read off this session's real
@@ -441,18 +527,26 @@ public sealed class SessionShelf : INotifyPropertyChanged
             throw new ArgumentException(problem, nameof(name));
         }
 
+        var isManager = string.Equals(pillLabel.Trim(), "Maestro", StringComparison.OrdinalIgnoreCase);
         var session = new AgentSession(
             $"session-{++_counter}-{Guid.NewGuid():N}"[..24],
             name.Trim(),
-            MaestroKey.Normalize(pillLabel),
-            string.IsNullOrWhiteSpace(pillLabel) ? "Session" : pillLabel.Trim(),
-            now);
+            // Manager is not a provider brand — wire key stays null; SessionTurnRouting
+            // fills from the app Maestro setting on each turn.
+            isManager ? null : MaestroKey.Normalize(pillLabel),
+            isManager ? "Maestro" : (string.IsNullOrWhiteSpace(pillLabel) ? "Session" : pillLabel.Trim()),
+            now,
+            isManager: isManager);
 
         _sessions.Add(session);
         Select(session);
         Raise(nameof(IsEmpty));
         return session;
     }
+
+    /// <summary>First manager session if any (for @ dispatch context).</summary>
+    public AgentSession? Manager =>
+        _sessions.FirstOrDefault(s => s.IsManager);
 
     public bool Select(AgentSession? session)
     {
@@ -580,7 +674,16 @@ public static class SessionTurnRouting
     public static Route ForTurn(AgentSession? selected, string? maestroCoordinator) =>
         selected is null
             ? new Route(null, maestroCoordinator ?? NoSessionFallbackProvider, true)
-            : new Route(selected, selected.ProviderKey ?? selected.PillLabel, false);
+            : selected.IsManager
+                // Manager uses the app Maestro coordinator (or its pinned key), never the literal "Maestro" label.
+                ? new Route(
+                    selected,
+                    selected.ProviderKey
+                        ?? MaestroKey.Normalize(maestroCoordinator)
+                        ?? maestroCoordinator
+                        ?? NoSessionFallbackProvider,
+                    false)
+                : new Route(selected, selected.ProviderKey ?? selected.PillLabel, false);
 
     /// <summary>
     /// What the console says when a send is refused because a turn is already running.
@@ -589,7 +692,7 @@ public static class SessionTurnRouting
     /// </summary>
     public static string BusyMessage(AgentSession? turnSession) =>
         turnSession is null
-            ? "[Busy — wait for the current reply, then try again]"
-            : $"[Busy — \"{turnSession.Name}\" is mid-turn. One turn runs at a time; "
-              + "wait for it to finish, then send.]";
+            ? "[Busy — console is mid-turn. Wait or Esc cancel. Other session pills can still run.]"
+            : $"[Busy — \"{turnSession.Name}\" is mid-turn. Wait or Esc cancel. "
+              + "Pick another agent pill to run in parallel.]";
 }

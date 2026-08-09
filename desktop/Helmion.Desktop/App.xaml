@@ -4,6 +4,31 @@
   <Application.Resources>
     <FontFamily x:Key="AppFont">Segoe UI Variable Text, Segoe UI</FontFamily>
     <SolidColorBrush x:Key="CanvasBrush" Color="#08100F" />
+    <!-- Glass = frosted panels + soft top rim light (not a blown-out white band). -->
+    <LinearGradientBrush x:Key="GlassPanelBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#38FFFFFF" Offset="0" />
+      <GradientStop Color="#99141822" Offset="0.08" />
+      <GradientStop Color="#AA10141C" Offset="0.55" />
+      <GradientStop Color="#BB0C1018" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="GlassRaisedBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#48FFFFFF" Offset="0" />
+      <GradientStop Color="#B31C2230" Offset="0.07" />
+      <GradientStop Color="#C2181C26" Offset="0.5" />
+      <GradientStop Color="#D0121620" Offset="1" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="GlassStrokeBrush" Color="#44FFFFFF" />
+    <SolidColorBrush x:Key="GlassHoverBrush" Color="#28FFFFFF" />
+    <LinearGradientBrush x:Key="GlassInsetBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#22000000" Offset="0" />
+      <GradientStop Color="#88060A10" Offset="0.2" />
+      <GradientStop Color="#AA080A10" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="GlassShineBrush" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="#33FFFFFF" Offset="0" />
+      <GradientStop Color="#10FFFFFF" Offset="0.45" />
+      <GradientStop Color="#00FFFFFF" Offset="1" />
+    </LinearGradientBrush>
     <SolidColorBrush x:Key="SidebarBrush" Color="#0B1513" />
     <SolidColorBrush x:Key="HeaderBrush" Color="#0B1412" />
     <SolidColorBrush x:Key="FooterBrush" Color="#0A1211" />
@@ -33,5 +58,189 @@
     <Color x:Key="HeroStartColor">#173F34</Color>
     <Color x:Key="HeroMiddleColor">#122924</Color>
     <Color x:Key="HeroEndColor">#101B19</Color>
+
+    <!-- ── Modern chrome: rounded track, no Windows white up/down arrows ── -->
+    <Style x:Key="ModernScrollBarThumb" TargetType="Thumb">
+      <Setter Property="OverridesDefaultStyle" Value="True" />
+      <Setter Property="IsTabStop" Value="False" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Thumb">
+            <Border x:Name="ThumbChrome"
+                    Margin="2,1"
+                    CornerRadius="4"
+                    Background="{DynamicResource StrokeBrush}"
+                    Opacity="0.75" />
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ThumbChrome" Property="Background" Value="{DynamicResource MutedTextBrush}" />
+                <Setter TargetName="ThumbChrome" Property="Opacity" Value="0.95" />
+              </Trigger>
+              <Trigger Property="IsDragging" Value="True">
+                <Setter TargetName="ThumbChrome" Property="Background" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="ThumbChrome" Property="Opacity" Value="1" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Invisible page-up/down hit areas (no stock Windows arrow chrome). -->
+    <Style x:Key="ModernScrollBarPageButton" TargetType="RepeatButton">
+      <Setter Property="OverridesDefaultStyle" Value="True" />
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="IsTabStop" Value="False" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RepeatButton">
+            <Border Background="Transparent" />
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style TargetType="ScrollBar">
+      <Setter Property="OverridesDefaultStyle" Value="True" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Stylus.IsPressAndHoldEnabled" Value="False" />
+      <Setter Property="Width" Value="10" />
+      <Setter Property="MinWidth" Value="10" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <!-- Chrome rail: subtle inset rounded bar on panel tone -->
+            <Border x:Name="Rail"
+                    Width="10"
+                    Background="{DynamicResource PanelInsetBrush}"
+                    CornerRadius="5"
+                    Opacity="0.55"
+                    Margin="1,2">
+              <Track x:Name="PART_Track" IsDirectionReversed="True" Focusable="False">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Style="{StaticResource ModernScrollBarPageButton}"
+                                Command="ScrollBar.PageUpCommand" />
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Style="{StaticResource ModernScrollBarThumb}" />
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Style="{StaticResource ModernScrollBarPageButton}"
+                                Command="ScrollBar.PageDownCommand" />
+                </Track.IncreaseRepeatButton>
+              </Track>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Rail" Property="Opacity" Value="0.9" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="Orientation" Value="Horizontal">
+          <Setter Property="Width" Value="Auto" />
+          <Setter Property="Height" Value="10" />
+          <Setter Property="MinHeight" Value="10" />
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ScrollBar">
+                <Border x:Name="RailH"
+                        Height="10"
+                        Background="{DynamicResource PanelInsetBrush}"
+                        CornerRadius="5"
+                        Opacity="0.55"
+                        Margin="2,1">
+                  <Track x:Name="PART_Track" IsDirectionReversed="False" Focusable="False">
+                    <Track.DecreaseRepeatButton>
+                      <RepeatButton Style="{StaticResource ModernScrollBarPageButton}"
+                                    Command="ScrollBar.PageLeftCommand" />
+                    </Track.DecreaseRepeatButton>
+                    <Track.Thumb>
+                      <Thumb Style="{StaticResource ModernScrollBarThumb}" />
+                    </Track.Thumb>
+                    <Track.IncreaseRepeatButton>
+                      <RepeatButton Style="{StaticResource ModernScrollBarPageButton}"
+                                    Command="ScrollBar.PageRightCommand" />
+                    </Track.IncreaseRepeatButton>
+                  </Track>
+                </Border>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- Slider: rounded track + accent thumb (theme-matched DynamicResources) -->
+    <Style TargetType="Slider">
+      <Setter Property="OverridesDefaultStyle" Value="True" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="MinHeight" Value="22" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid VerticalAlignment="Center">
+              <Border x:Name="TrackBg"
+                      Height="6"
+                      CornerRadius="3"
+                      Background="{DynamicResource PanelInsetBrush}"
+                      BorderBrush="{DynamicResource StrokeBrush}"
+                      BorderThickness="1"
+                      Opacity="0.95"
+                      Margin="0,8" />
+              <Track x:Name="PART_Track">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Focusable="False" IsTabStop="False">
+                    <RepeatButton.Template>
+                      <ControlTemplate TargetType="RepeatButton">
+                        <Border Height="6" CornerRadius="3,0,0,3"
+                                Background="{DynamicResource AccentStrokeBrush}"
+                                Opacity="0.85"
+                                Margin="0,8" />
+                      </ControlTemplate>
+                    </RepeatButton.Template>
+                  </RepeatButton>
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Width="16" Height="16">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="Knob"
+                                Width="16" Height="16"
+                                CornerRadius="8"
+                                Background="{DynamicResource AccentBrush}"
+                                BorderBrush="{DynamicResource SurfaceRaisedBrush}"
+                                BorderThickness="2" />
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Knob" Property="BorderBrush" Value="{DynamicResource TextBrush}" />
+                          </Trigger>
+                          <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="Knob" Property="Background" Value="{DynamicResource SoftTextBrush}" />
+                          </Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Focusable="False" IsTabStop="False">
+                    <RepeatButton.Template>
+                      <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent" Height="6" Margin="0,8" />
+                      </ControlTemplate>
+                    </RepeatButton.Template>
+                  </RepeatButton>
+                </Track.IncreaseRepeatButton>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Application.Resources>
 </Application>

@@ -43,10 +43,12 @@ internal static class VoiceBackendSmokeChecks
 
     private static void CheckFallsBackWhenMoshiUnreachable()
     {
+        // Prefer Moshi so the probe path is exercised; product default is Whisper.
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => new FakeDuplex(),
-            new StubProbe(MoshiAvailability.Unavailable("No Moshi host at 127.0.0.1:8998.")));
+            new StubProbe(MoshiAvailability.Unavailable("No Moshi host at 127.0.0.1:8998.")),
+            preferred: VoiceBackend.Moshi);
 
         var chosen = selector.StartAsync().GetAwaiter().GetResult();
 
@@ -61,13 +63,17 @@ internal static class VoiceBackendSmokeChecks
 
     private static void CheckFallsBackWhenNoMoshiInstalled()
     {
-        // duplexFactory: null is the shape of this machine — Moshi is not installed.
-        using var selector = new VoiceBackendSelector(() => new VoiceSession(new FakeEngine()));
+        // Prefer Moshi with no duplex factory — product default is Whisper preferred.
+        using var selector = new VoiceBackendSelector(
+            () => new VoiceSession(new FakeEngine()),
+            duplexFactory: null,
+            probe: null,
+            preferred: VoiceBackend.Moshi);
 
         var chosen = selector.StartAsync().GetAwaiter().GetResult();
 
         Check(chosen == VoiceBackend.WhisperKokoro, "with no Moshi backend installed, voice still starts");
-        Check(selector.Status.IsFallback, "running without Moshi is reported as a fallback");
+        Check(selector.Status.IsFallback, "running Moshi-preferred without Moshi is a fallback");
         Check(selector.Status.Detail?.Contains("not installed", StringComparison.OrdinalIgnoreCase) == true,
             "the reason says Moshi is not installed rather than inventing a failure");
     }
@@ -78,11 +84,12 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => duplex,
-            new StubProbe(MoshiAvailability.Available));
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
 
         var chosen = selector.StartAsync().GetAwaiter().GetResult();
 
-        Check(chosen == VoiceBackend.Moshi, "an available Moshi host is preferred by default");
+        Check(chosen == VoiceBackend.Moshi, "Moshi is used when preferred and available");
         Check(selector.Status.Display.StartsWith("Moshi active", StringComparison.Ordinal),
             "the UI label reads \"Moshi active\"");
         Check(!selector.Status.IsFallback, "the preferred backend is not marked as a fallback");
@@ -96,8 +103,8 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => duplex,
-            new StubProbe(MoshiAvailability.Available));
-
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
         Check(selector.HoldsSingleBackendInvariant, "invariant holds before start");
 
         selector.StartAsync().GetAwaiter().GetResult();
@@ -123,8 +130,8 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => duplex,
-            new StubProbe(MoshiAvailability.Available));
-
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
         var chosen = selector.StartAsync().GetAwaiter().GetResult();
 
         Check(chosen == VoiceBackend.WhisperKokoro,
@@ -141,8 +148,8 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => duplex,
-            new StubProbe(MoshiAvailability.Available));
-
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
         Check(selector.StartAsync().GetAwaiter().GetResult() == VoiceBackend.Moshi,
             "Moshi is live before the simulated death");
 
@@ -166,7 +173,8 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => duplex,
-            new StubProbe(MoshiAvailability.Available));
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
 
         selector.StartAsync().GetAwaiter().GetResult();
         selector.StopAsync().GetAwaiter().GetResult();
@@ -185,7 +193,8 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => duplex,
-            new StubProbe(MoshiAvailability.Available));
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
         selector.Error += (_, message) => errors.Add(message);
 
         selector.StartAsync().GetAwaiter().GetResult();
@@ -203,8 +212,8 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine { FailToStart = true }),
             () => new FakeDuplex { ThrowOnStart = "no moshi-server" },
-            new StubProbe(MoshiAvailability.Available));
-
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
         var chosen = selector.StartAsync().GetAwaiter().GetResult();
 
         Check(chosen == VoiceBackend.None, "with both backends dead, no backend is reported live");
@@ -242,7 +251,8 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => duplex,
-            new StubProbe(MoshiAvailability.Available));
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
         selector.StatusChanged += (_, status) => seen.Add(status.Display);
 
         selector.StartAsync().GetAwaiter().GetResult();
@@ -270,8 +280,8 @@ internal static class VoiceBackendSmokeChecks
         using var selector = new VoiceBackendSelector(
             () => new VoiceSession(new FakeEngine()),
             () => duplex,
-            new StubProbe(MoshiAvailability.Available));
-
+            new StubProbe(MoshiAvailability.Available),
+            preferred: VoiceBackend.Moshi);
         var chosen = selector.StartAsync().GetAwaiter().GetResult();
         selector.DrainPendingTransitionsAsync().GetAwaiter().GetResult();
 
@@ -301,7 +311,8 @@ internal static class VoiceBackendSmokeChecks
             using var selector = new VoiceBackendSelector(
                 () => new VoiceSession(new FakeEngine()),
                 () => duplex,
-                new StubProbe(MoshiAvailability.Available));
+                new StubProbe(MoshiAvailability.Available),
+                preferred: VoiceBackend.Moshi);
 
             var start = selector.StartAsync();
 

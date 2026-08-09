@@ -213,7 +213,7 @@ public sealed class PilotSnapshot
                 serviceConnected
                     ? "Current-user authenticated named-pipe service is active."
                     : "The background local service process is currently offline.",
-                "Process is managed and hosted automatically by Helmion Pilot.",
+                "Process is managed and hosted automatically by Helmian.",
                 serviceConnected ? "ACTIVE / CONNECTED" : "NOT LIVE",
                 false,
                 serviceConnected),
@@ -310,7 +310,7 @@ public sealed class PilotSnapshot
 
         return new PilotSnapshot
         {
-            ModeLabel = "Personal Pilot",
+            ModeLabel = "Helmian",
             DataSource = serviceConnected ? PilotDataSource.Live : PilotDataSource.Unconfigured,
             // serviceConnected proves the named pipe answered — it says nothing about the database.
             DataSourceLabel = serviceConnected

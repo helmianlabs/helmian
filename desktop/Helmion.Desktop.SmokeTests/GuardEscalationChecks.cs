@@ -183,21 +183,22 @@ internal static class GuardEscalationChecks
         }
 
         // --- 13. THE PRINTED RULE CANNOT DRIFT FROM THE OBEYED RULE -------------
-        // The panel shows StatedRule to the user. If a constant is retuned and the
-        // sentence is hand-written, the product lies about its own thresholds.
+        // Face line (StatedRule) is short; detail (StatedRuleDetail) is settings-only.
+        // Both must carry the same threshold numbers as the state machine.
         var stated = GuardEscalationRule.StatedRule;
+        var detail = GuardEscalationRule.StatedRuleDetail;
         Assert(stated.Contains(pulseAt.ToString(), StringComparison.Ordinal),
-            "the stated rule prints the pulse sighting threshold it obeys");
+            "the face rule prints the pulse sighting threshold");
         Assert(stated.Contains(redAt.ToString(), StringComparison.Ordinal),
-            "the stated rule prints the red sighting threshold it obeys");
+            "the face rule prints the red sighting threshold");
         Assert(stated.Contains(pulseAge.TotalMinutes.ToString("0"), StringComparison.Ordinal),
-            "the stated rule prints the pulse age threshold it obeys");
+            "the face rule prints the pulse age threshold");
         Assert(stated.Contains(redAge.TotalMinutes.ToString("0"), StringComparison.Ordinal),
-            "the stated rule prints the red age threshold it obeys");
-        Assert(stated.Contains("never solid", StringComparison.OrdinalIgnoreCase),
-            "the stated rule tells the reader red is never solid");
-        Assert(stated.Contains("Grey never moves", StringComparison.Ordinal),
-            "the stated rule tells the reader grey never moves");
+            "the face rule prints the red age threshold");
+        Assert(detail.Contains("Grey never moves", StringComparison.Ordinal),
+            "settings detail still explains grey never moves");
+        Assert(detail.Contains("never solid", StringComparison.OrdinalIgnoreCase),
+            "settings detail still explains red is never solid");
         checks += 6;
 
         // --- 14. A CARD WITH CHOICES RENDERS LARGE ------------------------------
@@ -236,11 +237,11 @@ internal static class GuardEscalationChecks
         }
         checks += 12;
 
-        // Full is quiet, but it must not be VAGUE. The card is the only place the
-        // panel says shell commands can run unattended.
+        // Full is quiet, but it must not be VAGUE. The card names the bounded
+        // execution and preview contract and explicitly rules out arbitrary control.
         var full = GuardPermissionPosture.Describe(AgentPermission.Full);
-        Assert(full.Detail.Contains("run_command", StringComparison.Ordinal)
-            && full.Detail.Contains("without stopping to ask", StringComparison.Ordinal),
+        Assert(full.Detail.Contains("tasks declared by the selected project", StringComparison.Ordinal)
+            && full.Detail.Contains("no arbitrary agent terminal", StringComparison.Ordinal),
             "the full-permission card names exactly what it allows, even though it is not an alarm");
 
         // Aliases resolve. "on" is a real value AgentPermission.Normalize accepts.

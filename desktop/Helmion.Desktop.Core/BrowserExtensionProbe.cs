@@ -143,15 +143,16 @@ public static class BrowserExtensionProbe
         {
             return new BrowserExtensionState(
                 GuardLevel.Unknown,
-                "Browser guard location not known",
-                "No extension folder was given, so Chrome's records could not be searched. "
-                + "Could not compute — not an all-clear.",
+                "I do not know where the browser guard should be",
+                "Nobody told me which folder the browser guard lives in, so I had nothing to look "
+                + "for in Chrome's records. This is not an all-clear — it is me saying I do not know.",
                 false, BrowserExtensionEnablement.NotRecorded, null);
         }
 
         var roots = userDataRoots ?? DefaultUserDataRoots();
         var profilesRead = 0;
-        var filesRead = 0;
+        var filesFound = 0;
+        var filesParsed = 0;
         Hit? best = null;
 
         foreach (var root in roots)
@@ -168,12 +169,24 @@ public static class BrowserExtensionProbe
                     if (!File.Exists(file)) continue;
 
                     readAnyFileHere = true;
-                    filesRead += 1;
+                    filesFound += 1;
 
-                    var enablement = FindInPreferences(file, target);
-                    if (enablement is null) continue;
+                    // A FILE THAT EXISTS IS NOT A FILE THAT WAS READ, and until now
+                    // this code could not tell the difference. FindInPreferences
+                    // swallowed every exception and returned the same null for "this
+                    // file has no record of us" as for "this file is locked or
+                    // corrupt", while the counter had already been bumped on
+                    // existence alone — so a machine whose Chrome records could not
+                    // be parsed was told, with total confidence, that the browser
+                    // guard is NOT INSTALLED, and sent to chrome://extensions to fix
+                    // something that was not broken.
+                    var lookup = FindInPreferences(file, target);
+                    if (!lookup.Readable) continue;
 
-                    var hit = new Hit(enablement.Value, profileDirectory, fileName);
+                    filesParsed += 1;
+                    if (lookup.Enablement is null) continue;
+
+                    var hit = new Hit(lookup.Enablement.Value, profileDirectory, fileName);
 
                     // A definite answer beats an indefinite one, and ENABLED beats
                     // DISABLED: the guard genuinely is running if any profile has it
@@ -188,14 +201,27 @@ public static class BrowserExtensionProbe
             }
         }
 
-        if (profilesRead == 0 || filesRead == 0)
+        if (profilesRead == 0 || filesFound == 0)
         {
             return new BrowserExtensionState(
                 GuardLevel.Unknown,
-                "Browser layer could not be checked",
-                "No Chrome, Edge, Brave or Chromium profile could be read on this machine, so "
-                + "whether the browser guard is installed cannot be determined. This is a "
-                + "could-not-compute, not an all-clear.",
+                "I could not find a browser to check",
+                "There is no Chrome, Edge, Brave or Chromium profile I can read on this machine, "
+                + "so I cannot tell you whether the browser guard is installed. This is not an "
+                + "all-clear — it is me saying I do not know.",
+                false, BrowserExtensionEnablement.NotRecorded, null);
+        }
+
+        // Files were there and not one of them could be parsed. This is NOT the
+        // same as "our extension is absent", and it must never be reported as one.
+        if (best is null && filesParsed == 0)
+        {
+            return new BrowserExtensionState(
+                GuardLevel.Unknown,
+                "I could not read Chrome's list of extensions",
+                "Chrome's own record of which extensions you have is there, but I could not read "
+                + "it, so I cannot tell you whether the browser guard is installed. This is not "
+                + "an all-clear. If Chrome is mid-update, try again in a minute.",
                 false, BrowserExtensionEnablement.NotRecorded, null);
         }
 
@@ -204,31 +230,36 @@ public static class BrowserExtensionProbe
             return new BrowserExtensionState(
                 GuardLevel.Warning,
                 "Browser guard is NOT installed",
-                $"{profilesRead} browser profile(s) were read — both the Preferences and the "
-                + $"Secure Preferences file in each, {filesRead} file(s) in total — and none has an "
-                + $"extension loaded from {extensionDirectory}. Nothing is checking AI chat replies "
-                + "in the browser. Load it: chrome://extensions → Developer mode → Load unpacked.",
+                "I read every browser profile on this machine and none of them has the Helmion "
+                + "extension loaded. Nothing is checking AI chat replies in your browser. "
+                + "To fix it: open chrome://extensions, turn on Developer mode, choose Load "
+                + "unpacked, and pick the extension folder inside your Helmion install.",
                 false, BrowserExtensionEnablement.NotRecorded, null);
         }
 
+        // WHICH FILE ANSWERED AND WHICH PROFILE stay on the record — they are the
+        // difference between a store install and a developer one, and reading the
+        // wrong one is the bug that made this card say CRITICAL for months. They
+        // are just not in the sentence he has to read. Troy, 2026-07-30, on the old
+        // wording: "That wording is still stupid and I don't know what the fuck any
+        // of that shit is." He was right; a card he skips is worse than no card.
         return best.Enablement switch
         {
             BrowserExtensionEnablement.Enabled => new BrowserExtensionState(
                 GuardLevel.Normal,
-                "Browser guard is installed and enabled",
-                $"Loaded from {extensionDirectory} and recorded as enabled in Chrome's own "
-                + $"\"{best.RecordFile}\" file for profile {Path.GetFileName(best.ProfileDirectory)}. "
-                + "It runs on claude.ai, chatgpt.com, gemini.google.com and grok.com. "
-                + "This says it is installed and switched on — the extension has no channel back to "
-                + "this window, so it cannot say a specific tab is being watched right now.",
+                "Browser guard is on",
+                "Chrome has it loaded and it is installed and switched on. It watches what AI "
+                + "chat replies tell you to do on claude.ai, chatgpt.com, gemini.google.com and "
+                + "grok.com. That is all this says — it cannot tell you whether one particular "
+                + "tab is being watched this second.",
                 true, BrowserExtensionEnablement.Enabled, best.ProfileDirectory, best.RecordFile),
 
             BrowserExtensionEnablement.Disabled => new BrowserExtensionState(
                 GuardLevel.Warning,
                 "Browser guard is installed but SWITCHED OFF",
-                $"Chrome has it loaded from {extensionDirectory} and its \"{best.RecordFile}\" file "
-                + $"for profile {Path.GetFileName(best.ProfileDirectory)} records it as disabled. "
-                + "That is not the same as missing — turn it back on at chrome://extensions.",
+                "Chrome has it loaded, but you have the switch turned off, so nothing is checking "
+                + "AI chat replies in your browser. That is not the same as it being missing. "
+                + "Open chrome://extensions and turn it back on.",
                 true, BrowserExtensionEnablement.Disabled, best.ProfileDirectory, best.RecordFile),
 
             // Installed, but the profile record contains neither of the two keys that
@@ -238,13 +269,18 @@ public static class BrowserExtensionProbe
             // already ranks Unknown above OK so it cannot render as an all-clear.
             _ => new BrowserExtensionState(
                 GuardLevel.Unknown,
-                "Browser guard is installed; whether it is ON is not recorded",
-                $"Chrome has it loaded from {extensionDirectory}, recorded in its "
-                + $"\"{best.RecordFile}\" file for profile {Path.GetFileName(best.ProfileDirectory)}. "
-                + "Whether it is enabled is NOT recorded in that profile — neither the "
-                + "\"disable_reasons\" nor the \"state\" key is present — so this cannot say. "
-                + "It is installed; check the switch at chrome://extensions. "
-                + "Could not compute — not an all-clear.",
+                // PLAIN ENGLISH. 2026-07-30, Troy, on the old wording: "That wording
+                // is still stupid and I don't know what the fuck any of that shit is."
+                // He was right. The old text named the Chrome file, the profile
+                // directory, and two JSON key names nobody outside this codebase has
+                // heard of. A card he cannot read is a card he ignores, and an ignored
+                // card is worse than no card. It says what he should DO, first.
+                "Browser guard is installed. I cannot tell if it is switched on",
+                "Chrome has it loaded, so it is definitely installed. But Chrome does "
+                + "not write down whether you have the switch turned on, so there is "
+                + "nothing for me to read. "
+                + "Open chrome://extensions and look at the toggle. "
+                + "I am showing this as unknown rather than guessing it is fine.",
                 true, BrowserExtensionEnablement.NotRecorded, best.ProfileDirectory, best.RecordFile),
         };
     }
@@ -287,15 +323,33 @@ public static class BrowserExtensionProbe
     }
 
     /// <summary>
-    /// The enablement recorded for our extension in one preference file, or null
-    /// when this file has no record of it.
+    /// What one preference file had to say.
+    /// </summary>
+    /// <param name="Readable">
+    /// Whether the file was actually opened and parsed. FALSE IS NOT "OUR
+    /// EXTENSION IS ABSENT" — it is "I could not look", and the caller must not
+    /// count it as evidence either way.
+    /// </param>
+    /// <param name="Enablement">
+    /// The enablement recorded for our extension, or null when the file parsed
+    /// fine and simply has no record of it.
+    /// </param>
+    internal readonly record struct PreferenceRead(bool Readable, BrowserExtensionEnablement? Enablement);
+
+    /// <summary>
+    /// Looks for our extension in one preference file.
     ///
     /// Chrome's preference files are large JSON documents; extensions live under
     /// extensions.settings keyed by id, each with a `path`. For an unpacked
     /// extension `path` is the absolute folder it was loaded from, which is what
     /// makes this identifiable at all.
+    ///
+    /// This used to return a plain nullable enablement, which forced "parsed, and
+    /// we are not in it" and "could not parse at all" to be spelled the same way.
+    /// The caller then reported the second one as the first, in a confident
+    /// sentence, with a fix-it instruction attached.
     /// </summary>
-    internal static BrowserExtensionEnablement? FindInPreferences(
+    internal static PreferenceRead FindInPreferences(
         string preferencesPath,
         string normalizedTarget)
     {
@@ -304,9 +358,11 @@ public static class BrowserExtensionProbe
             using var stream = File.Open(preferencesPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var document = JsonDocument.Parse(stream);
 
-            if (!document.RootElement.TryGetProperty("extensions", out var extensions)) return null;
-            if (!extensions.TryGetProperty("settings", out var settings)) return null;
-            if (settings.ValueKind != JsonValueKind.Object) return null;
+            // The file parsed. Everything below this line is a real answer, even
+            // when the answer is "our extension is not in here".
+            if (!document.RootElement.TryGetProperty("extensions", out var extensions)) return new(true, null);
+            if (!extensions.TryGetProperty("settings", out var settings)) return new(true, null);
+            if (settings.ValueKind != JsonValueKind.Object) return new(true, null);
 
             foreach (var entry in settings.EnumerateObject())
             {
@@ -315,17 +371,18 @@ public static class BrowserExtensionProbe
                 var path = Normalize(pathValue.GetString());
                 if (path.Length == 0 || path != normalizedTarget) continue;
 
-                return ReadEnablement(entry.Value);
+                return new(true, ReadEnablement(entry.Value));
             }
 
-            return null;
+            return new(true, null);
         }
         catch (Exception)
         {
-            // A locked or malformed preferences file is skipped, not fatal. Chrome
-            // holds these files open while running, which is why they are opened
-            // with FileShare.ReadWrite above.
-            return null;
+            // Locked, truncated or malformed. Chrome holds these files open while
+            // running, which is why they are opened with FileShare.ReadWrite above
+            // — but a file it is mid-way through rewriting still fails to parse,
+            // and that is a "could not look", not a finding.
+            return new(false, null);
         }
     }
 

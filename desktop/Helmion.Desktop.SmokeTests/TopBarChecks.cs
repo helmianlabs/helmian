@@ -27,6 +27,7 @@ internal static class TopBarChecks
         checks += CheckCtrlKFocusesTheSearchBox();
         checks += CheckExistingChordsSurvived();
         checks += CheckShelfSurvivesOpeningAProject();
+        checks += CheckShellPanelsAndFullScreenAreIndependent();
 
         Console.WriteLine($"Helmion top-bar checks passed ({checks} checks).");
     }
@@ -73,6 +74,13 @@ internal static class TopBarChecks
         Assert(Resolve(true, ShellKey.Subtract) == ShellShortcut.TextSmaller, "Ctrl+numpad-minus shrinks the text");
         Assert(Resolve(true, ShellKey.D0) == ShellShortcut.TextDefault, "Ctrl+0 restores the default size");
         Assert(Resolve(true, ShellKey.NumPad0) == ShellShortcut.TextDefault, "Ctrl+numpad-0 restores the default size");
+        Assert(Resolve(true, ShellKey.N) == ShellShortcut.NewProject, "Ctrl+N opens New Project");
+        Assert(Resolve(true, ShellKey.O) == ShellShortcut.OpenProject, "Ctrl+O opens the project folder picker");
+        Assert(Resolve(true, ShellKey.OemComma) == ShellShortcut.OpenSettings, "Ctrl+, opens Settings");
+        Assert(Resolve(true, ShellKey.B) == ShellShortcut.ToggleSidebar, "Ctrl+B toggles the sidebar");
+        Assert(Resolve(true, ShellKey.J) == ShellShortcut.ToggleBottomPanel, "Ctrl+J toggles the bottom panel");
+        Assert(ShellShortcuts.Resolve(true, ShellKey.D, false, shift: true) == ShellShortcut.ToggleDetails,
+            "Ctrl+Shift+D toggles details");
 
         Assert(Resolve(false, ShellKey.F11) == ShellShortcut.ToggleConsoleFullScreen,
             "F11 toggles immersive mode without a modifier");
@@ -90,7 +98,7 @@ internal static class TopBarChecks
 
         Assert(Resolve(true, ShellKey.Other) == ShellShortcut.None, "an unmapped Ctrl chord is not ours");
         Assert(Resolve(false, ShellKey.Other) == ShellShortcut.None, "an unmapped key is not ours");
-        return 12;
+        return 18;
     }
 
     /// <summary>
@@ -138,6 +146,36 @@ internal static class TopBarChecks
         Assert(ProjectShelfRoot.IsAtOrBeneath(project, workspace), "a project is beneath its workspace");
         Assert(!ProjectShelfRoot.IsAtOrBeneath(workspace, project), "a workspace is not beneath its own project");
         return 13;
+    }
+
+    private static int CheckShellPanelsAndFullScreenAreIndependent()
+    {
+        var state = ShellLayoutState.Default;
+        Assert(!state.IsFullScreen, "the shell starts in ordinary windowed mode");
+        Assert(state.LeftPanelVisible && !state.RightPanelVisible, "the compact shell starts with Details closed");
+        Assert(state.ShowWindowsCaption, "ordinary mode keeps Windows caption chrome");
+        Assert(state.ShowAppHeaderAndFooter, "ordinary mode keeps the app header and footer");
+
+        state = state.ToggleLeftPanel();
+        Assert(!state.LeftPanelVisible, "the left panel can be hidden");
+        Assert(!state.RightPanelVisible, "hiding the left panel does not reopen Details");
+
+        state = state.WithFullScreen(true);
+        Assert(state.IsFullScreen && !state.ShowWindowsCaption,
+            "F11 requests true captionless full screen");
+        Assert(!state.ShowAppHeaderAndFooter, "full screen hides Helmian header and footer chrome");
+        Assert(!state.LeftPanelVisible && !state.RightPanelVisible,
+            "entering full screen preserves independent panel choices");
+
+        state = state.ToggleRightPanel();
+        Assert(state.RightPanelVisible && !state.LeftPanelVisible,
+            "the Details panel can be toggled independently while full screen");
+
+        state = state.WithFullScreen(false);
+        Assert(state.ShowWindowsCaption, "leaving F11 restores Windows caption chrome");
+        Assert(!state.LeftPanelVisible && state.RightPanelVisible,
+            "leaving F11 does not silently reopen either panel");
+        return 12;
     }
 
     private static ShellShortcut Resolve(bool control, ShellKey key) =>

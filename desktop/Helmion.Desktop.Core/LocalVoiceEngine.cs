@@ -46,6 +46,14 @@ public sealed class LocalVoiceEngine : ISpeechEngine
             _recognizer.SpeechDetected += OnRecognizerSpeechDetected;
             _recognizer.Error += OnComponentError;
             _recognizer.Stopped += OnRecognizerStopped;
+
+            // ggml load is multi-second on first Start(). Warm in background so
+            // "Voice" / "Dictate" do not feel frozen on the first utterance.
+            _ = Task.Run(() =>
+            {
+                try { _recognizer.Warmup(); }
+                catch { /* Error event already reports load failures */ }
+            });
         }
 
         if (kokoroModelPath is not null)

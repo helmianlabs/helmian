@@ -138,6 +138,9 @@ public sealed class AgentBridge : IDisposable
         string provider,
         string? permissionMode = null,
         IReadOnlyList<CustomProviderProfile>? customProviders = null,
+        string? tier = null,
+        string? model = null,
+        IReadOnlyList<PromptImage>? images = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation]
         CancellationToken cancellationToken = default)
     {
@@ -153,6 +156,14 @@ public sealed class AgentBridge : IDisposable
                                provider,
                                permission,
                                customProviders = ToWirePayload(customProviders),
+                               tier,
+                               model,
+                               images = images?.Select(image => new
+                               {
+                                   fileName = image.FileName,
+                                   mediaType = image.MediaType,
+                                   data = image.Base64Data,
+                               }).ToArray(),
                            },
                            cancellationToken).ConfigureAwait(false))
         {
@@ -381,6 +392,12 @@ public sealed class AgentBridge : IDisposable
         {
             argsJson = argsEl.GetRawText();
         }
+        string? resultJson = null;
+        if (root.TryGetProperty("result", out var resultEl)
+            && resultEl.ValueKind == JsonValueKind.Object)
+        {
+            resultJson = resultEl.GetRawText();
+        }
 
         return new AgentBridgeEvent(
             Event: ev!,
@@ -392,6 +409,7 @@ public sealed class AgentBridge : IDisposable
             ProviderId: GetStr("providerId"),
             Workspace: GetStr("workspace"),
             ArgsJson: argsJson,
+            ResultJson: resultJson,
             Partial: root.TryGetProperty("partial", out var part) && part.ValueKind == JsonValueKind.True,
             Id: GetStr("id"),
             Tool: GetStr("tool"),
@@ -422,7 +440,8 @@ public sealed class AgentBridge : IDisposable
             SessionId: GetStr("sessionId"),
             // commands event (src/agent/bridge.mjs:279-292).
             Commands: ParseCommands(root),
-            Plugins: ParsePlugins(root));
+            Plugins: ParsePlugins(root),
+            PluginDetails: ParsePluginDetails(root));
     }
 
     private static IReadOnlyList<AgentSlashCommand>? ParseCommands(JsonElement root)
@@ -485,6 +504,109 @@ public sealed class AgentBridge : IDisposable
             }
         }
 
+        return list;
+    }
+
+    /// <summary>
+    /// The FULL plugin listing from a <c>commands</c> event, not just the names.
+    ///
+    /// <para>
+    /// WHY THIS EXISTS ALONGSIDE <see cref="ParsePlugins"/>. The bridge has always
+    /// sent the whole record — <c>src/agent/bridge.mjs:309-317</c> emits
+    /// <c>approvedMcpServers</c>, <c>refusedMcpServers</c> (name AND reason) and
+    /// <c>warnings</c> for every loaded plugin. The desktop reduced all of it to a
+    /// list of strings, so the one thing worth showing was the one thing thrown
+    /// away: WHICH MCP SERVERS THE GATE REFUSED, AND WHY.
+    /// </para>
+    /// <para>
+    /// Those refusals are produced by <c>src/agent/plugins.mjs</c>
+    /// <c>evaluateMcpDeclaration</c>, which fails closed at every branch. Dropping
+    /// them on the floor made a security decision invisible: a plugin whose server
+    /// was refused looked exactly like a plugin whose server was approved.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<AgentPluginInfo>? ParsePluginDetails(JsonElement root)
+    {
+        if (!root.TryGetProperty("plugins", out var el) || el.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var list = new List<AgentPluginInfo>();
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+
+            string? Field(string name) =>
+                item.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String
+                    ? p.GetString()
+                    : null;
+
+            var name = Field("name");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            list.Add(new AgentPluginInfo(
+                name!,
+                Field("root"),
+                Field("version"),
+                item.TryGetProperty("commands", out var hasCmds)
+                    && hasCmds.ValueKind == JsonValueKind.True,
+                StringArray(item, "approvedMcpServers"),
+                Refusals(item),
+                StringArray(item, "warnings")));
+        }
+
+        return list;
+    }
+
+    private static IReadOnlyList<string> StringArray(JsonElement parent, string property)
+    {
+        if (!parent.TryGetProperty(property, out var el) || el.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var list = new List<string>();
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String) continue;
+            var s = item.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) list.Add(s!);
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// A refusal with NO reason is still surfaced, carrying a stand-in sentence.
+    /// Silently dropping it would hide the refusal itself, which is the exact
+    /// failure this parser was added to end.
+    /// </summary>
+    private static IReadOnlyList<AgentMcpRefusal> Refusals(JsonElement plugin)
+    {
+        if (!plugin.TryGetProperty("refusedMcpServers", out var el)
+            || el.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var list = new List<AgentMcpRefusal>();
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            if (!item.TryGetProperty("name", out var n) || n.ValueKind != JsonValueKind.String) continue;
+            var name = n.GetString();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var reason = item.TryGetProperty("reason", out var r) && r.ValueKind == JsonValueKind.String
+                ? r.GetString()
+                : null;
+
+            list.Add(new AgentMcpRefusal(
+                name!,
+                string.IsNullOrWhiteSpace(reason)
+                    ? "The bridge refused this server but did not say why. That is a bug in Helmion."
+                    : reason!));
+        }
         return list;
     }
 
@@ -644,6 +766,7 @@ public sealed record AgentBridgeEvent(
     string? ProviderId = null,
     string? Workspace = null,
     string? ArgsJson = null,
+    string? ResultJson = null,
     bool Partial = false,
     // permission_request / permission_decision (ask mode)
     string? Id = null,
@@ -673,7 +796,34 @@ public sealed record AgentBridgeEvent(
     string? SessionId = null,
     // commands (slash-command registry listing)
     IReadOnlyList<AgentSlashCommand>? Commands = null,
-    IReadOnlyList<string>? Plugins = null);
+    IReadOnlyList<string>? Plugins = null,
+    // The same plugins, with everything the name-only list above discards — most
+    // importantly the MCP servers the install gate REFUSED, and the reason for
+    // each. Kept as a separate field so the existing string-list readers are
+    // untouched.
+    IReadOnlyList<AgentPluginInfo>? PluginDetails = null);
+
+/// <summary>One MCP server a plugin declared and the gate refused, with the reason.</summary>
+public sealed record AgentMcpRefusal(string Name, string Reason);
+
+/// <summary>
+/// One loaded plugin as the bridge reports it (<c>src/agent/bridge.mjs:309-317</c>).
+/// </summary>
+/// <param name="HasCommands">
+/// Whether the plugin has a <c>commands/</c> directory at its root. False here is
+/// worth showing: it is what the documented "common mistake" of nesting
+/// <c>commands/</c> inside the manifest folder produces, and
+/// <c>src/agent/plugins.mjs:296-304</c> puts the explanation in
+/// <paramref name="Warnings"/>.
+/// </param>
+public sealed record AgentPluginInfo(
+    string Name,
+    string? Root,
+    string? Version,
+    bool HasCommands,
+    IReadOnlyList<string> ApprovedMcpServers,
+    IReadOnlyList<AgentMcpRefusal> RefusedMcpServers,
+    IReadOnlyList<string> Warnings);
 
 /// <summary>One user-defined slash command as reported by the bridge.</summary>
 public sealed record AgentSlashCommand(

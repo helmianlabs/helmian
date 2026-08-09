@@ -87,7 +87,7 @@ try {
   Publish-HelmionProject -Project $desktopProject
   Publish-HelmionProject -Project $serviceProject
 
-  $desktopExecutable = Join-Path $stagingDirectory 'Helmion Pilot.exe'
+  $desktopExecutable = Join-Path $stagingDirectory 'Helmian.exe'
   $serviceExecutable = Join-Path $stagingDirectory 'Helmion Local Service.exe'
   foreach ($executable in @($desktopExecutable, $serviceExecutable)) {
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
@@ -140,7 +140,7 @@ try {
     Write-Warning "Voice models not downloaded (desktop\models missing) - packaged app will run voice-degraded. Run desktop/scripts/get-voice-models.ps1 first."
   }
 
-  $desktopExecutable = Join-Path $outputDirectory 'Helmion Pilot.exe'
+  $desktopExecutable = Join-Path $outputDirectory 'Helmian.exe'
   $serviceExecutable = Join-Path $outputDirectory 'Helmion Local Service.exe'
   [pscustomobject]@{
     status = 'published'

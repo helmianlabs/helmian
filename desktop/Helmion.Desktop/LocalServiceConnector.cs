@@ -7,14 +7,17 @@ namespace Helmion.Desktop;
 internal sealed class LocalServiceConnector
 {
     private readonly string _serviceExecutable;
+    private readonly string _pipeName;
     private Process? _startedProcess;
 
     public LocalServiceConnector()
     {
         _serviceExecutable = ResolveServiceExecutable();
+        _pipeName = ReadOnlyPipeClient.PipeNameForCurrentUser(_serviceExecutable);
     }
 
     public string ServiceExecutable => _serviceExecutable;
+    internal string PipeName => _pipeName;
 
     public async Task<ServiceHello> EnsureConnectedAsync(
         CancellationToken cancellationToken = default)
@@ -116,6 +119,8 @@ internal sealed class LocalServiceConnector
         }
         startInfo.ArgumentList.Add("--parent-pid");
         startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+        startInfo.ArgumentList.Add("--pipe-name");
+        startInfo.ArgumentList.Add(_pipeName);
         return Process.Start(startInfo)
             ?? throw new InvalidOperationException("Helmion Local Service did not start");
     }
@@ -136,7 +141,8 @@ internal sealed class LocalServiceConnector
         await using var client = await ReadOnlyPipeClient.ConnectAsync(
             _serviceExecutable,
             TimeSpan.FromSeconds(3),
-            cancellationToken);
+            cancellationToken,
+            _pipeName);
         var hello = await client.HelloAsync(cancellationToken);
         ValidateHello(hello);
         return await client.InspectWorkspaceAsync(workspacePath, cancellationToken);
@@ -152,7 +158,8 @@ internal sealed class LocalServiceConnector
         await using var client = await ReadOnlyPipeClient.ConnectAsync(
             _serviceExecutable,
             TimeSpan.FromSeconds(3),
-            cancellationToken);
+            cancellationToken,
+            _pipeName);
         var hello = await client.HelloAsync(cancellationToken);
         ValidateHello(hello);
         return await client.ProvisionSchemaAsync(workspacePath, databaseUrl, endpointId, cancellationToken);
@@ -165,10 +172,150 @@ internal sealed class LocalServiceConnector
         await using var client = await ReadOnlyPipeClient.ConnectAsync(
             _serviceExecutable,
             TimeSpan.FromSeconds(3),
-            cancellationToken);
+            cancellationToken,
+            _pipeName);
         var hello = await client.HelloAsync(cancellationToken);
         ValidateHello(hello);
         return await client.DetectCapabilitiesAsync(cancellationToken);
+    }
+
+    public async Task<TeamConnectionState> GetTeamConnectionAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable,
+            TimeSpan.FromSeconds(3),
+            cancellationToken,
+            _pipeName);
+        ValidateHello(await client.HelloAsync(cancellationToken));
+        return await client.GetTeamConnectionAsync(providerId, cancellationToken);
+    }
+
+    public async Task<TeamAuthorizationLaunch> BeginTeamAuthorizationAsync(
+        string providerId,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable,
+            TimeSpan.FromSeconds(3),
+            cancellationToken,
+            _pipeName);
+        var hello = await client.HelloAsync(cancellationToken);
+        ValidateHello(hello);
+        if (!hello.Capabilities.Contains(
+                TeamConnectorContract.BeginAuthorizationCommand,
+                StringComparer.Ordinal))
+        {
+            throw new InvalidDataException("Local service does not provide Team connections.");
+        }
+        return await client.BeginTeamAuthorizationAsync(providerId, cancellationToken);
+    }
+
+    public async Task<TeamConversationSnapshot> ReadTeamConversationAsync(
+        string? providerId = null,
+        string? scopeId = null,
+        string? channelId = null,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable,
+            TimeSpan.FromSeconds(3),
+            cancellationToken,
+            _pipeName);
+        ValidateHello(await client.HelloAsync(cancellationToken));
+        return await client.ReadTeamConversationAsync(
+            providerId,
+            scopeId,
+            channelId,
+            cancellationToken);
+    }
+
+    public async Task<RemoteControlLocalStatus> GetRemoteControlStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable, TimeSpan.FromSeconds(3), cancellationToken, _pipeName);
+        return await client.GetRemoteControlStatusAsync(cancellationToken);
+    }
+
+    public async Task<(RemoteControlLocalStatus Status, RemoteEnrollmentChallenge Challenge)>
+        RequestRemoteControlEnrollmentAsync(
+            string desktopDisplayName,
+            CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable, TimeSpan.FromSeconds(3), cancellationToken, _pipeName);
+        return await client.RequestRemoteControlEnrollmentAsync(
+            "local-service-owned", desktopDisplayName, cancellationToken);
+    }
+
+    public async Task<RemoteControlLocalStatus> RedeemRemoteControlEnrollmentAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable, TimeSpan.FromSeconds(3), cancellationToken, _pipeName);
+        return await client.RedeemRemoteControlEnrollmentAsync(cancellationToken);
+    }
+
+    public async Task<RemoteControlLocalStatus> PublishRemoteControlSessionAsync(
+        RemoteSelectedSessionMetadata session,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable, TimeSpan.FromSeconds(3), cancellationToken, _pipeName);
+        return await client.PublishRemoteControlSessionAsync(session, cancellationToken);
+    }
+
+    public async Task<RemoteControlLocalStatus> ClearRemoteControlSessionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable, TimeSpan.FromSeconds(3), cancellationToken, _pipeName);
+        return await client.ClearRemoteControlSessionAsync(cancellationToken);
+    }
+
+    public async Task<ArtifactProviderStatus> GetArtifactProviderStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable,
+            TimeSpan.FromSeconds(3),
+            cancellationToken,
+            _pipeName);
+        var hello = await client.HelloAsync(cancellationToken);
+        ValidateHello(hello);
+        return await client.GetArtifactProviderStatusAsync(cancellationToken);
+    }
+
+    public async Task<ArtifactGenerationResult> GenerateApprovedArtifactAsync(
+        string projectRoot,
+        string requestId,
+        string evidenceHash,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await using var client = await ReadOnlyPipeClient.ConnectAsync(
+            _serviceExecutable,
+            TimeSpan.FromSeconds(3),
+            cancellationToken,
+            _pipeName);
+        var hello = await client.HelloAsync(cancellationToken);
+        ValidateHello(hello);
+        return await client.GenerateApprovedArtifactAsync(
+            projectRoot,
+            requestId,
+            evidenceHash,
+            cancellationToken);
     }
 
     public async Task StopStartedProcessAsync()
@@ -204,7 +351,8 @@ internal sealed class LocalServiceConnector
         await using var client = await ReadOnlyPipeClient.ConnectAsync(
             _serviceExecutable,
             timeout,
-            cancellationToken);
+            cancellationToken,
+            _pipeName);
         var hello = await client.HelloAsync(cancellationToken);
         ValidateHello(hello);
         return hello;
@@ -213,8 +361,7 @@ internal sealed class LocalServiceConnector
     private static void ValidateHello(ServiceHello hello)
     {
         if (hello.ProtocolVersion != ReadOnlyServiceContract.ProtocolVersion
-            || !string.Equals(hello.Mode, "read-only", StringComparison.Ordinal)
-            || hello.WritesEnabled
+            || hello.Mode is not ("read-only" or "governed-local")
             || !hello.Capabilities.Contains(
                 ReadOnlyServiceContract.InspectWorkspaceCommand,
                 StringComparer.Ordinal))

@@ -31,6 +31,24 @@ public sealed record GuardOption(string Key, string Label, string Detail, string
 /// <param name="Level">What the layer computed. Unknown when it could not tell.</param>
 /// <param name="Options">Inline choices. Non-empty makes the card render large.</param>
 /// <param name="ActionKind">Routing tag the host uses to decide what a click means. Empty = nothing acts on it.</param>
+/// <param name="Subject">
+/// WHOSE PROBLEM THIS IS, in the words Troy uses for it — a session name, "your
+/// browser", "Helmion itself". Troy, 2026-07-30: "it needs to say which named
+/// agent has the issue."
+///
+/// <para>
+/// Deliberately NOT the same thing as <paramref name="Provider"/>, which is a tab
+/// name, or <paramref name="Source"/>, which is a detection layer. Neither is a
+/// person or an agent, and between them they left the panel unable to answer the
+/// first question anybody asks about a flag: whose is it?
+/// </para>
+/// <para>
+/// Empty is allowed at this layer and is filled in by <see cref="GuardCard"/>
+/// rather than left blank, because a card with no subject reads as "this is not
+/// about anyone" — which is exactly how a stale lock held by a live agent looked
+/// like housekeeping.
+/// </para>
+/// </param>
 public sealed record GuardObservation(
     string Provider,
     string Source,
@@ -39,7 +57,8 @@ public sealed record GuardObservation(
     string Detail,
     GuardLevel Level,
     IReadOnlyList<GuardOption>? Options = null,
-    string ActionKind = "");
+    string ActionKind = "",
+    string Subject = "");
 
 /// <summary>
 /// One row in the feed. Mutable and observable, because the same flag firing again
@@ -57,6 +76,7 @@ public sealed class GuardCard : INotifyPropertyChanged
         Signature = observation.Signature;
         Title = observation.Title;
         Detail = observation.Detail;
+        Subject = NameOrHonestUnknown(observation.Subject);
         ReportedLevel = observation.Level;
         ActionKind = observation.ActionKind;
         Options = observation.Options ?? [];
@@ -73,6 +93,9 @@ public sealed class GuardCard : INotifyPropertyChanged
     public string Signature { get; }
     public string Title { get; private set; }
     public string Detail { get; private set; }
+
+    /// <summary>Whose problem this is. Never blank — see <see cref="NameOrHonestUnknown"/>.</summary>
+    public string Subject { get; private set; }
     public string ActionKind { get; private set; }
     public GuardLevel ReportedLevel { get; private set; }
     public IReadOnlyList<GuardOption> Options { get; private set; }
@@ -83,6 +106,26 @@ public sealed class GuardCard : INotifyPropertyChanged
 
     public GuardLevel Level => _visual.Level;
     public GuardMotion Motion => _visual.Motion;
+
+    /// <summary>
+    /// What the card leads with: WHO, then WHAT. "Claude 2 — cannot run a turn".
+    ///
+    /// The subject goes first because the first question anybody asks about a red
+    /// card is whose it is, and the answer used to be somewhere in the fifth line
+    /// of the detail text, as a process number.
+    /// </summary>
+    public string HeadlineText => $"{Subject} — {Title}";
+
+    /// <summary>
+    /// The label over the buttons.
+    ///
+    /// "CHOOSE ONE" is right for the approval card, where the buttons are genuine
+    /// alternatives — allow once, allow for the session, deny. It is wrong for a
+    /// card offering the single thing you can DO about a problem, which is most of
+    /// them, and reading "choose one" over one button is the kind of small wrongness
+    /// that makes a panel feel like it was assembled rather than written.
+    /// </summary>
+    public string OptionsHeading => Options.Count > 1 ? "CHOOSE ONE" : "WHAT YOU CAN DO";
 
     /// <summary>The one word the level is, for anyone who cannot use the colour.</summary>
     public string LevelText => _visual.LevelText;
@@ -170,6 +213,7 @@ public sealed class GuardCard : INotifyPropertyChanged
         Source = observation.Source;
         Title = observation.Title;
         Detail = observation.Detail;
+        Subject = NameOrHonestUnknown(observation.Subject);
         ActionKind = observation.ActionKind;
         Options = observation.Options ?? [];
         LastSeen = now;
@@ -267,12 +311,28 @@ public sealed class GuardCard : INotifyPropertyChanged
                      nameof(IsAcknowledged), nameof(IsDismissed), nameof(AcknowledgementText),
                      nameof(Occurrences), nameof(OccurrenceText), nameof(TimeText),
                      nameof(OriginText), nameof(Options), nameof(HasOptions),
-                     nameof(Size), nameof(OptionsAreInert)
+                     nameof(Size), nameof(OptionsAreInert),
+                     nameof(Subject), nameof(HeadlineText), nameof(OptionsHeading)
                  })
         {
             Raise(name);
         }
     }
+
+    /// <summary>
+    /// Fills in a subject when the reporting layer had no name to give.
+    ///
+    /// IT SAYS SO RATHER THAN INVENTING ONE. The temptation with the write-lock
+    /// card was to print its <c>coordinatorId</c>, which reads like a name. It is
+    /// not one: src/core/lease.mjs:210 defaults it to the constant "claude-code"
+    /// and src/agent/tools.mjs:260 never overrides it, so EVERY lock Helmion takes
+    /// carries the same word regardless of which session took it. Printing it would
+    /// have been a constant dressed as an identity — the exact defect this whole
+    /// pass exists to remove — and it would have been believed, because it looks
+    /// like an answer.
+    /// </summary>
+    private static string NameOrHonestUnknown(string? subject) =>
+        string.IsNullOrWhiteSpace(subject) ? "Owner unknown" : subject.Trim();
 
     private void Raise(string name) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -525,19 +585,17 @@ public sealed class GuardFeed : INotifyPropertyChanged
         {
             if (_registeredSources.Count == 0)
             {
-                return "No detection layer has reported to this panel. An empty feed here means "
-                    + "nothing is connected — not that nothing was found.";
+                return "No layers connected · empty ≠ all-clear.";
             }
 
-            var names = string.Join(", ", _registeredSources.OrderBy(name => name, StringComparer.Ordinal));
-            return $"Reporting layers: {names}.";
+            var names = string.Join(" · ", _registeredSources.OrderBy(name => name, StringComparer.Ordinal));
+            return $"{_registeredSources.Count} layers · {names}";
         }
     }
 
     public string RetentionText => _droppedByRetention == 0
-        ? $"{_cards.Count} of at most {MaxRetainedCards} events retained."
-        : $"{_cards.Count} of at most {MaxRetainedCards} events retained · "
-          + $"{_droppedByRetention} older event{(_droppedByRetention == 1 ? string.Empty : "s")} dropped.";
+        ? $"{_cards.Count}/{MaxRetainedCards} retained"
+        : $"{_cards.Count}/{MaxRetainedCards} retained · {_droppedByRetention} dropped";
 
     public string EscalationRuleText => GuardEscalationRule.StatedRule;
 

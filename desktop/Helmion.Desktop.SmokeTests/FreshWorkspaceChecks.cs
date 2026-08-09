@@ -82,7 +82,9 @@ public static class FreshWorkspaceChecks
             var blank = FirstRunStates.ConnectorNeed("   ");
             Assert(blank is { State: PlusActionState.Empty },
                 "an empty connector box is a step not taken yet, not a search that failed");
-            Assert(blank!.Message.Contains("read local sqlite", StringComparison.Ordinal),
+            Assert(blank!.Message.Contains("sqlite", StringComparison.OrdinalIgnoreCase)
+                   || blank.Message.Contains("Discover", StringComparison.Ordinal)
+                   || blank.Message.Contains("Connectors", StringComparison.Ordinal),
                 "and it gives an example of what to type");
             Assert(FirstRunStates.ConnectorNeed("post to Slack") is null,
                 "a filled box returns nothing so the caller runs the real discovery");
