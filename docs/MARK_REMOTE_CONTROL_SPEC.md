@@ -148,6 +148,104 @@ same shared secret as the conversation is the easy answer and the wrong one.
 
 ---
 
+## Phase gate — Helmion Guard-wrapped AI exception analysis
+
+This phase comes **after the first-party, paired, read-only Helmion Remote** and
+**before any remotely initiated write action**. It does not turn the current
+phone bridge into an action lane.
+
+Normal dispatch and tender flow stays **rules- and optimizer-first**. An LLM may
+only analyze an exception and return structured, advisory evidence and options.
+It may never autonomously accept a tender, assign a person or vehicle, choose or
+change a route, send a message, invoke a filesystem/tool action, or write to
+production.
+
+Helmion Guard enforces the boundary outside the model:
+
+- tenant scope and data minimization/redaction
+- trusted-source and source-timestamp requirements
+- structured-schema validation, then hard-rule and staleness checks
+- explicit action and human-approval gates
+- strict production-versus-simulation separation
+- an immutable audit trail of the minimized inputs, sources and timestamps,
+  policy result, advisory output, explanation, and any human decision
+
+No model output may automate employment, discipline, compensation, or
+termination decisions. Safety or driver signals must be presented for human
+review and support with traceable evidence and explanation; they must never be
+reduced to an opaque score. **Helmion Executive Guard** is the approval, audit,
+and explanation view for this phase.
+
+**Dependencies before implementation:** a provider-neutral exception-analysis
+interface, plus versioned evaluation fixtures covering normal, exceptional,
+stale, redacted, adversarial, and cross-tenant cases. Provider-specific types or
+credentials must not cross the interface.
+
+**Acceptance criteria:**
+
+1. Normal dispatch/tender fixtures complete without an LLM call.
+2. Advisory output cannot reach an action, tool, message, filesystem, or
+   production-write path; an explicit approved decision is required outside the
+   model.
+3. Guard rejects wrong-tenant, untrusted, untimestamped, stale, malformed,
+   hard-rule-breaking, and replayed results before they reach Executive Guard.
+4. Simulation output cannot be applied to production, and the immutable audit
+   record reconstructs the evidence, policy checks, explanation, and reviewer
+   decision.
+5. Employment and safety fixtures prove that prohibited automated decisions and
+   opaque driver scoring fail closed.
+6. The same evaluation suite passes against provider-neutral stubs without
+   changing Guard policy or downstream schemas.
+
+---
+
+## Enterprise AI governance and audit-readiness track
+
+This is an engineering evidence roadmap, not legal advice, a compliance claim,
+or a claim that Helmion is certified. **SOC 2 is a future assurance objective,
+not a current certification.** Use the NIST AI Risk Management Framework as the
+initial organizing model, and consider ISO/IEC 42001 only when the product,
+customer scope, and operating system are mature enough to justify it.
+
+The phone/mobile roadmap must produce and maintain:
+
+- a capability inventory that separates released, pilot, simulated, and
+  unavailable desktop/mobile/remote behavior
+- a use-case risk assessment, plus a tenant-scoped data map with minimization,
+  redaction, retention, deletion, and provider-transfer rules
+- controlled model, provider, prompt, policy, and schema changes with owner,
+  version, evaluation result, approval, rollout, and rollback evidence
+- versioned evaluation fixtures and access/security tests, including pairing,
+  expiry, replay, revocation, wrong-device, wrong-tenant, and prohibited-action
+  cases
+- immutable Guard decision, approval, incident, and recovery evidence, plus
+  explicit customer/pilot acceptance and exception records
+
+The prohibited-use boundary remains absolute: no automated employment,
+discipline, compensation, or termination decisions, and no opaque driver
+scoring. Any consequential-decision use case requires legal review of both the
+use case and the product/customer state footprint **before** it is enabled.
+
+Evidence gates:
+
+1. **Pre-pilot:** approve the capability/risk inventory, data and retention map,
+   provider-neutral contract, change controls, evaluation baseline, access and
+   security tests, incident procedure, prohibited-use tests, and any required
+   legal review. No unresolved critical result enters a pilot.
+2. **Pilot:** bind participants, tenants, devices, capabilities, models, and
+   providers to the approved scope; preserve immutable decisions/incidents;
+   rerun evaluations on every material change; and record customer/pilot
+   acceptance, rejection, exception, and remediation.
+3. **Post-pilot:** reconcile promised versus observed capability, incidents,
+   access, retention/deletion, model/provider changes, evaluation regressions,
+   and acceptance records. Close material gaps before expansion and obtain an
+   independent readiness assessment before making any assurance claim.
+
+The enterprise build and evidence ownership are tracked in
+[MULTI_USER_RELEASE_ROADMAP.md](MULTI_USER_RELEASE_ROADMAP.md).
+
+---
+
 ## Order of work
 
 1. **Layer 2 push** — guard blocks and completions to the phone. Small.
