@@ -22,11 +22,14 @@ public readonly record struct HotkeyChord(uint Modifiers, uint VirtualKey, strin
     public const uint ModNoRepeat = 0x4000;
 
     /// <summary>
-    /// Helmion's dictation toggle. Chosen on 2026-07-30 after probing which
-    /// combinations another process already owns; see docs/POWERSHELL_VOICE.md
-    /// for the measurements and the reasoning behind rejecting Ctrl+Shift+C.
+    /// Helmion's dictation toggle. CHANGED 2026-08-04 at Troy's explicit direction, back to a
+    /// single Tilde/backquote key — he reported the prior 4-key chord ("ctrl+shift+alt+h", the
+    /// only value ever committed here; docs/POWERSHELL_VOICE.md referenced above it does not
+    /// exist in this repo, so its stated reasoning could not be verified) as a regression from a
+    /// simpler single-key binding he had working before. TryParseKey already supports "backquote"
+    /// /"grave" (VK_OEM_3, 0xC0) as a lone key with zero modifiers.
     /// </summary>
-    public const string DefaultChord = "ctrl+shift+alt+h";
+    public const string DefaultChord = "grave";
 
     /// <summary>Modifier flags with auto-repeat suppressed, as RegisterHotKey wants them.</summary>
     public uint ModifiersForRegistration => Modifiers | ModNoRepeat;

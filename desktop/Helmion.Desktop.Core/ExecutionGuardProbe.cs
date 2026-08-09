@@ -67,9 +67,10 @@ public static class ExecutionGuardProbe
         {
             return new GuardProbeResult(
                 GuardLevel.Unknown,
-                "Execution guard could not be probed",
-                $"Helmion's CLI is not at {cli}, so the gate could not be asked to refuse anything. "
-                + "This is a could-not-compute, not an all-clear.",
+                "I could not test whether dangerous commands are blocked",
+                "Helmion's own command-line program is not where I expected it, so I had nothing "
+                + "to ask. I do not know whether dangerous commands would be stopped. "
+                + "This is not an all-clear.",
                 false, false, started.Elapsed);
         }
 
@@ -88,23 +89,32 @@ public static class ExecutionGuardProbe
                 var why = blocked.Failed ? blocked.Error : allowed.Error;
                 return new GuardProbeResult(
                     GuardLevel.Unknown,
-                    "Execution guard could not be probed",
-                    $"The probe could not run: {why}. This is a could-not-compute, not an all-clear.",
+                    "I could not test whether dangerous commands are blocked",
+                    $"The test itself did not run — {why}. I do not know whether dangerous "
+                    + "commands would be stopped. This is not an all-clear.",
                     false, false, started.Elapsed);
             }
 
             var refusedDestructive = blocked.Allowed == false;
             var allowedHarmless = allowed.Allowed == true;
 
+            // THE WORDING SAYS WHAT WAS DONE, NOT WHAT IS TRUE RIGHT NOW.
+            //
+            // This card said "Execution guard is LIVE … Probed just now". It is
+            // published once, from PublishStaticPostureCards, and nothing calls it
+            // again — so six hours later "just now" was a green all-clear for a
+            // check that had not run since. The caller appends
+            // GuardFreshness.MeasuredAt, which names the clock time and says out
+            // loud that nothing re-checks it.
             if (refusedDestructive && allowedHarmless)
             {
                 return new GuardProbeResult(
                     GuardLevel.Normal,
-                    "Execution guard is LIVE",
-                    $"Probed just now: \"{DestructiveProbe}\" was REFUSED and "
-                    + $"\"{HarmlessProbe}\" was allowed. Both directions checked, because a gate "
-                    + $"stuck refusing everything is as broken as one stuck allowing it. "
-                    + $"Round trip {started.ElapsedMilliseconds} ms.",
+                    "Dangerous commands are being blocked",
+                    "I asked Helmion to run a command that would delete a whole folder tree and it "
+                    + "refused, then asked it to run a harmless one and it allowed that. Both "
+                    + "directions matter: something that refuses everything is just as broken as "
+                    + "something that refuses nothing. Nothing real was run either way.",
                     true, true, started.Elapsed);
             }
 
@@ -112,17 +122,19 @@ public static class ExecutionGuardProbe
             {
                 return new GuardProbeResult(
                     GuardLevel.Critical,
-                    "EXECUTION GUARD IS NOT REFUSING",
-                    $"\"{DestructiveProbe}\" was ALLOWED through. The destructive-pattern gate is "
-                    + "not doing its job in this workspace. Commands are running unguarded.",
+                    "DANGEROUS COMMANDS ARE NOT BEING BLOCKED",
+                    "I asked Helmion to run a command that would delete a whole folder tree, and it "
+                    + "let it through. Nothing is stopping destructive commands in this project. "
+                    + "Do not let an agent run unattended until this is fixed.",
                     false, allowedHarmless, started.Elapsed);
             }
 
             return new GuardProbeResult(
                 GuardLevel.Critical,
-                "Execution guard is refusing EVERYTHING",
-                $"\"{HarmlessProbe}\" was also refused. The gate is blocking harmless commands, "
-                + "which means the rules file is wrong or unreadable. Work will fail for no reason.",
+                "Everything is being blocked, including safe commands",
+                "Helmion refused a completely harmless command as well as a dangerous one, which "
+                + "means its rules are wrong or cannot be read. Work will fail for no reason until "
+                + "this is fixed.",
                 true, false, started.Elapsed);
         }
         finally

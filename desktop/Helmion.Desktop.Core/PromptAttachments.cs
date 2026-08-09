@@ -14,6 +14,8 @@ public sealed record AttachmentInclusion(
     bool Included,
     string Message);
 
+public sealed record PromptImage(string FileName, string MediaType, string Base64Data);
+
 /// <summary>
 /// The text that actually goes on the wire, plus a per-file account of what made
 /// it in. <see cref="Text"/> is the ONLY thing sent; anything not in it did not
@@ -21,7 +23,8 @@ public sealed record AttachmentInclusion(
 /// </summary>
 public sealed record OutgoingPrompt(
     string Text,
-    IReadOnlyList<AttachmentInclusion> Inclusions)
+    IReadOnlyList<AttachmentInclusion> Inclusions,
+    IReadOnlyList<PromptImage> Images)
 {
     public bool AnyRefused => Inclusions.Any(inclusion => !inclusion.Included);
 
@@ -73,16 +76,18 @@ public static class PromptAttachments
     /// </summary>
     public static OutgoingPrompt Compose(
         string? text,
-        IReadOnlyList<PlusActionItem>? attachments)
+        IReadOnlyList<PlusActionItem>? attachments,
+        string? provider = null)
     {
         var typed = text ?? string.Empty;
 
         if (attachments is null || attachments.Count == 0)
         {
-            return new OutgoingPrompt(typed, []);
+            return new OutgoingPrompt(typed, [], []);
         }
 
         var inclusions = new List<AttachmentInclusion>();
+        var images = new List<PromptImage>();
         var body = new System.Text.StringBuilder(typed);
 
         foreach (var item in attachments)
@@ -110,6 +115,64 @@ public static class PromptAttachments
                     path,
                     false,
                     decision.Message));
+                continue;
+            }
+
+            // ATTACHMENTS USE THE SAME EXTERNAL-ITEM PREFLIGHT AS PACKAGES,
+            // plugins, skills and MCP candidates. The attachment-specific branch
+            // treats manifests/signatures as not applicable because the file is
+            // sent as text and never installed or executed, but it still pins the
+            // exact bytes with SHA-256 and applies the same fail-closed decision.
+            var preflight = new ExternalItemPreflightInspector().ReviewLocalFile(
+                path,
+                ExternalItemKind.Attachment);
+            if (preflight.Decision != ExternalItemReviewDecision.ReadyToApprove)
+            {
+                inclusions.Add(new AttachmentInclusion(
+                    decision.FileName,
+                    path,
+                    false,
+                    $"Review before attach: {preflight.DecisionLabel}. {preflight.Explanation}"));
+                continue;
+            }
+
+            if (AttachmentPolicy.IsImage(path))
+            {
+                if (!AttachmentPolicy.ProviderSupportsImages(provider))
+                {
+                    inclusions.Add(new AttachmentInclusion(
+                        decision.FileName, path, false,
+                        $"{provider ?? "The selected provider"} has no approved Helmion vision adapter. "
+                        + "Choose ChatGPT/OpenAI, Claude, or Gemini for PNG/JPEG/WebP input."));
+                    continue;
+                }
+
+                try
+                {
+                    var bytes = File.ReadAllBytes(path);
+                    var mediaType = AttachmentPolicy.ImageMediaType(path)!;
+                    if (!HasExpectedImageSignature(bytes, mediaType))
+                    {
+                        inclusions.Add(new AttachmentInclusion(
+                            decision.FileName, path, false,
+                            $"\"{decision.FileName}\" does not contain a valid {mediaType} signature."));
+                        continue;
+                    }
+
+                    images.Add(new PromptImage(
+                        decision.FileName,
+                        mediaType,
+                        Convert.ToBase64String(bytes)));
+                    inclusions.Add(new AttachmentInclusion(
+                        decision.FileName, path, true,
+                        $"{decision.Message} Vision input enabled for {provider}."));
+                }
+                catch (Exception ex)
+                {
+                    inclusions.Add(new AttachmentInclusion(
+                        decision.FileName, path, false,
+                        $"\"{decision.FileName}\" could not be read: {ex.Message}"));
+                }
                 continue;
             }
 
@@ -148,7 +211,18 @@ public static class PromptAttachments
         // Nothing made it in: send the typed text untouched rather than a prompt
         // trailing empty ceremony. The refusals still travel back to the caller.
         return inclusions.Any(inclusion => inclusion.Included)
-            ? new OutgoingPrompt(body.ToString(), inclusions)
-            : new OutgoingPrompt(typed, inclusions);
+            ? new OutgoingPrompt(body.ToString(), inclusions, images)
+            : new OutgoingPrompt(typed, inclusions, images);
     }
+
+    private static bool HasExpectedImageSignature(byte[] bytes, string mediaType) => mediaType switch
+    {
+        "image/png" => bytes.Length >= 8
+            && bytes.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }),
+        "image/jpeg" => bytes.Length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff,
+        "image/webp" => bytes.Length >= 12
+            && System.Text.Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF"
+            && System.Text.Encoding.ASCII.GetString(bytes, 8, 4) == "WEBP",
+        _ => false,
+    };
 }

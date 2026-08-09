@@ -14,6 +14,8 @@ public sealed class VoiceSession : IDisposable
     private bool _pausedForTts;
     private bool _disposed;
     private int _speakGeneration;
+    /// <summary>Skip re-probing endpoints every Speak once we know TTS can run.</summary>
+    private bool _ttsEndpointsKnownReady;
 
     public event EventHandler<string>? OnSpeechRecognized;
     public event EventHandler<string>? OnError;
@@ -196,32 +198,30 @@ public sealed class VoiceSession : IDisposable
             return;
         }
 
-        // Pre-flight: only hard-skip when probe positively knows TTS cannot run.
-        // Inconclusive probes (devices=-1) still attempt Speak — false "no speakers"
-        // was muting working machines inside the single-file Pilot.
-        try
+        // Pre-flight once. Re-probing every reply (device enum + voice list) added
+        // real lag on every turn; Speak() already handles device faults itself.
+        if (!_ttsEndpointsKnownReady)
         {
-            var endpoints = _engine.ProbeAudioEndpoints();
-            if (!endpoints.IsReadyForTts)
+            try
             {
-                OnError?.Invoke(
-                    this,
-                    $"[Voice warning] {endpoints.Warning ?? "No audio output device for TTS."} "
-                    + $"devices={endpoints.RenderDeviceCount}, voices={endpoints.VoiceCount}");
-                OnStatus?.Invoke(this, "TTS skipped — no audio output device");
-                return;
-            }
+                var endpoints = _engine.ProbeAudioEndpoints();
+                if (!endpoints.IsReadyForTts)
+                {
+                    OnError?.Invoke(
+                        this,
+                        $"[Voice warning] {endpoints.Warning ?? "No audio output device for TTS."} "
+                        + $"devices={endpoints.RenderDeviceCount}, voices={endpoints.VoiceCount}");
+                    OnStatus?.Invoke(this, "TTS skipped — no audio output device");
+                    return;
+                }
 
-            if (!string.IsNullOrWhiteSpace(endpoints.Warning)
-                && endpoints.RenderDeviceCount < 0)
-            {
-                OnStatus?.Invoke(this, endpoints.Warning);
+                _ttsEndpointsKnownReady = true;
             }
-        }
-        catch (Exception ex)
-        {
-            OnError?.Invoke(this, $"[Voice warning] Audio endpoint probe failed: {ex.Message}");
-            // Continue — Speak() has its own recovery path.
+            catch (Exception ex)
+            {
+                OnError?.Invoke(this, $"[Voice warning] Audio endpoint probe failed: {ex.Message}");
+                // Continue — Speak() has its own recovery path.
+            }
         }
 
         var generation = Interlocked.Increment(ref _speakGeneration);
@@ -274,6 +274,9 @@ public sealed class VoiceSession : IDisposable
                 && !_disposed
                 && IsVoiceModeActive)
             {
+                // Short pad so speaker tail is not re-captured as a new utterance.
+                try { await Task.Delay(80, CancellationToken.None).ConfigureAwait(false); }
+                catch { /* ignore */ }
                 ResumeListeningAfterTts();
             }
         }

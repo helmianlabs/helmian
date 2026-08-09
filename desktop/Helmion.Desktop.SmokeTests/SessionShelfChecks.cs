@@ -22,6 +22,49 @@ internal static class SessionShelfChecks
         var checks = 0;
         var now = DateTimeOffset.UnixEpoch;
 
+        // --- 0. Maestro @mentions (manager fan-out) ---------------------------
+        var mentionAll = MaestroMentions.Parse("@all fix the login");
+        Assert(mentionAll.MentionsAll && mentionAll.BodyWithoutMentions.Contains("fix the login"),
+            "@all is recognized and the task body is kept");
+        var mentionTwo = MaestroMentions.Parse("@Claude @Grok split auth");
+        Assert(mentionTwo.Tags.Count == 2 && mentionTwo.HasMentions,
+            "@Claude @Grok yields two tags");
+        var shelfM = new SessionShelf();
+        var mgr = shelfM.Create("Maestro", "Boss", now);
+        Assert(mgr.IsManager, "Maestro pill creates a manager session");
+        var w1 = shelfM.Create("Claude", "Claude", now);
+        var w2 = shelfM.Create("Grok", "Grok", now);
+        var w3 = shelfM.Create("Grok", "Grok 1", now);
+        var resolved = MaestroMentions.ResolveWorkers(mentionTwo, shelfM.Sessions, mgr);
+        Assert(resolved.Count == 2 && resolved.Contains(w1) && resolved.Contains(w2),
+            "@Claude @Grok resolves to worker sessions, not the manager");
+        var allResolved = MaestroMentions.ResolveWorkers(mentionAll, shelfM.Sessions, manager: null);
+        Assert(allResolved.Count == 3 && !allResolved.Any(s => s.IsManager),
+            "@all resolves every worker without a manager session");
+        var grok1 = MaestroMentions.ResolveWorkers(
+            MaestroMentions.Parse("@grok1 yo"), shelfM.Sessions, null);
+        Assert(grok1.Count == 1 && ReferenceEquals(grok1[0], w3),
+            "@grok1 matches compact name Grok 1");
+        var prompt = MaestroMentions.BuildWorkerPrompt("Boss", w1, [w2], "create a landing page");
+        Assert(prompt.Contains("agent-slices", StringComparison.OrdinalIgnoreCase)
+               && prompt.Contains("Boss")
+               && prompt.Contains("Grok")
+               && prompt.Contains("Ownership", StringComparison.OrdinalIgnoreCase)
+               && prompt.Contains("REQUIRED", StringComparison.OrdinalIgnoreCase)
+               && prompt.Contains("start_project_preview", StringComparison.OrdinalIgnoreCase),
+            "build prompt assigns exclusive slice, forces write + preview");
+        Assert(MaestroMentions.IsCasualTask("hey") && MaestroMentions.IsCasualTask("give yourselves names"),
+            "short social tasks are casual");
+        Assert(!MaestroMentions.IsCasualTask("create each of you a landing page"),
+            "create landing page is not casual");
+        Assert(!MaestroMentions.IsCasualTask("make a bouncing blue ball and preview"),
+            "bounce/preview tasks are build dispatches");
+        var casual = MaestroMentions.BuildWorkerPrompt("Boss", w1, [w2], "hey");
+        Assert(casual.Contains("Do NOT use Claim/Result", StringComparison.OrdinalIgnoreCase)
+               && !casual.Contains("EXCLUSIVE SLICE", StringComparison.OrdinalIgnoreCase),
+            "casual prompt forbids Claim/Result and skips file slices");
+        checks += 10;
+
         // --- 1. TROY'S FOUR PILLS, IN HIS ORDER, ROUTED CORRECTLY --------------
         // "press the button for Claude or ChatGPT, Grok, whatever, Gemini".
         Assert(
@@ -38,6 +81,62 @@ internal static class SessionShelfChecks
             && MaestroKey.Normalize("Gemini") == MaestroKey.Gemini,
             "every pill normalizes to a coordinator key the bridge accepts");
         checks += 2;
+
+        // The real routing above is useless if the review shell hides its launch
+        // controls. Pin the actual XAML, not a reconstructed fixture: this caught
+        // SessionPillRow being shipped with Visibility="Collapsed" while every
+        // button and handler still existed behind it.
+        var repoRoot = FindRepoRoot()
+            ?? throw new InvalidOperationException("Session shelf check could not locate the repository root.");
+        var xamlPath = Path.Combine(repoRoot, "desktop", "Helmion.Desktop", "MainWindow.xaml");
+        var xaml = System.Xml.Linq.XDocument.Load(xamlPath);
+        var xNamespace = (System.Xml.Linq.XNamespace)"http://schemas.microsoft.com/winfx/2006/xaml";
+        var sessionPillRow = xaml.Descendants().Single(element =>
+            (string?)element.Attribute(xNamespace + "Name") == "SessionPillRow");
+        Assert(
+            !string.Equals((string?)sessionPillRow.Attribute("Visibility"), "Collapsed", StringComparison.Ordinal),
+            "the four real provider session controls are visible in the two-pane shell");
+        var pillButtons = sessionPillRow.Elements()
+            .Where(element => element.Name.LocalName == "Button")
+            .ToArray();
+        Assert(
+            pillButtons.Select(element => (string?)element.Attribute("Content"))
+                .SequenceEqual(SessionShelf.PillLabels.Cast<string?>()),
+            "the visible controls expose Claude, ChatGPT, Grok and Gemini in the routed order");
+        Assert(
+            pillButtons.All(element =>
+                (string?)element.Attribute("Click") == "SessionPill_Click"
+                && !string.IsNullOrWhiteSpace((string?)element.Attribute("Tag"))),
+            "every visible provider control invokes the real session creation handler");
+        checks += 3;
+
+        // The menu labels were visible while their inherited popup foreground made
+        // every populated submenu look empty. Require both real child actions and
+        // the explicit popup item surface that makes them readable in every theme.
+        var applicationMenu = xaml.Descendants().Single(element =>
+            (string?)element.Attribute(xNamespace + "Name") == "ApplicationMenu");
+        var topMenus = applicationMenu.Elements()
+            .Where(element => element.Name.LocalName == "MenuItem")
+            .ToArray();
+        Assert(
+            topMenus.Select(element => (string?)element.Attribute("Header"))
+                .SequenceEqual(new string?[] { "_File", "_Edit", "_View", "_Help" }),
+            "File, Edit, View and Help remain real top-level menus");
+        Assert(
+            topMenus.All(element => element.Elements().Any(child => child.Name.LocalName == "MenuItem")),
+            "every top-level menu contains real actions rather than opening an empty popup");
+        Assert(
+            topMenus.All(element => ((string?)element.Attribute("ItemContainerStyle"))
+                ?.Contains("ApplicationSubmenuItemStyle", StringComparison.Ordinal) == true),
+            "every popup applies the explicit readable submenu surface");
+        Assert(
+            topMenus.SelectMany(element => element.Descendants())
+                .Where(element => element.Name.LocalName == "MenuItem"
+                    && element.Attribute("IsEnabled")?.Value != "False"
+                    && !element.Elements().Any(child => child.Name.LocalName == "MenuItem"))
+                .All(element => !string.IsNullOrWhiteSpace((string?)element.Attribute("Click"))),
+            "each enabled leaf menu item is wired to an action handler");
+        checks += 4;
 
         // --- 2. A NEW SESSION IS GREY, NOT GREEN ------------------------------
         var shelf = new SessionShelf();
@@ -370,6 +469,29 @@ internal static class SessionShelfChecks
             "with no turn owner it invents no name");
         checks += 2;
 
+        // --- 11. WORKSPACE SWITCHES STAY VISIBLE UNTIL THE BRIDGE CONFIRMS ---
+        var pendingScope = AgentWorkspaceScopeIndicator.Describe(
+            @"E:\Helmion",
+            @"E:\Helmion\mark-hands-test");
+        Assert(!pendingScope.AgentConfirmed
+            && pendingScope.Text.Contains(@"E:\Helmion", StringComparison.Ordinal)
+            && pendingScope.Text.Contains("APPLIES NEXT TURN", StringComparison.Ordinal),
+            "switching folders immediately shows the new selected scope as pending");
+        Assert(pendingScope.ToolTip.Contains(
+                @"E:\Helmion\mark-hands-test",
+                StringComparison.Ordinal),
+            "a stale bridge confirmation is named instead of being hidden");
+
+        var confirmedScope = AgentWorkspaceScopeIndicator.Describe(
+            @"E:\Helmion",
+            @"e:\HELMION\");
+        Assert(confirmedScope.AgentConfirmed
+            && confirmedScope.Text.Contains("AGENT CONFIRMED", StringComparison.Ordinal),
+            "the persistent label changes to confirmed only for the exact selected folder");
+        Assert(!confirmedScope.Text.Contains("mark-hands-test", StringComparison.Ordinal),
+            "the previous project path disappears after the bridge confirms the new scope");
+        checks += 4;
+
         // --- 9. CLOSING ------------------------------------------------------
         var afterClose = shelf.Close(gpt);
         Assert(shelf.Sessions.Count == 1, "closing removes exactly one session");
@@ -390,5 +512,20 @@ internal static class SessionShelfChecks
         {
             throw new InvalidOperationException($"Session shelf check failed: {description}");
         }
+    }
+
+    private static string? FindRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "bin", "helmion.mjs")))
+            {
+                return directory.FullName;
+            }
+            directory = directory.Parent;
+        }
+
+        return null;
     }
 }

@@ -16,6 +16,12 @@ public enum ShellKey
     D0,
     NumPad0,
     K,
+    B,
+    D,
+    J,
+    N,
+    O,
+    OemComma,
     F11,
     Escape,
 }
@@ -32,6 +38,12 @@ public enum ShellShortcut
 
     /// <summary>Ctrl+K — put the caret in the left panel's project search box.</summary>
     FocusProjectSearch,
+    NewProject,
+    OpenProject,
+    OpenSettings,
+    ToggleSidebar,
+    ToggleDetails,
+    ToggleBottomPanel,
 }
 
 /// <summary>
@@ -60,7 +72,7 @@ public static class ShellShortcuts
     /// is — otherwise Escape belongs to whatever has focus, and swallowing it
     /// would break every text box and popup in the app.
     /// </param>
-    public static ShellShortcut Resolve(bool control, ShellKey key, bool consoleFullScreen)
+    public static ShellShortcut Resolve(bool control, ShellKey key, bool consoleFullScreen, bool shift = false)
     {
         if (control)
         {
@@ -83,6 +95,24 @@ public static class ShellShortcuts
 
                 case ShellKey.K:
                     return ShellShortcut.FocusProjectSearch;
+
+                case ShellKey.N:
+                    return ShellShortcut.NewProject;
+
+                case ShellKey.O:
+                    return ShellShortcut.OpenProject;
+
+                case ShellKey.OemComma:
+                    return ShellShortcut.OpenSettings;
+
+                case ShellKey.B:
+                    return ShellShortcut.ToggleSidebar;
+
+                case ShellKey.J:
+                    return ShellShortcut.ToggleBottomPanel;
+
+                case ShellKey.D when shift:
+                    return ShellShortcut.ToggleDetails;
             }
         }
 

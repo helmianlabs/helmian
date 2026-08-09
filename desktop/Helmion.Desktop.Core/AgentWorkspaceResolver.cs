@@ -79,3 +79,48 @@ public static class AgentWorkspaceResolver
         return DefaultWorkspace;
     }
 }
+
+/// <summary>
+/// Persistent, truthful text for the Console's agent tool boundary. The selected
+/// folder and the last folder confirmed by the live bridge are separate facts.
+/// </summary>
+public sealed record AgentWorkspaceScopeDisplay(
+    string Text,
+    string ToolTip,
+    bool AgentConfirmed);
+
+public static class AgentWorkspaceScopeIndicator
+{
+    public static AgentWorkspaceScopeDisplay Describe(
+        string selectedWorkspace,
+        string? agentConfirmedWorkspace)
+    {
+        var selected = Path.GetFullPath(selectedWorkspace);
+        var confirmed = string.IsNullOrWhiteSpace(agentConfirmedWorkspace)
+            ? null
+            : Path.GetFullPath(agentConfirmedWorkspace);
+        var matches = confirmed is not null
+            && string.Equals(
+                Path.TrimEndingDirectorySeparator(selected),
+                Path.TrimEndingDirectorySeparator(confirmed),
+                StringComparison.OrdinalIgnoreCase);
+
+        if (matches)
+        {
+            return new AgentWorkspaceScopeDisplay(
+                $"SCOPED FOLDER · {selected} · AGENT CONFIRMED",
+                $"The active agent bridge confirmed this tool boundary:\n{selected}\n\n"
+                + "Change it on Workspace → Choose workspace.",
+                AgentConfirmed: true);
+        }
+
+        var lastConfirmation = confirmed is null
+            ? "No agent workspace has been confirmed in this app run."
+            : $"The agent last confirmed a different folder:\n{confirmed}";
+        return new AgentWorkspaceScopeDisplay(
+            $"SCOPED FOLDER · {selected} · APPLIES NEXT TURN",
+            $"Selected tool boundary:\n{selected}\n\n{lastConfirmation}\n\n"
+            + "The selected folder will be applied and confirmed before the next provider turn.",
+            AgentConfirmed: false);
+    }
+}

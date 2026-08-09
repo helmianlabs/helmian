@@ -3,30 +3,68 @@ using System.IO.Pipes;
 
 namespace Helmion.LocalService.Protocol;
 
-public sealed class ReadOnlyPipeServer(string pipeName)
+public sealed class ReadOnlyPipeServer
 {
-    public string PipeName { get; } = string.IsNullOrWhiteSpace(pipeName)
-        ? throw new ArgumentException("Pipe name is required", nameof(pipeName))
-        : pipeName;
+    private readonly Func<PipeRequest, CancellationToken, Task<PipeResponse>>? _extensionHandler;
+    private readonly IReadOnlyList<string> _extensionCapabilities;
+
+    public ReadOnlyPipeServer(
+        string pipeName,
+        Func<PipeRequest, CancellationToken, Task<PipeResponse>>? extensionHandler = null,
+        IReadOnlyList<string>? extensionCapabilities = null)
+    {
+        PipeName = string.IsNullOrWhiteSpace(pipeName)
+            ? throw new ArgumentException("Pipe name is required", nameof(pipeName))
+            : pipeName;
+        _extensionHandler = extensionHandler;
+        _extensionCapabilities = extensionCapabilities ?? [];
+    }
+
+    public string PipeName { get; }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            await using var pipe = new NamedPipeServerStream(
+            var pipe = new NamedPipeServerStream(
                 PipeName,
                 PipeDirection.InOut,
-                1,
+                NamedPipeServerStream.MaxAllowedServerInstances,
                 PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous
                     | PipeOptions.CurrentUserOnly
                     | PipeOptions.WriteThrough);
-            await pipe.WaitForConnectionAsync(cancellationToken);
-            await HandleClientAsync(pipe, cancellationToken);
+            try
+            {
+                await pipe.WaitForConnectionAsync(cancellationToken);
+            }
+            catch
+            {
+                await pipe.DisposeAsync();
+                throw;
+            }
+
+            // A slow inspection or a caller that disconnects badly must never
+            // prevent Remote Control from reading status or publishing the
+            // selected session.  Each accepted CurrentUser-only pipe gets its
+            // own lifetime; the listener immediately returns to accept mode.
+            _ = Task.Run(async () =>
+            {
+                await using (pipe)
+                {
+                    try
+                    {
+                        await HandleClientAsync(pipe, cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                    }
+                }
+            }, CancellationToken.None);
         }
     }
 
-    private static async Task HandleClientAsync(
+    private async Task HandleClientAsync(
         Stream pipe,
         CancellationToken cancellationToken)
     {
@@ -47,12 +85,14 @@ public sealed class ReadOnlyPipeServer(string pipeName)
                 return;
             }
 
-            var response = HandleRequest(request);
+            var response = await HandleRequestAsync(request, cancellationToken);
             await PipeFraming.WriteAsync(pipe, response, cancellationToken);
         }
     }
 
-    private static PipeResponse HandleRequest(PipeRequest request)
+    private async Task<PipeResponse> HandleRequestAsync(
+        PipeRequest request,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Id))
         {
@@ -65,22 +105,12 @@ public sealed class ReadOnlyPipeServer(string pipeName)
 
         try
         {
-            return request.Command switch
+            var builtIn = request.Command switch
             {
                 ReadOnlyServiceContract.HelloCommand => new PipeResponse(
                     request.Id,
                     true,
-                    Hello: new ServiceHello(
-                        ReadOnlyServiceContract.ProtocolVersion,
-                        "read-only",
-                        "Windows CurrentUserOnly named pipe",
-                        [
-                            ReadOnlyServiceContract.HelloCommand,
-                            ReadOnlyServiceContract.InspectWorkspaceCommand,
-                            ReadOnlyServiceContract.DetectCapabilitiesCommand,
-                            ReadOnlyServiceContract.ProvisionSchemaCommand
-                        ],
-                        WritesEnabled: false)),
+                    Hello: CreateHello()),
                 ReadOnlyServiceContract.InspectWorkspaceCommand => new PipeResponse(
                     request.Id,
                     true,
@@ -95,12 +125,23 @@ public sealed class ReadOnlyPipeServer(string pipeName)
                     request.Id,
                     true,
                     SchemaProvisioning: ProvisionSchema(request.DatabaseUrl, request.EndpointId, request.WorkspacePath)),
-                _ => new PipeResponse(
-                    request.Id,
-                    false,
-                    "read_only_command_rejected",
-                    "The local service exposes only hello, workspace.inspect, and capabilities.detect")
+                _ => null
             };
+            if (builtIn is not null)
+            {
+                return builtIn;
+            }
+
+            if (_extensionHandler is not null)
+            {
+                return await _extensionHandler(request, cancellationToken);
+            }
+
+            return new PipeResponse(
+                request.Id,
+                false,
+                "read_only_command_rejected",
+                "The local service rejected an unsupported command.");
         }
         catch (Exception error) when (
             error is ArgumentException
@@ -115,6 +156,26 @@ public sealed class ReadOnlyPipeServer(string pipeName)
                 error.Message);
         }
     }
+
+    private ServiceHello CreateHello()
+    {
+        var governedWrites = _extensionCapabilities.Contains(
+            ReadOnlyServiceContract.GenerateApprovedArtifactCommand,
+            StringComparer.Ordinal);
+        return new ServiceHello(
+            ReadOnlyServiceContract.ProtocolVersion,
+            governedWrites ? "governed-local" : "read-only",
+            "Windows CurrentUserOnly named pipe · verified Helmion service process",
+            [
+                ReadOnlyServiceContract.HelloCommand,
+                ReadOnlyServiceContract.InspectWorkspaceCommand,
+                ReadOnlyServiceContract.DetectCapabilitiesCommand,
+                ReadOnlyServiceContract.ProvisionSchemaCommand,
+                .. _extensionCapabilities
+            ],
+            WritesEnabled: governedWrites);
+    }
+
     private static SchemaProvisioningResult ProvisionSchema(string? databaseUrl, string? endpointId, string? workspacePath)
     {
         if (string.IsNullOrWhiteSpace(databaseUrl) || string.IsNullOrWhiteSpace(endpointId) || string.IsNullOrWhiteSpace(workspacePath))

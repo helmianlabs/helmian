@@ -5,12 +5,67 @@ using Helmion.Desktop.Core;
 using Helmion.LocalService.Protocol;
 using Helmion.LocalService.Security;
 
+if (args.Contains("--browser-reference-only", StringComparer.OrdinalIgnoreCase))
+{
+    await BrowserReferenceChecks.RunAsync();
+    return;
+}
+
+if (args.Contains("--artifact-studio-only", StringComparer.OrdinalIgnoreCase))
+{
+    ArtifactStudioWorkflowChecks.Run();
+    OpenAiImagesAdapterChecks.Run();
+    return;
+}
+
+if (args.Contains("--reply-content-only", StringComparer.OrdinalIgnoreCase))
+{
+    ReplyContentPolicyChecks.Run();
+    return;
+}
+
+if (args.Contains("--session-shelf-only", StringComparer.OrdinalIgnoreCase))
+{
+    SessionShelfChecks.Run();
+    return;
+}
+
+if (args.Contains("--project-connectors-only", StringComparer.OrdinalIgnoreCase))
+{
+    ProjectConnectorChecks.Run();
+    return;
+}
+
+if (args.Contains("--team-connectors-only", StringComparer.OrdinalIgnoreCase))
+{
+    await TeamConnectorChecks.RunAsync();
+    return;
+}
+
+if (args.Contains("--project-activity-review-only", StringComparer.OrdinalIgnoreCase))
+{
+    ProjectActivityReviewChecks.Run();
+    return;
+}
+
+if (args.Contains("--remote-control-desktop-only", StringComparer.OrdinalIgnoreCase))
+{
+    RemoteControlDesktopChecks.Run();
+    return;
+}
+
+if (args.Contains("--herald-desktop-only", StringComparer.OrdinalIgnoreCase))
+{
+    HeraldDesktopGatewayChecks.Run();
+    return;
+}
+
 var snapshot = PilotSnapshot.CreateLive(false, null, "", "", "", "Codex");
 var settingsRoot = Path.Combine(
     Path.GetTempPath(),
     $"helmion-desktop-settings-smoke-{Guid.NewGuid():N}");
 
-Check(snapshot.ModeLabel == "Personal Pilot", "personal pilot mode is explicit");
+Check(snapshot.ModeLabel == "Helmian", "the end-user product name is Helmian");
 Check(snapshot.DataSource == PilotDataSource.Unconfigured, "data source is unconfigured");
 Check(snapshot.DataSourceLabel.Contains("disconnected", StringComparison.Ordinal), "disconnected label is visible");
 Check(!snapshot.LocalServiceConnected, "local service defaults disconnected");
@@ -70,7 +125,7 @@ try
         "color theme persists without other user state");
     Check(
         ColorThemeCatalog.All.Select(theme => theme.Id).SequenceEqual(
-            ["helmion-green", "ocean-blue", "clean-light", "warm-earth", "solar-yellow", "crimson-red"]),
+        ["helmion-green", "ocean-blue", "buzz-black", "clean-light", "warm-earth", "solar-yellow", "crimson-red"]),
         "six supported color themes have stable IDs");
     File.WriteAllText(settingsPath, """{"Version":1,"ColorTheme":"unknown"}""");
     Check(
@@ -127,6 +182,20 @@ finally
 
 Console.WriteLine("Helmion desktop smoke tests passed (34 checks).");
 
+var installPipeA = ReadOnlyPipeClient.PipeNameForCurrentUser(
+    @"C:\Helmion-A\Helmion Local Service.exe");
+var installPipeAAgain = ReadOnlyPipeClient.PipeNameForCurrentUser(
+    @"c:\helmion-a\HELMION LOCAL SERVICE.EXE");
+var installPipeB = ReadOnlyPipeClient.PipeNameForCurrentUser(
+    @"C:\Helmion-B\Helmion Local Service.exe");
+Check(
+    installPipeA == installPipeAAgain
+    && installPipeA != installPipeB
+    && installPipeA.StartsWith(
+        ReadOnlyPipeClient.PipeNameForCurrentUser(),
+        StringComparison.Ordinal),
+    "local-service pipes are stable per install and isolated across side-by-side builds");
+
 var workspaceRoot = Path.Combine(
     Path.GetTempPath(),
     $"helmion-workspace-inspection-smoke-{Guid.NewGuid():N}");
@@ -167,7 +236,7 @@ try
         pipeName: pipeName);
     var hello = await client.HelloAsync();
     Check(
-        hello.ProtocolVersion == 1
+        hello.ProtocolVersion == ReadOnlyServiceContract.ProtocolVersion
         && hello.Mode == "read-only"
         && !hello.WritesEnabled,
         "named-pipe hello proves the versioned read-only service contract");
@@ -248,7 +317,7 @@ finally
     }
 }
 
-Console.WriteLine("Helmion local-service smoke tests passed (9 checks).");
+Console.WriteLine("Helmion local-service smoke tests passed (10 checks).");
 
 var protectedStoreRoot = Path.Combine(
     Path.GetTempPath(),
@@ -388,12 +457,32 @@ try
         Check(true, "protected store rejects a retargeted Neon Development profile");
     }
 
-    var desktopProjectText = File.ReadAllText(
-        Path.Combine(
-            Environment.CurrentDirectory,
-            "desktop",
-            "Helmion.Desktop",
-            "Helmion.Desktop.csproj"));
+    // Resolve the csproj from this test assembly's tree — not CurrentDirectory.
+    // Running from bin/, the Guard suite, or another CWD used to throw
+    // DirectoryNotFoundException after 169 green checks and fail the whole suite.
+    static string? FindDesktopCsproj()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (var i = 0; i < 10 && dir is not null; i++, dir = dir.Parent)
+        {
+            var candidate = Path.Combine(
+                dir.FullName, "desktop", "Helmion.Desktop", "Helmion.Desktop.csproj");
+            if (File.Exists(candidate))
+                return candidate;
+            candidate = Path.Combine(dir.FullName, "Helmion.Desktop", "Helmion.Desktop.csproj");
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        var cwd = Path.Combine(
+            Environment.CurrentDirectory, "desktop", "Helmion.Desktop", "Helmion.Desktop.csproj");
+        return File.Exists(cwd) ? cwd : null;
+    }
+
+    var desktopCsproj = FindDesktopCsproj()
+        ?? throw new FileNotFoundException(
+            "Helmion.Desktop.csproj not found near the smoke assembly or CWD.");
+    var desktopProjectText = File.ReadAllText(desktopCsproj);
     // The Pilot may copy LocalService.Security.dll beside the hosted service
     // process, but the WPF renderer must not take a ProjectReference to it.
     var hasSecurityProjectReference =
@@ -940,7 +1029,32 @@ VoiceSmokeChecks.Run();
 
 VoiceBackendSmokeChecks.Run();
 
-VoiceHostSmokeChecks.Run();
+// THE ONE CHECK THAT COMPETES WITH THE OPERATOR. This starts a SECOND
+// helmion-voice.exe and makes it load Kokoro and Whisper. Measured on this machine:
+// the selftest's synthesis took 2,762 ms alone and 7,575 ms with another voice
+// process alive. Troy dictates almost everything he says, so when the Pilot's
+// "Run test suite" button is what launched this suite, the runner sets the variable
+// below and this check stands down.
+//
+// IT ANNOUNCES ITSELF WHEN IT DOES. A silent skip is indistinguishable from a check
+// that ran and passed, which is how a suite quietly stops running for months. The
+// runner reads this exact line back and refuses to call the run green.
+//
+// TYPING `npm run desktop:test` YOURSELF NEVER SKIPS IT — the variable is only ever
+// set by TestSuiteRunner, so the terminal remains the way to get full coverage.
+if (Environment.GetEnvironmentVariable(TestSuiteSkipContract.VoiceHostVariable) == "1")
+{
+    Console.WriteLine(
+        TestSuiteSkipContract.Marker
+        + "voice host round trip (VoiceHostSmokeChecks, 38 checks). It starts a second "
+        + "helmion-voice.exe, and one is already running, which would slow live "
+        + "dictation. 0 of its 38 checks ran. Run `npm run desktop:test` in a terminal "
+        + "when you are not dictating to include it.");
+}
+else
+{
+    VoiceHostSmokeChecks.Run();
+}
 
 ConversationModeChecks.Run();
 
@@ -949,12 +1063,23 @@ ProfileInstallerGuardChecks.Run();
 GuardEscalationChecks.Run();
 
 GuardFeedChecks.Run();
+ReplyContentPolicyChecks.Run();
 
 LeaseInspectorChecks.Run();
 
 PlusMenuChecks.Run();
 
 ProjectShelfChecks.Run();
+ProjectWorkbenchChecks.Run();
+ProjectArtifactChecks.Run();
+ArtifactStudioWorkflowChecks.Run();
+OpenAiImagesAdapterChecks.Run();
+await BrowserReferenceChecks.RunAsync();
+ProjectConnectorChecks.Run();
+await TeamConnectorChecks.RunAsync();
+ProjectActivityReviewChecks.Run();
+HeraldDesktopGatewayChecks.Run();
+RemoteControlDesktopChecks.Run();
 
 ProjectOpenScaffoldChecks.Run();
 
@@ -971,6 +1096,13 @@ OffscreenWindowChecks.Run();
 ModelProvenanceLabelChecks.Run();
 
 TopBarChecks.Run();
+
+SuperGrokOAuthChecks.Run();
+
+TestSuiteRunnerChecks.Run();
+McpSecurityRunnerChecks.Run();
+ExternalItemPreflightChecks.Run();
+WindowsSandboxOrchestrationChecks.Run();
 return;
 
 /// <summary>

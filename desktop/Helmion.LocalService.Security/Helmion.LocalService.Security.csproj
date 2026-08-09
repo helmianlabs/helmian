@@ -8,6 +8,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="ably.io" Version="1.2.18" />
     <ProjectReference Include="..\Helmion.LocalService.Protocol\Helmion.LocalService.Protocol.csproj" />
   </ItemGroup>
 </Project>

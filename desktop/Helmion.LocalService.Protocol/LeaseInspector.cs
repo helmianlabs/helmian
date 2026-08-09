@@ -169,14 +169,24 @@ public static class LeaseInspector
             var takeable = expired || (sameHost && !holderAlive);
             if (takeable)
             {
+                // PLAIN ENGLISH, 2026-07-30. "Write lease stale / Held by troy:21332
+                // on Helmion but expired at 2026-07-30 23:27:06 +00:00" told Troy
+                // nothing he could act on - he had to ask what a lease even was. The
+                // card now says what happened and whether it matters, and the ids and
+                // timestamps come after, for whoever needs them.
                 return new LeasePosture(
                     StatusStale,
-                    "Write lease stale",
+                    "An old lock was left behind",
                     expired
-                        ? $"Held by {instanceId} on {projectSlug} but expired at "
-                          + $"{expiresAt:yyyy-MM-dd HH:mm:ss zzz}. The next writer may take it over."
-                        : $"Held by {instanceId} on {projectSlug}, whose process (pid {pid}) is no "
-                          + "longer running. The next writer may take it over.",
+                        ? "Only one agent at a time is allowed to write files here. One took "
+                          + "the lock and never gave it back, and the lock has now run out. "
+                          + "Nothing is holding it, so the next agent can just take it. "
+                          + $"Nothing is wrong. (Was {instanceId} on {projectSlug}, ran out at "
+                          + $"{expiresAt:HH:mm:ss}.)"
+                        : "Only one agent at a time is allowed to write files here. One took "
+                          + "the lock and then died without giving it back. Nothing is holding "
+                          + "it, so the next agent can just take it. Nothing is wrong. "
+                          + $"(Was {instanceId} on {projectSlug}, process {pid} is gone.)",
                     IsLive: false);
             }
 

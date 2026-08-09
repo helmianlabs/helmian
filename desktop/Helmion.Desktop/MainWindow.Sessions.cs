@@ -35,13 +35,10 @@ namespace Helmion.Desktop;
 /// the existing in-memory tick (MainWindow.GuardPanel.cs:94-105), which performs no
 /// I/O.
 ///
-/// ONE TURN AT A TIME, ON PURPOSE. Each session owns its own bridge process and
-/// could in principle run concurrently, but the ask-mode approval strip is a single
-/// slot — <c>RequestToolApprovalAsync</c> calls <c>CancelPendingApproval()</c> on
-/// entry (MainWindow.xaml.cs:164), so a second session asking a question would
-/// silently withdraw the first one's. Until that is per-session, sending to a second
-/// session while one is mid-turn is refused out loud rather than allowed to clobber
-/// an approval nobody saw.
+/// MULTI-AGENT TURNS. Each named session owns its own bridge and may run a turn
+/// while another session is mid-turn. The shared console (no pill) is still one-at-a-time.
+/// Ask-mode keeps a single approval strip: a new Ask turn is refused while a decision
+/// is pending (Allow once / session / Deny). Esc cancels the selected session's turn.
 /// </summary>
 public partial class MainWindow
 {
@@ -74,6 +71,26 @@ public partial class MainWindow
             list.ItemsSource = _sessions.Sessions;
         }
 
+        WireSessionShelfOnce();
+    }
+
+    /// <summary>
+    /// Right Agents dock roster — same SessionShelf collection as the left list.
+    /// Multi-agent lives here (Troy: "multi agent on right shelf its already there").
+    /// </summary>
+    private void AgentsSessionList_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is ItemsControl list)
+        {
+            list.ItemsSource = _sessions.Sessions;
+        }
+
+        WireSessionShelfOnce();
+        RefreshSessionShelfChrome();
+    }
+
+    private void WireSessionShelfOnce()
+    {
         if (_sessionShelfWired) return;
         _sessionShelfWired = true;
 
@@ -100,10 +117,29 @@ public partial class MainWindow
 
     private void RefreshSessionShelfChrome()
     {
-        if (SessionShelfEmpty is null) return;
+        var empty = _sessions.IsEmpty;
+        if (SessionShelfEmpty is not null)
+        {
+            SessionShelfEmpty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+            SessionShelfEmpty.Text = _sessions.EmptyText;
+        }
 
-        SessionShelfEmpty.Visibility = _sessions.IsEmpty ? Visibility.Visible : Visibility.Collapsed;
-        SessionShelfEmpty.Text = _sessions.EmptyText;
+        if (AgentsSessionEmpty is not null)
+        {
+            AgentsSessionEmpty.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+            AgentsSessionEmpty.Text =
+                "No agents yet. Press Claude, ChatGPT, Grok, or Gemini above — each press adds another agent you can name.";
+        }
+
+        if (AgentsDockSubtitle is not null)
+        {
+            var n = _sessions.Sessions.Count;
+            AgentsDockSubtitle.Text = n == 0
+                ? "Multi-agent manager"
+                : n == 1
+                    ? "1 agent running"
+                    : $"{n} agents running";
+        }
     }
 
     // ── the pills ─────────────────────────────────────────────────────────────
@@ -115,24 +151,41 @@ public partial class MainWindow
     /// </summary>
     private void SessionPill_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: string pill } || string.IsNullOrWhiteSpace(pill)) return;
+        if (sender is not Button { Tag: string pill } pillButton || string.IsNullOrWhiteSpace(pill)) return;
         if (SessionNamePopup is null || SessionNameBox is null) return;
 
         _pendingPillLabel = pill;
 
+        // Anchor the naming popup on the pill that was pressed (composer row or Agents dock).
+        SessionNamePopup.PlacementTarget = pillButton;
+        SessionNamePopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+
         if (SessionNameHeader is not null)
         {
-            var routed = MaestroKey.Normalize(pill);
-            SessionNameHeader.Text = routed is null
-                ? $"New {pill} session — Helmion has no coordinator route for {pill}, so this "
-                  + "session will be created and will say so rather than pretending it can run."
-                : string.Equals(routed, pill, StringComparison.Ordinal)
-                    ? $"New {pill} session. Name it so you can tell it apart in the panel."
-                    : $"New {pill} session — routed to the {routed} coordinator. Name it so you "
-                      + "can tell it apart in the panel.";
+            if (string.Equals(pill, "Maestro", StringComparison.OrdinalIgnoreCase))
+            {
+                SessionNameHeader.Text =
+                    "Name your Maestro manager. After it exists, type @Claude @Grok (or @all) " +
+                    "so workers reply to the manager with non-overlapping work claims.";
+            }
+            else
+            {
+                var routed = MaestroKey.Normalize(pill);
+                SessionNameHeader.Text = routed is null
+                    ? $"New {pill} agent — Helmion has no coordinator route for {pill}, so this "
+                      + "session will be created and will say so rather than pretending it can run."
+                    : string.Equals(routed, pill, StringComparison.Ordinal)
+                        ? $"New {pill} agent. Name it so you can tell it apart in the manager."
+                        : $"New {pill} agent — routed to the {routed} coordinator. Name it so you "
+                          + "can tell it apart in the manager.";
+            }
         }
 
-        SessionNameBox.Text = _sessions.SuggestName(pill);
+        SessionNameBox.Text = string.Equals(pill, "Maestro", StringComparison.OrdinalIgnoreCase)
+            ? _sessions.SuggestName("Manager")
+            : _sessions.SuggestName(pill);
+        if (SessionTierCombo is not null) SessionTierCombo.SelectedIndex = 0;
+        if (SessionModelOverrideBox is not null) SessionModelOverrideBox.Clear();
         SetSessionNameProblem(null);
         SessionNamePopup.IsOpen = true;
         SessionNameBox.SelectAll();
@@ -205,6 +258,9 @@ public partial class MainWindow
         }
 
         CloseSessionNamePopup();
+
+        session.TierOverride = (SessionTierCombo?.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "auto";
+        session.ModelOverride = SessionModelOverrideBox?.Text;
 
         ReportSessionPreflight(session);
         ShowSessionTranscript(session);
@@ -347,8 +403,14 @@ public partial class MainWindow
         string detail,
         GuardLevel level)
     {
+        // THE SESSION'S OWN NAME IS THE SUBJECT. This is the one place on the panel
+        // where a genuine, Troy-typed agent name exists, and until now it appeared
+        // only as the tab heading ("Session · Claude 2") and never on the card. It
+        // is now the first thing the card says.
         _guardFeed.Report(
-            new GuardObservation(session.GuardProvider, source, signature, title, detail, level),
+            new GuardObservation(
+                session.GuardProvider, source, signature, title, detail, level,
+                Subject: session.Name),
             DateTimeOffset.Now);
         RefreshSessionDots();
     }
@@ -413,4 +475,38 @@ public partial class MainWindow
     private void ReportSessionTurn(AgentSession session, GuardLevel level, string title, string detail) =>
         ReportSessionCard(
             session, AgentSession.TurnSource, AgentSession.TurnSignature, title, detail, level);
+
+    /// <summary>
+    /// Stage-one scan of model prose: unsupported confidence, false certainty, harm.
+    /// Reports Guard cards; never withholds the reply. Same policy intent as the
+    /// browser extension claim lane, applied inside Helmian.
+    /// </summary>
+    private void ReportReplyContentPolicy(AgentSession? session, string? replyText, string? subjectOverride = null)
+    {
+        var scan = ReplyContentPolicy.Scan(replyText);
+        if (!scan.Flagged)
+        {
+            return;
+        }
+
+        var provider = session?.GuardProvider ?? "Maestro";
+        var subject = subjectOverride
+            ?? session?.Name
+            ?? "Maestro";
+        foreach (var observation in ReplyContentPolicy.ToObservations(scan, provider, subject))
+        {
+            _guardFeed.Report(observation, DateTimeOffset.Now);
+        }
+
+        RefreshSessionDots();
+        if (scan.Findings.Any(f => f.Kind == ReplyContentFindingKind.Harm))
+        {
+            AppendConsoleLine("[Guard] Harmful-content pattern flagged — open Guard panel.");
+        }
+        else
+        {
+            AppendConsoleLine(
+                $"[Guard] {scan.Findings.Count} unsupported/unsourced claim(s) — open Guard to review.");
+        }
+    }
 }

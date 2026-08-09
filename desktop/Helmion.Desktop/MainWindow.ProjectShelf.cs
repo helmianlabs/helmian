@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using Helmion.Desktop.Core;
 
 namespace Helmion.Desktop;
@@ -44,7 +45,11 @@ public partial class MainWindow
 
         var root = ResolveProjectRoot();
         var filter = ProjectSearchBox?.Text ?? string.Empty;
-        var projects = ProjectShelf.Discover(root, PinnedSlugs(), filter);
+        var projects = ProjectShelf.Discover(
+            root,
+            PinnedSlugs(),
+            filter,
+            _registeredWorkspacePath);
         ProjectShelfList.ItemsSource = projects;
 
         if (ProjectShelfEmpty is null) return;
@@ -94,11 +99,14 @@ public partial class MainWindow
     {
         try
         {
-            var workspace = ResolveAgentWorkspace();
+            var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            var workspace = ProjectWorkspaceDefaults.Resolve(
+                _registeredWorkspacePath,
+                EnvironmentSettingsStore.LoadWorkspacePath(),
+                _desktopSettings.LastWorkspacePath,
+                documents);
             _projectShelfRoot = ProjectShelfRoot.Resolve(_projectShelfRoot, workspace);
-            return string.IsNullOrWhiteSpace(_projectShelfRoot) || !Directory.Exists(_projectShelfRoot)
-                ? null
-                : _projectShelfRoot;
+            return string.IsNullOrWhiteSpace(_projectShelfRoot) ? null : _projectShelfRoot;
         }
         catch
         {
@@ -159,10 +167,24 @@ public partial class MainWindow
     {
         if (sender is not Button { Tag: string directory } || !Directory.Exists(directory)) return;
 
+        await ActivateProjectAsync(directory, ensureStructure: true);
+    }
+
+    /// <summary>
+    /// Make one shelf project the active work context and refresh every surface
+    /// that names that context. This is shared by shelf clicks and successful
+    /// creation so Create cannot leave Workspace and Console pointing at the
+    /// previous folder.
+    /// </summary>
+    private async Task ActivateProjectAsync(string directory, bool ensureStructure)
+    {
+        if (!Directory.Exists(directory)) return;
+
         // Opening a project means working in it, so the Workspace page is where
         // this goes. It does NOT launch a file explorer window — Troy's standing
         // correction is that Helmion must not auto-open things on his desktop.
         _registeredWorkspacePath = directory;
+        NotifyProjectScopedPanelsChanged();
 
         // The shelf is re-read, not left showing whatever it had before this
         // click. It does NOT follow us into the project — ProjectShelfRoot keeps
@@ -185,7 +207,17 @@ public partial class MainWindow
         //
         // It shells out to the SAME `helmion project init` the CLI runs. A second
         // implementation writing similar-looking files would drift from it.
-        await ProjectOpenScaffold.EnsureStructureAsync(HelmionRootPath(), directory);
+        if (ensureStructure)
+        {
+            await ProjectOpenScaffold.EnsureStructureAsync(HelmionRootPath(), directory);
+        }
+
+        // Registration alone is not visible. Inspecting applies the project name
+        // and path to Workspace and updates the Console workspace label in the
+        // same handoff. The selection is session-local; this does not rewrite the
+        // user's saved default workspace or move existing projects.
+        await InspectWorkspaceAsync(directory, persistSelection: false);
+        RefreshProjectWorkbench(forceCanvasReload: true);
     }
 
     private void PilotPagesToggle_Changed(object sender, RoutedEventArgs e)
@@ -196,73 +228,119 @@ public partial class MainWindow
         toggle.Content = open ? "PILOT  ▴" : "PILOT  ▾";
     }
 
-    /// <summary>
-    /// Create a structured project folder.
-    ///
-    /// It runs the SAME code path as `helmion project init` rather than a second
-    /// implementation that writes similar-looking files: the CLI is the source of
-    /// truth for what a project contains, and two writers would drift.
-    /// </summary>
-    private async void NewProjectButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>Open the dedicated project-name surface. This performs no write.</summary>
+    private void NewProjectButton_Click(object sender, RoutedEventArgs e)
     {
-        var root = ResolveProjectRoot();
+        if (NewProjectPanel is null || NewProjectNameBox is null) return;
+        NewProjectPanel.Visibility = Visibility.Visible;
+        HideNewProjectValidation();
+        NewProjectNameBox.Focus();
+        NewProjectNameBox.SelectAll();
+    }
 
-        // WHERE THE NAME COMES FROM. This used to read ConsoleInputBox only — a box
-        // on the Console PAGE, while the "+ New" button lives in the always-visible
-        // sidebar. Troy, 2026-07-30: he typed a name into a box, pressed +, and got
-        // an error telling him to type a name. He was typing in the wrong box, and
-        // there was no way for him to know that, because the button is nowhere near
-        // the box it reads.
-        //
-        // So it now reads the box DIRECTLY BENEATH THE BUTTON first
-        // (ProjectSearchBox, MainWindow.xaml:1141) and only falls back to the
-        // console box. Nothing about the old path breaks — anyone who was typing
-        // into the console still gets what they expect — but the obvious thing now
-        // works, which is the whole complaint.
-        var typedHere = (ProjectSearchBox?.Text ?? string.Empty).Trim();
-        var typedConsole = (ConsoleInputBox?.Text ?? string.Empty).Trim();
-        var typed = typedHere.Length > 0 ? typedHere : typedConsole;
+    private async void CreateProjectButton_Click(object sender, RoutedEventArgs e) =>
+        await CreateProjectFromPanelAsync();
 
-        // The row is created ONLY once we know something will be attempted. It used
-        // to be created first, so every click on "+ New" with an empty box added
-        // another bar. Troy's screenshot had eleven of them stacked in the console.
-        if (!FirstRunStates.CanCreateProject(root, typed, out var projectRoot, out var name, out var notYet))
+    private void CancelNewProjectButton_Click(object sender, RoutedEventArgs e) =>
+        CloseNewProjectPanel();
+
+    private void ChooseExistingProjectButton_Click(object sender, RoutedEventArgs e)
+    {
+        CloseNewProjectPanel();
+        MenuOpenProject_Click(sender, e);
+    }
+
+    private async void NewProjectNameBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
         {
-            var hint = _plusMenu.Begin(PlusMenuKind.Skill, "New project", "Checking…");
-            if (notYet is not null) _plusMenu.Settle(hint, notYet);
-            else _plusMenu.Fail(hint, "Could not work out where to create the project.");
+            e.Handled = true;
+            CloseNewProjectPanel();
             return;
         }
 
-        var row = _plusMenu.Begin(PlusMenuKind.Skill, "New project", "Writing the project folder…");
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await CreateProjectFromPanelAsync();
+        }
+    }
 
-        // NEITHER OF THESE IS A FAILURE. Nothing was attempted: one is a workspace
-        // the user has not picked yet, the other is a name they have not typed
-        // yet. Both are hints about the next step, and both used to come back in
-        // the same red as a scaffold that actually blew up. Red that fires on
-        // normal first-run states is red the user learns to ignore.
-        //
-        // Both decisions live in Core so the headless suite can assert them; a
-        // non-null result means nothing was attempted and the row is already settled.
-        // (The check itself now runs ABOVE, before any row is created — see the
-        // comment on where the name comes from.)
+    /// <summary>
+    /// Create from the dedicated entry only. The project filter and Console chat
+    /// composer never supply a project name, and all validation stays beside the
+    /// field instead of appearing as an unrelated Console action strip.
+    /// </summary>
+    private async Task CreateProjectFromPanelAsync()
+    {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var root = ProjectWorkspaceDefaults.CustomerRoot(documents);
+        var typed = (NewProjectNameBox?.Text ?? string.Empty).Trim();
+        if (!FirstRunStates.CanCreateProject(
+                root, typed, out var projectRoot, out var name, out var notYet))
+        {
+            ShowNewProjectValidation(
+                notYet?.Message ?? "Could not determine where to create the project.");
+            NewProjectNameBox?.Focus();
+            return;
+        }
 
         try
         {
+            if (!Directory.Exists(projectRoot)
+                && ProjectWorkspaceDefaults.IsCustomerRoot(projectRoot, documents))
+            {
+                // The default remains read-only until Create is explicitly
+                // confirmed. This is the sole point that materializes it.
+                Directory.CreateDirectory(projectRoot);
+            }
+
             var result = await ProjectScaffoldRunner.InitAsync(HelmionRootPath(), projectRoot, name);
             if (!result.Ok)
             {
-                _plusMenu.Fail(row, result.Summary);
+                ShowNewProjectValidation(result.Summary);
                 return;
             }
 
-            _plusMenu.Succeed(row, result.Summary);
-            RefreshProjectShelf();
+            if (string.IsNullOrWhiteSpace(result.Directory)
+                || !Directory.Exists(result.Directory))
+            {
+                RefreshProjectShelf();
+                ShowNewProjectValidation(
+                    $"{result.Summary} Helmian did not receive the created folder path, "
+                    + "so it was not selected automatically.");
+                return;
+            }
+
+            CloseNewProjectPanel();
+            await ActivateProjectAsync(result.Directory, ensureStructure: false);
         }
         catch (Exception ex)
         {
-            _plusMenu.Fail(row, $"Could not create the project: {ex.Message}");
+            ShowNewProjectValidation($"Could not create the project: {ex.Message}");
         }
+    }
+
+    private void ShowNewProjectValidation(string message)
+    {
+        if (NewProjectValidationText is null) return;
+        NewProjectValidationText.Text = message;
+        NewProjectValidationText.Visibility = Visibility.Visible;
+    }
+
+    private void HideNewProjectValidation()
+    {
+        if (NewProjectValidationText is null) return;
+        NewProjectValidationText.Text = string.Empty;
+        NewProjectValidationText.Visibility = Visibility.Collapsed;
+    }
+
+    private void CloseNewProjectPanel()
+    {
+        if (NewProjectNameBox is not null) NewProjectNameBox.Text = string.Empty;
+        HideNewProjectValidation();
+        if (NewProjectPanel is not null) NewProjectPanel.Visibility = Visibility.Collapsed;
+        NewProjectButton?.Focus();
     }
 
     private string HelmionRootPath()

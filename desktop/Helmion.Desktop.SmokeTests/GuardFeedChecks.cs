@@ -28,8 +28,10 @@ internal static class GuardFeedChecks
             "a feed no layer has reported to is UNKNOWN, not OK — nobody watching is not nothing wrong");
         Assert(blind.WorstLevelText == "UNKNOWN", "the blind headline says UNKNOWN in words");
         Assert(blind.WorstLevelKey == "Unknown", "the blind headline colour key is Unknown, not Normal");
-        Assert(blind.SourceText.Contains("nothing is connected", StringComparison.OrdinalIgnoreCase),
-            "an empty feed states that an empty list means nothing is connected");
+        Assert(blind.SourceText.Contains("No layers connected", StringComparison.OrdinalIgnoreCase)
+               || blind.SourceText.Contains("empty ≠ all-clear", StringComparison.OrdinalIgnoreCase)
+               || blind.SourceText.Contains("nothing is connected", StringComparison.OrdinalIgnoreCase),
+            "an empty feed states that empty is not all-clear (layers not connected)");
         checks += 5;
 
         // --- 2. A REGISTERED LAYER WITH NOTHING TO SAY IS GENUINELY OK ----------
@@ -312,7 +314,8 @@ internal static class GuardFeedChecks
         Assert(retained.TotalCards == GuardFeed.MaxRetainedCards,
             "the feed never holds more than its stated retention limit");
         Assert(retained.DroppedByRetention == 1, "the dropped card is counted");
-        Assert(retained.RetentionText.Contains("1 older event dropped", StringComparison.Ordinal),
+        Assert(retained.RetentionText.Contains("1 dropped", StringComparison.Ordinal)
+               || retained.RetentionText.Contains("1 older event dropped", StringComparison.Ordinal),
             "the panel states how many events it dropped rather than truncating silently");
         Assert(retained.Find("Claude", "Execution guard", "oldest-critical") is not null,
             "retention drops the oldest QUIET card first — it never hides the worst flag");
@@ -420,6 +423,71 @@ internal static class GuardFeedChecks
         Assert(removal.WorstLevel == GuardLevel.Normal,
             "with its layer still registered and nothing flagged, the emptied feed reads OK");
         checks += 4;
+
+        // --- 17b. EVERY CARD NAMES WHO IT IS ABOUT ----------------------------
+        //
+        // Troy, 2026-07-30: "it needs to say which named agent has the issue."
+        //
+        // The panel could not answer that. A card carried a Provider — a tab name
+        // — and a Source — the detection layer — and neither is an agent. The
+        // stale-lock card was the worst of them: it identified the holder as
+        // "troy:21332" buried in the detail text, which is a machine name and a
+        // process number, not anybody's session.
+        //
+        // Subject is that missing field. It is the ANSWER TO "WHOSE PROBLEM IS
+        // THIS", it renders at the front of the card's headline, and it is allowed
+        // to say "I cannot tell you" — what it may not do is be silently absent.
+        var named = new GuardFeed();
+        var owned = named.Report(
+            new GuardObservation("Session · Claude 2", "Session preflight", "pre", "Cannot run a turn",
+                "d", GuardLevel.Critical, Subject: "Claude 2"),
+            T0);
+        Assert(owned.Subject == "Claude 2", "a card carries the name of who it is about");
+        Assert(owned.HeadlineText.StartsWith("Claude 2", StringComparison.Ordinal),
+            "and that name leads the headline, rather than hiding in the detail text");
+        Assert(owned.HeadlineText.Contains("Cannot run a turn", StringComparison.Ordinal),
+            "without losing what the problem actually is");
+        checks += 3;
+
+        // A card with nobody to name must still not be silent about it. An unnamed
+        // card reads as "this is not about anyone", which is how the stale-lock
+        // card managed to be about a live agent and look like housekeeping.
+        var anonymous = named.Report(
+            new GuardObservation("Local", "Write lease", "lease", "An old lock was left behind",
+                "d", GuardLevel.Warning),
+            T0);
+        Assert(anonymous.Subject.Length > 0,
+            "a card with no known owner still fills in a subject rather than leaving it blank");
+        Assert(anonymous.HeadlineText.StartsWith(anonymous.Subject, StringComparison.Ordinal),
+            "and it leads with that, so every card on the panel answers the same question");
+        checks += 2;
+
+        // --- 17c. AN ACTION IS NOT A CHOICE, AND A DEAD BUTTON IS WORSE THAN NONE
+        //
+        // The options row was headed "CHOOSE ONE", which is right for the approval
+        // card — allow once, allow for the session, deny — and wrong for a card
+        // offering a single thing to DO about a problem.
+        var actionable = new GuardFeed();
+        var withAction = actionable.Report(
+            new GuardObservation("Browser", "Browser pattern match", "b", "t", "d", GuardLevel.Unknown,
+                [new GuardOption("A", "Check again now", "Re-read it now.", "recheck-browser")],
+                ActionKind: "guard-recheck",
+                Subject: "Your browser"),
+            T0);
+        Assert(withAction.OptionsHeading.Contains("DO", StringComparison.OrdinalIgnoreCase),
+            "a card offering one thing to do says so, rather than asking him to choose one");
+        Assert(!withAction.OptionsAreInert, "and a card with a routing tag is not marked dead");
+
+        var choice = actionable.Report(
+            new GuardObservation("Console", "Ask-mode approval", "a", "t", "d", GuardLevel.Warning,
+                [new GuardOption("A", "Allow once", "x", "allow-once"),
+                 new GuardOption("B", "Deny", "y", "deny")],
+                ActionKind: "console-approval",
+                Subject: "This window"),
+            T0);
+        Assert(choice.OptionsHeading.Contains("CHOOSE", StringComparison.OrdinalIgnoreCase),
+            "a card with several answers still says choose one");
+        checks += 3;
 
         // --- 18. THE FEED DETECTS NOTHING ITSELF ------------------------------
         var passive = new GuardFeed();

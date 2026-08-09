@@ -88,15 +88,22 @@ public static class GuardEscalationRule
     /// <summary>How long an unacknowledged yellow card may sit before it turns red.</summary>
     public static readonly TimeSpan CriticalAfterUnacknowledged = TimeSpan.FromMinutes(5);
 
-    /// <summary>Rendered on the panel. Built from the constants above so it cannot drift from them.</summary>
+    /// <summary>
+    /// Short face copy for the Guard panel (not a tutorial). Numbers still come from the constants.
+    /// Full prose: <see cref="StatedRuleDetail"/> (settings / docs only).
+    /// </summary>
     public static string StatedRule =>
+        $"Yellow → red at ×{CriticalAfterOccurrences} or {CriticalAfterUnacknowledged.TotalMinutes:0} min. "
+        + $"Pulse at ×{PulseAfterOccurrences} or {PulseAfterUnacknowledged.TotalMinutes:0} min. Ack hides non-criticals.";
+
+    /// <summary>Long form for Guard settings only — not the main feed.</summary>
+    public static string StatedRuleDetail =>
         $"Grey never moves. A yellow card is solid until it has been seen "
         + $"{PulseAfterOccurrences} times or sat unanswered for "
-        + $"{PulseAfterUnacknowledged.TotalMinutes:0} minutes — then it pulses, as the warning "
-        + $"before critical. At {CriticalAfterOccurrences} sightings or "
-        + $"{CriticalAfterUnacknowledged.TotalMinutes:0} minutes unanswered it turns red. Red pulses "
-        + $"from the moment it appears and is never solid. Acknowledging a card stops the motion "
-        + $"and keeps its level; a fresh sighting clears the acknowledgement and the motion returns.";
+        + $"{PulseAfterUnacknowledged.TotalMinutes:0} minutes — then it pulses. At "
+        + $"{CriticalAfterOccurrences} sightings or "
+        + $"{CriticalAfterUnacknowledged.TotalMinutes:0} minutes unanswered it turns red. "
+        + "Red is never solid — it pulses from the first frame. Acknowledge stops motion; a fresh sighting restores it.";
 
     /// <summary>
     /// Evaluate one card.

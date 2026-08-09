@@ -15,7 +15,8 @@ public sealed record ProjectSummary(
     IReadOnlyList<string> Parts,
     int SprintCount,
     DateTime LastWriteUtc,
-    bool IsPinned = false)
+    bool IsPinned = false,
+    bool IsActive = false)
 {
     /// <summary>The second line in the panel. Never empty.</summary>
     public string PartsText => Parts.Count == 0
@@ -28,6 +29,9 @@ public sealed record ProjectSummary(
     public string PinTooltip => IsPinned
         ? "Pinned to the top. Click to unpin."
         : "Pin this project to the top of the panel.";
+
+    /// <summary>Screen-reader name for the project-row button.</summary>
+    public string AccessibleName => IsActive ? $"{Name}, active project" : Name;
 }
 
 /// <summary>
@@ -77,19 +81,42 @@ public static class ProjectShelf
     public static IReadOnlyList<ProjectSummary> Discover(
         string? root,
         IReadOnlyCollection<string>? pinned = null,
-        string? filter = null)
+        string? filter = null,
+        string? activeDirectory = null)
     {
         var pins = new HashSet<string>(pinned ?? [], StringComparer.OrdinalIgnoreCase);
         var needle = (filter ?? string.Empty).Trim();
 
         return DiscoverAll(root)
-            .Select(project => project with { IsPinned = pins.Contains(project.Slug) })
+            .Select(project => project with
+            {
+                IsPinned = pins.Contains(project.Slug),
+                IsActive = SameDirectory(project.Directory, activeDirectory)
+            })
             .Where(project => Matches(project, needle))
             // Pinned first, then most recently touched. Two keys, both stated:
             // a pin is a deliberate choice and outranks recency, which is a guess.
             .OrderByDescending(project => project.IsPinned)
             .ThenByDescending(project => project.LastWriteUtc)
             .ToList();
+    }
+
+    private static bool SameDirectory(string directory, string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate)) return false;
+
+        try
+        {
+            var left = Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var right = Path.GetFullPath(candidate)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool Matches(ProjectSummary project, string needle) =>

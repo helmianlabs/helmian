@@ -5,11 +5,11 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>Helmion Pilot</AssemblyName>
+    <AssemblyName>Helmian</AssemblyName>
     <RootNamespace>Helmion.Desktop</RootNamespace>
     <Version>0.1.0</Version>
-    <Product>Helmion Personal Pilot</Product>
-    <Description>Local Windows dashboard shell for the Helmion personal pilot</Description>
+    <Product>Helmian</Product>
+    <Description>Helmian desktop productivity workspace</Description>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ApplicationIcon>Assets\Helmion.ico</ApplicationIcon>
   </PropertyGroup>
@@ -19,6 +19,13 @@
     <ProjectReference Include="..\Helmion.LocalService\Helmion.LocalService.csproj"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\Helmian-logo.png" />
+  </ItemGroup>
   <Target Name="GenerateHelmionIcon"
           BeforeTargets="CoreCompile"
           Condition="$([MSBuild]::IsOSPlatform('Windows'))">
@@ -27,12 +34,18 @@
 
   <!-- The Pilot hosts the Local Service as a sibling process. Copy the full
        service output (exe + dll + deps + runtimeconfig + protocol/security)
-       next to Helmion Pilot.exe. A bare apphost .exe without its .dll exits
+       next to Helmian.exe. A bare apphost .exe without its .dll exits
        immediately ("application to execute does not exist"). -->
   <Target Name="CopyLocalServiceBesidePilot"
           AfterTargets="Build">
     <PropertyGroup>
-      <_SvcOut>$(MSBuildThisFileDirectory)..\Helmion.LocalService\bin\$(Configuration)\net10.0-windows\</_SvcOut>
+      <!-- Keep isolated review builds internally consistent. The artifacts-path option
+           sends every project to one artifacts tree; copying from the repository's
+           shared bin folder here could mix a newer Desktop with an older protocol. -->
+      <_ArtifactConfigSegment Condition="'$(RuntimeIdentifier)' == ''">$([System.String]::Copy('$(Configuration)').ToLowerInvariant())</_ArtifactConfigSegment>
+      <_ArtifactConfigSegment Condition="'$(RuntimeIdentifier)' != ''">$([System.String]::Copy('$(Configuration)').ToLowerInvariant())_$(RuntimeIdentifier)</_ArtifactConfigSegment>
+      <_SvcOut Condition="'$(ArtifactsPath)' != ''">$(ArtifactsPath)\bin\Helmion.LocalService\$(_ArtifactConfigSegment)\</_SvcOut>
+      <_SvcOut Condition="'$(ArtifactsPath)' == ''">$(MSBuildThisFileDirectory)..\Helmion.LocalService\bin\$(Configuration)\net10.0-windows\</_SvcOut>
     </PropertyGroup>
     <ItemGroup Condition="Exists('$(_SvcOut)Helmion Local Service.dll')">
       <_LocalServiceCopy Include="$(_SvcOut)Helmion Local Service.exe" />
@@ -44,6 +57,11 @@
       <_LocalServiceCopy Include="$(_SvcOut)Helmion.LocalService.Protocol.pdb" Condition="Exists('$(_SvcOut)Helmion.LocalService.Protocol.pdb')" />
       <_LocalServiceCopy Include="$(_SvcOut)Helmion.LocalService.Security.dll" Condition="Exists('$(_SvcOut)Helmion.LocalService.Security.dll')" />
       <_LocalServiceCopy Include="$(_SvcOut)Helmion.LocalService.Security.pdb" Condition="Exists('$(_SvcOut)Helmion.LocalService.Security.pdb')" />
+      <_LocalServiceCopy Include="$(_SvcOut)IO.Ably.dll" Condition="Exists('$(_SvcOut)IO.Ably.dll')" />
+      <_LocalServiceCopy Include="$(_SvcOut)IO.Ably.DeltaCodec.dll" Condition="Exists('$(_SvcOut)IO.Ably.DeltaCodec.dll')" />
+      <_LocalServiceCopy Include="$(_SvcOut)Newtonsoft.Json.dll" Condition="Exists('$(_SvcOut)Newtonsoft.Json.dll')" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion.ArtifactStudio.dll" Condition="Exists('$(_SvcOut)Helmion.ArtifactStudio.dll')" />
+      <_LocalServiceCopy Include="$(_SvcOut)Helmion.ArtifactStudio.pdb" Condition="Exists('$(_SvcOut)Helmion.ArtifactStudio.pdb')" />
     </ItemGroup>
     <Copy SourceFiles="@(_LocalServiceCopy)"
           DestinationFolder="$(TargetDir)"

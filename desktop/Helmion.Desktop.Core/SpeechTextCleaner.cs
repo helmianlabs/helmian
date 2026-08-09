@@ -8,8 +8,11 @@ namespace Helmion.Desktop.Core;
 /// </summary>
 public static class SpeechTextCleaner
 {
-    /// <summary>Longest utterance we will speak, so one reply cannot monologue for minutes.</summary>
-    public const int MaxSpokenLength = 1200;
+    /// <summary>
+    /// Longest utterance we will speak. Shorter = less Kokoro wall time (laggy feel).
+    /// Was 1200; 420 chars is ~2–3 spoken sentences and keeps voice replies snappy.
+    /// </summary>
+    public const int MaxSpokenLength = 420;
 
     public static string CleanForSpeech(string text)
     {

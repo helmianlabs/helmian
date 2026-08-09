@@ -10,5 +10,6 @@
     <ProjectReference Include="..\Helmion.Desktop.Core\Helmion.Desktop.Core.csproj" />
     <ProjectReference Include="..\Helmion.LocalService.Protocol\Helmion.LocalService.Protocol.csproj" />
     <ProjectReference Include="..\Helmion.LocalService.Security\Helmion.LocalService.Security.csproj" />
+    <ProjectReference Include="..\Helmion.LocalService\Helmion.LocalService.csproj" />
   </ItemGroup>
 </Project>

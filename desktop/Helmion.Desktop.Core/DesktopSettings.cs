@@ -9,34 +9,38 @@ public sealed record ColorThemeOption(
 
 public static class ColorThemeCatalog
 {
-    public const string DefaultThemeId = "helmion-green";
+    public const string DefaultThemeId = "clean-light";
 
     public static IReadOnlyList<ColorThemeOption> All { get; } =
     [
         new(
-            DefaultThemeId,
-            "Helmion green",
+            "helmion-green",
+            "Studio dark",
             "Deep forest surfaces with a clear mint accent."),
         new(
             "ocean-blue",
-            "Ocean blue",
+            "Midnight",
             "Cool navy surfaces with an accessible cyan-blue accent."),
         new(
-            "clean-light",
-            "Clean light",
+            "buzz-black",
+            "Black",
+            "Cool near-black graphite with steel-blue accent — no warm brown on black."),
+        new(
+            DefaultThemeId,
+            "Professional light",
             "Bright white surfaces with crisp evergreen contrast."),
         new(
             "warm-earth",
-            "Warm earth",
-            "Grounded brown surfaces with a warm sand accent."),
+            "Warm neutral",
+            "Grounded brown family only — sand accent, warm slate secondary."),
         new(
             "solar-yellow",
-            "Solar yellow",
-            "Warm charcoal surfaces with a bright golden-yellow accent."),
+            "Graphite",
+            "Warm charcoal with gold accent (matched family, no cool purple)."),
         new(
             "crimson-red",
-            "Crimson red",
-            "Dark charcoal surfaces with a vivid crimson accent.")
+            "Editorial",
+            "Crimson family only — red accent, muted steel secondary, never purple.")
     ];
 
     public static bool IsKnown(string? id)
@@ -48,7 +52,7 @@ public static class ColorThemeCatalog
     {
         return All.FirstOrDefault(option =>
                 string.Equals(option.Id, id, StringComparison.Ordinal))
-            ?? All[0];
+            ?? All.First(option => option.Id == DefaultThemeId);
     }
 }
 
@@ -142,15 +146,27 @@ public sealed record DesktopSettings(
     /// </summary>
     IReadOnlyList<string>? PinnedProjects = null,
     /// <summary>
-    /// App-wide text scale. Last in the parameter list on purpose: a settings file
-    /// written by an earlier build has no such property, and System.Text.Json fills
-    /// the gap with this default rather than refusing the whole file.
+    /// App-wide text scale. Optional trailing fields: a settings file written by an
+    /// earlier build has no such property, and System.Text.Json fills the gap with
+    /// this default rather than refusing the whole file.
     /// </summary>
-    double TextScale = TextScaleRange.Default)
+    double TextScale = TextScaleRange.Default,
+    /// <summary>Herald pairing QR edge length in DIPs (clamped on apply).</summary>
+    double HeraldQrSize = HeraldLayoutRange.DefaultQrSize,
+    /// <summary>Herald activity log panel height in DIPs.</summary>
+    double HeraldLogHeight = HeraldLayoutRange.DefaultLogHeight,
+    /// <summary>Left (controls) column star share vs QR column (0.25–0.85).</summary>
+    double HeraldControlsShare = HeraldLayoutRange.DefaultControlsShare,
+    /// <summary>Herald status / detail font size.</summary>
+    double HeraldDetailFontSize = HeraldLayoutRange.DefaultDetailFontSize)
 {
     public static DesktopSettings Default { get; } =
         new(1, ColorThemeCatalog.DefaultThemeId, null, [], AgentPermission.ReadOnly, [],
-            TextScaleRange.Default);
+            TextScaleRange.Default,
+            HeraldLayoutRange.DefaultQrSize,
+            HeraldLayoutRange.DefaultLogHeight,
+            HeraldLayoutRange.DefaultControlsShare,
+            HeraldLayoutRange.DefaultDetailFontSize);
 
     /// <summary>Normalized console permission mode (read-only | read-tools | full).</summary>
     public string ResolvedPermissionMode => AgentPermission.Normalize(PermissionMode);
@@ -160,6 +176,43 @@ public sealed record DesktopSettings(
     /// directly — the raw value came off disk and nothing validated it there.
     /// </summary>
     public double ResolvedTextScale => TextScaleRange.Clamp(TextScale);
+
+    public double ResolvedHeraldQrSize => HeraldLayoutRange.ClampQrSize(HeraldQrSize);
+    public double ResolvedHeraldLogHeight => HeraldLayoutRange.ClampLogHeight(HeraldLogHeight);
+    public double ResolvedHeraldControlsShare => HeraldLayoutRange.ClampControlsShare(HeraldControlsShare);
+    public double ResolvedHeraldDetailFontSize => HeraldLayoutRange.ClampDetailFontSize(HeraldDetailFontSize);
+}
+
+/// <summary>Clamps for Herald panel layout preferences (sliders + splitters).</summary>
+public static class HeraldLayoutRange
+{
+    public const double DefaultQrSize = 220;
+    public const double MinQrSize = 120;
+    public const double MaxQrSize = 400;
+
+    public const double DefaultLogHeight = 160;
+    public const double MinLogHeight = 80;
+    public const double MaxLogHeight = 420;
+
+    public const double DefaultControlsShare = 0.58;
+    public const double MinControlsShare = 0.28;
+    public const double MaxControlsShare = 0.82;
+
+    public const double DefaultDetailFontSize = 11;
+    public const double MinDetailFontSize = 10;
+    public const double MaxDetailFontSize = 16;
+
+    public static double ClampQrSize(double v) =>
+        Math.Clamp(v, MinQrSize, MaxQrSize);
+
+    public static double ClampLogHeight(double v) =>
+        Math.Clamp(v, MinLogHeight, MaxLogHeight);
+
+    public static double ClampControlsShare(double v) =>
+        Math.Clamp(v, MinControlsShare, MaxControlsShare);
+
+    public static double ClampDetailFontSize(double v) =>
+        Math.Clamp(v, MinDetailFontSize, MaxDetailFontSize);
 }
 
 public static class DesktopSettingsStore

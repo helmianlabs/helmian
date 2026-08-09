@@ -49,9 +49,10 @@ public static class GuardPermissionPosture
         {
             AgentPermission.Full => new GuardPermissionCard(
                 GuardLevel.Normal,
-                "Full tool permissions",
-                "write_file and run_command run without stopping to ask. Every provider in this "
-                + "window can write files and run shell commands in the registered workspace. "
+                "Workspace actions enabled",
+                "Every provider in this window can create new files, make exact reviewed edits, "
+                + "run tasks declared by the selected project, and open a loopback static preview. "
+                + "There is no arbitrary agent terminal or general browser-control action. "
                 + "This is the setting you chose; change it in the permission dropdown."),
 
             AgentPermission.Ask => new GuardPermissionCard(
@@ -64,8 +65,8 @@ public static class GuardPermissionPosture
             AgentPermission.ReadTools => new GuardPermissionCard(
                 GuardLevel.Normal,
                 "Read tools only",
-                "read_file, list_dir and search_text are allowed. Writes and shell are refused "
-                + "by ToolDispatcher."),
+                "Bounded workspace context, read_file, list_dir and search_text are allowed. "
+                + "File changes, project tasks, and previews are refused by the tool gate."),
 
             AgentPermission.ReadOnly => new GuardPermissionCard(
                 GuardLevel.Normal,

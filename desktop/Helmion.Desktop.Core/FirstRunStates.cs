@@ -71,8 +71,8 @@ public static class FirstRunStates
         {
             return new PlusOutcome(
                 PlusActionState.Empty,
-                $"No plugins are installed in this workspace yet — {registry} does not exist. "
-                + "Install one with: helmion plugin add <path>");
+                "No plugins are registered in this workspace yet. This list is read-only; "
+                + "add one from reviewed local source with: helmion plugin add <path>");
         }
 
         long bytes;
@@ -109,8 +109,9 @@ public static class FirstRunStates
 
         return new PlusOutcome(
             PlusActionState.Empty,
-            "Type what you need it to reach into the box first — for example "
-            + "\"read local sqlite\" or \"post to Slack\" — then press + › Connectors.");
+            "Search cancelled. Type a need in the composer or MCP Discover box "
+            + "(e.g. \"read local sqlite\"), then + › Connectors again — or click "
+            + "Connectors and enter the need in the search dialog.");
     }
 
     /// <summary>

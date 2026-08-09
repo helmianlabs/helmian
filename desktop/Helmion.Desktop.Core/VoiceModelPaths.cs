@@ -27,10 +27,22 @@ public static class VoiceModelPaths
     /// nothing has to be downloaded for the app to start.
     /// </para>
     /// </summary>
+    /// <remarks>
+    /// ORDER REVERSED THE SAME NIGHT, and the reason matters more than the order.
+    /// small.en went first on the theory that the model was too weak to hear
+    /// "Helmion". It was not: the errors SURVIVED the upgrade and only died when
+    /// WhisperSpeechRecognizer.VocabularyPrompt was added. So the prompt was the
+    /// fix and the bigger model was never doing the work - it was only adding
+    /// latency, which the operator felt immediately as lag between speaking and
+    /// seeing text.
+    /// base.en is back in front: fast, and now accurate because it is finally
+    /// being told what the words are. small.en stays as a fallback for a machine
+    /// that has it and not base.en.
+    /// </remarks>
     public static readonly string[] WhisperModelFileNames =
     [
-        "ggml-small.en.bin",
         "ggml-base.en.bin",
+        "ggml-small.en.bin",
     ];
 
     /// <summary>The model this build looks for first. Kept for messages and tests.</summary>

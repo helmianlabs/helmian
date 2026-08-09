@@ -16,6 +16,42 @@ internal static class ProjectShelfChecks
     {
         var checks = 0;
 
+        // --- 0. CUSTOMER DEFAULT IS PURE AND PRESERVES EXPLICIT WORKSPACES ---
+        var documents = Path.Combine(Path.GetTempPath(), $"helmian-documents-{Guid.NewGuid():N}");
+        var expectedCustomerRoot = Path.Combine(documents, "Helmian Projects");
+        var existingExplicit = Path.Combine(Path.GetTempPath(), $"helmian-existing-{Guid.NewGuid():N}");
+        var knownExisting = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.GetFullPath(existingExplicit)
+        };
+        bool Exists(string path) => knownExisting.Contains(Path.GetFullPath(path));
+
+        Assert(ProjectWorkspaceDefaults.Resolve(null, null, null, documents, Exists)
+                == Path.GetFullPath(expectedCustomerRoot),
+            "a new customer defaults to Documents\\Helmian Projects");
+        Assert(ProjectWorkspaceDefaults.Resolve(existingExplicit, null, null, documents, Exists)
+                == Path.GetFullPath(existingExplicit),
+            "an existing registered workspace such as E:\\Helmion is preserved");
+        Assert(ProjectWorkspaceDefaults.Resolve(null, "Z:\\stale", existingExplicit, documents, Exists)
+                == Path.GetFullPath(existingExplicit),
+            "a stale higher-priority preference falls through to an existing saved workspace");
+        Assert(ProjectWorkspaceDefaults.IsCustomerRoot(
+                expectedCustomerRoot.ToUpperInvariant(), documents),
+            "the customer-default identity is case-insensitive on Windows");
+        Assert(!Directory.Exists(expectedCustomerRoot),
+            "resolving the default is read-only and creates no folder");
+        checks += 5;
+
+        Assert(WorkbenchSurfaceCatalog.All.Select(item => item.Label)
+                .SequenceEqual(new[] { "Guard", "Browser", "Canvas", "Preview", "Create" }),
+            "the right workbench exposes the five approved surfaces in order");
+        Assert(WorkbenchSurfaceCatalog.All.All(item => !item.CanExecute),
+            "the first workbench slice invents no hidden execution path");
+        Assert(WorkbenchSurfaceCatalog.Find("create")?.Boundary.Contains(
+                "approval before any API call", StringComparison.OrdinalIgnoreCase) == true,
+            "Create states that approval precedes a provider call");
+        checks += 3;
+
         var root = Path.Combine(Path.GetTempPath(), $"helmion-shelf-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try
@@ -109,7 +145,20 @@ internal static class ProjectShelfChecks
                 "a pin for a project that no longer exists matches nothing and breaks nothing");
             checks += 5;
 
-            // --- 6c. SEARCH MATCHES TITLE OR SLUG -----------------------------
+            // --- 6c. THE ACTIVE PROJECT IS EXPLICIT ---------------------------
+            var active = ProjectShelf.Discover(root, null, null, real);
+            Assert(active.Single(project => project.Slug == "invoice-importer").IsActive,
+                "the registered project is marked active on the shelf");
+            Assert(active.Where(project => project.Slug != "invoice-importer").All(project => !project.IsActive),
+                "only the registered project is active");
+            Assert(active.Single(project => project.Slug == "invoice-importer")
+                    .AccessibleName.Contains("active project", StringComparison.OrdinalIgnoreCase),
+                "the active state is spelled out for accessibility, not conveyed by color alone");
+            Assert(ProjectShelf.Discover(root).All(project => !project.IsActive),
+                "a shelf with no registered project invents no selection");
+            checks += 4;
+
+            // --- 6d. SEARCH MATCHES TITLE OR SLUG -----------------------------
             Assert(ProjectShelf.Discover(root, null, "Invoice").Single().Slug == "invoice-importer",
                 "search matches the readable title");
             Assert(ProjectShelf.Discover(root, null, "invoice-imp").Single().Slug == "invoice-importer",
