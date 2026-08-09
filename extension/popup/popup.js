@@ -72,6 +72,31 @@ function row(entry) {
 }
 
 async function refresh() {
+  const health = await ask('helmion:guard-status');
+  const status = health.ok ? health.status : {};
+  const protection = status && status.protection;
+  const claims = status && status.claims;
+
+  $('protectionDot').className = `status-dot ${protection || 'unknown'}`;
+  $('claimsDot').className = `status-dot ${claims || 'unknown'}`;
+  $('protectionStatus').textContent = protection === 'active'
+    ? 'Active on the most recently checked page.'
+    : protection === 'limited'
+      ? 'Active in compatibility mode.'
+      : protection === 'needs-attention'
+        ? 'Needs attention; checks may be incomplete.'
+        : 'Open or reload a supported AI page to check.';
+  $('claimsStatus').textContent = claims === 'active'
+    ? 'Active on the most recently checked page.'
+    : claims === 'limited'
+      ? 'Active in compatibility mode.'
+      : claims === 'unavailable'
+        ? 'Temporarily unavailable.'
+        : 'Open or reload a supported AI page to check.';
+  $('statusHelp').textContent = protection === 'needs-attention'
+    ? 'Reload the page. If this status remains, do not rely on Guard for that page.'
+    : '';
+
   const stats = await ask('helmion:ledger-stats');
   if (!stats.ok) {
     $('range').textContent = `Could not read the log: ${stats.error}`;

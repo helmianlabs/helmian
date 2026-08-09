@@ -9,10 +9,9 @@
 //      hidden behind it, so copying it takes a second deliberate click.
 //   2. A toast pinned to the corner, so a warning further up the page is still
 //      noticed when he has already scrolled past it.
-//   3. A broken banner across the top of the page. This is the important one.
-//      A safety tool that quietly stops working looks exactly like one that
-//      found nothing wrong. When anything in this extension fails, the page
-//      says so.
+//   3. A compact corner alert when destructive-command protection actually
+//      stops. It never exposes parser or fallback diagnostics on the page;
+//      those stay in the console and the toolbar popup.
 //
 // QUIET — an unsourced claim. Somebody stated a checkable fact and did not say
 // where it came from. It is a reading aid, it is wrong often enough that its own
@@ -20,8 +19,8 @@
 //
 //   4. A note beside the paragraph, and a dotted underline on the paragraph.
 //      Nothing is hidden, nothing is masked, and it never touches the badge.
-//   5. Its own banner, saying only that the reading aid stopped — never that the
-//      guard stopped watching, because that would be false.
+//   5. Health information in the toolbar popup. Advisory health never covers
+//      the page.
 //
 // Every element carries data-helmion-ui, which is how stream-watch.js tells our
 // own page changes apart from the site's and does not re-trigger itself.
@@ -264,6 +263,7 @@
   // ------------------------------------------------------------------- toast
 
   var toastElement = null;
+  var promptAlertElement = null;
 
   function hideToast() {
     if (toastElement && toastElement.parentNode) toastElement.parentNode.removeChild(toastElement);
@@ -274,11 +274,26 @@
     var parent = host();
     if (!parent) return null;
     hideToast();
+    hidePromptAlert();
 
     toastElement = make('div', PREFIX + '-toast');
     toastElement.setAttribute('role', 'alert');
     toastElement.appendChild(make('div', PREFIX + '-toast-title', message));
-    if (detail) toastElement.appendChild(make('div', PREFIX + '-toast-detail', detail));
+
+    if (detail) {
+      var detailElement = make('div', PREFIX + '-toast-detail', detail);
+      detailElement.hidden = true;
+      var details = make('button', PREFIX + '-toast-details', 'Details');
+      details.type = 'button';
+      details.setAttribute('aria-expanded', 'false');
+      details.addEventListener('click', function toggleDetails() {
+        detailElement.hidden = !detailElement.hidden;
+        details.setAttribute('aria-expanded', detailElement.hidden ? 'false' : 'true');
+        details.textContent = detailElement.hidden ? 'Details' : 'Hide details';
+      });
+      toastElement.appendChild(details);
+      toastElement.appendChild(detailElement);
+    }
 
     var close = make('button', PREFIX + '-toast-close', 'Dismiss');
     close.type = 'button';
@@ -289,7 +304,61 @@
     return toastElement;
   }
 
-  // ------------------------------------------------------------------ banner
+  // ---------------------------------------------------------- prompt alert
+
+  function hidePromptAlert() {
+    if (promptAlertElement && promptAlertElement.parentNode) {
+      promptAlertElement.parentNode.removeChild(promptAlertElement);
+    }
+    promptAlertElement = null;
+  }
+
+  function showPromptAlert(message, detail, onEdit) {
+    var parent = host();
+    if (!parent) return null;
+    hideToast();
+    hidePromptAlert();
+
+    promptAlertElement = make('div', PREFIX + '-prompt-alert');
+    promptAlertElement.setAttribute('role', 'alert');
+    promptAlertElement.appendChild(make(
+      'strong',
+      PREFIX + '-prompt-alert-title',
+      'Helmion Guard blocked this request',
+    ));
+    promptAlertElement.appendChild(make(
+      'span',
+      PREFIX + '-prompt-alert-message',
+      message || 'This request could permanently erase files or data.',
+    ));
+
+    var edit = make('button', PREFIX + '-prompt-alert-edit', 'Return to editing');
+    edit.type = 'button';
+    edit.addEventListener('click', function returnToEditing() {
+      if (typeof onEdit === 'function') onEdit();
+    });
+    promptAlertElement.appendChild(edit);
+
+    if (detail) {
+      var detailElement = make('span', PREFIX + '-prompt-alert-detail', detail);
+      detailElement.hidden = true;
+      var details = make('button', PREFIX + '-prompt-alert-details', 'Details');
+      details.type = 'button';
+      details.setAttribute('aria-expanded', 'false');
+      details.addEventListener('click', function togglePromptDetails() {
+        detailElement.hidden = !detailElement.hidden;
+        details.setAttribute('aria-expanded', detailElement.hidden ? 'false' : 'true');
+        details.textContent = detailElement.hidden ? 'Details' : 'Hide details';
+      });
+      promptAlertElement.appendChild(details);
+      promptAlertElement.appendChild(detailElement);
+    }
+
+    parent.appendChild(promptAlertElement);
+    return promptAlertElement;
+  }
+
+  // -------------------------------------------------------- protection alert
 
   var bannerElement = null;
 
@@ -300,32 +369,53 @@
     bannerElement = null;
   }
 
-  // Loud by design. This is what makes a silent failure impossible.
+  // A real protection failure must remain visible, but it must not cover the
+  // site or expose implementation diagnostics. Technical detail is logged by
+  // guard.js and summarized in the toolbar popup instead.
   function showBanner(message, detail) {
     var parent = host();
     if (!parent) return null;
     hideBanner();
 
-    bannerElement = make('div', PREFIX + '-banner');
+    bannerElement = make('div', PREFIX + '-health-alert');
     bannerElement.setAttribute('role', 'alert');
     bannerElement.appendChild(make(
       'strong',
-      PREFIX + '-banner-title',
-      'HELMION GUARD IS NOT WATCHING THIS PAGE',
+      PREFIX + '-health-alert-title',
+      'Helmion Guard needs attention',
     ));
-    bannerElement.appendChild(make('span', PREFIX + '-banner-message', message));
-    if (detail) bannerElement.appendChild(make('span', PREFIX + '-banner-detail', detail));
+    bannerElement.appendChild(make(
+      'span',
+      PREFIX + '-health-alert-message',
+      'Safety checks may be incomplete on this page.',
+    ));
+
+    var help = make(
+      'span',
+      PREFIX + '-health-alert-detail',
+      'Reload this page. If the alert returns, open the Helmion Guard extension for status.',
+    );
+    help.hidden = true;
+    var details = make('button', PREFIX + '-health-alert-details', 'Details');
+    details.type = 'button';
+    details.setAttribute('aria-expanded', 'false');
+    details.addEventListener('click', function toggleHealthDetails() {
+      help.hidden = !help.hidden;
+      details.setAttribute('aria-expanded', help.hidden ? 'false' : 'true');
+      details.textContent = help.hidden ? 'Details' : 'Hide details';
+    });
+    bannerElement.appendChild(details);
+    bannerElement.appendChild(help);
 
     parent.appendChild(bannerElement);
     return bannerElement;
   }
 
-  // ------------------------------------------------------- advisory banner
+  // ------------------------------------------------------- advisory status
 
-  // The claim lane's version of showBanner, and it says something different on
-  // purpose. showBanner claims the guard is not watching the page, which is
-  // about destructive commands and would be a lie if only the reading aid had
-  // failed. Two lanes, two honest sentences.
+  // Claim checking is advisory. Its health belongs in the toolbar popup, not in
+  // a fixed element over the host page. Keep these methods as no-op compatibility
+  // seams so the two enforcement lanes remain independently callable.
 
   var advisoryBannerElement = null;
 
@@ -337,31 +427,8 @@
   }
 
   function showAdvisoryBanner(message, detail) {
-    var parent = host();
-    if (!parent) return null;
     hideAdvisoryBanner();
-
-    advisoryBannerElement = make('div', PREFIX + '-advisory-banner');
-    advisoryBannerElement.setAttribute('role', 'status');
-    advisoryBannerElement.appendChild(make(
-      'strong',
-      PREFIX + '-advisory-banner-title',
-      'HELMION GUARD IS NOT READING THIS PAGE FOR UNSOURCED CLAIMS',
-    ));
-    advisoryBannerElement.appendChild(make('span', PREFIX + '-advisory-banner-message', message));
-    if (detail) {
-      advisoryBannerElement.appendChild(make('span', PREFIX + '-advisory-banner-detail', detail));
-    }
-    // Said plainly, because the two lanes fail independently and a reader who
-    // sees this needs to know which half is still working.
-    advisoryBannerElement.appendChild(make(
-      'span',
-      PREFIX + '-advisory-banner-detail',
-      'Destructive-command checking is unaffected and still running.',
-    ));
-
-    parent.appendChild(advisoryBannerElement);
-    return advisoryBannerElement;
+    return null;
   }
 
   root.HelmionUI = {
@@ -376,6 +443,8 @@
     clearClaims: clearClaims,
     showToast: showToast,
     hideToast: hideToast,
+    showPromptAlert: showPromptAlert,
+    hidePromptAlert: hidePromptAlert,
     showBanner: showBanner,
     hideBanner: hideBanner,
     showAdvisoryBanner: showAdvisoryBanner,

@@ -19,6 +19,7 @@ import { chrome, fake, installWorker } from '../test-support/fake-chrome.mjs';
 await installWorker();
 
 const CONTENT_SCRIPTS = [
+  'content/prompt-risk.js',
   'content/extract.js',
   'content/stream-watch.js',
   'content/ui.js',
@@ -40,6 +41,17 @@ async function runExtension(children) {
   const observers = [];
   const intervals = [];
   const windowListeners = new Map();
+  const fakeWindow = {
+    location: { hostname: 'gemini.google.com' },
+    addEventListener(type, handler) {
+      if (!windowListeners.has(type)) windowListeners.set(type, []);
+      windowListeners.get(type).push(handler);
+    },
+    dispatch(type, event = {}) {
+      event.type = event.type || type;
+      (windowListeners.get(type) || []).forEach((handler) => handler(event));
+    },
+  };
 
   class FakeMutationObserver {
     constructor(callback) {
@@ -58,19 +70,17 @@ async function runExtension(children) {
     document: doc,
     chrome,
     MutationObserver: FakeMutationObserver,
-    window: {
-      addEventListener(type, handler) { windowListeners.set(type, handler); },
-    },
+    window: fakeWindow,
     // The 60-second health check would keep the test process alive. Record the
     // call instead of scheduling it.
     setInterval(handler, ms) { intervals.push({ handler, ms }); return intervals.length; },
   });
 
-  return { doc, observers, intervals, windowListeners };
+  return { doc, observers, intervals, windowListeners, fakeWindow };
 }
 
 const panels = (doc) => doc.querySelectorAll('.helmion-guard-panel');
-const banners = (doc) => doc.querySelectorAll('.helmion-guard-banner');
+const healthAlerts = (doc) => doc.querySelectorAll('.helmion-guard-health-alert');
 const toasts = (doc) => doc.querySelectorAll('.helmion-guard-toast');
 
 test('a dangerous code block on the page is warned about and hidden', async () => {
@@ -114,7 +124,7 @@ test('the toolbar badge turns red and counts the flagged blocks', async () => {
 });
 
 test('a clean page draws nothing and clears the badge', async () => {
-  const { doc } = await runExtension([
+  const { doc, fakeWindow } = await runExtension([
     element('p', {}, ['Never run rm -rf on a production server without a backup.']),
     element('p', {}, ['Use ', element('code', {}, ['rm -rf /']), ' with care.']),
     codeBlock('npm install\nnpm run dev'),
@@ -123,11 +133,123 @@ test('a clean page draws nothing and clears the badge', async () => {
   await wait(60);
 
   assert.equal(panels(doc).length, 0, 'a warning was drawn on a clean page');
-  assert.equal(banners(doc).length, 0);
+  assert.equal(healthAlerts(doc).length, 0);
   assert.equal(toasts(doc).length, 0);
 
   const text = fake.badgeCalls.filter((entry) => entry.call === 'setBadgeText').pop();
   assert.equal(text.text, '');
+});
+
+test('GEMINI-LIKE FIXTURE: a destructive natural-language prompt is stopped before send', async () => {
+  const composer = element('div', {
+    contenteditable: 'true',
+    role: 'textbox',
+    'aria-label': 'Enter a prompt here',
+  }, ['Permanently erase all computer files.']);
+  const send = element('button', { 'aria-label': 'Send message' }, ['Send']);
+  const { doc, fakeWindow } = await runExtension([
+    element('main', { 'data-test-app': 'gemini-chat' }, [composer, send]),
+  ]);
+  await wait(60);
+
+  let prevented = false;
+  let stopped = false;
+  fakeWindow.dispatch('pointerdown', {
+    target: send,
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() { stopped = true; },
+  });
+  await wait(30);
+
+  assert.equal(prevented, true, 'the Gemini-like send event was not cancelled');
+  assert.equal(stopped, true, 'the host page could still receive the destructive send event');
+  const alerts = doc.querySelectorAll('.helmion-guard-prompt-alert');
+  assert.equal(alerts.length, 1, 'no bounded prompt warning appeared');
+  assert.match(alerts[0].textContent, /blocked this request/i);
+  assert.match(alerts[0].textContent, /permanently erase/i);
+  assert.equal(healthAlerts(doc).length, 0, 'prompt risk used the protection-health alert');
+
+  const badge = fake.badgeCalls.filter((entry) => entry.call === 'setBadgeText').pop();
+  assert.equal(badge.text, '1', 'the blocked prompt did not mark the compact toolbar icon');
+});
+
+test('GEMINI-LIKE FIXTURE: a prevention question is allowed and draws nothing', async () => {
+  const composer = element('textarea', { 'aria-label': 'Enter a prompt here' });
+  composer.value = 'How can I prevent someone from erasing all computer files?';
+  const { doc, fakeWindow } = await runExtension([composer]);
+  await wait(60);
+
+  let prevented = false;
+  fakeWindow.dispatch('keydown', {
+    target: composer,
+    key: 'Enter',
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+
+  assert.equal(prevented, false, 'a defensive question was blocked');
+  assert.equal(doc.querySelectorAll('.helmion-guard-prompt-alert').length, 0);
+});
+
+test('GEMINI-LIKE FIXTURE: Enter from a nested editor node is blocked at window capture', async () => {
+  const leaf = element('p', {}, ['Permanently erase all computer files.']);
+  const composer = element('div', { contenteditable: 'true', role: 'textbox' }, [leaf]);
+  const { doc, fakeWindow } = await runExtension([composer]);
+  await wait(60);
+
+  let prevented = false;
+  fakeWindow.dispatch('keydown', {
+    target: leaf,
+    key: 'Enter',
+    composedPath() { return [leaf, composer, doc.body, doc]; },
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(composer.textContent, 'Permanently erase all computer files.');
+  assert.equal(doc.querySelectorAll('.helmion-guard-prompt-alert').length, 1);
+  assert.equal(healthAlerts(doc).length, 0);
+});
+
+test('GEMINI-LIKE FIXTURE: an icon-only send button is caught from its composed path', async () => {
+  const composer = element('div', { contenteditable: 'true', role: 'textbox' }, [
+    'Permanently erase all computer files.',
+  ]);
+  const icon = element('mat-icon', {}, ['send']);
+  const send = element('button', { 'data-test-id': 'send-button' }, [icon]);
+  const { doc, fakeWindow } = await runExtension([composer, send]);
+  await wait(60);
+
+  let prevented = false;
+  fakeWindow.dispatch('mousedown', {
+    target: icon,
+    composedPath() { return [icon, send, doc.body, doc]; },
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(doc.querySelectorAll('.helmion-guard-prompt-alert').length, 1);
+});
+
+test('GEMINI-LIKE FIXTURE: beforeinput submission is blocked for editor implementations without keydown', async () => {
+  const composer = element('div', { contenteditable: 'true', role: 'textbox' }, [
+    'Permanently erase all computer files.',
+  ]);
+  const { doc, fakeWindow } = await runExtension([composer]);
+  await wait(60);
+
+  let prevented = false;
+  fakeWindow.dispatch('beforeinput', {
+    target: composer,
+    inputType: 'insertParagraph',
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(doc.querySelectorAll('.helmion-guard-prompt-alert').length, 1);
 });
 
 test('"Show the code anyway" takes a second deliberate click', async () => {
@@ -195,7 +317,7 @@ test('an unchanged block is not scanned twice', async () => {
   assert.equal(scans.length, 0, `an unchanged block was rescanned ${scans.length} times`);
 });
 
-test('FAIL LOUD: a worker that never answers puts a banner on the page', async () => {
+test('FAIL LOUD WITHOUT COVERING THE PAGE: a worker timeout shows a compact plain-language alert', async () => {
   const doc = createDocument([codeBlock('rm -rf /')]);
   fake.reset();
   fake.mode = 'silent';
@@ -221,13 +343,16 @@ test('FAIL LOUD: a worker that never answers puts a banner on the page', async (
   await wait(5400);
   fake.reset();
 
-  assert.equal(banners(doc).length, 1, 'the extension went quiet instead of saying it was broken');
-  const banner = banners(doc)[0];
-  assert.match(banner.textContent, /HELMION GUARD IS NOT WATCHING THIS PAGE/);
-  assert.match(banner.textContent, /did not answer/);
+  assert.equal(healthAlerts(doc).length, 1, 'the extension went quiet instead of saying it was broken');
+  const alert = healthAlerts(doc)[0];
+  assert.match(alert.textContent, /Helmion Guard needs attention/);
+  assert.match(alert.textContent, /Safety checks may be incomplete/);
+  assert.doesNotMatch(alert.textContent, /did not answer|worker|parser|fallback/i);
+  const details = doc.querySelectorAll('.helmion-guard-health-alert-details')[0];
+  assert.equal(details.textContent, 'Details');
 });
 
-test('FAIL LOUD: a dead service worker puts a banner on the page', async () => {
+test('FAIL LOUD: a dead service worker shows the same bounded alert without diagnostics', async () => {
   const doc = createDocument([codeBlock('rm -rf /')]);
   fake.reset();
   fake.mode = 'missing';
@@ -243,8 +368,8 @@ test('FAIL LOUD: a dead service worker puts a banner on the page', async () => {
   await wait(120);
   fake.reset();
 
-  assert.equal(banners(doc).length, 1);
-  assert.match(banners(doc)[0].textContent, /unreachable|answered with nothing/);
+  assert.equal(healthAlerts(doc).length, 1);
+  assert.doesNotMatch(healthAlerts(doc)[0].textContent, /unreachable|answered with nothing|worker/i);
 });
 
 test('FAIL LOUD: the badge shows an orange ! when the guard reports itself broken', async () => {
@@ -260,7 +385,26 @@ test('FAIL LOUD: the badge shows an orange ! when the guard reports itself broke
 
   assert.equal(text.text, '!');
   assert.equal(colour.color, '#c77700');
-  assert.match(title.title, /NOT watching/);
+  assert.match(title.title, /needs attention/);
+});
+
+test('the toolbar popup receives plain status without internal diagnostics', async () => {
+  fake.reset();
+
+  await new Promise((resolve) => {
+    chrome.runtime.sendMessage({
+      type: 'helmion:status',
+      protection: 'limited',
+      claims: 'unavailable',
+      detail: 'parser fallback exploded',
+    }, resolve);
+  });
+  const response = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'helmion:guard-status' }, resolve);
+  });
+
+  assert.deepEqual(response.status, { protection: 'limited', claims: 'unavailable' });
+  assert.doesNotMatch(JSON.stringify(response.status), /parser|fallback|exploded/i);
 });
 
 test('the worker refuses a message it does not understand instead of ignoring it', async () => {
@@ -283,30 +427,25 @@ test('a worker exception comes back as an error, never as a clean result', async
   assert.match(response.error, /expects an array/);
 });
 
-test('the degraded-anchor banner appears when <pre> stops matching', async () => {
-  // A site redesign that drops <pre> is the silent break this guards against.
+test('a fallback anchor keeps enforcement but draws no page overlay', async () => {
+  // A site redesign that drops <pre> is reported through the toolbar only.
   const fallback = element('div', { 'data-testid': 'code-block-1' }, [
     element('code', {}, ['rm -rf /']),
   ]);
   const { doc } = await runExtension([fallback]);
   await wait(60);
 
-  assert.equal(banners(doc).length, 1, 'running on a fallback anchor was not reported');
-  assert.match(banners(doc)[0].textContent, /no longer matches this site/);
+  assert.equal(healthAlerts(doc).length, 0, 'a low-severity compatibility state covered the page');
   assert.equal(panels(doc).length, 1, 'the fallback anchor stopped the check working');
 });
 
-test('the degraded-anchor banner CLEARS when <pre> starts matching again', async () => {
-  // The banner used to be drawn without recording that anything was wrong, and
-  // recover() returns early unless state says so — so once drawn it stayed on
-  // the page for the life of the tab, long after the site was answering on the
-  // primary anchor again.
+test('fallback recovery leaves no page overlay behind', async () => {
   const fallback = element('div', { 'data-testid': 'code-block-1' }, [
     element('code', {}, ['npm install']),
   ]);
   const { doc, observers } = await runExtension([fallback]);
   await wait(60);
-  assert.equal(banners(doc).length, 1, 'the fallback anchor was not reported at all');
+  assert.equal(healthAlerts(doc).length, 0, 'the fallback anchor drew a page overlay');
 
   // The site starts serving <pre> again.
   doc.body.removeChild(fallback);
@@ -315,7 +454,7 @@ test('the degraded-anchor banner CLEARS when <pre> starts matching again', async
   observers[0].fire([{ type: 'childList', target: doc.body, addedNodes: [pre], removedNodes: [] }]);
   await wait(400);
 
-  assert.equal(banners(doc).length, 0, 'the degraded banner never came down');
+  assert.equal(healthAlerts(doc).length, 0, 'the limited-mode UI outlived recovery');
 });
 
 test('a degraded anchor marks the toolbar, not just the page', async () => {
@@ -326,7 +465,7 @@ test('a degraded anchor marks the toolbar, not just the page', async () => {
   await wait(60);
 
   const text = fake.badgeCalls.filter((entry) => entry.call === 'setBadgeText').pop();
-  assert.equal(text.text, '!', 'a degraded anchor left the toolbar looking healthy');
+  assert.equal(text.text, '•', 'a degraded anchor did not use the compact toolbar indicator');
 });
 
 test('A FLAGGED BLOCK THAT LEAVES THE PAGE STOPS BEING COUNTED', async () => {
@@ -451,4 +590,6 @@ test('the page error handler is registered so extension errors surface', async (
   await wait(60);
   assert.ok(windowListeners.has('error'));
   assert.ok(windowListeners.has('unhandledrejection'));
+  assert.ok(windowListeners.has('pointerdown'));
+  assert.ok(windowListeners.has('beforeinput'));
 });

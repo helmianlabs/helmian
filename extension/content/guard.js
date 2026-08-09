@@ -12,15 +12,19 @@
 //   — and notes any sentence that welds a hedge onto a checkable fact. It flags,
 //   it never blocks, it never masks, and it never touches the red badge.
 //
+//   THE PROMPT LANE. Reads only the active chat composer at send time and stops
+//   explicit requests to erase an entire machine, drive or data set before the
+//   host page can submit them.
+//
 // The two share a page and a worker and nothing else: separate state, separate
-// self-tests, separate banners, separate failure counters. Either can be broken
-// while the other keeps working, and the page has to be able to say which.
+// self-tests, separate health state, separate failure counters. Either can be
+// broken while the other keeps working, and the toolbar reports each honestly.
 //
 // It fails loud. Every path that can break — the worker not answering, the page
-// never changing, the code-block anchor no longer matching, an exception
-// anywhere — puts a banner across the top of the page saying the guard is not
-// watching. A safety tool that goes quiet is indistinguishable from one that
-// found nothing wrong, so this one is never allowed to go quiet.
+// never changing or an exception anywhere — produces a bounded plain-language
+// alert and marks the toolbar. Compatibility paths stay off the page. A safety
+// tool that goes quiet is indistinguishable from one that found nothing wrong,
+// so a real protection failure is never allowed to go quiet.
 //
 // Load order is set in manifest.json: extract.js, stream-watch.js, ui.js, then
 // this file.
@@ -81,6 +85,9 @@
     broken: false,
     degraded: false,
     dangerousIds: new Set(),
+    promptRiskActive: false,
+    lastPromptFingerprint: '',
+    lastPromptBlockedAt: 0,
     // Block-ledger tally for this tab. Counted separately from dangerousIds
     // because "we warned about it" and "it reached the ledger" are two different
     // facts, and a browser-layer event only reaches an in-worker QUEUE today —
@@ -120,6 +127,7 @@
     }
     console.error('[Helmion Guard] NOT WATCHING:', message, detail || '');
     sendBadge();
+    sendStatus();
   }
 
   function recover() {
@@ -127,16 +135,8 @@
     state.broken = false;
     state.healthFailures = 0;
     HelmionUI.hideBanner();
-    // hideBanner clears whatever banner is on the page, and a degraded anchor
-    // may still be true underneath the failure that just cleared. Put that one
-    // back rather than letting a recovery quietly erase a live warning.
-    if (state.degraded) {
-      HelmionUI.showBanner(
-        'the usual code-block anchor no longer matches this site.',
-        'Running on a fallback. Checking still works, but this needs looking at.',
-      );
-    }
     sendBadge();
+    sendStatus();
   }
 
   // ------------------------------------------------------------------ worker
@@ -184,12 +184,9 @@
   function sendBadge() {
     const message = {
       type: 'helmion:badge',
-      dangerous: state.dangerousIds.size,
-      // A degraded anchor is a real "look at me" state, not a healthy one. It
-      // rides the same flag the worker already turns into the warning mark,
-      // because from the toolbar's point of view "running on a fallback" and
-      // "not running" both mean do not trust this silence.
-      broken: state.broken || state.degraded,
+      dangerous: state.dangerousIds.size + (state.promptRiskActive ? 1 : 0),
+      broken: state.broken,
+      degraded: state.degraded,
     };
     try {
       chrome.runtime.sendMessage(message, () => {
@@ -198,6 +195,21 @@
       });
     } catch (error) {
       console.warn('[Helmion Guard] badge update failed:', error.message);
+    }
+  }
+
+  // Plain, bounded state for the toolbar popup. Internal exception, parser and
+  // anchor details remain in the console and never become user-facing text.
+  function sendStatus() {
+    const message = {
+      type: 'helmion:status',
+      protection: state.broken ? 'needs-attention' : (state.degraded ? 'limited' : 'active'),
+      claims: state.claimsBroken ? 'unavailable' : (state.claimsDegraded ? 'limited' : 'active'),
+    };
+    try {
+      chrome.runtime.sendMessage(message, () => { void chrome.runtime.lastError; });
+    } catch (error) {
+      console.warn('[Helmion Guard] status update failed:', error.message);
     }
   }
 
@@ -273,25 +285,18 @@
       return;
     }
 
-    // Tier 1 is the <pre> element. If a lower tier answered, the primary anchor
-    // has stopped matching and the guard is running on a fallback. Say so.
-    //
-    // This is tracked in state.degraded so it can also be UNSAID. It used to
-    // call showBanner without recording anything, and recover() returns early
-    // unless state says something is wrong — so the banner outlived the problem
-    // and stayed on the page forever once drawn, and the toolbar icon never
-    // showed the warning mark the README promises.
+    // Tier 1 is the <pre> element. A lower tier is still protected, but its
+    // limited state is reported through the compact toolbar indicator/popup —
+    // never through a page-covering diagnostic.
     if (collected.tier > 1 && collected.tier !== state.lastTier) {
       state.degraded = true;
-      HelmionUI.showBanner(
-        'the usual code-block anchor no longer matches this site.',
-        `Running on a fallback (${collected.tierName}). Checking still works, but this needs looking at.`,
-      );
       sendBadge();
+      sendStatus();
     } else if (collected.tier === 1 && state.degraded) {
       state.degraded = false;
       HelmionUI.hideBanner();
       sendBadge();
+      sendStatus();
     }
     state.lastTier = collected.tier;
 
@@ -367,6 +372,174 @@
     } catch (error) {
       return '';
     }
+  }
+
+  // ------------------------------------------------------------ prompt lane
+
+  const COMPOSER_SELECTOR = 'textarea, [contenteditable="true"], [role="textbox"]';
+
+  function composerText(element) {
+    if (!element) return '';
+    if (typeof element.value === 'string') return element.value;
+    return String(element.innerText == null ? element.textContent : element.innerText).trim();
+  }
+
+  function eventComposer(event) {
+    const path = event && typeof event.composedPath === 'function'
+      ? event.composedPath() : [event && event.target].filter(Boolean);
+    const roots = new Set([document]);
+
+    for (const node of path) {
+      if (node && typeof node.closest === 'function') {
+        const direct = node.closest(COMPOSER_SELECTOR);
+        if (direct) return direct;
+      }
+      if (node && typeof node.getRootNode === 'function') roots.add(node.getRootNode());
+    }
+
+    // Gemini may move focus into an open shadow root. Walk through the focused
+    // hosts before falling back to a page-wide selector.
+    let activeRoot = document;
+    let active = activeRoot.activeElement;
+    while (active) {
+      if (typeof active.closest === 'function') {
+        const focusedComposer = active.closest(COMPOSER_SELECTOR);
+        if (focusedComposer) return focusedComposer;
+      }
+      if (!active.shadowRoot) break;
+      activeRoot = active.shadowRoot;
+      roots.add(activeRoot);
+      active = activeRoot.activeElement;
+    }
+
+    const candidates = [];
+    for (const root of roots) {
+      if (root && typeof root.querySelectorAll === 'function') {
+        candidates.push(...Array.from(root.querySelectorAll(COMPOSER_SELECTOR)));
+      }
+    }
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+      const candidate = candidates[i];
+      if (candidate.getAttribute('aria-hidden') === 'true') continue;
+      if (candidate.getAttribute('disabled') !== null) continue;
+      if (composerText(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  function isSendEvent(event) {
+    if (!event) return false;
+    if (event.type === 'submit') return true;
+    if (event.type === 'keydown' || event.type === 'keypress' || event.type === 'keyup') {
+      return event.key === 'Enter' && !event.shiftKey && !event.ctrlKey
+        && !event.altKey && !event.metaKey && !event.isComposing;
+    }
+    if (event.type === 'beforeinput') {
+      return event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak';
+    }
+    if (!['pointerdown', 'mousedown', 'touchstart', 'click'].includes(event.type)) return false;
+    const path = typeof event.composedPath === 'function'
+      ? event.composedPath() : [event.target].filter(Boolean);
+    let button = null;
+    for (const node of path) {
+      if (!node || typeof node.closest !== 'function') continue;
+      button = node.closest('button, [role="button"]');
+      if (button) break;
+    }
+    if (!button) return false;
+    const label = [
+      button.getAttribute('aria-label'),
+      button.getAttribute('title'),
+      button.getAttribute('data-test-id'),
+      button.getAttribute('data-testid'),
+      button.className,
+      button.textContent,
+    ]
+      .filter(Boolean).join(' ').toLowerCase();
+    return button.getAttribute('type') === 'submit' || /\b(?:send|submit)\b/.test(label);
+  }
+
+  function stopPrompt(event, composer, verdict) {
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    else if (typeof event.stopPropagation === 'function') event.stopPropagation();
+
+    state.promptRiskActive = true;
+    const prompt = composerText(composer);
+    const now = Date.now();
+    const duplicate = state.lastPromptFingerprint === prompt && now - state.lastPromptBlockedAt < 1500;
+    state.lastPromptFingerprint = prompt;
+    state.lastPromptBlockedAt = now;
+    if (duplicate) return;
+
+    HelmionUI.showPromptAlert(
+      verdict.message,
+      'Guard has not sent it. Edit the request so it does not ask for irreversible deletion.',
+      () => { if (typeof composer.focus === 'function') composer.focus(); },
+    );
+    sendBadge();
+    logToLedger({
+      kind: 'destructive-command',
+      site: SOURCE,
+      query: prompt,
+      conversation: prompt,
+      matched: verdict.hits.join(', '),
+      text: prompt,
+      lineNumber: 1,
+      outcome: 'blocked-before-send',
+    });
+  }
+
+  function inspectPromptEvent(event) {
+    if (!isSendEvent(event)) return;
+    const composer = eventComposer(event);
+    if (!composer) return;
+    const verdict = HelmionPromptRisk.scan(composerText(composer));
+    if (verdict.blocked) stopPrompt(event, composer, verdict);
+  }
+
+  function clearPromptWarningWhenSafe(event) {
+    const composer = eventComposer(event);
+    if (!composer || HelmionPromptRisk.scan(composerText(composer)).blocked) return;
+    if (!state.promptRiskActive) return;
+    state.promptRiskActive = false;
+    HelmionUI.hidePromptAlert();
+    sendBadge();
+  }
+
+  function inspectPromptDraft(event) {
+    const composer = eventComposer(event);
+    if (!composer) return;
+    const verdict = HelmionPromptRisk.scan(composerText(composer));
+    if (!verdict.blocked) {
+      clearPromptWarningWhenSafe(event);
+      return;
+    }
+    state.promptRiskActive = true;
+    HelmionUI.showPromptAlert(
+      verdict.message,
+      'Edit the request so it does not ask for irreversible deletion.',
+      () => { if (typeof composer.focus === 'function') composer.focus(); },
+    );
+    sendBadge();
+  }
+
+  function startPromptGuard() {
+    const destructive = HelmionPromptRisk.scan('Permanently erase all computer files.');
+    const protective = HelmionPromptRisk.scan('How can I prevent someone from erasing all computer files?');
+    if (!destructive.blocked || protective.blocked) {
+      throw new Error('the destructive-prompt detector failed its own test');
+    }
+    // Window capture runs before Gemini's document- or component-level event
+    // handlers, even when Gemini registered those handlers before this script.
+    // Document capture was too late on the live site.
+    for (const type of [
+      'submit', 'pointerdown', 'mousedown', 'touchstart', 'click',
+      'keydown', 'keypress', 'keyup', 'beforeinput',
+    ]) {
+      window.addEventListener(type, inspectPromptEvent, true);
+    }
+    window.addEventListener('input', inspectPromptDraft, true);
   }
 
   function noteAudit(result) {
@@ -458,12 +631,8 @@
 
   function claimsFail(message, detail) {
     state.claimsBroken = true;
-    try {
-      HelmionUI.showAdvisoryBanner(message, detail);
-    } catch (uiError) {
-      console.error('[Helmion Guard] could not draw the advisory banner:', uiError);
-    }
     console.error('[Helmion Guard] claim checking is not running:', message, detail || '');
+    sendStatus();
   }
 
   function claimsRecover() {
@@ -471,12 +640,7 @@
     state.claimsBroken = false;
     state.claimsHealthFailures = 0;
     HelmionUI.hideAdvisoryBanner();
-    if (state.claimsDegraded) {
-      HelmionUI.showAdvisoryBanner(
-        'the usual paragraph anchor no longer matches this site.',
-        'Reading prose from a fallback. Claim checking still works, but this needs looking at.',
-      );
-    }
+    sendStatus();
   }
 
   function proseId(element) {
@@ -504,18 +668,15 @@
       return;
     }
 
-    // Same degraded-anchor logic as the code lane, in its own state and its own
-    // banner. Tier 1 is semantic markup; anything lower means this site stopped
-    // rendering paragraphs as paragraphs.
+    // Same limited-mode tracking as the code lane. Claim health is visible in
+    // the toolbar popup and never becomes an overlay on the page.
     if (collected.tier > 1 && collected.tier !== state.lastProseTier) {
       state.claimsDegraded = true;
-      HelmionUI.showAdvisoryBanner(
-        'the usual paragraph anchor no longer matches this site.',
-        `Reading prose from a fallback (${collected.tierName}). Claim checking still works, but this needs looking at.`,
-      );
+      sendStatus();
     } else if (collected.tier === 1 && state.claimsDegraded) {
       state.claimsDegraded = false;
       HelmionUI.hideAdvisoryBanner();
+      sendStatus();
     }
     state.lastProseTier = collected.tier;
 
@@ -759,6 +920,7 @@
       () => {
         console.info('[Helmion Guard] self-test passed — watching this page.');
         sendBadge();
+        sendStatus();
       },
       (error) => fail('the detection chain failed its own test on load.', error.message),
     );
@@ -766,7 +928,10 @@
     // And the reading aid proves itself separately, so a failure in one is
     // never reported as a failure in the other.
     claimsSelfTest().then(
-      () => console.info('[Helmion Guard] claim self-test passed — reading this page for unsourced claims.'),
+      () => {
+        console.info('[Helmion Guard] claim self-test passed — reading this page for unsourced claims.');
+        sendStatus();
+      },
       (error) => claimsFail('the claim check failed its own test on load.', error.message),
     );
 
@@ -793,14 +958,21 @@
     });
   }
 
+  // Register the prompt blocker immediately at document_start, before Gemini's
+  // application installs its own submit handlers. Page scanning still waits
+  // for <body>, because the stream observer needs a concrete node to watch.
   try {
-    start();
-  } catch (error) {
-    // start() itself failing is the worst case, and it must still be visible.
-    try {
-      HelmionUI.showBanner('the extension failed to start.', error.message);
-    } catch (uiError) {
-      console.error('[Helmion Guard] failed to start and could not say so:', error, uiError);
+    startPromptGuard();
+    if (document.body) {
+      start();
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        try { start(); }
+        catch (error) { fail('the extension failed to start.', error.message); }
+      }, { once: true });
     }
+  } catch (error) {
+    // Startup failing is the worst case, and it must still be visible.
+    fail('the extension failed to start.', error.message);
   }
 }());

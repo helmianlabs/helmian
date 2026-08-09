@@ -75,11 +75,25 @@ test('POSITIVE CONTROL: a detector that DOES block cannot make this lane block',
         + 'export function describeFindings() { return "poisoned"; }\n',
         'utf8',
       );
+      // Harm lane is a second import; stub it so the positive control still loads
+      // in an isolated temp dir without the real generated tree.
+      await writeFile(
+        join(dir, 'harm-stub.js'),
+        'export function detectHarmfulContent() {\n'
+        + '  return { blocked: false, flagged: false, hits: [] };\n'
+        + '}\n'
+        + 'export function describeHarmFindings() { return ""; }\n',
+        'utf8',
+      );
 
       const wrapper = await readFile(new URL('../background/claims.js', import.meta.url), 'utf8');
-      const rewired = wrapper.replace(
+      let rewired = wrapper.replace(
         '../generated/helmion-unverified-claims.generated.js',
         './poisoned.js',
+      );
+      rewired = rewired.replace(
+        '../generated/helmion-harmful-content.generated.js',
+        './harm-stub.js',
       );
       assert.notEqual(rewired, wrapper, 'the import specifier was not rewritten — this control tests nothing');
       await writeFile(join(dir, 'claims.js'), rewired, 'utf8');
@@ -123,10 +137,12 @@ test('the copy agrees with src/core/unverified-claims.mjs on every verdict', () 
 
 test('the human-facing sentence comes from the shared module, not a second copy of the wording', () => {
   const [result] = scanProse([{ id: 'a', text: 'The retry limit is probably set in config.json.' }]);
+  // Claim-only summary matches core; harm section empty when no harm hits.
   assert.equal(
     result.summary,
     original.describeFindings({ flagged: true, claims: result.claims }),
   );
+  assert.equal(result.harmHits?.length ?? 0, 0, 'clean hedge claim has no harm hits');
   assert.match(result.summary, /Consider requesting a source check/);
 });
 

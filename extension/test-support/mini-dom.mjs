@@ -245,6 +245,7 @@ export function documentWith(children) {
 // document.createElement and read document.body.
 export function createDocument(children = []) {
   const body = element('body', {}, children);
+  const listeners = new Map();
   const doc = {
     nodeType: 9,
     body,
@@ -253,6 +254,14 @@ export function createDocument(children = []) {
     createTextNode: (value) => text(value),
     querySelector: (selector) => (body.matches(selector) ? body : body.querySelector(selector)),
     querySelectorAll: (selector) => body.querySelectorAll(selector),
+    addEventListener(type, handler) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(handler);
+    },
+    dispatch(type, event = {}) {
+      event.type = event.type || type;
+      (listeners.get(type) || []).forEach((handler) => handler(event));
+    },
   };
   return doc;
 }

@@ -235,52 +235,6 @@
   text-underline-offset: 3px !important;
 }
 
-/* The reading aid stopped. Its own banner, below the red one's z-index and in
- * its own colour, because "the guard is not watching" and "the footnotes
- * stopped" are different sentences and only one of them is an emergency. */
-.helmion-guard-advisory-banner {
-  all: initial !important;
-  display: block !important;
-  box-sizing: border-box !important;
-  position: fixed !important;
-  bottom: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  z-index: 2147483645 !important;
-  padding: 9px 18px !important;
-  background: #23324b !important;
-  color: #ffffff !important;
-  border-top: 3px solid #9aa9c2 !important;
-  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
-  font-size: 13px !important;
-  text-align: center !important;
-}
-
-.helmion-guard-advisory-banner-title {
-  display: block !important;
-  font-size: 13px !important;
-  font-weight: 800 !important;
-  letter-spacing: 0.04em !important;
-  color: #cfd9ea !important;
-  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
-}
-
-.helmion-guard-advisory-banner-message {
-  display: block !important;
-  margin-top: 3px !important;
-  color: #ffffff !important;
-  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
-}
-
-.helmion-guard-advisory-banner-detail {
-  display: block !important;
-  margin-top: 3px !important;
-  color: #b9c6dc !important;
-  font-size: 12px !important;
-  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
-  word-break: break-word !important;
-}
-
 .helmion-guard-toast {
   all: initial !important;
   display: block !important;
@@ -289,8 +243,11 @@
   top: 16px !important;
   right: 16px !important;
   z-index: 2147483646 !important;
-  max-width: 380px !important;
-  padding: 14px 16px !important;
+  width: min(320px, calc(100vw - 32px)) !important;
+  max-width: calc(100vw - 32px) !important;
+  max-height: min(280px, calc(100vh - 32px)) !important;
+  overflow: auto !important;
+  padding: 12px 14px !important;
   border: 2px solid #b3261e !important;
   border-radius: 8px !important;
   background: #b3261e !important;
@@ -316,6 +273,24 @@
   word-break: break-word !important;
 }
 
+.helmion-guard-toast-detail[hidden] {
+  display: none !important;
+}
+
+.helmion-guard-toast-details,
+.helmion-guard-health-alert-details {
+  all: initial !important;
+  display: inline-block !important;
+  margin-top: 9px !important;
+  padding: 4px 8px !important;
+  border: 1px solid currentColor !important;
+  border-radius: 5px !important;
+  color: inherit !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+}
+
 .helmion-guard-toast-close {
   all: initial !important;
   display: inline-block !important;
@@ -330,46 +305,133 @@
   cursor: pointer !important;
 }
 
-/* The broken banner. Deliberately impossible to miss. */
-.helmion-guard-banner {
+.helmion-guard-prompt-alert {
   all: initial !important;
   display: block !important;
   box-sizing: border-box !important;
   position: fixed !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  z-index: 2147483647 !important;
-  padding: 12px 18px !important;
-  background: #7a1109 !important;
-  color: #ffffff !important;
-  border-bottom: 4px solid #ffd166 !important;
+  top: 16px !important;
+  right: 16px !important;
+  z-index: 2147483646 !important;
+  width: min(320px, calc(100vw - 32px)) !important;
+  max-width: calc(100vw - 32px) !important;
+  max-height: min(280px, calc(100vh - 32px)) !important;
+  overflow: auto !important;
+  padding: 12px 14px !important;
+  border: 2px solid #b3261e !important;
+  border-radius: 8px !important;
+  background: #fff1f0 !important;
+  color: #4a0d09 !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3) !important;
   font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
-  font-size: 14px !important;
-  text-align: center !important;
+  font-size: 13px !important;
+  line-height: 1.4 !important;
 }
 
-.helmion-guard-banner-title {
+.helmion-guard-prompt-alert-title,
+.helmion-guard-prompt-alert-message,
+.helmion-guard-prompt-alert-detail {
   display: block !important;
-  font-size: 15px !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+
+.helmion-guard-prompt-alert-title { font-weight: 800 !important; color: #7a1109 !important; }
+.helmion-guard-prompt-alert-message { margin-top: 4px !important; }
+.helmion-guard-prompt-alert-detail { margin-top: 7px !important; color: #6b1a13 !important; font-size: 12px !important; }
+.helmion-guard-prompt-alert-detail[hidden] { display: none !important; }
+
+.helmion-guard-prompt-alert-edit,
+.helmion-guard-prompt-alert-details {
+  all: initial !important;
+  display: inline-block !important;
+  margin: 9px 6px 0 0 !important;
+  padding: 5px 8px !important;
+  border: 1px solid #7a1109 !important;
+  border-radius: 5px !important;
+  color: #7a1109 !important;
+  background: #ffffff !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+}
+
+/* A real protection failure: visible, bounded, and never page-covering. */
+.helmion-guard-health-alert {
+  all: initial !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  position: fixed !important;
+  top: 16px !important;
+  left: 16px !important;
+  z-index: 2147483647 !important;
+  width: min(300px, calc(100vw - 32px)) !important;
+  max-width: calc(100vw - 32px) !important;
+  max-height: min(260px, calc(100vh - 32px)) !important;
+  overflow: auto !important;
+  padding: 11px 13px !important;
+  background: #7a1109 !important;
+  color: #ffffff !important;
+  border: 2px solid #ffd166 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3) !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+}
+
+.helmion-guard-health-alert-title {
+  display: block !important;
+  font-size: 14px !important;
   font-weight: 800 !important;
-  letter-spacing: 0.04em !important;
   color: #ffd166 !important;
   font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
 }
 
-.helmion-guard-banner-message {
+.helmion-guard-health-alert-message {
   display: block !important;
   margin-top: 4px !important;
   color: #ffffff !important;
   font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
 }
 
-.helmion-guard-banner-detail {
+.helmion-guard-health-alert-detail {
   display: block !important;
-  margin-top: 4px !important;
+  margin-top: 7px !important;
   color: #ffd9d5 !important;
   font-size: 12px !important;
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
   word-break: break-word !important;
+}
+
+.helmion-guard-health-alert-detail[hidden] {
+  display: none !important;
+}
+
+@media (max-width: 660px), (max-height: 420px) {
+  .helmion-guard-toast {
+    top: 8px !important;
+    right: 8px !important;
+    left: auto !important;
+    width: min(280px, calc(100vw - 16px)) !important;
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(100vh - 16px) !important;
+  }
+
+  .helmion-guard-prompt-alert {
+    top: 8px !important;
+    right: 8px !important;
+    width: min(280px, calc(100vw - 16px)) !important;
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(50vh - 12px) !important;
+  }
+
+  .helmion-guard-health-alert {
+    top: auto !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    left: auto !important;
+    width: min(280px, calc(100vw - 16px)) !important;
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(50vh - 12px) !important;
+  }
 }

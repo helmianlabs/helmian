@@ -35,6 +35,10 @@ import {
   detectUnverifiedClaims,
   describeFindings,
 } from '../generated/helmion-unverified-claims.generated.js';
+import {
+  detectHarmfulContent,
+  describeHarmFindings,
+} from '../generated/helmion-harmful-content.generated.js';
 
 // A runaway guard, and nothing more — the same reasoning and the same number as
 // background/scan.js MAX_LINE_LENGTH. A passage this long has stopped being a
@@ -71,13 +75,17 @@ export function scanPassage(passage) {
 
   const result = detectUnverifiedClaims(text);
   const claims = Array.isArray(result?.claims) ? result.claims : [];
+  const harm = detectHarmfulContent(text);
+  const harmHits = Array.isArray(harm?.hits) ? harm.hits : [];
+  const flagged = claims.length > 0 || harmHits.length > 0;
 
   return {
     // Spelled literally. Not `result.blocked`, not `result.blocked === true`.
     // This lane has no route to a mask, a badge count or a refusal, and the
     // shape it returns should make that impossible to misread.
     blocked: false,
-    flagged: claims.length > 0,
+    flagged,
+    harmHits,
     claims,
   };
 }
@@ -101,10 +109,15 @@ export function scanProse(passages) {
   if (!Array.isArray(passages)) throw new TypeError('scanProse expects an array of passages');
   return passages.map((passage) => {
     const result = scanPassage(passage?.text);
-    // The wording of the human-facing sentence lives in
-    // src/core/unverified-claims.mjs describeFindings, so the CLI, the desktop
-    // pilot and the extension all say the same thing about the same finding.
-    const summary = result.flagged ? describeFindings({ flagged: true, claims: result.claims }) : '';
+    // Human-facing wording lives in the core modules so CLI, desktop, and
+    // extension stay aligned.
+    const claimSummary = result.claims?.length
+      ? describeFindings({ flagged: true, claims: result.claims })
+      : '';
+    const harmSummary = result.harmHits?.length
+      ? describeHarmFindings({ flagged: true, hits: result.harmHits })
+      : '';
+    const summary = [claimSummary, harmSummary].filter(Boolean).join('\n');
     return { id: passage?.id ?? null, ...result, summary };
   });
 }

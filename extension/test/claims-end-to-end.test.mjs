@@ -19,6 +19,7 @@ import { chrome, fake, installWorker } from '../test-support/fake-chrome.mjs';
 await installWorker();
 
 const CONTENT_SCRIPTS = [
+  'content/prompt-risk.js',
   'content/extract.js',
   'content/stream-watch.js',
   'content/ui.js',
@@ -36,7 +37,7 @@ const SOURCED = 'The retry limit is set in config.json.';
 
 const claimNotes = (doc) => doc.querySelectorAll('.helmion-guard-claims');
 const panels = (doc) => doc.querySelectorAll('.helmion-guard-panel');
-const banners = (doc) => doc.querySelectorAll('.helmion-guard-banner');
+const healthAlerts = (doc) => doc.querySelectorAll('.helmion-guard-health-alert');
 const advisoryBanners = (doc) => doc.querySelectorAll('.helmion-guard-advisory-banner');
 const toasts = (doc) => doc.querySelectorAll('.helmion-guard-toast');
 const lastBadgeText = () => fake.badgeCalls.filter((entry) => entry.call === 'setBadgeText').pop();
@@ -110,7 +111,7 @@ test('a hedged paragraph draws no red warning and no toast', async () => {
 
   assert.equal(panels(doc).length, 0);
   assert.equal(toasts(doc).length, 0);
-  assert.equal(banners(doc).length, 0);
+  assert.equal(healthAlerts(doc).length, 0);
 });
 
 test('NEGATIVE CONTROL: a hedge with nothing checkable draws no note', async () => {
@@ -211,11 +212,7 @@ test('an unchanged paragraph is not re-sent to the worker', async () => {
   assert.deepEqual(sent, [], `an unchanged paragraph was re-sent ${sent.length} times`);
 });
 
-test('FAIL LOUD, IN ITS OWN VOICE: the claim lane failing does not claim the guard stopped', async () => {
-  // The two lanes fail independently and the page has to say which. A red
-  // "HELMION GUARD IS NOT WATCHING THIS PAGE" banner here would be false: the
-  // destructive-command lane is fine, and this test proves it is still working
-  // in the same breath.
+test('a claim-lane failure stays off the page and does not stop destructive-command protection', async () => {
   const brokenClaims = {
     ...chrome,
     runtime: {
@@ -236,12 +233,8 @@ test('FAIL LOUD, IN ITS OWN VOICE: the claim lane failing does not claim the gua
   const { doc } = await runExtension([paragraph(HEDGED), pre], { chrome: brokenClaims });
   await wait(120);
 
-  assert.equal(advisoryBanners(doc).length, 1, 'the claim lane died silently');
-  const banner = advisoryBanners(doc)[0];
-  assert.match(banner.textContent, /NOT READING THIS PAGE FOR UNSOURCED CLAIMS/);
-  assert.match(banner.textContent, /Destructive-command checking is unaffected/);
-
-  assert.equal(banners(doc).length, 0, 'a dead reading aid claimed the guard had stopped watching');
+  assert.equal(advisoryBanners(doc).length, 0, 'the claim lane failure covered the page');
+  assert.equal(healthAlerts(doc).length, 0, 'an advisory failure used the blocking alert channel');
   assert.equal(panels(doc).length, 1, 'the destructive-command lane went down with the claim lane');
   assert.ok(pre.classList.contains('helmion-guard-masked'));
   assert.equal(claimNotes(doc).length, 0);
@@ -257,14 +250,13 @@ test('POSITIVE CONTROL: a healthy claim lane draws no advisory banner', async ()
   assert.equal(claimNotes(doc).length, 1, 'the lane that is supposedly healthy found nothing');
 });
 
-test('a site with no semantic markup falls back and says so, without stopping', async () => {
+test('a site with no semantic markup falls back without drawing diagnostics over the page', async () => {
   const { doc } = await runExtension([
     element('div', {}, [element('div', {}, [HEDGED])]),
   ]);
   await wait(120);
 
   assert.equal(claimNotes(doc).length, 1, 'the fallback tier found nothing');
-  assert.equal(advisoryBanners(doc).length, 1, 'a degraded prose anchor was not reported');
-  assert.match(advisoryBanners(doc)[0].textContent, /paragraph anchor no longer matches/);
-  assert.equal(banners(doc).length, 0, 'a degraded prose anchor was reported as the guard failing');
+  assert.equal(advisoryBanners(doc).length, 0, 'a degraded prose anchor covered the page');
+  assert.equal(healthAlerts(doc).length, 0, 'a degraded prose anchor used the blocking alert channel');
 });
