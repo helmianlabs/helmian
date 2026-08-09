@@ -29,6 +29,24 @@ h2 { margin: 16px 0 6px; font-size: 11px; letter-spacing: 0.08em; color: var(--f
 #tagline { margin: 3px 0 12px; font-size: 11px; color: var(--faint); }
 .muted { color: var(--faint); font-size: 11px; }
 
+.guard-status {
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.guard-status h2 { margin: 0 0 8px; }
+.status-row { display: grid; grid-template-columns: 9px 1fr; gap: 8px; align-items: start; margin-top: 7px; }
+.status-row strong, .status-row span span { display: block; }
+.status-row strong { font-size: 11px; }
+.status-row span span { color: var(--faint); font-size: 10.5px; }
+.status-dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--faint); }
+.status-dot.active { background: var(--ok); }
+.status-dot.limited { background: var(--note); }
+.status-dot.needs-attention, .status-dot.unavailable { background: var(--danger); }
+#statusHelp { margin: 8px 0 0; }
+
 #stats { display: flex; gap: 8px; }
 .stat {
   flex: 1;

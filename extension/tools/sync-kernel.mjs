@@ -55,6 +55,12 @@ export const COPIES = Object.freeze([
     source: source('src', 'core', 'unverified-claims.mjs'),
     generated: generated('helmion-unverified-claims.generated.js'),
   }),
+  Object.freeze({
+    name: 'harm',
+    label: 'src/core/harmful-content.mjs',
+    source: source('src', 'core', 'harmful-content.mjs'),
+    generated: generated('helmion-harmful-content.generated.js'),
+  }),
 ]);
 
 export function copyNamed(name) {

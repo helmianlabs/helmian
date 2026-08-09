@@ -11,6 +11,19 @@
     <p id="tagline">Every flag it raises is logged on this machine, and nowhere else.</p>
   </header>
 
+  <section id="guardStatus" class="guard-status" aria-live="polite">
+    <h2>Current status</h2>
+    <div class="status-row">
+      <span class="status-dot" id="protectionDot" aria-hidden="true"></span>
+      <span><strong>Destructive commands</strong><span id="protectionStatus">Checking status…</span></span>
+    </div>
+    <div class="status-row">
+      <span class="status-dot" id="claimsDot" aria-hidden="true"></span>
+      <span><strong>Claim notes</strong><span id="claimsStatus">Checking status…</span></span>
+    </div>
+    <p id="statusHelp" class="muted"></p>
+  </section>
+
   <section id="stats" aria-live="polite">
     <div class="stat"><span class="n" id="statTotal">–</span><span class="l">flags logged</span></div>
     <div class="stat"><span class="n danger" id="statDestructive">–</span><span class="l">destructive commands</span></div>

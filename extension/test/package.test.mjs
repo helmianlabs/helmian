@@ -68,11 +68,13 @@ test('the content scripts load in the order guard.js depends on', () => {
   // guard.js calls HelmionExtract, HelmionStreamWatch and HelmionUI at startup.
   // If it loads first, those are undefined and nothing runs.
   assert.deepEqual(manifest.content_scripts[0].js, [
+    'content/prompt-risk.js',
     'content/extract.js',
     'content/stream-watch.js',
     'content/ui.js',
     'content/guard.js',
   ]);
+  assert.equal(manifest.content_scripts[0].run_at, 'document_start');
 });
 
 test('it never asks for every site', () => {
@@ -128,6 +130,20 @@ test('the popup the manifest points at exists, with its script and styles', asyn
   assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?\S[\s\S]*?<\/script>/.test(html),
     'the popup carries an inline <script>, which MV3 will refuse to run');
   assert.ok(!/\son[a-z]+\s*=/.test(html), 'the popup uses an inline event handler, which MV3 refuses');
+});
+
+test('page health UI is bounded and internal diagnostics are not user-facing', async () => {
+  const ui = await readFile(path.join(EXTENSION_ROOT, 'content', 'ui.js'), 'utf8');
+  const css = await readFile(path.join(EXTENSION_ROOT, 'content', 'guard.css'), 'utf8');
+  const popup = await readFile(path.join(EXTENSION_ROOT, 'popup', 'popup.html'), 'utf8');
+
+  assert.doesNotMatch(ui, /HELMION GUARD IS NOT (?:WATCHING|READING)/);
+  assert.doesNotMatch(css, /\.helmion-guard-(?:advisory-)?banner\s*\{/);
+  assert.match(css, /\.helmion-guard-health-alert\s*\{[\s\S]*?width:\s*min\(300px,/);
+  assert.match(css, /\.helmion-guard-health-alert\s*\{[\s\S]*?max-height:/);
+  assert.match(css, /\.helmion-guard-prompt-alert\s*\{[\s\S]*?width:\s*min\(320px,/);
+  assert.match(css, /\.helmion-guard-prompt-alert\s*\{[\s\S]*?max-height:/);
+  assert.match(popup, /id="guardStatus"/);
 });
 
 test('it runs on the four sites, still not on every site', () => {

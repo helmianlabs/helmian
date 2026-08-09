@@ -40,6 +40,12 @@ const ledger = chromeStorage();
 
 const RED = '#b3261e';
 const AMBER = '#c77700';
+const BLUE = '#4a5b7a';
+
+let latestStatus = {
+  protection: 'unknown',
+  claims: 'unknown',
+};
 
 function setBadge(tabId, info) {
   if (typeof tabId !== 'number') return;
@@ -47,7 +53,7 @@ function setBadge(tabId, info) {
     if (info.broken) {
       chrome.action.setBadgeText({ tabId, text: '!' });
       chrome.action.setBadgeBackgroundColor({ tabId, color: AMBER });
-      chrome.action.setTitle({ tabId, title: 'Helmion Guard is NOT watching this page' });
+      chrome.action.setTitle({ tabId, title: 'Helmion Guard needs attention — open for details' });
       return;
     }
     const dangerous = Number(info.dangerous) || 0;
@@ -58,6 +64,12 @@ function setBadge(tabId, info) {
         tabId,
         title: `Helmion Guard flagged ${dangerous} destructive code block(s) on this page`,
       });
+      return;
+    }
+    if (info.degraded) {
+      chrome.action.setBadgeText({ tabId, text: '•' });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: BLUE });
+      chrome.action.setTitle({ tabId, title: 'Helmion Guard is active — open for status' });
       return;
     }
     chrome.action.setBadgeText({ tabId, text: '' });
@@ -129,6 +141,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (type === 'helmion:badge') {
       setBadge(sender && sender.tab ? sender.tab.id : undefined, message);
       sendResponse({ ok: true });
+      return false;
+    }
+
+    if (type === 'helmion:status') {
+      latestStatus = {
+        protection: ['active', 'limited', 'needs-attention'].includes(message.protection)
+          ? message.protection : 'unknown',
+        claims: ['active', 'limited', 'unavailable'].includes(message.claims)
+          ? message.claims : 'unknown',
+      };
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (type === 'helmion:guard-status') {
+      sendResponse({ ok: true, status: latestStatus });
       return false;
     }
 

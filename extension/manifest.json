@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Helmion Guard",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "Catches destructive commands and unsourced claims in AI chat replies, and keeps a durable local log of every flag.",
   "permissions": [
     "storage"
@@ -19,6 +19,7 @@
         "https://grok.com/*"
       ],
       "js": [
+        "content/prompt-risk.js",
         "content/extract.js",
         "content/stream-watch.js",
         "content/ui.js",
@@ -27,7 +28,7 @@
       "css": [
         "content/guard.css"
       ],
-      "run_at": "document_idle",
+      "run_at": "document_start",
       "all_frames": false
     }
   ],

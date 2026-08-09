@@ -2,6 +2,10 @@
 
 It watches the AI's reply as it types, and it reads that reply twice.
 
+It also checks the chat composer at send time. An explicit request to erase an
+entire computer, drive or data set is stopped before the site can submit it and
+gets a bounded corner warning with a **Return to editing** action.
+
 **The code blocks** are checked against Helmion's 15 destructive-command
 patterns. If one matches, the block is hidden behind a red warning that names the
 exact line. That is the safety half.
@@ -17,7 +21,7 @@ cries wolf. Feed prose to the command patterns and "never run rm -rf on a
 production server" comes back as a destructive command. Feed a code block to the
 claim detector and every comment in it looks like an unsourced fact.
 
-It works on three sites: claude.ai, chatgpt.com, gemini.google.com.
+It works on four sites: claude.ai, chatgpt.com, gemini.google.com and grok.com.
 
 No model. No network. No account. It is regular expressions running on your own
 machine, and nothing leaves the browser.
@@ -35,7 +39,9 @@ Do these in order. It takes about a minute.
 5. A folder picker opens. Choose this folder:
    `E:\Helmion\extension`
 6. Click **Select Folder**.
-7. A card appears saying **Helmion Guard 0.1.0**. That means it is installed.
+7. A card appears saying **Helmion Guard**. That means Chrome knows the unpacked
+   folder. After any source update, click the card's reload button and reload
+   every already-open AI chat tab so its content scripts are replaced.
 
 Edge works too. Same steps, but the address is `edge://extensions`.
 
@@ -58,6 +64,15 @@ Edge works too. Same steps, but the address is `edge://extensions`.
    second click on purpose.
 
 Then do the same on `https://chatgpt.com` and `https://gemini.google.com`.
+
+To test the prompt lane, type this into a chat composer and press Send:
+
+> Permanently erase all computer files.
+
+The send event should be cancelled. A small warning says **Helmion Guard blocked
+this request**, the text stays in the composer for editing, and the site receives
+nothing. A defensive question such as "How can I prevent someone from erasing
+all computer files?" is allowed.
 
 ---
 
@@ -137,43 +152,24 @@ get one line per lane because the two lanes can fail separately.
 
 ---
 
-## If something breaks, it says so
+## If something breaks, it says so without covering the page
 
 A safety tool that quietly stops working looks exactly like one that found
 nothing wrong. This one is not allowed to go quiet.
 
-If anything fails, a dark red bar appears across the top of the page:
+If destructive-command protection actually fails, a small dark-red alert appears
+in a corner. It says only that Guard needs attention and that checks may be
+incomplete. A **Details** button shows the next step; parser, worker, selector and
+fallback diagnostics remain in the developer console. The alert has a strict
+width and height limit and never stretches across the page.
 
-**HELMION GUARD IS NOT WATCHING THIS PAGE**
+The toolbar icon shows an orange `!` for that actionable failure. Reload the tab
+first. If the warning returns, open the toolbar popup for the plain-language
+status and do not rely on Guard on that page until it is fixed.
 
-with a plain sentence underneath saying what failed. The toolbar icon also shows
-an orange `!`.
-
-You get that bar when:
-
-| What went wrong | What the bar says |
-|---|---|
-| The background worker stopped answering | the checks are not running |
-| The self-test failed | the detection chain failed its own test |
-| A site redesign moved the code blocks | the usual code-block anchor no longer matches |
-| The page never changes, so it may not be watching | this page is full of content but the extension has not seen it change once |
-| Anything else throws | the extension hit an unexpected error |
-
-If you see that bar, the extension is not protecting you. Reload the tab first.
-If it comes back, that is a real bug worth reporting.
-
-**The reading half has its own bar, and it says something different.** A dark
-slate bar along the **bottom** of the page:
-
-**HELMION GUARD IS NOT READING THIS PAGE FOR UNSOURCED CLAIMS**
-
-followed by what failed, and then, in plain words, *"Destructive-command checking
-is unaffected and still running."*
-
-That is not a softer version of the red bar. The two lanes fail independently,
-and telling you the guard had stopped watching because a reading aid broke would
-be false. Red bar at the top: the safety check is down. Slate bar at the bottom:
-only the footnotes are down.
+When checking still works through a compatibility path, the page stays clear and
+the toolbar uses only a small dot. Claim-checking health also stays off the page.
+Open the Helmion Guard toolbar popup to see both lanes' current status.
 
 ---
 
@@ -248,7 +244,7 @@ box and the badge all still work. The code block just stays visible.
 
 This is not a read-only mode, and nothing here has one. Even with hiding off,
 the extension writes its own bookkeeping attributes onto each code block and
-inserts its warning, corner box and banner into the page.
+inserts its warning and bounded corner alert into the page.
 
 ---
 
@@ -257,11 +253,12 @@ inserts its warning, corner box and banner into the page.
 | File | What it does |
 |---|---|
 | `manifest.json` | Tells Chrome what to load and where to run |
+| `content/prompt-risk.js` | Detects explicit whole-device or whole-data deletion requests in the composer before send |
 | `content/extract.js` | Splits the reply in two: code blocks for one lane, prose for the other. Neither ever gets the other's text |
 | `content/stream-watch.js` | Knows when the assistant is typing and when it stopped |
-| `content/ui.js` | Draws all of it — red warning, corner box, broken banner, and the quiet claim note that never hides anything |
+| `content/ui.js` | Draws the red warning, bounded corner alerts, and the quiet claim note that never hides anything |
 | `content/guard.css` | Styles for all of the above, namespaced so the page cannot bend them |
-| `content/guard.js` | Runs both lanes, keeps their state apart, and fails loud when either breaks |
+| `content/guard.js` | Runs both lanes, keeps their state apart, and reports health without exposing internal diagnostics on the page |
 | `background/scan.js` | Runs the destructive-command kernel, one line of one code block at a time |
 | `background/claims.js` | Runs the claim detector over one passage of prose at a time. Cannot block; the literal `false` is tested |
 | `background/worker.js` | The background service worker, the only place that can load modules |
