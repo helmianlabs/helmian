@@ -23,11 +23,11 @@ window.HELMION_SITE_CONFIG = Object.freeze({
   },
   links: {
     'product-material': {
-      href: 'https://github.com/troy83352/helmion',
+      href: 'https://github.com/helmianlabs/helmian',
       label: 'View on GitHub',
     },
     contact: {
-      href: '',
+      href: 'mailto:helmianlabs@gmail.com',
       label: 'Contact',
     },
   },

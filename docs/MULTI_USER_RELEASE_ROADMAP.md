@@ -14,6 +14,36 @@ Personal Pilot remains useful and visually distinct:
 - optional local owner signing may remain unconfigured; and
 - the shell has no external, destructive, credential, or production authority.
 
+## Tonight's locked public-release execution plan
+
+Scope is frozen to the approved list below. UI defects and verification needed
+to ship it may be fixed; no adjacent product idea is part of this release.
+
+1. **Finish the desktop work surface.** Keep normal Windows-maximized startup;
+   make F11 true captionless full screen; provide familiar independent left- and
+   right-panel toggles; remove remaining border overlays, technical session
+   footer text, clipped labels, migration-name clipping, and responsive defects.
+2. **Complete project handoff.** After Create, select the new project and refresh
+   Workspace and Console immediately. Fresh customer installs default to
+   `Documents\Helmian Projects`; existing `E:\Helmion` data is never moved,
+   renamed, or replaced.
+3. **Complete the bounded workbench.** Right-side tabs are Guard, Browser,
+   Canvas, Preview, and Create. Canvas holds project notes/decisions; Browser and
+   Preview are non-executing surfaces.
+4. **Complete Artifact Studio.** Images, PDFs, documents, slides, spreadsheets,
+   and design assets use official provider APIs or approved SDKs only. Before any
+   provider send/create, show provider, destination, data scope, and an explicit
+   approval gate; record successful outputs in the active project's artifact
+   history and Preview.
+5. **Verify the release candidate.** Run policy, provider-contract, project,
+   accessibility, responsive-layout, packaging, clean-start, and rollback checks
+   without weakening Guard, approval, or audit behavior.
+
+Architecture constraints remain fixed: Neon is the Maestro coordination/audit
+layer; consumer CLI bridges and terminal workarounds are prohibited; Slack and
+GitHub replacement work and optional integrations are deferred; branding and
+the logo are unchanged unless correcting an existing defect.
+
 ## Target architecture
 
 ```text
@@ -194,6 +224,53 @@ Release gates include:
 10. backup restore, disaster recovery, key rotation, and incident exercises;
 11. dependency, secret, static, dynamic, and penetration testing; and
 12. a privacy and threat-model review before any production tenant data.
+
+## Enterprise AI governance and audit-readiness build track
+
+This is a cross-phase build and evidence plan, not legal advice, a compliance
+claim, or a claim that Helmion is certified. **SOC 2 is a future assurance
+objective, not a current certification.** Organize the AI governance program
+against the NIST AI Risk Management Framework first; consider eventual
+ISO/IEC 42001 adoption only after the operating scope, owners, and repeatable
+controls exist.
+
+Required build artifacts:
+
+- a tenant-aware capability inventory that marks each function released,
+  pilot-only, simulated, disabled, or unavailable
+- a documented use-case risk assessment and risk owner for every AI capability
+- a data map covering source, tenant, purpose, minimization/redaction,
+  provider transfer, retention, deletion, and incident handling
+- model/provider/prompt/policy/schema change controls with version, evaluation,
+  approval, staged rollout, rollback, and customer-impact records
+- versioned representative, edge, stale, adversarial, prohibited-use, and
+  cross-tenant evaluation fixtures with reproducible results
+- authentication, authorization, pairing, expiry, replay, revocation,
+  tenant-isolation, data-boundary, and prohibited-action security tests
+- immutable policy/approval/audit evidence and incident detection,
+  containment, recovery, notification-decision, and corrective-action records
+- dated pilot/customer acceptance, rejection, exception, limitation, and
+  remediation records tied to the exact capability and version evaluated
+
+No AI capability may automate employment, discipline, compensation, or
+termination decisions or reduce safety/driver signals to an opaque score.
+Those signals require traceable evidence, explanation, and human review for
+support. Legal review of the consequential-decision use case and the applicable
+product/customer state footprint is a prerequisite to enabling any such use,
+not a post-launch cleanup item.
+
+### Evidence gates
+
+| Gate | Evidence required to pass |
+|---|---|
+| **Pre-pilot** | Approved capability inventory, risk assessment, data/retention map, provider-neutral interface, change-control record, evaluation baseline, access/security test results, incident procedure, prohibited-use results, and completed legal review where consequential use is proposed. Critical failures block entry. |
+| **Pilot** | Named participants, tenant/device/capability scope, exact model/provider/policy versions, immutable decisions and incidents, evaluation results after every material change, access reviews, and explicit customer/pilot acceptance or exception records. Scope expansion requires a new gate. |
+| **Post-pilot** | Reconciliation of promised versus observed behavior; incident and remediation closure; access, retention/deletion, and change-log review; evaluation regression report; customer acceptance/limitations; and an approved go, revise, or stop decision. An independent readiness assessment precedes any assurance claim. |
+
+These artifacts must be versioned, attributable, retention-controlled, and
+exportable without granting the Auditor role operational authority. Framework
+mapping follows implemented evidence; a checklist never substitutes for a
+working control.
 
 ## Delivery phases
 
