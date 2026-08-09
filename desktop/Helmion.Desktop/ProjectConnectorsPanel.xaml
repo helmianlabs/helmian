@@ -1,0 +1,310 @@
+<UserControl x:Class="Helmion.Desktop.ProjectConnectorsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             IsVisibleChanged="ProjectConnectorsPanel_IsVisibleChanged">
+  <UserControl.Resources>
+    <Style x:Key="ConnectorInputStyle" TargetType="TextBox">
+      <Setter Property="Background" Value="{DynamicResource PanelInsetBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource StrokeBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="10,7" />
+    </Style>
+    <Style x:Key="ConnectorComboStyle" TargetType="ComboBox">
+      <Setter Property="Background" Value="{DynamicResource PanelInsetBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource StrokeBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="9,6" />
+    </Style>
+  </UserControl.Resources>
+
+  <StackPanel>
+    <Border Style="{DynamicResource CardStyle}">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel Margin="0,0,18,0">
+            <TextBlock Text="Project connectors" Style="{DynamicResource SectionTitleStyle}" />
+            <TextBlock Text="Slack and GitHub connection posture for the selected project. This build records local intent and drafts only."
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       TextWrapping="Wrap"
+                       Margin="0,6,0,0" />
+          </StackPanel>
+          <Border Grid.Column="1"
+                  Background="{DynamicResource PanelSubtleBrush}"
+                  BorderBrush="{DynamicResource StrokeBrush}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Padding="10,5"
+                  VerticalAlignment="Top">
+            <TextBlock Text="LOCAL ONLY"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontSize="10"
+                       FontWeight="Bold" />
+          </Border>
+        </Grid>
+        <Grid Margin="0,14,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock x:Name="ConnectorProjectText"
+                     Text="Select a project to inspect connector state."
+                     Foreground="{DynamicResource SoftTextBrush}"
+                     TextWrapping="Wrap"
+                     VerticalAlignment="Center" />
+          <Button Grid.Column="1"
+                  Content="Refresh current project"
+                  Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                  Margin="12,0,0,0"
+                  Click="ConnectorRefreshButton_Click"
+                  AutomationProperties.Name="Refresh selected project connector state" />
+        </Grid>
+        <TextBlock x:Name="ConnectorPanelStatusText"
+                   Text="No provider connection is active."
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   FontSize="10"
+                   TextWrapping="Wrap"
+                   Margin="0,8,0,0" />
+      </StackPanel>
+    </Border>
+
+    <ItemsControl x:Name="ConnectorCardList" Margin="0,12,0,0">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <Border Style="{DynamicResource CardStyle}" Margin="0,0,0,10">
+            <StackPanel>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Description}"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="11"
+                             TextWrapping="Wrap"
+                             Margin="0,5,20,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                  <TextBlock Text="{Binding ConnectionLabel}"
+                             Foreground="{DynamicResource SoftTextBrush}"
+                             FontSize="10"
+                             FontWeight="Bold"
+                             HorizontalAlignment="Right" />
+                  <TextBlock Text="{Binding AuthorizationLabel}"
+                             Foreground="{DynamicResource AccentBrush}"
+                             FontSize="9"
+                             FontWeight="Bold"
+                             HorizontalAlignment="Right"
+                             Margin="0,4,0,0" />
+                </StackPanel>
+              </Grid>
+              <TextBlock Text="{Binding Detail}"
+                         Foreground="{DynamicResource SoftTextBrush}"
+                         TextWrapping="Wrap"
+                         Margin="0,12,0,0" />
+              <TextBlock Text="{Binding CapabilitySummary}"
+                         Foreground="{DynamicResource MutedTextBrush}"
+                         FontSize="10"
+                         TextWrapping="Wrap"
+                         Margin="0,8,0,0" />
+              <TextBlock Text="{Binding Boundary}"
+                         Foreground="{DynamicResource AmberBrush}"
+                         FontSize="10"
+                         TextWrapping="Wrap"
+                         Margin="0,7,0,0" />
+              <Button Content="{Binding PrimaryActionLabel}"
+                      Tag="{Binding Id}"
+                      IsEnabled="{Binding PrimaryActionEnabled}"
+                      Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                      HorizontalAlignment="Left"
+                      Margin="0,11,0,0"
+                      Click="ConnectorPrimaryAction_Click" />
+            </StackPanel>
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <Border Style="{DynamicResource CardStyle}" Margin="0,2,0,0">
+      <StackPanel>
+        <TextBlock Text="Outbound action draft" Style="{DynamicResource SectionTitleStyle}" />
+        <TextBlock Text="Save content for later review inside this project. Drafts cannot be approved or sent from this build."
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,6,0,0" />
+        <Grid Margin="0,13,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <StackPanel Margin="0,0,6,0">
+            <TextBlock Text="Connector" FontSize="10" FontWeight="Bold" />
+            <ComboBox x:Name="DraftConnectorBox"
+                      Style="{StaticResource ConnectorComboStyle}"
+                      DisplayMemberPath="Name"
+                      Margin="0,5,0,0"
+                      SelectionChanged="DraftConnectorBox_SelectionChanged"
+                      AutomationProperties.Name="Draft connector" />
+          </StackPanel>
+          <StackPanel Grid.Column="1" Margin="6,0,0,0">
+            <TextBlock Text="Action" FontSize="10" FontWeight="Bold" />
+            <ComboBox x:Name="DraftOperationBox"
+                      Style="{StaticResource ConnectorComboStyle}"
+                      DisplayMemberPath="Label"
+                      Margin="0,5,0,0"
+                      SelectionChanged="DraftOperationBox_SelectionChanged"
+                      AutomationProperties.Name="Draft connector action" />
+          </StackPanel>
+        </Grid>
+        <TextBlock x:Name="DraftDestinationLabelText"
+                   Text="Destination"
+                   FontSize="10"
+                   FontWeight="Bold"
+                   Margin="0,11,0,0" />
+        <TextBox x:Name="DraftDestinationBox"
+                 Style="{StaticResource ConnectorInputStyle}"
+                 Margin="0,5,0,0"
+                 AutomationProperties.Name="Connector draft destination" />
+        <TextBlock Text="Draft content" FontSize="10" FontWeight="Bold" Margin="0,11,0,0" />
+        <TextBox x:Name="DraftBodyBox"
+                 Style="{StaticResource ConnectorInputStyle}"
+                 MinHeight="90"
+                 AcceptsReturn="True"
+                 TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto"
+                 Margin="0,5,0,0"
+                 AutomationProperties.Name="Connector outbound action draft content" />
+        <Button x:Name="SaveConnectorDraftButton"
+                Content="Save local draft"
+                Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                HorizontalAlignment="Left"
+                Margin="0,11,0,0"
+                Click="SaveConnectorDraftButton_Click"
+                AutomationProperties.Name="Save local connector action draft" />
+        <TextBlock x:Name="ConnectorDraftStatusText"
+                   Text="Nothing will be sent."
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   FontSize="10"
+                   TextWrapping="Wrap"
+                   Margin="0,8,0,0" />
+      </StackPanel>
+    </Border>
+
+    <Border Style="{DynamicResource CardStyle}" Margin="0,12,0,0">
+      <StackPanel>
+        <TextBlock Text="Active local drafts" Style="{DynamicResource SectionTitleStyle}" />
+        <TextBlock x:Name="ConnectorDraftEmptyText"
+                   Text="No active Slack or GitHub drafts for this project."
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   Margin="0,7,0,0" />
+        <ItemsControl x:Name="ConnectorDraftList" Margin="0,6,0,0">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Background="{DynamicResource PanelSubtleBrush}"
+                      BorderBrush="{DynamicResource StrokeBrush}"
+                      BorderThickness="1"
+                      CornerRadius="9"
+                      Padding="11"
+                      Margin="0,3,0,0">
+                <StackPanel>
+                  <DockPanel LastChildFill="True">
+                    <TextBlock Text="{Binding ConnectorLabel}" FontWeight="Bold" DockPanel.Dock="Left" />
+                    <TextBlock Text="{Binding UpdatedLabel}"
+                               Foreground="{DynamicResource FaintTextBrush}"
+                               FontSize="9"
+                               HorizontalAlignment="Right" />
+                  </DockPanel>
+                  <TextBlock Text="{Binding OperationLabel}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                  <TextBlock Text="{Binding ReadinessLabel}"
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontSize="9"
+                             FontWeight="Bold"
+                             Margin="0,3,0,0" />
+                  <TextBlock Text="{Binding ReviewStateLabel}"
+                             Foreground="{DynamicResource AccentBrush}"
+                             FontSize="9"
+                             FontWeight="Bold"
+                             Margin="0,3,0,0" />
+                  <TextBlock Text="{Binding Destination}"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="10"
+                             TextWrapping="Wrap"
+                             Margin="0,3,0,0" />
+                  <TextBlock Text="{Binding BodyPreview}"
+                             Foreground="{DynamicResource SoftTextBrush}"
+                             TextWrapping="Wrap"
+                             Margin="0,7,0,0" />
+                  <TextBlock Text="{Binding BlockerSummary}"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="9"
+                             TextWrapping="Wrap"
+                             Margin="0,7,0,0" />
+                  <Button Content="Withdraw local draft"
+                          Tag="{Binding Id}"
+                          Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                          HorizontalAlignment="Left"
+                          Margin="0,9,0,0"
+                          Click="WithdrawConnectorDraftButton_Click" />
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </Border>
+
+    <Border Style="{DynamicResource CardStyle}" Margin="0,12,0,0">
+      <StackPanel>
+        <TextBlock Text="Connector audit" Style="{DynamicResource SectionTitleStyle}" />
+        <TextBlock x:Name="ConnectorAuditEmptyText"
+                   Text="No connector activity recorded for this project."
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   Margin="0,7,0,0" />
+        <ItemsControl x:Name="ConnectorAuditList" Margin="0,6,0,0">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Grid Margin="0,4,0,0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding ConnectorLabel}"
+                           Foreground="{DynamicResource AccentBrush}"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           Margin="0,0,9,0" />
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="{Binding EventLabel}" FontSize="10" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Detail}"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="9"
+                             TextWrapping="Wrap"
+                             Margin="0,2,12,0" />
+                </StackPanel>
+                <TextBlock Grid.Column="2"
+                           Text="{Binding TimeLabel}"
+                           Foreground="{DynamicResource FaintTextBrush}"
+                           FontSize="9" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </Border>
+
+    <TextBlock Text="Protocol boundary · this renderer has no Slack/GitHub gateway implementation, credential field, OAuth launcher, API client, approval action, or send button. Future external writes must present a verified connection, real approval id, payload hash, and idempotency key to the service boundary."
+               Foreground="{DynamicResource AmberBrush}"
+               FontSize="10"
+               FontWeight="SemiBold"
+               TextWrapping="Wrap"
+               Margin="0,11,0,0" />
+  </StackPanel>
+</UserControl>

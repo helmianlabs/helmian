@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Helmian Discord setup</title>
+<style>
+body{font-family:Segoe UI,system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.5}
+code,input{font-family:Consolas,monospace;background:#f4f4f5;padding:4px 8px;border-radius:6px}
+.step{border:1px solid #ddd;border-radius:12px;padding:16px;margin:16px 0}
+button{padding:10px 14px;border-radius:8px;border:0;background:#5865F2;color:#fff;cursor:pointer;font-weight:600}
+</style></head><body>
+<h1>Discord setup for Helmian (5 minutes)</h1>
+<p>You only need Discord. Slack is skipped. GitHub is already wired on this PC.</p>
+<div class="step">
+  <h3>1. Open Discord Developer Portal</h3>
+  <p><a href="https://discord.com/developers/applications" target="_blank">https://discord.com/developers/applications</a> — log in if asked.</p>
+  <button onclick="window.open('https://discord.com/developers/applications','_blank')">Open portal</button>
+</div>
+<div class="step">
+  <h3>2. New Application → name it <code>Helmian</code></h3>
+  <p>OAuth2 → Redirects → Add:</p>
+  <p><code id="cb">https://helmian.vercel.app/api/team-oauth/discord/callback</code>
+  <button onclick="navigator.clipboard.writeText(document.getElementById('cb').innerText)">Copy URL</button></p>
+  <p>Scopes for OAuth URL generator: <code>identify</code> + <code>guilds</code></p>
+</div>
+<div class="step">
+  <h3>3. Bot tab</h3>
+  <ul>
+    <li>Add Bot → Reset Token → copy token</li>
+    <li>Enable <b>Message Content Intent</b></li>
+    <li>OAuth2 URL Generator: scopes <code>bot</code>, permissions <b>View Channels</b> + <b>Read Message History</b> (value 66560) → invite to your server</li>
+  </ul>
+</div>
+<div class="step">
+  <h3>4. Paste into env file</h3>
+  <p>Open <code>%LOCALAPPDATA%\Helmion\team-connectors\local-service.team.env</code> and set:</p>
+  <pre>HELMION_DISCORD_CLIENT_ID=...
+HELMION_DISCORD_CLIENT_SECRET=...
+HELMION_DISCORD_BOT_TOKEN=...</pre>
+  <p>Then run <b>Start-Demo-Desk</b> and press Connect Discord in Helmian.</p>
+</div>
+</body></html>
