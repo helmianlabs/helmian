@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Helmion.Desktop.Core\ArtifactStudioWorkflow.cs" Link="ArtifactStudioWorkflow.cs" />
+    <Compile Include="..\Helmion.Desktop.Core\ProjectArtifactStore.cs" Link="ProjectArtifactStore.cs" />
+    <Compile Include="..\Helmion.Desktop.Core\ProjectWorkbenchStore.cs" Link="ProjectWorkbenchStore.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Helmion.LocalService.Protocol\Helmion.LocalService.Protocol.csproj" />
+  </ItemGroup>
+</Project>
