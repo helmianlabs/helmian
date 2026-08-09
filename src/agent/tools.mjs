@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -18,13 +19,29 @@ import {
   resolveAskTimeoutMs,
 } from './approval.mjs';
 import {
+  WORKBENCH_CONTRACT,
+  assertNoFilesystemLinks,
+  discoverWorkbenchArtifacts,
+  isPrivateWorkbenchPath,
+  projectTaskCommand,
+  resolveWorkbenchPath,
+  startStaticPreview,
+  workspaceContext,
+} from './workbench.mjs';
+import {
   evaluateToolCall,
   governanceRefusalMessage,
   requiresWriteLease,
 } from '../core/governance-gate.mjs';
 
-const READ_TOOLS = new Set(['read_file', 'list_dir', 'search_text']);
-const WRITE_TOOLS = new Set(['write_file', 'run_command']);
+const READ_TOOLS = new Set(['workspace_context', 'read_file', 'list_dir', 'search_text']);
+const WRITE_TOOLS = new Set([
+  'create_file',
+  'edit_file',
+  'run_project_task',
+  'start_project_preview',
+  'stop_project_preview',
+]);
 
 /**
  * Safe environment variable allowlist for child processes.
@@ -105,10 +122,10 @@ function buildSafeEnv() {
 /**
  * Normalize console permission mode used by every LLM provider.
  * - read-only: no tools
- * - read-tools: read_file, list_dir, search_text
+ * - read-tools: workspace_context, read_file, list_dir, search_text
  * - ask:       every tool is eligible, but each individual call must be
  *              approved by a human before it runs
- * - full:      all tools including write_file + run_command, no asking
+ * - full:      every tool in the caller-selected catalog, no asking
  */
 export function normalizePermissionMode(mode) {
   const m = String(mode || 'read-only').trim().toLowerCase();
@@ -226,6 +243,7 @@ export function createToolRuntime(workspaceRoot, options = {}) {
   // writer for ninety seconds, and constructing a runtime is not a statement of
   // intent to write.
   let leaseToken = options.leaseToken ?? null;
+  let previewServer = null;
   const leaseSlug = projectSlug ?? basename(root) ?? 'workspace';
 
   /**
@@ -328,9 +346,18 @@ export function createToolRuntime(workspaceRoot, options = {}) {
     return full;
   }
 
-  const tools = {
+  const safeTools = {
+    workspace_context: {
+      description:
+        'Inspect the selected workspace boundary, bounded file inventory, declared project tasks, and artifacts. Private configuration files are excluded.',
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        return JSON.stringify(workspaceContext(root));
+      },
+    },
+
     read_file: {
-      description: 'Read a UTF-8 text file under the workspace.',
+      description: 'Read a non-private UTF-8 text file under the selected workspace. Refuses filesystem links.',
       parameters: {
         type: 'object',
         properties: {
@@ -339,10 +366,12 @@ export function createToolRuntime(workspaceRoot, options = {}) {
         required: ['path'],
       },
       async execute({ path }) {
-        const full = resolveInWorkspace(path);
-        if (!existsSync(full)) return `Error: file not found: ${path}`;
+        const { full, relativePath } = resolveWorkbenchPath(root, path);
+        if (isPrivateWorkbenchPath(relativePath)) return 'Error: private configuration files are not available to the agent workbench.';
+        assertNoFilesystemLinks(root, relativePath, { allowMissingLeaf: false });
+        if (!existsSync(full)) return `Error: file not found: ${relativePath}`;
         const st = statSync(full);
-        if (!st.isFile()) return `Error: not a file: ${path}`;
+        if (!st.isFile()) return `Error: not a file: ${relativePath}`;
         if (st.size > 400_000) {
           return `Error: file too large (${st.size} bytes). Read a smaller file.`;
         }
@@ -351,8 +380,8 @@ export function createToolRuntime(workspaceRoot, options = {}) {
       },
     },
 
-    write_file: {
-      description: 'Write UTF-8 content to a file under the workspace (creates parent dirs).',
+    create_file: {
+      description: 'Create one new UTF-8 file beneath the selected workspace. Refuses overwrite, links, and private configuration paths.',
       parameters: {
         type: 'object',
         properties: {
@@ -362,15 +391,70 @@ export function createToolRuntime(workspaceRoot, options = {}) {
         required: ['path', 'content'],
       },
       async execute({ path, content }) {
-        const full = resolveInWorkspace(path);
+        const { full, relativePath } = resolveWorkbenchPath(root, path);
+        if (isPrivateWorkbenchPath(relativePath)) return 'Error: private configuration paths cannot be created by the agent workbench.';
+        assertNoFilesystemLinks(root, relativePath);
+        if (existsSync(full)) return `Error: file already exists: ${relativePath}. Use edit_file with an exact precondition.`;
         mkdirSync(dirname(full), { recursive: true });
         writeFileSync(full, content ?? '', 'utf8');
-        return `Wrote ${Buffer.byteLength(content ?? '', 'utf8')} bytes to ${path}`;
+        const bytes = Buffer.byteLength(content ?? '', 'utf8');
+        return JSON.stringify({
+          contract: WORKBENCH_CONTRACT,
+          kind: 'file_change',
+          status: 'completed',
+          operation: 'created',
+          path: relativePath.split(sep).join('/'),
+          bytes,
+          sha256: createHash('sha256').update(content ?? '', 'utf8').digest('hex'),
+        });
+      },
+    },
+
+    edit_file: {
+      description: 'Replace one exact text occurrence in an existing UTF-8 workspace file. Refuses ambiguous or stale edits.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          old_text: { type: 'string', description: 'Exact text expected once in the current file' },
+          new_text: { type: 'string' },
+          expected_sha256: { type: 'string', description: 'Optional SHA-256 precondition for the current file' },
+        },
+        required: ['path', 'old_text', 'new_text'],
+      },
+      async execute({ path, old_text, new_text, expected_sha256 }) {
+        const { full, relativePath } = resolveWorkbenchPath(root, path);
+        if (isPrivateWorkbenchPath(relativePath)) return 'Error: private configuration paths cannot be edited by the agent workbench.';
+        assertNoFilesystemLinks(root, relativePath, { allowMissingLeaf: false });
+        if (!existsSync(full) || !statSync(full).isFile()) return `Error: file not found: ${relativePath}`;
+        if (statSync(full).size > 400_000) return 'Error: file is too large for a controlled exact edit.';
+        const before = readFileSync(full, 'utf8');
+        const beforeHash = createHash('sha256').update(before, 'utf8').digest('hex');
+        if (expected_sha256 && String(expected_sha256).toLowerCase() !== beforeHash) {
+          return 'Error: file changed since it was reviewed; SHA-256 precondition did not match.';
+        }
+        if (!String(old_text ?? '').length) return 'Error: old_text must not be empty.';
+        const first = before.indexOf(old_text);
+        if (first < 0 || before.indexOf(old_text, first + old_text.length) >= 0) {
+          return 'Error: old_text must match exactly once; nothing was changed.';
+        }
+        const after = `${before.slice(0, first)}${new_text ?? ''}${before.slice(first + old_text.length)}`;
+        writeFileSync(full, after, 'utf8');
+        return JSON.stringify({
+          contract: WORKBENCH_CONTRACT,
+          kind: 'file_change',
+          status: 'completed',
+          operation: 'edited',
+          path: relativePath.split(sep).join('/'),
+          bytes: Buffer.byteLength(after, 'utf8'),
+          beforeSha256: beforeHash,
+          sha256: createHash('sha256').update(after, 'utf8').digest('hex'),
+        });
       },
     },
 
     list_dir: {
-      description: 'List files and directories under a workspace path.',
+      description: 'List non-private files and directories under a selected workspace path. Filesystem links are omitted.',
       parameters: {
         type: 'object',
         properties: {
@@ -378,33 +462,78 @@ export function createToolRuntime(workspaceRoot, options = {}) {
         },
       },
       async execute({ path = '.' } = {}) {
-        const full = resolveInWorkspace(path);
-        if (!existsSync(full)) return `Error: directory not found: ${path}`;
+        const { full, relativePath } = resolveWorkbenchPath(root, path);
+        if (isPrivateWorkbenchPath(relativePath)) return 'Error: private configuration paths are not available to the agent workbench.';
+        assertNoFilesystemLinks(root, relativePath, { allowMissingLeaf: false });
+        if (!existsSync(full)) return `Error: directory not found: ${relativePath}`;
         const entries = readdirSync(full, { withFileTypes: true });
-        if (entries.length === 0) return `(empty) ${path}`;
-        return entries
+        const visible = entries.filter((entry) => {
+          if (entry.isSymbolicLink()) return false;
+          const child = relativePath === '.' ? entry.name : join(relativePath, entry.name);
+          return !isPrivateWorkbenchPath(child);
+        });
+        if (visible.length === 0) return `(empty) ${relativePath}`;
+        return visible
           .map((e) => `${e.isDirectory() ? '[DIR] ' : '[FILE]'} ${e.name}`)
           .join('\n');
       },
     },
 
-    run_command: {
+    run_project_task: {
       description:
-        'Run a shell command in the workspace (PowerShell on Windows, sh elsewhere). Prefer small, non-interactive commands.',
+        'Run one project-declared task by id from workspace_context (package.json script or bounded dotnet build/test). Arbitrary shell text and arguments are not accepted.',
       parameters: {
         type: 'object',
         properties: {
-          command: { type: 'string' },
+          task_id: { type: 'string' },
           timeout_ms: { type: 'number', description: 'Max wait (default 120000)' },
         },
-        required: ['command'],
+        required: ['task_id'],
       },
-      async execute({ command, timeout_ms = 120_000 }) {
-        if (!command || !String(command).trim()) {
-          return 'Error: empty command';
-        }
-        const output = await runShell(String(command), root, Number(timeout_ms) || 120_000);
-        return redactSecrets(output);
+      async execute({ task_id, timeout_ms = 120_000 }) {
+        const command = projectTaskCommand(root, String(task_id ?? ''));
+        const timeout = Math.max(1_000, Math.min(Number(timeout_ms) || 120_000, 300_000));
+        const execution = await runDirect(command.executable, command.args, root, timeout);
+        return JSON.stringify({
+          contract: WORKBENCH_CONTRACT,
+          kind: 'task_run',
+          status: execution.exitCode === 0 ? 'completed' : execution.timedOut ? 'timed_out' : 'failed',
+          task: command.task,
+          exitCode: execution.exitCode,
+          timedOut: execution.timedOut,
+          output: redactSecrets(execution.output),
+          artifacts: discoverWorkbenchArtifacts(root),
+        });
+      },
+    },
+
+    start_project_preview: {
+      description:
+        'Serve one existing static HTML file or folder from the selected workspace on a random 127.0.0.1 port. '
+        + 'Helmian Desktop opens that URL in the right-hand Browser panel (WebView2). '
+        + 'One preview per agent session; multi-agent = one-at-a-time in the shared panel. '
+        + 'No external bind and no general browser-control API.',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string', description: 'Relative HTML file or directory containing index.html' } },
+        required: ['path'],
+      },
+      async execute({ path }) {
+        if (previewServer) await new Promise((done) => previewServer.close(done));
+        const started = await startStaticPreview(root, path);
+        previewServer = started.server;
+        return JSON.stringify(started.result);
+      },
+    },
+
+    stop_project_preview: {
+      description: 'Stop the loopback preview owned by this agent session.',
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        if (!previewServer) return JSON.stringify({ contract: WORKBENCH_CONTRACT, kind: 'preview', status: 'stopped', alreadyStopped: true });
+        await new Promise((done) => previewServer.close(done));
+        previewServer = null;
+        return JSON.stringify({ contract: WORKBENCH_CONTRACT, kind: 'preview', status: 'stopped', alreadyStopped: false });
       },
     },
 
@@ -421,11 +550,15 @@ export function createToolRuntime(workspaceRoot, options = {}) {
       },
       async execute({ query, path = '.', max_hits = 40 }) {
         if (!query) return 'Error: empty query';
-        const full = resolveInWorkspace(path);
+        const { full, relativePath } = resolveWorkbenchPath(root, path);
+        if (isPrivateWorkbenchPath(relativePath)) return 'Error: private configuration paths are not available to the agent workbench.';
+        assertNoFilesystemLinks(root, relativePath, { allowMissingLeaf: false });
         const hits = [];
         walk(full, (file) => {
           if (hits.length >= max_hits) return;
           try {
+            const rel = relative(root, file);
+            if (isPrivateWorkbenchPath(rel)) return;
             const st = statSync(file);
             if (!st.isFile() || st.size > 200_000) return;
             if (!/\.(cs|js|mjs|ts|tsx|json|md|sql|ps1|py|xaml|csproj|txt|yml|yaml)$/i.test(file)) {
@@ -436,7 +569,7 @@ export function createToolRuntime(workspaceRoot, options = {}) {
             lines.forEach((line, idx) => {
               if (hits.length >= max_hits) return;
               if (line.includes(query)) {
-                hits.push(`${relative(root, file)}:${idx + 1}: ${line.trim().slice(0, 200)}`);
+                hits.push(`${rel}:${idx + 1}: ${line.trim().slice(0, 200)}`);
               }
             });
           } catch {
@@ -448,6 +581,46 @@ export function createToolRuntime(workspaceRoot, options = {}) {
       },
     },
   };
+
+  // The committed CLI / `relay --hands` surface remains available only when a
+  // caller has not opted into the modern workbench contract. This preserves the
+  // explicit legacy proof without exposing arbitrary shell text to the Desktop
+  // and account Remote Control paths, which pass safeWorkspaceTools:true.
+  const legacyTools = {
+    read_file: safeTools.read_file,
+    write_file: {
+      description: 'Write UTF-8 content to a file under the workspace (creates parent dirs).',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string' }, content: { type: 'string' } },
+        required: ['path', 'content'],
+      },
+      async execute({ path, content }) {
+        const full = resolveInWorkspace(path);
+        mkdirSync(dirname(full), { recursive: true });
+        writeFileSync(full, content ?? '', 'utf8');
+        return `Wrote ${Buffer.byteLength(content ?? '', 'utf8')} bytes to ${path}`;
+      },
+    },
+    list_dir: safeTools.list_dir,
+    run_command: {
+      description: 'Run a shell command in the workspace (legacy explicit CLI/hands surface).',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string' },
+          timeout_ms: { type: 'number', description: 'Max wait (default 120000)' },
+        },
+        required: ['command'],
+      },
+      async execute({ command, timeout_ms = 120_000 }) {
+        if (!command || !String(command).trim()) return 'Error: empty command';
+        return redactSecrets(await runShell(String(command), root, Number(timeout_ms) || 120_000));
+      },
+    },
+    search_text: safeTools.search_text,
+  };
+  const tools = options.safeWorkspaceTools === true ? safeTools : legacyTools;
 
   function allowedTools() {
     return Object.fromEntries(
@@ -559,6 +732,11 @@ export function createToolRuntime(workspaceRoot, options = {}) {
         return redactSecrets(errMsg);
       }
     },
+    async dispose() {
+      if (!previewServer) return;
+      await new Promise((done) => previewServer.close(done));
+      previewServer = null;
+    },
   };
 }
 
@@ -573,6 +751,7 @@ function walk(dir, onFile) {
     return;
   }
   for (const e of entries) {
+    if (e.isSymbolicLink()) continue;
     if (
       e.isDirectory()
       && (e.name === 'node_modules'
@@ -590,25 +769,14 @@ function walk(dir, onFile) {
   }
 }
 
-function runShell(command, cwd, timeoutMs) {
+function runDirect(executable, args, cwd, timeoutMs) {
   return new Promise((resolvePromise) => {
-    const isWin = process.platform === 'win32';
-    const child = spawn(
-      isWin ? 'powershell.exe' : 'sh',
-      isWin
-        ? ['-NoProfile', '-NonInteractive', '-Command', command]
-        : ['-c', command],
-      {
-        cwd,
-        env: buildSafeEnv(),
-        windowsHide: true,
-      },
-    );
+    const child = spawn(executable, args, { cwd, env: buildSafeEnv(), windowsHide: true, shell: false });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill();
-      resolvePromise(`Error: command timed out after ${timeoutMs}ms\n${stdout}\n${stderr}`);
+      resolvePromise({ exitCode: null, timedOut: true, output: `Task timed out after ${timeoutMs}ms\n${stdout}\n${stderr}` });
     }, timeoutMs);
     child.stdout.on('data', (d) => {
       stdout += d.toString();
@@ -623,12 +791,48 @@ function runShell(command, cwd, timeoutMs) {
       const parts = [];
       if (stdout) parts.push(stdout.trimEnd());
       if (stderr) parts.push(`STDERR:\n${stderr.trimEnd()}`);
-      parts.push(`exit_code=${code}`);
-      resolvePromise(parts.join('\n') || `(no output) exit_code=${code}`);
+      resolvePromise({ exitCode: code, timedOut: false, output: parts.join('\n') || '(no output)' });
     });
     child.on('error', (err) => {
       clearTimeout(timer);
-      resolvePromise(`Error starting shell: ${err.message}`);
+      resolvePromise({ exitCode: null, timedOut: false, output: `Error starting project task: ${err.message}` });
+    });
+  });
+}
+
+function runShell(command, cwd, timeoutMs) {
+  return new Promise((resolvePromise) => {
+    const isWin = process.platform === 'win32';
+    const child = spawn(
+      isWin ? 'powershell.exe' : 'sh',
+      isWin ? ['-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command],
+      { cwd, env: buildSafeEnv(), windowsHide: true },
+    );
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      resolvePromise(`Error: command timed out after ${timeoutMs}ms\n${stdout}\n${stderr}`);
+    }, timeoutMs);
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+      if (stdout.length > 80_000) stdout = `${stdout.slice(0, 80_000)}\n…truncated`;
+    });
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+      if (stderr.length > 40_000) stderr = `${stderr.slice(0, 40_000)}\n…truncated`;
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const parts = [];
+      if (stdout) parts.push(stdout.trimEnd());
+      if (stderr) parts.push(`STDERR:\n${stderr.trimEnd()}`);
+      parts.push(`exit_code=${code}`);
+      resolvePromise(parts.join('\n') || `(no output) exit_code=${code}`);
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolvePromise(`Error starting shell: ${error.message}`);
     });
   });
 }

@@ -202,9 +202,9 @@ test('tier tables resolve to the doc-verified model ids', () => {
   assert.equal(modelForTier(ANTHROPIC, 'standard').model, 'claude-sonnet-5');
   assert.equal(modelForTier(ANTHROPIC, 'deep').model, 'claude-opus-5');
 
-  assert.equal(modelForTier(GEMINI, 'fast').model, 'gemini-2.5-flash-lite');
-  assert.equal(modelForTier(GEMINI, 'standard').model, 'gemini-2.5-flash');
-  assert.equal(modelForTier(GEMINI, 'deep').model, 'gemini-2.5-pro');
+  assert.equal(modelForTier(GEMINI, 'fast').model, 'gemini-flash-lite-latest');
+  assert.equal(modelForTier(GEMINI, 'standard').model, 'gemini-flash-latest');
+  assert.equal(modelForTier(GEMINI, 'deep').model, 'gemini-pro-latest');
 
   // xAI publishes no mini/fast SKU, so fast and standard intentionally share a
   // model rather than pinning an invented or dated id.
@@ -318,7 +318,7 @@ test('resolveTurnModel maps a trivial and a hard prompt to different models', ()
 test('resolveTurnModel reports the tier, the model and why it chose them', () => {
   const choice = resolveTurnModel({ provider: GEMINI, userText: 'refactor these three files' });
   assert.equal(choice.tier, 'standard');
-  assert.equal(choice.model, 'gemini-2.5-flash');
+  assert.equal(choice.model, 'gemini-flash-latest');
   assert.match(choice.reason, /prompt describes code or tool work/);
   assert.match(choice.source, /gemini standard tier/);
 });

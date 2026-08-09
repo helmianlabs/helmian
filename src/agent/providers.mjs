@@ -28,15 +28,26 @@ export function redactOutboundBody(json, apiKey) {
   return s;
 }
 
-export function systemPrompt(workspaceRoot) {
+export function systemPrompt(workspaceRoot, toolNames = ['read_file', 'write_file', 'list_dir', 'run_command', 'search_text']) {
+  const tools = new Set(toolNames);
+  const safeWorkbench = tools.has('workspace_context') || tools.has('run_project_task');
+  const actionRules = safeWorkbench
+    ? `- Start workspace work with workspace_context so you see the bounded file inventory, declared tasks, artifacts, and boundaries.
+- Use create_file only for a new file and edit_file only for an exact, unambiguous replacement. Never claim a change unless the tool returned completed.
+- Execution is limited to run_project_task entries declared by the selected project. You have no arbitrary terminal or OS command tool.
+- Preview: call start_project_preview with a relative HTML path; Helmian opens 127.0.0.1 in the right Browser panel. One live preview at a time in that panel. You have no general browser-control tool.
+- Images: you cannot generate images via tools here. Troy uses the Create workbench (OpenAI Images) for image generation with human approve.`
+    : `- Use tools to inspect and change the workspace. Do not claim you edited a file unless write_file succeeded.
+- For multi-step work: read first, then edit, then run a check command when useful.
+- run_command is real shell on the user's machine — avoid destructive commands unless asked.`;
   return `You are Helmion, a real coding agent running in the user's terminal (like Claude Code / Cursor agent).
 Workspace root: ${workspaceRoot}
+Available tools: ${toolNames.length ? toolNames.join(', ') : '(none)'}
 
 Rules:
-- Use tools to inspect and change the workspace. Do not claim you edited a file unless write_file succeeded.
+- Treat the workspace root as the complete filesystem boundary. Do not request or expose provider credentials, tokens, private keys, or private configuration files.
 - Prefer small, verified steps. Cite paths you touch.
-- For multi-step work: read first, then edit, then run a check command when useful.
-- run_command is real shell on the user's machine — avoid destructive commands unless asked.
+${actionRules}
 - Be concise in final answers. When done, answer without more tool calls.
 - You are not a fake UI stub. Tools execute for real.`;
 }
@@ -128,6 +139,7 @@ export async function chatWithTools({
   signal,
   url,
   reasoningEffortNone = false,
+  images = [],
   provenance = null,
 }) {
   if (!apiKey) {
@@ -151,9 +163,11 @@ export async function chatWithTools({
       toolDefs,
       signal,
       reasoningEffortNone,
+      images,
     });
     return recordTurnProvenance(reply, {
       providerId,
+      images,
       model: resolvedModel,
       url,
       // PRIMARILY DERIVED FROM THE ENDPOINT, NOT DECLARED BY THE CALLER. Every
@@ -184,6 +198,7 @@ export async function chatWithTools({
       messages,
       toolDefs,
       signal,
+      images,
       providerId,
     });
     return recordTurnProvenance(reply, {
@@ -199,6 +214,7 @@ export async function chatWithTools({
       messages,
       toolDefs,
       signal,
+      images,
     });
     return recordTurnProvenance(reply, {
       providerId, model: resolvedModel, url: ANTHROPIC_URL, isLocal: false, provenance, startedAt,
@@ -206,13 +222,14 @@ export async function chatWithTools({
   }
 
   if (providerId === 'gemini') {
-    const resolvedModel = model || 'gemini-2.5-flash';
+    const resolvedModel = model || 'gemini-flash-latest';
     const reply = await geminiTurn({
       apiKey,
       model: resolvedModel,
       messages,
       toolDefs,
       signal,
+      images,
     });
     return recordTurnProvenance(reply, {
       providerId,
@@ -271,10 +288,24 @@ async function openAiCompatibleTurn({
   signal,
   providerId,
   reasoningEffortNone = false,
+  images = [],
 }) {
+  const outboundMessages = images.length === 0 ? messages : messages.map((message, index) => {
+    if (index !== messages.length - 1 || message.role !== 'user') return message;
+    return {
+      ...message,
+      content: [
+        { type: 'text', text: String(message.content || '') },
+        ...images.map((image) => ({
+          type: 'image_url',
+          image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+        })),
+      ],
+    };
+  });
   const body = {
     model,
-    messages,
+    messages: outboundMessages,
   };
   const hasTools = Array.isArray(toolDefs) && toolDefs.length > 0;
 
@@ -334,7 +365,7 @@ async function openAiCompatibleTurn({
   };
 }
 
-async function anthropicTurn({ apiKey, model, messages, toolDefs, signal }) {
+async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images = [] }) {
   // Convert OpenAI-style messages to Anthropic
   let system = '';
   const anthMessages = [];
@@ -382,6 +413,23 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal }) {
     input_schema: t.function.parameters,
   }));
 
+  if (images.length > 0) {
+    for (let index = anthMessages.length - 1; index >= 0; index -= 1) {
+      if (anthMessages[index].role !== 'user' || typeof anthMessages[index].content !== 'string') continue;
+      anthMessages[index] = {
+        ...anthMessages[index],
+        content: [
+          { type: 'text', text: anthMessages[index].content },
+          ...images.map((image) => ({
+            type: 'image',
+            source: { type: 'base64', media_type: image.mediaType, data: image.data },
+          })),
+        ],
+      };
+      break;
+    }
+  }
+
   const payload = {
     model,
     max_tokens: 8192,
@@ -423,7 +471,7 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal }) {
   return { role: 'assistant', content, toolCalls, raw: data };
 }
 
-async function geminiTurn({ apiKey, model, messages, toolDefs, signal }) {
+async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = [] }) {
   // Flatten to Gemini contents; put system in systemInstruction
   let system = '';
   const contents = [];
@@ -447,17 +495,36 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal }) {
       continue;
     }
     if (m.role === 'assistant' && m.tool_calls?.length) {
+      // Prefer the exact model parts we stored (includes thought_signature for Gemini 3 / thinking).
+      // Rebuilding functionCall without thoughtSignature causes HTTP 400:
+      // "Function call is missing a thought_signature in functionCall parts."
+      if (Array.isArray(m.geminiParts) && m.geminiParts.length > 0) {
+        contents.push({ role: 'model', parts: m.geminiParts });
+        continue;
+      }
       const parts = [];
       if (m.content) parts.push({ text: m.content });
       for (const tc of m.tool_calls) {
-        parts.push({
+        const part = {
           functionCall: {
             name: tc.function?.name || tc.name,
             args: safeJson(tc.function?.arguments ?? tc.arguments),
           },
-        });
+        };
+        // Pass back thought signatures when we only have the OpenAI-shaped history.
+        const sig = tc.thoughtSignature || tc.thought_signature
+          || tc.function?.thoughtSignature || tc.function?.thought_signature;
+        if (sig) {
+          part.thoughtSignature = sig;
+        }
+        parts.push(part);
       }
       contents.push({ role: 'model', parts });
+      continue;
+    }
+    // Plain assistant turns may still carry thought parts / signatures from Gemini.
+    if (m.role === 'assistant' && Array.isArray(m.geminiParts) && m.geminiParts.length > 0) {
+      contents.push({ role: 'model', parts: m.geminiParts });
       continue;
     }
     contents.push({
@@ -471,6 +538,16 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal }) {
     description: t.function.description,
     parameters: t.function.parameters,
   }));
+
+  if (images.length > 0) {
+    for (let index = contents.length - 1; index >= 0; index -= 1) {
+      if (contents[index].role !== 'user') continue;
+      contents[index].parts.push(...images.map((image) => ({
+        inline_data: { mime_type: image.mediaType, data: image.data },
+      })));
+      break;
+    }
+  }
 
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
@@ -492,23 +569,47 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal }) {
   });
   const raw = await res.text();
   if (!res.ok) {
-    throw new Error(`Gemini HTTP ${res.status}: ${raw.slice(0, 400)}`);
+    let detail;
+    if (res.status === 404) {
+      detail = `Model "${model}" is not available for generateContent on this Gemini API version/project. `
+        + 'The API key reached Google; this is a model or endpoint availability mismatch, not proof that the key is missing.';
+    } else if (res.status === 401 || res.status === 403) {
+      detail = 'Google rejected the Gemini credential or its project permissions. Check the saved key and its API restrictions in Google AI Studio.';
+    } else if (res.status === 400 && /FAILED_PRECONDITION|billing|paid plan/i.test(raw)) {
+      detail = 'The Gemini project requires billing or another project precondition in Google AI Studio.';
+    } else if (res.status === 429) {
+      detail = 'The Gemini project reached a rate, token, daily, or spend limit.';
+    } else {
+      detail = raw.slice(0, 400);
+    }
+    throw new Error(`Gemini HTTP ${res.status}: ${detail}`);
   }
   const data = JSON.parse(raw);
   const parts = data.candidates?.[0]?.content?.parts || [];
   let content = '';
   const toolCalls = [];
   for (const p of parts) {
-    if (p.text) content += p.text;
+    // Thought-only parts (thinking models) have no user-visible text; keep them in geminiParts.
+    if (p.text && !p.thought) content += p.text;
     if (p.functionCall) {
+      // Capture thought_signature from the part (camelCase or snake_case) so the next
+      // generateContent request can echo it — required for Gemini 3 / thinking tool use.
+      // Docs: https://ai.google.dev/gemini-api/docs/thinking
+      const thoughtSignature = p.thoughtSignature
+        || p.thought_signature
+        || p.functionCall.thoughtSignature
+        || p.functionCall.thought_signature
+        || undefined;
       toolCalls.push({
         id: `gemini_${toolCalls.length}_${p.functionCall.name}`,
         name: p.functionCall.name,
         arguments: p.functionCall.args || {},
+        thoughtSignature,
       });
     }
   }
-  return { role: 'assistant', content, toolCalls, raw: data };
+  // geminiParts: exact model turn for history replay (signatures + thought parts).
+  return { role: 'assistant', content, toolCalls, raw: data, geminiParts: parts };
 }
 
 function safeJson(value) {
@@ -524,14 +625,22 @@ function safeJson(value) {
 /** Normalize provider reply into OpenAI-ish message for history. */
 export function toHistoryAssistant(reply) {
   if (!reply.toolCalls?.length) {
-    return { role: 'assistant', content: reply.content || '' };
+    const plain = { role: 'assistant', content: reply.content || '' };
+    // Keep Gemini parts even on text-only turns when they carry thought signatures.
+    if (Array.isArray(reply.geminiParts) && reply.geminiParts.length > 0) {
+      plain.geminiParts = reply.geminiParts;
+    }
+    return plain;
   }
   return {
     role: 'assistant',
     content: reply.content || null,
+    // Exact Gemini model parts — required so thought_signature is not dropped on tool turns.
+    geminiParts: Array.isArray(reply.geminiParts) ? reply.geminiParts : undefined,
     tool_calls: reply.toolCalls.map((tc) => ({
       id: tc.id,
       type: 'function',
+      thoughtSignature: tc.thoughtSignature || tc.thought_signature,
       function: {
         name: tc.name,
         arguments: typeof tc.arguments === 'string'

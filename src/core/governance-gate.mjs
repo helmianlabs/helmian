@@ -55,7 +55,11 @@ export const GOVERNANCE_BLOCK_MARKER = 'BLOCKED by Helmion governance';
  * deliberate scope line, not an oversight — the agent runtime is governed, the
  * host harness is not, and enabling it needs a decision rather than a commit.
  */
-export const LEASE_REQUIRED_TOOLS = new Set(['write_file', 'run_command']);
+export const LEASE_REQUIRED_TOOLS = new Set([
+  'write_file', 'run_command',
+  'create_file', 'edit_file', 'run_project_task',
+  'start_project_preview', 'stop_project_preview',
+]);
 
 /** True when this tool may not proceed without a held write lease. */
 export function requiresWriteLease(tool) {

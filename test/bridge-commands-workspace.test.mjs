@@ -241,6 +241,83 @@ describe('agent-bridge expands a slash command on the way into a turn', () => {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
+
+  test('the first turn after a workspace switch refreshes scope and command files', {
+    timeout: 60_000,
+  }, async () => {
+    const workspaceA = mkdtempSync(join(tmpdir(), 'helmion-switch-a-'));
+    const workspaceB = mkdtempSync(join(tmpdir(), 'helmion-switch-b-'));
+    writeProjectCommand(workspaceA, 'scope', 'SCOPE-COMMAND-FROM-A\n');
+    writeProjectCommand(workspaceB, 'scope', 'SCOPE-COMMAND-FROM-B\n');
+
+    const seen = [];
+    const server = createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        const parsed = JSON.parse(body || '{}');
+        seen.push(parsed.messages ?? []);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          id: 'chatcmpl-workspace-switch',
+          object: 'chat.completion',
+          model: parsed.model || 'stub',
+          choices: [{
+            index: 0,
+            message: { role: 'assistant', content: 'ack' },
+            finish_reason: 'stop',
+          }],
+        }));
+      });
+    });
+    await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+    const { port } = server.address();
+
+    const bridge = startBridge({ cwd: REPO_ROOT });
+    const customProviders = [{
+      name: 'workspace-switch-endpoint',
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      apiKey: 'workspace-switch-key',
+      model: 'stub-model',
+    }];
+
+    try {
+      bridge.send({
+        cmd: 'configure',
+        workspace: workspaceA,
+        provider: 'workspace-switch-endpoint',
+        permission: 'read-only',
+        customProviders,
+      });
+      await bridge.waitFor((event) => event.event === 'ready' && event.workspace === workspaceA);
+
+      bridge.send({ cmd: 'turn', workspace: workspaceA, text: '/scope' });
+      await bridge.waitFor((event) => event.event === 'done');
+
+      const doneBeforeSwitch = bridge.events.filter((event) => event.event === 'done').length;
+      bridge.send({ cmd: 'turn', workspace: workspaceB, text: '/scope' });
+      const confirmed = await bridge.waitFor(
+        (event) => event.event === 'ready' && event.workspace === workspaceB,
+      );
+      await bridge.waitFor(
+        () => bridge.events.filter((event) => event.event === 'done').length > doneBeforeSwitch,
+      );
+
+      assert.equal(confirmed.workspace, workspaceB,
+        'the bridge confirms the new workspace before the provider turn');
+      assert.equal(seen.length, 2, 'both scoped turns reached the provider');
+      assert.match(JSON.stringify(seen[0]), /SCOPE-COMMAND-FROM-A/);
+      assert.match(JSON.stringify(seen[1]), /SCOPE-COMMAND-FROM-B/,
+        'the first turn in B expands B command files');
+      assert.doesNotMatch(JSON.stringify(seen[1]), /SCOPE-COMMAND-FROM-A/,
+        'neither A command content nor A conversation history leaks into B');
+    } finally {
+      await bridge.stop();
+      server.close();
+      rmSync(workspaceA, { recursive: true, force: true });
+      rmSync(workspaceB, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('the governance gate reads the rules of the workspace it is given', () => {

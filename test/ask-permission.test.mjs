@@ -506,7 +506,7 @@ describe('approval broker — the request/response protocol', () => {
 
 /**
  * End-to-end through the real `helmion agent-bridge` process, driven by a
- * scripted OpenAI-compatible endpoint that asks for write_file on its first
+ * scripted OpenAI-compatible endpoint that asks for create_file on its first
  * turn. This is the only test that proves the whole chain: model tool call →
  * permission_request on stdout → permission_response on stdin → the file
  * appearing (or not) on disk.
@@ -538,7 +538,7 @@ describe('agent-bridge protocol end to end', () => {
                   id: 'call_write_1',
                   type: 'function',
                   function: {
-                    name: 'write_file',
+                    name: 'create_file',
                     arguments: JSON.stringify({ path: 'agent-wrote-this.txt', content: 'tool output' }),
                   },
                 }],
@@ -670,12 +670,18 @@ describe('agent-bridge protocol end to end', () => {
   test('ALLOW ONCE over the wire: the file is created', { timeout: 60_000 }, async () => {
     const r = await runBridgeScenario('allow-once');
     try {
-      assert.equal(r.request.tool, 'write_file');
-      assert.equal(r.request.summary, 'write_file: agent-wrote-this.txt (11 bytes)');
+      assert.equal(r.request.tool, 'create_file');
+      assert.equal(r.request.summary, 'create_file: agent-wrote-this.txt (11 bytes)');
       assert.equal(r.decisionEvent.decision, 'allow-once');
       assert.equal(r.decisionEvent.source, 'user', 'answered by the human, not by the timeout');
       assert.equal(existsSync(r.target), true, 'the approved tool call actually wrote the file');
       assert.equal(readFileSync(r.target, 'utf8'), 'tool output');
+      const toolResult = r.bridge.events.find(
+        (event) => event.event === 'tool_result' && event.name === 'create_file',
+      );
+      assert.equal(toolResult?.result?.contract, 'helmion.workbench.v1');
+      assert.equal(toolResult?.result?.kind, 'file_change');
+      assert.equal(toolResult?.result?.status, 'completed');
 
       // If permission_response were queued behind the in-flight turn, this could
       // only finish after the 20s ask timeout, and source would be "timeout".

@@ -50,13 +50,11 @@ const TIER_RANK = { fast: 0, standard: 1, deep: 2 };
  *   Aliases are used, not dated snapshots — the docs state the alias strings are
  *   complete as-is and warn against appending date suffixes.
  *
- * gemini — https://ai.google.dev/gemini-api/docs/models and .../docs/pricing
- *   gemini-2.5-flash-lite  cheapest of the stable 2.5 line
- *   gemini-2.5-flash       $0.30 in / $2.50 out
- *   gemini-2.5-pro         $1.25 in / $10 out
- *   The 3.x line exists, but its only Pro-tier entry (gemini-3.1-pro-preview)
- *   is marked Preview. Pinning a preview ID into a default path is how you get
- *   a 404 the week it graduates, so the stable 2.5 family is used throughout.
+ * gemini — resolved through Google's current stable aliases. The previous
+ *   pinned 2.5 ids produced NOT_FOUND after model availability changed. These
+ *   aliases were verified through this installation's authenticated ListModels
+ *   response and all advertise generateContent support. A later alias rollover
+ *   therefore follows Google's supported model instead of pinning a retired id.
  *
  * xai — https://docs.x.ai/docs/models
  *   grok-4.3  1M context, the cheaper current model  ($1.25 in / $2.50 out)
@@ -78,9 +76,9 @@ export const PROVIDER_TIER_MODELS = {
     deep: 'claude-opus-5',
   },
   gemini: {
-    fast: 'gemini-2.5-flash-lite',
-    standard: 'gemini-2.5-flash',
-    deep: 'gemini-2.5-pro',
+    fast: 'gemini-flash-lite-latest',
+    standard: 'gemini-flash-latest',
+    deep: 'gemini-pro-latest',
   },
   xai: {
     fast: 'grok-4.3',
