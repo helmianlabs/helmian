@@ -1,0 +1,141 @@
+<UserControl x:Class="Helmion.Desktop.ProjectActivityPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             IsVisibleChanged="ProjectActivityPanel_IsVisibleChanged">
+  <StackPanel>
+    <Border Style="{DynamicResource CardStyle}">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel Margin="0,0,18,0">
+            <TextBlock Text="History" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="Search recorded actions and results for the selected project."
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       TextWrapping="Wrap"
+                       Margin="0,6,0,0" />
+          </StackPanel>
+          <Border Grid.Column="1"
+                  Background="{DynamicResource PanelSubtleBrush}"
+                  BorderBrush="{DynamicResource StrokeBrush}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Padding="10,5"
+                  VerticalAlignment="Top">
+            <TextBlock x:Name="ActivityCountText"
+                       Text="0 RECORDED"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontSize="10"
+                       FontWeight="Bold" />
+          </Border>
+        </Grid>
+        <TextBlock x:Name="ActivityProjectText"
+                   Text="Select a project to inspect its activity."
+                   Foreground="{DynamicResource SoftTextBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,13,0,0" />
+        <Grid Margin="0,14,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="180" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <ComboBox x:Name="ActivityFilterBox"
+                    DisplayMemberPath="Label"
+                    SelectedValuePath="Id"
+                    Height="34"
+                    Padding="9,6"
+                    Background="White"
+                    Foreground="#17221F"
+                    BorderBrush="{DynamicResource StrokeBrush}"
+                    SelectionChanged="ActivityFilterBox_SelectionChanged"
+                    AutomationProperties.Name="Project activity type filter" />
+          <TextBox x:Name="ActivitySearchBox"
+                   Grid.Column="1"
+                   Margin="10,0,0,0"
+                   Padding="10,7"
+                   Background="{DynamicResource PanelInsetBrush}"
+                   Foreground="{DynamicResource TextBrush}"
+                   BorderBrush="{DynamicResource StrokeBrush}"
+                   ToolTip="Search history"
+                   KeyDown="ActivitySearchBox_KeyDown"
+                   AutomationProperties.Name="Search history" />
+          <Button Grid.Column="2"
+                  Content="Apply"
+                  Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                  Margin="10,0,0,0"
+                  Click="ActivityApplyButton_Click"
+                  AutomationProperties.Name="Apply history filters" />
+          <Button Grid.Column="3"
+                  Content="Clear"
+                  Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                  Margin="8,0,0,0"
+                  Click="ActivityClearButton_Click"
+                  AutomationProperties.Name="Clear history filters" />
+        </Grid>
+        <TextBlock x:Name="ActivityStatusText"
+                   Text="No project activity loaded."
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   FontSize="10"
+                   TextWrapping="Wrap"
+                   Margin="0,8,0,0" />
+      </StackPanel>
+    </Border>
+
+    <TextBlock x:Name="ActivityEmptyText"
+               Text="No project activity has been recorded yet."
+               Foreground="{DynamicResource MutedTextBrush}"
+               Margin="0,18,0,0" />
+    <ItemsControl x:Name="ActivityItems" Margin="0,14,0,0">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate>
+          <Border Style="{DynamicResource CardStyle}" Margin="0,0,0,10">
+            <StackPanel>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding KindLabel}"
+                           Foreground="{DynamicResource AccentBrush}"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           Margin="0,0,12,0" />
+                <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="2"
+                           Text="{Binding TimeLabel}"
+                           Foreground="{DynamicResource FaintTextBrush}"
+                           FontSize="9" />
+              </Grid>
+              <TextBlock Text="{Binding Detail}"
+                         Foreground="{DynamicResource SoftTextBrush}"
+                         TextWrapping="Wrap"
+                         Margin="0,8,0,0" />
+              <Grid Margin="0,9,0,0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding StatusLabel}"
+                           Foreground="{DynamicResource AmberBrush}"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           Margin="0,0,12,0" />
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="{Binding Source}"
+                             Foreground="{DynamicResource MutedTextBrush}"
+                             FontSize="9" />
+                  <TextBlock Text="{Binding EvidenceLabel}" Visibility="Collapsed" />
+                </StackPanel>
+              </Grid>
+            </StackPanel>
+          </Border>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+  </StackPanel>
+</UserControl>
