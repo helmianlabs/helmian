@@ -1,0 +1,203 @@
+<UserControl x:Class="Helmion.Desktop.ProjectApprovalsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             IsVisibleChanged="ProjectApprovalsPanel_IsVisibleChanged">
+  <StackPanel>
+    <Border Style="{DynamicResource CardStyle}">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel Margin="0,0,18,0">
+            <TextBlock Text="Needs attention" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="Review pending local decisions and completed results. Nothing here sends externally."
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       TextWrapping="Wrap"
+                       Margin="0,6,0,0" />
+          </StackPanel>
+          <Border Grid.Column="1"
+                  Background="{DynamicResource PanelSubtleBrush}"
+                  BorderBrush="{DynamicResource StrokeBrush}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Padding="10,5"
+                  VerticalAlignment="Top">
+            <TextBlock x:Name="ReviewCountText"
+                       Text="0 ACTIONABLE"
+                       Foreground="{DynamicResource AccentBrush}"
+                       FontSize="10"
+                       FontWeight="Bold" />
+          </Border>
+        </Grid>
+        <TextBlock x:Name="ReviewProjectText"
+                   Text="Select a project to inspect its review queue."
+                   Foreground="{DynamicResource SoftTextBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,13,0,0" />
+        <Grid Margin="0,14,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <ComboBox x:Name="ReviewFilterBox"
+                    DisplayMemberPath="Label"
+                    SelectedValuePath="Id"
+                    Height="34"
+                    Padding="9,6"
+                    Background="White"
+                    Foreground="#17221F"
+                    BorderBrush="{DynamicResource StrokeBrush}"
+                    SelectionChanged="ReviewFilterBox_SelectionChanged"
+                    AutomationProperties.Name="Project approval and review filter" />
+          <TextBlock Grid.Column="1"
+                     Text="All actions update append-only local project records. Nothing here sends to a provider."
+                     Foreground="{DynamicResource AmberBrush}"
+                     FontSize="10"
+                     TextWrapping="Wrap"
+                     VerticalAlignment="Center"
+                     Margin="12,0" />
+          <Button Grid.Column="2"
+                  Content="Refresh"
+                  Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                  Click="ReviewRefreshButton_Click"
+                  AutomationProperties.Name="Refresh project approvals and reviews" />
+        </Grid>
+        <TextBlock x:Name="ReviewStatusText"
+                   Text="No project review record loaded."
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   FontSize="10"
+                   TextWrapping="Wrap"
+                   Margin="0,8,0,0" />
+      </StackPanel>
+    </Border>
+
+    <TextBlock x:Name="ReviewEmptyText"
+               Text="No project review records match this filter."
+               Foreground="{DynamicResource MutedTextBrush}"
+               Margin="0,18,0,0" />
+
+    <StackPanel x:Name="ArtifactApprovalSection" Margin="0,18,0,0">
+      <TextBlock Text="Artifact approvals" Style="{DynamicResource SectionTitleStyle}" />
+      <TextBlock Text="Approve or deny the local request record. Approval does not generate, dispatch, or create an artifact."
+                 Foreground="{DynamicResource MutedTextBrush}"
+                 TextWrapping="Wrap"
+                 Margin="0,5,0,9" />
+      <ItemsControl x:Name="ArtifactApprovalItems">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Style="{DynamicResource CardStyle}" Margin="0,0,0,10">
+              <StackPanel>
+                <DockPanel LastChildFill="True">
+                  <TextBlock Text="ARTIFACT APPROVAL · LOCAL DECISION"
+                             Foreground="{DynamicResource AccentBrush}"
+                             FontSize="9"
+                             FontWeight="Bold"
+                             DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding UpdatedLabel}"
+                             Foreground="{DynamicResource FaintTextBrush}"
+                             FontSize="9"
+                             HorizontalAlignment="Right" />
+                </DockPanel>
+                <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" Margin="0,7,0,0" />
+                <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource SoftTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                <TextBlock Text="{Binding ProviderLabel}" Foreground="{DynamicResource AmberBrush}" FontSize="10" Margin="0,6,0,0" />
+                <TextBlock Text="{Binding Destination}" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" Margin="0,4,0,0" />
+                <TextBlock Text="{Binding EvidenceLabel}" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" TextWrapping="Wrap" Margin="0,4,0,0" />
+                <StackPanel Orientation="Horizontal" Margin="0,11,0,0">
+                  <Button Content="Approve locally"
+                          Tag="{Binding Id}"
+                          Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                          Click="ApproveArtifactButton_Click" />
+                  <Button Content="Deny locally"
+                          Tag="{Binding Id}"
+                          Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                          Margin="8,0,0,0"
+                          Click="DenyArtifactButton_Click" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+
+    <StackPanel x:Name="ConnectorReviewSection" Margin="0,18,0,0">
+      <TextBlock Text="Connector draft reviews" Style="{DynamicResource SectionTitleStyle}" />
+      <TextBlock Text="Local review is not approval. Slack and GitHub drafts remain unable to send even after they are marked reviewed."
+                 Foreground="{DynamicResource AmberBrush}"
+                 TextWrapping="Wrap"
+                 Margin="0,5,0,9" />
+      <ItemsControl x:Name="ConnectorReviewItems">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Style="{DynamicResource CardStyle}" Margin="0,0,0,10">
+              <StackPanel>
+                <DockPanel LastChildFill="True">
+                  <TextBlock Text="{Binding ReviewStateLabel}"
+                             Foreground="{DynamicResource AmberBrush}"
+                             FontSize="9"
+                             FontWeight="Bold"
+                             DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding UpdatedLabel}"
+                             Foreground="{DynamicResource FaintTextBrush}"
+                             FontSize="9"
+                             HorizontalAlignment="Right" />
+                </DockPanel>
+                <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" Margin="0,7,0,0" />
+                <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource SoftTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                <TextBlock Text="{Binding Destination}" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" Margin="0,5,0,0" />
+                <TextBlock Text="{Binding EvidenceLabel}" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" TextWrapping="Wrap" Margin="0,4,0,0" />
+                <StackPanel Orientation="Horizontal" Margin="0,11,0,0">
+                  <Button Content="Mark reviewed locally"
+                          Tag="{Binding Id}"
+                          IsEnabled="{Binding CanMarkReviewed}"
+                          Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                          Click="MarkConnectorReviewedButton_Click" />
+                  <Button Content="Withdraw draft"
+                          Tag="{Binding Id}"
+                          Style="{DynamicResource ConsoleNeutralButtonStyle}"
+                          Margin="8,0,0,0"
+                          Click="WithdrawConnectorDraftButton_Click" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+
+    <StackPanel x:Name="CompletedReviewSection" Margin="0,18,0,0">
+      <TextBlock Text="Completed decision history" Style="{DynamicResource SectionTitleStyle}" />
+      <TextBlock Text="Artifact decisions, connector local reviews, withdrawals, and typed project approval records."
+                 Foreground="{DynamicResource MutedTextBrush}"
+                 TextWrapping="Wrap"
+                 Margin="0,5,0,9" />
+      <ItemsControl x:Name="CompletedReviewItems">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Background="{DynamicResource PanelSubtleBrush}"
+                    BorderBrush="{DynamicResource StrokeBrush}"
+                    BorderThickness="1"
+                    CornerRadius="9"
+                    Padding="12"
+                    Margin="0,0,0,8">
+              <StackPanel>
+                <DockPanel LastChildFill="True">
+                  <TextBlock Text="{Binding TypeLabel}" Foreground="{DynamicResource AccentBrush}" FontSize="9" FontWeight="Bold" DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding UpdatedLabel}" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" HorizontalAlignment="Right" />
+                </DockPanel>
+                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Margin="0,6,0,0" />
+                <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource SoftTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                <TextBlock Text="{Binding StateLabel}" Foreground="{DynamicResource AmberBrush}" FontSize="9" FontWeight="Bold" Margin="0,6,0,0" />
+                <TextBlock Text="{Binding EvidenceLabel}" Foreground="{DynamicResource FaintTextBrush}" FontSize="9" TextWrapping="Wrap" Margin="0,3,0,0" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+  </StackPanel>
+</UserControl>
