@@ -1,54 +1,43 @@
-// Helmion Herald — the phone half.
+// Helmian Herald — first-party paired phone companion.
 //
-// A dependency-free HTTP server that serves ONE mobile-first page and ONE JSON
-// endpoint, so Troy can open Helmion's status on his phone over Wi-Fi without an
-// app store, a build step, or anything reaching the internet.
+// This server intentionally has only these route families:
+//   1. static in-memory PWA shell assets (no filesystem access),
+//   2. POST /api/pair (memory-only authentication state), and
+//   3. paired status/session reads and narrowly scoped, explicitly confirmed
+//      instruction/approval requests delegated to the desktop-owned bridge.
 //
-// THE SECURITY POSTURE, STATED PLAINLY, BECAUSE THIS OPENS A PORT:
-//
-//   READ-ONLY BY CONSTRUCTION. There is no route that writes anything. Not a
-//   disabled one, not a guarded one — there is no write path in this file or in
-//   digest.mjs. Approving a change from a phone means authenticating a human on
-//   a device, and that is a separate piece of work with its own failure modes.
-//
-//   A TOKEN IS REQUIRED, and it is minted per run — 32 random bytes, never
-//   stored, never reused. No token, no answer: every route returns 401 before it
-//   reads a single file.
-//
-//   IT BINDS WHERE IT IS TOLD, and defaults to LOOPBACK. Serving to the LAN is
-//   an explicit --host, because the difference between 127.0.0.1 and 0.0.0.0 is
-//   the difference between "my machine" and "everyone on this coffee shop's
-//   Wi-Fi", and that must never be a default nobody chose.
-//
-//   IT SERVES NO FILES. There is no static handler and no path parameter that
-//   reaches the filesystem. The only disk reads are the three ledgers digest.mjs
-//   knows about, at fixed paths under the workspace.
-//
-// The token is compared in CONSTANT TIME. A naive === on a secret leaks its
-// length and prefix to anyone patient enough to time the responses.
+// There is no generic prompt, file, tool, shell, install, or write route.
+// Authentication is checked before local reads or desktop delegation. Pairing
+// sessions are per-device, expiring, revocable, scope-limited, and nonce-
+// protected. The phone receives the session only as an HttpOnly cookie.
 
 import { createServer } from 'node:http';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 
 import { buildDigest } from './digest.mjs';
+import {
+  APPROVAL_DECIDE_SCOPE,
+  HeraldPairingRegistry,
+  SESSION_INSTRUCT_SCOPE,
+  SESSION_READ_SCOPE,
+  STATUS_READ_SCOPE,
+} from './pairing.mjs';
+import { sanitizeDigestForPhone } from './status.mjs';
+import {
+  HERALD_APP_JS,
+  HERALD_ICON,
+  HERALD_MANIFEST,
+  HERALD_SERVICE_WORKER,
+  renderMobileShell,
+} from './mobile-shell.mjs';
 
 export const DEFAULT_PORT = 7420;
+export const SESSION_COOKIE = 'helmian_herald_session';
+const MAX_REQUEST_BODY_BYTES = 16_384;
+const MAX_INSTRUCTION_LENGTH = 4_000;
 
-/** 32 bytes of real entropy, hex-encoded. Minted per run and never written down. */
-export function mintToken() {
-  return randomBytes(32).toString('hex');
-}
-
-/** Constant-time comparison that cannot throw on a length mismatch. */
-export function tokenMatches(expected, supplied) {
-  const a = Buffer.from(String(expected ?? ''), 'utf8');
-  const b = Buffer.from(String(supplied ?? ''), 'utf8');
-  if (a.length === 0 || a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
-
-/** Every LAN address this machine answers on, for the URL to hand the phone. */
+/** Every LAN address this machine answers on, for an explicitly requested URL. */
 export function lanAddresses() {
   const found = [];
   for (const entries of Object.values(networkInterfaces())) {
@@ -59,166 +48,318 @@ export function lanAddresses() {
   return found;
 }
 
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+function send(response, status, contentType, body, extraHeaders = {}) {
+  response.writeHead(status, {
+    'content-type': contentType,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+    'x-frame-options': 'DENY',
+    ...extraHeaders,
+  });
+  response.end(body);
+}
+
+function sendJson(response, status, value, extraHeaders = {}) {
+  send(response, status, 'application/json; charset=utf-8', JSON.stringify(value), extraHeaders);
+}
+
+function parseCookies(header) {
+  const cookies = new Map();
+  for (const part of String(header ?? '').split(';')) {
+    const separator = part.indexOf('=');
+    if (separator <= 0) continue;
+    const name = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    try { cookies.set(name, decodeURIComponent(value)); } catch { /* malformed cookie is absent */ }
+  }
+  return cookies;
+}
+
+async function readJsonBody(request) {
+  const contentType = String(request.headers['content-type'] ?? '').split(';')[0].trim();
+  if (contentType !== 'application/json') {
+    const error = new Error('Pairing requires application/json.');
+    error.status = 415;
+    throw error;
+  }
+
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > MAX_REQUEST_BODY_BYTES) {
+      const error = new Error('Request is too large.');
+      error.status = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    const error = new Error('Pairing request is not valid JSON.');
+    error.status = 400;
+    throw error;
+  }
+}
+
+function publicAsset(pathname) {
+  if (pathname === '/') {
+    return {
+      type: 'text/html; charset=utf-8',
+      body: renderMobileShell(),
+      headers: {
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; img-src 'self'",
+      },
+    };
+  }
+  if (pathname === '/app.js') {
+    return { type: 'text/javascript; charset=utf-8', body: HERALD_APP_JS };
+  }
+  if (pathname === '/sw.js') {
+    return { type: 'text/javascript; charset=utf-8', body: HERALD_SERVICE_WORKER };
+  }
+  if (pathname === '/manifest.webmanifest') {
+    return { type: 'application/manifest+json; charset=utf-8', body: HERALD_MANIFEST };
+  }
+  if (pathname === '/icon.svg') {
+    return { type: 'image/svg+xml; charset=utf-8', body: HERALD_ICON };
+  }
+  return null;
 }
 
 /**
- * The page. Server-rendered, no framework, no fetch on load — it works the
- * instant it arrives even on a bad signal, which is the whole point of a thing
- * you check from a sofa or a truck cab.
- */
-export function renderPage(digest, token) {
-  const s = digest.summary;
-  const tone = s.state === 'needs-you' ? '#e06c60' : s.state === 'unknown' ? '#c8a35a' : '#4cc38a';
-
-  const refusals = digest.advisory.items.filter((d) => !d.allowed);
-
-  const advisoryRows = refusals.length === 0
-    ? '<p class="muted">No refused changes.</p>'
-    : refusals.map((d) => `
-      <div class="card stop">
-        <div class="when">${escapeHtml(d.at ?? '')}</div>
-        <div class="title">${escapeHtml(d.summary)}</div>
-        <div class="why">${escapeHtml(d.why)}</div>
-        ${d.blocks.length ? `<div class="tag">BLOCK: ${escapeHtml(d.blocks.join(' · '))}</div>` : ''}
-        ${d.concerns.length ? `<div class="tag">CONCERN: ${escapeHtml(d.concerns.join(' · '))}</div>` : ''}
-        ${d.missing.length ? `<div class="tag">no answer from: ${escapeHtml(d.missing.join(', '))}</div>` : ''}
-      </div>`).join('');
-
-  const blockRows = digest.blocks.items.length === 0
-    ? '<p class="muted">Nothing blocked.</p>'
-    : digest.blocks.items.slice(0, 12).map((b) => `
-      <div class="card warn">
-        <div class="when">${escapeHtml(b.at ?? '')} · ${escapeHtml(b.layer)}</div>
-        <div class="mono">${escapeHtml(b.text)}</div>
-        <div class="tag">matched: ${escapeHtml(b.matched)}</div>
-      </div>`).join('');
-
-  return `<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="dark">
-<title>Helmion Herald</title>
-<style>
-:root{--bg:#0d1419;--panel:#101a22;--stroke:#263845;--ink:#f2fbff;--faint:#92a8b8}
-*{box-sizing:border-box}
-body{margin:0;padding:16px;background:var(--bg);color:var(--ink);
-  font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif;
-  padding-bottom:env(safe-area-inset-bottom)}
-h1{font-size:16px;margin:0 0 2px}
-h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin:22px 0 8px}
-.muted{color:var(--faint);font-size:13px}
-.head{border-left:5px solid ${tone};background:var(--panel);border-radius:0 12px 12px 0;padding:14px 16px}
-.state{font-size:11px;font-weight:800;letter-spacing:.09em;color:${tone}}
-.headline{font-size:19px;font-weight:700;margin:4px 0 6px}
-.card{background:var(--panel);border:1px solid var(--stroke);border-left-width:4px;
-  border-radius:0 10px 10px 0;padding:11px 13px;margin-bottom:9px}
-.card.stop{border-left-color:#e06c60}
-.card.warn{border-left-color:#c8a35a}
-.when{font-size:11px;color:var(--faint)}
-.title{font-weight:650;margin:3px 0}
-.why{font-size:13px;color:#c6d6e2}
-.tag{font-size:11.5px;color:var(--faint);margin-top:5px;word-break:break-word}
-.mono{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12.5px;
-  white-space:pre-wrap;word-break:break-word;margin:3px 0}
-footer{margin-top:26px;border-top:1px solid var(--stroke);padding-top:12px}
-a.refresh{display:block;text-align:center;margin-top:18px;padding:12px;border:1px solid var(--stroke);
-  border-radius:10px;color:var(--ink);text-decoration:none;font-weight:600}
-</style></head><body>
-
-<h1>Helmion Herald</h1>
-<p class="muted">${escapeHtml(digest.workspace)}</p>
-
-<div class="head">
-  <div class="state">${escapeHtml(s.state.toUpperCase())}</div>
-  <div class="headline">${escapeHtml(s.headline)}</div>
-  <div class="why">${escapeHtml(s.detail)}</div>
-</div>
-
-<h2>Write lease</h2>
-<div class="card ${digest.lease.state === 'active' ? '' : 'warn'}">
-  <div class="title">${escapeHtml(digest.lease.state)}</div>
-  <div class="why">${digest.lease.computed
-    ? escapeHtml(`${digest.lease.holder ?? '—'} · expires ${digest.lease.expiresAt ?? 'unknown'}`)
-    : escapeHtml(`could not read: ${digest.lease.reason}`)}</div>
-</div>
-
-<h2>Refused changes</h2>
-${advisoryRows}
-
-<h2>Blocked commands</h2>
-${blockRows}
-
-<a class="refresh" href="/?token=${encodeURIComponent(token)}">Refresh</a>
-
-<footer class="muted">
-  Read-only. This page cannot approve, run or change anything — it only reports what
-  Helmion already wrote to disk. Generated ${escapeHtml(digest.generatedAt)}.
-</footer>
-</body></html>`;
-}
-
-/**
- * Starts the Herald.
+ * Starts the local Herald companion service.
  *
- * @param {{workspace: string, host?: string, port?: number, token?: string}} options
- *   host defaults to LOOPBACK. Serving to the LAN is an explicit choice.
+ * @param {{
+ *   workspace: string,
+ *   host?: string,
+ *   port?: number,
+ *   pairingRegistry?: HeraldPairingRegistry,
+ *   digestBuilder?: typeof buildDigest,
+ *   pairingScopes?: string[],
+ *   desktopBridge?: object,
+ * }} options
  */
 export async function startHerald({
   workspace,
   host = '127.0.0.1',
   port = DEFAULT_PORT,
-  token = mintToken(),
+  pairingRegistry = new HeraldPairingRegistry(),
+  digestBuilder = buildDigest,
+  pairingScopes = [STATUS_READ_SCOPE],
+  desktopBridge = null,
 } = {}) {
   if (!workspace) throw new Error('Herald needs a workspace to report on');
+  const pairing = pairingRegistry.issuePairingCode({ scopes: pairingScopes });
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
 
-    // Authenticate BEFORE reading anything. A 401 must not depend on what is on
-    // disk, or the response time itself leaks whether a workspace exists.
-    const supplied = url.searchParams.get('token') ?? request.headers['x-helmion-token'];
-    if (!tokenMatches(token, supplied)) {
-      response.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end('Helmion Herald: a valid token is required.\n');
+    const asset = publicAsset(url.pathname);
+    if (asset) {
+      if (request.method !== 'GET') {
+        send(response, 405, 'text/plain; charset=utf-8', 'Helmian Herald shell is read-only.\n', { allow: 'GET' });
+        return;
+      }
+      send(response, 200, asset.type, asset.body, asset.headers);
       return;
     }
 
-    // No route reads a path from the request. There is no static handler.
-    if (request.method !== 'GET') {
-      response.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end('Helmion Herald is read-only.\n');
-      return;
-    }
-
-    try {
-      const digest = await buildDigest(workspace);
-      if (url.pathname === '/api/digest') {
-        response.writeHead(200, {
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'no-store',
+    if (url.pathname === '/api/pair') {
+      if (request.method !== 'POST') {
+        sendJson(response, 405, { error: 'method_not_allowed' }, { allow: 'POST' });
+        return;
+      }
+      try {
+        const body = await readJsonBody(request);
+        const result = pairingRegistry.pair({ code: body?.code, deviceId: body?.deviceId });
+        if (!result.ok) {
+          sendJson(response, 401, { error: 'pairing_refused', reason: result.reason, message: 'Pairing was refused.' });
+          return;
+        }
+        const maxAge = Math.max(0, Math.floor((Date.parse(result.expiresAt) - Date.now()) / 1000));
+        sendJson(response, 200, {
+          paired: true,
+          deviceId: result.deviceId,
+          scope: result.scope,
+          scopes: result.scopes,
+          expiresAt: result.expiresAt,
+        }, {
+          'set-cookie': `${SESSION_COOKIE}=${encodeURIComponent(result.token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`,
         });
-        response.end(JSON.stringify(digest, null, 2));
+      } catch (error) {
+        sendJson(response, error?.status ?? 400, { error: 'invalid_pairing_request', message: error.message });
+      }
+      return;
+    }
+
+    const authorize = (scope) => {
+      const token = parseCookies(request.headers.cookie).get(SESSION_COOKIE);
+      return pairingRegistry.authorize({
+        token,
+        deviceId: request.headers['x-helmian-device-id'],
+        nonce: request.headers['x-helmian-nonce'],
+        scope,
+      });
+    };
+
+    const requireAuthorization = (scope) => {
+      const authorization = authorize(scope);
+      if (!authorization.ok) {
+        sendJson(response, 401, {
+          error: 'pairing_required',
+          reason: authorization.reason,
+          message: 'A current device pairing with the required scope is required.',
+        });
+        return null;
+      }
+      return authorization;
+    };
+
+    if (url.pathname === '/api/status') {
+      if (request.method !== 'GET') {
+        sendJson(response, 405, { error: 'read_only' }, { allow: 'GET' });
         return;
       }
 
-      response.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8',
-        'cache-control': 'no-store',
-        // It renders its own markup and loads nothing. Say so.
-        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'",
-        'referrer-policy': 'no-referrer',
-      });
-      response.end(renderPage(digest, token));
-    } catch (error) {
-      // A failure here must not read as a calm page.
-      response.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end(`Helmion Herald could not build a digest: ${error.message}\n`);
+      // Authentication and replay denial occur before the digest builder can
+      // touch the fixed local status ledgers.
+      if (!requireAuthorization(STATUS_READ_SCOPE)) return;
+
+      try {
+        const digest = await digestBuilder(workspace);
+        sendJson(response, 200, sanitizeDigestForPhone(digest));
+      } catch {
+        // Local read failures stay generic at the phone boundary.
+        sendJson(response, 503, {
+          error: 'status_unavailable',
+          message: 'Local Helmian status could not be computed. This is not an all-clear.',
+        });
+      }
+      return;
     }
+
+    if (url.pathname === '/api/session') {
+      if (request.method !== 'GET') {
+        sendJson(response, 405, { error: 'method_not_allowed' }, { allow: 'GET' });
+        return;
+      }
+      const authorization = requireAuthorization(SESSION_READ_SCOPE);
+      if (!authorization) return;
+      if (!await desktopBridge?.isAvailable?.()) {
+        sendJson(response, 503, { error: 'desktop_unavailable', message: 'Helmian Desktop is not available.' });
+        return;
+      }
+      const context = await desktopBridge.getSessionContext({ deviceId: authorization.deviceId });
+      sendJson(response, 200, {
+        project: context.project,
+        session: context.session,
+        agent: context.agent,
+        guard: context.guard,
+        outputs: Array.isArray(context.outputs) ? context.outputs.slice(-20) : [],
+        approvals: Array.isArray(context.approvals) ? context.approvals : [],
+        voice: context.voice ?? { available: false, reason: 'Voice is not available from this desktop session.' },
+      });
+      return;
+    }
+
+    if (url.pathname === '/api/instructions') {
+      if (request.method !== 'POST') {
+        sendJson(response, 405, { error: 'method_not_allowed' }, { allow: 'POST' });
+        return;
+      }
+      const authorization = requireAuthorization(SESSION_INSTRUCT_SCOPE);
+      if (!authorization) return;
+      if (!await desktopBridge?.isAvailable?.()) {
+        sendJson(response, 503, { error: 'desktop_unavailable', message: 'Helmian Desktop is not available; no instruction was sent.' });
+        return;
+      }
+      try {
+        const body = await readJsonBody(request);
+        const text = String(body?.text ?? '').trim();
+        if (body?.confirmed !== true || text.length === 0 || text.length > MAX_INSTRUCTION_LENGTH) {
+          sendJson(response, 400, { error: 'invalid_instruction', message: 'Review and explicitly confirm a 1–4000 character instruction.' });
+          return;
+        }
+        const context = await desktopBridge.getSessionContext({ deviceId: authorization.deviceId });
+        if (body.projectId !== context.project?.id || body.sessionId !== context.session?.id) {
+          sendJson(response, 409, { error: 'context_changed', message: 'The selected project or session changed. Review again before sending.' });
+          return;
+        }
+        const command = {
+          id: randomUUID(),
+          kind: 'user_instruction',
+          deviceId: authorization.deviceId,
+          projectId: body.projectId,
+          sessionId: body.sessionId,
+          text,
+          confirmed: true,
+          submittedAt: new Date().toISOString(),
+        };
+        await desktopBridge.audit?.({ ...command, event: 'remote_instruction_requested' });
+        const result = await desktopBridge.submitInstruction(command);
+        await desktopBridge.audit?.({ ...command, event: 'remote_instruction_result', result: result?.state ?? 'unknown' });
+        sendJson(response, result?.accepted === true ? 202 : 409, {
+          instructionId: command.id,
+          accepted: result?.accepted === true,
+          state: result?.state ?? 'refused',
+          message: result?.message ?? 'The desktop did not accept the instruction.',
+        });
+      } catch (error) {
+        sendJson(response, error?.status ?? 400, { error: 'invalid_instruction', message: error.message });
+      }
+      return;
+    }
+
+    const approvalMatch = url.pathname.match(/^\/api\/approvals\/([A-Za-z0-9._:-]{1,128})\/decision$/);
+    if (approvalMatch) {
+      if (request.method !== 'POST') {
+        sendJson(response, 405, { error: 'method_not_allowed' }, { allow: 'POST' });
+        return;
+      }
+      const authorization = requireAuthorization(APPROVAL_DECIDE_SCOPE);
+      if (!authorization) return;
+      if (!await desktopBridge?.isAvailable?.()) {
+        sendJson(response, 503, { error: 'desktop_unavailable', message: 'Helmian Desktop is not available; no decision was applied.' });
+        return;
+      }
+      try {
+        const body = await readJsonBody(request);
+        if (body?.confirmed !== true || !['allow-once', 'deny'].includes(body?.decision)) {
+          sendJson(response, 400, { error: 'invalid_decision', message: 'Review and confirm Allow once or Deny.' });
+          return;
+        }
+        const context = await desktopBridge.getSessionContext({ deviceId: authorization.deviceId });
+        if (body.projectId !== context.project?.id || body.sessionId !== context.session?.id) {
+          sendJson(response, 409, { error: 'context_changed', message: 'The selected project or session changed. Review again.' });
+          return;
+        }
+        const decision = {
+          id: randomUUID(), approvalId: approvalMatch[1], decision: body.decision,
+          deviceId: authorization.deviceId, projectId: body.projectId, sessionId: body.sessionId,
+          confirmed: true,
+          decidedAt: new Date().toISOString(),
+        };
+        await desktopBridge.audit?.({ ...decision, event: 'remote_approval_requested' });
+        const result = await desktopBridge.decideApproval(decision);
+        await desktopBridge.audit?.({ ...decision, event: 'remote_approval_result', result: result?.state ?? 'unknown' });
+        sendJson(response, result?.accepted === true ? 200 : 409, {
+          decisionId: decision.id,
+          accepted: result?.accepted === true,
+          state: result?.state ?? 'refused',
+          message: result?.message ?? 'The desktop did not accept the decision.',
+        });
+      } catch (error) {
+        sendJson(response, error?.status ?? 400, { error: 'invalid_decision', message: error.message });
+      }
+      return;
+    }
+
+    // No catch-all digest and no static filesystem handler. Prompt, file, tool,
+    // shell, write, approval, and traversal-looking routes all end here.
+    sendJson(response, 404, { error: 'route_not_found' });
   });
 
   await new Promise((resolve, reject) => {
@@ -228,13 +369,15 @@ export async function startHerald({
 
   const actual = server.address();
   const urls = (host === '0.0.0.0' ? lanAddresses() : [host])
-    .map((address) => `http://${address}:${actual.port}/?token=${token}`);
+    .map((address) => `http://${address}:${actual.port}/`);
 
   return {
-    token,
     host,
     port: actual.port,
     urls,
+    pairingCode: pairing.code,
+    pairingExpiresAt: pairing.expiresAt,
+    revokeDevice: (deviceId) => pairingRegistry.revokeDevice(deviceId),
     async close() {
       await new Promise((resolve) => server.close(resolve));
     },
