@@ -25,6 +25,22 @@ public sealed record ProtectedProviderProfileDescriptor(
 
 public static class BuiltInProviderProfiles
 {
+    public const string OpenAiImagesProfileId = "openai-images";
+
+    public static ProviderProfileManifest OpenAiImages(DateTimeOffset updatedAt)
+    {
+        return new ProviderProfileManifest(
+            Version: 1,
+            Id: OpenAiImagesProfileId,
+            AdapterId: "openai-images",
+            DisplayName: "OpenAI Images API",
+            AuthenticationClass: "bearer-api-key",
+            CredentialCustody: "Windows CurrentUser DPAPI · Helmion Local Service only",
+            Target: null,
+            HasProtectedMaterial: true,
+            UpdatedAt: updatedAt);
+    }
+
     public static ProviderProfileManifest NeonDevelopment(DateTimeOffset updatedAt)
     {
         return new ProviderProfileManifest(
@@ -192,6 +208,47 @@ public sealed partial class ProtectedProviderProfileStore
         return RedactedDescriptor(manifest);
     }
 
+    public bool IsConfigured(string profileId, string expectedAdapterId)
+    {
+        ValidateProfileId(profileId);
+        if (string.IsNullOrWhiteSpace(expectedAdapterId))
+        {
+            throw new ArgumentException("Expected adapter ID is required", nameof(expectedAdapterId));
+        }
+
+        try
+        {
+            var directory = ProfileDirectory(profileId);
+            RejectReparsePoint(directory);
+            var cipherPath = ProfileFile(directory, CiphertextFileName);
+            var manifestPath = ProfileFile(directory, ManifestFileName);
+            if (!File.Exists(cipherPath) || new FileInfo(cipherPath).Length == 0
+                || !File.Exists(manifestPath))
+            {
+                return false;
+            }
+
+            var manifest = JsonSerializer.Deserialize<ProviderProfileManifest>(
+                File.ReadAllText(manifestPath, Encoding.UTF8));
+            if (manifest is null)
+            {
+                return false;
+            }
+            ValidateManifest(manifest);
+            return manifest.HasProtectedMaterial
+                   && string.Equals(manifest.Id, profileId, StringComparison.Ordinal)
+                   && string.Equals(manifest.AdapterId, expectedAdapterId, StringComparison.Ordinal);
+        }
+        catch (Exception error) when (error is IOException
+                                      or UnauthorizedAccessException
+                                      or JsonException
+                                      or InvalidDataException
+                                      or DirectoryNotFoundException)
+        {
+            return false;
+        }
+    }
+
     private static ProtectedProviderProfileDescriptor RedactedDescriptor(
         ProviderProfileManifest manifest)
     {
@@ -242,6 +299,18 @@ public sealed partial class ProtectedProviderProfileStore
         {
             throw new InvalidDataException(
                 "Neon Development profile target binding does not match the isolated development target");
+        }
+
+        if (string.Equals(
+                manifest.Id,
+                BuiltInProviderProfiles.OpenAiImagesProfileId,
+                StringComparison.Ordinal)
+            && (manifest.AdapterId != "openai-images"
+                || manifest.AuthenticationClass != "bearer-api-key"
+                || manifest.Target is not null))
+        {
+            throw new InvalidDataException(
+                "OpenAI Images profile does not match the fixed official adapter binding");
         }
     }
 

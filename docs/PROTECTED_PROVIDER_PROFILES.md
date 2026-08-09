@@ -23,9 +23,11 @@ The default future storage root is:
 %LOCALAPPDATA%\Helmion\provider-profiles\
 ```
 
-The normal application does not instantiate the store or create this directory
-in this slice. No enrollment command, renderer form, named-pipe command, CLI
-argument, environment lookup, or provider invocation has been added.
+The desktop renderer does not instantiate the store or create this directory.
+The Helmion Local Service now instantiates it for the OpenAI Images status and
+approved-generation path, and owns a one-time redirected-standard-input
+enrollment command. No renderer form, pipe credential payload, environment
+lookup, or unapproved provider invocation has been added.
 
 Tests use disposable fixture bytes in a temporary directory and prove that the
 fixture plaintext is absent from stored files and can round-trip only through
@@ -39,7 +41,7 @@ profile.
 | Helmion profile | Authentication class | Current status |
 |---|---|---|
 | Codex CLI | provider-owned ChatGPT/account browser sign-in | documented; detection/status test not implemented |
-| OpenAI API | bearer API key or future supported short-lived server credential | protected store ready; no key enrolled |
+| OpenAI Images API | bearer API key or future supported short-lived server credential | protected adapter and one-time enrollment ready; no key or provider access is claimed by source state |
 | Claude Code CLI | not yet verified for this slice | documentation/isolation gate |
 | Gemini CLI | provider-owned Google account browser sign-in | documented; detection/status test not implemented |
 | Gemini API | Gemini authorization API key | protected store ready; no key enrolled |
@@ -126,16 +128,61 @@ The future first test has two read-only probes:
 
 No Neon connection or canary was run in this slice.
 
+## OpenAI Images activation
+
+Artifact Studio image generation now uses the official OpenAI Images HTTPS
+endpoint through the Helmion Local Service. The desktop sends only the selected
+project path, request ID, and approval evidence hash over the current-user pipe.
+The service rereads the project ledger, rechecks the exact approval and evidence,
+loads the `openai-images` DPAPI profile, and keeps the bearer credential out of
+the desktop process and pipe payload.
+
+One-time enrollment is deliberately outside the desktop UI. Build the local
+service, then run:
+
+```powershell
+& .\desktop\scripts\enroll-openai-images.ps1
+```
+
+The script uses a hidden secure prompt and streams the credential only to the
+local service's standard input. The key is not placed in command arguments,
+PowerShell history, project files, `.env`, Helmion settings, logs, or request
+history. The service validates it and stores only CurrentUser-DPAPI ciphertext
+under `%LOCALAPPDATA%\Helmion\provider-profiles\openai-images\`.
+
+Generation is a separate action that appears only after local approval. The
+adapter fixes one low-quality 1024×1024 output per request, bounds response and
+decoded media sizes, verifies PNG/JPEG signatures, atomically replaces the
+approved destination under `.helmion/artifacts`, and records the output SHA-256,
+provider request ID, model, media type, size, activity event, and Preview entry.
+A durable delivered state is idempotent; repeating the action returns the stored
+receipt without another provider call.
+
+The Integrations status contract keeps image and video generation separate from
+chat providers and from each other. A protected image credential is reported as
+`configured-not-tested`, not as provider availability. Positive availability
+requires provider-test evidence. Video reports `provider-not-selected` in this
+build: there is no video adapter, model, credential, test, or availability
+claim. Both lanes require an explicit approval policy and cost boundary.
+
+OpenAI may require API Organization Verification before GPT Image models can be
+used. The enrolled API key must belong to an OpenAI API project permitted to
+call `POST /v1/images/generations`, with `gpt-image-2` access and sufficient
+billing/quota. Enrollment validates only the local credential shape; it does
+not test those external account conditions and does not incur a provider call.
+
+The request shape and current `gpt-image-2` route were verified against the
+official [image generation guide](https://developers.openai.com/api/docs/guides/image-generation)
+and [Images API reference](https://developers.openai.com/api/reference/resources/images).
+
 ## Next implementation gate
 
-Before credential enrollment or a canary:
+Before a provider canary or wider activation:
 
 1. threat-model the local enrollment IPC, screen privacy, crash handling, and
    same-user process risks;
-2. add one-time service-owned enrollment with no echo/history/logging and
-   explicit profile/target review;
-3. add per-profile revocation and replacement without returning the old value;
-4. implement the typed non-mutating status/connection test for exactly one
+2. add per-profile revocation and replacement without returning the old value;
+3. implement the typed non-mutating status/connection test for exactly one
    adapter;
-5. bind the result to evidence and display only redacted fields; and
-6. run an isolated read-only canary before exposing any governed write.
+4. bind the result to evidence and display only redacted fields; and
+5. run an isolated read-only canary before claiming provider availability.

@@ -10,6 +10,13 @@ namespace Helmion.Desktop.Core;
 /// <summary>
 /// Streams chat completions from <b>xAI Grok</b> (api.x.ai) — not Groq, not Llama.
 /// OpenAI-compatible <c>/v1/chat/completions</c> endpoint.
+///
+/// <para>
+/// Two ways to authenticate, in this order: a SuperGrok subscription signed in through
+/// <see cref="SuperGrokCredentialProvider"/> (OAuth bearer), or the pasted xAI API key. Both
+/// go out as <c>Authorization: Bearer</c>; the OAuth path adds the client header the official
+/// Grok CLI sends. <see cref="LastAuthStatus"/> records which one the last request used.
+/// </para>
 /// </summary>
 public sealed class GrokChatSession : IDisposable
 {
@@ -18,27 +25,77 @@ public sealed class GrokChatSession : IDisposable
     /// <summary>Current xAI flagship chat model (Grok 4.5). Not a Groq/Llama id.</summary>
     public const string DefaultModelId = "grok-4.5";
 
+    /// <summary>
+    /// Client marker the official Grok CLI sends alongside a subscription bearer token
+    /// (read out of grok.exe v0.2.118 next to its Authorization header handling).
+    /// </summary>
+    public const string SubscriptionClientHeader = "X-XAI-Token-Auth";
+    public const string SubscriptionClientHeaderValue = "xai-grok-cli";
+
     private readonly HttpClient _http;
     private readonly List<ChatMessage> _history = [];
     private string _apiKey;
+    private SuperGrokCredentialProvider? _superGrok;
 
-    public GrokChatSession(string apiKey)
+    public GrokChatSession(string apiKey, SuperGrokCredentialProvider? superGrok = null)
     {
         _apiKey = apiKey;
+        _superGrok = superGrok;
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
     }
 
     public void UpdateApiKey(string apiKey) => _apiKey = apiKey;
 
-    public bool HasKey => !string.IsNullOrWhiteSpace(_apiKey);
+    /// <summary>Attach (or detach) the SuperGrok subscription credential source.</summary>
+    public void UpdateSuperGrok(SuperGrokCredentialProvider? superGrok) => _superGrok = superGrok;
+
+    /// <summary>True when EITHER a SuperGrok session or an API key can authenticate a request.</summary>
+    public bool HasKey => !string.IsNullOrWhiteSpace(_apiKey) || _superGrok?.IsSignedIn == true;
+
+    /// <summary>
+    /// How the most recent request authenticated ("Using SuperGrok subscription" /
+    /// "Using API key"), or null before the first request. Never contains a token.
+    /// </summary>
+    public string? LastAuthStatus { get; private set; }
+
+    /// <summary>
+    /// Resolve the credential for the next request without sending one, so Settings can show
+    /// the live status.
+    /// </summary>
+    public Task<GrokCredential> DescribeAuthAsync(CancellationToken cancellationToken = default) =>
+        _superGrok is null
+            ? Task.FromResult(string.IsNullOrWhiteSpace(_apiKey)
+                ? new GrokCredential(GrokAuthMode.None, null, "No xAI credential configured.")
+                : new GrokCredential(GrokAuthMode.ApiKey, _apiKey, "Using API key"))
+            : _superGrok.ResolveAsync(_apiKey, cancellationToken);
 
     public async IAsyncEnumerable<string> SendAsync(
         string userText,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(_apiKey))
+        GrokCredential credential;
+        string? authError = null;
+        try
         {
-            yield return "[No xAI Grok API key configured — enter XAI/Grok key in Settings]";
+            credential = await DescribeAuthAsync(cancellationToken);
+        }
+        catch (SuperGrokAuthException ex)
+        {
+            authError = $"[SuperGrok sign-in problem: {ex.Message}]";
+            credential = null!;
+        }
+
+        if (authError != null)
+        {
+            yield return authError;
+            yield break;
+        }
+
+        LastAuthStatus = credential.StatusLabel;
+
+        if (!credential.CanSend)
+        {
+            yield return $"[{credential.StatusLabel}]";
             yield break;
         }
 
@@ -56,7 +113,13 @@ public sealed class GrokChatSession : IDisposable
         {
             Content = JsonContent.Create(requestBody, options: JsonOptions)
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Token);
+        if (credential.Mode == GrokAuthMode.SuperGrok)
+        {
+            request.Headers.TryAddWithoutValidation(
+                SubscriptionClientHeader,
+                SubscriptionClientHeaderValue);
+        }
 
         HttpResponseMessage response;
         string? connectionError = null;
@@ -82,7 +145,19 @@ public sealed class GrokChatSession : IDisposable
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            yield return $"[xAI Grok API error {(int)response.StatusCode}: {body[..Math.Min(200, body.Length)]}]";
+            var detail = body[..Math.Min(200, body.Length)];
+
+            // 401/403 on the subscription path means the token was revoked or is not entitled.
+            // Say so, and say what to do — an OAuth bearer failing looks identical to a bad API
+            // key otherwise, and the user has no way to tell which credential was even used.
+            var hint = credential.Mode == GrokAuthMode.SuperGrok
+                && response.StatusCode is System.Net.HttpStatusCode.Unauthorized
+                    or System.Net.HttpStatusCode.Forbidden
+                ? " — your SuperGrok sign-in was rejected. Sign out and sign in again in "
+                    + "Settings, or paste an xAI API key."
+                : "";
+
+            yield return $"[xAI Grok API error {(int)response.StatusCode} · {credential.StatusLabel}: {detail}{hint}]";
             yield break;
         }
 
