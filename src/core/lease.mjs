@@ -29,11 +29,11 @@
 //
 // HOW THE MUTUAL EXCLUSION ACTUALLY WORKS
 //
-// `open(path, 'wx')` — exclusive create. The OS either creates the file or
-// fails with EEXIST, in one syscall. There is no read-then-write window for a
-// second process to slip through, which is the bug every naive
-// "if (!exists) write" lock has. Everything else here is bookkeeping on top of
-// that one guarantee.
+// A fully written same-directory temporary record is published with an
+// exclusive hard link. The OS either creates the final name or fails with
+// EEXIST in one syscall. There is no read-then-write window and no visible
+// partial JSON record. Everything else here is bookkeeping on top of that one
+// guarantee.
 //
 // FAILURE POSTURE: CLOSED.
 //
@@ -45,14 +45,12 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import {
-  closeSync,
+  linkSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
 import path from 'node:path';
 
@@ -198,6 +196,26 @@ function writeRecordAtomically(file, record) {
   }
 }
 
+// Publish the first lease only after its complete bytes exist. Opening the
+// final path with `wx` and then writing it gives exclusive ownership, but it
+// briefly exposes a zero-length/partial JSON file to the losing processes.
+// A hard link created from a fully written same-directory temporary file is
+// also exclusive (EEXIST names the loser) and the target is complete at the
+// instant it becomes visible.
+function createRecordExclusively(file, record) {
+  const temporary = `${file}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}.create`;
+  writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+  try {
+    linkSync(temporary, file);
+    return true;
+  } catch (err) {
+    if (err.code === 'EEXIST') return false;
+    throw err;
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
 /**
  * Take the lease for this project, or fail because somebody else holds it.
  *
@@ -231,23 +249,18 @@ export function acquireLease(workspace, {
     tookOverFrom: null,
   };
 
-  // THE ATOMIC STEP. Exclusive create: the OS decides the winner, and it
-  // decides in one syscall. Two processes racing here cannot both succeed.
+  // THE ATOMIC STEP. The full temporary record is linked to the final name
+  // exclusively, so the OS decides one winner in one syscall and no loser can
+  // observe half-written JSON.
   try {
-    const fd = openSync(file, 'wx');
-    try {
-      writeSync(fd, `${JSON.stringify(record, null, 2)}\n`);
-    } finally {
-      closeSync(fd);
+    if (createRecordExclusively(file, record)) {
+      return { record, tookOverFrom: null };
     }
-    return { record, tookOverFrom: null };
   } catch (err) {
-    if (err.code !== 'EEXIST') {
-      throw new LeaseUnreadableError(
-        `the lease at ${file} could not be created (${err.message})`,
-        { file, code: err.code },
-      );
-    }
+    throw new LeaseUnreadableError(
+      `the lease at ${file} could not be created (${err.message})`,
+      { file, code: err.code },
+    );
   }
 
   // Somebody got there first. Whether we may take it over is a question about

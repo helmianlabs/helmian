@@ -624,7 +624,10 @@ test('THE CONTENT SCRIPT NAMES THE SITE ON EVERY REAL SCAN, AND NOT ON ITS PROBE
     disconnect() {}
   }
 
+  // Same order as manifest.json content_scripts — omit prompt-risk and
+  // startPromptGuard throws before selfTest / page scan ever run.
   await loadContentScripts([
+    'content/prompt-risk.js',
     'content/extract.js',
     'content/stream-watch.js',
     'content/ui.js',
@@ -648,7 +651,9 @@ test('THE CONTENT SCRIPT NAMES THE SITE ON EVERY REAL SCAN, AND NOT ON ITS PROBE
     },
   });
 
-  await new Promise((done) => { setTimeout(done, 80); });
+  // Self-test is async + sendMessage uses setTimeout(0); stream-watch debounce
+  // can add a page pass. 80ms was tight under load and flaked to zero messages.
+  await new Promise((done) => { setTimeout(done, 400); });
 
   const scans = sent.filter((message) => message.type === 'helmion:scan');
   assert.ok(scans.length >= 2, `expected a self-test and a page scan, saw ${scans.length}`);

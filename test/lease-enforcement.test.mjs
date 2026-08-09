@@ -59,13 +59,19 @@ function plantForeignLease(dir, { expiresInMs = DEFAULT_TTL_MS, token = 'rival-t
 
 const full = (ws) => createToolRuntime(ws, { permissionMode: 'full' });
 
-test('the policy set is the two mutating tools, and only those', () => {
-  assert.deepEqual([...LEASE_REQUIRED_TOOLS].sort(), ['run_command', 'write_file']);
+test('the policy set covers legacy and typed workbench mutations, and only those', () => {
+  assert.deepEqual([...LEASE_REQUIRED_TOOLS].sort(), [
+    'create_file', 'edit_file', 'run_command', 'run_project_task',
+    'start_project_preview', 'stop_project_preview', 'write_file',
+  ]);
   assert.equal(requiresWriteLease('write_file'), true);
   assert.equal(requiresWriteLease('run_command'), true);
+  assert.equal(requiresWriteLease('create_file'), true);
+  assert.equal(requiresWriteLease('edit_file'), true);
+  assert.equal(requiresWriteLease('run_project_task'), true);
   // Reading cannot conflict with another writer, and requiring a lease to read
   // would make a second session useless rather than safe.
-  for (const readTool of ['read_file', 'list_dir', 'search_text']) {
+  for (const readTool of ['workspace_context', 'read_file', 'list_dir', 'search_text']) {
     assert.equal(requiresWriteLease(readTool), false, `${readTool} must not need a lease`);
   }
 });

@@ -87,6 +87,26 @@ export function summarizeToolCall(tool, args, maxLength = 220) {
       body = `write_file: ${String(a.path ?? '')} (${bytes} bytes)`;
       break;
     }
+    case 'create_file': {
+      const bytes = Buffer.byteLength(String(a.content ?? ''), 'utf8');
+      body = `create_file: ${String(a.path ?? '')} (${bytes} bytes)`;
+      break;
+    }
+    case 'edit_file':
+      body = `edit_file: ${String(a.path ?? '')} (exact replacement)`;
+      break;
+    case 'run_project_task':
+      body = `run_project_task: ${String(a.task_id ?? '')}`;
+      break;
+    case 'start_project_preview':
+      body = `start_project_preview: ${String(a.path ?? '')}`;
+      break;
+    case 'stop_project_preview':
+      body = 'stop_project_preview';
+      break;
+    case 'workspace_context':
+      body = 'workspace_context';
+      break;
     case 'read_file':
       body = `read_file: ${String(a.path ?? '')}`;
       break;

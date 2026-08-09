@@ -44,6 +44,7 @@ export async function runAgentTurn({
   // HELMION_MODEL_TIER > the router's own classification.
   tier: explicitTier = null,
   modelOverride = null,
+  images = [],
   envTier = readEnvTier(),
   // Interactive replies fail closed to the selected provider. Local Qwen is
   // reserved for the schema-validated, no-tools micro-task runner under
@@ -125,6 +126,7 @@ export async function runAgentTurn({
       // routing decision, NOT providerId 'custom' — a user-supplied LM Studio /
       // vLLM / DeepSeek endpoint is also 'custom' and was never tested here.
       reasoningEffortNone: Boolean(choice.isLocal),
+      images: round === 0 ? images : [],
       signal: choice.isLocal && active.timeoutMs
         ? AbortSignal.timeout(active.timeoutMs)
         : undefined,
@@ -237,6 +239,7 @@ export async function runAgentTurn({
         args: tc.arguments || {},
       });
       const result = await runtime.execute(tc.name, tc.arguments);
+      const workbenchResult = parseWorkbenchResult(result);
       const clipped = result.length > 12_000
         ? `${result.slice(0, 12_000)}\n…(truncated)`
         : result;
@@ -245,6 +248,7 @@ export async function runAgentTurn({
         name: tc.name,
         preview: clipped.split('\n')[0].slice(0, 200),
         bytes: clipped.length,
+        result: workbenchResult,
       });
       results.push(clipped);
     }
@@ -340,6 +344,21 @@ export async function runAgentTurn({
   return { text: `${wrapText}${footer}`, messages };
 }
 
+function parseWorkbenchResult(value) {
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed?.contract !== 'helmion.workbench.v1' || typeof parsed?.kind !== 'string') return null;
+    // The structured host/UI event is status, not an alternate transcript.
+    // Bound task output here even though provider tool output has its own cap.
+    if (typeof parsed.output === 'string' && parsed.output.length > 4_000) {
+      parsed.output = `${parsed.output.slice(0, 4_000)}\n…(workbench status truncated)`;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Create agent session state for CLI agent.
  * Defaults to full tools (read + write + run_command) unless overridden.
@@ -350,7 +369,7 @@ export function createSessionState(workspaceRoot, options = {}) {
   const permissionMode = options.permissionMode ?? 'full';
   const runtime = createToolRuntime(workspaceRoot, { ...options, permissionMode });
   const messages = [
-    { role: 'system', content: systemPrompt(runtime.root) },
+    { role: 'system', content: systemPrompt(runtime.root, Object.keys(runtime.tools)) },
   ];
   return { runtime, messages, permissionMode: runtime.permissionMode };
 }
@@ -360,9 +379,10 @@ export function resetSessionState(state, workspaceRoot, options = {}) {
   // Forward the whole option bag exactly like createSessionState does. Dropping
   // it here silently detached the ask-mode approver on every reconfigure, which
   // fails closed (every tool denied) rather than loudly.
+  void state.runtime?.dispose?.();
   state.runtime = createToolRuntime(workspaceRoot, { ...options, permissionMode });
   state.permissionMode = state.runtime.permissionMode;
   state.messages = [
-    { role: 'system', content: systemPrompt(state.runtime.root) },
+    { role: 'system', content: systemPrompt(state.runtime.root, Object.keys(state.runtime.tools)) },
   ];
 }

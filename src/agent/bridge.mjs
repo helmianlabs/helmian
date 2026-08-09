@@ -86,6 +86,9 @@ export async function runAgentBridge() {
     permissionMode,
     approver: broker.approver,
     approvalTimeoutMs: broker.timeoutMs,
+    // The account/Desktop path never exposes the legacy arbitrary shell and
+    // whole-file overwrite catalog. It receives the typed project workbench.
+    safeWorkspaceTools: true,
   });
 
   const state = createSessionState(workspace, runtimeOptions());
@@ -329,25 +332,18 @@ export async function runAgentBridge() {
         return;
       }
       if (cmd === 'turn') {
-        // A slash line is expanded before anything else reads req.text. An
-        // unknown one is left alone and goes to the model as typed.
-        if (typeof req.text === 'string' && req.text.trim().startsWith('/')) {
-          const hit = expandBridgeCommand(req.text.trim());
-          if (hit) {
-            emit({ event: 'command', name: hit.name, path: hit.path });
-            req.text = hit.text;
-          }
-        }
-        const text = String(req.text || '').trim();
-        if (!text) {
+        const rawText = String(req.text || '').trim();
+        if (!rawText) {
           emit({ event: 'error', message: 'turn requires text' });
           emit({ event: 'done' });
           return;
         }
         let needsFullReset = false;
+        let workspaceChanged = false;
         if (req.workspace && String(req.workspace) !== workspace) {
           workspace = String(req.workspace);
           needsFullReset = true;
+          workspaceChanged = true;
         }
         if (req.provider && String(req.provider) !== providerName) {
           providerName = String(req.provider);
@@ -365,6 +361,7 @@ export async function runAgentBridge() {
             // Swap tool gate without wiping conversation history. A fresh
             // runtime also drops every allow-for-session grant, so leaving ask
             // mode can never leave a standing approval behind.
+            void state.runtime.dispose?.();
             state.runtime = createToolRuntime(workspace, runtimeOptions());
             state.permissionMode = state.runtime.permissionMode;
           }
@@ -376,6 +373,49 @@ export async function runAgentBridge() {
         if (!needsFullReset) refreshProviderKeyFromEnv();
         if (needsFullReset || !provider?.key) reconfigure();
 
+        // Commands and tools are workspace-scoped. Refresh BEFORE expanding a
+        // slash line, or the first turn after switching projects can execute the
+        // previous project's command body even though the tool runtime already
+        // points at the new folder.
+        if (workspaceChanged) {
+          await refreshCommands().catch(() => { commandRegistry = null; });
+        }
+
+        let text = rawText;
+        if (text.startsWith('/')) {
+          const hit = expandBridgeCommand(text);
+          if (hit) {
+            emit({ event: 'command', name: hit.name, path: hit.path });
+            text = hit.text;
+          }
+        }
+
+        // Agent-side confirmation on every turn. The desktop keeps this as a
+        // persistent scope label; it is not a one-time transcript decoration.
+        emit({
+          event: 'ready',
+          workspace: state.runtime.root,
+          provider: provider.label,
+          providerId: provider.id,
+          endpoint: provider.url || null,
+          permission: state.runtime.permissionMode,
+          tier: tierOverride || 'auto',
+          model: modelOverride || null,
+          tools: Object.keys(state.runtime.tools),
+        });
+
+        const images = Array.isArray(req.images)
+          ? req.images.filter((image) => image
+              && ['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)
+              && typeof image.data === 'string'
+              && image.data.length <= 7_000_000)
+            .map((image) => ({
+              fileName: String(image.fileName || 'image').slice(0, 200),
+              mediaType: image.mediaType,
+              data: image.data,
+            }))
+          : [];
+
         await runAgentTurn({
           userText: text,
           messages: state.messages,
@@ -383,6 +423,7 @@ export async function runAgentBridge() {
           runtime: state.runtime,
           tier: tierOverride,
           modelOverride,
+          images,
           onEvent: (ev) => {
             if (ev.type === 'model') {
               emit({
@@ -423,6 +464,7 @@ export async function runAgentBridge() {
                 name: ev.name,
                 preview: ev.preview,
                 bytes: ev.bytes,
+                result: ev.result,
               });
             } else if (ev.type === 'assistant' || ev.type === 'assistant_partial') {
               emit({ event: 'assistant', text: ev.text, partial: ev.type === 'assistant_partial' });
@@ -482,4 +524,5 @@ export async function runAgentBridge() {
   // stdin is gone: nobody can answer an approval any more, so fail them closed.
   broker.denyAllPending('shutdown');
   await queue;
+  await state.runtime.dispose?.();
 }

@@ -575,21 +575,69 @@ async function review() {
 //
 // `helmion herald [--lan] [--port 7420]`
 //
-// Prints a URL with a one-run token. Loopback by default; --lan is the explicit
-// choice to serve the local network, because the difference between 127.0.0.1
-// and 0.0.0.0 is the difference between "my machine" and "everyone on this
-// Wi-Fi" and must never be a default nobody picked.
+// Prints a token-free URL and one short-lived pairing code. Loopback by default;
+// --lan is the explicit local-network development choice and is not a WAN,
+// production, or TLS deployment claim.
 async function herald() {
+  const remote = hasFlag('--remote');
+  if (remote) {
+    const { createHeraldDesktopPipeBridge } = await import('../src/herald/desktop-pipe.mjs');
+    const { startRemoteHeraldSession } = await import('../src/herald/remote-session.mjs');
+    const { loadHeraldOwnerSecret } = await import('../src/herald/remote-owner-store.mjs');
+    const origin = option('--origin', process.env.HELMION_HERALD_ORIGIN ?? 'https://helmian.vercel.app');
+    const secret = await loadHeraldOwnerSecret();
+    let running;
+    try {
+      running = await startRemoteHeraldSession({
+        origin, ownerSecret: secret.toString('utf8'),
+        desktopBridge: createHeraldDesktopPipeBridge({ pipeName: option('--desktop-pipe-name', undefined) }),
+        onStatus: (status) => {
+          if (status.state === 'offline') process.stderr.write(`Herald relay offline: ${status.message}\n`);
+        },
+      });
+    } finally { secret.fill(0); }
+    process.stdout.write('\nHELMION HERALD — cellular paired companion.\n');
+    process.stdout.write('Desktop connection: outbound only. No public port is open on this PC.\n');
+    process.stdout.write(`Phone: ${running.phoneUrl}\n`);
+    process.stdout.write(`Pairing code: ${running.pairingCode} (expires ${running.pairingExpiresAt})\n`);
+    process.stdout.write('Ctrl+C stops sharing and makes the phone session unavailable.\n');
+    const stop = async () => { await running.stop(); process.exit(0); };
+    process.once('SIGINT', stop); process.once('SIGTERM', stop);
+    await new Promise(() => {});
+    return;
+  }
   const { startHerald } = await import('../src/herald/server.mjs');
+  const {
+    APPROVAL_DECIDE_SCOPE,
+    SESSION_INSTRUCT_SCOPE,
+    SESSION_READ_SCOPE,
+    STATUS_READ_SCOPE,
+  } = await import('../src/herald/pairing.mjs');
   const lan = hasFlag('--lan');
+  const desktopPipeEnabled = hasFlag('--desktop-pipe');
+  let desktopBridge = null;
+  if (desktopPipeEnabled) {
+    const { createHeraldDesktopPipeBridge } = await import('../src/herald/desktop-pipe.mjs');
+    desktopBridge = createHeraldDesktopPipeBridge({
+      pipeName: option('--desktop-pipe-name', undefined),
+    });
+  }
 
   const running = await startHerald({
     workspace: process.cwd(),
     host: lan ? '0.0.0.0' : '127.0.0.1',
     port: Number(option('--port', '7420')),
+    desktopBridge,
+    pairingScopes: desktopPipeEnabled
+      ? [STATUS_READ_SCOPE, SESSION_READ_SCOPE, SESSION_INSTRUCT_SCOPE, APPROVAL_DECIDE_SCOPE]
+      : [STATUS_READ_SCOPE],
   });
 
-  process.stdout.write('\nHELMION HERALD — read-only. It cannot approve, run or change anything.\n\n');
+  process.stdout.write(desktopPipeEnabled
+    ? '\nHELMION HERALD — paired selected-session companion.\n'
+      + 'Phone instructions and allow-once/deny decisions go through the current-user desktop pipe.\n'
+      + 'No shell, files, tools, install route, provider credential, or direct provider call is exposed.\n\n'
+    : '\nHELMION HERALD — read-only. It cannot approve, run or change anything.\n\n');
   if (running.urls.length === 0) {
     process.stdout.write('  No reachable address was found on this machine.\n');
   }
@@ -597,8 +645,11 @@ async function herald() {
     process.stdout.write(`  ${url}\n`);
   }
   process.stdout.write(
+    `\nPairing code: ${running.pairingCode} (expires ${running.pairingExpiresAt})\n`,
+  );
+  process.stdout.write(
     lan
-      ? '\nServing the LOCAL NETWORK. The token is required and is valid only while this runs.\n'
+      ? '\nServing the LOCAL NETWORK for Phase 1 testing only. Pair per device; this is not a WAN or production endpoint.\n'
       : '\nLoopback only. Pass --lan to open it to your phone on the same Wi-Fi.\n',
   );
   process.stdout.write('Ctrl+C to stop.\n');
