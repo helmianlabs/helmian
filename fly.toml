@@ -7,7 +7,7 @@ primary_region = "den"
 [env]
   PORT = "8080"
   HELMION_CLOUD_ENVIRONMENT = "staging"
-  HELMION_CORA_PROVIDER = "claude"
+  HELMION_CORA_PROVIDER = "openai"
   HELMION_CORA_TIER = "standard"
   HELMION_CORA_PERMISSION = "ask"
 
