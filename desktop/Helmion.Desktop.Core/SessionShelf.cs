@@ -696,3 +696,19 @@ public static class SessionTurnRouting
             : $"[Busy — \"{turnSession.Name}\" is mid-turn. Wait or Esc cancel. "
               + "Pick another agent pill to run in parallel.]";
 }
+
+/// <summary>
+/// Resolves the provider that a session's preflight must inspect. A Manager session
+/// deliberately has no fixed provider key: it follows the selected Maestro
+/// coordinator at send time. Looking at its null session key made the guard card
+/// report "No route" even though the send path had a valid coordinator route.
+/// </summary>
+public static class SessionPreflightRouting
+{
+    /// <summary>
+    /// Returns the canonical provider key for the exact route a future turn would
+    /// use, or null only when that route is genuinely a custom/unknown provider.
+    /// </summary>
+    public static string? ProviderKeyFor(AgentSession session, string? maestroCoordinator) =>
+        MaestroKey.Normalize(SessionTurnRouting.ForTurn(session, maestroCoordinator).Provider);
+}
