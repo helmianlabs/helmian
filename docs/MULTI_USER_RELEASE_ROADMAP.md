@@ -234,6 +234,53 @@ against the NIST AI Risk Management Framework first; consider eventual
 ISO/IEC 42001 adoption only after the operating scope, owners, and repeatable
 controls exist.
 
+### Helmian Cloud product direction
+
+Helmian Cloud is a standalone multi-agent governance product, not merely an
+internal AimForge feature. AimForge may consume Helmian Cloud as a governed
+orchestration layer, while other individual, company, and enterprise customers
+can connect their own approved agents, models, domains, and business systems.
+Cora is a Helmian Cloud capability: a governed operator interface and agent
+participant, rather than a tenant's unchecked source of authority.
+
+The product must support a clear deployment boundary between:
+
+- customer applications such as AimForge;
+- the Helmian Cloud control plane for identities, tenant policy, approvals,
+  audit evidence, and integration grants; and
+- customer-owned model, agent, tool, data, and provider environments.
+
+Its enterprise governance roadmap has five required capabilities:
+
+1. **Discovery and inventory.** Record approved agents, models, tools,
+   connectors, data classes, owners, environments, and their current posture.
+   Discovery findings must be reviewable; unverified findings must not be
+   treated as facts or silently disabled.
+2. **Runtime guardrails.** Evaluate each governed tool call, data request, and
+   agent-to-agent handoff against tenant policy before execution. Block or hold
+   privilege escalation, cross-tenant requests, prohibited data transfer, and
+   unapproved high-risk actions.
+3. **Least-privilege access.** Use tenant-owned OAuth grants or supported
+   service identities, narrow scopes, expiration, revocation, and just-in-time
+   elevation bound to a specific approved task. No shared desktop login or
+   long-lived plaintext credential is a cloud integration boundary.
+4. **Correlated observability.** Join model, agent, tool, approval, policy,
+   data-class, and outcome events into one tenant-scoped trace. Evidence must
+   show what was requested, what policy decided, who approved when required,
+   and what actually happened, without storing unnecessary raw sensitive data.
+5. **Compliance evidence mapping.** Map implemented controls and retained
+   evidence to NIST AI RMF first, then to customer-specific requirements such
+   as SOC 2, HIPAA, or the EU AI Act where applicable. A framework label is not
+   a certification or a substitute for legal, security, or independent audit
+   review.
+
+Build in this order: inventory and policy model; governed sample adapters and
+traces; OAuth/service-connection vaulting; runtime enforcement and approval
+flows; evaluation, retention, export, and compliance evidence; then
+customer-specific production enablement. Real provider actions remain disabled
+until the relevant integration, data handling, role policy, and approval path
+are implemented and verified.
+
 Required build artifacts:
 
 - a tenant-aware capability inventory that marks each function released,
