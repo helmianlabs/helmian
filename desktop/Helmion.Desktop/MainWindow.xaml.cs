@@ -2899,6 +2899,21 @@ public partial class MainWindow : Window
                 AppendConsoleLine($"Action needed — attachment not included: {refused.Message}");
             }
 
+            // Subscription sessions stay inside their provider-owned desktop CLI.
+            // They are read-only by policy and never receive Helmion's tool protocol,
+            // API-key environment, or any token copied from Settings. Tool-capable
+            // turns keep using the governed AgentBridge path below.
+            if (await TryRunProviderOwnedReadOnlyTurnAsync(
+                    provider,
+                    permission,
+                    outgoing.Text,
+                    outgoing.Images.Count > 0,
+                    session,
+                    turnToken))
+            {
+                return;
+            }
+
             // Consumed by the message they were attached to, so a file does not
             // silently ride along with every later turn. The row stays on screen in
             // the Removed state, so Undo puts it back for the next message.

@@ -22,6 +22,8 @@ public sealed class ProviderCliChatException(string message) : Exception(message
 /// run shell commands on Troy's machine from inside a chat turn.
 /// </para>
 /// </summary>
+public sealed record ProviderCliChatResult(string Text, bool IsError);
+
 public static class ProviderCliChatSession
 {
     /// <summary>
@@ -30,7 +32,7 @@ public static class ProviderCliChatSession
     /// persist a session file." --json streams structured events; -o writes the final message to
     /// a temp file so a truncated/garbled stdout parse still leaves a clean answer to read.
     /// </summary>
-    public static async IAsyncEnumerable<string> SendToCodexAsync(
+    public static async IAsyncEnumerable<ProviderCliChatResult> SendToCodexAsync(
         string prompt,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -43,6 +45,7 @@ public static class ProviderCliChatSession
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        ClearApiKeyEnvironment(psi, "OPENAI_API_KEY");
         psi.ArgumentList.Add("exec");
         psi.ArgumentList.Add("--sandbox");
         psi.ArgumentList.Add("read-only");
@@ -65,11 +68,11 @@ public static class ProviderCliChatSession
 
         if (failure is not null)
         {
-            yield return $"[{failure}]";
+            yield return new ProviderCliChatResult(failure, IsError: true);
             yield break;
         }
 
-        yield return answer;
+        yield return new ProviderCliChatResult(answer, IsError: false);
     }
 
     /// <summary>
@@ -78,7 +81,7 @@ public static class ProviderCliChatSession
     /// --sandbox read-only above. --output-format json gives a parseable envelope instead of
     /// terminal-formatted text.
     /// </summary>
-    public static async IAsyncEnumerable<string> SendToGeminiAsync(
+    public static async IAsyncEnumerable<ProviderCliChatResult> SendToGeminiAsync(
         string prompt,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -90,6 +93,7 @@ public static class ProviderCliChatSession
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        ClearApiKeyEnvironment(psi, "GEMINI_API_KEY", "GOOGLE_API_KEY");
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add(prompt);
         psi.ArgumentList.Add("--approval-mode");
@@ -110,11 +114,102 @@ public static class ProviderCliChatSession
 
         if (failure is not null)
         {
-            yield return $"[{failure}]";
+            yield return new ProviderCliChatResult(failure, IsError: true);
             yield break;
         }
 
-        yield return answer;
+        yield return new ProviderCliChatResult(answer, IsError: false);
+    }
+
+    /// <summary>
+    /// Runs the provider-owned Claude Code CLI in its documented non-interactive,
+    /// read-only permission mode. Helmion does not pass its locally stored
+    /// setup-token to this process: Claude Code owns its own sign-in and auth state.
+    /// </summary>
+    public static async IAsyncEnumerable<ProviderCliChatResult> SendToClaudeAsync(
+        string prompt,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "claude",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        ClearApiKeyEnvironment(psi, "ANTHROPIC_API_KEY");
+        psi.ArgumentList.Add("-p");
+        psi.ArgumentList.Add(prompt);
+        psi.ArgumentList.Add("--permission-mode");
+        psi.ArgumentList.Add("plan");
+        psi.ArgumentList.Add("--output-format");
+        psi.ArgumentList.Add("json");
+
+        var result = await RunResultAsync(psi, "Claude Code", cancellationToken);
+        yield return result;
+    }
+
+    /// <summary>
+    /// Runs the official Grok CLI in one-turn plan mode. This avoids treating a
+    /// SuperGrok desktop session as an xAI API key, which is what causes the
+    /// Chat Completions entitlement rejection for subscription-only accounts.
+    /// </summary>
+    public static async IAsyncEnumerable<ProviderCliChatResult> SendToGrokAsync(
+        string prompt,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "grok",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        ClearApiKeyEnvironment(psi, "XAI_API_KEY", "GROK_API_KEY");
+        psi.ArgumentList.Add("-p");
+        psi.ArgumentList.Add(prompt);
+        psi.ArgumentList.Add("--permission-mode");
+        psi.ArgumentList.Add("plan");
+        psi.ArgumentList.Add("--output-format");
+        psi.ArgumentList.Add("json");
+        psi.ArgumentList.Add("--no-memory");
+        psi.ArgumentList.Add("--no-subagents");
+        psi.ArgumentList.Add("--disable-web-search");
+
+        var result = await RunResultAsync(psi, "Grok CLI", cancellationToken);
+        yield return result;
+    }
+
+    private static async Task<ProviderCliChatResult> RunResultAsync(
+        ProcessStartInfo psi,
+        string toolName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return new ProviderCliChatResult(
+                await RunAndReadJsonStdoutAsync(psi, toolName, cancellationToken),
+                IsError: false);
+        }
+        catch (ProviderCliChatException ex)
+        {
+            return new ProviderCliChatResult(ex.Message, IsError: true);
+        }
+    }
+
+    /// <summary>
+    /// A provider-owned CLI must choose its own subscription session for this path.
+    /// Do not let an inherited API-key environment variable silently switch it back
+    /// to the separate API billing/entitlement route.
+    /// </summary>
+    private static void ClearApiKeyEnvironment(ProcessStartInfo psi, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            psi.Environment.Remove(name);
+        }
     }
 
     private static async Task<string> RunAndReadOutputFileAsync(
@@ -194,7 +289,7 @@ public static class ProviderCliChatSession
                 // than guess a field name that might not exist.
                 if (doc.RootElement.ValueKind == JsonValueKind.Object)
                 {
-                    foreach (var candidate in new[] { "response", "text", "output", "answer" })
+                    foreach (var candidate in new[] { "result", "response", "text", "output", "answer" })
                     {
                         if (doc.RootElement.TryGetProperty(candidate, out var field)
                             && field.ValueKind == JsonValueKind.String)
@@ -228,7 +323,7 @@ public static class ProviderCliChatSession
     /// account, not enterprise). --mode plan is Antigravity's read-only mode, matching the
     /// pattern used for Codex/Gemini above.
     /// </summary>
-    public static async IAsyncEnumerable<string> SendToAntigravityAsync(
+    public static async IAsyncEnumerable<ProviderCliChatResult> SendToAntigravityAsync(
         string prompt,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -258,11 +353,11 @@ public static class ProviderCliChatSession
 
         if (failure is not null)
         {
-            yield return $"[{failure}]";
+            yield return new ProviderCliChatResult(failure, IsError: true);
             yield break;
         }
 
-        yield return answer;
+        yield return new ProviderCliChatResult(answer, IsError: false);
     }
 
     private static async Task<string> RunAndReadStdoutTextAsync(

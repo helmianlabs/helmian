@@ -445,6 +445,27 @@ internal static class SessionShelfChecks
         shelf.Close(manager);
         checks += 4;
 
+        // Provider-owned subscription sessions are desktop-only and read-only.
+        // Their tokens never enter Node's AgentBridge environment. Tool-capable
+        // requests retain the existing governed bridge path instead.
+        Assert(
+            ProviderOwnedTurnRouting.Decide(MaestroKey.OpenAi, AgentPermission.ReadOnly).Kind
+                == ProviderOwnedTurnRouting.Kind.CodexCli
+            && ProviderOwnedTurnRouting.Decide(MaestroKey.Claude, AgentPermission.ReadOnly).Kind
+                == ProviderOwnedTurnRouting.Kind.ClaudeCli
+            && ProviderOwnedTurnRouting.Decide(MaestroKey.Gemini, AgentPermission.ReadOnly).Kind
+                == ProviderOwnedTurnRouting.Kind.GeminiCli
+            && ProviderOwnedTurnRouting.Decide(MaestroKey.Grok, AgentPermission.ReadOnly).Kind
+                == ProviderOwnedTurnRouting.Kind.GrokCli,
+            "each built-in provider uses its own local session owner for read-only turns");
+        Assert(
+            ProviderOwnedTurnRouting.Decide(MaestroKey.Grok, AgentPermission.Ask).Kind
+                == ProviderOwnedTurnRouting.Kind.AgentBridge
+            && ProviderOwnedTurnRouting.Decide("custom", AgentPermission.ReadOnly).Kind
+                == ProviderOwnedTurnRouting.Kind.AgentBridge,
+            "tool-capable and custom turns do not bypass Helmion's governed bridge");
+        checks += 2;
+
         // Output ownership. gpt is the selected session; claude is running a turn in
         // the background.
         Assert(ReferenceEquals(shelf.Selected, gpt), "the fixture still has the ChatGPT session on screen");
