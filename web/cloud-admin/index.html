@@ -1,1 +1,46 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><title>Helmian Cloud Admin</title><style>body{font:16px system-ui;margin:3rem;max-width:900px;background:#10141d;color:#e8edf5}button,select{padding:.55rem;margin:.25rem}pre{padding:1rem;background:#1c2431;overflow:auto}.note{color:#a9c7ff}</style><h1>Helmian Cloud Admin</h1><p class="note">Working sample mode: tenant controls, provider readiness, approvals, and audit posture. No provider connections or live actions are enabled.</p><label>Sample tenant <select id="tenant"><option value="acme-operations">Acme Operations</option><option value="northstar-logistics">Northstar Logistics</option></select></label><button id="load">Load control surface</button><button id="loads">Search sample DAT loads</button><pre id="result">Choose a sample action.</pre><script>const out=document.querySelector('#result'),tenant=document.querySelector('#tenant');async function show(path){const r=await fetch(path);out.textContent=JSON.stringify(await r.json(),null,2)}document.querySelector('#load').onclick=()=>show('/api/control-surface?tenant_id='+tenant.value+'&actor_role=admin');document.querySelector('#loads').onclick=()=>show('/api/sample-loads?tenant_id='+tenant.value+'&actor_role=admin&provider_id=dat&origin=Dallas%2C%20TX&equipment=dry_van');</script></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Helmian Cloud Admin</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { font: 16px system-ui, sans-serif; margin: 3rem auto; max-width: 900px; padding: 0 1rem; background: #10141d; color: #e8edf5; }
+    button { padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #7db4ff; color: #09111d; font-weight: 700; cursor: pointer; }
+    pre { padding: 1rem; background: #1c2431; overflow: auto; border-radius: .35rem; }
+    .note { color: #a9c7ff; }
+    [hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Helmian Cloud Admin</h1>
+  <p class="note">This is the live, read-only control surface. Sign in with your organization identity to view the tenant-scoped Neon and deployment status.</p>
+  <section id="signed-out">
+    <button id="login" type="button">Sign in with organization identity</button>
+  </section>
+  <section id="signed-in" hidden>
+    <p id="actor"></p>
+    <button id="refresh" type="button">Refresh control surface</button>
+    <pre id="result">Loading…</pre>
+  </section>
+  <script>
+    const signedOut = document.querySelector('#signed-out');
+    const signedIn = document.querySelector('#signed-in');
+    const actor = document.querySelector('#actor');
+    const out = document.querySelector('#result');
+    document.querySelector('#login').onclick = () => { window.location.href = '/auth/login'; };
+    async function load() {
+      const session = await fetch('/api/session', { credentials: 'same-origin' });
+      if (!session.ok) { signedOut.hidden = false; signedIn.hidden = true; return; }
+      const sessionBody = await session.json();
+      signedOut.hidden = true; signedIn.hidden = false;
+      actor.textContent = `Signed in as ${sessionBody.actor.role} for tenant ${sessionBody.actor.tenantId}`;
+      const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
+      out.textContent = JSON.stringify(await surface.json(), null, 2);
+    }
+    document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
+    load().catch(() => { signedOut.hidden = false; signedIn.hidden = true; });
+  </script>
+</body>
+</html>
