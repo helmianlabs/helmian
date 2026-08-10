@@ -424,6 +424,27 @@ internal static class SessionShelfChecks
         shelf.Close(odd);
         checks += 4;
 
+        // Manager is a role, not a provider. Its stored ProviderKey is null by
+        // design, but its preflight must use the same current Maestro route as its
+        // send path. Otherwise the guard card lies with "No route" while a turn
+        // correctly routes to the configured coordinator.
+        var manager = shelf.Create("Maestro", "Manager", now);
+        Assert(manager.ProviderKey is null && manager.IsManager,
+            "a Manager has no pinned provider key because it follows Maestro");
+        Assert(
+            SessionPreflightRouting.ProviderKeyFor(manager, "Codex") == MaestroKey.OpenAi,
+            "Manager preflight normalizes the selected Codex coordinator to OpenAI");
+        Assert(
+            SessionPreflightRouting.ProviderKeyFor(manager, "Claude") == MaestroKey.Claude
+            && SessionPreflightRouting.ProviderKeyFor(manager, "Gemini") == MaestroKey.Gemini
+            && SessionPreflightRouting.ProviderKeyFor(manager, "Grok") == MaestroKey.Grok,
+            "Manager preflight follows every built-in coordinator route");
+        Assert(
+            SessionPreflightRouting.ProviderKeyFor(manager, "Some custom route") is null,
+            "a genuinely unknown Manager coordinator remains unroutable");
+        shelf.Close(manager);
+        checks += 4;
+
         // Output ownership. gpt is the selected session; claude is running a turn in
         // the background.
         Assert(ReferenceEquals(shelf.Selected, gpt), "the fixture still has the ChatGPT session on screen");

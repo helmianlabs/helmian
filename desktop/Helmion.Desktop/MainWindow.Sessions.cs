@@ -365,7 +365,15 @@ public partial class MainWindow
             return;
         }
 
-        var credential = session.ProviderKey switch
+        // A Manager session intentionally stores no ProviderKey. Its provider is
+        // the current Maestro coordinator, exactly as SessionTurnRouting uses when
+        // a turn is sent. Preflighting the stored null used to create a false
+        // "No route for this provider" warning for Manager despite a valid route.
+        var providerKey = SessionPreflightRouting.ProviderKeyFor(
+            session,
+            settings.MaestroCoordinator);
+
+        var credential = providerKey switch
         {
             MaestroKey.OpenAi => settings.OpenAiApiKey,
             MaestroKey.Claude => settings.AnthropicApiKey,
@@ -381,7 +389,7 @@ public partial class MainWindow
         if (cli is not null && !File.Exists(cli)) cli = null;
 
         var result = SessionPreflight.Evaluate(
-            session.ProviderKey,
+            providerKey,
             !string.IsNullOrWhiteSpace(credential),
             AgentBridge.FindNodeExecutable(),
             cli);
