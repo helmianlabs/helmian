@@ -262,6 +262,83 @@ export function applySpokenBudget(text, remaining) {
   return { text: clean.slice(0, cut).trim(), truncated: true, used: remaining };
 }
 
+// ── STOP INTENT ────────────────────────────────────────────────────────────
+//
+// WHY THIS IS A WHOLE-UTTERANCE MATCH AND NOT A KEYWORD SEARCH.
+//
+// The obvious implementation — `text.includes('stop')` — is wrong in the most
+// expensive possible direction. "Stop the docker container", "cancel the order
+// in the staging database" and "wait for the build to finish" are all REAL
+// INSTRUCTIONS that contain a stop word, and treating them as an interrupt
+// would silently refuse to do the work while telling the user it had stopped.
+//
+// So the rule is: the utterance must be ESSENTIALLY NOTHING BUT the stop
+// phrase. Politeness, the wake word and trailing filler are stripped; anything
+// with a real object attached to the verb is a command and runs as one.
+//
+// The asymmetry is deliberate. A missed cancel costs one more press of the
+// stop button. A false cancel silently drops work the user asked for and is
+// indistinguishable from a bug — so this fails toward "run it".
+
+/** Filler that carries no instruction, stripped from either end. */
+const STOP_FILLER = new Set([
+  'hey', 'ok', 'okay', 'yo', 'um', 'uh', 'er', 'cora', 'please', 'just',
+  'now', 'it', 'that', 'already', 'thanks', 'thank', 'you', 'dude', 'man',
+  'right', 'no', 'actually',
+]);
+
+/**
+ * Utterances that mean "abandon what you are doing", as whole sentences.
+ * Multi-word entries are matched BEFORE filler stripping, so "forget it" is
+ * recognised even though stripping "it" would leave the meaningless "forget".
+ */
+export const STOP_PHRASES = new Set([
+  'stop', 'stop it', 'stop that', 'stop talking', 'stop please', 'please stop',
+  'cancel', 'cancel it', 'cancel that',
+  'abort', 'halt', 'wait', 'hold on', 'hang on',
+  'never mind', 'nevermind', 'forget it', 'forget that',
+  'scratch that', 'belay that', 'knock it off', 'cut it out',
+  'enough', 'thats enough', 'that is enough',
+  'shut up', 'be quiet', 'quiet', 'shush', 'silence',
+  'stop stop', 'stop stop stop',
+]);
+
+/** Lowercase, punctuation-free, single-spaced. Apostrophes are dropped so
+ *  "that's enough" and "thats enough" are the same utterance. */
+export function normalizeUtterance(text) {
+  return String(text ?? '')
+    .toLowerCase()
+    .replace(/['’]/g, '')
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Did the speaker ask to be let go of, rather than ask for something?
+ *
+ * Only ever consulted when a turn is ALREADY RUNNING — see clm-server.mjs. A
+ * bare "stop" with nothing in flight is just a word, and is answered as one.
+ */
+export function isStopIntent(text) {
+  const clean = normalizeUtterance(text);
+  if (!clean) return false;
+  // Whole utterance first: catches the multi-word phrases intact.
+  if (STOP_PHRASES.has(clean)) return true;
+
+  // Then again with filler peeled off both ends, so "hey Cora, stop it now
+  // please" reduces to "stop". A word with any real content survives this and
+  // therefore fails the set lookup, which is the entire safety property.
+  const words = clean.split(' ');
+  let start = 0;
+  let end = words.length;
+  while (start < end && STOP_FILLER.has(words[start])) start += 1;
+  while (end > start && STOP_FILLER.has(words[end - 1])) end -= 1;
+  const core = words.slice(start, end).join(' ');
+  if (!core) return false;
+  return STOP_PHRASES.has(core);
+}
+
 /**
  * `{"type":"assistant_input","text":…}` — plus `custom_session_id` when the
  * chat has one, which the docs permit on this message specifically.

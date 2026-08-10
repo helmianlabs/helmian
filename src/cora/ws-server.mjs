@@ -317,6 +317,59 @@ class CoraSocket extends EventEmitter {
 }
 
 /**
+ * Origins permitted to open this socket from a BROWSER. Empty by default:
+ * nothing web-hosted has any business driving a local coding agent.
+ */
+export const DEFAULT_ALLOWED_ORIGINS = Object.freeze([]);
+
+/**
+ * THE THREAT THIS STOPS, AND THE ONE IT DOES NOT — because the difference
+ * decides why "no Origin header" is a PASS rather than a failure.
+ *
+ * Cross-Site WebSocket Hijacking: any page Troy has open can execute
+ * `new WebSocket('ws://127.0.0.1:7421/llm')`. The same-origin policy does NOT
+ * apply to WebSockets and no CORS preflight happens, so without this check a
+ * random tab can open a socket that reaches `run_command`. Loopback binding
+ * does not help — the browser IS on loopback. That attack is browser-only, and
+ * every browser is REQUIRED to send Origin on a WebSocket handshake, so
+ * rejecting unknown origins stops all of it.
+ *
+ * A non-browser attacker forges the header trivially, so this is worth exactly
+ * nothing against one. That is what the token is for; the two are different
+ * controls against different attackers and neither substitutes for the other.
+ *
+ * Hence: a MISSING Origin means the peer is not a browser and is judged on its
+ * token instead. Hume's cloud dials this socket from a server, and server-side
+ * WebSocket clients do not send Origin.
+ * 🔴 UNVERIFIED against a live Hume connection — no Hume key exists on this
+ * machine (docs/CORA_CLM_LOCAL_PHASE1.md records the same gap). If a real Hume
+ * dial-in ever IS refused here, the refusal log line below names the exact
+ * origin to add, which is why it logs the value rather than just "denied".
+ *
+ * `Origin: null` — what a sandboxed iframe or a `file://` page sends — is a
+ * PRESENT header and is therefore refused unless explicitly allowlisted.
+ *
+ * @returns {{ok: boolean, reason: string}}
+ */
+export function isOriginAllowed(origin, allowedOrigins = DEFAULT_ALLOWED_ORIGINS) {
+  const raw = typeof origin === 'string' ? origin.trim() : '';
+  if (!raw) return { ok: true, reason: 'no Origin header — the peer is not a browser' };
+
+  const list = Array.isArray(allowedOrigins) ? allowedOrigins : [];
+  const normalize = (value) => String(value).trim().toLowerCase().replace(/\/+$/, '');
+  // An explicit opt-out has to be spelled out by a caller; it is never a default.
+  if (list.some((entry) => typeof entry === 'string' && entry.trim() === '*')) {
+    return { ok: true, reason: 'wildcard origin allowlist' };
+  }
+  const presented = normalize(raw);
+  for (const entry of list) {
+    if (typeof entry !== 'string') continue;
+    if (normalize(entry) === presented) return { ok: true, reason: 'allowlisted origin' };
+  }
+  return { ok: false, reason: `Origin ${raw} is not on the allowlist` };
+}
+
+/**
  * Attach a WebSocket upgrade handler to an existing node:http server.
  *
  * `verifyClient({ request, url })` runs BEFORE the 101 and may refuse with
@@ -330,14 +383,18 @@ export function attachWebSocketServer(httpServer, {
   path = '/',
   onConnection,
   verifyClient = null,
+  allowedOrigins = DEFAULT_ALLOWED_ORIGINS,
+  onRefused = null,
   maxMessageBytes = DEFAULT_MAX_MESSAGE_BYTES,
 } = {}) {
   const connections = new Set();
 
+  const STATUS_TEXT = { 400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 500: 'Internal Server Error' };
+
   const refuse = (socket, status, message) => {
     const body = `${message}\n`;
     socket.write(
-      `HTTP/1.1 ${status} ${status === 401 ? 'Unauthorized' : status === 404 ? 'Not Found' : 'Bad Request'}\r\n`
+      `HTTP/1.1 ${status} ${STATUS_TEXT[status] ?? 'Bad Request'}\r\n`
       + 'content-type: text/plain; charset=utf-8\r\n'
       + `content-length: ${Buffer.byteLength(body)}\r\n`
       + 'connection: close\r\n\r\n'
@@ -371,6 +428,24 @@ export function attachWebSocketServer(httpServer, {
     }
     if (path && url.pathname !== path) {
       refuse(socket, 404, `No WebSocket endpoint at ${url.pathname}.`);
+      return;
+    }
+
+    // BEFORE the token check on purpose. A cross-site handshake from a page in
+    // Troy's browser would carry his cookies and anything else the browser
+    // attaches automatically; the question "is this peer allowed to be a
+    // browser at all" is therefore settled first, and the answer is logged with
+    // the actual origin so a legitimate refusal can be fixed in one look
+    // instead of being guessed at.
+    const originVerdict = isOriginAllowed(request.headers.origin, allowedOrigins);
+    if (!originVerdict.ok) {
+      onRefused?.({
+        reason: 'origin',
+        origin: request.headers.origin ?? null,
+        detail: originVerdict.reason,
+        remoteAddress: socket.remoteAddress ?? null,
+      });
+      refuse(socket, 403, `${originVerdict.reason}.`);
       return;
     }
 
