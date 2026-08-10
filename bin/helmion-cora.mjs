@@ -19,7 +19,19 @@
  * simulated Hume client on this machine, with no Hume account involved.
  */
 
-import { startCoraClm, DEFAULT_CORA_PORT, DEFAULT_CORA_PATH } from '../src/cora/clm-server.mjs';
+import {
+  startCoraClm,
+  DEFAULT_CORA_HEALTH_PATH,
+  DEFAULT_CORA_PORT,
+  DEFAULT_CORA_PATH,
+} from '../src/cora/clm-server.mjs';
+import { readHelmionEnv } from '../src/agent/env.mjs';
+import {
+  CORA_PROVIDER_READINESS_INVALID_CONFIGURATION,
+  inspectCoraProviderReadiness,
+} from '../src/cora/provider-readiness.mjs';
+import { runCoraSelfTest } from '../src/cora/self-test.mjs';
+import { createLiveHelmianCloudAdminHandler } from '../src/cloud/live-admin.mjs';
 
 function parseFlags(argv) {
   const out = {
@@ -31,6 +43,13 @@ function parseFlags(argv) {
     tier: 'standard',
     permission: 'read-tools',
     token: process.env.HELMION_CORA_TOKEN || null,
+    // Browser origins allowed to open the socket. Empty = every browser
+    // refused; a peer that sends no Origin at all is not a browser and is
+    // judged on its token instead. See src/cora/ws-server.mjs.
+    allowOrigin: [],
+    agentNotify: true,
+    providerStatus: false,
+    selfTest: false,
     quiet: false,
     help: false,
   };
@@ -40,10 +59,14 @@ function parseFlags(argv) {
     else if (a === '--host') out.host = argv[++i];
     else if (a === '--port') out.port = Number(argv[++i]);
     else if (a === '--path') out.path = argv[++i];
-    else if (a === '--provider') out.provider = argv[++i];
+    else if (a === '--provider') out.provider = argv[++i] ?? '';
     else if (a === '--tier') out.tier = argv[++i];
     else if (a === '--permission' || a === '--permissions') out.permission = argv[++i];
     else if (a === '--token') out.token = argv[++i];
+    else if (a === '--allow-origin') out.allowOrigin.push(argv[++i]);
+    else if (a === '--no-agent-notify') out.agentNotify = false;
+    else if (a === '--provider-status') out.providerStatus = true;
+    else if (a === '--self-test') out.selfTest = true;
     else if (a === '--quiet') out.quiet = true;
     else if (a === '--help' || a === '-h') out.help = true;
   }
@@ -59,10 +82,19 @@ function usage() {
   --host <addr>        bind address                     (default: 127.0.0.1)
   --port <n>           bind port                        (default: ${DEFAULT_CORA_PORT})
   --path <path>        WebSocket path                   (default: ${DEFAULT_CORA_PATH})
+  health: GET ${DEFAULT_CORA_HEALTH_PATH} (add ?detail=1 for bounded redacted diagnostics)
+          Bearer token required when the socket bind requires one
   --provider <name>    openai | claude | gemini | grok  (default: claude)
   --tier <t>           fast | standard | deep           (default: standard = claude-sonnet-5)
   --permission <mode>  read-only | read-tools | ask | full   (default: read-tools)
   --token <secret>     required for any non-loopback bind; also HELMION_CORA_TOKEN
+  --allow-origin <o>   let a BROWSER at this origin open the socket (repeatable).
+                       Default: none. A peer sending no Origin header is not a
+                       browser and is unaffected — that is how a server-side
+                       client such as Hume's cloud connects.
+  --no-agent-notify    do not announce background agents finishing
+  --provider-status     print secret-free provider readiness and exit; never starts Cora
+  --self-test           run a provider-free local WebSocket/policy smoke test and exit
   --quiet              only errors on stdout
 
   A chat is "Helmion mode" — tools enabled — when its Hume custom_session_id
@@ -77,6 +109,32 @@ if (flags.help) {
   process.exit(0);
 }
 
+if (flags.providerStatus) {
+  let readiness;
+  try {
+    readiness = inspectCoraProviderReadiness({
+      providerName: flags.provider,
+      env: readHelmionEnv(flags.workspace),
+    });
+  } catch {
+    readiness = CORA_PROVIDER_READINESS_INVALID_CONFIGURATION;
+  }
+  process.stdout.write(`${JSON.stringify(readiness)}\n`);
+  process.exitCode = readiness.ready ? 0 : 1;
+} else if (flags.selfTest) {
+  try {
+    const result = await runCoraSelfTest({ workspace: flags.workspace });
+    process.stdout.write(
+      `Cora self-test passed (${result.turns} turns: ${result.policyModes.join(', ')}).\n`,
+    );
+    process.exitCode = 0;
+  } catch (err) {
+    process.stderr.write(`Cora self-test failed: ${err.message}\n`);
+    process.exitCode = 1;
+  }
+}
+
+if (!flags.providerStatus && !flags.selfTest) {
 const logger = ({ level, event, ...rest }) => {
   if (flags.quiet && level !== 'error') return;
   const detail = Object.entries(rest)
@@ -87,7 +145,16 @@ const logger = ({ level, event, ...rest }) => {
 };
 
 let server;
+let liveAdmin;
 try {
+  const adminConfigPresent = [
+    process.env.HELMION_ADMIN_ISSUER,
+    process.env.HELMION_ADMIN_CLIENT_ID,
+    process.env.HELMION_ADMIN_REDIRECT_URI,
+  ].some((value) => String(value ?? '').trim());
+  if (adminConfigPresent) {
+    liveAdmin = await createLiveHelmianCloudAdminHandler();
+  }
   server = await startCoraClm({
     workspace: flags.workspace,
     host: flags.host,
@@ -97,9 +164,13 @@ try {
     providerName: flags.provider,
     permissionMode: flags.permission,
     tier: flags.tier,
+    allowedOrigins: flags.allowOrigin,
+    notifyBackgroundAgents: flags.agentNotify,
+    httpRequestHandler: liveAdmin?.handler,
     logger,
   });
 } catch (err) {
+  await liveAdmin?.close?.().catch(() => {});
   process.stderr.write(`Cora CLM did not start: ${err.message}\n`);
   process.exit(1);
 }
@@ -107,17 +178,22 @@ try {
 process.stdout.write(
   `Cora CLM listening\n`
   + `  socket:     ${server.url}\n`
+  + `  health:     ${server.healthUrl}\n`
   + `  workspace:  ${flags.workspace}\n`
   + `  provider:   ${server.provider?.label ?? flags.provider} (tier ${flags.tier})\n`
   + `  permission: ${flags.permission} — only for sessions marked helmion:*\n`
   + `  token:      ${server.requiresToken ? 'required' : 'not required (loopback)'}\n`
+  + `  origins:    ${flags.allowOrigin.length ? flags.allowOrigin.join(', ') : 'no browser origin allowed (non-browser peers unaffected)'}\n`
+  + `  agents:     ${flags.agentNotify ? 'background completions announced' : 'notifications off'}\n`
   + `  stop:       Ctrl-C\n`,
 );
 
 const shutdown = async (signal) => {
   process.stdout.write(`\n${signal} — closing Cora CLM.\n`);
   await server.close();
+  await liveAdmin?.close?.();
   process.exit(0);
 };
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}

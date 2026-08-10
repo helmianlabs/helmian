@@ -39,8 +39,8 @@ import { timingSafeEqual } from 'node:crypto';
 import { isIPv4, isIPv6 } from 'node:net';
 
 import { loadHelmionEnv, resolveProvider } from '../agent/env.mjs';
-import { createSessionState, runAgentTurn } from '../agent/loop.mjs';
-import { attachWebSocketServer, CLOSE } from './ws-server.mjs';
+import { createSessionState, isAbortError, runAgentTurn } from '../agent/loop.mjs';
+import { attachWebSocketServer, CLOSE, DEFAULT_ALLOWED_ORIGINS } from './ws-server.mjs';
 import {
   DEFAULT_MAX_SPOKEN_CHARS,
   DEFAULT_SPEECH_CHUNK_CHARS,
@@ -48,12 +48,26 @@ import {
   applySpokenBudget,
   assistantEnd,
   assistantInput,
+  isStopIntent,
   parseHumePayload,
   speakableText,
   splitForSpeech,
   topProsody,
 } from './clm-protocol.mjs';
 import { recordVoiceTurn } from './activity.mjs';
+import { createBackgroundAgentNotifier } from './notify.mjs';
+import { inspectCoraProviderReadiness } from './provider-readiness.mjs';
+import {
+  CORA_HEALTH_DIAGNOSTICS_SCHEMA_VERSION,
+  MAX_CORA_HEALTH_AGE_MS,
+  MAX_CORA_HEALTH_DETAIL_SESSIONS,
+  MAX_CORA_HEALTH_PHASE_COUNT,
+} from './health-schema.mjs';
+import {
+  authorizeSessionConnection,
+  DEFAULT_MAX_SESSION_ID_CHARS,
+  validateSessionId,
+} from './session-context.mjs';
 
 /**
  * Deliberately NOT 8788. A ws server on :8788 that spawned a coding agent with
@@ -66,6 +80,15 @@ export const DEFAULT_CORA_PORT = 7421;
 
 /** Hume's own example serves the CLM socket at /llm; keep the convention. */
 export const DEFAULT_CORA_PATH = '/llm';
+
+/** Read-only local readiness endpoint; it never returns credentials or paths. */
+export const DEFAULT_CORA_HEALTH_PATH = '/healthz';
+
+// Re-export contract bounds for existing local consumers and focused tests.
+export {
+  MAX_CORA_HEALTH_DETAIL_SESSIONS,
+  MAX_CORA_HEALTH_PHASE_COUNT,
+} from './health-schema.mjs';
 
 /** A chat whose custom_session_id starts with this runs with tools. */
 export const HELMION_SESSION_PREFIX = 'helmion';
@@ -116,6 +139,14 @@ function tokenMatches(expected, presented) {
   return timingSafeEqual(a, b);
 }
 
+/** Bearer auth for the HTTP health endpoint. WebSocket auth remains query-based. */
+function requestBearerToken(request) {
+  const header = request?.headers?.authorization;
+  if (typeof header !== 'string') return '';
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match?.[1]?.trim() ?? '';
+}
+
 /**
  * Decide whether this bind is allowed at all, BEFORE the port is opened.
  *
@@ -154,7 +185,7 @@ export function createAgentTurnRunner({
   tier = 'standard',
   safeWorkspaceTools = true,
 }) {
-  return async function runTurn({ text, session, onEvent }) {
+  return async function runTurn({ text, session, onEvent, signal = null }) {
     if (!session.state) {
       session.state = createSessionState(workspace, {
         permissionMode: session.helmionMode ? permissionMode : 'read-only',
@@ -168,6 +199,10 @@ export function createAgentTurnRunner({
       runtime: session.state.runtime,
       onEvent,
       tier,
+      // The kill switch. Without this line every other part of the cancel path
+      // is decoration: the agent loop would keep calling models and running
+      // tools no matter what the socket had been told.
+      signal,
       // Groups every provenance row for this chat under the id Hume gave us, so
       // "which model answered me on that call" is answerable from the ledger.
       sessionId: session.id,
@@ -188,6 +223,7 @@ export async function startCoraClm({
   host = '127.0.0.1',
   port = DEFAULT_CORA_PORT,
   path = DEFAULT_CORA_PATH,
+  healthPath = DEFAULT_CORA_HEALTH_PATH,
   token = null,
   providerName = 'claude',
   provider = null,
@@ -204,18 +240,48 @@ export async function startCoraClm({
   turnTimeoutMs = DEFAULT_TURN_TIMEOUT_MS,
   sessionIdleMs = DEFAULT_SESSION_IDLE_MS,
   maxSessions = DEFAULT_MAX_SESSIONS,
+  maxSessionIdChars = DEFAULT_MAX_SESSION_ID_CHARS,
+  // Browser origins allowed to open this socket. Empty = every browser
+  // refused, non-browser peers judged on their token. See ws-server.mjs.
+  allowedOrigins = DEFAULT_ALLOWED_ORIGINS,
+  // Background-agent completion notices. Injectable so a test drives the exact
+  // transitions instead of sleeping past a 5-second poll and hoping.
+  notifyBackgroundAgents = true,
+  notifier = null,
+  notifyPollMs = undefined,
+  deliverNotification = null,
+  // Attempt an unprompted spoken notice on an idle socket. See speakUnprompted
+  // below — undocumented in Hume's CLM guide and unverified against a live
+  // config, which is why it degrades to the guaranteed next-turn path rather
+  // than being relied on.
+  speakNotificationsUnprompted = true,
+  // Optional authenticated HTTP surface sharing this process/port. The
+  // handler must return true after it has written a response, or false to let
+  // the CLM health/WebSocket fallback handle the request.
+  httpRequestHandler = null,
   logger = () => {},
 } = {}) {
   const { requiresToken } = resolveAccess({ host, token });
+  const statusPath = String(healthPath || DEFAULT_CORA_HEALTH_PATH).startsWith('/')
+    ? String(healthPath || DEFAULT_CORA_HEALTH_PATH)
+    : `/${String(healthPath)}`;
 
   let activeProvider = provider;
   let turn = runTurn;
+  let providerReadiness;
   if (!turn) {
     if (!activeProvider) {
       const env = loadHelmionEnv(workspace);
       activeProvider = resolveProvider(providerName, env);
     }
-    if (!activeProvider?.key) {
+    providerReadiness = inspectCoraProviderReadiness({
+      providerName,
+      provider: activeProvider,
+    });
+    if (!providerReadiness.ready) {
+      if (providerReadiness.state === 'invalid-configuration') {
+        throw new Error('Invalid live-provider configuration for Cora.');
+      }
       throw new Error(
         `No API key for ${activeProvider?.label ?? providerName}. Cora speaks with `
         + 'Helmion\'s own provider chain; set the matching key in .env '
@@ -224,6 +290,12 @@ export async function startCoraClm({
     }
     turn = createAgentTurnRunner({
       workspace, provider: activeProvider, permissionMode, tier, safeWorkspaceTools,
+    });
+  } else {
+    providerReadiness = inspectCoraProviderReadiness({
+      providerName,
+      provider: activeProvider,
+      runTurn: turn,
     });
   }
 
@@ -244,6 +316,10 @@ export async function startCoraClm({
     evictIdle();
     const key = customSessionId ?? `socket:${connectionId}`;
     let session = sessions.get(key);
+    const access = authorizeSessionConnection(session, connectionId);
+    if (!access.ok) {
+      return { session: null, refused: access.reason };
+    }
     if (!session) {
       if (sessions.size >= maxSessions) {
         // Drop the least recently used rather than refusing the live caller.
@@ -256,25 +332,123 @@ export async function startCoraClm({
       session = {
         key,
         id: customSessionId ?? `cora-${connectionId}`,
+        connectionId,
         helmionMode: isHelmionSession(customSessionId, sessionPrefix),
         state: null,
         // Turns on one chat are strictly serialized. Two overlapping agent
         // turns on one tool runtime would interleave their tool calls into a
         // single history and produce an answer neither question asked for.
         queue: Promise.resolve(),
+        // Every turn that has not settled yet — the RUNNING one plus anything
+        // queued behind it. A Set rather than a single slot because "stop"
+        // means stop this chat, and cancelling only the newest would leave the
+        // one actually touching the disk running.
+        inFlight: new Set(),
         lastSeen: Date.now(),
         turns: 0,
       };
       sessions.set(key, session);
     }
     session.lastSeen = Date.now();
-    return session;
+    return { session, refused: null };
   };
+
+  /**
+   * Cancel everything unsettled on ONE chat — the running turn and anything
+   * queued behind it.
+   * @returns {number} how many were actually cancelled; 0 means nothing ran,
+   *   which is a different thing to say out loud than "stopped".
+   */
+  const cancelSession = (session, reason) => {
+    let cancelled = 0;
+    for (const handle of [...session.inFlight]) {
+      if (handle.cancel(reason)) cancelled += 1;
+    }
+    return cancelled;
+  };
+
+  /**
+   * A disconnected voice client no longer owns a live conversational context.
+   * Remove it immediately instead of allowing a reconnect or another client
+   * to inherit stale tool history during the idle grace period. Cancellation
+   * happens before disposal, and disposal waits for the serialized queue to
+   * settle so it cannot tear down a runtime underneath a running tool.
+   */
+  const discardConnectionSessions = (connectionId, reason) => {
+    let discarded = 0;
+    for (const [key, session] of sessions) {
+      if (session.connectionId !== connectionId) continue;
+      cancelSession(session, reason);
+      sessions.delete(key);
+      discarded += 1;
+      void Promise.resolve(session.queue)
+        .then(() => session.state?.runtime?.dispose?.())
+        .catch(() => {});
+    }
+    return discarded;
+  };
+
+  /** True while ANY chat has a turn that has not settled. */
+  const anyTurnInFlight = () => {
+    for (const session of sessions.values()) if (session.inFlight.size > 0) return true;
+    return false;
+  };
+
+  /** Live sockets, so a notification has somewhere it could be spoken. */
+  const liveConnections = new Set();
+
+  /**
+   * Say a background-agent notice on an idle socket, without being asked.
+   *
+   * 🔴 THE ONE UNVERIFIED BEHAVIOUR IN THIS FILE, flagged rather than buried.
+   * Hume's CLM guide documents the REPLY path only — EVI hands the CLM a turn,
+   * the CLM streams `assistant_input` and closes with `assistant_end`
+   * (quoted verbatim in clm-protocol.mjs). Whether EVI accepts an
+   * `assistant_input` it did not ask for is documented NEITHER WAY, and there
+   * is no Hume key on this machine to settle it with.
+   *
+   * So this is built to be harmless if it turns out to be wrong: it is only
+   * ever attempted when NOTHING is in flight (it can never interrupt a real
+   * answer), and a `false` return puts the line straight back on the pending
+   * queue, where the next genuine turn speaks it for certain. The guaranteed
+   * path is the drain at the top of handleTurn; this is the nicety on top.
+   *
+   * Set `speakNotificationsUnprompted: false` to use only the guaranteed path.
+   */
+  const speakUnprompted = (text) => {
+    if (!speakNotificationsUnprompted) return false;
+    if (anyTurnInFlight()) return false;
+    const connection = [...liveConnections].find((c) => !c.closed);
+    if (!connection) return false;
+    if (!connection.sendJson(assistantInput(text))) return false;
+    connection.sendJson(assistantEnd());
+    logger({ level: 'info', event: 'spoke_notification_unprompted' });
+    return true;
+  };
+
+  const backgroundNotifier = notifier ?? (notifyBackgroundAgents
+    ? createBackgroundAgentNotifier({
+      root: workspace,
+      speak: speakUnprompted,
+      isBusy: anyTurnInFlight,
+      ...(deliverNotification ? { deliver: deliverNotification } : {}),
+      ...(notifyPollMs === undefined ? {} : { pollMs: notifyPollMs }),
+      logger,
+    })
+    : null);
 
   async function handleTurn(connection, raw) {
     const parsed = parseHumePayload(raw);
-    const session = sessionFor(parsed.customSessionId, connection.id);
-    const sessionId = parsed.customSessionId;
+    const sessionIdCheck = validateSessionId(parsed.customSessionId, {
+      maxChars: maxSessionIdChars,
+    });
+    // Do not reflect an invalid, potentially unbounded value back to the voice
+    // service. Invalid labels are a refused request, not session context.
+    const sessionId = sessionIdCheck.ok ? sessionIdCheck.id : null;
+    const sessionResult = sessionIdCheck.ok
+      ? sessionFor(sessionId, connection.id)
+      : { session: null, refused: sessionIdCheck.reason };
+    const session = sessionResult.session;
 
     let ended = false;
     let spokenBudget = maxSpokenChars;
@@ -284,7 +458,18 @@ export async function startCoraClm({
     const toolsUsed = [];
     let answeredBy = null;
 
+    /**
+     * This turn's cancel state, in an object so `speak` and the catch can both
+     * see it before the controller further down has been created.
+     */
+    const turnState = { cancelled: false, controller: null };
+
     const speak = (text) => {
+      // A cancelled turn goes SILENT immediately. Its model call and its tools
+      // are being torn down, but events already in flight can still arrive, and
+      // letting them speak would talk straight over the "Stopped." the user is
+      // hearing — the exact failure Rule 0.25 is about, one layer down.
+      if (turnState.cancelled) return;
       const clean = speakableText(text);
       if (!clean) return;
       const { text: allowed, truncated } = applySpokenBudget(clean, spokenBudget);
@@ -317,6 +502,19 @@ export async function startCoraClm({
     };
 
     try {
+      if (!session) {
+        logger({
+          level: 'warn',
+          event: 'session_refused',
+          sessionId,
+          reason: sessionResult.refused,
+        });
+        connection.sendJson(assistantInput(
+          'I could not use that voice session. Please start a new voice session.',
+          sessionId,
+        ));
+        return;
+      }
       if (!parsed.ok) {
         logger({ level: 'warn', event: 'bad_payload', reason: parsed.error });
         connection.sendJson(assistantInput(
@@ -332,9 +530,38 @@ export async function startCoraClm({
       }
 
       const heard = parsed.lastUser.content;
+
+      // ── THE STOP PATH ───────────────────────────────────────────────────
+      //
+      // CHECKED BEFORE THE QUEUE, AND THAT ORDERING IS THE ENTIRE FIX. The old
+      // code sent every incoming payload through `session.queue.then(...)`, so
+      // the word "stop" waited politely in line behind the very turn it was
+      // trying to stop — Troy heard silence, assumed it had worked, and the
+      // agent carried on running tools against his disk the whole time.
+      //
+      // A cancel is also answered WITHOUT a model call. Paying a provider
+      // round-trip to find out how to say "Stopped." would put a second or two
+      // of latency on the one interaction that must feel instant.
+      if (isStopIntent(heard)) {
+        const stopped = cancelSession(session, 'the user said stop');
+        logger({ level: 'info', event: 'stop_requested', sessionId, cancelled: stopped });
+        speak(stopped > 0
+          ? 'Stopped.'
+          : 'Nothing was running, but I am listening.');
+        // Deliberately NOT written to the activity ledger as a turn: the
+        // cancelled turn writes its own `cancelled` row, and a second row
+        // saying "heard: stop" would double-count one interruption.
+        return;
+      }
+
       const prompt = includeProsody
         ? annotateWithProsody(heard, topProsody(parsed.lastUser.prosody, 3))
         : heard;
+
+      // Anything a background agent finished while nobody was talking gets said
+      // FIRST, in the same breath as the answer. See notify.mjs for why this is
+      // the guaranteed delivery path and an unprompted one is not.
+      for (const line of backgroundNotifier?.drainSpoken() ?? []) speak(line);
 
       session.turns += 1;
       logger({
@@ -363,7 +590,30 @@ export async function startCoraClm({
         }
       };
 
-      const running = session.queue.then(() => turn({ text: prompt, session, onEvent }));
+      // This turn's kill switch, registered on the session BEFORE the turn
+      // starts. Registering after would leave a window — short, but exactly the
+      // window a fast "stop" lands in — where the turn is running and nothing
+      // on the session knows how to reach it. A turn that is still QUEUED is
+      // registered too, so cancelling takes out the backlog as well as the
+      // thing currently touching the disk.
+      const controller = new AbortController();
+      turnState.controller = controller;
+      turnState.handle = {
+        phase: 'queued',
+        cancel(reason) {
+          if (turnState.cancelled) return false;
+          turnState.cancelled = true;
+          controller.abort(new Error(reason));
+          return true;
+        },
+      };
+      session.inFlight.add(turnState.handle);
+
+      const running = session.queue
+        .then(() => {
+          turnState.handle.phase = 'running';
+          return turn({ text: prompt, session, onEvent, signal: controller.signal });
+        });
       // Keep the chain alive even when this turn rejects, or one failure would
       // poison every later turn on the session.
       session.queue = running.catch(() => {});
@@ -390,14 +640,29 @@ export async function startCoraClm({
         // speaking into a turn we already handed back means talking over
         // whatever the user said next.
         logger({ level: 'warn', event: 'turn_timeout', sessionId, ms: turnTimeoutMs });
+        turnState.handle.phase = 'timed-out';
         connection.sendJson(assistantInput(
           'That is taking longer than a conversation should. It is still running, '
           + 'and I will put the result in the activity log.', sessionId,
         ));
         endTurn();
+        // THE HANDLE DELIBERATELY STAYS REGISTERED. This is the one case where
+        // the conversation has been handed back while real work is still
+        // running, so it is precisely when Troy is most likely to say "stop" —
+        // and if the `finally` below deregistered it on the way out, that stop
+        // would have nothing left to cancel. It is removed when the work
+        // actually settles, in both branches here.
+        turnState.keepRegistered = true;
+        const releaseHandle = () => session.inFlight.delete(turnState.handle);
         void running.then(
-          () => writeActivity('completed-after-timeout'),
+          () => { releaseHandle(); writeActivity('completed-after-timeout'); },
           (err) => {
+            releaseHandle();
+            if (isAbortError(err) || turnState.cancelled) {
+              logger({ level: 'info', event: 'turn_cancelled_after_timeout', sessionId });
+              writeActivity('cancelled');
+              return;
+            }
             logger({ level: 'error', event: 'turn_failed_after_timeout', message: err?.message });
             writeActivity('failed');
           },
@@ -411,6 +676,15 @@ export async function startCoraClm({
       }
       writeActivity('completed');
     } catch (err) {
+      // A CANCEL IS NOT A FAILURE, and must not be announced as one. The stop
+      // turn has already said "Stopped."; an apology arriving a moment later
+      // contradicts it out loud, and a 'failed' ledger row would turn every
+      // deliberate interruption into a defect that never happened.
+      if (isAbortError(err) || turnState.cancelled) {
+        logger({ level: 'info', event: 'turn_cancelled', sessionId });
+        writeActivity('cancelled');
+        return;
+      }
       logger({ level: 'error', event: 'turn_failed', message: err?.message ?? String(err) });
       // The listener must be told, out loud, that it failed. A silent failure
       // followed by assistant_end is indistinguishable from a correct answer of
@@ -422,6 +696,12 @@ export async function startCoraClm({
       }
       writeActivity('failed', shortError(err));
     } finally {
+      // Deregistered here for every normal exit. The ONE exception is the
+      // timeout path above, which keeps its handle alive on purpose so a late
+      // "stop" still has something to kill.
+      if (turnState.handle && !turnState.keepRegistered) {
+        session.inFlight.delete(turnState.handle);
+      }
       endTurn();
     }
 
@@ -444,17 +724,156 @@ export async function startCoraClm({
     }
   }
 
-  const httpServer = createServer((_request, response) => {
+  const countInFlight = () => {
+    let n = 0;
+    for (const session of sessions.values()) n += session.inFlight.size;
+    return n;
+  };
+
+  /**
+   * A deliberately lossy, identifier-free view of live session state.
+   * Diagnostics can say whether work exists and which policy mode it uses, but
+   * never which session, connection, workspace, or user prompt produced it.
+   */
+  const healthDetail = () => {
+    const now = Date.now();
+    const sessionsForHealth = [...sessions.values()].slice(0, MAX_CORA_HEALTH_DETAIL_SESSIONS);
+    const phaseCounts = { queued: 0, running: 0, 'timed-out': 0 };
+    const phaseCountsByMode = {
+      'tools-enabled': { queued: 0, running: 0, 'timed-out': 0 },
+      'chat-only': { queued: 0, running: 0, 'timed-out': 0 },
+    };
+    let phaseCountsTruncated = false;
+    const phaseCountsByModeTruncated = { 'tools-enabled': false, 'chat-only': false };
+    for (const session of sessions.values()) {
+      const mode = session.helmionMode ? 'tools-enabled' : 'chat-only';
+      for (const handle of session.inFlight) {
+        const phase = handle.phase;
+        if (phase !== 'queued' && phase !== 'running' && phase !== 'timed-out') continue;
+        if (phaseCounts[phase] >= MAX_CORA_HEALTH_PHASE_COUNT) {
+          phaseCountsTruncated = true;
+        } else {
+          phaseCounts[phase] += 1;
+        }
+        if (phaseCountsByMode[mode][phase] >= MAX_CORA_HEALTH_PHASE_COUNT) {
+          phaseCountsByModeTruncated[mode] = true;
+        } else {
+          phaseCountsByMode[mode][phase] += 1;
+        }
+      }
+    }
+    return {
+      schemaVersion: CORA_HEALTH_DIAGNOSTICS_SCHEMA_VERSION,
+      sessions: sessionsForHealth.map((session) => {
+        const activeTurnPhases = [...session.inFlight]
+          .map((handle) => handle.phase)
+          .filter((phase) => phase === 'queued' || phase === 'running' || phase === 'timed-out')
+          .slice(0, MAX_CORA_HEALTH_DETAIL_SESSIONS);
+        const phase = activeTurnPhases.includes('timed-out')
+          ? 'timed-out'
+          : activeTurnPhases.includes('running')
+            ? 'running'
+            : activeTurnPhases.includes('queued')
+              ? 'queued'
+              : null;
+        return {
+          mode: session.helmionMode ? 'tools-enabled' : 'chat-only',
+          turns: Math.max(0, Math.min(1_000_000, Number(session.turns) || 0)),
+          inFlight: Math.max(0, Math.min(100, session.inFlight.size)),
+          active: session.inFlight.size > 0,
+          phase,
+          activeTurnPhases,
+          lastSeenAgeMs: Math.max(0, Math.min(MAX_CORA_HEALTH_AGE_MS, now - session.lastSeen)),
+        };
+      }),
+      phaseCounts,
+      phaseCountsTruncated,
+      phaseCountsByMode,
+      phaseCountsByModeTruncated,
+      truncated: sessions.size > MAX_CORA_HEALTH_DETAIL_SESSIONS,
+    };
+  };
+
+  const handleHttpRequest = async (request, response) => {
+    let requestUrl;
+    try {
+      requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+    } catch {
+      response.writeHead(400, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      response.end('Malformed request target.\n');
+      return;
+    }
+
+    // Health remains behind the Cora bearer boundary below. An optional
+    // application handler may serve other HTTP routes on this same port.
+    if (requestUrl.pathname !== statusPath && typeof httpRequestHandler === 'function') {
+      const handled = await httpRequestHandler(request, response, requestUrl);
+      if (handled) return;
+    }
+
+    if (request.method === 'GET' && requestUrl.pathname === statusPath) {
+      if (requiresToken && !tokenMatches(token, requestBearerToken(request))) {
+        response.writeHead(401, {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+          'www-authenticate': 'Bearer',
+          'x-content-type-options': 'nosniff',
+        });
+        response.end(JSON.stringify({ status: 'unauthorized', service: 'cora-clm' }));
+        return;
+      }
+      const bodyObject = {
+        status: 'ok',
+        service: 'cora-clm',
+        protocol: 'hume-clm',
+        socketPath: path,
+        healthPath: statusPath,
+        provider: activeProvider ? { id: activeProvider.id, label: activeProvider.label } : null,
+        providerReadiness,
+        requiresToken,
+        allowedOriginCount: Array.isArray(allowedOrigins) ? allowedOrigins.length : 0,
+        sessions: sessions.size,
+        inFlight: countInFlight(),
+      };
+      // Detail is opt-in. `detail=1` is intentionally not a second authority
+      // mechanism: it inherits the exact health endpoint bearer boundary above.
+      if (requestUrl.searchParams.get('detail') === '1') {
+        bodyObject.diagnostics = healthDetail();
+      }
+      const body = JSON.stringify(bodyObject);
+      response.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      response.end(body);
+      return;
+    }
+
     response.writeHead(426, {
       'content-type': 'text/plain; charset=utf-8',
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
     });
     response.end(`Cora CLM speaks WebSocket only. Point a Hume EVI config at ws://${host}:${port}${path}\n`);
+  };
+
+  const httpServer = createServer((request, response) => {
+    void handleHttpRequest(request, response).catch((error) => {
+      logger({ level: 'error', event: 'http_handler_failed', message: error?.message ?? String(error) });
+      if (!response.headersSent) {
+        response.writeHead(500, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+        response.end(JSON.stringify({ valid: false, code: 'HTTP_HANDLER_FAILED' }));
+      } else if (!response.writableEnded) {
+        response.end();
+      }
+    });
   });
 
   const ws = attachWebSocketServer(httpServer, {
     path,
+    allowedOrigins,
+    onRefused: (info) => logger({ level: 'warn', event: 'upgrade_refused', ...info }),
     verifyClient: ({ url }) => {
       if (!requiresToken) return { ok: true };
       const presented = url.searchParams.get('token') ?? '';
@@ -463,6 +882,7 @@ export async function startCoraClm({
     },
     onConnection: (connection) => {
       logger({ level: 'info', event: 'connected', id: connection.id, from: connection.remoteAddress });
+      liveConnections.add(connection);
       connection.on('text', (raw) => {
         // Deliberately not awaited: each incoming payload owns its own turn and
         // its own assistant_end. Serialization happens per SESSION inside
@@ -473,6 +893,14 @@ export async function startCoraClm({
         });
       });
       connection.on('close', ({ code, reason }) => {
+        liveConnections.delete(connection);
+        const discarded = discardConnectionSessions(connection.id, 'the voice connection closed');
+        if (discarded) logger({
+          level: 'info',
+          event: 'sessions_discarded_on_disconnect',
+          connectionId: connection.id,
+          count: discarded,
+        });
         logger({ level: 'info', event: 'disconnected', id: connection.id, code, reason });
       });
       connection.on('error', (err) => {
@@ -487,20 +915,42 @@ export async function startCoraClm({
   });
 
   const address = httpServer.address();
+  backgroundNotifier?.start?.();
+
   return {
     host,
     port: address.port,
     path,
+    healthPath: statusPath,
     url: `ws://${host}:${address.port}${path}`,
+    healthUrl: `http://${host}:${address.port}${statusPath}`,
     provider: activeProvider
       ? { id: activeProvider.id, label: activeProvider.label }
       : null,
+    providerReadiness,
     requiresToken,
+    allowedOrigins,
     sessionCount: () => sessions.size,
+    /** Turns that have not settled, across every chat. */
+    inFlightCount: countInFlight,
+    /** The kill switch, reachable from outside a spoken turn. */
+    cancelAll(reason = 'cancelled by the host') {
+      let n = 0;
+      for (const session of sessions.values()) n += cancelSession(session, reason);
+      return n;
+    },
+    notifier: backgroundNotifier,
     async close() {
+      // CANCEL BEFORE DISPOSING. `dispose()` tears down the tool runtime a
+      // running turn is still using; doing that underneath a live turn is how
+      // shutdown races turn into "cannot read property of undefined" from
+      // inside a tool. Stopping the work first makes the teardown ordered.
+      for (const session of sessions.values()) cancelSession(session, 'the server is shutting down');
+      backgroundNotifier?.stop?.();
       ws.closeAll(CLOSE.GOING_AWAY, 'Cora CLM shutting down');
       for (const session of sessions.values()) await session.state?.runtime?.dispose?.();
       sessions.clear();
+      liveConnections.clear();
       await new Promise((resolve) => httpServer.close(resolve));
     },
   };

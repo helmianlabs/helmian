@@ -6,6 +6,7 @@ COPY bin ./bin
 COPY src ./src
 COPY sql ./sql
 COPY docs ./docs
+COPY web ./web
 ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080

@@ -46,6 +46,16 @@ Troy speaks
 | `src/cora/clm-protocol.mjs` | Hume's wire contract as pure functions, with its primary sources cited in the header. |
 | `src/cora/clm-server.mjs` | The CLM backend: sessions, Helmion-mode gating, the turn lifecycle, access control. |
 | `src/cora/activity.mjs` | Writes a voice turn into the ledger the desktop already reads. |
+| `src/cora/capability-manifest.mjs` | A generic, local-only role/action contract; it is advisory and does not dispatch or authorize actions. |
+| `src/cora/action-intent-compat.mjs` | A local-only translation from Cora's four action classes to Helmian's canonical intent categories; it preserves disabled execution and confirmation/approval markers without dispatch. |
+| `src/cora/capability-summary.mjs` | A deterministic plain-language summary of role-scoped capability classes and their confirmation/approval requirements; it is informational only. |
+| `src/cora/request-preview.mjs` | A bounded, local-only preview for one known Cora action class; it reports the request shape, gates, and unwired execution without accepting request details. |
+| `src/cora/role-action-matrix.mjs` | A frozen role×action posture matrix for future help/UI consumers; it exposes only known scopes, classes, and fixed request/gate/wired status. |
+| `src/cora/approval-request-projection.mjs` | A local-only projection from the exact Cora approval-required preview toward Helmian's approval-request shape; it omits identity and request details and cannot create an approval. |
+| `src/cora/role-help.mjs` | A bounded role help/selection projection for a future voice operator surface; it composes only the matrix and request previews and states that selection grants no authority. |
+| `src/cora/operator-surface-projection.mjs` | A pure consumer projection that composes role help with the approval-request projection for consistent future operator display; it is non-authorizing and non-invoking. |
+| `src/cora/demo-command-planner.mjs` | A strict local demo intent catalog and deterministic non-executing planner for navigation, mocked ELD trucks, mocked load-board opportunities, and payroll approval preparation. |
+| `src/cora/operations-command-envelope.mjs` | A tenant/role-scoped Cora consumer envelope that translates the four demo intents to stable Aim Forge page IDs or Helmian mock-service contracts and returns bounded responses without dispatch. |
 | `bin/helmion-cora.mjs` | `npm run cora` — foreground, loopback, Ctrl-C. |
 | `test/cora-clm.test.mjs` | 34 tests. Real sockets, real frames, real agent loop. |
 
@@ -79,6 +89,13 @@ agent. Anything else — a different product's session, or no id at all — is b
 `read-only`, which produces an empty tool catalog. An unmarked session is one
 where nobody stated an intent, and "nobody stated an intent" must never mean
 "may run commands by voice".
+
+The label is not treated as authority by itself. It is limited to 128
+characters, rejects control characters, and is bound to the WebSocket
+connection that first presents it. A second connection cannot guess the label
+and join the first connection's conversation history or tool runtime. This
+keeps the short-lived context and its audit trail connection-scoped even when
+the socket has already passed the configured token/origin checks.
 
 There is a positive control for this: the same scripted model that successfully
 lists a directory in one test is given an unmarked session in the next, at
@@ -141,6 +158,9 @@ answered, and the Hume `custom_session_id`.
 ```
 npm test                                   # whole repo
 node --test test/cora-clm.test.mjs         # this feature: 34 pass, 0 fail, ~1s
+node bin/helmion-cora.mjs --self-test      # real local socket + policy smoke test, no provider key
+node bin/helmion-cora.mjs --provider-status --provider claude  # read-only readiness, no server or provider call
+curl http://127.0.0.1:7421/healthz?detail=1  # opt-in redacted local diagnostics
 ```
 
 | Claim | Evidence |
@@ -153,6 +173,20 @@ node --test test/cora-clm.test.mjs         # this feature: 34 pass, 0 fail, ~1s
 | An unmarked session gets nothing, even at `permission: full` | `AN UNMARKED SESSION CANNOT REACH A TOOL EVEN IF THE MODEL ASKS FOR ONE` |
 | A crash still yields the microphone | `A THROWN TURN STILL YIELDS THE MICROPHONE` |
 | Framing is correct on a real network, not just loopback | fragmentation, 16- and 64-bit lengths, TCP re-framing, unmasked-client refusal, the §5.5 control-frame rules, and an assembled-message size cap |
+| The shipped CLI can prove its local wiring without Hume | `node bin/helmion-cora.mjs --self-test` starts the real server, drives a real WebSocket client, checks both `helmion:*` and chat-only policy sessions, and exits without a provider key or activity-ledger write |
+| Live-turn detail stays bounded and non-authoritative | `GET /healthz?detail=1` adds a read-only schema version plus policy mode, turn count, active-turn count, server-owned phase (`queued`, `running`, or `timed-out`), aggregate and per-policy-mode phase counts capped independently at 100 per phase, explicit aggregate/per-mode truncation flags, bounded age, and session-list truncation status; the schema fixture and provider-free consumer assertion negotiate supported versions and reject extra fields or invalid cap semantics; it omits session/connection IDs, user text, workspace paths, and credentials, and uses the same bearer boundary as health |
+| Provider readiness stays local and fail-closed | The health projection reports only `local-mock` readiness or secret-free `live-provider` states (`ready`, `missing-credential`, `invalid-configuration`); tests validate built-in and keyless local-compatible configuration shape without contacting Hume or echoing credentials, endpoints, or model details |
+| Invalid provider status is a stable local contract | `--provider-status` returns exactly `{"schemaVersion":1,"mode":"live-provider","state":"invalid-configuration","ready":false,"providerRequired":true}` plus one newline for malformed or unknown live-provider selection; it emits no selection, credential, endpoint, or error detail and exits with status 1 |
+| Voice action classes are role-scoped but not wired | `src/cora/capability-manifest.mjs` defines generic `search`, `draft`, `notify`, and `approval-required-execute` classes for observer/drafter/notifier/approver roles; all remain `execution: "not-wired"`, external classes require confirmation/approval, and the contract is explicitly non-authoritative |
+| Cora-to-Helmian action compatibility is bounded and non-invoking | `src/cora/action-intent-compat.mjs` maps those four classes exactly to `read_search`, `draft`, `notify`, and `execute`; every projection retains `enabled: false`, `execution: "not-wired"`, Cora confirmation/approval markers, and Helmian `authorization: "not_evaluated"` / `invocation: "not_performed"` |
+| Capability explanations are user-facing but non-authoritative | `summarizeCoraVoiceCapabilitiesForRole()` accepts only an allowlisted role and returns fixed plain language for its scoped classes, including confirmation/approval requirements; malformed or unknown roles return a fixed no-capabilities message, and no payload, tenant, session, credential, or path data is accepted or returned |
+| Request previews are bounded and never become actions | `previewCoraVoiceRequest()` accepts only one of the four known action ids and returns a frozen `cora.request-preview.v1` shape with fixed plain-language wording, explicit confirmation/approval flags, canonical intent, `enabled: false`, `execution: "not-wired"`, and no payload, identity, credential, endpoint, or path fields; unknown input returns `null` |
+| Role/action display data is closed and non-runtime | `CORA_ROLE_ACTION_MATRIX` contains exactly the four known roles × four known action classes, with fixed `requestable`, confirmation, approval, enabled, and wired status; the role filter returns only known rows or an empty result for malformed/unknown input, and the serialized matrix contains no identity, payload, secret, provider, endpoint, or path fields |
+| Cora approval projection preserves gates without authorizing | `projectCoraApprovalPreviewToHelmianRequest()` accepts only the exact `approval-required-execute` preview and returns a frozen `cora.helmion-approval-projection.v1` with execute/pending/non-authorizing markers, confirmation and approval required, and disabled/unwired execution; it contains no tenant, actor, request, policy, payload, target, credential, endpoint, path, or provider fields and never calls Helmian's approval builder |
+| Role help/selection stays local and fail-closed | `getCoraRoleHelp()` composes one known role's four matrix rows with the fixed request previews, exposes only requestability, confirmation/approval requirements, and disabled/not-wired status, and says selecting a role grants no authority; malformed/unknown roles return `null`, with no tenant/session, payload, target, secret, provider, network, or configuration data |
+| Consumer operator projection is consistent and non-authorizing | `projectCoraOperatorSurface()` accepts only exact outputs of the role-help and approval-projection contracts, then returns frozen capability posture plus a pending approval handoff view; extra or altered fields fail closed, and the output contains no identity, request detail, credential, provider, endpoint, path, network, messaging, UI, or runtime fields |
+| Cora demo command plans are strict and local-only | `planCoraDemoCommand()` recognizes only `switch-dashboard`, `locate-trucks`, `search-loads`, and `prepare-payroll-work`; navigation is descriptive, ELD/load-board results come from fixed mock records, payroll uses the existing pending approval projection, and unknown/incomplete/extra-field/invalid requests return fixed clarification plans without echoing input or executing anything |
+| Cora consumes stable operations contracts without becoming an executor | `createCoraOperationsEnvelope()` requires exact tenant/role/intent/request keys, translates Aim Forge dashboard aliases to stable `desk`/`board`/`dispatch`/`fleet`/`money`/`docs`/`connect`/`settings` IDs, delegates only to the deterministic Helmian fleet/load/payroll mock contracts, preserves audit IDs and payroll approval gates, and returns frozen `cora.operations-command-envelope.v1` data with execution disabled |
 
 Two real defects were found by these tests and fixed before anything was
 committed:
