@@ -76,6 +76,14 @@ public sealed class SuperGrokOAuthClient : IDisposable
     public const string DeviceCodeGrantType = "urn:ietf:params:oauth:grant-type:device_code";
 
     /// <summary>
+    /// Minimal public-client device authorization scope. xAI requires a scope on this
+    /// request; <c>openid</c> identifies the signed-in session and <c>offline_access</c>
+    /// requests refresh-token continuity. No chat, tool, data, or provider API scope is
+    /// requested here.
+    /// </summary>
+    public const string DeviceAuthorizationScope = "openid offline_access";
+
+    /// <summary>
     /// xAI's first-party device-flow client id. Confirmed as the <c>aud</c> claim of a live
     /// Grok CLI access token and accepted by <see cref="DeviceCodeEndpoint"/>.
     /// </summary>
@@ -101,7 +109,11 @@ public sealed class SuperGrokOAuthClient : IDisposable
     {
         var root = await PostFormAsync(
             DeviceCodeUrl,
-            new Dictionary<string, string> { ["client_id"] = ClientId },
+            new Dictionary<string, string>
+            {
+                ["client_id"] = ClientId,
+                ["scope"] = DeviceAuthorizationScope,
+            },
             cancellationToken);
 
         var deviceCode = ReadString(root, "device_code");

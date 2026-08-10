@@ -65,13 +65,16 @@ internal static class SuperGrokOAuthChecks
             SuperGrokOAuthClient.ClientId == "b1a00492-073a-47ea-816f-4c329264a828",
             "client id is xAI's first-party device client, confirmed as the token audience");
         Assert(
+            SuperGrokOAuthClient.DeviceAuthorizationScope == "openid offline_access",
+            "device authorization requests only minimal identity and refresh continuity scopes");
+        Assert(
             !typeof(SuperGrokOAuthClient).GetFields(
                     System.Reflection.BindingFlags.Public
                     | System.Reflection.BindingFlags.NonPublic
                     | System.Reflection.BindingFlags.Static)
                 .Any(f => f.Name.Contains("secret", StringComparison.OrdinalIgnoreCase)),
             "device flow is a public client — there is no client secret anywhere in it");
-        return 6;
+        return 7;
     }
 
     // --- 2. THE HAPPY PATH, END TO END --------------------------------------------
@@ -93,6 +96,9 @@ internal static class SuperGrokOAuthChecks
         Assert(
             server.LastDeviceForm["client_id"] == SuperGrokOAuthClient.ClientId,
             "the device request sends the client id the live server requires");
+        Assert(
+            server.LastDeviceForm["scope"] == SuperGrokOAuthClient.DeviceAuthorizationScope,
+            "the device request includes the scope the authorization server requires");
 
         var progressReports = new List<string>();
         var tokens = client
@@ -123,7 +129,7 @@ internal static class SuperGrokOAuthChecks
             refreshed.RefreshToken == "refresh-alpha",
             "a response with no refresh_token keeps the existing one instead of dropping it");
 
-        return 13;
+        return 14;
     }
 
     // --- 3. THE STATES NOBODY CLICKS ----------------------------------------------
