@@ -4,7 +4,7 @@ import {
   toHistoryAssistant,
   toHistoryToolResults,
 } from './providers.mjs';
-import { createToolRuntime } from './tools.mjs';
+import { createToolRuntime, CANCELLED_TOOL_MESSAGE } from './tools.mjs';
 import { redactSecrets } from './redact.mjs';
 import { readEnvTier, resolveTurnModel } from './model-router.mjs';
 import { withLocalBrevity } from './local-provider.mjs';
@@ -28,6 +28,48 @@ export function resolveMaxToolRounds(override) {
 
 /** @deprecated use resolveMaxToolRounds() — kept for importers that expect a number. */
 export const MAX_TOOL_ROUNDS = MAX_TOOL_ROUNDS_DEFAULT;
+
+/**
+ * The error a cancelled turn throws.
+ *
+ * `name === 'AbortError'` on purpose: that is what `fetch` throws when its own
+ * signal fires, so a caller that wants to know "was this cancelled, or did it
+ * genuinely fail" gets ONE answer for both the model call dying and the loop
+ * refusing to continue. Two different shapes would mean every caller has to
+ * remember both, and the one that forgets reports a user-requested stop as a
+ * crash.
+ */
+export function abortError(message = 'The turn was cancelled.') {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
+}
+
+/** True for our own cancels AND for the DOMException fetch raises on abort. */
+export function isAbortError(err) {
+  return err?.name === 'AbortError';
+}
+
+/**
+ * One signal from several, so a local-model timeout and a user cancel can both
+ * kill the same request.
+ *
+ * `AbortSignal.any` landed in Node 20.3; this falls back rather than assuming
+ * it, because a missing static would throw at call time — inside the turn, on
+ * the machine where it is least welcome.
+ */
+export function combineSignals(...signals) {
+  const live = signals.filter(Boolean);
+  if (live.length === 0) return undefined;
+  if (live.length === 1) return live[0];
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any(live);
+  const controller = new AbortController();
+  for (const s of live) {
+    if (s.aborted) { controller.abort(s.reason); break; }
+    s.addEventListener('abort', () => controller.abort(s.reason), { once: true });
+  }
+  return controller.signal;
+}
 
 /**
  * Shared multi-round tool loop used by CLI REPL and the Windows EXE bridge.
@@ -59,9 +101,19 @@ export async function runAgentTurn({
   // callers: the bridge is one process per app run (bridge.mjs) and the CLI REPL
   // is one process per sitting. Passed explicitly by anything that knows better.
   sessionId = processSessionId(),
+  // A REAL kill switch for this turn. Default `null` is byte-for-byte today's
+  // behaviour: no signal reaches fetch, no abort check ever fires true, and the
+  // loop runs exactly as it did before. When a caller does pass one, aborting it
+  // stops the in-flight model call, stops any running child process, and stops
+  // the loop from starting anything new — see the three checks below.
+  signal = null,
 }) {
   const toolDefs = runtime.definitionsForOpenAi();
   const limit = resolveMaxToolRounds(maxToolRounds);
+  // Before the prompt is even recorded. A turn cancelled while it sat queued
+  // never happened, and appending its user message would leave the history
+  // carrying a question nothing ever answered.
+  if (signal?.aborted) throw abortError('Cancelled before the turn started.');
   messages.push({ role: 'user', content: userText });
 
   // Escalate-only within this turn: never hand a partially-reasoned turn back
@@ -127,9 +179,13 @@ export async function runAgentTurn({
       // vLLM / DeepSeek endpoint is also 'custom' and was never tested here.
       reasoningEffortNone: Boolean(choice.isLocal),
       images: round === 0 ? images : [],
-      signal: choice.isLocal && active.timeoutMs
-        ? AbortSignal.timeout(active.timeoutMs)
-        : undefined,
+      // BOTH reasons a request should die: the local box wedged, or the user
+      // said stop. Previously only the first existed, so a cancel could not
+      // reach the HTTP request that was actually burning the time.
+      signal: combineSignals(
+        signal,
+        choice.isLocal && active.timeoutMs ? AbortSignal.timeout(active.timeoutMs) : null,
+      ),
     });
   };
 
@@ -193,6 +249,12 @@ export async function runAgentTurn({
   };
 
   for (let round = 0; round < limit; round += 1) {
+    // Checked at the top of EVERY round, not once before the loop. A cancel
+    // that lands while round 3 is running has to stop round 4 from starting.
+    if (signal?.aborted) {
+      onEvent({ type: 'cancelled', reason: 'before the model call', round });
+      throw abortError('Cancelled before the model call.');
+    }
     let choice = pickModel(round);
     announce(choice, round);
 
@@ -200,6 +262,14 @@ export async function runAgentTurn({
     try {
       reply = await callProvider(choice, round);
     } catch (err) {
+      // A CANCEL IS NOT A LOCAL FAILURE. Without this line, aborting during a
+      // local call lands in the fallback below and immediately fires a fresh
+      // request at the frontier provider — the user says "stop" and Helmion
+      // answers by starting a second, more expensive call.
+      if (isAbortError(err)) {
+        onEvent({ type: 'cancelled', reason: 'the model call was aborted', round });
+        throw err;
+      }
       // A local failure must never fail the turn. Anything else propagates.
       // Nothing was recorded for the failed attempt, and that is correct: no
       // completion arrived, so no model answered.
@@ -232,13 +302,27 @@ export async function runAgentTurn({
 
     messages.push(toHistoryAssistant(reply));
     const results = [];
+    let cancelledInTools = false;
     for (const tc of reply.toolCalls) {
+      if (signal?.aborted) {
+        // Every remaining call STILL NEEDS A RESULT ROW. An assistant message
+        // carrying tool_calls with no matching tool results is a malformed
+        // history that Anthropic and OpenAI both reject outright on the next
+        // request — so bailing out of this loop early would leave the
+        // conversation unusable, and a cancel would break the very session it
+        // was supposed to leave resumable.
+        cancelledInTools = true;
+        results.push(CANCELLED_TOOL_MESSAGE);
+        continue;
+      }
       onEvent({
         type: 'tool',
         name: tc.name,
         args: tc.arguments || {},
       });
-      const result = await runtime.execute(tc.name, tc.arguments);
+      // The signal goes INTO the tool. This is the line that makes a cancel
+      // reach a running child process rather than merely preventing the next one.
+      const result = await runtime.execute(tc.name, tc.arguments, { signal });
       const workbenchResult = parseWorkbenchResult(result);
       const clipped = result.length > 12_000
         ? `${result.slice(0, 12_000)}\n…(truncated)`
@@ -252,13 +336,27 @@ export async function runAgentTurn({
       });
       results.push(clipped);
     }
+    // Written BEFORE the throw, deliberately: the history has to be well-formed
+    // even on the cancelled path, so the next turn on this session can continue
+    // from it instead of erroring on a dangling tool_call.
     messages.push(...toHistoryToolResults(reply.toolCalls, results));
+    if (cancelledInTools || signal?.aborted) {
+      onEvent({ type: 'cancelled', reason: 'during tool execution', round });
+      throw abortError('Cancelled during tool execution.');
+    }
   }
 
   // Hit the cap — one final no-tools call so the user gets a real wrap-up,
   // not only a dead "stopped" line. History is kept; "continue" still works.
   // The wrap-up runs through the router too, so it inherits this turn's floor
   // rather than silently dropping to a cheaper model for the summary.
+  // The tool-round cap was reached. If the user cancelled on the way here, do
+  // NOT spend one more model call on a wrap-up nobody is waiting to hear.
+  if (signal?.aborted) {
+    onEvent({ type: 'cancelled', reason: 'before the wrap-up call', round: limit });
+    throw abortError('Cancelled before the wrap-up.');
+  }
+
   const wrapChoice = pickModel(limit);
   onEvent({
     type: 'model',
@@ -305,6 +403,7 @@ export async function runAgentTurn({
         round: limit,
         routedLocal: false,
       },
+      signal: combineSignals(signal, null),
     });
     announceProvenance(wrap, limit);
     // Redact secrets from wrap-up response
@@ -314,6 +413,14 @@ export async function runAgentTurn({
       onEvent({ type: 'assistant', text: wrapText });
     }
   } catch (err) {
+    // A cancel must NOT be swallowed here. This catch exists so a failed
+    // wrap-up still returns the "paused after N rounds" text; letting an abort
+    // fall through to that would report a user-requested stop as a normal pause
+    // and hand back a turn the caller believes completed.
+    if (isAbortError(err)) {
+      onEvent({ type: 'cancelled', reason: 'the wrap-up call was aborted', round: limit });
+      throw err;
+    }
     wrapText = '';
     onEvent({
       type: 'status',

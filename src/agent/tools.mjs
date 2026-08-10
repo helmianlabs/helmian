@@ -490,14 +490,19 @@ export function createToolRuntime(workspaceRoot, options = {}) {
         },
         required: ['task_id'],
       },
-      async execute({ task_id, timeout_ms = 120_000 }) {
+      async execute({ task_id, timeout_ms = 120_000 }, { signal = null } = {}) {
         const command = projectTaskCommand(root, String(task_id ?? ''));
         const timeout = Math.max(1_000, Math.min(Number(timeout_ms) || 120_000, 300_000));
-        const execution = await runDirect(command.executable, command.args, root, timeout);
+        const execution = await runDirect(command.executable, command.args, root, timeout, signal);
         return JSON.stringify({
           contract: WORKBENCH_CONTRACT,
           kind: 'task_run',
-          status: execution.exitCode === 0 ? 'completed' : execution.timedOut ? 'timed_out' : 'failed',
+          // 'cancelled' is checked FIRST: a killed task has exitCode null and
+          // timedOut false, which the old two-way ternary would have reported as
+          // a plain 'failed' — indistinguishable from a task that ran and broke.
+          status: execution.cancelled
+            ? 'cancelled'
+            : execution.exitCode === 0 ? 'completed' : execution.timedOut ? 'timed_out' : 'failed',
           task: command.task,
           exitCode: execution.exitCode,
           timedOut: execution.timedOut,
@@ -613,9 +618,9 @@ export function createToolRuntime(workspaceRoot, options = {}) {
         },
         required: ['command'],
       },
-      async execute({ command, timeout_ms = 120_000 }) {
+      async execute({ command, timeout_ms = 120_000 }, { signal = null } = {}) {
         if (!command || !String(command).trim()) return 'Error: empty command';
-        return redactSecrets(await runShell(String(command), root, Number(timeout_ms) || 120_000));
+        return redactSecrets(await runShell(String(command), root, Number(timeout_ms) || 120_000, signal));
       },
     },
     search_text: safeTools.search_text,
@@ -648,7 +653,11 @@ export function createToolRuntime(workspaceRoot, options = {}) {
         },
       }));
     },
-    async execute(name, args) {
+    async execute(name, args, { signal = null } = {}) {
+      // The FIRST gate — before permission, before governance, before approval.
+      // Once the user has said stop, the correct number of NEW tool calls to
+      // begin is zero, including ones that would otherwise have been allowed.
+      if (signal?.aborted) return CANCELLED_TOOL_MESSAGE;
       if (!isToolAllowed(permissionMode, name)) {
         return (
           `Error: tool '${name}' blocked by permission mode '${permissionMode}'. `
@@ -723,8 +732,16 @@ export function createToolRuntime(workspaceRoot, options = {}) {
         }
       }
 
+      // Re-checked after the gates, deliberately. In 'ask' mode requestApproval
+      // waits on a human; a cancel that arrives during that wait must not be
+      // overtaken by an approval landing a moment later.
+      if (signal?.aborted) return CANCELLED_TOOL_MESSAGE;
+
       try {
-        const result = await tool.execute(callArgs);
+        // The signal is handed to the tool itself so a LONG-RUNNING one can stop
+        // mid-flight. Every other tool ignores the second argument, which is why
+        // this is additive rather than a signature change across the catalog.
+        const result = await tool.execute(callArgs, { signal });
         // Redact secrets from all tool outputs as a final safety net
         return redactSecrets(String(result));
       } catch (err) {
@@ -739,6 +756,18 @@ export function createToolRuntime(workspaceRoot, options = {}) {
     },
   };
 }
+
+/**
+ * What a tool call returns when the turn was cancelled.
+ *
+ * Phrased FOR THE MODEL, not for a log. If a cancelled turn is ever resumed the
+ * model reads this string as the tool result, and it has to be unambiguous that
+ * the work did not happen and that retrying is not the right response — a vague
+ * "error" invites an immediate retry of the exact thing the user just stopped.
+ */
+export const CANCELLED_TOOL_MESSAGE =
+  'Cancelled: the user interrupted this turn before this tool ran. Nothing was '
+  + 'changed. Do NOT retry it — wait for the next instruction.';
 
 // Keep WRITE_TOOLS referenced so tree-shaking / lint does not drop the policy table.
 void WRITE_TOOLS;
@@ -769,15 +798,81 @@ function walk(dir, onFile) {
   }
 }
 
-function runDirect(executable, args, cwd, timeoutMs) {
+/**
+ * Kill a spawned child AND its descendants.
+ *
+ * `child.kill()` terminates only the DIRECT child. On Windows that direct child
+ * is `powershell.exe`, so a command which itself spawned something (`npm test`,
+ * `dotnet build`) leaves the grandchild running after its parent is gone. That
+ * would make "the tool was cancelled" a claim about a process tree still
+ * writing to disk, which is the exact lie this whole change exists to remove.
+ * `taskkill /T` walks the tree.
+ *
+ * Best-effort by construction: the process may already have exited, and a kill
+ * that fails must never throw into a turn that is being torn down.
+ */
+function killTree(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const pid = child.pid;
+  if (process.platform === 'win32' && pid) {
+    try {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      }).unref();
+      return;
+    } catch { /* fall through to the portable path */ }
+  }
+  try { child.kill('SIGKILL'); } catch { /* already gone */ }
+}
+
+/**
+ * @param {AbortSignal|null} signal fires when the user cancelled the turn this
+ *   task belongs to. The child is killed and the promise settles immediately
+ *   rather than waiting for 'close': the caller has stopped caring about the
+ *   output, and on Windows a taskkill'd tree can take a moment to reap. What
+ *   has to be true the instant the signal fires is that the process was
+ *   SIGNALLED, not that it has finished dying.
+ */
+function runDirect(executable, args, cwd, timeoutMs, signal = null) {
   return new Promise((resolvePromise) => {
+    // Checked BEFORE the spawn. Spawning and then killing on the next tick is a
+    // race that can leave a real process behind, and the point of the signal is
+    // that nothing NEW starts once it has fired.
+    if (signal?.aborted) {
+      resolvePromise({
+        exitCode: null, timedOut: false, cancelled: true,
+        output: 'Cancelled before the task started; nothing ran.',
+      });
+      return;
+    }
     const child = spawn(executable, args, { cwd, env: buildSafeEnv(), windowsHide: true, shell: false });
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill();
-      resolvePromise({ exitCode: null, timedOut: true, output: `Task timed out after ${timeoutMs}ms\n${stdout}\n${stderr}` });
+    let settled = false;
+    let timer = null;
+    let onAbort = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+      resolvePromise(value);
+    };
+    timer = setTimeout(() => {
+      killTree(child);
+      finish({ exitCode: null, timedOut: true, cancelled: false, output: `Task timed out after ${timeoutMs}ms\n${stdout}\n${stderr}` });
     }, timeoutMs);
+    if (signal) {
+      onAbort = () => {
+        killTree(child);
+        finish({
+          exitCode: null, timedOut: false, cancelled: true,
+          output: 'Cancelled by the user while the task was running; the process tree was killed.',
+        });
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
     child.stdout.on('data', (d) => {
       stdout += d.toString();
       if (stdout.length > 80_000) stdout = `${stdout.slice(0, 80_000)}\n…truncated`;
@@ -787,21 +882,24 @@ function runDirect(executable, args, cwd, timeoutMs) {
       if (stderr.length > 40_000) stderr = `${stderr.slice(0, 40_000)}\n…truncated`;
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
       const parts = [];
       if (stdout) parts.push(stdout.trimEnd());
       if (stderr) parts.push(`STDERR:\n${stderr.trimEnd()}`);
-      resolvePromise({ exitCode: code, timedOut: false, output: parts.join('\n') || '(no output)' });
+      finish({ exitCode: code, timedOut: false, cancelled: false, output: parts.join('\n') || '(no output)' });
     });
     child.on('error', (err) => {
-      clearTimeout(timer);
-      resolvePromise({ exitCode: null, timedOut: false, output: `Error starting project task: ${err.message}` });
+      finish({ exitCode: null, timedOut: false, cancelled: false, output: `Error starting project task: ${err.message}` });
     });
   });
 }
 
-function runShell(command, cwd, timeoutMs) {
+/** @param {AbortSignal|null} signal see runDirect — same contract, string result. */
+function runShell(command, cwd, timeoutMs, signal = null) {
   return new Promise((resolvePromise) => {
+    if (signal?.aborted) {
+      resolvePromise('Cancelled before the command started; nothing ran.');
+      return;
+    }
     const isWin = process.platform === 'win32';
     const child = spawn(
       isWin ? 'powershell.exe' : 'sh',
@@ -810,10 +908,27 @@ function runShell(command, cwd, timeoutMs) {
     );
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill();
-      resolvePromise(`Error: command timed out after ${timeoutMs}ms\n${stdout}\n${stderr}`);
+    let settled = false;
+    let timer = null;
+    let onAbort = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+      resolvePromise(value);
+    };
+    timer = setTimeout(() => {
+      killTree(child);
+      finish(`Error: command timed out after ${timeoutMs}ms\n${stdout}\n${stderr}`);
     }, timeoutMs);
+    if (signal) {
+      onAbort = () => {
+        killTree(child);
+        finish('Cancelled by the user while the command was running; the process tree was killed.');
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
     child.stdout.on('data', (data) => {
       stdout += data.toString();
       if (stdout.length > 80_000) stdout = `${stdout.slice(0, 80_000)}\n…truncated`;
@@ -823,16 +938,14 @@ function runShell(command, cwd, timeoutMs) {
       if (stderr.length > 40_000) stderr = `${stderr.slice(0, 40_000)}\n…truncated`;
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
       const parts = [];
       if (stdout) parts.push(stdout.trimEnd());
       if (stderr) parts.push(`STDERR:\n${stderr.trimEnd()}`);
       parts.push(`exit_code=${code}`);
-      resolvePromise(parts.join('\n') || `(no output) exit_code=${code}`);
+      finish(parts.join('\n') || `(no output) exit_code=${code}`);
     });
     child.on('error', (error) => {
-      clearTimeout(timer);
-      resolvePromise(`Error starting shell: ${error.message}`);
+      finish(`Error starting shell: ${error.message}`);
     });
   });
 }
