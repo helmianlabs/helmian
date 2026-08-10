@@ -1,0 +1,30 @@
+# Copy to fly.toml only after `fly launch` has created the intended Helmian app.
+# Do not reuse a DairyForge, AimForge, or marketing Fly application.
+app = "replace-with-verified-helmian-cloud-app"
+primary_region = "den"
+
+[build]
+  dockerfile = "deploy/helmian-cloud/Dockerfile"
+
+[env]
+  PORT = "8080"
+  HELMION_CLOUD_ENVIRONMENT = "staging"
+  HELMION_CORA_PROVIDER = "claude"
+  HELMION_CORA_TIER = "standard"
+  HELMION_CORA_PERMISSION = "ask"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  processes = ["app"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  # The Cora health route deliberately requires a bearer token on a public bind.
+  # Use a TCP check here so Fly does not need to store or expose that token in TOML.
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "20s"
