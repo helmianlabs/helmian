@@ -40,7 +40,7 @@ import { isIPv4, isIPv6 } from 'node:net';
 
 import { loadHelmionEnv, resolveProvider } from '../agent/env.mjs';
 import { createSessionState, isAbortError, runAgentTurn } from '../agent/loop.mjs';
-import { attachWebSocketServer, CLOSE, DEFAULT_ALLOWED_ORIGINS } from './ws-server.mjs';
+import { attachWebSocketServer, CLOSE } from './ws-server.mjs';
 import {
   DEFAULT_MAX_SPOKEN_CHARS,
   DEFAULT_SPEECH_CHUNK_CHARS,
@@ -83,6 +83,12 @@ export const DEFAULT_CORA_PATH = '/llm';
 
 /** Read-only local readiness endpoint; it never returns credentials or paths. */
 export const DEFAULT_CORA_HEALTH_PATH = '/healthz';
+
+// Keep the default policy local to the CLM entrypoint so an older packaged
+// WebSocket helper cannot make the service fail during module linking. An
+// empty list is fail-closed: browser origins are allowed only when explicitly
+// supplied by the caller.
+const DEFAULT_ALLOWED_ORIGINS = Object.freeze([]);
 
 // Re-export contract bounds for existing local consumers and focused tests.
 export {
