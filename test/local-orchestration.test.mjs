@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import {
   LOCAL_ORCHESTRATION_LIMITS,
   createMockProviderRegistry,
+  createIntegrationReadinessRegistry,
   defineMockProviderContract,
+  defineIntegrationReadinessDescriptor,
   buildOrchestrationRequestEnvelope,
   inspectOrchestrationRequest,
+  inspectLocalIntegrationReadiness,
   listMockProviderContracts,
+  listLocalIntegrationReadiness,
+  INTEGRATION_READINESS_STATES,
   preparePayrollWork,
   readFleetStatus,
   searchLoadBoard,
@@ -368,4 +373,123 @@ test('request envelope building fails closed before any external or approval pat
     );
     assert.equal(JSON.stringify(result).includes('credential'), false);
   }
+});
+
+test('integration readiness lists every mock surface with safe disabled adapter states', () => {
+  const first = listLocalIntegrationReadiness(acmeAuditor);
+  const second = listLocalIntegrationReadiness(acmeAuditor);
+  assert.deepEqual(first, second);
+  assert.equal(first.valid, true);
+  assert.deepEqual(first.result.integrations.map((item) => item.integration_id), [
+    'fleet-eld-readiness',
+    'load-board-readiness',
+    'payroll-readiness',
+  ]);
+  for (const item of first.result.integrations) {
+    assert.equal(item.readiness, INTEGRATION_READINESS_STATES.MOCK_ONLY);
+    assert.equal(item.activation, 'awaiting_user_connection');
+    assert.equal(item.connection, 'not_configured');
+    assert.equal(item.credential_state, 'not_present');
+    assert.equal(item.transport, 'disabled');
+    assert.equal(item.execution, 'disabled');
+    assert.equal(item.mutations, 'disabled');
+    assert.equal(item.tenant_id, 'acme-operations');
+    assert.equal(item.actor_role, 'auditor');
+    assert.equal(item.tenant_scoped, true);
+    assert.equal(item.deterministic, true);
+    assert.equal(item.authorization, 'not_evaluated');
+    assert.equal(item.invocation, 'not_performed');
+    assert.equal(item.audit_id.startsWith('integration-readiness-'), true);
+    assert.equal(Object.isFrozen(item), true);
+  }
+  const payroll = first.result.integrations.find((item) => item.surface === 'payroll');
+  assert.equal(payroll.approval_required, true);
+  assert.equal(payroll.role_policy, 'owner_admin_prepare');
+  assert.equal(payroll.role_eligible, false);
+  assert.equal(Object.isFrozen(first.result), true);
+  assert.equal(Object.isFrozen(first.result.integrations), true);
+});
+
+test('integration readiness preserves role posture and tenant-scoped audit identity', () => {
+  const owner = inspectLocalIntegrationReadiness({
+    tenant_id: 'Acme-Operations',
+    actor_role: 'Owner',
+    integration_id: 'payroll-readiness',
+  });
+  const otherTenant = inspectLocalIntegrationReadiness({
+    tenant_id: 'Northstar-Logistics',
+    actor_role: 'Owner',
+    integration_id: 'payroll-readiness',
+  });
+  assert.equal(owner.valid, true);
+  assert.equal(owner.readiness.role_eligible, true);
+  assert.equal(owner.readiness.approval_required, true);
+  assert.equal(owner.readiness.tenant_id, 'acme-operations');
+  assert.equal(otherTenant.valid, true);
+  assert.equal(otherTenant.readiness.tenant_id, 'northstar-logistics');
+  assert.notEqual(owner.readiness.audit_id, otherTenant.readiness.audit_id);
+  assert.equal(JSON.stringify(owner).includes('credential'), true);
+  assert.equal(JSON.stringify(owner).includes('api_key'), false);
+});
+
+test('integration readiness registry is extensible but rejects unsafe or mismatched descriptors', () => {
+  const base = {
+    format: 'helmion.integration-readiness-descriptor.v1',
+    integration_id: 'fleet-eld-secondary',
+    provider_id: 'fleet-eld-mock',
+    surface: 'fleet_eld',
+    readiness: 'mock_only',
+    activation: 'awaiting_user_connection',
+    connection: 'not_configured',
+    credential_state: 'not_present',
+    transport: 'disabled',
+    execution: 'disabled',
+    mutations: 'disabled',
+    deterministic: true,
+    tenant_scoped: true,
+    role_policy: 'all_roles_read',
+    approval_required: false,
+    capabilities: { read: true, plan: true, write: false },
+  };
+  const descriptor = defineIntegrationReadinessDescriptor(base);
+  assert.equal(Object.isFrozen(descriptor), true);
+  const registry = createIntegrationReadinessRegistry([base]);
+  assert.deepEqual(registry.list().map((item) => item.integration_id), ['fleet-eld-secondary']);
+  for (const altered of [
+    { ...base, transport: 'api' },
+    { ...base, provider_id: 'load-board-mock' },
+    { ...base, credential_state: 'configured' },
+    { ...base, capabilities: { read: true, plan: true, write: true } },
+    { ...base, secret: 'must-not-be-accepted' },
+  ]) {
+    assert.throws(() => defineIntegrationReadinessDescriptor(altered), TypeError);
+  }
+  assert.throws(() => createIntegrationReadinessRegistry([base, base]), TypeError);
+});
+
+test('integration readiness fails closed for malformed scope, unknown IDs, and sensitive fields', () => {
+  assert.deepEqual(listLocalIntegrationReadiness({
+    tenant_id: 'acme-operations',
+    actor_role: 'member',
+    credential: 'must-not-be-read',
+  }), {
+    valid: false,
+    code: 'ORCHESTRATION_READINESS_INVALID',
+  });
+  assert.deepEqual(inspectLocalIntegrationReadiness({
+    tenant_id: 'acme-operations',
+    actor_role: 'member',
+    integration_id: 'unknown-readiness',
+  }), {
+    valid: false,
+    code: 'ORCHESTRATION_READINESS_NOT_FOUND',
+  });
+  assert.deepEqual(inspectLocalIntegrationReadiness({
+    tenant_id: 'acme-operations',
+    actor_role: 'unknown',
+    integration_id: 'fleet-eld-readiness',
+  }), {
+    valid: false,
+    code: 'ORCHESTRATION_READINESS_INVALID',
+  });
 });

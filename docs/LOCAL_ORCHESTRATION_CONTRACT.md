@@ -67,3 +67,28 @@ approval posture, bounded summary shape, and the self-bound audit ID. It
 returns only a frozen `helmion.orchestration-request-inspection.v1` summary or
 a stable failure code. Inspection is not membership authorization, approval,
 confirmation, invocation, notification, transport, or mutation.
+
+## Integration readiness registry
+
+`localIntegrationReadinessRegistry` is the extensible local readiness catalog
+for the three product surfaces. Its descriptors are bound to the mock provider
+registry and are rejected if their surface/provider binding, capabilities, or
+safety state drifts. The current descriptors report:
+
+- `fleet-eld-readiness` for fleet/ELD;
+- `load-board-readiness` for load-board search;
+- `payroll-readiness` for payroll work.
+
+`listLocalIntegrationReadiness` and `inspectLocalIntegrationReadiness` require
+explicit tenant/role scope and return only frozen audit-safe state. Every
+descriptor is `mock_only`, `awaiting_user_connection`,
+`connection: "not_configured"`, `credential_state: "not_present"`, with
+transport, execution, and mutations disabled. Payroll additionally reports
+`owner_admin_prepare` and `approval_required: true`; an auditor/member can see
+that posture but cannot be treated as eligible to prepare payroll work.
+
+Readiness is descriptive, not authorization. No descriptor probes a provider,
+reads credentials, opens a connection, sends data, grants approval, invokes an
+action, or changes a tenant record. A future live integration must introduce a
+separate reviewed state transition after explicit user connection and active
+tenant membership checks.

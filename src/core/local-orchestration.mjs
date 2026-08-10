@@ -315,6 +315,264 @@ const CONTRACTS = Object.freeze([
 
 export const localMockProviderRegistry = createMockProviderRegistry(CONTRACTS);
 
+export const INTEGRATION_READINESS_STATES = Object.freeze({
+  MOCK_ONLY: 'mock_only',
+  AWAITING_USER_CONNECTION: 'awaiting_user_connection',
+  DISABLED: 'disabled',
+});
+
+const READINESS_DESCRIPTOR_KEYS = Object.freeze([
+  'activation',
+  'approval_required',
+  'capabilities',
+  'connection',
+  'credential_state',
+  'deterministic',
+  'execution',
+  'format',
+  'integration_id',
+  'mutations',
+  'provider_id',
+  'readiness',
+  'role_policy',
+  'surface',
+  'tenant_scoped',
+  'transport',
+]);
+
+const READINESS_SURFACES = new Set(['fleet_eld', 'load_board', 'payroll']);
+const READINESS_ROLE_POLICIES = new Set(['all_roles_read', 'owner_admin_prepare']);
+
+function validateReadinessDescriptor(descriptor, providerRegistry) {
+  if (!isPlainObject(descriptor)) throw new TypeError('readiness descriptor is invalid');
+  requireExactKeys(descriptor, READINESS_DESCRIPTOR_KEYS);
+  if (descriptor.format !== 'helmion.integration-readiness-descriptor.v1'
+      || typeof descriptor.integration_id !== 'string'
+      || !PROVIDER_ID_PATTERN.test(descriptor.integration_id)
+      || typeof descriptor.provider_id !== 'string'
+      || !PROVIDER_ID_PATTERN.test(descriptor.provider_id)
+      || !READINESS_SURFACES.has(descriptor.surface)
+      || !Object.values(INTEGRATION_READINESS_STATES).includes(descriptor.readiness)
+      || descriptor.activation !== 'awaiting_user_connection'
+      || descriptor.connection !== 'not_configured'
+      || descriptor.credential_state !== 'not_present'
+      || descriptor.transport !== 'disabled'
+      || descriptor.execution !== 'disabled'
+      || descriptor.mutations !== 'disabled'
+      || descriptor.deterministic !== true
+      || descriptor.tenant_scoped !== true
+      || typeof descriptor.approval_required !== 'boolean'
+      || !READINESS_ROLE_POLICIES.has(descriptor.role_policy)) {
+    throw new TypeError('readiness descriptor is invalid');
+  }
+  const provider = providerRegistry.get(descriptor.provider_id);
+  if (!provider || provider.domain !== descriptor.surface) {
+    throw new TypeError('readiness provider binding is invalid');
+  }
+  if (!isPlainObject(descriptor.capabilities)
+      || !hasExactKeys(descriptor.capabilities, ['plan', 'read', 'write'])
+      || typeof descriptor.capabilities.read !== 'boolean'
+      || typeof descriptor.capabilities.plan !== 'boolean'
+      || descriptor.capabilities.write !== false) {
+    throw new TypeError('readiness capabilities are invalid');
+  }
+  if (descriptor.surface === 'payroll'
+      && (descriptor.approval_required !== true
+        || descriptor.role_policy !== 'owner_admin_prepare')) {
+    throw new TypeError('payroll readiness policy is invalid');
+  }
+  if (descriptor.surface !== 'payroll'
+      && (descriptor.approval_required !== false
+        || descriptor.role_policy !== 'all_roles_read')) {
+    throw new TypeError('readiness role policy is invalid');
+  }
+}
+
+export function defineIntegrationReadinessDescriptor(
+  input,
+  providerRegistry = localMockProviderRegistry,
+) {
+  try {
+    const descriptor = structuredClone(input);
+    validateReadinessDescriptor(descriptor, providerRegistry);
+    return deepFreeze(descriptor);
+  } catch {
+    throw new TypeError('integration readiness descriptor is invalid');
+  }
+}
+
+export function createIntegrationReadinessRegistry(
+  descriptors,
+  providerRegistry = localMockProviderRegistry,
+) {
+  if (!Array.isArray(descriptors)
+      || descriptors.length < 1
+      || descriptors.length > LOCAL_ORCHESTRATION_LIMITS.maxProviderContracts) {
+    throw new TypeError('integration readiness descriptors are invalid');
+  }
+  const byId = new Map();
+  for (const candidate of descriptors) {
+    const descriptor = defineIntegrationReadinessDescriptor(candidate, providerRegistry);
+    if (byId.has(descriptor.integration_id)) {
+      throw new TypeError('duplicate integration_id');
+    }
+    byId.set(descriptor.integration_id, descriptor);
+  }
+  return Object.freeze({
+    list() {
+      return Object.freeze([...byId.values()].sort(
+        (left, right) => left.integration_id.localeCompare(right.integration_id),
+      ));
+    },
+    get(integrationId) {
+      return byId.get(integrationId) ?? null;
+    },
+  });
+}
+
+const READINESS_DESCRIPTORS = Object.freeze([
+  {
+    format: 'helmion.integration-readiness-descriptor.v1',
+    integration_id: 'fleet-eld-readiness',
+    provider_id: 'fleet-eld-mock',
+    surface: 'fleet_eld',
+    readiness: INTEGRATION_READINESS_STATES.MOCK_ONLY,
+    activation: 'awaiting_user_connection',
+    connection: 'not_configured',
+    credential_state: 'not_present',
+    transport: 'disabled',
+    execution: 'disabled',
+    mutations: 'disabled',
+    deterministic: true,
+    tenant_scoped: true,
+    role_policy: 'all_roles_read',
+    approval_required: false,
+    capabilities: { read: true, plan: true, write: false },
+  },
+  {
+    format: 'helmion.integration-readiness-descriptor.v1',
+    integration_id: 'load-board-readiness',
+    provider_id: 'load-board-mock',
+    surface: 'load_board',
+    readiness: INTEGRATION_READINESS_STATES.MOCK_ONLY,
+    activation: 'awaiting_user_connection',
+    connection: 'not_configured',
+    credential_state: 'not_present',
+    transport: 'disabled',
+    execution: 'disabled',
+    mutations: 'disabled',
+    deterministic: true,
+    tenant_scoped: true,
+    role_policy: 'all_roles_read',
+    approval_required: false,
+    capabilities: { read: true, plan: true, write: false },
+  },
+  {
+    format: 'helmion.integration-readiness-descriptor.v1',
+    integration_id: 'payroll-readiness',
+    provider_id: 'payroll-mock',
+    surface: 'payroll',
+    readiness: INTEGRATION_READINESS_STATES.MOCK_ONLY,
+    activation: 'awaiting_user_connection',
+    connection: 'not_configured',
+    credential_state: 'not_present',
+    transport: 'disabled',
+    execution: 'disabled',
+    mutations: 'disabled',
+    deterministic: true,
+    tenant_scoped: true,
+    role_policy: 'owner_admin_prepare',
+    approval_required: true,
+    capabilities: { read: true, plan: true, write: false },
+  },
+]);
+
+export const localIntegrationReadinessRegistry = createIntegrationReadinessRegistry(
+  READINESS_DESCRIPTORS,
+);
+
+function readinessRoleEligible(descriptor, actorRole) {
+  return descriptor.role_policy === 'all_roles_read' || PAYROLL_ROLES.has(actorRole);
+}
+
+function readinessAuditId(descriptor, tenantId, actorRole) {
+  return auditId('integration-readiness', tenantId, {
+    actor_role: actorRole,
+    integration_id: descriptor.integration_id,
+    provider_id: descriptor.provider_id,
+    surface: descriptor.surface,
+    readiness: descriptor.readiness,
+    activation: descriptor.activation,
+  });
+}
+
+function readinessSummary(descriptor, scope) {
+  return Object.freeze({
+    format: 'helmion.integration-readiness.v1',
+    integration_id: descriptor.integration_id,
+    provider_id: descriptor.provider_id,
+    surface: descriptor.surface,
+    readiness: descriptor.readiness,
+    activation: descriptor.activation,
+    connection: descriptor.connection,
+    credential_state: descriptor.credential_state,
+    transport: descriptor.transport,
+    execution: descriptor.execution,
+    mutations: descriptor.mutations,
+    tenant_id: scope.tenant_id,
+    actor_role: scope.actor_role,
+    tenant_scoped: descriptor.tenant_scoped,
+    deterministic: descriptor.deterministic,
+    role_policy: descriptor.role_policy,
+    role_eligible: readinessRoleEligible(descriptor, scope.actor_role),
+    approval_required: descriptor.approval_required,
+    capabilities: Object.freeze({ ...descriptor.capabilities }),
+    audit_id: readinessAuditId(descriptor, scope.tenant_id, scope.actor_role),
+    authorization: 'not_evaluated',
+    invocation: 'not_performed',
+  });
+}
+
+export function listLocalIntegrationReadiness(input = {}) {
+  return serviceFailure('ORCHESTRATION_READINESS_INVALID', () => {
+    rejectForbiddenKeys(input);
+    requireExactKeys(input, ['actor_role', 'tenant_id']);
+    const scope = normalizeScope(input);
+    const integrations = localIntegrationReadinessRegistry
+      .list()
+      .map((descriptor) => readinessSummary(descriptor, scope));
+    return Object.freeze({
+      valid: true,
+      result: Object.freeze({
+        format: 'helmion.integration-readiness-list.v1',
+        tenant_id: scope.tenant_id,
+        actor_role: scope.actor_role,
+        count: integrations.length,
+        complete: true,
+        integrations: Object.freeze(integrations),
+        authorization: 'not_evaluated',
+        invocation: 'not_performed',
+      }),
+    });
+  });
+}
+
+export function inspectLocalIntegrationReadiness(input = {}) {
+  return serviceFailure('ORCHESTRATION_READINESS_INVALID', () => {
+    rejectForbiddenKeys(input);
+    requireExactKeys(input, ['actor_role', 'integration_id', 'tenant_id']);
+    const scope = normalizeScope(input);
+    const integrationId = safeText(input.integration_id, 'integration_id', 64).toLowerCase();
+    if (!PROVIDER_ID_PATTERN.test(integrationId)) throw new TypeError('integration_id is invalid');
+    const descriptor = localIntegrationReadinessRegistry.get(integrationId);
+    if (!descriptor) return fail('ORCHESTRATION_READINESS_NOT_FOUND');
+    return Object.freeze({
+      valid: true,
+      readiness: readinessSummary(descriptor, scope),
+    });
+  });
+}
+
 const MOCK_FIXTURES = deepFreeze({
   fleet_eld: {
     'acme-operations': [
