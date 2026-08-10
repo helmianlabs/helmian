@@ -91,31 +91,69 @@ export function resolveChatCompletionsUrl(baseUrl) {
  * Helmion-managed keys from the file always win over inherited process env.
  */
 export function loadHelmionEnv(startDir = process.cwd()) {
+  const candidate = findHelmionEnvFile(startDir);
+  if (candidate) applyEnvFile(candidate);
+  return snapshotHelmionEnv(process.env);
+}
+
+/** Read the same configuration without changing process.env. */
+export function readHelmionEnv(startDir = process.cwd()) {
+  const values = { ...process.env };
+  const candidate = findHelmionEnvFile(startDir);
+  if (candidate) {
+    for (const [key, val] of Object.entries(readEnvFile(candidate))) {
+      const shouldOverride =
+        HELMION_ENV_OVERRIDE_KEYS.has(key)
+        || values[key] === undefined
+        || values[key] === '';
+      if (shouldOverride) values[key] = val;
+    }
+  }
+  return snapshotHelmionEnv(values);
+}
+
+function findHelmionEnvFile(startDir) {
   let dir = resolve(startDir);
   for (let i = 0; i < 12; i += 1) {
     const candidate = join(dir, '.env');
-    if (existsSync(candidate)) {
-      applyEnvFile(candidate);
-      break;
-    }
+    if (existsSync(candidate)) return candidate;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
+  return null;
+}
+
+function snapshotHelmionEnv(values) {
   return {
-    openai: process.env.OPENAI_API_KEY || '',
-    anthropic: process.env.ANTHROPIC_API_KEY || '',
-    gemini: process.env.GEMINI_API_KEY || '',
-    xai: process.env.XAI_API_KEY || process.env.GROK_API_KEY || '',
-    maestro: (process.env.HELMION_MAESTRO_COORDINATOR || 'Gemini').trim(),
-    permissionMode: (process.env.HELMION_PERMISSION_MODE || 'read-only').trim(),
-    workspace: process.env.WORKSPACE_PATH || process.env.HELMION_WORKSPACE_PATH || process.cwd(),
-    databaseUrl: process.env.HELMION_DATABASE_URL || '',
-    customProviders: parseCustomProviders(process.env.HELMION_CUSTOM_PROVIDERS),
+    openai: values.OPENAI_API_KEY || '',
+    anthropic: values.ANTHROPIC_API_KEY || '',
+    gemini: values.GEMINI_API_KEY || '',
+    xai: values.XAI_API_KEY || values.GROK_API_KEY || '',
+    maestro: (values.HELMION_MAESTRO_COORDINATOR || 'Gemini').trim(),
+    permissionMode: (values.HELMION_PERMISSION_MODE || 'read-only').trim(),
+    workspace: values.WORKSPACE_PATH || values.HELMION_WORKSPACE_PATH || process.cwd(),
+    databaseUrl: values.HELMION_DATABASE_URL || '',
+    customProviders: parseCustomProviders(values.HELMION_CUSTOM_PROVIDERS),
   };
 }
 
 function applyEnvFile(path) {
+  const values = readEnvFile(path);
+  for (const [key, val] of Object.entries(values)) {
+    const existing = process.env[key];
+    const shouldOverride =
+      HELMION_ENV_OVERRIDE_KEYS.has(key)
+      || existing === undefined
+      || existing === '';
+    if (shouldOverride) {
+      process.env[key] = val;
+    }
+  }
+}
+
+function readEnvFile(path) {
+  const values = {};
   const text = readFileSync(path, 'utf8');
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
@@ -130,15 +168,9 @@ function applyEnvFile(path) {
     ) {
       val = val.slice(1, -1);
     }
-    const existing = process.env[key];
-    const shouldOverride =
-      HELMION_ENV_OVERRIDE_KEYS.has(key)
-      || existing === undefined
-      || existing === '';
-    if (shouldOverride) {
-      process.env[key] = val;
-    }
+    values[key] = val;
   }
+  return values;
 }
 
 /**
