@@ -23,6 +23,18 @@ export function inspectHelmianCloudDeployment(env = process.env) {
   if (text(env.HELMION_AIMFORGE_BRIDGE_SECRET).length < 32) {
     missing.push('HELMION_AIMFORGE_BRIDGE_SECRET');
   }
+  if (text(env.HELMION_AIMFORGE_ACTION_SECRET).length < 32) {
+    missing.push('HELMION_AIMFORGE_ACTION_SECRET');
+  }
+  try {
+    const aimforge = new URL(text(env.HELMION_AIMFORGE_API_BASE_URL));
+    if (aimforge.protocol !== 'https:' || aimforge.username || aimforge.password
+      || aimforge.search || aimforge.hash || !['', '/'].includes(aimforge.pathname)) {
+      throw new Error('not an HTTPS origin');
+    }
+  } catch {
+    missing.push('HELMION_AIMFORGE_API_BASE_URL');
+  }
   const providerKey = PROVIDER_KEY_BY_NAME[provider];
   if (providerKey && !text(env[providerKey])) missing.push(providerKey);
 

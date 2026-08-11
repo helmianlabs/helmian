@@ -65,6 +65,10 @@ import {
 import { createBackgroundAgentNotifier } from './notify.mjs';
 import { inspectCoraProviderReadiness } from './provider-readiness.mjs';
 import {
+  createAimForgeBoardActionClient,
+  createAimForgeBoardToolRuntime,
+} from './aimforge-board-action.mjs';
+import {
   CORA_HEALTH_DIAGNOSTICS_SCHEMA_VERSION,
   MAX_CORA_HEALTH_AGE_MS,
   MAX_CORA_HEALTH_DETAIL_SESSIONS,
@@ -103,7 +107,7 @@ export {
   MAX_CORA_HEALTH_PHASE_COUNT,
 } from './health-schema.mjs';
 
-/** A chat whose custom_session_id starts with this runs with tools. */
+/** Legacy local marker; production AimForge sessions require a verified bridge. */
 export const HELMION_SESSION_PREFIX = 'helmion';
 
 /** How long one spoken turn may hold the conversation before it is released. */
@@ -116,10 +120,11 @@ export const DEFAULT_MAX_SESSIONS = 8;
 
 /**
  * "Helmion mode", marked the way the task requires: on Hume's
- * `custom_session_id`. Configure the EVI session with
- * `custom_session_id: "helmion:<anything>"` and the turn gets the tool-enabled
- * agent; anything else — including a session with no id at all — gets a
- * read-only chat runtime.
+ * `custom_session_id`. A legacy local marker selects the configured local
+ * runtime. Production AimForge sessions additionally require a signed bridge;
+ * only a verified bridge receives the dedicated fixed-path board-summary tool.
+ * Anything else — including a session with no id at all — gets a read-only
+ * chat runtime.
  *
  * FAILING CLOSED IS THE WHOLE VALUE OF THIS FUNCTION. An unmarked session is
  * the case where nobody stated an intent, and "nobody stated an intent" must
@@ -163,10 +168,11 @@ function requestBearerToken(request) {
 /**
  * Decide whether this bind is allowed at all, BEFORE the port is opened.
  *
- * This socket reaches `run_command`. Binding it to 0.0.0.0 with no credential
- * would put an unauthenticated remote-shell on the LAN, which is exactly the
- * defect already recorded against another local ws server on this machine. So
- * that combination is refused at startup rather than documented as a caveat.
+ * A legacy local session can reach `run_command`. Binding it to 0.0.0.0 with
+ * no credential would put an unauthenticated remote-shell on the LAN, which is
+ * exactly the defect already recorded against another local ws server on this
+ * machine. Signed AimForge sessions never receive that runtime, but the socket
+ * still fails closed for every mode at startup.
  *
  * @returns {{ requiresToken: boolean }}
  * @throws when the configuration would expose an unauthenticated agent
@@ -197,13 +203,32 @@ export function createAgentTurnRunner({
   permissionMode = 'read-tools',
   tier = 'standard',
   safeWorkspaceTools = true,
+  aimforgeActionClient = null,
 }) {
   return async function runTurn({ text, session, onEvent, signal = null }) {
     if (!session.state) {
-      session.state = createSessionState(workspace, {
-        permissionMode: session.helmionMode ? permissionMode : 'read-only',
-        safeWorkspaceTools,
-      });
+      if (session.bridgeContext) {
+        if (!aimforgeActionClient) {
+          throw new Error('Signed AimForge actions are unavailable: the fixed action client is not configured.');
+        }
+        const runtime = createAimForgeBoardToolRuntime({
+          client: aimforgeActionClient,
+          signedBridge: session.signedBridge,
+        });
+        session.state = {
+          runtime,
+          permissionMode: runtime.permissionMode,
+          messages: [{
+            role: 'system',
+            content: 'You are Cora for AimForge operations. You have exactly one read-only tool for aggregate dispatch-board counts. Never claim a write, approval, message delivery, navigation, or record change. Never infer or request another tenant identifier; tenant scope comes only from the signed session.',
+          }],
+        };
+      } else {
+        session.state = createSessionState(workspace, {
+          permissionMode: session.helmionMode ? permissionMode : 'read-only',
+          safeWorkspaceTools,
+        });
+      }
     }
     return runAgentTurn({
       userText: text,
@@ -312,8 +337,16 @@ export async function startCoraClm({
         + '(ANTHROPIC_API_KEY for Claude/Sonnet).',
       );
     }
+    const actionConfigured = Boolean(
+      String(process.env.HELMION_AIMFORGE_API_BASE_URL ?? '').trim()
+      || String(process.env.HELMION_AIMFORGE_ACTION_SECRET ?? '').trim(),
+    );
+    const aimforgeActionClient = (requireSignedSessions || actionConfigured)
+      ? createAimForgeBoardActionClient()
+      : null;
     turn = createAgentTurnRunner({
       workspace, provider: activeProvider, permissionMode, tier, safeWorkspaceTools,
+      aimforgeActionClient,
     });
   } else {
     providerReadiness = inspectCoraProviderReadiness({
@@ -394,6 +427,9 @@ export async function startCoraClm({
         connectionId,
         helmionMode: bridgeContext ? true : isHelmionSession(customSessionId, sessionPrefix),
         bridgeContext,
+        // Bearer-like raw bridge is kept only in memory for the fixed AimForge
+        // action request. Activity/log paths receive bridgeContext, never this.
+        signedBridge: bridgeContext ? customSessionId : null,
         state: null,
         // Turns on one chat are strictly serialized. Two overlapping agent
         // turns on one tool runtime would interleave their tool calls into a
