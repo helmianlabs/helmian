@@ -52,7 +52,7 @@ test('a symlink inside the workspace cannot be used to READ outside it', async (
   try {
     const workspace = join(base, 'workspace');
     const outside = join(base, 'outside');
-    writeFileSync(join(outside, 'secret.txt'), 'API_KEY=live-value');
+    writeFileSync(join(outside, 'boundary-proof.txt'), 'OUTSIDE_BOUNDARY_SENTINEL');
 
     if (!tryLink(outside, join(workspace, 'escape'))) {
       t.skip('this platform/account cannot create a directory link');
@@ -63,14 +63,14 @@ test('a symlink inside the workspace cannot be used to READ outside it', async (
 
     let result;
     try {
-      result = await runtime.execute('read_file', { path: 'escape/secret.txt' });
+      result = await runtime.execute('read_file', { path: 'escape/boundary-proof.txt' });
     } catch (error) {
       result = error.message;
     }
 
     assert.doesNotMatch(
       String(result),
-      /live-value/,
+      /OUTSIDE_BOUNDARY_SENTINEL/,
       'the agent read a file outside the workspace through a symlink',
     );
     assert.match(String(result), /symlink|escape|outside|verified/i);
