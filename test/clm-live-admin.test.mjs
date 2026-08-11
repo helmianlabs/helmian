@@ -110,6 +110,9 @@ test('live admin is mounted under /admin on the CLM port and never replaces /llm
   assert.doesNotMatch(page.headers.get('content-security-policy') ?? '', /script-src 'unsafe-inline'/u);
   assert.equal(page.headers.get('x-frame-options'), 'DENY');
   assert.equal((await fetch(`${app.url}/auth/login`)).status, 426);
+  for (const sibling of ['/administrator', '/administer', '/api/administrator']) {
+    assert.equal((await fetch(`${app.url}${sibling}`)).status, 426, `${sibling} must remain outside the admin mount`);
+  }
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CONTROL_PATH}`, { method: 'POST' })).status, 405);
   const login = await fetch(`${app.url}/admin/auth/login`, { redirect: 'manual' });
   assert.equal(login.status, 302);
