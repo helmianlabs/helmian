@@ -1,4 +1,5 @@
 import { assertExpectedNeonEndpoint } from '../core/database-target.mjs';
+import { isAllowedAimForgeActionOrigin } from '../cora/aimforge-board-action.mjs';
 
 const PROVIDER_KEY_BY_NAME = Object.freeze({
   claude: 'ANTHROPIC_API_KEY',
@@ -26,13 +27,7 @@ export function inspectHelmianCloudDeployment(env = process.env) {
   if (text(env.HELMION_AIMFORGE_ACTION_SECRET).length < 32) {
     missing.push('HELMION_AIMFORGE_ACTION_SECRET');
   }
-  try {
-    const aimforge = new URL(text(env.HELMION_AIMFORGE_API_BASE_URL));
-    if (aimforge.protocol !== 'https:' || aimforge.username || aimforge.password
-      || aimforge.search || aimforge.hash || !['', '/'].includes(aimforge.pathname)) {
-      throw new Error('not an HTTPS origin');
-    }
-  } catch {
+  if (!isAllowedAimForgeActionOrigin(text(env.HELMION_AIMFORGE_API_BASE_URL))) {
     missing.push('HELMION_AIMFORGE_API_BASE_URL');
   }
   const providerKey = PROVIDER_KEY_BY_NAME[provider];

@@ -37,3 +37,19 @@ test('cloud deployment preflight fails closed without every secret and Neon boun
   assert.ok(result.missing.some((item) => item.includes('HELMION_EXPECTED_ENDPOINT_ID')));
   assert.ok(result.missing.includes('ANTHROPIC_API_KEY'));
 });
+
+test('cloud deployment preflight refuses a wrong-site API origin', () => {
+  const result = inspectHelmianCloudDeployment({
+    HELMION_CLOUD_ENVIRONMENT: 'production',
+    HELMION_DATABASE_URL: 'postgresql://u:p@ep-silent-rain-a1b2c3d4.us-east-2.aws.neon.tech/helmian?sslmode=require',
+    HELMION_EXPECTED_ENDPOINT_ID: 'ep-silent-rain-a1b2c3d4',
+    HELMION_CORA_TOKEN: 'x'.repeat(32),
+    HELMION_AIMFORGE_BRIDGE_SECRET: 'b'.repeat(32),
+    HELMION_AIMFORGE_ACTION_SECRET: 'a'.repeat(32),
+    HELMION_AIMFORGE_API_BASE_URL: 'https://dairyforge-api.fly.dev',
+    HELMION_CORA_PROVIDER: 'claude',
+    ANTHROPIC_API_KEY: 'configured-outside-git',
+  });
+  assert.equal(result.ready, false);
+  assert.ok(result.missing.includes('HELMION_AIMFORGE_API_BASE_URL'));
+});

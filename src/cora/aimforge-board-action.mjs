@@ -3,6 +3,10 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 export const AIMFORGE_BOARD_SUMMARY_PATH = '/api/helmian/actions/dispatch-board-summary';
 export const AIMFORGE_BOARD_TOOL_NAME = 'aimforge_get_dispatch_board_summary';
 export const AIMFORGE_ACTION_TIMEOUT_MS = 10_000;
+export const AIMFORGE_ACTION_MAX_RESPONSE_BYTES = 16_384;
+export const AIMFORGE_ALLOWED_ACTION_ORIGINS = Object.freeze([
+  'https://aimforge-api.fly.dev',
+]);
 
 function requiredActionSecret(value) {
   const secret = String(value ?? '');
@@ -12,17 +16,27 @@ function requiredActionSecret(value) {
   return secret;
 }
 
-function fixedActionUrl(value) {
+export function isAllowedAimForgeActionOrigin(value) {
   let base;
   try {
     base = new URL(String(value ?? '').trim());
   } catch {
-    throw new Error('HELMION_AIMFORGE_API_BASE_URL must be a valid HTTPS origin');
+    return false;
   }
   if (base.protocol !== 'https:' || base.username || base.password
     || base.search || base.hash || !['', '/'].includes(base.pathname)) {
-    throw new Error('HELMION_AIMFORGE_API_BASE_URL must be an HTTPS origin without path, credentials, query, or fragment');
+    return false;
   }
+  return AIMFORGE_ALLOWED_ACTION_ORIGINS.includes(base.origin);
+}
+
+function fixedActionUrl(value) {
+  if (!isAllowedAimForgeActionOrigin(value)) {
+    throw new Error(
+      'HELMION_AIMFORGE_API_BASE_URL must be an explicitly allowed AimForge HTTPS origin',
+    );
+  }
+  const base = new URL(String(value).trim());
   return new URL(AIMFORGE_BOARD_SUMMARY_PATH, base.origin);
 }
 
@@ -51,6 +65,36 @@ function combineSignals(external, timeoutMs) {
       external?.removeEventListener?.('abort', onAbort);
     },
   };
+}
+
+async function readBoundedResponse(response, maxBytes = AIMFORGE_ACTION_MAX_RESPONSE_BYTES) {
+  const contentLength = response.headers?.get?.('content-length');
+  if (contentLength !== null && contentLength !== undefined && contentLength !== '') {
+    const declared = Number(contentLength);
+    if (!Number.isSafeInteger(declared) || declared < 0 || declared > maxBytes) {
+      await response.body?.cancel?.('AimForge response exceeded its size limit');
+      throw new Error('AimForge board summary response exceeded its size limit');
+    }
+  }
+  const reader = response.body?.getReader?.();
+  if (!reader) throw new Error('AimForge returned an unreadable response body');
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!(value instanceof Uint8Array)) {
+      await reader.cancel('AimForge response chunk was invalid');
+      throw new Error('AimForge returned an unreadable response body');
+    }
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel('AimForge response exceeded its size limit');
+      throw new Error('AimForge board summary response exceeded its size limit');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total).toString('utf8');
 }
 
 function validateDate(value) {
@@ -134,6 +178,7 @@ export function createAimForgeBoardActionClient({
       try {
         const response = await fetchImpl(url, {
           method: 'POST',
+          redirect: 'error',
           headers: {
             'content-type': 'application/json',
             'x-helmian-timestamp': timestamp,
@@ -143,10 +188,11 @@ export function createAimForgeBoardActionClient({
           body,
           signal: combined.signal,
         });
-        const text = await response.text();
-        if (Buffer.byteLength(text, 'utf8') > 16_384) {
-          throw new Error('AimForge board summary response exceeded its size limit');
+        if (response.status >= 300 && response.status < 400) {
+          await response.body?.cancel?.('AimForge redirects are forbidden');
+          throw new Error('AimForge board summary redirect was refused');
         }
+        const text = await readBoundedResponse(response);
         let parsed;
         try { parsed = JSON.parse(text); } catch { throw new Error('AimForge returned non-JSON'); }
         if (!response.ok) {

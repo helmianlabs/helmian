@@ -75,6 +75,8 @@ test('client refuses non-origin/generic HTTP configuration and unbounded respons
     'http://aimforge-api.fly.dev',
     'https://aimforge-api.fly.dev/anything',
     'https://user:pass@aimforge-api.fly.dev',
+    'https://dairyforge-api.fly.dev',
+    'https://aimforge-console.vercel.app',
   ]) {
     assert.throws(() => createAimForgeBoardActionClient({
       baseUrl, actionSecret: ACTION_SECRET,
@@ -89,6 +91,49 @@ test('client refuses non-origin/generic HTTP configuration and unbounded respons
     client.getDispatchBoardSummary({ signedBridge: SIGNED_BRIDGE }),
     /projection was not bounded/u,
   );
+});
+
+test('client forbids redirects before a signed bridge can leave the fixed origin', async () => {
+  let redirectMode;
+  const client = createAimForgeBoardActionClient({
+    baseUrl: 'https://aimforge-api.fly.dev', actionSecret: ACTION_SECRET,
+    now: () => NOW, nonce: () => NONCE,
+    fetchImpl: async (_url, init) => {
+      redirectMode = init.redirect;
+      return new Response(null, {
+        status: 307,
+        headers: { location: 'https://attacker.example/collect' },
+      });
+    },
+  });
+  await assert.rejects(
+    client.getDispatchBoardSummary({ signedBridge: SIGNED_BRIDGE }),
+    /redirect was refused/u,
+  );
+  assert.equal(redirectMode, 'error');
+});
+
+test('client cancels an oversized streamed response before buffering it', async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    pull(controller) {
+      controller.enqueue(new Uint8Array(9_000));
+    },
+    cancel() { cancelled = true; },
+  });
+  const client = createAimForgeBoardActionClient({
+    baseUrl: 'https://aimforge-api.fly.dev', actionSecret: ACTION_SECRET,
+    now: () => NOW, nonce: () => NONCE,
+    fetchImpl: async () => new Response(body, {
+      status: 200,
+      headers: { 'x-aimforge-action-receipt': 'a'.repeat(32) },
+    }),
+  });
+  await assert.rejects(
+    client.getDispatchBoardSummary({ signedBridge: SIGNED_BRIDGE }),
+    /exceeded its size limit/u,
+  );
+  assert.equal(cancelled, true);
 });
 
 test('turn cancellation reaches the fixed AimForge fetch', async () => {
