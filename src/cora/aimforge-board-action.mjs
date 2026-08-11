@@ -165,7 +165,7 @@ export function createAimForgeBoardActionClient({
 }
 
 /** Dedicated one-tool runtime for signed AimForge voice sessions. */
-export function createAimForgeBoardToolRuntime({ client, signedBridge }) {
+export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace = process.cwd() }) {
   if (!client || typeof client.getDispatchBoardSummary !== 'function') {
     throw new Error('AimForge board action client is required');
   }
@@ -191,7 +191,9 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge }) {
   });
   const tools = Object.freeze({ [AIMFORGE_BOARD_TOOL_NAME]: tool });
   return Object.freeze({
-    root: 'aimforge-remote',
+    // The agent loop uses root only for local provenance storage. It does not
+    // add workspace tools; this runtime's advertised catalog remains fixed.
+    root: workspace,
     permissionMode: 'read-tools',
     tools,
     definitionsForOpenAi() {

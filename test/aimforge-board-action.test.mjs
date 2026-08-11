@@ -117,6 +117,7 @@ test('signed AimForge runtime advertises exactly one read-only tool', async () =
   const calls = [];
   const runtime = createAimForgeBoardToolRuntime({
     signedBridge: SIGNED_BRIDGE,
+    workspace: 'C:/signed-aimforge-provenance',
     client: {
       async getDispatchBoardSummary(input) {
         calls.push(input);
@@ -125,6 +126,7 @@ test('signed AimForge runtime advertises exactly one read-only tool', async () =
     },
   });
   assert.deepEqual(Object.keys(runtime.tools), [AIMFORGE_BOARD_TOOL_NAME]);
+  assert.equal(runtime.root, 'C:/signed-aimforge-provenance');
   assert.deepEqual(runtime.definitionsForOpenAi().map((item) => item.function.name), [AIMFORGE_BOARD_TOOL_NAME]);
   assert.match(await runtime.execute('run_command', { command: 'curl anywhere' }), /unknown tool/u);
   const result = JSON.parse(await runtime.execute(AIMFORGE_BOARD_TOOL_NAME, { date: '2026-08-11' }));
