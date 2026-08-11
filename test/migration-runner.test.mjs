@@ -75,6 +75,10 @@ class MigrationPool {
           pool.executedSql.push('007_platform_action_policy.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('equipment_safety_status_enabled')) {
+          pool.executedSql.push('008_equipment_safety_action_policy.sql');
+          return { rowCount: 0, rows: [] };
+        }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
       },
       release() {},
@@ -96,6 +100,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['005_tenant_audit_claims.sql', true, 'committed'],
       ['006_tenant_audit_claim_operations.sql', true, 'committed'],
       ['007_platform_action_policy.sql', true, 'committed'],
+      ['008_equipment_safety_action_policy.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -108,13 +113,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '005_tenant_audit_claims.sql',
       '006_tenant_audit_claim_operations.sql',
       '007_platform_action_policy.sql',
+      '008_equipment_safety_action_policy.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -126,9 +132,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '005_tenant_audit_claims.sql',
       '006_tenant_audit_claim_operations.sql',
       '007_platform_action_policy.sql',
+      '008_equipment_safety_action_policy.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 14);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 16);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 

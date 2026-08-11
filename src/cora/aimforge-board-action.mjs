@@ -3,9 +3,20 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 export const AIMFORGE_BOARD_SUMMARY_PATH = '/api/helmian/actions/dispatch-board-summary';
 export const AIMFORGE_PREPARE_DRIVER_MESSAGE_PATH = '/api/helmian/actions/prepare-driver-message';
 export const AIMFORGE_DEPARTMENT_HANDOFF_PATH = '/api/helmian/actions/department-handoff';
+export const AIMFORGE_EQUIPMENT_SAFETY_STATUS_PATH = '/api/helmian/actions/equipment-safety-status';
+export const AIMFORGE_EQUIPMENT_SAFETY_CHECK_PATH = '/api/helmian/actions/equipment-safety-check';
+export const AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_PATH = '/api/helmian/actions/equipment-safety-escalation';
 export const AIMFORGE_BOARD_TOOL_NAME = 'aimforge_get_dispatch_board_summary';
 export const AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME = 'aimforge_prepare_driver_message';
 export const AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME = 'aimforge_create_department_handoff';
+export const AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME = 'aimforge_get_equipment_safety_status';
+export const AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME = 'aimforge_record_equipment_safety_check';
+export const AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_TOOL_NAME = 'aimforge_request_safety_supervisor_review';
+export const AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES = Object.freeze([
+  AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME,
+  AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME,
+  AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_TOOL_NAME,
+]);
 export const AIMFORGE_ACTION_TIMEOUT_MS = 10_000;
 export const AIMFORGE_ACTION_MAX_RESPONSE_BYTES = 16_384;
 export const AIMFORGE_ALLOWED_ACTION_ORIGINS = Object.freeze([
@@ -237,6 +248,48 @@ function isExplicitHandoffConfirmation(value) {
   return /^(?:yes(?:,? i)? confirm(?: the (?:internal )?(?:department )?handoff)?|i confirm(?: the (?:internal )?(?:department )?handoff)?|confirm(?: the (?:internal )?(?:department )?handoff)?|confirmed|proceed|go ahead)$/u.test(text);
 }
 
+function validateSafetyCheckInput(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== 'checkKey,notes,result,structuredData') {
+    throw new Error('Only checkKey, result, notes, and structuredData are allowed');
+  }
+  const checkKey = typeof value.checkKey === 'string' ? value.checkKey.trim() : '';
+  const notes = value.notes === null ? null : typeof value.notes === 'string' ? value.notes.trim() : undefined;
+  const results = ['OK', 'DEFECT_MINOR', 'DEFECT_MAJOR', 'DEFECT_OOS', 'NOT_APPLICABLE'];
+  if (!checkKey || checkKey.length > 80 || !results.includes(value.result)
+    || notes === undefined || (notes?.length ?? 0) > 500
+    || !value.structuredData || typeof value.structuredData !== 'object' || Array.isArray(value.structuredData)
+    || Object.keys(value.structuredData).length > 12) throw new Error('Safety check arguments are invalid');
+  for (const entry of Object.values(value.structuredData)) {
+    if (!['string', 'number', 'boolean'].includes(typeof entry) || (typeof entry === 'string' && entry.length > 100)) {
+      throw new Error('Safety structured data is invalid');
+    }
+  }
+  return { checkKey, result: value.result, notes, structuredData: value.structuredData };
+}
+
+function validateSafetyResponse(value, action, state, status) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.version !== '1' || value.action !== action || value.state !== state) {
+    throw new Error('AimForge returned an invalid safety receipt');
+  }
+  if (action === 'equipment.safety.status') {
+    if (status !== 200 || !['PENDING', 'DEFECT', 'HOLD'].includes(value.disposition)
+      || !['dry_van', 'reefer', 'flatbed'].includes(value.equipmentType)
+      || !Array.isArray(value.checks) || value.checks.length > 32
+      || !Array.isArray(value.recordedChecks) || value.recordedChecks.length > 128) {
+      throw new Error('AimForge returned an invalid safety status');
+    }
+    return Object.freeze(value);
+  }
+  if (status !== 201 || !/^[0-9a-f-]{36}$/iu.test(value.inspectionItemId)
+    || !['PENDING', 'DEFECT', 'HOLD'].includes(value.disposition)
+    || (action === 'equipment.safety.escalation' && value.disposition !== 'HOLD')) {
+    throw new Error('AimForge returned an invalid safety write receipt');
+  }
+  return Object.freeze({ state: value.state, disposition: value.disposition, inspectionItemId: value.inspectionItemId });
+}
+
 /** A fixed-path client limited to aggregate reads and prepare-only proposals. */
 export function createAimForgeBoardActionClient({
   baseUrl = process.env.HELMION_AIMFORGE_API_BASE_URL,
@@ -249,6 +302,9 @@ export function createAimForgeBoardActionClient({
   const boardUrl = fixedActionUrl(baseUrl, AIMFORGE_BOARD_SUMMARY_PATH);
   const prepareUrl = fixedActionUrl(baseUrl, AIMFORGE_PREPARE_DRIVER_MESSAGE_PATH);
   const departmentHandoffUrl = fixedActionUrl(baseUrl, AIMFORGE_DEPARTMENT_HANDOFF_PATH);
+  const safetyStatusUrl = fixedActionUrl(baseUrl, AIMFORGE_EQUIPMENT_SAFETY_STATUS_PATH);
+  const safetyCheckUrl = fixedActionUrl(baseUrl, AIMFORGE_EQUIPMENT_SAFETY_CHECK_PATH);
+  const safetyEscalationUrl = fixedActionUrl(baseUrl, AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_PATH);
   const secret = requiredActionSecret(actionSecret);
   if (typeof fetchImpl !== 'function') throw new Error('AimForge action fetch is unavailable');
 
@@ -340,6 +396,25 @@ export function createAimForgeBoardActionClient({
         throw new Error(`AimForge department handoff returned HTTP ${result.status}`);
       }
       return validateDepartmentHandoffResponse(result.parsed, result.status);
+    },
+    async getEquipmentSafetyStatus({ signedBridge, signal = null }) {
+      const result = await signedRequest({ path: AIMFORGE_EQUIPMENT_SAFETY_STATUS_PATH, url: safetyStatusUrl,
+        signedBridge, payload: {}, signal, label: 'equipment safety status' });
+      return validateSafetyResponse(result.parsed, 'equipment.safety.status', 'active', result.status);
+    },
+    async recordEquipmentSafetyCheck({ signedBridge, signal = null, ...args }) {
+      const input = validateSafetyCheckInput(args);
+      const result = await signedRequest({ path: AIMFORGE_EQUIPMENT_SAFETY_CHECK_PATH, url: safetyCheckUrl,
+        signedBridge, payload: input, signal, label: 'equipment safety check' });
+      return validateSafetyResponse(result.parsed, 'equipment.safety.check', 'recorded', result.status);
+    },
+    async requestSafetySupervisorReview({ signedBridge, checkKey, reason, signal = null }) {
+      const key = typeof checkKey === 'string' ? checkKey.trim() : '';
+      const cleanReason = typeof reason === 'string' ? reason.trim() : '';
+      if (!key || key.length > 80 || !cleanReason || cleanReason.length > 500) throw new Error('Safety escalation arguments are invalid');
+      const result = await signedRequest({ path: AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_PATH, url: safetyEscalationUrl,
+        signedBridge, payload: { checkKey: key, reason: cleanReason }, signal, label: 'safety supervisor review' });
+      return validateSafetyResponse(result.parsed, 'equipment.safety.escalation', 'supervisor_review_requested', result.status);
     },
   });
 }
@@ -440,10 +515,43 @@ export function createAimForgeBoardToolRuntime({
       return JSON.stringify(receipt);
     },
   });
+  const safetyStatusTool = Object.freeze({
+    description: 'Read or initialize the safety workflow for the server-focused active driver assignment. Takes no identifiers and returns server-approved guidance and current disposition.',
+    parameters: { type: 'object', additionalProperties: false, properties: {} },
+    async execute(args, { signal = null } = {}) {
+      if (Object.keys(args ?? {}).length) throw new Error('Safety status takes no arguments');
+      return JSON.stringify(await client.getEquipmentSafetyStatus({ signedBridge, signal }));
+    },
+  });
+  const safetyCheckTool = Object.freeze({
+    description: 'Record exactly one server-manifest-approved equipment safety check for the signed current assignment. Speak success only from the returned receipt. This cannot release or bypass a hold.',
+    parameters: { type: 'object', additionalProperties: false, required: ['checkKey', 'result', 'notes', 'structuredData'], properties: {
+      checkKey: { type: 'string', minLength: 1, maxLength: 80 },
+      result: { type: 'string', enum: ['OK', 'DEFECT_MINOR', 'DEFECT_MAJOR', 'DEFECT_OOS', 'NOT_APPLICABLE'] },
+      notes: { type: ['string', 'null'], maxLength: 500 },
+      structuredData: { type: 'object', maxProperties: 12, additionalProperties: { type: ['string', 'number', 'boolean'] } },
+    } },
+    async execute(args, { signal = null } = {}) {
+      return JSON.stringify(await client.recordEquipmentSafetyCheck({ signedBridge, ...validateSafetyCheckInput(args), signal }));
+    },
+  });
+  const safetyEscalationTool = Object.freeze({
+    description: 'Request human supervisor review and place/retain a safety hold for one server-manifest-approved check. This cannot release, approve, or bypass a hold.',
+    parameters: { type: 'object', additionalProperties: false, required: ['checkKey', 'reason'], properties: {
+      checkKey: { type: 'string', minLength: 1, maxLength: 80 }, reason: { type: 'string', minLength: 1, maxLength: 500 },
+    } },
+    async execute(args, { signal = null } = {}) {
+      if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).sort().join(',') !== 'checkKey,reason') throw new Error('Only checkKey and reason are allowed');
+      return JSON.stringify(await client.requestSafetySupervisorReview({ signedBridge, checkKey: args.checkKey, reason: args.reason, signal }));
+    },
+  });
   const availableTools = Object.freeze({
     [AIMFORGE_BOARD_TOOL_NAME]: boardTool,
     [AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME]: prepareTool,
     [AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME]: handoffTool,
+    [AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME]: safetyStatusTool,
+    [AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME]: safetyCheckTool,
+    [AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_TOOL_NAME]: safetyEscalationTool,
   });
   if (!Array.isArray(enabledToolNames)
     || enabledToolNames.some((name) => typeof name !== 'string' || !Object.hasOwn(availableTools, name))

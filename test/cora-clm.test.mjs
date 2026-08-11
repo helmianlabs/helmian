@@ -1139,6 +1139,43 @@ test('A SIGNED AIMFORGE TURN FAILS CLOSED WHEN GLOBAL ACTION POLICY CANNOT BE RE
   }), /database unavailable/u);
 });
 
+test('A PLATFORM-GLOBAL SAFETY DISABLE REMOVES THE RECORD HAND FROM A SIGNED DRIVER FOCUS', async () => {
+  const ws = tempWorkspace('aimforge-driver-safety-agent');
+  const calls = [];
+  const endpoint = await fakeOpenAiEndpoint([
+    toolCallMessage('aimforge_get_equipment_safety_status', {}, 'I will read the server safety workflow.'),
+    finalMessage('Your equipment safety workflow is active and pending.'),
+  ]);
+  const actionClient = {
+    async getDispatchBoardSummary() {}, async prepareDriverMessage() {}, async createDepartmentHandoff() {},
+    async getEquipmentSafetyStatus(input) { calls.push(input); return { state: 'active', disposition: 'PENDING', equipmentType: 'dry_van', checks: [], recordedChecks: [] }; },
+    async recordEquipmentSafetyCheck() {}, async requestSafetySupervisorReview() {},
+  };
+  const runTurn = createAgentTurnRunner({
+    workspace: ws.dir,
+    provider: { id: 'custom', key: 'none', label: 'scripted-endpoint', url: endpoint.url, model: 'scripted-model', models: null },
+    aimforgeActionClient: actionClient,
+    async globalActionPolicyResolver() { return { enabledActions: [
+      'aimforge_get_dispatch_board_summary', 'aimforge_prepare_driver_message', 'aimforge_create_department_handoff',
+      'aimforge_get_equipment_safety_status', 'aimforge_request_safety_supervisor_review',
+    ] }; },
+  });
+  const session = { id: 'driver-safety', helmionMode: true,
+    bridgeContext: { tenantId: 'tenant-a', role: 'driver', surface: 'mobile', focusedAssignmentId: 41 },
+    signedBridge: 'helmion:payload.signature', state: null };
+  try {
+    await runTurn({ text: 'What safety check is next?', session, onEvent: () => {} });
+    const advertised = (endpoint.requests[0].body.tools ?? []).map((tool) => tool.function.name);
+    assert.deepEqual(advertised, [
+      'aimforge_get_equipment_safety_status',
+      'aimforge_request_safety_supervisor_review',
+    ]);
+    assert.equal(advertised.some((name) => /release|approve|send|http|shell|hazmat/iu.test(name)), false);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].signedBridge, session.signedBridge);
+  } finally { await endpoint.close(); ws.cleanup(); }
+});
+
 test('AN UNMARKED SESSION CANNOT REACH A TOOL EVEN IF THE MODEL ASKS FOR ONE', async () => {
   // The positive control for the fail-closed default: the same scripted model
   // that successfully listed a directory above is given a session id that is

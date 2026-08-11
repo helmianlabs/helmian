@@ -58,6 +58,9 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
           dispatch_board_summary_enabled: values[2],
           prepare_driver_message_enabled: values[3],
           department_handoff_enabled: values[4],
+          equipment_safety_status_enabled: values[5],
+          equipment_safety_check_enabled: values[6],
+          equipment_safety_escalation_enabled: values[7],
         };
         return { rowCount: 1, rows: [actionPolicy] };
       }
@@ -68,6 +71,9 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
           dispatch_board_summary_enabled: values[2],
           prepare_driver_message_enabled: values[3],
           department_handoff_enabled: values[4],
+          equipment_safety_status_enabled: values[5],
+          equipment_safety_check_enabled: values[6],
+          equipment_safety_escalation_enabled: values[7],
         };
         return { rowCount: 1, rows: [actionPolicy] };
       }
@@ -179,7 +185,12 @@ test('session and readiness routes require live Neon owner/admin membership and 
     'aimforge_get_dispatch_board_summary',
     'aimforge_prepare_driver_message',
     'aimforge_create_department_handoff',
+    'aimforge_get_equipment_safety_status',
+    'aimforge_record_equipment_safety_check',
+    'aimforge_request_safety_supervisor_review',
   ]);
+  assert.equal(result.tools.humeAttached.count, 0);
+  assert.equal(result.tools.helmianHands.driverSafety.holdRelease, false);
   assert.equal(result.tools.genericTools, false);
   assert.equal(result.release.ready, true);
   assert.equal(result.migrations.ready, true);
@@ -248,6 +259,9 @@ test('action policy requires preview, actor-bound confirm, current ETag, and exa
     'aimforge_get_dispatch_board_summary',
     'aimforge_prepare_driver_message',
     'aimforge_create_department_handoff',
+    'aimforge_get_equipment_safety_status',
+    'aimforge_record_equipment_safety_check',
+    'aimforge_request_safety_supervisor_review',
   ]);
 
   const invalid = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH}`, {
@@ -304,6 +318,7 @@ test('action policy requires preview, actor-bound confirm, current ETag, and exa
 test('admin page presents fixed Helmian hands with explicit preview and confirmation, never a provider or secret editor', async (t) => {
   const page = await readFile(new URL('../web/cloud-admin/index.html', import.meta.url), 'utf8');
   assert.match(page, /Hume-attached tools:\s*<strong>0<\/strong>/u);
+  assert.match(page, /Driver safety hands:\s*<strong>3<\/strong>/u);
   assert.match(page, /Preview change/u);
   assert.match(page, /Confirm action policy/u);
   assert.match(page, /every newly signed AimForge customer session/u);

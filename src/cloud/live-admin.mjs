@@ -18,6 +18,7 @@ import {
   resolvePlatformActionPolicy,
   updateAdminActionPolicy,
 } from './tenant-action-policy.mjs';
+import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-action.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -227,6 +228,13 @@ export async function createLiveHelmianCloudAdminHandler({
           helmianHands: {
             available: toolNames,
             enabled: actionPolicy.enabledActions,
+            policyManaged: HELMIAN_ACTION_TOOL_NAMES,
+            driverSafety: {
+              available: AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES,
+              scope: 'signed_driver_mobile_session_with_server_focused_assignment',
+              authority: 'aimforge_live_safety_service',
+              holdRelease: false,
+            },
             policyVersion: actionPolicy.version,
             policySource: actionPolicy.source,
             policyScope: actionPolicy.scope,

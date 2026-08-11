@@ -67,6 +67,7 @@ import { inspectCoraProviderReadiness } from './provider-readiness.mjs';
 import {
   createAimForgeBoardActionClient,
   createAimForgeBoardToolRuntime,
+  AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES,
 } from './aimforge-board-action.mjs';
 import {
   CORA_HEALTH_DIAGNOSTICS_SCHEMA_VERSION,
@@ -222,14 +223,19 @@ export function createAgentTurnRunner({
           client: aimforgeActionClient,
           signedBridge: session.signedBridge,
           workspace,
-          ...(actionPolicy ? { enabledToolNames: actionPolicy.enabledActions } : {}),
+          ...(session.bridgeContext.role === 'driver'
+            && session.bridgeContext.surface === 'mobile'
+            ? { enabledToolNames: session.bridgeContext.focusedAssignmentId
+              ? AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES.filter((name) => !actionPolicy || actionPolicy.enabledActions.includes(name))
+              : [] }
+            : (actionPolicy ? { enabledToolNames: actionPolicy.enabledActions } : {})),
         });
         session.state = {
           runtime,
           permissionMode: runtime.permissionMode,
           messages: [{
             role: 'system',
-            content: 'You are Cora for AimForge operations. You may receive only the bounded Helmian action tools enabled for this signed tenant session: aggregate dispatch-board read, driver-message proposal preparation for later human approval, and/or internal department handoff persistence. Never claim a tool exists when it is not advertised. For a department handoff, first call the handoff tool with confirmed=false, speak the exact recipient/subject/body/priority summary, and ask for explicit confirmation. Do not call confirmed=true until the user explicitly confirms in a later turn; the runtime enforces this. An internal handoff is not SMS or provider delivery. Preparing a driver proposal is not approving, sending, accepting, or delivering. Never claim external delivery from either result. You have no approval, provider-send, generic HTTP, shell, workspace, navigation, or arbitrary record-change tool. Never infer or request a tenant, assignment, or driver recipient identifier; signed session scope controls those.',
+            content: 'You are Cora for AimForge. Use only the bounded tools advertised for this signed session. Driver mobile sessions may read the server-approved equipment-safety workflow, record one manifest-approved check, or request human supervisor review and a hold. Speak success only from the API receipt. Hazmat, evidence rules, and holds fail closed. You can never release a hold, approve, send, choose hazmat, bypass evidence, or choose a tenant, driver, assignment, profile, citation, provider, or URL. Operations sessions may instead receive aggregate board read, prepare-only driver proposal, or internal department handoff. For a handoff, call with confirmed=false first, speak the exact summary, and only call confirmed=true after the user explicitly confirms in a later turn. You have no generic HTTP, shell, workspace, navigation, or arbitrary record-change tool.',
           }],
         };
       } else {
