@@ -205,12 +205,23 @@ async function insertGovernanceAction(client, {
   return { inserted: false, row: existing.rows[0] };
 }
 
+export function canonicalizeMigrationSql(sql) {
+  return String(sql).replace(/\r\n?/g, '\n');
+}
+
 async function loadMigrations() {
   const names = (await readdir(migrationsDirectory))
     .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
     .sort((left, right) => left.localeCompare(right));
   return Promise.all(names.map(async (name) => {
-    const sql = await readFile(join(migrationsDirectory, name), 'utf8');
+    // Git records these migrations with LF line endings, but a Windows build
+    // context can materialize them as CRLF. Hashing the raw checkout made the
+    // same immutable migration appear modified after a Windows-origin deploy.
+    // Execute and hash one canonical representation so the migration ledger is
+    // stable across Linux and Windows without weakening checksum enforcement.
+    const sql = canonicalizeMigrationSql(
+      await readFile(join(migrationsDirectory, name), 'utf8'),
+    );
     return {
       version: name.slice(0, name.indexOf('_')),
       name,
