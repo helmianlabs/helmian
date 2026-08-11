@@ -214,6 +214,7 @@ export function createAgentTurnRunner({
         const runtime = createAimForgeBoardToolRuntime({
           client: aimforgeActionClient,
           signedBridge: session.signedBridge,
+          workspace,
         });
         session.state = {
           runtime,

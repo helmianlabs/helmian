@@ -1029,6 +1029,63 @@ test('AN END-TO-END VOICE TURN RUNS A REAL TOOL ON REAL DISK', async () => {
   }
 });
 
+test('A SIGNED AIMFORGE TURN GETS ONLY THE FIXED BOARD TOOL THROUGH THE REAL AGENT LOOP', async () => {
+  const ws = tempWorkspace('aimforge-board-agent');
+  const calls = [];
+  const endpoint = await fakeOpenAiEndpoint([
+    toolCallMessage(
+      'aimforge_get_dispatch_board_summary',
+      { date: '2026-08-11' },
+      'I will read the aggregate board summary.',
+    ),
+    finalMessage('There are five loads and four drivers on shift.'),
+  ]);
+  const runTurn = createAgentTurnRunner({
+    workspace: ws.dir,
+    provider: {
+      id: 'custom', key: 'no-key-required', label: 'scripted-endpoint',
+      url: endpoint.url, model: 'scripted-model', models: null,
+    },
+    permissionMode: 'full',
+    aimforgeActionClient: {
+      async getDispatchBoardSummary(input) {
+        calls.push(input);
+        return {
+          date: '2026-08-11', totalLoads: 5, assignedLoads: 3,
+          unassignedLoads: 2, driversOnShift: 4, driversLowHos: 1,
+        };
+      },
+    },
+  });
+  const session = {
+    id: 'session-signed-board',
+    helmionMode: true,
+    bridgeContext: { tenantId: 'tenant-a' },
+    signedBridge: 'helmion:payload.signature',
+    state: null,
+  };
+
+  try {
+    const result = await runTurn({
+      text: 'How does the board look today?',
+      session,
+      onEvent: () => {},
+    });
+    const advertised = (endpoint.requests[0].body.tools ?? []).map((tool) => tool.function.name);
+    assert.deepEqual(advertised, ['aimforge_get_dispatch_board_summary']);
+    assert.equal(advertised.includes('run_command'), false);
+    assert.equal(advertised.includes('list_dir'), false);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].signedBridge, session.signedBridge);
+    assert.equal(calls[0].date, '2026-08-11');
+    assert.equal(session.state.runtime.root, ws.dir, 'provenance stays in the real Helmian workspace');
+    assert.match(result.text, /five loads and four drivers/i);
+  } finally {
+    await endpoint.close();
+    ws.cleanup();
+  }
+});
+
 test('AN UNMARKED SESSION CANNOT REACH A TOOL EVEN IF THE MODEL ASKS FOR ONE', async () => {
   // The positive control for the fail-closed default: the same scripted model
   // that successfully listed a directory above is given a session id that is
