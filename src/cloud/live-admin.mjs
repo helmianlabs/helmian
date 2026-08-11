@@ -214,7 +214,7 @@ export async function createLiveHelmianCloudAdminHandler({
       }
       catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
-        send(response, denied ? 403 : 500, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+        send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
       }
       return true;
     }
