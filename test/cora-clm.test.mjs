@@ -492,7 +492,8 @@ test('AimForge bridge verification authenticates tenant/user/role and rejects ta
     receiptId: 'receipt-22222222',
   });
 
-  assert.equal(verifyAimForgeSessionBridge(`${signed.slice(0, -1)}x`, {
+  const changedSignature = `${signed.slice(0, -1)}${signed.endsWith('x') ? 'y' : 'x'}`;
+  assert.equal(verifyAimForgeSessionBridge(changedSignature, {
     secret: BRIDGE_SECRET,
   }).ok, false, 'changed signatures are refused');
   assert.match(verifyAimForgeSessionBridge(signedAimForgeSession({ aud: 'somewhere-else' }), {
