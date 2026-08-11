@@ -28,6 +28,7 @@ const CONTENT_SCRIPTS = [
   'content/extract.js',
   'content/stream-watch.js',
   'content/ui.js',
+  'content/prompt-risk.js',
   'content/guard.js',
 ];
 
