@@ -1,5 +1,9 @@
 import { createHash, randomBytes, randomUUID, webcrypto } from 'node:crypto';
 
+const OIDC_FETCH_TIMEOUT_MS = 10_000;
+const OIDC_MAX_JSON_BYTES = 64 * 1024;
+const MAX_IDENTITY_STATE_ENTRIES = 256;
+
 function base64url(value) {
   return Buffer.from(value).toString('base64url');
 }
@@ -14,14 +18,57 @@ function required(value, name) {
   return text;
 }
 
+function requiredHttpsUrl(value, name, { callback = false } = {}) {
+  const raw = required(value, name);
+  let url;
+  try { url = new URL(raw); } catch { throw new Error(`${name} must be an HTTPS URL`); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash
+    || (callback && (url.pathname !== '/admin/auth/callback' || url.search))) {
+    throw new Error(`${name} must be an HTTPS URL${callback ? ' ending exactly /admin/auth/callback' : ''}`);
+  }
+  return url.toString().replace(/\/$/u, '');
+}
+
+async function boundedJson(response, label) {
+  const declared = response.headers?.get?.('content-length');
+  if (declared && (!Number.isSafeInteger(Number(declared)) || Number(declared) > OIDC_MAX_JSON_BYTES)) {
+    await response.body?.cancel?.();
+    throw new Error(`${label} response is too large`);
+  }
+  const reader = response.body?.getReader?.();
+  if (!reader) throw new Error(`${label} response is unreadable`);
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > OIDC_MAX_JSON_BYTES) {
+      await reader.cancel();
+      throw new Error(`${label} response is too large`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  try { return JSON.parse(Buffer.concat(chunks, total).toString('utf8')); }
+  catch { throw new Error(`${label} response is not JSON`); }
+}
+
+async function fetchJson(url, init, fetchImpl, label) {
+  const response = await fetchImpl(url, {
+    ...init,
+    redirect: 'error',
+    signal: AbortSignal.timeout(OIDC_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`${label} failed`);
+  return boundedJson(response, label);
+}
+
 async function discover(issuer, fetchImpl) {
-  const response = await fetchImpl(`${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`, { headers: { accept: 'application/json' } });
-  if (!response.ok) throw new Error('OIDC discovery failed');
-  const metadata = await response.json();
+  const metadata = await fetchJson(`${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`, { headers: { accept: 'application/json' } }, fetchImpl, 'OIDC discovery');
   return {
-    authorizationEndpoint: required(metadata.authorization_endpoint, 'authorization_endpoint'),
-    tokenEndpoint: required(metadata.token_endpoint, 'token_endpoint'),
-    jwksUri: required(metadata.jwks_uri, 'jwks_uri'),
+    authorizationEndpoint: requiredHttpsUrl(metadata.authorization_endpoint, 'authorization_endpoint'),
+    tokenEndpoint: requiredHttpsUrl(metadata.token_endpoint, 'token_endpoint'),
+    jwksUri: requiredHttpsUrl(metadata.jwks_uri, 'jwks_uri'),
   };
 }
 
@@ -32,9 +79,7 @@ async function verifyJwt(token, { issuer, audience, jwksUri, fetchImpl }) {
   const header = decodeJson(encodedHeader);
   const claims = decodeJson(encodedPayload);
   if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw new Error('OIDC token algorithm invalid');
-  const keysResponse = await fetchImpl(jwksUri, { headers: { accept: 'application/json' } });
-  if (!keysResponse.ok) throw new Error('OIDC JWKS lookup failed');
-  const keys = await keysResponse.json();
+  const keys = await fetchJson(jwksUri, { headers: { accept: 'application/json' } }, fetchImpl, 'OIDC JWKS lookup');
   const jwk = Array.isArray(keys.keys) ? keys.keys.find((key) => key.kid === header.kid && key.kty === 'RSA') : null;
   if (!jwk) throw new Error('OIDC signing key unavailable');
   const cryptoKey = await webcrypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
@@ -45,27 +90,30 @@ async function verifyJwt(token, { issuer, audience, jwksUri, fetchImpl }) {
     Buffer.from(`${encodedHeader}.${encodedPayload}`),
   );
   if (!valid || claims.iss !== issuer || (Array.isArray(claims.aud) ? !claims.aud.includes(audience) : claims.aud !== audience)) throw new Error('OIDC token claims invalid');
-  if (typeof claims.sub !== 'string' || !claims.sub || (claims.exp != null && Number(claims.exp) <= Math.floor(Date.now() / 1000))) throw new Error('OIDC token expired or missing subject');
+  if (typeof claims.sub !== 'string' || !claims.sub
+    || !Number.isFinite(Number(claims.exp)) || Number(claims.exp) <= Math.floor(Date.now() / 1000)) {
+    throw new Error('OIDC token expired or missing subject');
+  }
   return claims;
 }
 
-function claimValue(claims, name) {
-  const value = claims[name];
-  return typeof value === 'string' ? value.trim() : '';
-}
-
 export function createIdentityGateway({ env = process.env, fetchImpl = fetch } = {}) {
-  const issuer = required(env.HELMION_ADMIN_ISSUER, 'HELMION_ADMIN_ISSUER').replace(/\/$/, '');
+  const issuer = requiredHttpsUrl(env.HELMION_ADMIN_ISSUER, 'HELMION_ADMIN_ISSUER');
   const clientId = required(env.HELMION_ADMIN_CLIENT_ID, 'HELMION_ADMIN_CLIENT_ID');
-  const redirectUri = required(env.HELMION_ADMIN_REDIRECT_URI, 'HELMION_ADMIN_REDIRECT_URI');
-  const tenantClaim = String(env.HELMION_ADMIN_TENANT_CLAIM || 'tenant_id').trim();
-  const roleClaim = String(env.HELMION_ADMIN_ROLE_CLAIM || 'role').trim();
+  const redirectUri = requiredHttpsUrl(env.HELMION_ADMIN_REDIRECT_URI, 'HELMION_ADMIN_REDIRECT_URI', { callback: true });
   const sessions = new Map();
   const pending = new Map();
   let metadataPromise = null;
   const metadata = () => metadataPromise ?? (metadataPromise = discover(issuer, fetchImpl));
+  const prune = () => {
+    const now = Date.now();
+    for (const [key, value] of pending) if (value.expiresAt < now) pending.delete(key);
+    for (const [key, value] of sessions) if (value.expiresAt < now) sessions.delete(key);
+  };
 
   async function beginLogin() {
+    prune();
+    if (pending.size >= MAX_IDENTITY_STATE_ENTRIES) throw new Error('OIDC login capacity reached');
     const state = randomBytes(24).toString('base64url');
     const verifier = randomBytes(48).toString('base64url');
     const challenge = createHash('sha256').update(verifier).digest('base64url');
@@ -87,19 +135,18 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     pending.delete(state);
     if (!attempt || attempt.expiresAt < Date.now()) throw new Error('OIDC login state invalid or expired');
     const endpoints = await metadata();
-    const tokenResponse = await fetchImpl(endpoints.tokenEndpoint, {
+    const tokenBody = await fetchJson(endpoints.tokenEndpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
       body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: clientId, code_verifier: attempt.verifier }),
-    });
-    if (!tokenResponse.ok) throw new Error('OIDC token exchange failed');
-    const tokenBody = await tokenResponse.json();
+    }, fetchImpl, 'OIDC token exchange');
     const claims = await verifyJwt(tokenBody.id_token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl });
     const sessionId = randomUUID();
-    const tenantId = claimValue(claims, tenantClaim) || claimValue(claims, 'tenantId');
-    const role = claimValue(claims, roleClaim);
-    sessions.set(sessionId, { subject: claims.sub, tenantId, role, expiresAt: Date.now() + 8 * 60 * 60_000 });
-    return { sessionId, identity: { subject: claims.sub, tenantId, role } };
+    prune();
+    if (sessions.size >= MAX_IDENTITY_STATE_ENTRIES) throw new Error('OIDC session capacity reached');
+    const tokenExpiry = Number(claims.exp) * 1_000;
+    sessions.set(sessionId, { subject: claims.sub, expiresAt: Math.min(Date.now() + 8 * 60 * 60_000, tokenExpiry) });
+    return { sessionId, identity: { subject: claims.sub } };
   }
 
   function getSession(sessionId) {
@@ -112,11 +159,10 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     issuer,
     clientId,
     redirectUri,
-    tenantClaim,
-    roleClaim,
     beginLogin,
     finishLogin,
     getSession,
+    revokeSession: (sessionId) => sessions.delete(sessionId),
     verifyAccessToken: (token) => metadata().then((endpoints) => verifyJwt(token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl })),
   });
 }

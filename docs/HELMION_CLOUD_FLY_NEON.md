@@ -32,6 +32,12 @@ node bin/helmion-cloud-preflight.mjs
 
 It verifies environment names, token presence/length, the provider key presence,
 and that the Neon URL points at the asserted endpoint. It never prints secrets.
+
+The same preflight now requires the live admin OIDC names
+`HELMION_ADMIN_ISSUER`, `HELMION_ADMIN_CLIENT_ID`, and
+`HELMION_ADMIN_REDIRECT_URI`. The redirect must be the deployed HTTPS Helmian
+origin plus `/admin/auth/callback`. Do not deploy the admin mount until an
+external identity administrator has registered that exact client and redirect.
 Then deploy with Fly from this repository. The Fly app should pass its TCP
 readiness check; authenticated `GET /healthz` is the application health check.
 

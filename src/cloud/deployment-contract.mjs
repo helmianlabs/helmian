@@ -12,6 +12,16 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
+function validHttpsUrl(value, { callback = false } = {}) {
+  try {
+    const url = new URL(text(value));
+    return url.protocol === 'https:' && !url.username && !url.password
+      && !url.hash && (!callback || (url.pathname === '/admin/auth/callback' && !url.search));
+  } catch {
+    return false;
+  }
+}
+
 export function inspectHelmianCloudDeployment(env = process.env) {
   const environment = text(env.HELMION_CLOUD_ENVIRONMENT).toLowerCase();
   const provider = text(env.HELMION_CORA_PROVIDER || 'claude').toLowerCase();
@@ -29,6 +39,11 @@ export function inspectHelmianCloudDeployment(env = process.env) {
   }
   if (!isAllowedAimForgeActionOrigin(text(env.HELMION_AIMFORGE_API_BASE_URL))) {
     missing.push('HELMION_AIMFORGE_API_BASE_URL');
+  }
+  if (!validHttpsUrl(env.HELMION_ADMIN_ISSUER)) missing.push('HELMION_ADMIN_ISSUER');
+  if (!text(env.HELMION_ADMIN_CLIENT_ID)) missing.push('HELMION_ADMIN_CLIENT_ID');
+  if (!validHttpsUrl(env.HELMION_ADMIN_REDIRECT_URI, { callback: true })) {
+    missing.push('HELMION_ADMIN_REDIRECT_URI');
   }
   const providerKey = PROVIDER_KEY_BY_NAME[provider];
   if (providerKey && !text(env[providerKey])) missing.push(providerKey);
@@ -49,6 +64,10 @@ export function inspectHelmianCloudDeployment(env = process.env) {
     environment: ['staging', 'production'].includes(environment) ? environment : null,
     provider: PROVIDER_KEY_BY_NAME[provider] ? provider : null,
     database: database ? Object.freeze({ endpointId: database.endpointId, databaseName: database.databaseName }) : null,
+    admin: Object.freeze({
+      configured: !missing.some((name) => name.startsWith('HELMION_ADMIN_')),
+      callbackPath: '/admin/auth/callback',
+    }),
     missing: Object.freeze([...new Set(missing)]),
   });
 }
