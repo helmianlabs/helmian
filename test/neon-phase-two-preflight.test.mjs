@@ -77,6 +77,7 @@ test('database preflight reports a fresh Helmion schema without writing', async 
       ['004_tenant_audit_outbox.sql', 'pending'],
       ['005_tenant_audit_claims.sql', 'pending'],
       ['006_tenant_audit_claim_operations.sql', 'pending'],
+      ['007_platform_action_policy.sql', 'pending'],
     ],
   );
   assert.equal(inspection.migrationsReady, false);

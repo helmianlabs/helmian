@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { startCoraClm } from '../src/cora/clm-server.mjs';
 import {
   createLiveHelmianCloudAdminHandler,
   LIVE_ADMIN_CONTROL_PATH,
+  LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH,
+  LIVE_ADMIN_ACTION_POLICY_PATH,
+  LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -24,8 +28,10 @@ const env = {
   ANTHROPIC_API_KEY: 'configured-outside-git',
 };
 
-function fakePool({ membershipRoles = { 'tenant-a': 'admin' }, membershipError = false } = {}) {
+function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershipError = false } = {}) {
   const queries = [];
+  const auditEntries = [];
+  let actionPolicy = null;
   const client = {
     async query(sql, values = []) {
       const text = String(sql);
@@ -39,9 +45,36 @@ function fakePool({ membershipRoles = { 'tenant-a': 'admin' }, membershipError =
         const role = membershipRoles[values[0]] ?? null;
         return role ? { rowCount: 1, rows: [{ role }] } : { rowCount: 0, rows: [] };
       }
-      if (text.includes('from helmion.tenants')) return { rowCount: 1, rows: [{ tenant_id: 'tenant-a', display_name: 'Tenant A' }] };
+      if (text.includes('from helmion.tenants')) return { rowCount: 1, rows: [{ tenant_id: values[0], display_name: 'Helmian Platform' }] };
       if (text.includes('from helmion.audit_events')) return { rowCount: 1, rows: [{ count: 7 }] };
       if (text.includes('from helmion.audit_outbox')) return { rowCount: 1, rows: [{ count: 1 }] };
+      if (text.includes('from helmion.platform_action_policy')) {
+        return actionPolicy ? { rowCount: 1, rows: [actionPolicy] } : { rowCount: 0, rows: [] };
+      }
+      if (text.includes('insert into helmion.platform_action_policy')) {
+        if (actionPolicy) return { rowCount: 0, rows: [] };
+        actionPolicy = {
+          version: 1,
+          dispatch_board_summary_enabled: values[2],
+          prepare_driver_message_enabled: values[3],
+          department_handoff_enabled: values[4],
+        };
+        return { rowCount: 1, rows: [actionPolicy] };
+      }
+      if (text.includes('update helmion.platform_action_policy')) {
+        if (!actionPolicy || Number(actionPolicy.version) !== Number(values[1])) return { rowCount: 0, rows: [] };
+        actionPolicy = {
+          version: Number(actionPolicy.version) + 1,
+          dispatch_board_summary_enabled: values[2],
+          prepare_driver_message_enabled: values[3],
+          department_handoff_enabled: values[4],
+        };
+        return { rowCount: 1, rows: [actionPolicy] };
+      }
+      if (text.includes('insert into helmion.audit_events')) {
+        auditEntries.push({ actionType: values[5], decision: values[7], reason: JSON.parse(values[11]).reason });
+        return { rowCount: 1, rows: [] };
+      }
       if (text.includes("to_regclass('helmion.schema_migrations')")) return { rowCount: 1, rows: [{ migration_table: 'helmion.schema_migrations' }] };
       if (text.includes('from helmion.schema_migrations')) {
         return { rowCount: 2, rows: [
@@ -53,14 +86,14 @@ function fakePool({ membershipRoles = { 'tenant-a': 'admin' }, membershipError =
     },
     release() {},
   };
-  return { queries, connect: async () => client };
+  return { queries, auditEntries, connect: async () => client };
 }
 
 function identity() {
   return {
     getSession: (sessionId) => sessionId === 'active-session'
       ? { subject: 'user-1' }
-      : null,
+      : sessionId === 'second-session' ? { subject: 'user-2' } : null,
     beginLogin: async () => ({ url: 'https://identity.example.com/authorize', state: 'state-1' }),
     finishLogin: async () => ({ sessionId: 'active-session' }),
   };
@@ -136,11 +169,11 @@ test('session and readiness routes require live Neon owner/admin membership and 
   const headers = { cookie: 'helmion_admin_session=active-session' };
   const session = await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers });
   assert.equal(session.status, 200);
-  assert.deepEqual((await session.json()).actor, { subject: 'user-1', tenantId: 'tenant-a', role: 'admin' });
+  assert.deepEqual((await session.json()).actor, { subject: 'user-1', tenantId: 'helmian-platform', role: 'admin' });
   const response = await fetch(`${app.url}${LIVE_ADMIN_CONTROL_PATH}?tenant_id=tenant-b`, { headers });
   assert.equal(response.status, 200);
   const result = (await response.json()).result;
-  assert.equal(result.tenant.tenant_id, 'tenant-a');
+  assert.equal(result.tenant.tenant_id, 'helmian-platform');
   assert.equal(result.authorization, 'oidc_identity_plus_neon_membership_verified');
   assert.deepEqual(result.tools.names, [
     'aimforge_get_dispatch_board_summary',
@@ -156,7 +189,7 @@ test('session and readiness routes require live Neon owner/admin membership and 
   const membershipQueries = app.pool.queries.filter(({ text }) => text.includes('tenant_memberships'));
   assert.ok(membershipQueries.length >= 2);
   assert.ok(membershipQueries.some(({ values }) => values[0] === 'user-1'));
-  assert.ok(membershipQueries.some(({ values }) => values[0] === 'tenant-a' && values[1] === 'user-1'));
+  assert.ok(membershipQueries.some(({ values }) => values[0] === 'helmian-platform' && values[1] === 'user-1'));
 });
 
 test('revoked OIDC subjects fail closed against current Neon membership', async (t) => {
@@ -168,7 +201,7 @@ test('revoked OIDC subjects fail closed against current Neon membership', async 
 });
 
 test('a subject with two admin tenants is denied until a server-bound picker exists', async (t) => {
-  const app = await fixture({ membershipRoles: { 'tenant-a': 'admin', 'tenant-b': 'owner' } });
+  const app = await fixture({ membershipRoles: { 'helmian-platform': 'admin', 'tenant-b': 'owner' } });
   t.after(app.close);
   const headers = { cookie: 'helmion_admin_session=active-session' };
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers })).status, 403);
@@ -176,7 +209,7 @@ test('a subject with two admin tenants is denied until a server-bound picker exi
 });
 
 test('a current role change from admin to member immediately removes admin access', async (t) => {
-  const app = await fixture({ membershipRoles: { 'tenant-a': 'member' } });
+  const app = await fixture({ membershipRoles: { 'helmian-platform': 'member' } });
   t.after(app.close);
   const headers = { cookie: 'helmion_admin_session=active-session' };
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers })).status, 403);
@@ -192,4 +225,87 @@ test('database outages fail closed without being mislabeled as membership revoca
   assert.equal((await session.json()).code, 'ADMIN_DATABASE_READ_FAILED');
   assert.equal(control.status, 503);
   assert.equal((await control.json()).code, 'ADMIN_DATABASE_READ_FAILED');
+});
+
+test('a customer-tenant admin cannot manage the platform-global action policy', async (t) => {
+  const app = await fixture({ membershipRoles: { 'customer-facility-west': 'admin' } });
+  t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers })).status, 200);
+  const policy = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_PATH}`, { headers });
+  assert.equal(policy.status, 403);
+  assert.equal((await policy.json()).code, 'ADMIN_MEMBERSHIP_REQUIRED');
+});
+
+test('action policy requires preview, actor-bound confirm, current ETag, and exact allowlisted actions', async (t) => {
+  const app = await fixture();
+  t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  const initial = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_PATH}`, { headers });
+  assert.equal(initial.status, 200);
+  assert.equal(initial.headers.get('etag'), '"helmion-action-policy-v0"');
+  assert.deepEqual((await initial.json()).policy.enabledActions, [
+    'aimforge_get_dispatch_board_summary',
+    'aimforge_prepare_driver_message',
+    'aimforge_create_department_handoff',
+  ]);
+
+  const invalid = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH}`, {
+    method: 'POST', headers: { ...headers, 'content-type': 'application/json', 'if-match': '"helmion-action-policy-v0"' },
+    body: JSON.stringify({ enabledActions: ['run_command'] }),
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).code, 'ACTION_POLICY_INPUT_INVALID');
+  const wrongMedia = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH}`, {
+    method: 'POST', headers: { ...headers, 'content-type': 'application/jsonp', 'if-match': '"helmion-action-policy-v0"' },
+    body: JSON.stringify({ enabledActions: [] }),
+  });
+  assert.equal(wrongMedia.status, 415);
+  assert.equal((await wrongMedia.json()).code, 'ACTION_POLICY_MEDIA_TYPE_REQUIRED');
+
+  const preview = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH}?tenantId=tenant-b`, {
+    method: 'POST', headers: { ...headers, 'content-type': 'application/json', 'if-match': '"helmion-action-policy-v0"' },
+    body: JSON.stringify({ enabledActions: ['aimforge_get_dispatch_board_summary'] }),
+  });
+  assert.equal(preview.status, 200);
+  const previewBody = await preview.json();
+  const previewId = previewBody.preview.previewId;
+  assert.equal(previewBody.preview.scope, 'all_signed_aimforge_tenants');
+  const stolen = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH}`, {
+    method: 'POST', headers: { cookie: 'helmion_admin_session=second-session', 'content-type': 'application/json', 'if-match': '"helmion-action-policy-v0"' },
+    body: JSON.stringify({ previewId }),
+  });
+  assert.equal(stolen.status, 409);
+  assert.equal((await stolen.json()).code, 'ACTION_POLICY_PREVIEW_INVALID');
+
+  const confirmed = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH}`, {
+    method: 'POST', headers: { ...headers, 'content-type': 'application/json', 'if-match': '"helmion-action-policy-v0"' },
+    body: JSON.stringify({ previewId }),
+  });
+  assert.equal(confirmed.status, 200);
+  assert.equal(confirmed.headers.get('etag'), '"helmion-action-policy-v1"');
+  assert.deepEqual((await confirmed.json()).policy.enabledActions, ['aimforge_get_dispatch_board_summary']);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH}`, {
+    method: 'POST', headers: { ...headers, 'content-type': 'application/json', 'if-match': '"helmion-action-policy-v0"' },
+    body: JSON.stringify({ previewId }),
+  })).status, 409, 'a preview can be confirmed only once');
+  const stale = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH}`, {
+    method: 'POST', headers: { ...headers, 'content-type': 'application/json', 'if-match': '"helmion-action-policy-v0"' },
+    body: JSON.stringify({ enabledActions: [] }),
+  });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(await stale.json(), { valid: false, code: 'ACTION_POLICY_VERSION_CONFLICT', currentVersion: 1 });
+  assert.ok(app.pool.auditEntries.some((entry) => entry.actionType === 'admin.action_policy.preview' && entry.decision === 'ALLOW'));
+  assert.ok(app.pool.auditEntries.some((entry) => entry.actionType === 'admin.action_policy.preview' && entry.decision === 'DENY'));
+  assert.ok(app.pool.auditEntries.some((entry) => entry.actionType === 'admin.action_policy.confirm' && entry.decision === 'ALLOW'));
+  assert.equal(app.pool.queries.some(({ values }) => values.includes?.('tenant-b')), false, 'query parameters never choose the tenant');
+});
+
+test('admin page presents fixed Helmian hands with explicit preview and confirmation, never a provider or secret editor', async (t) => {
+  const page = await readFile(new URL('../web/cloud-admin/index.html', import.meta.url), 'utf8');
+  assert.match(page, /Hume-attached tools:\s*<strong>0<\/strong>/u);
+  assert.match(page, /Preview change/u);
+  assert.match(page, /Confirm action policy/u);
+  assert.match(page, /every newly signed AimForge customer session/u);
+  assert.doesNotMatch(page, /type="password"|provider selector|model selector|command editor/iu);
 });

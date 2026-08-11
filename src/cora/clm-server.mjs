@@ -204,6 +204,7 @@ export function createAgentTurnRunner({
   tier = 'standard',
   safeWorkspaceTools = true,
   aimforgeActionClient = null,
+  globalActionPolicyResolver = null,
 }) {
   return async function runTurn({ text, session, onEvent, signal = null }) {
     if (!session.state) {
@@ -211,17 +212,24 @@ export function createAgentTurnRunner({
         if (!aimforgeActionClient) {
           throw new Error('Signed AimForge actions are unavailable: the fixed action client is not configured.');
         }
+        const actionPolicy = globalActionPolicyResolver
+          ? await globalActionPolicyResolver()
+          : null;
+        if (globalActionPolicyResolver && !Array.isArray(actionPolicy?.enabledActions)) {
+          throw new Error('Signed AimForge action policy is unavailable or invalid.');
+        }
         const runtime = createAimForgeBoardToolRuntime({
           client: aimforgeActionClient,
           signedBridge: session.signedBridge,
           workspace,
+          ...(actionPolicy ? { enabledToolNames: actionPolicy.enabledActions } : {}),
         });
         session.state = {
           runtime,
           permissionMode: runtime.permissionMode,
           messages: [{
             role: 'system',
-            content: 'You are Cora for AimForge operations. You have exactly three bounded tools: aggregate dispatch-board read, driver-message proposal preparation for later human approval, and internal department handoff persistence. For a department handoff, first call the handoff tool with confirmed=false, speak the exact recipient/subject/body/priority summary, and ask for explicit confirmation. Do not call confirmed=true until the user explicitly confirms in a later turn; the runtime enforces this. An internal handoff is not SMS or provider delivery. Preparing a driver proposal is not approving, sending, accepting, or delivering. Never claim external delivery from either result. You have no approval, provider-send, generic HTTP, shell, workspace, navigation, or arbitrary record-change tool. Never infer or request a tenant, assignment, or driver recipient identifier; signed session scope controls those.',
+            content: 'You are Cora for AimForge operations. You may receive only the bounded Helmian action tools enabled for this signed tenant session: aggregate dispatch-board read, driver-message proposal preparation for later human approval, and/or internal department handoff persistence. Never claim a tool exists when it is not advertised. For a department handoff, first call the handoff tool with confirmed=false, speak the exact recipient/subject/body/priority summary, and ask for explicit confirmation. Do not call confirmed=true until the user explicitly confirms in a later turn; the runtime enforces this. An internal handoff is not SMS or provider delivery. Preparing a driver proposal is not approving, sending, accepting, or delivering. Never claim external delivery from either result. You have no approval, provider-send, generic HTTP, shell, workspace, navigation, or arbitrary record-change tool. Never infer or request a tenant, assignment, or driver recipient identifier; signed session scope controls those.',
           }],
         };
       } else {
@@ -304,6 +312,7 @@ export async function startCoraClm({
   // handler must return true after it has written a response, or false to let
   // the CLM health/WebSocket fallback handle the request.
   httpRequestHandler = null,
+  globalActionPolicyResolver = null,
   logger = () => {},
 } = {}) {
   const { requiresToken } = resolveAccess({ host, token });
@@ -349,6 +358,7 @@ export async function startCoraClm({
     turn = createAgentTurnRunner({
       workspace, provider: activeProvider, permissionMode, tier, safeWorkspaceTools,
       aimforgeActionClient,
+      globalActionPolicyResolver,
     });
   } else {
     providerReadiness = inspectCoraProviderReadiness({
