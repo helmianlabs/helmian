@@ -30,10 +30,11 @@ reports bounded tool, release, migration, and audit readiness. It has no
 migration, release, provider-call, enrollment, invitation, approval, or
 identity-mutation endpoint.
 
-Migration `007_platform_action_policy.sql` adds the only live mutation currently
-available: platform-global kill switches for the three fixed Helmian hands. The
+Migrations `007_platform_action_policy.sql` and
+`008_equipment_safety_action_policy.sql` define the only live mutation currently
+available: platform-global kill switches for the six fixed Helmian hands. The
 sole manager is an active owner/admin of the exact `helmian-platform` tenant.
-The schema uses three boolean columns rather than accepting tool names, customer
+The schema uses six boolean columns rather than accepting tool names, customer
 tenant IDs, URLs, commands, providers, models, or secret values. These switches
 can only remove actions from the compiled release; they cannot add authority or
 expand what a signed AimForge session may do. The API exposes:
@@ -60,7 +61,7 @@ facility's tenant ID, and intersects it with the fixed compiled tool release.
 The signed bridge and AimForge APIs still derive and enforce the actual customer
 tenant, subject, role, focus, and action authorization; the platform policy does
 not replace or widen those checks. Active sessions are not mutated. A missing
-row retains the existing three fixed hands; a database read failure does not
+row retains the six fixed compiled hands; a database read failure does not
 fall back and the new signed session fails closed. Hume has zero attached tools
 in the custom-language-model configuration—these are Helmian hands executed by
 the CLM.
