@@ -492,10 +492,20 @@ test('AimForge bridge verification authenticates tenant/user/role and rejects ta
     receiptId: 'receipt-22222222',
   });
 
-  const changedSignature = `${signed.slice(0, -1)}${signed.endsWith('x') ? 'y' : 'x'}`;
-  assert.equal(verifyAimForgeSessionBridge(changedSignature, {
+  const [signedPayload, canonicalSignature] = signed.slice('helmion:'.length).split('.');
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const lastIndex = alphabet.indexOf(canonicalSignature.at(-1));
+  const sameBytesSignature = `${canonicalSignature.slice(0, -1)}${alphabet[lastIndex + 1]}`;
+  assert.notEqual(sameBytesSignature, canonicalSignature);
+  assert.deepEqual(Buffer.from(sameBytesSignature, 'base64url'), Buffer.from(canonicalSignature, 'base64url'));
+  assert.equal(verifyAimForgeSessionBridge(`helmion:${signedPayload}.${sameBytesSignature}`, {
     secret: BRIDGE_SECRET,
-  }).ok, false, 'changed signatures are refused');
+  }).ok, false, 'noncanonical same-byte signatures are refused');
+  const changedBytesSignature = `${canonicalSignature[0] === 'A' ? 'B' : 'A'}${canonicalSignature.slice(1)}`;
+  assert.notDeepEqual(Buffer.from(changedBytesSignature, 'base64url'), Buffer.from(canonicalSignature, 'base64url'));
+  assert.equal(verifyAimForgeSessionBridge(`helmion:${signedPayload}.${changedBytesSignature}`, {
+    secret: BRIDGE_SECRET,
+  }).ok, false, 'changed-byte signatures are refused');
   assert.match(verifyAimForgeSessionBridge(signedAimForgeSession({ aud: 'somewhere-else' }), {
     secret: BRIDGE_SECRET,
   }).reason, /audience/i);
