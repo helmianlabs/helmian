@@ -218,7 +218,9 @@ export async function createLiveHelmianCloudAdminHandler({
       }
       return true;
     }
-    if (requestUrl.pathname.startsWith('/admin') || requestUrl.pathname.startsWith('/api/admin')) {
+    const adminPath = requestUrl.pathname === '/admin' || requestUrl.pathname.startsWith('/admin/');
+    const adminApiPath = requestUrl.pathname === '/api/admin' || requestUrl.pathname.startsWith('/api/admin/');
+    if (adminPath || adminApiPath) {
       const methodAllowed = request.method === 'GET';
       send(response, methodAllowed ? 404 : 405, JSON.stringify({ valid: false, code: methodAllowed ? 'CLOUD_ADMIN_ROUTE_NOT_FOUND' : 'CLOUD_ADMIN_METHOD_NOT_ALLOWED' }), 'application/json; charset=utf-8', methodAllowed ? {} : { allow: 'GET' });
       return true;
