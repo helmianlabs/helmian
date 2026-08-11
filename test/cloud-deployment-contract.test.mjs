@@ -11,6 +11,7 @@ test('cloud deployment preflight accepts a dedicated Neon deployment contract', 
     HELMION_DATABASE_URL: databaseUrl,
     HELMION_EXPECTED_ENDPOINT_ID: 'ep-silent-rain-a1b2c3d4',
     HELMION_CORA_TOKEN: 'x'.repeat(32),
+    HELMION_AIMFORGE_BRIDGE_SECRET: 'b'.repeat(32),
     ANTHROPIC_API_KEY: 'configured-outside-git',
   });
   assert.equal(result.ready, true);
@@ -28,6 +29,7 @@ test('cloud deployment preflight fails closed without every secret and Neon boun
   });
   assert.equal(result.ready, false);
   assert.ok(result.missing.includes('HELMION_CORA_TOKEN'));
+  assert.ok(result.missing.includes('HELMION_AIMFORGE_BRIDGE_SECRET'));
   assert.ok(result.missing.some((item) => item.includes('HELMION_EXPECTED_ENDPOINT_ID')));
   assert.ok(result.missing.includes('ANTHROPIC_API_KEY'));
 });
