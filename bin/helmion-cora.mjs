@@ -31,7 +31,7 @@ import {
   inspectCoraProviderReadiness,
 } from '../src/cora/provider-readiness.mjs';
 import { runCoraSelfTest } from '../src/cora/self-test.mjs';
-import { createLiveHelmianCloudAdminHandler } from '../src/cloud/live-admin.mjs';
+import { createLiveHelmianCloudAdminHandler, shouldMountLiveAdmin } from '../src/cloud/live-admin.mjs';
 
 function parseFlags(argv) {
   const out = {
@@ -150,12 +150,7 @@ const logger = ({ level, event, ...rest }) => {
 let server;
 let liveAdmin;
 try {
-  const adminConfigPresent = [
-    process.env.HELMION_ADMIN_ISSUER,
-    process.env.HELMION_ADMIN_CLIENT_ID,
-    process.env.HELMION_ADMIN_REDIRECT_URI,
-  ].some((value) => String(value ?? '').trim());
-  if (adminConfigPresent) {
+  if (shouldMountLiveAdmin(process.env)) {
     liveAdmin = await createLiveHelmianCloudAdminHandler();
   }
   server = await startCoraClm({

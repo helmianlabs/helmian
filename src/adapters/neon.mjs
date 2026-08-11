@@ -231,6 +231,15 @@ async function loadMigrations() {
   }));
 }
 
+/** Read-only release manifest; never opens a database or returns migration SQL. */
+export async function listExpectedMigrationManifest() {
+  return (await loadMigrations()).map(({ version, name, checksum }) => ({
+    version,
+    name,
+    checksum,
+  }));
+}
+
 async function applyMigration(pool, migration) {
   return withCommittedTransaction(pool, async (client) => {
     await client.query('select pg_advisory_xact_lock(hashtext($1))', [MIGRATION_LOCK_NAME]);
