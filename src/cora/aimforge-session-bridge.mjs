@@ -96,6 +96,11 @@ export function verifyAimForgeSessionBridge(customSessionId, {
     if (!AIMFORGE_BRIDGE_SURFACES.includes(surface)) {
       throw new Error('bridge surface is not authorized for voice');
     }
+    const focusedAssignmentId = claims.asg ?? null;
+    if (focusedAssignmentId !== null
+      && (!Number.isSafeInteger(focusedAssignmentId) || focusedAssignmentId <= 0)) {
+      throw new Error('assignment focus is invalid');
+    }
 
     return {
       ok: true,
@@ -108,6 +113,7 @@ export function verifyAimForgeSessionBridge(customSessionId, {
         issuedAt,
         expiresAt,
         receiptId: cleanBoundedString(claims.jti, 'receipt id'),
+        focusedAssignmentId,
       }),
     };
   } catch (error) {
