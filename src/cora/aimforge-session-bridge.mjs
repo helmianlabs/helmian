@@ -37,6 +37,7 @@ function signatureMatches(expected, presented) {
   } catch {
     return false;
   }
+  if (actual.toString('base64url') !== presented) return false;
   if (expected.length !== actual.length || actual.length === 0) return false;
   return timingSafeEqual(expected, actual);
 }
