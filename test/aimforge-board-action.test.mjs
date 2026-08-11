@@ -302,7 +302,7 @@ test('signed AimForge runtime advertises exactly three bounded tools and enforce
   }));
   assert.equal(proposal.state, 'pending_approval');
   assert.equal(calls[1].signedBridge, SIGNED_BRIDGE);
-  runtime.beginTurn();
+  runtime.beginTurn('Please hand this to safety.');
   const intent = {
     recipientRole: 'safety', subject: 'Review concern',
     body: 'Please review the reported steering vibration.', priority: 'urgent',
@@ -312,11 +312,14 @@ test('signed AimForge runtime advertises exactly three bounded tools and enforce
   assert.equal(calls.length, 2, 'staging must not call AimForge');
   assert.match(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }), /later user turn/u);
   assert.equal(calls.length, 2, 'same-turn confirmation must not call AimForge');
-  runtime.beginTurn();
+  runtime.beginTurn('I have another question instead.');
   assert.match(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, {
     ...intent, subject: 'Changed without confirmation', confirmed: true,
   }), /Stage this exact handoff/u);
   assert.equal(calls.length, 2, 'changed content must not call AimForge');
+  assert.match(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }), /latest user turn must explicitly confirm/u);
+  assert.equal(calls.length, 2, 'a later but unconfirmed turn must not call AimForge');
+  runtime.beginTurn('Yes, I confirm the internal department handoff.');
   const handoff = JSON.parse(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }));
   assert.equal(handoff.state, 'persisted');
   assert.equal(calls[2].signedBridge, SIGNED_BRIDGE);

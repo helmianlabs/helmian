@@ -231,7 +231,7 @@ export function createAgentTurnRunner({
         });
       }
     }
-    session.state.runtime.beginTurn?.();
+    session.state.runtime.beginTurn?.(text);
     return runAgentTurn({
       userText: text,
       messages: session.state.messages,
