@@ -328,3 +328,24 @@ test('signed AimForge runtime advertises exactly three bounded tools and enforce
   assert.equal(handoff.state, 'persisted');
   assert.equal(calls[2].signedBridge, SIGNED_BRIDGE);
 });
+
+test('platform action policy advertises only the fixed enabled subset and cannot add arbitrary tools', async () => {
+  const client = {
+    async getDispatchBoardSummary() { return { date: '2026-08-11', totalLoads: 0, assignedLoads: 0, unassignedLoads: 0, driversOnShift: 0, driversLowHos: 0 }; },
+    async prepareDriverMessage() { throw new Error('disabled tool must not execute'); },
+    async createDepartmentHandoff() { throw new Error('disabled tool must not execute'); },
+  };
+  const runtime = createAimForgeBoardToolRuntime({
+    client,
+    signedBridge: SIGNED_BRIDGE,
+    enabledToolNames: [AIMFORGE_BOARD_TOOL_NAME],
+  });
+  assert.deepEqual(Object.keys(runtime.tools), [AIMFORGE_BOARD_TOOL_NAME]);
+  assert.deepEqual(runtime.definitionsForOpenAi().map((item) => item.function.name), [AIMFORGE_BOARD_TOOL_NAME]);
+  assert.match(await runtime.execute(AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, {}), /unknown tool/u);
+  assert.throws(() => createAimForgeBoardToolRuntime({
+    client,
+    signedBridge: SIGNED_BRIDGE,
+    enabledToolNames: ['run_command'],
+  }), /enabled tool policy is invalid/u);
+});

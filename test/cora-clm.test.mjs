@@ -1040,7 +1040,7 @@ test('AN END-TO-END VOICE TURN RUNS A REAL TOOL ON REAL DISK', async () => {
   }
 });
 
-test('A SIGNED AIMFORGE TURN GETS ONLY THE THREE BOUNDED AIMFORGE TOOLS THROUGH THE REAL AGENT LOOP', async () => {
+test('A PLATFORM-GLOBAL DISABLE REMOVES A TOOL FOR A DIFFERENT SIGNED AIMFORGE CUSTOMER TENANT', async () => {
   const ws = tempWorkspace('aimforge-board-agent');
   const calls = [];
   const endpoint = await fakeOpenAiEndpoint([
@@ -1051,6 +1051,7 @@ test('A SIGNED AIMFORGE TURN GETS ONLY THE THREE BOUNDED AIMFORGE TOOLS THROUGH 
     ),
     finalMessage('There are five loads and four drivers on shift.'),
   ]);
+  let policyReads = 0;
   const runTurn = createAgentTurnRunner({
     workspace: ws.dir,
     provider: {
@@ -1075,11 +1076,15 @@ test('A SIGNED AIMFORGE TURN GETS ONLY THE THREE BOUNDED AIMFORGE TOOLS THROUGH 
         return { state: 'persisted', messageId: 'ee67017d-b760-405b-beb6-e4e60f2cb5b5', recipientRole: input.recipientRole, priority: input.priority, duplicate: false };
       },
     },
+    async globalActionPolicyResolver() {
+      policyReads += 1;
+      return { enabledActions: ['aimforge_get_dispatch_board_summary'] };
+    },
   });
   const session = {
     id: 'session-signed-board',
     helmionMode: true,
-    bridgeContext: { tenantId: 'tenant-a' },
+    bridgeContext: { tenantId: 'customer-facility-west' },
     signedBridge: 'helmion:payload.signature',
     state: null,
   };
@@ -1091,11 +1096,7 @@ test('A SIGNED AIMFORGE TURN GETS ONLY THE THREE BOUNDED AIMFORGE TOOLS THROUGH 
       onEvent: () => {},
     });
     const advertised = (endpoint.requests[0].body.tools ?? []).map((tool) => tool.function.name);
-    assert.deepEqual(advertised, [
-      'aimforge_get_dispatch_board_summary',
-      'aimforge_prepare_driver_message',
-      'aimforge_create_department_handoff',
-    ]);
+    assert.deepEqual(advertised, ['aimforge_get_dispatch_board_summary']);
     assert.equal(advertised.some((name) => /approve|send|deliver/iu.test(name)), false);
     assert.equal(advertised.includes('run_command'), false);
     assert.equal(advertised.includes('list_dir'), false);
@@ -1103,6 +1104,7 @@ test('A SIGNED AIMFORGE TURN GETS ONLY THE THREE BOUNDED AIMFORGE TOOLS THROUGH 
     assert.match(systemPrompt, /confirmed=false/u);
     assert.match(systemPrompt, /explicitly confirms in a later turn/u);
     assert.equal(calls.length, 1);
+    assert.equal(policyReads, 1);
     assert.equal(calls[0].signedBridge, session.signedBridge);
     assert.equal(calls[0].date, '2026-08-11');
     assert.equal(session.state.runtime.root, ws.dir, 'provenance stays in the real Helmian workspace');
@@ -1111,6 +1113,30 @@ test('A SIGNED AIMFORGE TURN GETS ONLY THE THREE BOUNDED AIMFORGE TOOLS THROUGH 
     await endpoint.close();
     ws.cleanup();
   }
+});
+
+test('A SIGNED AIMFORGE TURN FAILS CLOSED WHEN GLOBAL ACTION POLICY CANNOT BE READ', async () => {
+  const runTurn = createAgentTurnRunner({
+    workspace: process.cwd(),
+    provider: { id: 'unused' },
+    aimforgeActionClient: {
+      async getDispatchBoardSummary() {},
+      async prepareDriverMessage() {},
+      async createDepartmentHandoff() {},
+    },
+    async globalActionPolicyResolver() { throw new Error('database unavailable'); },
+  });
+  await assert.rejects(() => runTurn({
+    text: 'Read the board',
+    session: {
+      id: 'signed-policy-outage',
+      helmionMode: true,
+      bridgeContext: { tenantId: 'tenant-a' },
+      signedBridge: 'helmion:payload.signature',
+      state: null,
+    },
+    onEvent: () => {},
+  }), /database unavailable/u);
 });
 
 test('AN UNMARKED SESSION CANNOT REACH A TOOL EVEN IF THE MODEL ASKS FOR ONE', async () => {

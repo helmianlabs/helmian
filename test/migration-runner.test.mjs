@@ -71,6 +71,10 @@ class MigrationPool {
           pool.executedSql.push('006_tenant_audit_claim_operations.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('create table if not exists helmion.platform_action_policy')) {
+          pool.executedSql.push('007_platform_action_policy.sql');
+          return { rowCount: 0, rows: [] };
+        }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
       },
       release() {},
@@ -91,6 +95,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['004_tenant_audit_outbox.sql', true, 'committed'],
       ['005_tenant_audit_claims.sql', true, 'committed'],
       ['006_tenant_audit_claim_operations.sql', true, 'committed'],
+      ['007_platform_action_policy.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -102,13 +107,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '004_tenant_audit_outbox.sql',
       '005_tenant_audit_claims.sql',
       '006_tenant_audit_claim_operations.sql',
+      '007_platform_action_policy.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false],
+    [false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -119,9 +125,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '004_tenant_audit_outbox.sql',
       '005_tenant_audit_claims.sql',
       '006_tenant_audit_claim_operations.sql',
+      '007_platform_action_policy.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 12);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 14);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 

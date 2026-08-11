@@ -345,7 +345,16 @@ export function createAimForgeBoardActionClient({
 }
 
 /** Dedicated three-tool runtime for signed AimForge voice sessions. */
-export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace = process.cwd() }) {
+export function createAimForgeBoardToolRuntime({
+  client,
+  signedBridge,
+  workspace = process.cwd(),
+  enabledToolNames = [
+    AIMFORGE_BOARD_TOOL_NAME,
+    AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME,
+    AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME,
+  ],
+}) {
   if (!client || typeof client.getDispatchBoardSummary !== 'function'
     || typeof client.prepareDriverMessage !== 'function'
     || typeof client.createDepartmentHandoff !== 'function') {
@@ -431,11 +440,20 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace
       return JSON.stringify(receipt);
     },
   });
-  const tools = Object.freeze({
+  const availableTools = Object.freeze({
     [AIMFORGE_BOARD_TOOL_NAME]: boardTool,
     [AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME]: prepareTool,
     [AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME]: handoffTool,
   });
+  if (!Array.isArray(enabledToolNames)
+    || enabledToolNames.some((name) => typeof name !== 'string' || !Object.hasOwn(availableTools, name))
+    || new Set(enabledToolNames).size !== enabledToolNames.length) {
+    throw new Error('AimForge enabled tool policy is invalid');
+  }
+  const enabled = new Set(enabledToolNames);
+  const tools = Object.freeze(Object.fromEntries(
+    Object.entries(availableTools).filter(([name]) => enabled.has(name)),
+  ));
   return Object.freeze({
     // The agent loop uses root only for local provenance storage. It does not
     // add workspace tools; this runtime's advertised catalog remains fixed.

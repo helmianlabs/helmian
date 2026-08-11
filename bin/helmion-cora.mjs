@@ -151,7 +151,7 @@ let server;
 let liveAdmin;
 try {
   if (shouldMountLiveAdmin(process.env)) {
-    liveAdmin = await createLiveHelmianCloudAdminHandler();
+    liveAdmin = await createLiveHelmianCloudAdminHandler({ logger });
   }
   server = await startCoraClm({
     workspace: flags.workspace,
@@ -165,6 +165,7 @@ try {
     allowedOrigins: flags.allowOrigin,
     notifyBackgroundAgents: flags.agentNotify,
     httpRequestHandler: liveAdmin?.handler,
+    globalActionPolicyResolver: liveAdmin?.resolveActionPolicy,
     logger,
   });
 } catch (err) {

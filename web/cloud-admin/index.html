@@ -7,21 +7,42 @@
   <style>
     :root { color-scheme: dark; }
     body { font: 16px system-ui, sans-serif; margin: 3rem auto; max-width: 900px; padding: 0 1rem; background: #10141d; color: #e8edf5; }
-    button { padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #7db4ff; color: #09111d; font-weight: 700; cursor: pointer; }
+    button { padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #7db4ff; color: #09111d; font-weight: 700; cursor: pointer; margin-right: .5rem; }
+    button.secondary { background: #2b3547; color: #e8edf5; }
+    button.danger { background: #f0b4a8; }
     pre { padding: 1rem; background: #1c2431; overflow: auto; border-radius: .35rem; }
     .note { color: #a9c7ff; }
+    .card { margin: 1.5rem 0; padding: 1.25rem; background: #171e29; border: 1px solid #344156; border-radius: .5rem; }
+    .tool { display: block; padding: .5rem 0; }
+    #policy-status { min-height: 1.5rem; }
     [hidden] { display: none; }
   </style>
 </head>
 <body>
   <h1>Helmian Cloud Admin</h1>
-  <p class="note">This is the live, read-only control surface. Sign in with your organization identity to view the tenant-scoped Neon and deployment status.</p>
+  <p class="note">This live control plane reads platform status and can change only the three global Helmian action kill switches shown below. It never accepts secrets, URLs, commands, providers, models, customer tenants, or arbitrary tool names.</p>
   <section id="signed-out">
     <button id="login" type="button">Sign in with organization identity</button>
   </section>
   <section id="signed-in" hidden>
     <p id="actor"></p>
     <button id="refresh" type="button">Refresh control surface</button>
+    <button id="logout" class="secondary" type="button">Sign out</button>
+    <section class="card" aria-labelledby="policy-heading">
+      <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>
+      <p>Hume-attached tools: <strong>0</strong>. These switches can only remove fixed Helmian actions from every newly signed AimForge customer session. They cannot grant tenant access or add tools. Active voice sessions keep their starting policy.</p>
+      <form id="policy-form">
+        <div id="policy-actions"></div>
+        <button id="preview" type="submit">Preview change</button>
+      </form>
+      <div id="policy-confirmation" hidden>
+        <h3>Confirm exact change</h3>
+        <pre id="policy-diff"></pre>
+        <button id="confirm" class="danger" type="button">Confirm action policy</button>
+        <button id="cancel" class="secondary" type="button">Cancel</button>
+      </div>
+      <p id="policy-status" role="status"></p>
+    </section>
     <pre id="result">Loading…</pre>
   </section>
   <script src="/admin/assets/app.js"></script>
