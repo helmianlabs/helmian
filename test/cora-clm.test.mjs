@@ -25,6 +25,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createHmac } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,6 +60,10 @@ import {
   startCoraClm,
 } from '../src/cora/clm-server.mjs';
 import { activityEntry, readActivity, recordVoiceTurn } from '../src/cora/activity.mjs';
+import {
+  authorizeAimForgeBridgeReceipt,
+  verifyAimForgeSessionBridge,
+} from '../src/cora/aimforge-session-bridge.mjs';
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -96,6 +101,29 @@ function humeEnvelope(turns, customSessionId = null) {
   };
   if (customSessionId !== null) payload.custom_session_id = customSessionId;
   return JSON.stringify(payload);
+}
+
+const BRIDGE_SECRET = 'test-aimforge-bridge-secret-that-is-over-thirty-two-bytes';
+
+function signedAimForgeSession(overrides = {}, secret = BRIDGE_SECRET) {
+  const now = Math.floor(Date.now() / 1_000);
+  const claims = {
+    v: 1,
+    iss: 'aimforge-api',
+    aud: 'helmian-cora',
+    sid: 'session-11111111',
+    tid: 'tenant-a',
+    sub: 'driver:driver-7',
+    rol: 'driver',
+    srf: 'mobile',
+    iat: now,
+    exp: now + 600,
+    jti: 'receipt-22222222',
+    ...overrides,
+  };
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  const signature = createHmac('sha256', secret).update(payload).digest('base64url');
+  return `helmion:${payload}.${signature}`;
 }
 
 /**
@@ -446,6 +474,67 @@ test('HELMION MODE IS MARKED ON custom_session_id, and fails closed', () => {
   assert.equal(isHelmionSession('nothelmion:x'), false, 'a prefix match must be on a boundary');
 });
 
+test('AimForge bridge verification authenticates tenant/user/role and rejects tampering', () => {
+  const signed = signedAimForgeSession();
+  const verified = verifyAimForgeSessionBridge(signed, { secret: BRIDGE_SECRET });
+  assert.equal(verified.ok, true);
+  assert.deepEqual({
+    tenantId: verified.context.tenantId,
+    subjectId: verified.context.subjectId,
+    role: verified.context.role,
+    surface: verified.context.surface,
+    receiptId: verified.context.receiptId,
+  }, {
+    tenantId: 'tenant-a',
+    subjectId: 'driver:driver-7',
+    role: 'driver',
+    surface: 'mobile',
+    receiptId: 'receipt-22222222',
+  });
+
+  assert.equal(verifyAimForgeSessionBridge(`${signed.slice(0, -1)}x`, {
+    secret: BRIDGE_SECRET,
+  }).ok, false, 'changed signatures are refused');
+  assert.match(verifyAimForgeSessionBridge(signedAimForgeSession({ aud: 'somewhere-else' }), {
+    secret: BRIDGE_SECRET,
+  }).reason, /audience/i);
+  assert.match(verifyAimForgeSessionBridge(signedAimForgeSession({ exp: 1 }), {
+    secret: BRIDGE_SECRET,
+  }).reason, /expired/i);
+  assert.match(verifyAimForgeSessionBridge(signedAimForgeSession({ srf: 'web' }), {
+    secret: BRIDGE_SECRET,
+  }).reason, /surface/i);
+  assert.equal(verifyAimForgeSessionBridge('helmion:unsigned', {
+    secret: BRIDGE_SECRET,
+  }).ok, false);
+
+  const receipts = new Map();
+  assert.deepEqual(authorizeAimForgeBridgeReceipt(receipts, verified.context, 'socket-a'), {
+    ok: true, firstUse: true,
+  });
+  assert.deepEqual(authorizeAimForgeBridgeReceipt(receipts, verified.context, 'socket-a'), {
+    ok: true, firstUse: false,
+  }, 'the owner connection is idempotent');
+  assert.match(
+    authorizeAimForgeBridgeReceipt(receipts, verified.context, 'socket-b').reason,
+    /already used/i,
+    'a second socket cannot replay the receipt',
+  );
+});
+
+test('a cloud Cora process refuses to start without the bridge verification secret', async () => {
+  await assert.rejects(
+    startCoraClm({
+      host: '0.0.0.0',
+      port: 0,
+      token: 'server-to-server-token',
+      bridgeSecret: '',
+      runTurn: async () => ({ text: '' }),
+    }),
+    /BRIDGE_SECRET/,
+  );
+});
+
 // ── the server, over a real socket ─────────────────────────────────────────
 
 test('A REAL SOCKET, A REAL TURN: assistant_input then exactly one assistant_end', async () => {
@@ -484,6 +573,57 @@ test('A REAL SOCKET, A REAL TURN: assistant_input then exactly one assistant_end
     assert.equal(order.at(-1), ASSISTANT_END);
   } finally {
     hume.close();
+    await server.close();
+    ws.cleanup();
+  }
+});
+
+test('SIGNED AIMFORGE SESSION enables tools, binds its receipt, and audits authorization once', async () => {
+  const ws = tempWorkspace('signed-bridge');
+  const contexts = [];
+  const authorizations = [];
+  const sessionId = signedAimForgeSession();
+  const server = await startCoraClm({
+    workspace: ws.dir,
+    port: 0,
+    bridgeSecret: BRIDGE_SECRET,
+    requireSignedSessions: true,
+    activitySink: () => ({ logged: true }),
+    authorizationActivitySink: (_workspace, context) => {
+      authorizations.push(context);
+      return { logged: true };
+    },
+    runTurn: async ({ session, onEvent }) => {
+      contexts.push({
+        id: session.id,
+        helmionMode: session.helmionMode,
+        bridgeContext: session.bridgeContext,
+      });
+      onEvent({ type: 'assistant', text: 'authorized' });
+      return { text: 'authorized' };
+    },
+  });
+  const first = await connectMockHume(server.url);
+
+  try {
+    first.sendTurn([{ role: 'user', content: 'first' }], sessionId);
+    await waitFor(() => first.ends().length === 1, { label: 'signed first turn' });
+    first.sendTurn([{ role: 'user', content: 'second' }], sessionId);
+    await waitFor(() => first.ends().length === 2, { label: 'idempotent signed second turn' });
+
+    assert.equal(contexts.length, 2, 'the owner connection may reuse its session');
+    assert.equal(contexts.every((context) => context.helmionMode), true);
+    assert.equal(contexts[0].id, 'session-11111111');
+    assert.equal(contexts[0].bridgeContext.tenantId, 'tenant-a');
+    assert.equal(contexts[0].bridgeContext.subjectId, 'driver:driver-7');
+    assert.equal(authorizations.length, 1, 'one receipt produces one authorization audit');
+    assert.equal(
+      first.inputs().some((message) => 'custom_session_id' in message),
+      false,
+      'the signed authorization envelope is not echoed in assistant frames',
+    );
+  } finally {
+    first.close();
     await server.close();
     ws.cleanup();
   }
@@ -730,6 +870,7 @@ test('health identifies the separately configured Hume CLM without exposing its 
       configId: 'f9244ec5-5c86-405f-bfe0-af622a12f20b',
       customLanguageModel: true,
       requiredSessionPrefix: 'helmion:',
+      signedSessionsRequired: false,
     });
     assert.equal(JSON.stringify(body).includes('token'), false);
   } finally {

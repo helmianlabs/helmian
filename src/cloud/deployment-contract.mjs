@@ -20,6 +20,9 @@ export function inspectHelmianCloudDeployment(env = process.env) {
   if (!text(env.HELMION_DATABASE_URL)) missing.push('HELMION_DATABASE_URL');
   if (!text(env.HELMION_EXPECTED_ENDPOINT_ID)) missing.push('HELMION_EXPECTED_ENDPOINT_ID');
   if (text(env.HELMION_CORA_TOKEN).length < 32) missing.push('HELMION_CORA_TOKEN');
+  if (text(env.HELMION_AIMFORGE_BRIDGE_SECRET).length < 32) {
+    missing.push('HELMION_AIMFORGE_BRIDGE_SECRET');
+  }
   const providerKey = PROVIDER_KEY_BY_NAME[provider];
   if (providerKey && !text(env[providerKey])) missing.push(providerKey);
 

@@ -277,11 +277,13 @@ socket** (`gaugeContext.tsx:330` → `humeClient.ts:3286, 3346, 3367`). That is
 config **A**, not D, so nothing in this feature touches it — but it is why
 "which account" gets answered before anyone edits a config.
 
-Once those are settled the remaining work is: point the config's CLM URL at the
-tunnelled address, set `custom_session_id` to `helmion:<something>` when starting
-the chat, and run `npm run cora -- --token <secret> --host 0.0.0.0`. No code
-change is expected — but "no code change is expected" is a prediction, and it
-gets verified against a live socket before anyone says it works.
+Historical local-phase note: the plain `helmion:<something>` marker described
+here remains valid only on a loopback development bind. A hosted/non-loopback
+server now refuses startup without `HELMION_AIMFORGE_BRIDGE_SECRET` and refuses
+every turn unless `custom_session_id` is the HMAC-signed AimForge envelope.
+Follow `docs/CORA_AIMFORGE_SESSION_BRIDGE.md` for the production CLM URL,
+secrets, deployment order, and fail-closed contract. Do not expose the old
+marker through a tunnel as production authorization.
 
 ### Helmion already has a second, unrelated voice path
 

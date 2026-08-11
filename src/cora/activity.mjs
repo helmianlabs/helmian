@@ -41,7 +41,7 @@
 // was returned and dropped on the floor.
 
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 export const ACTIVITY_RELATIVE_PATH = path.join('.helmion', 'audit', 'project-activity.jsonl');
@@ -71,6 +71,7 @@ export function activityId(at = new Date()) {
  * test) can inspect the exact object that would land on disk.
  */
 export function activityEntry({
+  id = null,
   kind = VOICE_ACTIVITY_KIND,
   title,
   detail,
@@ -90,7 +91,7 @@ export function activityEntry({
     cleanDetail = cleanDetail.slice(0, MAX_ACTIVITY_DETAIL_CHARS - marker.length) + marker;
   }
   return {
-    id: activityId(at),
+    id: id ? String(id) : activityId(at),
     atUtc: at.toISOString(),
     kind: String(kind).trim().toLowerCase(),
     title: cleanTitle,
@@ -144,6 +145,7 @@ export function recordVoiceTurn(workspaceRoot, {
   model = null,
   sessionId = null,
   helmionMode = true,
+  bridgeContext = null,
   at = new Date(),
 } = {}) {
   const lines = [
@@ -155,13 +157,54 @@ export function recordVoiceTurn(workspaceRoot, {
     : 'Tools run: none');
   if (model) lines.push(`Answered by: ${model}`);
   lines.push(`Mode: ${helmionMode ? 'Helmion (tools enabled)' : 'chat only (no tools)'}`);
-  if (sessionId) lines.push(`Hume custom_session_id: ${sessionId}`);
+  // A signed custom_session_id is a bearer-like authorization envelope. It
+  // must never be copied to the durable activity ledger. Correlate through the
+  // non-secret issuance receipt instead.
+  if (bridgeContext) {
+    lines.push(`AimForge receipt: ${bridgeContext.receiptId}`);
+    lines.push(`Tenant: ${bridgeContext.tenantId}`);
+    lines.push(`Role/surface: ${bridgeContext.role}/${bridgeContext.surface}`);
+  } else if (sessionId) {
+    lines.push(`Hume custom_session_id: ${sessionId}`);
+  }
 
   return recordActivity(workspaceRoot, {
     kind: VOICE_ACTIVITY_KIND,
     title: 'Voice turn via Cora',
     detail: lines.join('\n'),
     status,
+    source: VOICE_ACTIVITY_SOURCE,
+    at,
+  });
+}
+
+/**
+ * Record the authorization decision exactly once per accepted bridge receipt.
+ * The deterministic activity id lets operators correlate a session without
+ * retaining the signed custom_session_id or the signing secret.
+ */
+export function recordVoiceSessionAuthorization(workspaceRoot, bridgeContext, {
+  at = new Date(),
+} = {}) {
+  const receiptId = String(bridgeContext?.receiptId ?? '').trim();
+  if (!receiptId) return { logged: false, reason: 'bridge receipt id is required' };
+  const digest = createHash('sha256').update(receiptId).digest('hex').slice(0, 32);
+  const issued = Number.isInteger(bridgeContext.issuedAt)
+    ? new Date(bridgeContext.issuedAt * 1_000)
+    : at;
+  const deterministicId = `${activityId(issued).slice(0, 18)}${digest}`;
+  return recordActivity(workspaceRoot, {
+    id: deterministicId,
+    kind: VOICE_ACTIVITY_KIND,
+    title: 'AimForge voice session authorized',
+    detail: [
+      `AimForge receipt: ${receiptId}`,
+      `Tenant: ${bridgeContext.tenantId}`,
+      `Subject: ${bridgeContext.subjectId}`,
+      `Role/surface: ${bridgeContext.role}/${bridgeContext.surface}`,
+      `Expires: ${new Date(bridgeContext.expiresAt * 1_000).toISOString()}`,
+    ].join('\n'),
+    status: 'authorized',
     source: VOICE_ACTIVITY_SOURCE,
     at,
   });

@@ -88,6 +88,9 @@ function usage() {
   --tier <t>           fast | standard | deep           (default: standard = claude-sonnet-5)
   --permission <mode>  read-only | read-tools | ask | full   (default: read-tools)
   --token <secret>     required for any non-loopback bind; also HELMION_CORA_TOKEN
+  HELMION_AIMFORGE_BRIDGE_SECRET
+                       required for any non-loopback bind (minimum 32 bytes).
+                       Must exactly match AimForge's server-side secret.
   --allow-origin <o>   let a BROWSER at this origin open the socket (repeatable).
                        Default: none. A peer sending no Origin header is not a
                        browser and is unaffected — that is how a server-side
@@ -97,9 +100,9 @@ function usage() {
   --self-test           run a provider-free local WebSocket/policy smoke test and exit
   --quiet              only errors on stdout
 
-  A chat is "Helmion mode" — tools enabled — when its Hume custom_session_id
-  starts with "helmion". Any other session, including one with no id, runs
-  read-only. That is a fail-closed default and it is deliberate.
+  Cloud sessions are "Helmion mode" only after the HMAC-signed AimForge
+  custom_session_id is verified. Loopback development keeps the legacy
+  helmion:* marker; any other local session runs read-only.
 `;
 }
 
@@ -183,6 +186,7 @@ process.stdout.write(
   + `  provider:   ${server.provider?.label ?? flags.provider} (tier ${flags.tier})\n`
   + `  permission: ${flags.permission} — only for sessions marked helmion:*\n`
   + `  token:      ${server.requiresToken ? 'required' : 'not required (loopback)'}\n`
+  + `  sessions:   ${server.requiresSignedSessions ? 'signed AimForge context required' : 'local development policy'}\n`
   + `  origins:    ${flags.allowOrigin.length ? flags.allowOrigin.join(', ') : 'no browser origin allowed (non-browser peers unaffected)'}\n`
   + `  agents:     ${flags.agentNotify ? 'background completions announced' : 'notifications off'}\n`
   + `  stop:       Ctrl-C\n`,

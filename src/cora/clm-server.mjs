@@ -56,7 +56,12 @@ import {
   splitForSpeech,
   topProsody,
 } from './clm-protocol.mjs';
-import { recordVoiceTurn } from './activity.mjs';
+import { recordVoiceSessionAuthorization, recordVoiceTurn } from './activity.mjs';
+import {
+  AIMFORGE_BRIDGE_MARKER,
+  authorizeAimForgeBridgeReceipt,
+  verifyAimForgeSessionBridge,
+} from './aimforge-session-bridge.mjs';
 import { createBackgroundAgentNotifier } from './notify.mjs';
 import { inspectCoraProviderReadiness } from './provider-readiness.mjs';
 import {
@@ -233,6 +238,10 @@ export async function startCoraClm({
   path = DEFAULT_CORA_PATH,
   healthPath = DEFAULT_CORA_HEALTH_PATH,
   token = null,
+  bridgeSecret = process.env.HELMION_AIMFORGE_BRIDGE_SECRET ?? null,
+  // Cloud/non-loopback deployments must accept only signed AimForge context.
+  // Loopback keeps the legacy marker for local self-test/development only.
+  requireSignedSessions = !isLoopbackHost(host),
   providerName = 'claude',
   provider = null,
   permissionMode = 'read-tools',
@@ -241,6 +250,7 @@ export async function startCoraClm({
   sessionPrefix = HELMION_SESSION_PREFIX,
   runTurn = null,
   activitySink = recordVoiceTurn,
+  authorizationActivitySink = recordVoiceSessionAuthorization,
   includeProsody = true,
   speakToolProgress = true,
   maxSpokenChars = DEFAULT_MAX_SPOKEN_CHARS,
@@ -270,6 +280,12 @@ export async function startCoraClm({
   logger = () => {},
 } = {}) {
   const { requiresToken } = resolveAccess({ host, token });
+  if (requireSignedSessions && Buffer.byteLength(String(bridgeSecret ?? ''), 'utf8') < 32) {
+    throw new Error(
+      'Refusing to start signed Cora sessions without '
+      + 'HELMION_AIMFORGE_BRIDGE_SECRET (minimum 32 bytes).',
+    );
+  }
   const statusPath = String(healthPath || DEFAULT_CORA_HEALTH_PATH).startsWith('/')
     ? String(healthPath || DEFAULT_CORA_HEALTH_PATH)
     : `/${String(healthPath)}`;
@@ -309,8 +325,14 @@ export async function startCoraClm({
 
   /** @type {Map<string, {id, key, helmionMode, state, queue, lastSeen, turns}>} */
   const sessions = new Map();
+  /** A receipt may bind to one session/socket for its full signed lifetime. */
+  const bridgeReceipts = new Map();
 
   const evictIdle = () => {
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    for (const [receiptId, receipt] of bridgeReceipts) {
+      if (receipt.expiresAt <= nowSeconds) bridgeReceipts.delete(receiptId);
+    }
     const cutoff = Date.now() - sessionIdleMs;
     for (const [key, session] of sessions) {
       if (session.lastSeen < cutoff) {
@@ -322,11 +344,40 @@ export async function startCoraClm({
 
   const sessionFor = (customSessionId, connectionId) => {
     evictIdle();
-    const key = customSessionId ?? `socket:${connectionId}`;
+    const isSignedShape = String(customSessionId ?? '').startsWith(AIMFORGE_BRIDGE_MARKER);
+    const verification = (requireSignedSessions || isSignedShape)
+      ? verifyAimForgeSessionBridge(customSessionId, { secret: bridgeSecret })
+      : { ok: false, reason: null };
+    if (requireSignedSessions && !verification.ok) {
+      return { session: null, refused: verification.reason, bridgeContext: null };
+    }
+    // When a verification secret is configured, a claimed signed marker is
+    // never downgraded to the old local marker path after a bad signature.
+    if (isSignedShape && bridgeSecret && !verification.ok) {
+      return { session: null, refused: verification.reason, bridgeContext: null };
+    }
+
+    const bridgeContext = verification.ok ? verification.context : null;
+    if (bridgeContext) {
+      const receiptAccess = authorizeAimForgeBridgeReceipt(
+        bridgeReceipts, bridgeContext, connectionId,
+      );
+      if (!receiptAccess.ok) {
+        return {
+          session: null,
+          refused: receiptAccess.reason,
+          bridgeContext: null,
+        };
+      }
+    }
+
+    const key = bridgeContext
+      ? `aimforge:${bridgeContext.sessionId}`
+      : (customSessionId ?? `socket:${connectionId}`);
     let session = sessions.get(key);
     const access = authorizeSessionConnection(session, connectionId);
     if (!access.ok) {
-      return { session: null, refused: access.reason };
+      return { session: null, refused: access.reason, bridgeContext: null };
     }
     if (!session) {
       if (sessions.size >= maxSessions) {
@@ -339,9 +390,10 @@ export async function startCoraClm({
       }
       session = {
         key,
-        id: customSessionId ?? `cora-${connectionId}`,
+        id: bridgeContext?.sessionId ?? customSessionId ?? `cora-${connectionId}`,
         connectionId,
-        helmionMode: isHelmionSession(customSessionId, sessionPrefix),
+        helmionMode: bridgeContext ? true : isHelmionSession(customSessionId, sessionPrefix),
+        bridgeContext,
         state: null,
         // Turns on one chat are strictly serialized. Two overlapping agent
         // turns on one tool runtime would interleave their tool calls into a
@@ -356,9 +408,25 @@ export async function startCoraClm({
         turns: 0,
       };
       sessions.set(key, session);
+      if (bridgeContext) {
+        const result = authorizationActivitySink?.(workspace, bridgeContext);
+        if (result && result.logged === false) {
+          logger({
+            level: 'error', event: 'voice_authorization_not_recorded', reason: result.reason,
+          });
+        }
+        logger({
+          level: 'info',
+          event: 'aimforge_session_authorized',
+          receiptId: bridgeContext.receiptId,
+          tenantId: bridgeContext.tenantId,
+          role: bridgeContext.role,
+          surface: bridgeContext.surface,
+        });
+      }
     }
     session.lastSeen = Date.now();
-    return { session, refused: null };
+    return { session, refused: null, bridgeContext: session.bridgeContext };
   };
 
   /**
@@ -457,6 +525,12 @@ export async function startCoraClm({
       ? sessionFor(sessionId, connection.id)
       : { session: null, refused: sessionIdCheck.reason };
     const session = sessionResult.session;
+    const logSessionId = session?.bridgeContext?.receiptId ?? sessionId;
+    // Hume already remembers the client-supplied id for this chat. Do not
+    // echo a signed authorization envelope on every assistant frame.
+    const outboundSessionId = /^helmion:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(String(sessionId ?? ''))
+      ? null
+      : sessionId;
 
     let ended = false;
     let spokenBudget = maxSpokenChars;
@@ -486,7 +560,7 @@ export async function startCoraClm({
         saidAnything = true;
         spokenPieces.push(allowed);
         for (const chunk of splitForSpeech(allowed, { maxChars: speechChunkChars })) {
-          connection.sendJson(assistantInput(chunk, sessionId));
+          connection.sendJson(assistantInput(chunk, outboundSessionId));
         }
       }
       // Say that it was cut, ONCE. Going quiet mid-answer is indistinguishable
@@ -497,7 +571,7 @@ export async function startCoraClm({
         saidAnything = true;
         connection.sendJson(assistantInput(
           'There is more detail than I should read out; the full answer is in the Helmion activity log.',
-          sessionId,
+          outboundSessionId,
         ));
       }
     };
@@ -514,26 +588,26 @@ export async function startCoraClm({
         logger({
           level: 'warn',
           event: 'session_refused',
-          sessionId,
+          sessionId: null,
           reason: sessionResult.refused,
         });
         connection.sendJson(assistantInput(
           'I could not use that voice session. Please start a new voice session.',
-          sessionId,
+          outboundSessionId,
         ));
         return;
       }
       if (!parsed.ok) {
         logger({ level: 'warn', event: 'bad_payload', reason: parsed.error });
         connection.sendJson(assistantInput(
-          'I could not read that message from the voice service.', sessionId,
+          'I could not read that message from the voice service.', outboundSessionId,
         ));
         return;
       }
       if (!parsed.lastUser) {
         // Nothing was asked. Hand the turn straight back rather than filling the
         // silence — and do NOT bill a model call for it.
-        logger({ level: 'debug', event: 'no_user_turn', sessionId });
+        logger({ level: 'debug', event: 'no_user_turn', sessionId: logSessionId });
         return;
       }
 
@@ -552,7 +626,7 @@ export async function startCoraClm({
       // of latency on the one interaction that must feel instant.
       if (isStopIntent(heard)) {
         const stopped = cancelSession(session, 'the user said stop');
-        logger({ level: 'info', event: 'stop_requested', sessionId, cancelled: stopped });
+        logger({ level: 'info', event: 'stop_requested', sessionId: logSessionId, cancelled: stopped });
         speak(stopped > 0
           ? 'Stopped.'
           : 'Nothing was running, but I am listening.');
@@ -575,7 +649,7 @@ export async function startCoraClm({
       logger({
         level: 'info',
         event: 'turn_start',
-        sessionId,
+        sessionId: logSessionId,
         helmionMode: session.helmionMode,
         chars: heard.length,
       });
@@ -589,7 +663,7 @@ export async function startCoraClm({
             // ONE short line, once per turn. A running commentary of every tool
             // call talks over the user and is the fastest way to make a voice
             // agent unbearable.
-            connection.sendJson(assistantInput('Working on that now.', sessionId));
+            connection.sendJson(assistantInput('Working on that now.', outboundSessionId));
           }
         } else if (ev.type === 'provenance') {
           answeredBy = ev.model ?? answeredBy;
@@ -647,11 +721,11 @@ export async function startCoraClm({
         // real work in flight — but it will not speak after this point, because
         // speaking into a turn we already handed back means talking over
         // whatever the user said next.
-        logger({ level: 'warn', event: 'turn_timeout', sessionId, ms: turnTimeoutMs });
+        logger({ level: 'warn', event: 'turn_timeout', sessionId: logSessionId, ms: turnTimeoutMs });
         turnState.handle.phase = 'timed-out';
         connection.sendJson(assistantInput(
           'That is taking longer than a conversation should. It is still running, '
-          + 'and I will put the result in the activity log.', sessionId,
+          + 'and I will put the result in the activity log.', outboundSessionId,
         ));
         endTurn();
         // THE HANDLE DELIBERATELY STAYS REGISTERED. This is the one case where
@@ -667,7 +741,7 @@ export async function startCoraClm({
           (err) => {
             releaseHandle();
             if (isAbortError(err) || turnState.cancelled) {
-              logger({ level: 'info', event: 'turn_cancelled_after_timeout', sessionId });
+              logger({ level: 'info', event: 'turn_cancelled_after_timeout', sessionId: logSessionId });
               writeActivity('cancelled');
               return;
             }
@@ -689,7 +763,7 @@ export async function startCoraClm({
       // contradicts it out loud, and a 'failed' ledger row would turn every
       // deliberate interruption into a defect that never happened.
       if (isAbortError(err) || turnState.cancelled) {
-        logger({ level: 'info', event: 'turn_cancelled', sessionId });
+        logger({ level: 'info', event: 'turn_cancelled', sessionId: logSessionId });
         writeActivity('cancelled');
         return;
       }
@@ -699,7 +773,7 @@ export async function startCoraClm({
       // "nothing".
       if (!ended) {
         connection.sendJson(assistantInput(
-          `Something went wrong on my side: ${shortError(err)}`, sessionId,
+          `Something went wrong on my side: ${shortError(err)}`, outboundSessionId,
         ));
       }
       writeActivity('failed', shortError(err));
@@ -723,6 +797,7 @@ export async function startCoraClm({
         model: answeredBy,
         sessionId,
         helmionMode: session.helmionMode,
+        bridgeContext: session.bridgeContext,
       });
       // A ledger failure is never silent — this codebase already shipped that
       // bug once with a dropped `skipped` flag.
@@ -843,6 +918,7 @@ export async function startCoraClm({
           configId: String(process.env.HELMION_HUME_CONFIG_ID ?? '').trim() || null,
           customLanguageModel: true,
           requiredSessionPrefix: `${sessionPrefix}:`,
+          signedSessionsRequired: requireSignedSessions,
         },
         requiresToken,
         allowedOriginCount: Array.isArray(allowedOrigins) ? allowedOrigins.length : 0,
@@ -943,6 +1019,7 @@ export async function startCoraClm({
       : null,
     providerReadiness,
     requiresToken,
+    requiresSignedSessions: requireSignedSessions,
     allowedOrigins,
     sessionCount: () => sessions.size,
     /** Turns that have not settled, across every chat. */

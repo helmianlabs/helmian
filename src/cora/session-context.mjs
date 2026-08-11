@@ -7,7 +7,9 @@
 // runtime by guessing the label.
 
 /** Keep untrusted session labels small enough to stay cheap in memory and logs. */
-export const DEFAULT_MAX_SESSION_ID_CHARS = 128;
+// A signed AimForge bridge carries bounded tenant/user/role claims plus an
+// HMAC. Keep the wire value bounded, but large enough for that compact token.
+export const DEFAULT_MAX_SESSION_ID_CHARS = 2_048;
 
 /**
  * Validate and normalize one Hume session label.
