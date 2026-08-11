@@ -232,6 +232,11 @@ function validateDepartmentHandoffResponse(value, status) {
   });
 }
 
+function isExplicitHandoffConfirmation(value) {
+  const text = String(value ?? '').trim().toLowerCase().replace(/[.!]+$/u, '').trim();
+  return /^(?:yes(?:,? i)? confirm(?: the (?:internal )?(?:department )?handoff)?|i confirm(?: the (?:internal )?(?:department )?handoff)?|confirm(?: the (?:internal )?(?:department )?handoff)?|confirmed|proceed|go ahead)$/u.test(text);
+}
+
 /** A fixed-path client limited to aggregate reads and prepare-only proposals. */
 export function createAimForgeBoardActionClient({
   baseUrl = process.env.HELMION_AIMFORGE_API_BASE_URL,
@@ -385,6 +390,7 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace
     },
   });
   let turnNumber = 0;
+  let currentTurnConfirmed = false;
   let pendingHandoff = null;
   const handoffTool = Object.freeze({
     description: 'Stage or persist an internal tenant department handoff. First call with confirmed=false to produce the confirmation summary. Only after the user explicitly confirms in a later turn may the same handoff be called with confirmed=true. This is internal inbox persistence, never SMS or provider delivery.',
@@ -414,6 +420,9 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace
       if (turnNumber <= pendingHandoff.stagedTurn) {
         throw new Error('Explicit confirmation must arrive in a later user turn');
       }
+      if (!currentTurnConfirmed) {
+        throw new Error('The latest user turn must explicitly confirm this internal handoff');
+      }
       const receipt = await client.createDepartmentHandoff({ signedBridge, ...intent, signal });
       pendingHandoff = null;
       return JSON.stringify(receipt);
@@ -430,7 +439,10 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace
     root: workspace,
     permissionMode: 'read-tools',
     tools,
-    beginTurn() { turnNumber += 1; },
+    beginTurn(userText = '') {
+      turnNumber += 1;
+      currentTurnConfirmed = isExplicitHandoffConfirmation(userText);
+    },
     definitionsForOpenAi() {
       return Object.entries(tools).map(([name, tool]) => ({
         type: 'function', function: { name, description: tool.description, parameters: tool.parameters },
