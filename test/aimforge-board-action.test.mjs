@@ -1,0 +1,133 @@
+import assert from 'node:assert/strict';
+import { createHash, createHmac } from 'node:crypto';
+import test from 'node:test';
+import {
+  AIMFORGE_BOARD_SUMMARY_PATH,
+  AIMFORGE_BOARD_TOOL_NAME,
+  createAimForgeBoardActionClient,
+  createAimForgeBoardToolRuntime,
+} from '../src/cora/aimforge-board-action.mjs';
+
+const ACTION_SECRET = 'action-secret-for-tests-that-is-at-least-32-bytes';
+const SIGNED_BRIDGE = 'helmion:payload.signature';
+const NOW = new Date('2026-08-11T17:00:00.000Z');
+const NONCE = 'nonce-helmian-board-0001';
+
+function okResponse(summary = {}) {
+  return new Response(JSON.stringify({
+    version: '1',
+    action: 'dispatch.board.summary',
+    summary: {
+      date: '2026-08-11',
+      totalLoads: 5,
+      assignedLoads: 3,
+      unassignedLoads: 2,
+      driversOnShift: 4,
+      driversLowHos: 1,
+      ...summary,
+    },
+  }), {
+    status: 200,
+    headers: { 'x-aimforge-action-receipt': 'a'.repeat(32) },
+  });
+}
+
+test('fixed board client signs the canonical request and returns bounded aggregates only', async () => {
+  let captured;
+  const client = createAimForgeBoardActionClient({
+    baseUrl: 'https://aimforge-api.fly.dev',
+    actionSecret: ACTION_SECRET,
+    now: () => NOW,
+    nonce: () => NONCE,
+    fetchImpl: async (url, init) => {
+      captured = { url: String(url), init };
+      return okResponse();
+    },
+  });
+  const result = await client.getDispatchBoardSummary({
+    signedBridge: SIGNED_BRIDGE,
+    date: '2026-08-11',
+  });
+
+  assert.equal(captured.url, `https://aimforge-api.fly.dev${AIMFORGE_BOARD_SUMMARY_PATH}`);
+  assert.equal(captured.init.method, 'POST');
+  assert.equal(captured.init.body, JSON.stringify({
+    custom_session_id: SIGNED_BRIDGE,
+    date: '2026-08-11',
+  }));
+  const digestHex = createHash('sha256').update(captured.init.body).digest('hex');
+  const canonical = [
+    'v1', 'POST', AIMFORGE_BOARD_SUMMARY_PATH,
+    String(Math.floor(NOW.getTime() / 1_000)), NONCE, digestHex,
+  ].join('\n');
+  const expected = createHmac('sha256', ACTION_SECRET).update(canonical).digest('base64url');
+  assert.equal(captured.init.headers['x-helmian-signature'], expected);
+  assert.deepEqual(result, {
+    date: '2026-08-11', totalLoads: 5, assignedLoads: 3, unassignedLoads: 2,
+    driversOnShift: 4, driversLowHos: 1,
+  });
+  assert.equal(JSON.stringify(result).includes('receipt'), false);
+  assert.equal(JSON.stringify(result).includes('tenant'), false);
+});
+
+test('client refuses non-origin/generic HTTP configuration and unbounded response fields', async () => {
+  for (const baseUrl of [
+    'http://aimforge-api.fly.dev',
+    'https://aimforge-api.fly.dev/anything',
+    'https://user:pass@aimforge-api.fly.dev',
+  ]) {
+    assert.throws(() => createAimForgeBoardActionClient({
+      baseUrl, actionSecret: ACTION_SECRET,
+    }), /HTTPS origin/u);
+  }
+  const client = createAimForgeBoardActionClient({
+    baseUrl: 'https://aimforge-api.fly.dev', actionSecret: ACTION_SECRET,
+    now: () => NOW, nonce: () => NONCE,
+    fetchImpl: async () => okResponse({ driverName: 'must-not-cross' }),
+  });
+  await assert.rejects(
+    client.getDispatchBoardSummary({ signedBridge: SIGNED_BRIDGE }),
+    /projection was not bounded/u,
+  );
+});
+
+test('turn cancellation reaches the fixed AimForge fetch', async () => {
+  const controller = new AbortController();
+  let fetchSignal;
+  const client = createAimForgeBoardActionClient({
+    baseUrl: 'https://aimforge-api.fly.dev', actionSecret: ACTION_SECRET,
+    now: () => NOW, nonce: () => NONCE,
+    fetchImpl: async (_url, init) => {
+      fetchSignal = init.signal;
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+      });
+    },
+  });
+  const pending = client.getDispatchBoardSummary({
+    signedBridge: SIGNED_BRIDGE,
+    signal: controller.signal,
+  });
+  controller.abort(new Error('driver stopped Cora'));
+  await assert.rejects(pending, /driver stopped Cora/u);
+  assert.equal(fetchSignal.aborted, true);
+});
+
+test('signed AimForge runtime advertises exactly one read-only tool', async () => {
+  const calls = [];
+  const runtime = createAimForgeBoardToolRuntime({
+    signedBridge: SIGNED_BRIDGE,
+    client: {
+      async getDispatchBoardSummary(input) {
+        calls.push(input);
+        return { date: '2026-08-11', totalLoads: 1, assignedLoads: 0, unassignedLoads: 1, driversOnShift: 2, driversLowHos: 0 };
+      },
+    },
+  });
+  assert.deepEqual(Object.keys(runtime.tools), [AIMFORGE_BOARD_TOOL_NAME]);
+  assert.deepEqual(runtime.definitionsForOpenAi().map((item) => item.function.name), [AIMFORGE_BOARD_TOOL_NAME]);
+  assert.match(await runtime.execute('run_command', { command: 'curl anywhere' }), /unknown tool/u);
+  const result = JSON.parse(await runtime.execute(AIMFORGE_BOARD_TOOL_NAME, { date: '2026-08-11' }));
+  assert.equal(result.totalLoads, 1);
+  assert.equal(calls[0].signedBridge, SIGNED_BRIDGE);
+});
