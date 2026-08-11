@@ -320,6 +320,10 @@ test('signed AimForge runtime advertises exactly three bounded tools and enforce
   assert.match(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }), /latest user turn must explicitly confirm/u);
   assert.equal(calls.length, 2, 'a later but unconfirmed turn must not call AimForge');
   runtime.beginTurn('Yes, I confirm the internal department handoff.');
+  assert.match(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }), /must be restaged/u);
+  assert.equal(calls.length, 2, 'a stale confirmation must not call AimForge');
+  assert.equal(JSON.parse(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: false })).state, 'confirmation_required');
+  runtime.beginTurn('Yes, I confirm the internal department handoff.');
   const handoff = JSON.parse(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }));
   assert.equal(handoff.state, 'persisted');
   assert.equal(calls[2].signedBridge, SIGNED_BRIDGE);
