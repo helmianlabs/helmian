@@ -1029,7 +1029,7 @@ test('AN END-TO-END VOICE TURN RUNS A REAL TOOL ON REAL DISK', async () => {
   }
 });
 
-test('A SIGNED AIMFORGE TURN GETS ONLY THE FIXED BOARD TOOL THROUGH THE REAL AGENT LOOP', async () => {
+test('A SIGNED AIMFORGE TURN GETS ONLY BOARD-READ AND MESSAGE-PREPARE THROUGH THE REAL AGENT LOOP', async () => {
   const ws = tempWorkspace('aimforge-board-agent');
   const calls = [];
   const endpoint = await fakeOpenAiEndpoint([
@@ -1055,6 +1055,10 @@ test('A SIGNED AIMFORGE TURN GETS ONLY THE FIXED BOARD TOOL THROUGH THE REAL AGE
           unassignedLoads: 2, driversOnShift: 4, driversLowHos: 1,
         };
       },
+      async prepareDriverMessage(input) {
+        calls.push(input);
+        return { state: 'pending_approval', proposalId: 'a30aa22b-5740-4966-8d62-394cb53ba6fa', recipientMasked: '(***) ***-0198', duplicate: false };
+      },
     },
   });
   const session = {
@@ -1072,7 +1076,11 @@ test('A SIGNED AIMFORGE TURN GETS ONLY THE FIXED BOARD TOOL THROUGH THE REAL AGE
       onEvent: () => {},
     });
     const advertised = (endpoint.requests[0].body.tools ?? []).map((tool) => tool.function.name);
-    assert.deepEqual(advertised, ['aimforge_get_dispatch_board_summary']);
+    assert.deepEqual(advertised, [
+      'aimforge_get_dispatch_board_summary',
+      'aimforge_prepare_driver_message',
+    ]);
+    assert.equal(advertised.some((name) => /approve|send|deliver/iu.test(name)), false);
     assert.equal(advertised.includes('run_command'), false);
     assert.equal(advertised.includes('list_dir'), false);
     assert.equal(calls.length, 1);
