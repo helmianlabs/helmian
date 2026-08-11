@@ -149,20 +149,18 @@ function validateDriverMessageInput(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('driver-message arguments must be an object');
   }
-  if (Object.keys(value).sort().join(',') !== 'assignmentId,body,priority,subject') {
-    throw new Error('Only assignmentId, subject, body, and priority are allowed');
+  if (Object.keys(value).sort().join(',') !== 'body,priority,subject') {
+    throw new Error('Only subject, body, and priority are allowed');
   }
-  const assignmentId = value.assignmentId;
   const subject = typeof value.subject === 'string' ? value.subject.trim() : '';
   const body = typeof value.body === 'string' ? value.body.trim() : '';
   const priority = value.priority;
-  if (!Number.isSafeInteger(assignmentId) || assignmentId <= 0
-    || !subject || subject.length > 120
+  if (!subject || subject.length > 120
     || !body || body.length > 1_400
     || (priority !== 'normal' && priority !== 'urgent')) {
     throw new Error('Driver-message arguments are invalid');
   }
-  return { assignmentId, subject, body, priority };
+  return { subject, body, priority };
 }
 
 function validatePrepareResponse(value, status) {
@@ -258,8 +256,8 @@ export function createAimForgeBoardActionClient({
       });
       return validateSummaryResponse(result.parsed);
     },
-    async prepareDriverMessage({ signedBridge, assignmentId, subject, body, priority, signal = null }) {
-      const input = validateDriverMessageInput({ assignmentId, subject, body, priority });
+    async prepareDriverMessage({ signedBridge, subject, body, priority, signal = null }) {
+      const input = validateDriverMessageInput({ subject, body, priority });
       const result = await signedRequest({
         path: AIMFORGE_PREPARE_DRIVER_MESSAGE_PATH,
         url: prepareUrl,
@@ -303,13 +301,12 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace
     },
   });
   const prepareTool = Object.freeze({
-    description: 'Prepare a driver SMS proposal for human approval. This does not approve, send, or deliver anything.',
+    description: 'Prepare a driver SMS proposal for the assignment focused in the signed session. This does not approve, send, or deliver anything.',
     parameters: {
       type: 'object',
       additionalProperties: false,
-      required: ['assignmentId', 'subject', 'body', 'priority'],
+      required: ['subject', 'body', 'priority'],
       properties: {
-        assignmentId: { type: 'integer', minimum: 1 },
         subject: { type: 'string', minLength: 1, maxLength: 120 },
         body: { type: 'string', minLength: 1, maxLength: 1400 },
         priority: { type: 'string', enum: ['normal', 'urgent'] },

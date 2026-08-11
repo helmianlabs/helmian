@@ -122,7 +122,6 @@ test('prepare client signs only the fixed proposal path and returns pending appr
   });
   const result = await client.prepareDriverMessage({
     signedBridge: SIGNED_BRIDGE,
-    assignmentId: 41,
     subject: 'Dock changed',
     body: 'Use door six.',
     priority: 'urgent',
@@ -130,7 +129,6 @@ test('prepare client signs only the fixed proposal path and returns pending appr
   assert.equal(captured.url, `https://aimforge-api.fly.dev${AIMFORGE_PREPARE_DRIVER_MESSAGE_PATH}`);
   assert.equal(captured.init.body, JSON.stringify({
     custom_session_id: SIGNED_BRIDGE,
-    assignmentId: 41,
     subject: 'Dock changed',
     body: 'Use door six.',
     priority: 'urgent',
@@ -158,7 +156,7 @@ test('prepare client rejects forged scope fields and unbounded or send-like resp
     fetchImpl: async () => proposalResponse({ providerMessageId: 'SMsecret', state: 'accepted' }),
   });
   await assert.rejects(client.prepareDriverMessage({
-    signedBridge: SIGNED_BRIDGE, assignmentId: 41, subject: 'x', body: 'y',
+    signedBridge: SIGNED_BRIDGE, subject: 'x', body: 'y',
     priority: 'normal', tenantId: 'forged', recipientDriverId: 'forged',
   }), /invalid pending-approval proposal/u);
 });
@@ -252,13 +250,13 @@ test('signed AimForge runtime advertises exactly board-read plus prepare-only an
   assert.match(await runtime.execute(AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, {
     assignmentId: 41, subject: 'Dock changed', body: 'Use door six.', priority: 'normal',
     tenantId: 'forged-tenant', recipientDriverId: 'forged-driver', approved: true,
-  }), /Only assignmentId, subject, body, and priority are allowed/u);
+  }), /Only subject, body, and priority are allowed/u);
   assert.equal(calls.length, 0);
   const result = JSON.parse(await runtime.execute(AIMFORGE_BOARD_TOOL_NAME, { date: '2026-08-11' }));
   assert.equal(result.totalLoads, 1);
   assert.equal(calls[0].signedBridge, SIGNED_BRIDGE);
   const proposal = JSON.parse(await runtime.execute(AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, {
-    assignmentId: 41, subject: 'Dock changed', body: 'Use door six.', priority: 'normal',
+    subject: 'Dock changed', body: 'Use door six.', priority: 'normal',
   }));
   assert.equal(proposal.state, 'pending_approval');
   assert.equal(calls[1].signedBridge, SIGNED_BRIDGE);
