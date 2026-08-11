@@ -2,8 +2,10 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 
 export const AIMFORGE_BOARD_SUMMARY_PATH = '/api/helmian/actions/dispatch-board-summary';
 export const AIMFORGE_PREPARE_DRIVER_MESSAGE_PATH = '/api/helmian/actions/prepare-driver-message';
+export const AIMFORGE_DEPARTMENT_HANDOFF_PATH = '/api/helmian/actions/department-handoff';
 export const AIMFORGE_BOARD_TOOL_NAME = 'aimforge_get_dispatch_board_summary';
 export const AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME = 'aimforge_prepare_driver_message';
+export const AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME = 'aimforge_create_department_handoff';
 export const AIMFORGE_ACTION_TIMEOUT_MS = 10_000;
 export const AIMFORGE_ACTION_MAX_RESPONSE_BYTES = 16_384;
 export const AIMFORGE_ALLOWED_ACTION_ORIGINS = Object.freeze([
@@ -183,6 +185,53 @@ function validatePrepareResponse(value, status) {
   });
 }
 
+const DEPARTMENT_ROLES = Object.freeze(['safety', 'payroll', 'director', 'dispatcher']);
+
+function validateDepartmentHandoffInput(value, { includeConfirmation = false } = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('department-handoff arguments must be an object');
+  }
+  const expected = includeConfirmation
+    ? 'body,confirmed,priority,recipientRole,subject'
+    : 'body,priority,recipientRole,subject';
+  if (Object.keys(value).sort().join(',') !== expected) {
+    throw new Error(`Only recipientRole, subject, body, priority${includeConfirmation ? ', and confirmed' : ''} are allowed`);
+  }
+  const recipientRole = typeof value.recipientRole === 'string' ? value.recipientRole.trim().toLowerCase() : '';
+  const subject = typeof value.subject === 'string' ? value.subject.trim() : '';
+  const body = typeof value.body === 'string' ? value.body.trim() : '';
+  const priority = value.priority;
+  if (!DEPARTMENT_ROLES.includes(recipientRole)
+    || !subject || subject.length > 160
+    || !body || body.length > 4_000
+    || (priority !== 'normal' && priority !== 'urgent')
+    || (includeConfirmation && typeof value.confirmed !== 'boolean')) {
+    throw new Error('Department-handoff arguments are invalid');
+  }
+  return { recipientRole, subject, body, priority, ...(includeConfirmation ? { confirmed: value.confirmed } : {}) };
+}
+
+function validateDepartmentHandoffResponse(value, status) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== 'action,duplicate,messageId,priority,recipientRole,state,version'
+    || value.version !== '1' || value.action !== 'department.handoff.create'
+    || value.state !== 'persisted'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value.messageId)
+    || !DEPARTMENT_ROLES.includes(value.recipientRole)
+    || (value.priority !== 'normal' && value.priority !== 'urgent')
+    || typeof value.duplicate !== 'boolean'
+    || (status === 201 && value.duplicate) || (status === 200 && !value.duplicate)) {
+    throw new Error('AimForge returned an invalid department-handoff receipt');
+  }
+  return Object.freeze({
+    state: value.state,
+    messageId: value.messageId,
+    recipientRole: value.recipientRole,
+    priority: value.priority,
+    duplicate: value.duplicate,
+  });
+}
+
 /** A fixed-path client limited to aggregate reads and prepare-only proposals. */
 export function createAimForgeBoardActionClient({
   baseUrl = process.env.HELMION_AIMFORGE_API_BASE_URL,
@@ -194,6 +243,7 @@ export function createAimForgeBoardActionClient({
 } = {}) {
   const boardUrl = fixedActionUrl(baseUrl, AIMFORGE_BOARD_SUMMARY_PATH);
   const prepareUrl = fixedActionUrl(baseUrl, AIMFORGE_PREPARE_DRIVER_MESSAGE_PATH);
+  const departmentHandoffUrl = fixedActionUrl(baseUrl, AIMFORGE_DEPARTMENT_HANDOFF_PATH);
   const secret = requiredActionSecret(actionSecret);
   if (typeof fetchImpl !== 'function') throw new Error('AimForge action fetch is unavailable');
 
@@ -271,13 +321,29 @@ export function createAimForgeBoardActionClient({
       }
       return validatePrepareResponse(result.parsed, result.status);
     },
+    async createDepartmentHandoff({ signedBridge, recipientRole, subject, body, priority, signal = null }) {
+      const input = validateDepartmentHandoffInput({ recipientRole, subject, body, priority });
+      const result = await signedRequest({
+        path: AIMFORGE_DEPARTMENT_HANDOFF_PATH,
+        url: departmentHandoffUrl,
+        signedBridge,
+        payload: input,
+        signal,
+        label: 'department handoff',
+      });
+      if (result.status !== 200 && result.status !== 201) {
+        throw new Error(`AimForge department handoff returned HTTP ${result.status}`);
+      }
+      return validateDepartmentHandoffResponse(result.parsed, result.status);
+    },
   });
 }
 
-/** Dedicated two-tool runtime for signed AimForge voice sessions. */
+/** Dedicated three-tool runtime for signed AimForge voice sessions. */
 export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace = process.cwd() }) {
   if (!client || typeof client.getDispatchBoardSummary !== 'function'
-    || typeof client.prepareDriverMessage !== 'function') {
+    || typeof client.prepareDriverMessage !== 'function'
+    || typeof client.createDepartmentHandoff !== 'function') {
     throw new Error('AimForge action client is required');
   }
   const boardTool = Object.freeze({
@@ -318,9 +384,45 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace
       return JSON.stringify(proposal);
     },
   });
+  let turnNumber = 0;
+  let pendingHandoff = null;
+  const handoffTool = Object.freeze({
+    description: 'Stage or persist an internal tenant department handoff. First call with confirmed=false to produce the confirmation summary. Only after the user explicitly confirms in a later turn may the same handoff be called with confirmed=true. This is internal inbox persistence, never SMS or provider delivery.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['recipientRole', 'subject', 'body', 'priority', 'confirmed'],
+      properties: {
+        recipientRole: { type: 'string', enum: DEPARTMENT_ROLES },
+        subject: { type: 'string', minLength: 1, maxLength: 160 },
+        body: { type: 'string', minLength: 1, maxLength: 4000 },
+        priority: { type: 'string', enum: ['normal', 'urgent'] },
+        confirmed: { type: 'boolean', description: 'False to stage and ask; true only after explicit user confirmation in a later turn.' },
+      },
+    },
+    async execute(args, { signal = null } = {}) {
+      const input = validateDepartmentHandoffInput(args, { includeConfirmation: true });
+      const intent = { recipientRole: input.recipientRole, subject: input.subject, body: input.body, priority: input.priority };
+      const intentDigest = sha256Hex(JSON.stringify(intent));
+      if (!input.confirmed) {
+        pendingHandoff = { intentDigest, stagedTurn: turnNumber };
+        return JSON.stringify({ state: 'confirmation_required', ...intent });
+      }
+      if (!pendingHandoff || pendingHandoff.intentDigest !== intentDigest) {
+        throw new Error('Stage this exact handoff with confirmed=false before asking for confirmation');
+      }
+      if (turnNumber <= pendingHandoff.stagedTurn) {
+        throw new Error('Explicit confirmation must arrive in a later user turn');
+      }
+      const receipt = await client.createDepartmentHandoff({ signedBridge, ...intent, signal });
+      pendingHandoff = null;
+      return JSON.stringify(receipt);
+    },
+  });
   const tools = Object.freeze({
     [AIMFORGE_BOARD_TOOL_NAME]: boardTool,
     [AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME]: prepareTool,
+    [AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME]: handoffTool,
   });
   return Object.freeze({
     // The agent loop uses root only for local provenance storage. It does not
@@ -328,6 +430,7 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace
     root: workspace,
     permissionMode: 'read-tools',
     tools,
+    beginTurn() { turnNumber += 1; },
     definitionsForOpenAi() {
       return Object.entries(tools).map(([name, tool]) => ({
         type: 'function', function: { name, description: tool.description, parameters: tool.parameters },

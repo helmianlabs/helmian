@@ -6,6 +6,8 @@ import {
   AIMFORGE_BOARD_TOOL_NAME,
   AIMFORGE_PREPARE_DRIVER_MESSAGE_PATH,
   AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME,
+  AIMFORGE_DEPARTMENT_HANDOFF_PATH,
+  AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME,
   createAimForgeBoardActionClient,
   createAimForgeBoardToolRuntime,
 } from '../src/cora/aimforge-board-action.mjs';
@@ -47,6 +49,14 @@ function proposalResponse(overrides = {}, status = 201) {
     status,
     headers: { 'x-aimforge-action-receipt': 'b'.repeat(32) },
   });
+}
+
+function handoffResponse(overrides = {}, status = 201) {
+  return new Response(JSON.stringify({
+    version: '1', action: 'department.handoff.create', state: 'persisted',
+    messageId: 'ee67017d-b760-405b-beb6-e4e60f2cb5b5', recipientRole: 'safety',
+    priority: 'urgent', duplicate: status === 200, ...overrides,
+  }), { status, headers: { 'x-aimforge-action-receipt': 'c'.repeat(32) } });
 }
 
 test('fixed board client signs the canonical request and returns bounded aggregates only', async () => {
@@ -161,6 +171,34 @@ test('prepare client rejects forged scope fields and unbounded or send-like resp
   }), /invalid pending-approval proposal/u);
 });
 
+test('department handoff client signs only its fixed path and returns a bounded persisted receipt', async () => {
+  let captured;
+  const client = createAimForgeBoardActionClient({
+    baseUrl: 'https://aimforge-api.fly.dev', actionSecret: ACTION_SECRET,
+    now: () => NOW, nonce: () => NONCE,
+    fetchImpl: async (url, init) => { captured = { url: String(url), init }; return handoffResponse(); },
+  });
+  const result = await client.createDepartmentHandoff({
+    signedBridge: SIGNED_BRIDGE, recipientRole: 'safety', subject: 'Review concern',
+    body: 'Please review the reported steering vibration.', priority: 'urgent',
+  });
+  assert.equal(captured.url, `https://aimforge-api.fly.dev${AIMFORGE_DEPARTMENT_HANDOFF_PATH}`);
+  assert.equal(captured.init.body, JSON.stringify({
+    custom_session_id: SIGNED_BRIDGE, recipientRole: 'safety', subject: 'Review concern',
+    body: 'Please review the reported steering vibration.', priority: 'urgent',
+  }));
+  const digest = createHash('sha256').update(captured.init.body).digest('hex');
+  const canonical = ['v1', 'POST', AIMFORGE_DEPARTMENT_HANDOFF_PATH,
+    String(Math.floor(NOW.getTime() / 1_000)), NONCE, digest].join('\n');
+  assert.equal(captured.init.headers['x-helmian-signature'], createHmac('sha256', ACTION_SECRET).update(canonical).digest('base64url'));
+  assert.deepEqual(result, {
+    state: 'persisted', messageId: 'ee67017d-b760-405b-beb6-e4e60f2cb5b5',
+    recipientRole: 'safety', priority: 'urgent', duplicate: false,
+  });
+  assert.equal(JSON.stringify(result).includes('body'), false);
+  assert.equal(JSON.stringify(result).includes('tenant'), false);
+});
+
 test('client forbids redirects before a signed bridge can leave the fixed origin', async () => {
   let redirectMode;
   const client = createAimForgeBoardActionClient({
@@ -226,7 +264,7 @@ test('turn cancellation reaches the fixed AimForge fetch', async () => {
   assert.equal(fetchSignal.aborted, true);
 });
 
-test('signed AimForge runtime advertises exactly board-read plus prepare-only and no approval tool', async () => {
+test('signed AimForge runtime advertises exactly three bounded tools and enforces later-turn handoff confirmation', async () => {
   const calls = [];
   const runtime = createAimForgeBoardToolRuntime({
     signedBridge: SIGNED_BRIDGE,
@@ -240,11 +278,15 @@ test('signed AimForge runtime advertises exactly board-read plus prepare-only an
         calls.push(input);
         return { state: 'pending_approval', proposalId: 'a30aa22b-5740-4966-8d62-394cb53ba6fa', recipientMasked: '(***) ***-0198', duplicate: false };
       },
+      async createDepartmentHandoff(input) {
+        calls.push(input);
+        return { state: 'persisted', messageId: 'ee67017d-b760-405b-beb6-e4e60f2cb5b5', recipientRole: input.recipientRole, priority: input.priority, duplicate: false };
+      },
     },
   });
-  assert.deepEqual(Object.keys(runtime.tools), [AIMFORGE_BOARD_TOOL_NAME, AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME]);
+  assert.deepEqual(Object.keys(runtime.tools), [AIMFORGE_BOARD_TOOL_NAME, AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME]);
   assert.equal(runtime.root, 'C:/signed-aimforge-provenance');
-  assert.deepEqual(runtime.definitionsForOpenAi().map((item) => item.function.name), [AIMFORGE_BOARD_TOOL_NAME, AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME]);
+  assert.deepEqual(runtime.definitionsForOpenAi().map((item) => item.function.name), [AIMFORGE_BOARD_TOOL_NAME, AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME]);
   assert.match(await runtime.execute('run_command', { command: 'curl anywhere' }), /unknown tool/u);
   assert.match(await runtime.execute('aimforge_approve_driver_message', { proposalId: 'forged' }), /unknown tool/u);
   assert.match(await runtime.execute(AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, {
@@ -260,4 +302,22 @@ test('signed AimForge runtime advertises exactly board-read plus prepare-only an
   }));
   assert.equal(proposal.state, 'pending_approval');
   assert.equal(calls[1].signedBridge, SIGNED_BRIDGE);
+  runtime.beginTurn();
+  const intent = {
+    recipientRole: 'safety', subject: 'Review concern',
+    body: 'Please review the reported steering vibration.', priority: 'urgent',
+  };
+  const staged = JSON.parse(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: false }));
+  assert.equal(staged.state, 'confirmation_required');
+  assert.equal(calls.length, 2, 'staging must not call AimForge');
+  assert.match(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }), /later user turn/u);
+  assert.equal(calls.length, 2, 'same-turn confirmation must not call AimForge');
+  runtime.beginTurn();
+  assert.match(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, {
+    ...intent, subject: 'Changed without confirmation', confirmed: true,
+  }), /Stage this exact handoff/u);
+  assert.equal(calls.length, 2, 'changed content must not call AimForge');
+  const handoff = JSON.parse(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }));
+  assert.equal(handoff.state, 'persisted');
+  assert.equal(calls[2].signedBridge, SIGNED_BRIDGE);
 });

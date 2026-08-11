@@ -58,3 +58,26 @@ Local loopback development retains the old `helmion:*` marker for existing
 self-tests. That compatibility path does not exist on the Fly/non-loopback
 production bind.
 
+## Bounded AimForge action catalog
+
+A verified AimForge session receives exactly three fixed actions: aggregate
+dispatch-board summary, prepare-only driver-message proposal, and internal
+department handoff. There is no generic HTTP, shell, workspace, provider-send,
+or approval tool.
+
+`aimforge_create_department_handoff` accepts only recipient role, subject, body,
+priority, and an explicit confirmation state. The recipient role is restricted
+to safety, payroll, director, or dispatcher. Tenant and sender identity and role
+come only from the signed bridge and are revalidated by AimForge immediately
+before the write.
+
+The first exact handoff call stages its content and returns a confirmation
+request without network access. A matching `confirmed: true` call is accepted
+only after a later user turn. Changed content, same-turn confirmation, or a new
+recipient restarts confirmation. AimForge then applies canonical request HMAC,
+timestamp and nonce replay protection, current membership/module checks, and a
+stable request-digest-bound idempotency key before persisting one internal
+`cora_messages` row. The model receives only a bounded persisted-message receipt,
+not tenant IDs, recipient people, phone numbers, provider fields, or message
+content echoed by the API.
+

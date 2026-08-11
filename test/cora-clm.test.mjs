@@ -1029,7 +1029,7 @@ test('AN END-TO-END VOICE TURN RUNS A REAL TOOL ON REAL DISK', async () => {
   }
 });
 
-test('A SIGNED AIMFORGE TURN GETS ONLY BOARD-READ AND MESSAGE-PREPARE THROUGH THE REAL AGENT LOOP', async () => {
+test('A SIGNED AIMFORGE TURN GETS ONLY THE THREE BOUNDED AIMFORGE TOOLS THROUGH THE REAL AGENT LOOP', async () => {
   const ws = tempWorkspace('aimforge-board-agent');
   const calls = [];
   const endpoint = await fakeOpenAiEndpoint([
@@ -1059,6 +1059,10 @@ test('A SIGNED AIMFORGE TURN GETS ONLY BOARD-READ AND MESSAGE-PREPARE THROUGH TH
         calls.push(input);
         return { state: 'pending_approval', proposalId: 'a30aa22b-5740-4966-8d62-394cb53ba6fa', recipientMasked: '(***) ***-0198', duplicate: false };
       },
+      async createDepartmentHandoff(input) {
+        calls.push(input);
+        return { state: 'persisted', messageId: 'ee67017d-b760-405b-beb6-e4e60f2cb5b5', recipientRole: input.recipientRole, priority: input.priority, duplicate: false };
+      },
     },
   });
   const session = {
@@ -1079,10 +1083,14 @@ test('A SIGNED AIMFORGE TURN GETS ONLY BOARD-READ AND MESSAGE-PREPARE THROUGH TH
     assert.deepEqual(advertised, [
       'aimforge_get_dispatch_board_summary',
       'aimforge_prepare_driver_message',
+      'aimforge_create_department_handoff',
     ]);
     assert.equal(advertised.some((name) => /approve|send|deliver/iu.test(name)), false);
     assert.equal(advertised.includes('run_command'), false);
     assert.equal(advertised.includes('list_dir'), false);
+    const systemPrompt = endpoint.requests[0].body.messages.find((message) => message.role === 'system')?.content ?? '';
+    assert.match(systemPrompt, /confirmed=false/u);
+    assert.match(systemPrompt, /explicitly confirms in a later turn/u);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].signedBridge, session.signedBridge);
     assert.equal(calls[0].date, '2026-08-11');
