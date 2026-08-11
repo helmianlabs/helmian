@@ -24,13 +24,14 @@ const env = {
   ANTHROPIC_API_KEY: 'configured-outside-git',
 };
 
-function fakePool({ membershipRoles = { 'tenant-a': 'admin' } } = {}) {
+function fakePool({ membershipRoles = { 'tenant-a': 'admin' }, membershipError = false } = {}) {
   const queries = [];
   const client = {
     async query(sql, values = []) {
       const text = String(sql);
       queries.push({ text, values });
       if (text.includes('tenant_memberships')) {
+        if (membershipError) throw new Error('database unavailable');
         if (text.includes("role in ('owner','admin')")) {
           const rows = Object.entries(membershipRoles).map(([tenant_id, role]) => ({ tenant_id, role }));
           return { rowCount: rows.length, rows };
@@ -176,4 +177,16 @@ test('a current role change from admin to member immediately removes admin acces
   t.after(app.close);
   const headers = { cookie: 'helmion_admin_session=active-session' };
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers })).status, 403);
+});
+
+test('database outages fail closed without being mislabeled as membership revocation', async (t) => {
+  const app = await fixture({ membershipError: true });
+  t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  const session = await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers });
+  const control = await fetch(`${app.url}${LIVE_ADMIN_CONTROL_PATH}`, { headers });
+  assert.equal(session.status, 503);
+  assert.equal((await session.json()).code, 'ADMIN_DATABASE_READ_FAILED');
+  assert.equal(control.status, 503);
+  assert.equal((await control.json()).code, 'ADMIN_DATABASE_READ_FAILED');
 });
