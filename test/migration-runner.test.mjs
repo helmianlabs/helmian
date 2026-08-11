@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNeonStore } from '../src/adapters/neon.mjs';
+import { canonicalizeMigrationSql, createNeonStore } from '../src/adapters/neon.mjs';
+
+test('migration SQL has one cross-platform checksum representation', () => {
+  const linux = 'create table helmion.example (id integer);\n';
+  const windows = 'create table helmion.example (id integer);\r\n';
+  const legacyMac = 'create table helmion.example (id integer);\r';
+  assert.equal(canonicalizeMigrationSql(windows), linux);
+  assert.equal(canonicalizeMigrationSql(legacyMac), linux);
+  assert.equal(canonicalizeMigrationSql(linux), linux);
+});
 
 class MigrationPool {
   constructor(seed = []) {
@@ -50,6 +59,18 @@ class MigrationPool {
           pool.executedSql.push('002_maestro_phase_one.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('create table if not exists helmion.tenants')) {
+          pool.executedSql.push('004_tenant_audit_outbox.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (String(sql).includes('add column if not exists claim_token')) {
+          pool.executedSql.push('005_tenant_audit_claims.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (String(sql).includes('create table if not exists helmion.audit_outbox_operations')) {
+          pool.executedSql.push('006_tenant_audit_claim_operations.sql');
+          return { rowCount: 0, rows: [] };
+        }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
       },
       release() {},
@@ -67,20 +88,40 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['001_helmion.sql', true, 'committed'],
       ['002_maestro_phase_one.sql', true, 'committed'],
       ['003_human_confirmations.sql', true, 'committed'],
+      ['004_tenant_audit_outbox.sql', true, 'committed'],
+      ['005_tenant_audit_claims.sql', true, 'committed'],
+      ['006_tenant_audit_claim_operations.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
     pool.executedSql,
-    ['001_helmion.sql', '002_maestro_phase_one.sql', '003_human_confirmations.sql'],
+    [
+      '001_helmion.sql',
+      '002_maestro_phase_one.sql',
+      '003_human_confirmations.sql',
+      '004_tenant_audit_outbox.sql',
+      '005_tenant_audit_claims.sql',
+      '006_tenant_audit_claim_operations.sql',
+    ],
   );
 
   const second = await store.migrate();
-  assert.deepEqual(second.map((result) => result.applied), [false, false, false]);
+  assert.deepEqual(
+    second.map((result) => result.applied),
+    [false, false, false, false, false, false],
+  );
   assert.deepEqual(
     pool.executedSql,
-    ['001_helmion.sql', '002_maestro_phase_one.sql', '003_human_confirmations.sql'],
+    [
+      '001_helmion.sql',
+      '002_maestro_phase_one.sql',
+      '003_human_confirmations.sql',
+      '004_tenant_audit_outbox.sql',
+      '005_tenant_audit_claims.sql',
+      '006_tenant_audit_claim_operations.sql',
+    ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 6);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 12);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 
