@@ -1,5 +1,7 @@
-// CORA -> HELMION, PHASE 1: a Custom Language Model backend that runs on this
-// machine, for Troy alone. No cloud, no tenancy, no relay.
+// CORA -> HELMIAN: the Custom Language Model backend used both by the local
+// desktop runtime and the separately deployed Helmian Cloud voice endpoint.
+// Remote binds are refused unless a token is configured; a Hume configuration
+// is therefore a named, authenticated entry point rather than an open agent.
 //
 // WHAT THIS IS. Hume EVI can be configured to get its words from YOUR server
 // instead of a hosted model: EVI dials a WebSocket, sends the conversation (with
@@ -836,6 +838,12 @@ export async function startCoraClm({
         healthPath: statusPath,
         provider: activeProvider ? { id: activeProvider.id, label: activeProvider.label } : null,
         providerReadiness,
+        hume: {
+          configured: Boolean(String(process.env.HELMION_HUME_CONFIG_ID ?? '').trim()),
+          configId: String(process.env.HELMION_HUME_CONFIG_ID ?? '').trim() || null,
+          customLanguageModel: true,
+          requiredSessionPrefix: `${sessionPrefix}:`,
+        },
         requiresToken,
         allowedOriginCount: Array.isArray(allowedOrigins) ? allowedOrigins.length : 0,
         sessions: sessions.size,

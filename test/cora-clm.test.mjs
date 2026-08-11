@@ -708,6 +708,36 @@ test('plain HTTP to the port explains itself instead of 404-ing', async () => {
   }
 });
 
+test('health identifies the separately configured Hume CLM without exposing its token', async (t) => {
+  const before = process.env.HELMION_HUME_CONFIG_ID;
+  process.env.HELMION_HUME_CONFIG_ID = 'f9244ec5-5c86-405f-bfe0-af622a12f20b';
+  t.after(() => {
+    if (before === undefined) delete process.env.HELMION_HUME_CONFIG_ID;
+    else process.env.HELMION_HUME_CONFIG_ID = before;
+  });
+  const ws = tempWorkspace('hume-health');
+  const server = await startCoraClm({
+    workspace: ws.dir,
+    port: 0,
+    activitySink: () => ({ logged: true }),
+    runTurn: async () => ({ text: '' }),
+  });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/healthz`);
+    const body = await response.json();
+    assert.deepEqual(body.hume, {
+      configured: true,
+      configId: 'f9244ec5-5c86-405f-bfe0-af622a12f20b',
+      customLanguageModel: true,
+      requiredSessionPrefix: 'helmion:',
+    });
+    assert.equal(JSON.stringify(body).includes('token'), false);
+  } finally {
+    await server.close();
+    ws.cleanup();
+  }
+});
+
 test('startCoraClm refuses to start with no provider key rather than failing on the first word', async () => {
   const ws = tempWorkspace('nokey');
   try {
