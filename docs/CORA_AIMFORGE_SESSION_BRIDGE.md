@@ -73,9 +73,10 @@ before the write.
 
 The first exact handoff call stages its content and returns a confirmation
 request without network access. A matching `confirmed: true` call is accepted
-only after a later user turn whose text explicitly confirms the handoff.
-Changed content, same-turn confirmation, a non-confirming later turn, or a new
-recipient performs no write. AimForge then applies canonical request HMAC,
+only on the immediately following user turn when its text explicitly confirms
+the handoff. Changed content, same-turn confirmation, a non-confirming or stale
+later turn, or a new recipient performs no write and requires restaging.
+AimForge then applies canonical request HMAC,
 timestamp and nonce replay protection, current membership/module checks, and a
 stable request-digest-bound idempotency key before persisting one internal
 `cora_messages` row. The model receives only a bounded persisted-message receipt,

@@ -420,6 +420,9 @@ export function createAimForgeBoardToolRuntime({ client, signedBridge, workspace
       if (turnNumber <= pendingHandoff.stagedTurn) {
         throw new Error('Explicit confirmation must arrive in a later user turn');
       }
+      if (turnNumber !== pendingHandoff.stagedTurn + 1) {
+        throw new Error('The handoff must be restaged before asking for confirmation again');
+      }
       if (!currentTurnConfirmed) {
         throw new Error('The latest user turn must explicitly confirm this internal handoff');
       }
