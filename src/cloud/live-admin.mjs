@@ -193,7 +193,10 @@ export async function createLiveHelmianCloudAdminHandler({
       try {
         const actor = await activeActor(request);
         send(response, 200, JSON.stringify({ authenticated: true, actor: { subject: actor.subject, tenantId: actor.tenantId, role: actor.role } }));
-      } catch { send(response, 403, JSON.stringify({ authenticated: false, code: 'ADMIN_MEMBERSHIP_REQUIRED' })); }
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        send(response, denied ? 403 : 503, JSON.stringify({ authenticated: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+      }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGOUT_PATH) {
