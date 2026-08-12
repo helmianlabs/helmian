@@ -31,6 +31,7 @@ export const LIVE_ADMIN_CALLBACK_PATH = '/admin/auth/callback';
 export const LIVE_ADMIN_LOGOUT_PATH = '/admin/auth/logout';
 export const LIVE_ADMIN_SESSION_PATH = '/api/admin/session';
 export const LIVE_ADMIN_CONTROL_PATH = '/api/admin/control-surface';
+export const LIVE_ADMIN_EVENTS_PATH = '/api/admin/events';
 export const LIVE_ADMIN_ACTION_POLICY_PATH = '/api/admin/action-policy';
 export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/preview';
 export const LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH = '/api/admin/action-policy/confirm';
@@ -259,6 +260,28 @@ export async function createLiveHelmianCloudAdminHandler({
     });
   }
 
+  async function recentAuditEvents(actor) {
+    const context = actorContext(actor);
+    return withTenantTransaction(pool, context, async (client) => {
+      await requireActiveTenantMembership(client, context);
+      const result = await client.query(
+        `select id, action_type, decision, privacy_summary, created_at
+         from helmion.audit_events
+         where tenant_id=$1
+         order by created_at desc, id desc
+         limit 25`,
+        [context.tenantId],
+      );
+      return result.rows.map((row) => ({
+        id: String(row.id),
+        actionType: String(row.action_type).slice(0, 120),
+        decision: String(row.decision).slice(0, 40),
+        summary: String(row.privacy_summary).slice(0, 240),
+        createdAt: row.created_at,
+      }));
+    });
+  }
+
   async function handler(request, response, requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)) {
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/` }); return true; }
     if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_PAGE_PATH}/`) { send(response, 200, page, 'text/html; charset=utf-8'); return true; }
@@ -306,6 +329,16 @@ export async function createLiveHelmianCloudAdminHandler({
         send(response, 200, JSON.stringify({ valid: true, result: await controlSurface(actor) }));
       }
       catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_EVENTS_PATH) {
+      try {
+        const actor = await activeActor(request);
+        send(response, 200, JSON.stringify({ valid: true, events: await recentAuditEvents(actor) }));
+      } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
       }
