@@ -119,6 +119,37 @@ export const DEFAULT_SESSION_IDLE_MS = 30 * 60_000;
 
 export const DEFAULT_MAX_SESSIONS = 8;
 
+const AIMFORGE_HAND_LABELS = Object.freeze({
+  aimforge_get_dispatch_board_summary: 'read aggregate dispatch-board counts',
+  aimforge_prepare_driver_message: 'prepare a driver message proposal for the already-focused assignment; it is not sent',
+  aimforge_create_department_handoff: 'stage an internal department handoff that requires a later explicit confirmation',
+  aimforge_get_equipment_safety_status: 'read the server-approved equipment-safety workflow and current disposition',
+  aimforge_record_equipment_safety_check: 'record one server-manifest-approved equipment safety check',
+  aimforge_request_safety_supervisor_review: 'request human supervisor review and place or retain a safety hold',
+});
+
+export function buildAimForgeSessionPrompt({ bridgeContext = null, enabledToolNames = [] } = {}) {
+  const enabled = Array.isArray(enabledToolNames)
+    ? enabledToolNames.filter((name) => Object.hasOwn(AIMFORGE_HAND_LABELS, name))
+    : [];
+  const hands = enabled.map((name) => AIMFORGE_HAND_LABELS[name]);
+  const scope = bridgeContext?.surface === 'mobile' && bridgeContext?.role === 'driver'
+    ? 'This is a driver mobile session.'
+    : 'This is an operations session.';
+  const capability = hands.length
+    ? `For this session you can ${hands.join('; ')}.`
+    : 'No AimForge action hands are enabled for this session. You may explain status, but you must not claim to have changed anything.';
+  return [
+    'You are Cora for AimForge.',
+    scope,
+    capability,
+    'Speak success only from an API receipt.',
+    'If an internal handoff hand is enabled, call confirmed=false first and only call confirmed=true after the user explicitly confirms in a later turn (the immediately following user turn).',
+    'You cannot release or approve holds, send or deliver messages, choose tenants, drivers, assignments, profiles, citations, providers, URLs, or arbitrary records.',
+    'You have no generic HTTP, shell, workspace, navigation, or arbitrary record-change tool.',
+  ].join(' ');
+}
+
 /**
  * "Helmion mode", marked the way the task requires: on Hume's
  * `custom_session_id`. A legacy local marker selects the configured local
@@ -235,7 +266,10 @@ export function createAgentTurnRunner({
           permissionMode: runtime.permissionMode,
           messages: [{
             role: 'system',
-            content: 'You are Cora for AimForge. Use only the bounded tools advertised for this signed session. Driver mobile sessions may read the server-approved equipment-safety workflow, record one manifest-approved check, or request human supervisor review and a hold. Speak success only from the API receipt. Hazmat, evidence rules, and holds fail closed. You can never release a hold, approve, send, choose hazmat, bypass evidence, or choose a tenant, driver, assignment, profile, citation, provider, or URL. Operations sessions may instead receive aggregate board read, prepare-only driver proposal, or internal department handoff. For a handoff, call with confirmed=false first, speak the exact summary, and only call confirmed=true after the user explicitly confirms in a later turn. You have no generic HTTP, shell, workspace, navigation, or arbitrary record-change tool.',
+            content: buildAimForgeSessionPrompt({
+              bridgeContext: session.bridgeContext,
+              enabledToolNames: Object.keys(runtime.tools ?? {}),
+            }),
           }],
         };
       } else {
