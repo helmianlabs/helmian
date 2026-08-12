@@ -19,6 +19,7 @@ import {
   updateAdminActionPolicy,
 } from './tenant-action-policy.mjs';
 import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-action.mjs';
+import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -32,6 +33,7 @@ export const LIVE_ADMIN_LOGOUT_PATH = '/admin/auth/logout';
 export const LIVE_ADMIN_SESSION_PATH = '/api/admin/session';
 export const LIVE_ADMIN_CONTROL_PATH = '/api/admin/control-surface';
 export const LIVE_ADMIN_EVENTS_PATH = '/api/admin/events';
+export const LIVE_ADMIN_WORKSPACE_PATH = '/api/admin/workspace';
 export const LIVE_ADMIN_ACTION_POLICY_PATH = '/api/admin/action-policy';
 export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/preview';
 export const LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH = '/api/admin/action-policy/confirm';
@@ -282,6 +284,15 @@ export async function createLiveHelmianCloudAdminHandler({
     });
   }
 
+  async function workspaceSnapshot(actor) {
+    const events = await recentAuditEvents(actor);
+    const agentEvents = events.map((event) => {
+      const match = /^agent:([a-z0-9-]+):(idle|running|blocked|waiting)$/u.exec(event.actionType.toLowerCase());
+      return match ? { agentId: match[1], status: match[2], lastAction: event.summary, occurredAt: event.createdAt } : null;
+    }).filter(Boolean);
+    return buildMaestroWorkspaceSnapshot({ tenantId: actor.tenantId, events: agentEvents });
+  }
+
   async function handler(request, response, requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)) {
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/` }); return true; }
     if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_PAGE_PATH}/`) { send(response, 200, page, 'text/html; charset=utf-8'); return true; }
@@ -338,6 +349,16 @@ export async function createLiveHelmianCloudAdminHandler({
       try {
         const actor = await activeActor(request);
         send(response, 200, JSON.stringify({ valid: true, events: await recentAuditEvents(actor) }));
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_PATH) {
+      try {
+        const actor = await activeActor(request);
+        send(response, 200, JSON.stringify({ valid: true, workspace: await workspaceSnapshot(actor) }));
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));

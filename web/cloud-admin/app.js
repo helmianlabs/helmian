@@ -9,6 +9,7 @@ const policyDiff = document.querySelector('#policy-diff');
 const policyStatus = document.querySelector('#policy-status');
 const scope = document.querySelector('#scope');
 const guardEvents = document.querySelector('#guard-events');
+const agentCards = document.querySelector('#agent-cards');
 let policyEtag = '';
 let previewId = '';
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
@@ -56,6 +57,21 @@ function renderEvents(body) {
   }
 }
 
+function renderWorkspace(body) {
+  agentCards.replaceChildren();
+  for (const agent of body.workspace?.agents ?? []) {
+    const card = document.createElement('div');
+    card.className = 'agent-card';
+    const name = document.createElement('strong');
+    name.textContent = agent.label;
+    const status = document.createElement('div');
+    status.className = 'agent-status';
+    status.textContent = `${agent.status} · ${agent.lastAction || 'no recorded action'}`;
+    card.append(name, status);
+    agentCards.append(card);
+  }
+}
+
 async function loadPolicy() {
   const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });
   if (!response.ok) throw new Error('Action policy unavailable');
@@ -74,6 +90,8 @@ async function load() {
   out.textContent = JSON.stringify(await surface.json(), null, 2);
   const events = await fetch('/api/admin/events', { credentials: 'same-origin' });
   if (events.ok) renderEvents(await events.json());
+  const workspace = await fetch('/api/admin/workspace', { credentials: 'same-origin' });
+  if (workspace.ok) renderWorkspace(await workspace.json());
   await loadPolicy();
 }
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
