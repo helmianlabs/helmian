@@ -3,10 +3,41 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Helmian Cloud Admin</title>
+  <title>Helmian Cloud Workspace</title>
   <style>
     :root { color-scheme: dark; }
-    body { font: 16px system-ui, sans-serif; margin: 3rem auto; max-width: 900px; padding: 0 1rem; background: #10141d; color: #e8edf5; }
+    body { font: 16px system-ui, sans-serif; margin: 0; min-height: 100vh; background: #0b0e14; color: #e8edf5; }
+    .shell { display: grid; grid-template-columns: 220px minmax(0, 1fr) 270px 300px; min-height: 100vh; }
+    .rail, .agents, .guard { background: #111620; border-color: #293346; padding: 1rem; }
+    .rail { border-right: 1px solid #293346; }
+    .agents { border-left: 1px solid #293346; }
+    .guard { border-left: 1px solid #293346; }
+    .brand { font-weight: 800; letter-spacing: .04em; margin-bottom: 2rem; }
+    .nav-item { color: #9eacc2; padding: .65rem .75rem; border-radius: .35rem; margin: .25rem 0; }
+    .nav-item.active { color: #fff; background: #25314a; }
+    .workspace { padding: 1.25rem; min-width: 0; }
+    .topbar { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+    .scope { color: #a9c7ff; font-size: .9rem; }
+    .conversation { min-height: 390px; display: flex; flex-direction: column; }
+    .conversation-body { flex: 1; padding: 1rem; background: #0d1119; border: 1px solid #344156; border-radius: .5rem; }
+    .composer { margin-top: 1rem; display: flex; gap: .5rem; }
+    .composer input { flex: 1; min-width: 0; background: #171e29; border: 1px solid #344156; color: #fff; border-radius: .35rem; padding: .7rem; }
+    .agent-card { padding: .75rem; margin: .65rem 0; background: #171e29; border: 1px solid #344156; border-radius: .5rem; }
+    .agent-status { color: #7ee2a8; font-size: .8rem; }
+    .guard-tabs { display: flex; gap: .35rem; margin-bottom: 1rem; }
+    .guard-tab { border: 1px solid #344156; background: #171e29; color: #9eacc2; padding: .45rem .55rem; border-radius: .3rem; font-size: .78rem; }
+    .guard-tab.active { color: #fff; background: #25314a; }
+    .guard-card { padding: .75rem; margin: .65rem 0; background: #171e29; border: 1px solid #344156; border-left: 4px solid #7ee2a8; border-radius: .45rem; }
+    .guard-card.warn { border-left-color: #f2c879; }
+    .guard-card.critical { border-left-color: #f07f7f; }
+    .guard-card h3 { font-size: .9rem; margin: 0 0 .35rem; }
+    .guard-card p { color: #aebbd0; font-size: .8rem; margin: .25rem 0 0; }
+    .guard-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; margin-top: 1rem; }
+    .guard-actions button { margin: 0; padding: .55rem .4rem; font-size: .78rem; background: #2b3547; color: #e8edf5; }
+    .guard-actions button:disabled { opacity: .65; cursor: not-allowed; }
+    .preview { color: #f2c879; font-size: .85rem; }
+    @media (max-width: 1380px) { .shell { grid-template-columns: 180px minmax(0, 1fr) 230px 260px; } }
+    @media (max-width: 960px) { .shell { grid-template-columns: 1fr; } .rail, .agents, .guard { border: 0; } .rail { display: flex; gap: .5rem; align-items: center; } .brand { margin: 0 1rem 0 0; } .nav-item { margin: 0; } }
     button { padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #7db4ff; color: #09111d; font-weight: 700; cursor: pointer; margin-right: .5rem; }
     button.secondary { background: #2b3547; color: #e8edf5; }
     button.danger { background: #f0b4a8; }
@@ -19,33 +50,78 @@
   </style>
 </head>
 <body>
-  <h1>Helmian Cloud Admin</h1>
-  <p class="note">This live control plane reads platform status and can change only the six global Helmian action kill switches shown below: three operations hands and three driver-safety hands. It never accepts secrets, URLs, commands, providers, models, customer tenants, or arbitrary tool names.</p>
-  <section id="signed-out">
-    <button id="login" type="button">Sign in with organization identity</button>
-  </section>
-  <section id="signed-in" hidden>
-    <p id="actor"></p>
-    <button id="refresh" type="button">Refresh control surface</button>
-    <button id="logout" class="secondary" type="button">Sign out</button>
-    <section class="card" aria-labelledby="policy-heading">
-      <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>
-      <p>Hume-attached tools: <strong>0</strong>. These switches can only remove fixed Helmian actions from every newly signed AimForge customer session. They cannot grant tenant access or add tools. Active voice sessions keep their starting policy.</p>
-      <p>Driver safety hands: <strong>3</strong> fixed Helmian actions. They appear only for a signed mobile driver session with a server-focused active assignment and use AimForge's live safety service. They are not Hume tools and never include hold release.</p>
-      <form id="policy-form">
-        <div id="policy-actions"></div>
-        <button id="preview" type="submit">Preview change</button>
-      </form>
-      <div id="policy-confirmation" hidden>
-        <h3>Confirm exact change</h3>
-        <pre id="policy-diff"></pre>
-        <button id="confirm" class="danger" type="button">Confirm action policy</button>
-        <button id="cancel" class="secondary" type="button">Cancel</button>
+  <div class="shell">
+    <aside class="rail" aria-label="Helmian navigation">
+      <div class="brand">HELMian</div>
+      <div class="nav-item active">Maestro</div>
+      <div class="nav-item">Workspace</div>
+      <div class="nav-item">Activity</div>
+      <div class="nav-item">Governance</div>
+      <div class="nav-item">Admin</div>
+      <p class="preview">Browser workspace preview. Builder actions and shared ledger are not wired yet.</p>
+    </aside>
+    <main class="workspace">
+      <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Scope: loading…</div></div><span class="preview">READ-ONLY PREVIEW</span></div>
+      <section class="card conversation" aria-labelledby="conversation-heading">
+        <h2 id="conversation-heading">Conversation</h2>
+        <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>The hosted Maestro surface is staged. I can show scope and agent readiness here; no builder or monitor action is executed from this preview.</p></div>
+        <form id="composer" class="composer"><input aria-label="Message Maestro" placeholder="Ask Maestro about this workspace…" disabled><button type="submit" disabled>Send</button></form>
+      </section>
+      <section id="signed-out" class="card">
+        <h2>Owner access</h2>
+        <p class="note">Sign in to view the authenticated control surface and global Helmian policy.</p>
+        <button id="login" type="button">Sign in with organization identity</button>
+      </section>
+      <section id="signed-in" hidden>
+        <p id="actor"></p>
+        <button id="refresh" type="button">Refresh control surface</button>
+        <button id="logout" class="secondary" type="button">Sign out</button>
+        <section class="card" aria-labelledby="policy-heading">
+          <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>
+          <p>Hume-attached tools: <strong>0</strong>. These switches can only remove fixed Helmian actions from every newly signed AimForge customer session. They cannot grant tenant access or add tools. Active voice sessions keep their starting policy.</p>
+          <p>Driver safety hands: <strong>3</strong> fixed Helmian actions. They appear only for a signed mobile driver session with a server-focused active assignment and use AimForge's live safety service. They are not Hume tools and never include hold release.</p>
+          <form id="policy-form">
+            <div id="policy-actions"></div>
+            <button id="preview" type="submit">Preview change</button>
+          </form>
+          <div id="policy-confirmation" hidden>
+            <h3>Confirm exact change</h3>
+            <pre id="policy-diff"></pre>
+            <button id="confirm" class="danger" type="button">Confirm action policy</button>
+            <button id="cancel" class="secondary" type="button">Cancel</button>
+          </div>
+          <p id="policy-status" role="status"></p>
+        </section>
+      </section>
+      <pre id="result">Loading…</pre>
+    </main>
+    <aside class="agents" aria-labelledby="agents-heading">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem"><h2 id="agents-heading">Agents</h2><button id="refresh-workspace" class="secondary" type="button">Refresh</button></div>
+      <p class="preview">Silent-monitor coordination is planned; these cards are status placeholders until the Neon event ledger is connected.</p>
+      <div id="agent-cards">
+        <div class="agent-card"><strong>Maestro</strong><div class="agent-status">Idle · awaiting workspace data</div></div>
+        <div class="agent-card"><strong>Claude</strong><div class="agent-status">Idle · awaiting workspace data</div></div>
+        <div class="agent-card"><strong>ChatGPT</strong><div class="agent-status">Idle · awaiting workspace data</div></div>
+        <div class="agent-card"><strong>Grok</strong><div class="agent-status">Idle · awaiting workspace data</div></div>
+        <div class="agent-card"><strong>Gemini</strong><div class="agent-status">Idle · awaiting workspace data</div></div>
       </div>
-      <p id="policy-status" role="status"></p>
-    </section>
-    <pre id="result">Loading…</pre>
-  </section>
+    </aside>
+    <aside class="guard" aria-labelledby="guard-heading">
+      <div class="guard-tabs" role="tablist" aria-label="Workspace panels">
+        <button class="guard-tab active" type="button">Guard</button>
+        <button class="guard-tab" type="button" disabled>Browser</button>
+        <button class="guard-tab" type="button" disabled>Canvas</button>
+        <button class="guard-tab" type="button" disabled>Preview</button>
+      </div>
+      <h2 id="guard-heading">Guard</h2>
+      <p class="preview">Read-only governance preview. Live findings will come from the Neon event ledger.</p>
+      <div class="guard-card critical"><h3>Browser guard · not connected</h3><p>The hosted workspace has no browser-control authority in this slice.</p></div>
+      <div class="guard-card warn"><h3>Builder activity · waiting</h3><p>No builder is selected. No model can write or deploy from this panel.</p></div>
+      <div class="guard-card"><h3>Governance · ready to wire</h3><p>Risk, approval and rollback cards will appear after the ledger and monitor service are implemented.</p></div>
+      <div id="guard-events" aria-live="polite"></div>
+      <div class="guard-actions"><button type="button" disabled>Check again</button><button type="button" disabled>Ack all</button><button type="button" disabled>Quarantine</button><button type="button" disabled>Tests</button></div>
+    </aside>
+  </div>
   <script src="/admin/assets/app.js"></script>
 </body>
 </html>
