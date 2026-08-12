@@ -8,6 +8,7 @@ const policyConfirmation = document.querySelector('#policy-confirmation');
 const policyDiff = document.querySelector('#policy-diff');
 const policyStatus = document.querySelector('#policy-status');
 const scope = document.querySelector('#scope');
+const guardEvents = document.querySelector('#guard-events');
 let policyEtag = '';
 let previewId = '';
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
@@ -31,6 +32,30 @@ function renderPolicy(body) {
   policyConfirmation.hidden = true;
 }
 
+function renderEvents(body) {
+  guardEvents.replaceChildren();
+  const heading = document.createElement('h3');
+  heading.textContent = 'Recent Guard activity';
+  guardEvents.append(heading);
+  if (!body.events?.length) {
+    const empty = document.createElement('p');
+    empty.className = 'preview';
+    empty.textContent = 'No audited events yet.';
+    guardEvents.append(empty);
+    return;
+  }
+  for (const event of body.events) {
+    const card = document.createElement('div');
+    card.className = `guard-card ${event.decision === 'BLOCK' || event.decision === 'DENY' ? 'critical' : event.decision === 'PAUSE_FOR_OWNER' ? 'warn' : ''}`;
+    const title = document.createElement('h3');
+    title.textContent = `${event.decision} · ${event.actionType}`;
+    const summary = document.createElement('p');
+    summary.textContent = event.summary;
+    card.append(title, summary);
+    guardEvents.append(card);
+  }
+}
+
 async function loadPolicy() {
   const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });
   if (!response.ok) throw new Error('Action policy unavailable');
@@ -47,6 +72,8 @@ async function load() {
   scope.textContent = `Scope: ${sessionBody.actor.tenantId} · ${sessionBody.actor.role}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
+  const events = await fetch('/api/admin/events', { credentials: 'same-origin' });
+  if (events.ok) renderEvents(await events.json());
   await loadPolicy();
 }
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
