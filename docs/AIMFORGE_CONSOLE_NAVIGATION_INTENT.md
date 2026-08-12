@@ -5,3 +5,7 @@
 AimForge returns a typed intent with `execution: not_executed`. Hume still has zero attached tools. Helmian can create the intent while answering a Custom-LM turn, but the current Hume reply protocol carries assistant text/audio rather than an out-of-band typed browser event, and the AimForge web client has no reviewed consumer. Cora must not say the page changed. A future browser consumer is a separate security boundary and release.
 
 The platform-global action policy can disable this fixed tool for every signed customer session; it cannot introduce a new page or arbitrary tool.
+
+AimForge persists successful intents into a ten-minute, tenant + Clerk-subject + voice-session-bound event outbox. The authenticated browser seam is a short-lived SSE fetch using the raw bridge in a request header, never in a URL. This Helmian repository does not add dashboard code, so the final local-router call remains a separately reviewed browser change.
+
+Twilio, SMS, provider delivery, and phone-message transport are explicitly out of scope. This contract covers Cora voice, signed Helmian actions, and audited navigation intents only.
