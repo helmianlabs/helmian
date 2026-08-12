@@ -8,12 +8,18 @@ This slice adds the safe connector primitives for Discord and Slack:
 - HTTPS host allowlists for outbound webhooks;
 - abortable outbound delivery;
 - secret-free configuration status.
+- fail-closed provider-user/channel binding to a live Helmian subject, tenant,
+  and membership role (`communication-identity.mjs`).
 
 It deliberately does **not** claim that Discord or Slack can execute a Helmian
 agent yet. `agentBridge: not-connected` is intentional until a reviewed route
 binds a verified platform user/channel to a tenant, role, workspace, and
 Helmian session. That route must reuse the same signed-session, global action
 policy, human-confirmation, audit, and replay controls as browser/Hume actions.
+The identity binding helper is only the first half of that route: it rejects
+missing, duplicate, inactive, unsupported, and cross-tenant mappings, then
+returns `sessionIssuer: signed-session-required`. It does not mint a session or
+call a model.
 
 Required provider setup, when the bridge is approved:
 
