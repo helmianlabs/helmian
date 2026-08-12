@@ -7,6 +7,7 @@ const policyForm = document.querySelector('#policy-form');
 const policyConfirmation = document.querySelector('#policy-confirmation');
 const policyDiff = document.querySelector('#policy-diff');
 const policyStatus = document.querySelector('#policy-status');
+const scope = document.querySelector('#scope');
 let policyEtag = '';
 let previewId = '';
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
@@ -43,6 +44,7 @@ async function load() {
   const sessionBody = await session.json();
   signedOut.hidden = true; signedIn.hidden = false;
   actor.textContent = `Signed in as ${sessionBody.actor.role} for tenant ${sessionBody.actor.tenantId}`;
+  scope.textContent = `Scope: ${sessionBody.actor.tenantId} · ${sessionBody.actor.role}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
   await loadPolicy();
