@@ -11,15 +11,25 @@ This slice adds the safe connector primitives for Discord and Slack:
 - fail-closed provider-user/channel binding to a live Helmian subject, tenant,
   and membership role (`communication-identity.mjs`).
 
-It deliberately does **not** claim that Discord or Slack can execute a Helmian
-agent yet. `agentBridge: not-connected` is intentional until a reviewed route
-binds a verified platform user/channel to a tenant, role, workspace, and
-Helmian session. That route must reuse the same signed-session, global action
-policy, human-confirmation, audit, and replay controls as browser/Hume actions.
-The identity binding helper is only the first half of that route: it rejects
-missing, duplicate, inactive, unsupported, and cross-tenant mappings, then
-returns `sessionIssuer: signed-session-required`. It does not mint a session or
-call a model.
+The next source-only slice is now present in
+`src/cloud/communication-session-bridge.mjs`. It still does **not** enable the
+live provider route or claim production readiness. The bridge takes only the
+identity binding returned by `communication-identity.mjs`, mints a 15-minute
+HMAC session, verifies it on every turn, binds its receipt to one connection,
+rejects duplicate provider events, refreshes the supplied action policy before
+each turn, and refuses to run unless a durable audit sink and bounded runtime
+adapter are supplied. `toHelmianTenantContext()` maps the verified subject,
+role, tenant, and session into the existing `withTenantTransaction()` / Neon
+RLS context. Audit callbacks receive sanitized identifiers; the signed token
+and provider secrets are never sent to the runtime or audit payload.
+
+The bridge is an integration contract, not a deployed webhook. The caller must
+still provide DB-backed resolvers, a policy resolver, an append-only audit
+sink, and a runtime adapter that exposes only approved tools. No provider user
+can create membership, choose a tenant, widen the action list, or bypass the
+existing global action policy. A live route remains blocked until those
+adapters are wired to the cloud server and exercised with positive and negative
+Discord/Slack webhook tests.
 
 Required provider setup, when the bridge is approved:
 
@@ -34,4 +44,4 @@ Required provider setup, when the bridge is approved:
    agent turn is allowed.
 
 Until those steps and an end-to-end negative/positive test pass, these
-connectors are verification/delivery foundations, not production agent access.
+connectors are verification/session foundations, not production agent access.
