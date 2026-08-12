@@ -12,6 +12,7 @@ const guardEvents = document.querySelector('#guard-events');
 const agentCards = document.querySelector('#agent-cards');
 let policyEtag = '';
 let previewId = '';
+let workspaceTimer = null;
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
 document.querySelector('#logout').onclick = () => { window.location.href = '/admin/auth/logout'; };
 
@@ -72,6 +73,13 @@ function renderWorkspace(body) {
   }
 }
 
+async function refreshWorkspacePanels() {
+  const events = await fetch('/api/admin/events', { credentials: 'same-origin' });
+  if (events.ok) renderEvents(await events.json());
+  const workspace = await fetch('/api/admin/workspace', { credentials: 'same-origin' });
+  if (workspace.ok) renderWorkspace(await workspace.json());
+}
+
 async function loadPolicy() {
   const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });
   if (!response.ok) throw new Error('Action policy unavailable');
@@ -88,12 +96,11 @@ async function load() {
   scope.textContent = `Scope: ${sessionBody.actor.tenantId} · ${sessionBody.actor.role}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
-  const events = await fetch('/api/admin/events', { credentials: 'same-origin' });
-  if (events.ok) renderEvents(await events.json());
-  const workspace = await fetch('/api/admin/workspace', { credentials: 'same-origin' });
-  if (workspace.ok) renderWorkspace(await workspace.json());
+  await refreshWorkspacePanels();
   await loadPolicy();
+  if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
+document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
 policyForm.onsubmit = async (event) => {
   event.preventDefault();
