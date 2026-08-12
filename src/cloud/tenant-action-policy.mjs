@@ -12,6 +12,7 @@ import {
   AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME,
   AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME,
   AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_TOOL_NAME,
+  AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME,
 } from '../cora/aimforge-board-action.mjs';
 
 export const HELMIAN_ACTION_TOOL_NAMES = Object.freeze([
@@ -21,6 +22,7 @@ export const HELMIAN_ACTION_TOOL_NAMES = Object.freeze([
   AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME,
   AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME,
   AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_TOOL_NAME,
+  AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME,
 ]);
 export const HELMIAN_PLATFORM_TENANT_ID = 'helmian-platform';
 const PLATFORM_POLICY_KEY = 'signed_aimforge_actions';
@@ -32,6 +34,7 @@ const TOOL_COLUMNS = Object.freeze({
   [AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME]: 'equipment_safety_status_enabled',
   [AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME]: 'equipment_safety_check_enabled',
   [AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_TOOL_NAME]: 'equipment_safety_escalation_enabled',
+  [AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME]: 'console_navigation_intent_enabled',
 });
 
 export class ActionPolicyConflictError extends Error {
@@ -85,7 +88,8 @@ async function selectPolicy(client, suffix = '') {
   const result = await client.query(
     `select version, dispatch_board_summary_enabled, prepare_driver_message_enabled,
             department_handoff_enabled, equipment_safety_status_enabled,
-            equipment_safety_check_enabled, equipment_safety_escalation_enabled
+            equipment_safety_check_enabled, equipment_safety_escalation_enabled,
+            console_navigation_intent_enabled
        from helmion.platform_action_policy
       where policy_key=$1${suffix}`,
     [PLATFORM_POLICY_KEY],
@@ -202,13 +206,13 @@ export async function updateAdminActionPolicy(pool, context, { expectedVersion, 
            (policy_key, managing_tenant_id, version, dispatch_board_summary_enabled,
             prepare_driver_message_enabled, department_handoff_enabled,
             equipment_safety_status_enabled, equipment_safety_check_enabled,
-            equipment_safety_escalation_enabled, updated_by)
-         values ($1,$2,1,$3,$4,$5,$6,$7,$8,$9)
+            equipment_safety_escalation_enabled, console_navigation_intent_enabled, updated_by)
+         values ($1,$2,1,$3,$4,$5,$6,$7,$8,$9,$10)
          on conflict (policy_key) do nothing
          returning version, dispatch_board_summary_enabled,
                    prepare_driver_message_enabled, department_handoff_enabled,
                    equipment_safety_status_enabled, equipment_safety_check_enabled,
-                   equipment_safety_escalation_enabled`,
+                   equipment_safety_escalation_enabled, console_navigation_intent_enabled`,
         [PLATFORM_POLICY_KEY, HELMIAN_PLATFORM_TENANT_ID, ...flags, activeContext.actorSubject],
       );
     } else {
@@ -221,13 +225,14 @@ export async function updateAdminActionPolicy(pool, context, { expectedVersion, 
                 equipment_safety_status_enabled=$6,
                 equipment_safety_check_enabled=$7,
                 equipment_safety_escalation_enabled=$8,
-                updated_by=$9,
+                console_navigation_intent_enabled=$9,
+                updated_by=$10,
                 updated_at=clock_timestamp()
           where policy_key=$1 and version=$2
          returning version, dispatch_board_summary_enabled,
                    prepare_driver_message_enabled, department_handoff_enabled,
                    equipment_safety_status_enabled, equipment_safety_check_enabled,
-                   equipment_safety_escalation_enabled`,
+                   equipment_safety_escalation_enabled, console_navigation_intent_enabled`,
         [PLATFORM_POLICY_KEY, version, ...flags, activeContext.actorSubject],
       );
     }

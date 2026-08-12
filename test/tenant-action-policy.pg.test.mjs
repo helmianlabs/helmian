@@ -24,7 +24,7 @@ function context(tenantId, subject) {
   };
 }
 
-test('migrations 007-008 provide platform-owned global kill switches with customer-tenant isolation and conflict audit', {
+test('migrations 007-009 provide platform-owned global kill switches with customer-tenant isolation and conflict audit', {
   skip: !connectionString && 'HELMION_ADMIN_CONFIG_TEST_DATABASE_URL is not configured',
 }, async (t) => {
   const pool = new Pool({ connectionString, ssl: false, max: 4 });

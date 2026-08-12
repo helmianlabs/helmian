@@ -61,6 +61,7 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
           equipment_safety_status_enabled: values[5],
           equipment_safety_check_enabled: values[6],
           equipment_safety_escalation_enabled: values[7],
+          console_navigation_intent_enabled: values[8],
         };
         return { rowCount: 1, rows: [actionPolicy] };
       }
@@ -74,6 +75,7 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
           equipment_safety_status_enabled: values[5],
           equipment_safety_check_enabled: values[6],
           equipment_safety_escalation_enabled: values[7],
+          console_navigation_intent_enabled: values[8],
         };
         return { rowCount: 1, rows: [actionPolicy] };
       }
@@ -188,6 +190,7 @@ test('session and readiness routes require live Neon owner/admin membership and 
     'aimforge_get_equipment_safety_status',
     'aimforge_record_equipment_safety_check',
     'aimforge_request_safety_supervisor_review',
+    'aimforge_create_console_navigation_intent',
   ]);
   assert.equal(result.tools.humeAttached.count, 0);
   assert.equal(result.tools.helmianHands.driverSafety.holdRelease, false);
@@ -262,6 +265,7 @@ test('action policy requires preview, actor-bound confirm, current ETag, and exa
     'aimforge_get_equipment_safety_status',
     'aimforge_record_equipment_safety_check',
     'aimforge_request_safety_supervisor_review',
+    'aimforge_create_console_navigation_intent',
   ]);
 
   const invalid = await fetch(`${app.url}${LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH}`, {

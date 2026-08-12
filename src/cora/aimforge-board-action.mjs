@@ -6,12 +6,15 @@ export const AIMFORGE_DEPARTMENT_HANDOFF_PATH = '/api/helmian/actions/department
 export const AIMFORGE_EQUIPMENT_SAFETY_STATUS_PATH = '/api/helmian/actions/equipment-safety-status';
 export const AIMFORGE_EQUIPMENT_SAFETY_CHECK_PATH = '/api/helmian/actions/equipment-safety-check';
 export const AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_PATH = '/api/helmian/actions/equipment-safety-escalation';
+export const AIMFORGE_CONSOLE_NAVIGATION_INTENT_PATH = '/api/helmian/actions/console-navigation-intent';
 export const AIMFORGE_BOARD_TOOL_NAME = 'aimforge_get_dispatch_board_summary';
 export const AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME = 'aimforge_prepare_driver_message';
 export const AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME = 'aimforge_create_department_handoff';
 export const AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME = 'aimforge_get_equipment_safety_status';
 export const AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME = 'aimforge_record_equipment_safety_check';
 export const AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_TOOL_NAME = 'aimforge_request_safety_supervisor_review';
+export const AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME = 'aimforge_create_console_navigation_intent';
+export const AIMFORGE_CONSOLE_NAVIGATION_PAGES = Object.freeze(['dashboard', 'dispatch_board', 'load_planner']);
 export const AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES = Object.freeze([
   AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME,
   AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME,
@@ -290,6 +293,34 @@ function validateSafetyResponse(value, action, state, status) {
   return Object.freeze({ state: value.state, disposition: value.disposition, inspectionItemId: value.inspectionItemId });
 }
 
+function validateNavigationInput(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== 'page'
+    || !AIMFORGE_CONSOLE_NAVIGATION_PAGES.includes(value.page)) {
+    throw new Error('Only one allowlisted page is allowed');
+  }
+  return { page: value.page };
+}
+
+function validateNavigationResponse(value, status) {
+  if (status !== 201 || !value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== 'action,execution,intent,state,version'
+    || value.version !== '1' || value.action !== 'console.navigation.intent.create'
+    || value.state !== 'intent_created' || value.execution !== 'not_executed') {
+    throw new Error('AimForge returned an invalid navigation intent');
+  }
+  const intent = value.intent;
+  const paths = { dashboard: '/dashboard', dispatch_board: '/dispatch', load_planner: '/schedule' };
+  if (!intent || typeof intent !== 'object' || Array.isArray(intent)
+    || Object.keys(intent).sort().join(',') !== 'page,path,replace,type,version'
+    || intent.type !== 'aimforge.console.navigate' || intent.version !== '1'
+    || !AIMFORGE_CONSOLE_NAVIGATION_PAGES.includes(intent.page)
+    || intent.path !== paths[intent.page] || intent.replace !== false) {
+    throw new Error('AimForge returned an invalid navigation intent projection');
+  }
+  return Object.freeze({ state: value.state, execution: value.execution, intent: Object.freeze({ ...intent }) });
+}
+
 /** A fixed-path client limited to aggregate reads and prepare-only proposals. */
 export function createAimForgeBoardActionClient({
   baseUrl = process.env.HELMION_AIMFORGE_API_BASE_URL,
@@ -305,6 +336,7 @@ export function createAimForgeBoardActionClient({
   const safetyStatusUrl = fixedActionUrl(baseUrl, AIMFORGE_EQUIPMENT_SAFETY_STATUS_PATH);
   const safetyCheckUrl = fixedActionUrl(baseUrl, AIMFORGE_EQUIPMENT_SAFETY_CHECK_PATH);
   const safetyEscalationUrl = fixedActionUrl(baseUrl, AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_PATH);
+  const navigationUrl = fixedActionUrl(baseUrl, AIMFORGE_CONSOLE_NAVIGATION_INTENT_PATH);
   const secret = requiredActionSecret(actionSecret);
   if (typeof fetchImpl !== 'function') throw new Error('AimForge action fetch is unavailable');
 
@@ -416,6 +448,12 @@ export function createAimForgeBoardActionClient({
         signedBridge, payload: { checkKey: key, reason: cleanReason }, signal, label: 'safety supervisor review' });
       return validateSafetyResponse(result.parsed, 'equipment.safety.escalation', 'supervisor_review_requested', result.status);
     },
+    async createConsoleNavigationIntent({ signedBridge, page, signal = null }) {
+      const input = validateNavigationInput({ page });
+      const result = await signedRequest({ path: AIMFORGE_CONSOLE_NAVIGATION_INTENT_PATH, url: navigationUrl,
+        signedBridge, payload: input, signal, label: 'console navigation intent' });
+      return validateNavigationResponse(result.parsed, result.status);
+    },
   });
 }
 
@@ -428,6 +466,7 @@ export function createAimForgeBoardToolRuntime({
     AIMFORGE_BOARD_TOOL_NAME,
     AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME,
     AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME,
+    AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME,
   ],
 }) {
   if (!client || typeof client.getDispatchBoardSummary !== 'function'
@@ -545,6 +584,15 @@ export function createAimForgeBoardToolRuntime({
       return JSON.stringify(await client.requestSafetySupervisorReview({ signedBridge, checkKey: args.checkKey, reason: args.reason, signal }));
     },
   });
+  const navigationTool = Object.freeze({
+    description: 'Create a typed intent for one allowlisted AimForge console page. This does not move the browser; never claim navigation completed.',
+    parameters: { type: 'object', additionalProperties: false, required: ['page'], properties: {
+      page: { type: 'string', enum: AIMFORGE_CONSOLE_NAVIGATION_PAGES },
+    } },
+    async execute(args, { signal = null } = {}) {
+      return JSON.stringify(await client.createConsoleNavigationIntent({ signedBridge, ...validateNavigationInput(args), signal }));
+    },
+  });
   const availableTools = Object.freeze({
     [AIMFORGE_BOARD_TOOL_NAME]: boardTool,
     [AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME]: prepareTool,
@@ -552,6 +600,7 @@ export function createAimForgeBoardToolRuntime({
     [AIMFORGE_EQUIPMENT_SAFETY_STATUS_TOOL_NAME]: safetyStatusTool,
     [AIMFORGE_EQUIPMENT_SAFETY_CHECK_TOOL_NAME]: safetyCheckTool,
     [AIMFORGE_EQUIPMENT_SAFETY_ESCALATION_TOOL_NAME]: safetyEscalationTool,
+    [AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME]: navigationTool,
   });
   if (!Array.isArray(enabledToolNames)
     || enabledToolNames.some((name) => typeof name !== 'string' || !Object.hasOwn(availableTools, name))

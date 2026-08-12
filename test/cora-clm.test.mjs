@@ -1115,6 +1115,39 @@ test('A PLATFORM-GLOBAL DISABLE REMOVES A TOOL FOR A DIFFERENT SIGNED AIMFORGE C
   }
 });
 
+test('A SIGNED OPERATIONS SESSION CAN CREATE ONLY A NON-EXECUTED ALLOWLISTED NAVIGATION INTENT', async () => {
+  const ws = tempWorkspace('aimforge-navigation-intent');
+  const calls = [];
+  const endpoint = await fakeOpenAiEndpoint([
+    toolCallMessage('aimforge_create_console_navigation_intent', { page: 'dispatch_board' }, 'I will create a console navigation intent.'),
+    finalMessage('I created a navigation intent, but the browser has not moved.'),
+  ]);
+  const runTurn = createAgentTurnRunner({
+    workspace: ws.dir,
+    provider: { id: 'custom', key: 'none', label: 'scripted-endpoint', url: endpoint.url, model: 'scripted-model', models: null },
+    aimforgeActionClient: {
+      async getDispatchBoardSummary() {}, async prepareDriverMessage() {}, async createDepartmentHandoff() {},
+      async createConsoleNavigationIntent(input) { calls.push(input); return { state: 'intent_created', execution: 'not_executed', intent: {
+        type: 'aimforge.console.navigate', version: '1', page: input.page, path: '/dispatch', replace: false,
+      } }; },
+    },
+    async globalActionPolicyResolver() { return { enabledActions: ['aimforge_create_console_navigation_intent'] }; },
+  });
+  const session = { id: 'navigation-session', helmionMode: true,
+    bridgeContext: { tenantId: 'tenant-a', role: 'dispatcher', surface: 'cora' },
+    signedBridge: 'helmion:payload.signature', state: null };
+  try {
+    const result = await runTurn({ text: 'Open the dispatch board', session, onEvent: () => {} });
+    const tools = endpoint.requests[0].body.tools.map((tool) => tool.function);
+    assert.deepEqual(tools.map((tool) => tool.name), ['aimforge_create_console_navigation_intent']);
+    assert.deepEqual(tools[0].parameters.properties.page.enum, ['dashboard', 'dispatch_board', 'load_planner']);
+    assert.equal(Object.hasOwn(tools[0].parameters.properties, 'url'), false);
+    assert.equal(Object.hasOwn(tools[0].parameters.properties, 'path'), false);
+    assert.equal(calls.length, 1); assert.equal(calls[0].signedBridge, session.signedBridge);
+    assert.match(result.text, /browser has not moved/iu);
+  } finally { await endpoint.close(); ws.cleanup(); }
+});
+
 test('A SIGNED AIMFORGE TURN FAILS CLOSED WHEN GLOBAL ACTION POLICY CANNOT BE READ', async () => {
   const runTurn = createAgentTurnRunner({
     workspace: process.cwd(),

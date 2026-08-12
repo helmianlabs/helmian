@@ -8,6 +8,8 @@ import {
   AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME,
   AIMFORGE_DEPARTMENT_HANDOFF_PATH,
   AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME,
+  AIMFORGE_CONSOLE_NAVIGATION_INTENT_PATH,
+  AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME,
   createAimForgeBoardActionClient,
   createAimForgeBoardToolRuntime,
 } from '../src/cora/aimforge-board-action.mjs';
@@ -58,6 +60,33 @@ function handoffResponse(overrides = {}, status = 201) {
     priority: 'urgent', duplicate: status === 200, ...overrides,
   }), { status, headers: { 'x-aimforge-action-receipt': 'c'.repeat(32) } });
 }
+
+function navigationResponse(overrides = {}) {
+  return new Response(JSON.stringify({ version: '1', action: 'console.navigation.intent.create',
+    state: 'intent_created', execution: 'not_executed', intent: {
+      type: 'aimforge.console.navigate', version: '1', page: 'dispatch_board', path: '/dispatch', replace: false,
+    }, ...overrides }), { status: 201, headers: { 'x-aimforge-action-receipt': 'd'.repeat(32) } });
+}
+
+test('navigation client signs only the fixed path and returns a typed non-executed intent', async () => {
+  let captured;
+  const client = createAimForgeBoardActionClient({ baseUrl: 'https://aimforge-api.fly.dev', actionSecret: ACTION_SECRET,
+    now: () => NOW, nonce: () => NONCE, fetchImpl: async (url, init) => { captured = { url: String(url), init }; return navigationResponse(); } });
+  const result = await client.createConsoleNavigationIntent({ signedBridge: SIGNED_BRIDGE, page: 'dispatch_board' });
+  assert.equal(captured.url, `https://aimforge-api.fly.dev${AIMFORGE_CONSOLE_NAVIGATION_INTENT_PATH}`);
+  assert.deepEqual(JSON.parse(captured.init.body), { custom_session_id: SIGNED_BRIDGE, page: 'dispatch_board' });
+  const digest = createHash('sha256').update(captured.init.body).digest('hex');
+  const canonical = ['v1', 'POST', AIMFORGE_CONSOLE_NAVIGATION_INTENT_PATH,
+    String(Math.floor(NOW.getTime() / 1_000)), NONCE, digest].join('\n');
+  assert.equal(captured.init.headers['x-helmian-signature'], createHmac('sha256', ACTION_SECRET).update(canonical).digest('base64url'));
+  assert.deepEqual(result, { state: 'intent_created', execution: 'not_executed', intent: {
+    type: 'aimforge.console.navigate', version: '1', page: 'dispatch_board', path: '/dispatch', replace: false,
+  } });
+  await assert.rejects(client.createConsoleNavigationIntent({ signedBridge: SIGNED_BRIDGE, page: 'https://evil.example', path: '/admin' }), /allowlisted page/u);
+  const forged = createAimForgeBoardActionClient({ baseUrl: 'https://aimforge-api.fly.dev', actionSecret: ACTION_SECRET,
+    now: () => NOW, nonce: () => NONCE, fetchImpl: async () => navigationResponse({ execution: 'executed', url: 'https://evil.example' }) });
+  await assert.rejects(forged.createConsoleNavigationIntent({ signedBridge: SIGNED_BRIDGE, page: 'dispatch_board' }), /invalid navigation intent/u);
+});
 
 test('fixed board client signs the canonical request and returns bounded aggregates only', async () => {
   let captured;
@@ -264,7 +293,7 @@ test('turn cancellation reaches the fixed AimForge fetch', async () => {
   assert.equal(fetchSignal.aborted, true);
 });
 
-test('signed AimForge runtime advertises exactly three bounded tools and enforces later-turn handoff confirmation', async () => {
+test('signed AimForge operations runtime advertises exactly four bounded tools and enforces later-turn handoff confirmation', async () => {
   const calls = [];
   const runtime = createAimForgeBoardToolRuntime({
     signedBridge: SIGNED_BRIDGE,
@@ -282,11 +311,14 @@ test('signed AimForge runtime advertises exactly three bounded tools and enforce
         calls.push(input);
         return { state: 'persisted', messageId: 'ee67017d-b760-405b-beb6-e4e60f2cb5b5', recipientRole: input.recipientRole, priority: input.priority, duplicate: false };
       },
+      async createConsoleNavigationIntent(input) {
+        calls.push(input); return { state: 'intent_created', execution: 'not_executed', intent: { type: 'aimforge.console.navigate', version: '1', page: input.page, path: '/dispatch', replace: false } };
+      },
     },
   });
-  assert.deepEqual(Object.keys(runtime.tools), [AIMFORGE_BOARD_TOOL_NAME, AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME]);
+  assert.deepEqual(Object.keys(runtime.tools), [AIMFORGE_BOARD_TOOL_NAME, AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME]);
   assert.equal(runtime.root, 'C:/signed-aimforge-provenance');
-  assert.deepEqual(runtime.definitionsForOpenAi().map((item) => item.function.name), [AIMFORGE_BOARD_TOOL_NAME, AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME]);
+  assert.deepEqual(runtime.definitionsForOpenAi().map((item) => item.function.name), [AIMFORGE_BOARD_TOOL_NAME, AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME]);
   assert.match(await runtime.execute('run_command', { command: 'curl anywhere' }), /unknown tool/u);
   assert.match(await runtime.execute('aimforge_approve_driver_message', { proposalId: 'forged' }), /unknown tool/u);
   assert.match(await runtime.execute(AIMFORGE_PREPARE_DRIVER_MESSAGE_TOOL_NAME, {
@@ -327,6 +359,9 @@ test('signed AimForge runtime advertises exactly three bounded tools and enforce
   const handoff = JSON.parse(await runtime.execute(AIMFORGE_DEPARTMENT_HANDOFF_TOOL_NAME, { ...intent, confirmed: true }));
   assert.equal(handoff.state, 'persisted');
   assert.equal(calls[2].signedBridge, SIGNED_BRIDGE);
+  const navigation = JSON.parse(await runtime.execute(AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME, { page: 'dispatch_board' }));
+  assert.equal(navigation.execution, 'not_executed');
+  assert.match(await runtime.execute(AIMFORGE_CONSOLE_NAVIGATION_TOOL_NAME, { page: '/admin', url: 'https://evil.example' }), /allowlisted page/u);
 });
 
 test('platform action policy advertises only the fixed enabled subset and cannot add arbitrary tools', async () => {
