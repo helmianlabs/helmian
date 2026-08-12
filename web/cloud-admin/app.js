@@ -7,8 +7,12 @@ const policyForm = document.querySelector('#policy-form');
 const policyConfirmation = document.querySelector('#policy-confirmation');
 const policyDiff = document.querySelector('#policy-diff');
 const policyStatus = document.querySelector('#policy-status');
+const scope = document.querySelector('#scope');
+const guardEvents = document.querySelector('#guard-events');
+const agentCards = document.querySelector('#agent-cards');
 let policyEtag = '';
 let previewId = '';
+let workspaceTimer = null;
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
 document.querySelector('#logout').onclick = () => { window.location.href = '/admin/auth/logout'; };
 
@@ -30,6 +34,52 @@ function renderPolicy(body) {
   policyConfirmation.hidden = true;
 }
 
+function renderEvents(body) {
+  guardEvents.replaceChildren();
+  const heading = document.createElement('h3');
+  heading.textContent = 'Recent Guard activity';
+  guardEvents.append(heading);
+  if (!body.events?.length) {
+    const empty = document.createElement('p');
+    empty.className = 'preview';
+    empty.textContent = 'No audited events yet.';
+    guardEvents.append(empty);
+    return;
+  }
+  for (const event of body.events) {
+    const card = document.createElement('div');
+    card.className = `guard-card ${event.decision === 'BLOCK' || event.decision === 'DENY' ? 'critical' : event.decision === 'PAUSE_FOR_OWNER' ? 'warn' : ''}`;
+    const title = document.createElement('h3');
+    title.textContent = `${event.decision} · ${event.actionType}`;
+    const summary = document.createElement('p');
+    summary.textContent = event.summary;
+    card.append(title, summary);
+    guardEvents.append(card);
+  }
+}
+
+function renderWorkspace(body) {
+  agentCards.replaceChildren();
+  for (const agent of body.workspace?.agents ?? []) {
+    const card = document.createElement('div');
+    card.className = 'agent-card';
+    const name = document.createElement('strong');
+    name.textContent = agent.label;
+    const status = document.createElement('div');
+    status.className = 'agent-status';
+    status.textContent = `${agent.status} · ${agent.lastAction || 'no recorded action'}`;
+    card.append(name, status);
+    agentCards.append(card);
+  }
+}
+
+async function refreshWorkspacePanels() {
+  const events = await fetch('/api/admin/events', { credentials: 'same-origin' });
+  if (events.ok) renderEvents(await events.json());
+  const workspace = await fetch('/api/admin/workspace', { credentials: 'same-origin' });
+  if (workspace.ok) renderWorkspace(await workspace.json());
+}
+
 async function loadPolicy() {
   const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });
   if (!response.ok) throw new Error('Action policy unavailable');
@@ -43,10 +93,14 @@ async function load() {
   const sessionBody = await session.json();
   signedOut.hidden = true; signedIn.hidden = false;
   actor.textContent = `Signed in as ${sessionBody.actor.role} for tenant ${sessionBody.actor.tenantId}`;
+  scope.textContent = `Scope: ${sessionBody.actor.tenantId} · ${sessionBody.actor.role}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
+  await refreshWorkspacePanels();
   await loadPolicy();
+  if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
+document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
 policyForm.onsubmit = async (event) => {
   event.preventDefault();
