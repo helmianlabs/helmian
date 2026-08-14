@@ -16,15 +16,16 @@ test('release manifest validator accepts the complete non-secret source checklis
   assert.match(result.checklist, /\[PASS\] exact canary sequence\/rollback criteria/u);
 });
 
-test('release manifest validator rejects mismatched migration, UI, Hume, and canary values', async () => {
+test('release manifest validator rejects mismatched migration, UI, Hume descriptor, and canary values', async () => {
   const manifest = await fixture('release-canary-valid.json');
   manifest.migrations = ['010_cora_organization_config.sql', '009_envoy_chat.sql', '011_cora_provider_usage.sql'];
   manifest.ui.bundleRevision = 'wrong';
   manifest.hume.readiness = 'live';
+  manifest.hume.sessionDescriptor.acceptance = 'accepted';
   manifest.canary.sequence = ['deploy-canary'];
   const result = validateReleaseManifest(manifest, await fixture('release-canary-expected.json'));
   assert.equal(result.valid, false);
-  assert.match(result.errors.join(' '), /migration order|UI bundle|Hume readiness|canary sequence/u);
+  assert.match(result.errors.join(' '), /migration order|UI bundle|Hume readiness|session descriptor|canary sequence/u);
 });
 
 test('release manifest validator rejects secret-bearing fields and source self-approval', async () => {

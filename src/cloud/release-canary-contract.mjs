@@ -81,6 +81,13 @@ export function validateReleaseManifest(manifest = {}, expected = {}) {
   check('Hume readiness/config metadata', () => {
     for (const field of ['readiness', 'configRevision', 'tokenMode']) if (manifest.hume?.[field] !== expected.hume?.[field]) throw new Error(`Hume ${field} mismatch`);
   });
+  check('Hume Organization session descriptor/preflight', () => {
+    const actual = manifest.hume?.sessionDescriptor;
+    const required = expected.hume?.sessionDescriptor;
+    for (const field of ['format', 'source', 'serverReadiness', 'acceptance', 'mutation', 'payloadSafe']) {
+      if (actual?.[field] !== required?.[field]) throw new Error(`Hume session descriptor ${field} mismatch`);
+    }
+  });
   check('provider usage ledger enabled', () => {
     if (manifest.providerUsageLedger?.enabled !== true || manifest.providerUsageLedger?.enabled !== expected.providerUsageLedger?.enabled) throw new Error('provider usage ledger is not enabled as expected');
   });

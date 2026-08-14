@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "check:aimforge-bridge": "node --check src/cora/aimforge-session-bridge.mjs",
-    "check:cora-config": "node --check src/cora/organization-config.mjs && node --check src/cora/provider-usage-ledger.mjs && node --check src/cora/provider-usage-repository.mjs && node --check src/cora/provider-session-usage.mjs && node --check src/cora/agent-task-intent.mjs && node --check src/cora/agent-task-repository.mjs && node --check src/cora/agent-task-worker-claim.mjs && node --check src/cora/agent-execution-adapter.mjs",
+    "check:cora-config": "node --check src/cora/organization-config.mjs && node --check src/cora/provider-usage-ledger.mjs && node --check src/cora/provider-usage-repository.mjs && node --check src/cora/provider-session-usage.mjs && node --check src/cora/agent-task-intent.mjs && node --check src/cora/agent-task-repository.mjs && node --check src/cora/agent-task-worker-claim.mjs && node --check src/cora/agent-execution-adapter.mjs && node --check src/cora/hume-session-descriptor.mjs",
     "check:cloud-admin": "node --check src/cloud/live-admin.mjs && node --check src/cloud/communication-connectors.mjs && node --check src/cloud/communication-identity.mjs && node --check src/cloud/communication-session-bridge.mjs && node --check src/cloud/tenant-action-policy.mjs && node --check src/cloud/identity-gateway.mjs && node --check web/cloud-admin/app.js && node --check web/cloud-admin/envoy-client.mjs && node --check web/cloud-admin/cora-config-client.mjs && node --check bin/helmion-cora.mjs",
     "check:browser-scaffold": "node --check qa/browser/fixture-server.mjs && node --check qa/browser/cloud-admin-smoke.spec.mjs && node --check qa/browser/playwright.config.mjs",
     "test": "node --test",
