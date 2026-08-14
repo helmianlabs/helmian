@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -93,6 +93,15 @@ const artifactExecutionStatus = document.querySelector('#artifact-execution-stat
 const artifactExecutionReceipts = document.querySelector('#artifact-execution-receipts');
 const workspaceState = document.querySelector('#workspace-state');
 const adminNav = document.querySelector('[data-admin-only]');
+const workspaceSettings = document.querySelector('#workspace-settings');
+const workspaceSettingsOpen = document.querySelector('#workspace-settings-open');
+const workspaceSettingsClose = document.querySelector('#workspace-settings-close');
+const workspaceLayoutStatus = document.querySelector('#workspace-layout-status');
+const workspaceLayoutSave = document.querySelector('#workspace-layout-save');
+const workspaceLayoutReset = document.querySelector('#workspace-layout-reset');
+const workspacePanelOrder = document.querySelector('#workspace-panel-order');
+const workspaceDensity = document.querySelector('#workspace-density');
+const workspaceDefaultChannel = document.querySelector('#workspace-default-channel');
 let coraDraft = null;
 let coraPublishedConfig = null;
 let policyEtag = '';
@@ -102,6 +111,7 @@ let envoyTimer = null;
 let envoyStream = null;
 let envoyMessages = [];
 let envoyCursor = null;
+let workspaceLayout = null;
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
 document.querySelector('#logout').onclick = () => { window.location.href = '/admin/auth/logout'; };
 
@@ -193,11 +203,14 @@ function renderMessageList() {
 async function loadEnvoyChannels() {
   const body = await envoy.listChannels();
   envoyChannel.replaceChildren();
+  workspaceDefaultChannel.replaceChildren(new Option('No default channel', ''));
   for (const channel of body.channels ?? []) {
     const option = document.createElement('option');
     option.value = channel.id;
     option.textContent = channel.title || channel.slug;
     envoyChannel.append(option);
+    const layoutOption = option.cloneNode(true);
+    workspaceDefaultChannel.append(layoutOption);
   }
   envoyChannel.disabled = !(body.channels?.length);
   composerInput.disabled = !(body.channels?.length);
@@ -209,6 +222,28 @@ async function loadEnvoyChannels() {
   }
   composerStatus.textContent = 'Organization Envoy ready. Cora and outbound delivery are not invoked.';
   await loadEnvoyMessages();
+}
+
+function renderWorkspaceLayout(body) {
+  const model = workspaceLayoutModel(body);
+  workspaceLayout = model.layout;
+  for (const checkbox of document.querySelectorAll('[data-layout-shelf]')) checkbox.checked = model.layout.visibleShelves?.includes(checkbox.dataset.layoutShelf) ?? false;
+  workspacePanelOrder.value = (model.layout.panelOrder ?? []).join(',');
+  workspaceDensity.value = model.layout.density ?? 'comfortable';
+  workspaceDefaultChannel.value = model.layout.defaultEnvoyChannelId ?? '';
+  workspaceLayoutStatus.textContent = model.statusLabel;
+}
+
+async function loadWorkspaceLayout() {
+  workspaceLayoutStatus.textContent = 'Loading your workspace layout…';
+  workspaceSettings.setAttribute('aria-busy', 'true');
+  try { renderWorkspaceLayout(await coraClient.readWorkspaceLayout()); }
+  catch (error) { workspaceLayoutStatus.textContent = error.status === 403 ? 'Workspace layout unavailable: Organization membership is required.' : `Workspace layout unavailable: ${error.message}`; }
+  finally { workspaceSettings.removeAttribute('aria-busy'); }
+}
+
+function layoutInput() {
+  return { visibleShelves: [...document.querySelectorAll('[data-layout-shelf]:checked')].map((item) => item.dataset.layoutShelf), panelOrder: workspacePanelOrder.value.split(',').map((item) => item.trim()).filter(Boolean), density: workspaceDensity.value, defaultEnvoyChannelId: workspaceDefaultChannel.value || null };
 }
 
 async function loadEnvoyMessages() {
@@ -494,7 +529,7 @@ async function loadPolicy() {
 
 async function load() {
   const session = await fetch('/api/admin/session', { credentials: 'same-origin' });
-  if (!session.ok) { signedOut.hidden = false; signedIn.hidden = true; return; }
+  if (!session.ok) { signedOut.hidden = false; signedIn.hidden = true; workspaceSettingsOpen.hidden = true; return; }
   const sessionBody = await session.json();
   signedOut.hidden = true; signedIn.hidden = false;
   actor.textContent = `Signed in as ${sessionBody.actor.role} for Organization ${sessionBody.actor.tenantId}`;
@@ -508,6 +543,8 @@ async function load() {
   await refreshWorkspacePanels();
   await loadPolicy();
   await loadEnvoyChannels();
+  workspaceSettingsOpen.hidden = false;
+  await loadWorkspaceLayout();
   await loadCoraSettings();
   await loadWorkspacePreviews();
   await loadAgentTasks();
@@ -515,6 +552,10 @@ async function load() {
   startEnvoyRealtime();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
+workspaceSettingsOpen.onclick = () => { workspaceSettings.showModal(); loadWorkspaceLayout().catch(() => {}); };
+workspaceSettingsClose.onclick = () => workspaceSettings.close();
+workspaceLayoutSave.onclick = async () => { workspaceLayoutStatus.textContent = 'Saving your workspace layout…'; workspaceLayoutSave.disabled = true; try { renderWorkspaceLayout(await coraClient.saveWorkspaceLayout(layoutInput())); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not saved: ${error.message}`; } finally { workspaceLayoutSave.disabled = false; } };
+workspaceLayoutReset.onclick = async () => { workspaceLayoutStatus.textContent = 'Restoring your role default…'; workspaceLayoutReset.disabled = true; try { renderWorkspaceLayout(await coraClient.resetWorkspaceLayout()); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not reset: ${error.message}`; } finally { workspaceLayoutReset.disabled = false; } };
 for (const item of document.querySelectorAll('#workspace-nav [data-target]')) {
   item.onclick = () => {
     document.getElementById(item.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
