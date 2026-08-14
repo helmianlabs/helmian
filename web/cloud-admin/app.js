@@ -1,4 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
+import { createCoraConfigClient } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -19,6 +20,15 @@ const composerSend = document.querySelector('#composer-send');
 const envoyChannel = document.querySelector('#envoy-channel');
 const composerStatus = document.querySelector('#composer-status');
 const envoy = createEnvoyClient();
+const coraClient = createCoraConfigClient();
+const coraConfigStatus = document.querySelector('#cora-config-status');
+const coraConfigDetails = document.querySelector('#cora-config-details');
+const coraKnowledgeDetails = document.querySelector('#cora-knowledge-details');
+const coraAdminControls = document.querySelector('#cora-admin-controls');
+const coraDraftReason = document.querySelector('#cora-draft-reason');
+const coraCreateDraft = document.querySelector('#cora-create-draft');
+const coraTransition = document.querySelector('#cora-transition');
+let coraDraft = null;
 let policyEtag = '';
 let previewId = '';
 let workspaceTimer = null;
@@ -182,6 +192,67 @@ async function refreshWorkspacePanels() {
   if (workspace.ok) renderWorkspace(await workspace.json());
 }
 
+function configItem(label, value) {
+  const item = document.createElement('div'); item.className = 'config-item';
+  const strong = document.createElement('strong'); strong.textContent = label;
+  const span = document.createElement('span'); span.textContent = value;
+  item.append(strong, span); return item;
+}
+
+function renderCoraConfig(body) {
+  coraConfigDetails.replaceChildren();
+  if (body.status !== 'published' || !body.config) {
+    coraConfigStatus.textContent = 'No published Cora Organization config is available.';
+    return;
+  }
+  const config = body.config;
+  const effective = config.config?.effective ?? config.config ?? {};
+  coraConfigStatus.textContent = `Published config v${config.configVersion} · ${config.lifecycle} · reviewed reason: ${config.reason}`;
+  coraConfigDetails.append(
+    configItem('Style', effective.style || 'professional_brief'),
+    configItem('Voice budget', `${effective.maxSpokenChars || 'not set'} characters`),
+    configItem('Interrupt behavior', effective.interruptMode || 'not set'),
+    configItem('Turn behavior', effective.turnMode || 'not set'),
+    configItem('Hume voice', 'process-env readiness only'),
+    configItem('Model invocation', 'not connected'),
+  );
+  for (const entry of config.config?.approvedModelCatalog ?? []) {
+    coraConfigDetails.append(configItem(`Approved model · ${entry.provider}`, `${entry.model} ${entry.version} · ${entry.source}`));
+  }
+}
+
+function renderCoraKnowledge(body) {
+  coraKnowledgeDetails.replaceChildren();
+  if (!body.sources?.length) { coraKnowledgeDetails.textContent = 'No approved knowledge sources or packs are published for this Organization.'; return; }
+  for (const source of body.sources) {
+    const line = document.createElement('p');
+    const pack = source.pack ? ` · pack ${source.pack.key} v${source.pack.version} (${source.pack.allowlisted ? 'allowlisted' : 'not allowlisted'})` : '';
+    const citation = source.snippet ? ` · citation ${source.snippet.citation}` : '';
+    line.textContent = `${source.title} · ${source.publisher} · ${source.lifecycle}${pack}${citation}`;
+    coraKnowledgeDetails.append(line);
+  }
+}
+
+function renderCoraAdminControls() {
+  coraAdminControls.hidden = !['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase());
+  if (!coraDraft) { coraTransition.hidden = true; return; }
+  const next = { draft: 'testing', testing: 'approved', approved: 'published' }[coraDraft.lifecycle];
+  coraTransition.hidden = !next;
+  coraTransition.textContent = next ? `Move draft to ${next}` : 'No further transition';
+}
+
+async function loadCoraSettings() {
+  coraConfigStatus.textContent = 'Loading Cora settings and knowledge metadata…';
+  try {
+    const [config, knowledge] = await Promise.all([coraClient.readConfig(), coraClient.readKnowledgeSources()]);
+    renderCoraConfig(config); renderCoraKnowledge(knowledge); renderCoraAdminControls();
+    if (config.status === 'published') coraConfigStatus.textContent += ' Cora agent/model invocation remains not connected.';
+  } catch (error) {
+    coraConfigDetails.replaceChildren(); coraKnowledgeDetails.replaceChildren();
+    coraConfigStatus.textContent = error.status === 403 ? 'Cora settings unavailable: Organization membership is required.' : `Cora settings unavailable: ${error.message}`;
+  }
+}
+
 async function loadPolicy() {
   const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });
   if (!response.ok) throw new Error('Action policy unavailable');
@@ -196,16 +267,41 @@ async function load() {
   signedOut.hidden = true; signedIn.hidden = false;
   actor.textContent = `Signed in as ${sessionBody.actor.role} for tenant ${sessionBody.actor.tenantId}`;
   scope.textContent = `Scope: ${sessionBody.actor.tenantId} · ${sessionBody.actor.role}`;
+  window.helmianActorRole = sessionBody.actor.role;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
   await refreshWorkspacePanels();
   await loadPolicy();
   await loadEnvoyChannels();
+  await loadCoraSettings();
   startEnvoyPolling();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
 document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
+coraCreateDraft.onclick = async () => {
+  const reason = coraDraftReason.value.trim();
+  if (!reason) { coraConfigStatus.textContent = 'Enter a reason before creating a draft.'; return; }
+  coraCreateDraft.disabled = true;
+  try {
+    const result = await coraClient.createDraft({ reason }); coraDraft = result.config; coraDraftReason.value = '';
+    coraConfigStatus.textContent = `Draft ${coraDraft.id} created. No config is published.`; renderCoraAdminControls();
+  } catch (error) { coraConfigStatus.textContent = `Draft refused: ${error.message}`; }
+  finally { coraCreateDraft.disabled = false; }
+};
+coraTransition.onclick = async () => {
+  const next = { draft: 'testing', testing: 'approved', approved: 'published' }[coraDraft?.lifecycle];
+  if (!coraDraft || !next) return;
+  coraTransition.disabled = true;
+  try {
+    const result = await coraClient.transition({ id: coraDraft.id, lifecycle: next, reason: `Cloud admin reviewed transition to ${next}` });
+    coraDraft.lifecycle = result.lifecycle;
+    coraConfigStatus.textContent = `Draft ${coraDraft.id} is now ${result.lifecycle}.`;
+    renderCoraAdminControls();
+    await loadCoraSettings();
+  } catch (error) { coraConfigStatus.textContent = `Transition refused: ${error.message}`; }
+  finally { coraTransition.disabled = false; }
+};
 envoyChannel.onchange = () => loadEnvoyMessages();
 composer.onsubmit = async (event) => {
   event.preventDefault();

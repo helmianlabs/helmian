@@ -48,6 +48,12 @@
     pre { padding: 1rem; background: #1c2431; overflow: auto; border-radius: .35rem; }
     .note { color: #a9c7ff; }
     .card { margin: 1.5rem 0; padding: 1.25rem; background: #171e29; border: 1px solid #344156; border-radius: .5rem; }
+    .config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .75rem; }
+    .config-item { padding: .7rem; background: #0d1119; border: 1px solid #344156; border-radius: .35rem; }
+    .config-item strong { display: block; margin-bottom: .3rem; }
+    .config-item span, .config-list { color: #aebbd0; font-size: .85rem; }
+    .config-controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .9rem; }
+    .config-controls input { flex: 1; min-width: 14rem; background: #0d1119; border: 1px solid #344156; color: #fff; border-radius: .35rem; padding: .65rem; }
     .tool { display: block; padding: .5rem 0; }
     #policy-status { min-height: 1.5rem; }
     [hidden] { display: none; }
@@ -81,6 +87,17 @@
         <p id="actor"></p>
         <button id="refresh" type="button">Refresh control surface</button>
         <button id="logout" class="secondary" type="button">Sign out</button>
+        <section class="card" aria-labelledby="cora-config-heading">
+          <h2 id="cora-config-heading">Cora settings and approved knowledge</h2>
+          <p id="cora-config-status" class="note" role="status">Loading Organization Cora settings…</p>
+          <div id="cora-config-details" class="config-grid"></div>
+          <div id="cora-knowledge-details" class="config-list"></div>
+          <div id="cora-admin-controls" class="config-controls" hidden>
+            <input id="cora-draft-reason" aria-label="Cora draft reason" maxlength="2000" placeholder="Reason for a reviewed Cora draft">
+            <button id="cora-create-draft" type="button">Create reviewed draft</button>
+            <button id="cora-transition" class="secondary" type="button" hidden></button>
+          </div>
+        </section>
         <section class="card" aria-labelledby="policy-heading">
           <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>
           <p>Hume-attached tools: <strong>0</strong>. These switches can only remove fixed Helmian actions from every newly signed AimForge customer session. They cannot grant tenant access or add tools. Active voice sessions keep their starting policy.</p>
