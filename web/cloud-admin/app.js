@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { createCoraConfigClient, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, createCoraConfigClient, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -39,6 +39,16 @@ const workspacePreviewTitle = document.querySelector('#workspace-preview-title')
 const workspacePreviewSubmit = document.querySelector('#workspace-preview-submit');
 const workspacePreviewStatus = document.querySelector('#workspace-preview-status');
 const workspacePreviewReceipts = document.querySelector('#workspace-preview-receipts');
+const agentTaskForm = document.querySelector('#agent-task-form');
+const agentTaskType = document.querySelector('#agent-task-type');
+const agentTaskIntent = document.querySelector('#agent-task-intent');
+const agentTaskGoal = document.querySelector('#agent-task-goal');
+const agentTaskContext = document.querySelector('#agent-task-context');
+const agentTaskDepartment = document.querySelector('#agent-task-department');
+const agentTaskCostCenter = document.querySelector('#agent-task-cost-center');
+const agentTaskSubmit = document.querySelector('#agent-task-submit');
+const agentTaskStatus = document.querySelector('#agent-task-status');
+const agentTaskReceipts = document.querySelector('#agent-task-receipts');
 let coraDraft = null;
 let policyEtag = '';
 let previewId = '';
@@ -296,6 +306,23 @@ async function loadWorkspacePreviews({ replayed = false } = {}) {
   }
 }
 
+function renderAgentTasks(body) {
+  const model = agentTaskPanelModel(body); agentTaskReceipts.replaceChildren();
+  if (model.empty) { const empty = document.createElement('p'); empty.className = 'preview'; empty.textContent = 'No agent task intents recorded for this Organization.'; agentTaskReceipts.append(empty); agentTaskStatus.textContent = 'No task intents yet. Drafting and preparing do not invoke a worker.'; return; }
+  agentTaskStatus.textContent = model.statusLabel;
+  for (const receipt of model.receipts) {
+    const card = document.createElement('article'); card.className = 'config-item';
+    card.append(configItem('Task', `${receipt.taskType} · ${receipt.status}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Execution', 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
+    agentTaskReceipts.append(card);
+  }
+}
+
+async function loadAgentTasks({ replayed = false } = {}) {
+  agentTaskStatus.textContent = 'Loading task receipts…';
+  try { renderAgentTasks({ ...(await coraClient.readAgentTasks()), replayed }); }
+  catch (error) { agentTaskReceipts.replaceChildren(); agentTaskStatus.textContent = error.status === 403 ? 'Task receipts unavailable: Organization membership is required.' : `Task receipts unavailable: ${error.message}`; }
+}
+
 function renderCoraAdminControls() {
   coraAdminControls.hidden = !['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase());
   if (!coraDraft) { coraTransition.hidden = true; return; }
@@ -342,6 +369,7 @@ async function load() {
   await loadEnvoyChannels();
   await loadCoraSettings();
   await loadWorkspacePreviews();
+  await loadAgentTasks();
   startEnvoyPolling();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
@@ -387,6 +415,16 @@ workspacePreviewForm.onsubmit = async (event) => {
     await loadWorkspacePreviews({ replayed: result.replayed === true });
   } catch (error) { workspacePreviewStatus.textContent = `Preview intent not prepared: ${error.message}`; }
   finally { workspacePreviewSubmit.disabled = false; }
+};
+agentTaskForm.onsubmit = async (event) => {
+  event.preventDefault();
+  if (!agentTaskGoal.value.trim()) { agentTaskStatus.textContent = 'Enter a bounded task goal.'; return; }
+  agentTaskSubmit.disabled = true; agentTaskStatus.textContent = 'Recording task intent…';
+  try {
+    const result = await coraClient.createAgentTask({ taskType: agentTaskType.value, intent: agentTaskIntent.value, goal: agentTaskGoal.value.trim(), contextRef: agentTaskContext.value.trim() || undefined, department: agentTaskDepartment.value.trim() || undefined, costCenter: agentTaskCostCenter.value.trim() || undefined, idempotencyKey: crypto.randomUUID() });
+    agentTaskGoal.value = ''; agentTaskStatus.textContent = result.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : 'Task intent recorded. No worker execution occurred.'; await loadAgentTasks({ replayed: result.replayed === true });
+  } catch (error) { agentTaskStatus.textContent = `Task intent not recorded: ${error.message}`; }
+  finally { agentTaskSubmit.disabled = false; }
 };
 envoyChannel.onchange = () => loadEnvoyMessages();
 composer.onsubmit = async (event) => {

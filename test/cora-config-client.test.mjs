@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCoraConfigClient, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
+import { agentTaskPanelModel, createCoraConfigClient, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
 
 function fakeFetch() {
   const calls = [];
@@ -10,6 +10,7 @@ function fakeFetch() {
     if (url.endsWith('/knowledge-sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
     if (url.endsWith('/usage')) return new Response(JSON.stringify({ budget: { policyState: 'active' }, totals: { eventCount: 1, estimatedCostMinor: 12, reconciledCostMinor: null }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' }), { status: 200 });
     if (url.endsWith('/workspace/previews')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
+    if (url.endsWith('/tasks')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     return new Response(JSON.stringify({ config: { id: 'c1', lifecycle: 'draft' } }), { status: 200 });
   };
   fetchImpl.calls = calls;
@@ -24,12 +25,15 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.readUsage();
   await client.readWorkspacePreviews();
   await client.createWorkspacePreview({ mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
+  await client.readAgentTasks();
+  await client.createAgentTask({ taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
   await client.createDraft({ reason: 'reviewed brief defaults' });
   await client.transition({ id: 'c1', lifecycle: 'testing', reason: 'begin test' });
   assert.equal(fetchImpl.calls.every(({ options }) => options.credentials === 'same-origin'), true);
   assert.equal(fetchImpl.calls.some(({ url, options }) => url.includes('tenant') || url.includes('plant') || String(options.body).includes('tenant') || String(options.body).includes('plant')), false);
   assert.deepEqual(JSON.parse(fetchImpl.calls[4].options.body), { mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
-  assert.deepEqual(JSON.parse(fetchImpl.calls[5].options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' });
+  assert.deepEqual(JSON.parse(fetchImpl.calls[6].options.body), { taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
+  assert.deepEqual(JSON.parse(fetchImpl.calls[7].options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' });
 });
 
 test('workspace preview model keeps empty, replay, and not-performed states truthful', () => {
@@ -40,6 +44,12 @@ test('workspace preview model keeps empty, replay, and not-performed states trut
   assert.equal(model.execution, 'not_performed');
   assert.equal(model.providerInvocation, 'not_performed');
   assert.equal(model.filesystemMutation, 'not_performed');
+});
+
+test('agent task panel model reports empty, replay, and not-performed states', () => {
+  assert.equal(agentTaskPanelModel({ receipts: [] }).empty, true);
+  const model = agentTaskPanelModel({ replayed: true, receipts: [{ taskType: 'workspace_preview', status: 'prepared', goal: 'SOP', receiptId: 'r1' }] });
+  assert.equal(model.empty, false); assert.match(model.statusLabel, /replay receipt/); assert.equal(model.execution, 'not_performed'); assert.equal(model.agentInvocation, 'not_performed');
 });
 
 test('usage panel model exposes truthful empty, soft, hard, and unavailable reconciliation states', () => {
