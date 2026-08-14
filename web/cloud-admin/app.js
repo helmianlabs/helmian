@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { createCoraConfigClient, usagePanelModel } from './cora-config-client.mjs';
+import { createCoraConfigClient, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -30,6 +30,15 @@ const coraAdminControls = document.querySelector('#cora-admin-controls');
 const coraDraftReason = document.querySelector('#cora-draft-reason');
 const coraCreateDraft = document.querySelector('#cora-create-draft');
 const coraTransition = document.querySelector('#cora-transition');
+const workspacePreviewForm = document.querySelector('#workspace-preview-form');
+const workspacePreviewMode = document.querySelector('#workspace-preview-mode');
+const workspacePreviewIntent = document.querySelector('#workspace-preview-intent');
+const workspacePreviewDepartment = document.querySelector('#workspace-preview-department');
+const workspacePreviewTemplate = document.querySelector('#workspace-preview-template');
+const workspacePreviewTitle = document.querySelector('#workspace-preview-title');
+const workspacePreviewSubmit = document.querySelector('#workspace-preview-submit');
+const workspacePreviewStatus = document.querySelector('#workspace-preview-status');
+const workspacePreviewReceipts = document.querySelector('#workspace-preview-receipts');
 let coraDraft = null;
 let policyEtag = '';
 let previewId = '';
@@ -253,6 +262,40 @@ function renderCoraUsage(body) {
   );
 }
 
+function renderWorkspacePreviews(body) {
+  const model = workspacePreviewPanelModel(body);
+  workspacePreviewReceipts.replaceChildren();
+  if (model.empty) {
+    const empty = document.createElement('p'); empty.className = 'preview';
+    empty.textContent = 'No workspace preview intents recorded for this Organization.';
+    workspacePreviewReceipts.append(empty);
+    workspacePreviewStatus.textContent = 'No preview receipts yet. Drafting and preparing are available without an approval step.';
+    return;
+  }
+  workspacePreviewStatus.textContent = model.statusLabel;
+  for (const receipt of model.receipts) {
+    const card = document.createElement('article'); card.className = 'config-item';
+    card.append(
+      configItem('Intent', `${receipt.intent} · ${receipt.mode}`),
+      configItem('Title', receipt.title || 'Untitled preview intent'),
+      configItem('Receipt', receipt.receiptId || receipt.id || 'unavailable'),
+      configItem('Execution', 'Not performed'),
+      configItem('Agents / providers', 'Not invoked'),
+      configItem('Filesystem / build', 'Not performed'),
+    );
+    workspacePreviewReceipts.append(card);
+  }
+}
+
+async function loadWorkspacePreviews({ replayed = false } = {}) {
+  workspacePreviewStatus.textContent = 'Loading preview receipts…';
+  try { renderWorkspacePreviews({ ...(await coraClient.readWorkspacePreviews()), replayed }); }
+  catch (error) {
+    workspacePreviewReceipts.replaceChildren();
+    workspacePreviewStatus.textContent = error.status === 403 ? 'Preview receipts unavailable: Organization membership is required.' : `Preview receipts unavailable: ${error.message}`;
+  }
+}
+
 function renderCoraAdminControls() {
   coraAdminControls.hidden = !['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase());
   if (!coraDraft) { coraTransition.hidden = true; return; }
@@ -298,6 +341,7 @@ async function load() {
   await loadPolicy();
   await loadEnvoyChannels();
   await loadCoraSettings();
+  await loadWorkspacePreviews();
   startEnvoyPolling();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
@@ -325,6 +369,24 @@ coraTransition.onclick = async () => {
     await loadCoraSettings();
   } catch (error) { coraConfigStatus.textContent = `Transition refused: ${error.message}`; }
   finally { coraTransition.disabled = false; }
+};
+workspacePreviewForm.onsubmit = async (event) => {
+  event.preventDefault();
+  if (!workspacePreviewTitle.value.trim()) { workspacePreviewStatus.textContent = 'Enter a bounded preview title.'; return; }
+  workspacePreviewSubmit.disabled = true;
+  workspacePreviewStatus.textContent = 'Preparing preview intent…';
+  try {
+    const result = await coraClient.createWorkspacePreview({
+      mode: workspacePreviewMode.value, intent: workspacePreviewIntent.value,
+      department: workspacePreviewDepartment.value.trim() || undefined,
+      templateId: workspacePreviewTemplate.value.trim() || undefined,
+      title: workspacePreviewTitle.value.trim(), idempotencyKey: crypto.randomUUID(),
+    });
+    workspacePreviewStatus.textContent = result.replayed ? 'Preview intent already received. Durable replay receipt confirmed.' : 'Preview intent prepared. Durable receipt confirmed.';
+    workspacePreviewTitle.value = '';
+    await loadWorkspacePreviews({ replayed: result.replayed === true });
+  } catch (error) { workspacePreviewStatus.textContent = `Preview intent not prepared: ${error.message}`; }
+  finally { workspacePreviewSubmit.disabled = false; }
 };
 envoyChannel.onchange = () => loadEnvoyMessages();
 composer.onsubmit = async (event) => {
