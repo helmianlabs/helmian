@@ -1,4 +1,5 @@
 import { evaluateCoraActionPolicy } from './action-policy.mjs';
+import { normalizeCoraRoutingPolicy } from './routing-policy.mjs';
 
 export const CORA_ORGANIZATION_CONFIG_FORMAT = 'cora.organization-config.v1';
 export const CORA_KNOWLEDGE_RESPONSE_FORMAT = 'cora.approved-knowledge-response.v1';
@@ -67,7 +68,7 @@ function normalizeUserPreferences(input = {}) {
   return Object.freeze(result);
 }
 
-function normalizeCatalog(entries = []) {
+export function normalizeCoraApprovedModelCatalog(entries = []) {
   if (!Array.isArray(entries) || entries.length > 32) throw new Error('approved model catalog is invalid');
   return Object.freeze(entries.map((entry) => {
     rejectPhysicalAuthority(entry, 'approved model catalog entry');
@@ -122,6 +123,7 @@ export function buildCoraOrganizationConfig({
   userPreferences = {},
   approvedModelCatalog = [],
   knowledgePacks = [],
+  routingPolicy = null,
   requestedOrganizationId,
 } = {}) {
   rejectPhysicalAuthority(verifiedMembership, 'verified membership');
@@ -136,7 +138,8 @@ export function buildCoraOrganizationConfig({
   if (!ROLES.has(role)) throw new Error('Organization role is unsupported');
   const published = normalizePublishedDefaults(publishedDefaults);
   const prefs = normalizeUserPreferences(userPreferences);
-  const catalog = normalizeCatalog(approvedModelCatalog);
+  const catalog = normalizeCoraApprovedModelCatalog(approvedModelCatalog);
+  const normalizedRoutingPolicy = normalizeCoraRoutingPolicy(routingPolicy, catalog);
   const packs = normalizeKnowledgePacks(knowledgePacks);
   return Object.freeze({
     format: CORA_ORGANIZATION_CONFIG_FORMAT,
@@ -146,6 +149,7 @@ export function buildCoraOrganizationConfig({
     userPreferences: prefs,
     effective: effectiveDefaults(published, prefs),
     approvedModelCatalog: catalog,
+    routingPolicy: normalizedRoutingPolicy,
     knowledgePacks: packs,
     runtime: Object.freeze({
       humeVoice: 'process_env_readiness_only',
@@ -194,4 +198,3 @@ export function lookupApprovedKnowledge({ config, query, snippets = [] } = {}) {
 }
 
 export { evaluateCoraActionPolicy };
-

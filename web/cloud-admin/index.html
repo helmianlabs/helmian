@@ -123,9 +123,11 @@
           <p class="preview">These controls affect only your signed-in user. Organization policy, approved catalogs, provider keys, and voice readiness remain admin/server controlled.</p>
           <div id="cora-admin-controls" class="config-controls" hidden>
             <input id="cora-draft-reason" aria-label="Cora draft reason" maxlength="2000" placeholder="Reason for a reviewed Cora draft">
+            <textarea id="cora-routing-policy" aria-label="Cora routing policy JSON" maxlength="12000" placeholder="Optional routing-policy JSON; references only approved catalog IDs"></textarea>
             <button id="cora-create-draft" type="button">Create reviewed draft</button>
             <button id="cora-transition" class="secondary" type="button" hidden></button>
           </div>
+          <p class="preview">Routing policy is Organization-published metadata only. It may select among approved catalog IDs for the four supported task classes; it never stores keys or invokes a provider.</p>
         </section>
         <section id="section-usage" class="card" aria-labelledby="cora-usage-heading">
           <h2 id="cora-usage-heading">Internal provider usage ledger</h2>

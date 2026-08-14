@@ -1,4 +1,6 @@
 import { requireActiveTenantMembership, TenantAuthorizationError, withTenantTransaction } from '../core/tenant-context.mjs';
+import { normalizeCoraRoutingPolicy } from './routing-policy.mjs';
+import { normalizeCoraApprovedModelCatalog } from './organization-config.mjs';
 
 const ADMIN_ROLES = new Set(['owner', 'admin']);
 const LIFECYCLES = new Set(['draft', 'testing', 'approved', 'published', 'rolled_back']);
@@ -116,6 +118,11 @@ export function createCoraOrganizationConfigRepository(pool) {
       requireAdmin(actor);
       const body = object(input, 'Cora config draft');
       const config = object(body.config, 'Cora config');
+      if (config.approvedModelCatalog !== undefined) config.approvedModelCatalog = normalizeCoraApprovedModelCatalog(config.approvedModelCatalog);
+      if (config.routingPolicy !== undefined) {
+        const normalizedRoutingPolicy = normalizeCoraRoutingPolicy(config.routingPolicy, config.approvedModelCatalog ?? []);
+        config.routingPolicy = normalizedRoutingPolicy;
+      }
       const reason = text(body.reason, 'Cora config reason', 2000);
       const provenance = object(body.provenance ?? {}, 'Cora config provenance');
       const context = actorContext(actor);
