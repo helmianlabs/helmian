@@ -5,7 +5,43 @@ const DECISIONS = new Set(['AUTO_RUN', 'ALLOW', 'PAUSE_FOR_OWNER', 'BLOCK', 'DEN
 const MAX_FILTER = 120;
 const EXPORT_MAX_ROWS = 100;
 const EXPORT_MAX_DAYS = 31;
+const SESSION_MAX_ROWS = 100;
+const SESSION_ACTIONS = Object.freeze({ started: 'cora.session.started', ended: 'cora.session.ended', failed: 'cora.session.failed' });
+const SHA256 = /^[a-f0-9]{64}$/u;
 export const AUDIT_EXPORT_COLUMNS = Object.freeze(['id', 'created_at', 'action_type', 'decision', 'actor_subject', 'actor_role', 'privacy_summary']);
+
+function sessionText(value, field, max = 256, optional = false) {
+  if (optional && (value == null || value === '')) return null;
+  const result = String(value ?? '').trim();
+  if (!result || result.length > max || /[\u0000-\u001f\u007f]/u.test(result)) throw Object.assign(new Error(`${field} is invalid`), { status: 400 });
+  return result;
+}
+
+function sessionReceipt(input = {}) {
+  const phase = sessionText(input.phase, 'session phase');
+  if (!Object.hasOwn(SESSION_ACTIONS, phase)) throw Object.assign(new Error('session phase is invalid'), { status: 400 });
+  const hashes = ['configHash', 'toolManifestHash', 'routingPolicyHash'].map((field) => sessionText(input.sessionConfig?.[field], field, 64, true));
+  for (const value of hashes) if (value !== null && !SHA256.test(value)) throw Object.assign(new Error('session config hash is invalid'), { status: 400 });
+  const evidence = input.providerEvidence?.verified === true ? input.providerEvidence : null;
+  const numberOrNull = (value) => value == null ? null : Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
+  const configVersion = input.sessionConfig?.configVersion == null ? null : Number(input.sessionConfig.configVersion);
+  if (configVersion !== null && (!Number.isInteger(configVersion) || configVersion < 1)) throw Object.assign(new Error('session config version is invalid'), { status: 400 });
+  return Object.freeze({
+    phase,
+    actionType: SESSION_ACTIONS[phase],
+    sessionId: sessionText(input.bridgeContext?.sessionId, 'session id'),
+    receiptId: sessionText(input.bridgeContext?.receiptId, 'session receipt'),
+    configId: sessionText(input.sessionConfig?.configId, 'config id', 128, true),
+    configVersion,
+    configHash: hashes[0], toolManifestHash: hashes[1], routingPolicyHash: hashes[2],
+    startedAt: sessionText(input.startedAt, 'started time', 64, true),
+    endedAt: sessionText(input.endedAt, 'ended time', 64, true),
+    failureReason: sessionText(input.failureReason, 'failure reason', 240, true),
+    providerRequestRef: sessionText(evidence?.providerRequestRef, 'provider request reference', 512, true),
+    actualTokens: numberOrNull(evidence?.actualTokens), audioSeconds: numberOrNull(evidence?.audioSeconds), imageUnits: numberOrNull(evidence?.imageUnits), videoSeconds: numberOrNull(evidence?.videoSeconds), actualCostMinor: numberOrNull(evidence?.actualCostMinor),
+    providerEvidence: evidence !== null,
+  });
+}
 
 function text(value, field) {
   const result = String(value ?? '').trim();
@@ -135,6 +171,37 @@ export function createAuditEventRepository(pool) {
             JSON.stringify({ rows: rows.length, hasMore, columns: AUDIT_EXPORT_COLUMNS, redacted: true })],
         );
         return { csv: csv(rows), empty: rows.length === 0, hasMore, rowCount: rows.length, receiptId: receipt.rows[0]?.id == null ? null : String(receipt.rows[0].id), columns: AUDIT_EXPORT_COLUMNS, source: 'helmion.audit_events', mutation: 'export_receipt_only' };
+      });
+    },
+    async appendSessionLifecycle(actor, input = {}) {
+      const receipt = sessionReceipt(input);
+      const context = { tenantId: actor?.tenantId, actorSubject: actor?.subject, actorRole: actor?.role, sessionId: actor?.sessionId ?? randomUUID(), requestId: `cora-session-${receipt.receiptId}-${receipt.phase}` };
+      return withTenantTransaction(pool, context, async (client, scoped) => {
+        await requireActiveTenantMembership(client, scoped);
+        const existing = await client.query('select id from helmion.audit_events where tenant_id=$1 and request_id=$2 and action_type=$3 limit 1', [scoped.tenantId, scoped.requestId, receipt.actionType]);
+        if (existing.rowCount === 1) return { durable: true, replayed: true, receiptId: String(existing.rows[0].id), phase: receipt.phase, usageEvidence: receipt.providerEvidence };
+        const result = await client.query(
+          `insert into helmion.audit_events
+             (tenant_id, actor_subject, actor_role, session_id, request_id, action_type,
+              canonical_target, policy_version, decision, privacy_summary, result)
+           values ($1,$2,$3,$4,$5,$6,$7::jsonb,'cora-session-lifecycle.v1','ALLOW',$8,$9::jsonb)
+           returning id`,
+          [scoped.tenantId, scoped.actorSubject, scoped.actorRole, scoped.sessionId, scoped.requestId, receipt.actionType,
+            JSON.stringify({ resource: 'cora_session', phase: receipt.phase, sessionId: receipt.sessionId, receiptId: receipt.receiptId, configId: receipt.configId, configVersion: receipt.configVersion }),
+            receipt.failureReason ? `Cora signed session ${receipt.phase}: ${receipt.failureReason}` : `Cora signed session ${receipt.phase}; provider usage is actual-evidence-only`,
+            JSON.stringify({ configHash: receipt.configHash, toolManifestHash: receipt.toolManifestHash, routingPolicyHash: receipt.routingPolicyHash, startedAt: receipt.startedAt, endedAt: receipt.endedAt, failureReason: receipt.failureReason, providerRequestRef: receipt.providerRequestRef, actualTokens: receipt.actualTokens, audioSeconds: receipt.audioSeconds, imageUnits: receipt.imageUnits, videoSeconds: receipt.videoSeconds, actualCostMinor: receipt.actualCostMinor, providerEvidence: receipt.providerEvidence })],
+        );
+        return { durable: true, replayed: false, receiptId: String(result.rows[0].id), phase: receipt.phase, usageEvidence: receipt.providerEvidence };
+      });
+    },
+    async listSessionHistory(actor, input = {}) {
+      const limit = Number(input.limit ?? 50);
+      if (!Number.isInteger(limit) || limit < 1 || limit > SESSION_MAX_ROWS) throw Object.assign(new Error('session history limit is invalid'), { status: 400 });
+      const context = { tenantId: actor?.tenantId, actorSubject: actor?.subject, actorRole: actor?.role, sessionId: randomUUID(), requestId: randomUUID() };
+      return withTenantTransaction(pool, context, async (client, scoped) => {
+        await requireActiveTenantMembership(client, scoped);
+        const result = await client.query(`select id, actor_subject, actor_role, action_type, canonical_target, result, created_at from helmion.audit_events where tenant_id=$1 and action_type in ('cora.session.started','cora.session.ended','cora.session.failed') order by created_at desc, id desc limit $2`, [scoped.tenantId, limit]);
+        return { sessions: result.rows.map((row) => ({ id: String(row.id), phase: String(row.canonical_target?.phase ?? row.action_type.split('.').at(-1)), sessionId: String(row.canonical_target?.sessionId ?? ''), receiptId: String(row.canonical_target?.receiptId ?? ''), configId: row.canonical_target?.configId ?? null, configVersion: row.canonical_target?.configVersion ?? null, actor: String(row.actor_subject), actorRole: String(row.actor_role), configHash: row.result?.configHash ?? null, toolManifestHash: row.result?.toolManifestHash ?? null, routingPolicyHash: row.result?.routingPolicyHash ?? null, startedAt: row.result?.startedAt ?? null, endedAt: row.result?.endedAt ?? null, failureReason: row.result?.failureReason ?? null, providerEvidence: row.result?.providerEvidence === true, actualTokens: row.result?.actualTokens ?? null, audioSeconds: row.result?.audioSeconds ?? null, actualCostMinor: row.result?.actualCostMinor ?? null, createdAt: row.created_at })), empty: result.rows.length === 0, source: 'helmion.audit_events', mutation: 'not_performed' };
       });
     },
   });

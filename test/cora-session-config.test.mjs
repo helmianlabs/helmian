@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { startCoraClm } from '../src/cora/clm-server.mjs';
 import { resolvePublishedCoraSessionConfig } from '../src/cora/session-config-resolver.mjs';
+import { recordCoraSessionLifecycle } from '../src/cora/session-lifecycle.mjs';
 
 const signedContext = { verified: true, tenantId: 'org-a', subjectId: 'user-a', role: 'member', sessionId: 'session-a', receiptId: 'receipt-a' };
 const config = { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise', voiceProfiles: ['cora-professional'], routingPolicy: { format: 'cora.routing-policy.v1', version: 4, entries: [] } };
@@ -35,4 +36,10 @@ test('CLM health reports Organization session config resolution separately from 
   assert.equal(response.status, 200);
   assert.equal(body.hume.configured, false);
   assert.equal(body.hume.sessionConfigResolution, 'organization_published_at_session_time');
+});
+
+test('session lifecycle adapter maps signed job role to server membership and preserves unknown usage as null', async () => {
+  const calls = [];
+  const result = await recordCoraSessionLifecycle({ append: async (actor, input) => { calls.push({ actor, input }); return { durable: true, replayed: false, receiptId: 'audit-1' }; }, bridgeContext: { tenantId: 'org-a', subjectId: 'driver-1', role: 'driver', sessionId: 'session-a', receiptId: 'receipt-a' }, sessionConfig: { configId: 'config-4', configVersion: 4, configHash: 'a'.repeat(64), toolManifestHash: 'b'.repeat(64), routingPolicyHash: 'c'.repeat(64) }, phase: 'started' });
+  assert.equal(result.recorded, true); assert.equal(calls[0].actor.role, 'member'); assert.equal(calls[0].input.providerEvidence, null); assert.equal(calls[0].input.sessionConfig.configVersion, 4);
 });

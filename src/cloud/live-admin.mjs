@@ -94,6 +94,7 @@ export const LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH = '/api/admin/organization
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/membership-role-plan';
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
+export const LIVE_ADMIN_CORA_SESSIONS_PATH = '/api/admin/cora/sessions';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -828,6 +829,14 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CAPABILITY_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_CAPABILITY_SELECTOR_INVALID' : 'CORA_CAPABILITY_UNAVAILABLE' })); }
       return true;
     }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_SESSIONS_PATH) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'provider', 'model', 'usage', 'actual_tokens', 'cost'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('session history selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        send(response, 200, JSON.stringify({ valid: true, ...await auditEvents.listSessionHistory(actor, { limit: requestUrl.searchParams.get('limit') }) }));
+      } catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_SESSION_HISTORY_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_SESSION_HISTORY_SELECTOR_INVALID' : 'CORA_SESSION_HISTORY_UNAVAILABLE' })); }
+      return true;
+    }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['idempotencyKey', 'jobTitle', 'reason', 'subject']); send(response, 200, JSON.stringify({ valid: true, ...await organizationRoles.prepareRolePlan(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 409 ? 409 : error?.status === 404 ? 404 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ROLE_ADMIN_REQUIRED' : error?.status === 409 ? 'ORGANIZATION_SELF_LOCKOUT' : error?.status === 404 ? 'ORGANIZATION_MEMBER_NOT_FOUND' : 'ORGANIZATION_ROLE_PLAN_INVALID' })); }
@@ -1005,6 +1014,8 @@ export async function createLiveHelmianCloudAdminHandler({
     savePersonalPreferences: (actor, input) => personalPreferences.save(actor, input),
     resolveOrganizationDatabase: (actor) => organizationDatabase.resolve(actor),
     resolvePublishedCoraSessionConfig: (signedContext) => resolvePublishedCoraSessionConfig({ repository: coraConfig, signedContext }),
+    appendCoraSessionLifecycle: (actor, input) => auditEvents.appendSessionLifecycle(actor, input),
+    listCoraSessionHistory: (actor, input) => auditEvents.listSessionHistory(actor, input),
     claimAgentTask: (workerActor, input) => agentTasks.claimPrepared(workerActor, input),
     close: () => ownsPool ? pool.end() : Promise.resolve(),
   });

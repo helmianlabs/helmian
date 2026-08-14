@@ -25,6 +25,7 @@ import {
   LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH,
   LIVE_ADMIN_ORGANIZATION_READINESS_PATH,
   LIVE_ADMIN_CORA_CAPABILITIES_PATH,
+  LIVE_ADMIN_CORA_SESSIONS_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -258,6 +259,15 @@ test('Audit export exposes an honest no-records state without a fake download', 
   const app = await fixture({ membershipRoles: { 'customer-a': 'member' }, auditEventRepository }); t.after(app.close);
   const response = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_EXPORT_PATH}?from=2026-08-01&to=2026-08-15`, { headers: { cookie: 'helmion_admin_session=active-session' } });
   assert.equal(response.status, 200); assert.equal(response.headers.get('x-helmian-audit-export-empty'), 'true'); assert.match(await response.text(), /^id,created_at/mu);
+});
+
+test('signed Cora session history is Organization-scoped, bounded, and read-only', async (t) => {
+  const calls = [];
+  const auditEventRepository = { async list() { return { events: [] }; }, async listSessionHistory(actor, query) { calls.push({ actor, query }); return { sessions: [{ id: '9', phase: 'started', sessionId: 'session-a', receiptId: 'receipt-a', configVersion: 4, configHash: 'a'.repeat(64), toolManifestHash: 'b'.repeat(64), routingPolicyHash: 'c'.repeat(64), providerEvidence: false, actualTokens: null, actualCostMinor: null }], empty: false, source: 'helmion.audit_events', mutation: 'not_performed' }; } };
+  const app = await fixture({ membershipRoles: { 'customer-a': 'member' }, auditEventRepository }); t.after(app.close);
+  const response = await fetch(`${app.url}${LIVE_ADMIN_CORA_SESSIONS_PATH}?limit=25`, { headers: { cookie: 'helmion_admin_session=active-session' } });
+  const body = await response.json(); assert.equal(response.status, 200); assert.equal(body.sessions[0].providerEvidence, false); assert.equal(body.sessions[0].actualCostMinor, null); assert.equal(calls[0].actor.tenantId, 'customer-a'); assert.equal(calls[0].query.limit, '25');
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_SESSIONS_PATH}?plant_id=west`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400); assert.equal(calls.length, 1);
 });
 
 test('Artifact Studio routes are Organization-scoped and expose only source-only receipts', async (t) => {

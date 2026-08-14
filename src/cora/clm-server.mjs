@@ -356,6 +356,7 @@ export async function startCoraClm({
   logger = () => {},
   providerSessionUsageSink = null,
   publishedConfigResolver = null,
+  sessionLifecycleSink = null,
 } = {}) {
   const { requiresToken } = resolveAccess({ host, token });
   if (requireSignedSessions && Buffer.byteLength(String(bridgeSecret ?? ''), 'utf8') < 32) {
@@ -451,6 +452,7 @@ export async function startCoraClm({
       try {
         sessionConfig = await publishedConfigResolver({ ...bridgeContext, verified: true });
       } catch (error) {
+        await Promise.resolve(sessionLifecycleSink?.({ phase: 'failed', bridgeContext, sessionConfig: null, failureReason: error?.code ?? 'published_config_unavailable' })).catch(() => {});
         return { session: null, refused: error?.code ?? 'published Organization Cora config is unavailable', bridgeContext: null };
       }
     }
@@ -507,6 +509,14 @@ export async function startCoraClm({
         lastSeen: Date.now(),
         turns: 0,
       };
+      if (bridgeContext && requireSignedSessions && typeof sessionLifecycleSink === 'function') {
+        try {
+          const lifecycle = await sessionLifecycleSink({ phase: 'started', bridgeContext, sessionConfig });
+          if (lifecycle?.recorded === false) return { session: null, refused: 'session lifecycle receipt was not recorded', bridgeContext: null };
+        } catch (error) {
+          return { session: null, refused: 'session lifecycle receipt was not recorded', bridgeContext: null };
+        }
+      }
       sessions.set(key, session);
       if (bridgeContext) {
         const result = authorizationActivitySink?.(workspace, bridgeContext);
@@ -562,6 +572,7 @@ export async function startCoraClm({
       cancelSession(session, reason);
       sessions.delete(key);
       discarded += 1;
+      if (session.bridgeContext && requireSignedSessions && typeof sessionLifecycleSink === 'function') void Promise.resolve(sessionLifecycleSink({ phase: 'ended', bridgeContext: session.bridgeContext, sessionConfig: session.sessionConfig, failureReason: null })).catch(() => {});
       void Promise.resolve(session.queue)
         .then(() => session.state?.runtime?.dispose?.())
         .catch(() => {});
