@@ -13,6 +13,7 @@ const policyStatus = document.querySelector('#policy-status');
 const scope = document.querySelector('#scope');
 const guardEvents = document.querySelector('#guard-events');
 const guardCheckAgain = document.querySelector('#guard-check-again');
+const previewTab = document.querySelector('#preview-tab');
 const auditStatus = document.querySelector('#audit-status');
 const auditFilters = document.querySelector('#audit-filters');
 const auditAction = document.querySelector('#audit-action');
@@ -916,6 +917,7 @@ guardCheckAgain.onclick = async () => {
     guardCheckAgain.disabled = false;
   }
 };
+previewTab.onclick = () => document.querySelector('#section-prepare')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
 coraCreateDraft.onclick = async () => {
   const reason = coraDraftReason.value.trim();

@@ -24,6 +24,9 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(page, /Governance monitor · unavailable/iu);
   assert.match(page, /does not claim production readiness/iu);
   assert.match(page, /id="guard-check-again"/u);
+  assert.match(page, /id="preview-tab"[^>]*>Preview · intents/u);
+  assert.doesNotMatch(page, /id="preview-tab"[^>]*disabled/u);
+  assert.match(script, /section-prepare.*scrollIntoView/iu);
   assert.match(script, /Read-only readiness rechecked/iu);
   assert.match(script, /loadOrganizationReadiness()/u);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);
@@ -33,7 +36,7 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.doesNotMatch(page, /plant selector|facility selector|choose a plant|choose a facility/iu);
   assert.match(page, /No audited status/u);
   assert.match(page, /no agent execution is implied/u);
-  assert.match(page, /Preview · not executed/u);
+  assert.match(page, /Preview intent prepared; no agent, provider, filesystem, build, or external execution occurred/iu);
   assert.match(page, /External execution and browser automation are unavailable/u);
   assert.match(page, /stored excerpts with citations only/u);
   assert.match(script, /Use citation in preparation/u);

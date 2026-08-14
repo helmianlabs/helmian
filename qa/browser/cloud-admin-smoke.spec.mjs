@@ -46,6 +46,13 @@ test.describe('Helmian Cloud authenticated fixture smoke', () => {
     await expect(page.getByText('Read-only readiness rechecked. No action, agent, provider, or external write was performed.')).toBeVisible();
   });
 
+  test('Preview tab opens persisted preparation intents without execution claims', async ({ page }) => {
+    await page.goto('/admin/?envoy=empty');
+    await page.getByRole('button', { name: 'Preview · intents' }).click();
+    await expect(page.getByRole('heading', { name: 'Workspace preview intents' })).toBeVisible();
+    await expect(page.getByText('Preview intent prepared; no agent, provider, filesystem, build, or external execution occurred.')).toBeVisible();
+  });
+
   test.fixme('visual baselines are not generated in this source-only pass', async ({ page }) => {
     await page.goto('/admin/');
     await expect(page).toHaveScreenshot('cloud-admin-member.png', { animations: 'disabled' });
