@@ -21,7 +21,7 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', 'http://fixture.local');
   if (url.pathname === '/admin/' && request.method === 'GET') {
     const role = url.searchParams.get('role') === 'admin' ? 'admin' : 'member';
-    const state = ['empty', 'reconnecting', 'revoked', 'pollingFallback'].includes(url.searchParams.get('envoy')) ? url.searchParams.get('envoy') : 'connected';
+    const state = ['empty', 'unavailable', 'reconnecting', 'revoked', 'pollingFallback'].includes(url.searchParams.get('envoy')) ? url.searchParams.get('envoy') : 'connected';
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'set-cookie': [`ui_fixture_role=${role}; Path=/`, `ui_fixture_envoy=${state}; Path=/`] });
     response.end(await readFile(join(root, 'index.html')));
     return;
@@ -35,6 +35,7 @@ const server = createServer(async (request, response) => {
     const role = cookie(request, 'ui_fixture_role') === 'admin' ? 'admin' : 'member';
     const state = cookie(request, 'ui_fixture_envoy') || 'connected';
     if (url.pathname === '/api/admin/session') return json(response, { authenticated: true, actor: { subject: `fixture-${role}`, tenantId: 'fixture-organization', role } });
+    if (url.pathname === '/api/admin/envoy/channels' && state === 'unavailable') return json(response, { valid: false, code: 'ENVOY_DATABASE_READ_FAILED' }, 503);
     if (url.pathname === '/api/admin/envoy/channels') return json(response, { channels: state === 'empty' ? [] : [{ id: 'fixture-channel', title: 'Operations', slug: 'operations', kind: 'team' }] });
     if (url.pathname === '/api/admin/envoy/messages') return json(response, { messages: [], nextCursor: null });
     if (url.pathname === '/api/admin/envoy/stream') {

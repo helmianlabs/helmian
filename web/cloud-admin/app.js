@@ -433,7 +433,16 @@ function renderMessageList() {
 }
 
 async function loadEnvoyChannels() {
-  const body = await envoy.listChannels();
+  let body;
+  try { body = await envoy.listChannels(); }
+  catch (error) {
+    envoyChannel.replaceChildren(new Option('Envoy unavailable', ''));
+    workspaceDefaultChannel.replaceChildren(new Option('No default channel', ''));
+    envoyChannel.disabled = true; composerInput.disabled = true; composerSend.disabled = true;
+    renderMessages({ messages: [] });
+    composerStatus.textContent = error.status === 403 ? 'Envoy unavailable: active Organization membership is required.' : 'Envoy unavailable: the authenticated chat store is not ready.';
+    return;
+  }
   envoyChannel.replaceChildren();
   workspaceDefaultChannel.replaceChildren(new Option('No default channel', ''));
   for (const channel of body.channels ?? []) {

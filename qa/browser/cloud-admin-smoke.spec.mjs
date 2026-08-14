@@ -17,6 +17,13 @@ test.describe('Helmian Cloud authenticated fixture smoke', () => {
     await expect(page.getByText('No audited status')).toHaveCount(6);
   });
 
+  test('member keeps the authenticated shell when Envoy storage is unavailable', async ({ page }) => {
+    await page.goto('/admin/?envoy=unavailable');
+    await expect(page.locator('#signed-in')).toBeVisible();
+    await expect(page.getByText('Envoy unavailable: the authenticated chat store is not ready.')).toBeVisible();
+    await expect(page.getByText('Cora prepare desk')).toBeVisible();
+  });
+
   test('member can prepare a bounded Cora request and sees a not-executed receipt', async ({ page }) => {
     await page.goto('/admin/?envoy=empty');
     await page.getByLabel('Cora preparation goal').fill('Prepare an internal orientation outline');
