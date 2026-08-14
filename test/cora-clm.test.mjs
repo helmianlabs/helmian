@@ -600,6 +600,7 @@ test('SIGNED AIMFORGE SESSION enables tools, binds its receipt, and audits autho
     port: 0,
     bridgeSecret: BRIDGE_SECRET,
     requireSignedSessions: true,
+    publishedConfigResolver: async (context) => ({ format: 'cora.published-session-config.v1', tenantId: context.tenantId, configVersion: 4, voiceProfile: 'cora-professional', professionalBehavior: { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' }, toolManifestHash: 'a'.repeat(64), routingPolicyHash: 'b'.repeat(64), configHash: 'c'.repeat(64), providerInvocation: 'not_performed', humeMutation: 'not_performed' }),
     activitySink: () => ({ logged: true }),
     authorizationActivitySink: (_workspace, context) => {
       authorizations.push(context);
@@ -888,6 +889,7 @@ test('health identifies the separately configured Hume CLM without exposing its 
       customLanguageModel: true,
       requiredSessionPrefix: 'helmion:',
       signedSessionsRequired: false,
+      sessionConfigResolution: 'unavailable',
     });
     assert.equal(JSON.stringify(body).includes('token'), false);
   } finally {

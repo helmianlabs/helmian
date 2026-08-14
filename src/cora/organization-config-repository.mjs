@@ -98,10 +98,10 @@ export function createCoraOrganizationConfigRepository(pool) {
           `select id, tenant_id, config_version, lifecycle, config, reason, provenance, is_current,
                   created_by_subject, created_at, approved_by_subject, approved_at,
                   published_by_subject, published_at, rollback_by_subject, rollback_at, rollback_reason
-           from helmion.cora_configs where tenant_id=$1 and lifecycle='published' and is_current limit 1`,
+           from helmion.cora_configs where tenant_id=$1 and lifecycle='published' and is_current limit 2`,
           [context.tenantId],
         );
-        return { status: result.rowCount === 1 ? 'published' : 'not_published', config: result.rowCount === 1 ? configRow(result.rows[0]) : null };
+        return { status: result.rowCount === 1 ? 'published' : result.rowCount > 1 ? 'ambiguous' : 'not_published', config: result.rowCount === 1 ? configRow(result.rows[0]) : null };
       });
     },
     async listKnowledgeSources(actor) {

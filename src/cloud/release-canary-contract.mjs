@@ -122,6 +122,9 @@ export function validateReleaseManifest(manifest = {}, expected = {}) {
     const toolHash = clean(manifest.cora?.sessionToolManifestHash, 'cora.sessionToolManifestHash');
     if (!SHA256.test(toolHash) || toolHash !== clean(expected.cora?.sessionToolManifestHash, 'expected Cora tool manifest hash')) throw new Error('Cora session tool manifest hash mismatch');
   });
+  check('Cora Organization session config resolution', () => {
+    if (manifest.cora?.sessionConfigResolution !== expected.cora?.sessionConfigResolution) throw new Error('Cora Organization session config resolution mismatch');
+  });
   check('test fixture version', () => {
     if (clean(manifest.tests?.fixtureVersion, 'tests.fixtureVersion') !== clean(expected.tests?.fixtureVersion, 'expected test fixture version')) throw new Error('test fixture version mismatch');
   });
