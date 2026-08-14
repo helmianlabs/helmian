@@ -88,6 +88,7 @@
         <button class="nav-item" type="button" data-target="section-artifact">Artifact Studio</button>
         <button class="nav-item" type="button" data-target="section-governance">Governance</button>
         <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
+        <button class="nav-item" type="button" data-target="section-readiness">Readiness</button>
         <button class="nav-item" type="button" data-target="section-people">People & permissions</button>
         <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
       </nav>
@@ -239,6 +240,12 @@
           <div id="audit-events" aria-live="polite"></div>
           <button id="audit-next" class="secondary" type="button" hidden>Load older events</button>
           <p class="preview">Read-only durable audit records from this Organization. No synthetic KPI, export, email, mutation, provider call, or Plant/facility authority is used.</p>
+        </section>
+        <section id="section-readiness" class="card" aria-labelledby="readiness-heading">
+          <h2 id="readiness-heading">Organization onboarding readiness</h2>
+          <p id="readiness-status" class="note" role="status" aria-live="polite">Loading verifiable source states…</p>
+          <div id="readiness-cards" class="config-grid"></div>
+          <p class="preview">This is an Organization-scoped source status view, not a global production-ready claim. Registered connectors are not connected, unavailable sources remain unknown, and no provider, OAuth, export, email, or mutation is performed.</p>
         </section>
         <section id="section-people" class="card" aria-labelledby="people-heading">
           <h2 id="people-heading">People & permissions</h2>

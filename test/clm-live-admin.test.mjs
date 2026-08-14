@@ -22,6 +22,7 @@ import {
   LIVE_ADMIN_EVENTS_PATH,
   LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH,
   LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH,
+  LIVE_ADMIN_ORGANIZATION_READINESS_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -148,6 +149,9 @@ async function fixture(options = {}) {
     connectorResolveChannel: options.connectorResolveChannel ?? undefined,
     auditEventRepository: options.auditEventRepository ?? undefined,
     organizationRoleRepository: options.organizationRoleRepository ?? undefined,
+    coraConfigRepository: options.coraConfigRepository ?? undefined,
+    providerUsageRepository: options.providerUsageRepository ?? undefined,
+    workspaceLayoutRepository: options.workspaceLayoutRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -162,6 +166,23 @@ async function fixture(options = {}) {
     close: async () => { await clm.close(); await admin.close(); },
   };
 }
+
+test('Organization readiness reports verifiable source states and preserves member/admin detail boundaries', async (t) => {
+  const base = {
+    async readPublishedConfig() { return { status: 'not_published', config: null }; },
+    async listKnowledgeSources() { return { sources: [] }; },
+  };
+  const providerUsageRepository = { async readSummary() { return { budget: null, totals: { eventCount: 0, reconciledCostMinor: null } }; } };
+  const connectors = { async list() { return { registrations: [{ provider: 'slack', lifecycle: 'testing', enabled: false, publicEndpointReady: false, secretReferenceName: 'hidden' }] }; } };
+  const workspaceLayoutRepository = { async readRoleDefaults() { return { roleDefaults: [{ role: 'admin', layout: {} }] }; } };
+  const auditEventRepository = { async list(actor, query) { return { events: query.action ? [] : [{ id: '1' }] }; } };
+  const organizationRoleRepository = { async list(actor) { return { memberships: [{ subject: actor.subject, serverRole: actor.role, active: true }], roles: [], pending: [] }; } };
+  const memberApp = await fixture({ membershipRoles: { 'customer-a': 'member' }, organizationRoleRepository, coraConfigRepository: base, providerUsageRepository, connectorRegistrationRepository: connectors, workspaceLayoutRepository, auditEventRepository }); t.after(memberApp.close);
+  const member = await fetch(`${memberApp.url}${LIVE_ADMIN_ORGANIZATION_READINESS_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const memberBody = await member.json(); assert.equal(member.status, 200); assert.equal(memberBody.readiness.coraConfig.state, 'unpublished'); assert.equal(memberBody.readiness.knowledge.state, 'none_approved'); assert.equal(memberBody.readiness.connectors.state, 'registered_not_connected'); assert.equal(memberBody.readiness.connectors.registrations[0].secretReferenceName, undefined); assert.equal(memberBody.readiness.workspace.state, 'not_permitted');
+  const adminApp = await fixture({ organizationRoleRepository, coraConfigRepository: { ...base, async readPublishedConfig() { return { status: 'published', config: { configVersion: 4 } }; } }, providerUsageRepository, connectorRegistrationRepository: connectors, workspaceLayoutRepository, auditEventRepository }); t.after(adminApp.close);
+  const admin = await fetch(`${adminApp.url}${LIVE_ADMIN_ORGANIZATION_READINESS_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const adminBody = await admin.json(); assert.equal(admin.status, 200); assert.equal(adminBody.readiness.coraConfig.state, 'published'); assert.equal(adminBody.readiness.coraConfig.version, 4); assert.equal(adminBody.readiness.workspace.state, 'available');
+  const injected = await fetch(`${adminApp.url}${LIVE_ADMIN_ORGANIZATION_READINESS_PATH}?plant_id=west`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
+});
 
 test('Organization role administration exposes fixed capabilities and only prepares external membership changes', async (t) => {
   const calls = [];
