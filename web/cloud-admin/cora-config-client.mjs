@@ -110,6 +110,11 @@ export function agentTaskPanelModel(body = {}) {
   return Object.freeze({ empty: receipts.length === 0, receipts, execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', statusLabel: body.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : 'Task intent recorded. No worker execution occurred.' });
 }
 
+export function coraPreparationPanelModel(body = {}) {
+  const receipt = body.receipt && typeof body.receipt === 'object' ? body.receipt : body;
+  return Object.freeze({ status: body.replayed === true ? 'replayed' : receipt.receiptId ? 'prepared' : 'unavailable', receipt, receiptId: receipt.receiptId ?? null, taskStatus: receipt.status ?? 'prepared', execution: receipt.execution ?? 'not_performed', agentInvocation: receipt.agentInvocation ?? 'not_performed', providerInvocation: receipt.providerInvocation ?? 'not_performed' });
+}
+
 export function artifactStudioPanelModel(body = {}) {
   const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
   return Object.freeze({

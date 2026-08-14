@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraPreparationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
 
 function fakeFetch() {
   const calls = [];
@@ -104,6 +104,13 @@ test('agent task panel model reports empty, replay, and not-performed states', (
   assert.equal(agentTaskPanelModel({ receipts: [] }).empty, true);
   const model = agentTaskPanelModel({ replayed: true, receipts: [{ taskType: 'workspace_preview', status: 'prepared', goal: 'SOP', receiptId: 'r1' }] });
   assert.equal(model.empty, false); assert.match(model.statusLabel, /replay receipt/); assert.equal(model.execution, 'not_performed'); assert.equal(model.agentInvocation, 'not_performed');
+});
+
+test('Cora preparation model distinguishes prepared, replay, and unavailable receipts', () => {
+  const prepared = coraPreparationPanelModel({ receipt: { receiptId: 'r1', status: 'prepared', execution: 'not_performed' } });
+  assert.equal(prepared.status, 'prepared'); assert.equal(prepared.execution, 'not_performed');
+  assert.equal(coraPreparationPanelModel({ replayed: true, receipt: { receiptId: 'r1' } }).status, 'replayed');
+  assert.equal(coraPreparationPanelModel({ valid: true }).status, 'unavailable');
 });
 
 test('Artifact Studio panel model keeps source-only receipt states truthful', () => {

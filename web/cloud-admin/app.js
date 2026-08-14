@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraPreparationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -923,9 +923,9 @@ coraPrepareForm.onsubmit = async (event) => {
   coraPrepareReceipt.replaceChildren();
   try {
     const result = await coraClient.createAgentTask({ taskType: 'workspace_preview', intent: 'prepare', goal, contextRef: coraPrepareContext.value.trim() || undefined, idempotencyKey: crypto.randomUUID() });
-    const receipt = result.receipt ?? result;
+    const model = coraPreparationPanelModel(result);
     const card = document.createElement('article'); card.className = 'config-item';
-    card.textContent = `${result.replayed ? 'Replay receipt confirmed' : 'Prepared receipt recorded'} · ${receipt.receiptId ?? 'receipt unavailable'} · status ${receipt.status ?? 'prepared'} · execution not performed`;
+    card.textContent = `${model.status === 'replayed' ? 'Replay receipt confirmed' : model.status === 'prepared' ? 'Prepared receipt recorded' : 'Receipt unavailable'} · ${model.receiptId ?? 'receipt unavailable'} · status ${model.taskStatus} · execution ${model.execution}`;
     coraPrepareReceipt.append(card);
     coraPrepareStatus.textContent = result.replayed ? 'Cora preparation request already exists. Replay receipt confirmed; nothing was executed.' : 'Cora preparation request recorded. Prepared only; nothing was executed.';
     coraPrepareGoal.value = ''; coraPrepareContext.value = '';
