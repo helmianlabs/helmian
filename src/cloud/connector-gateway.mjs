@@ -41,10 +41,11 @@ export async function receiveInboundConnectorEvent({
   if (verification.provider !== provider) throw new Error('connector provider verification mismatch');
   const message = normalizeConnectorMessage({
     provider,
-    eventId: payload?.eventId ?? payload?.event_id,
-    externalUserId: payload?.externalUserId ?? payload?.external_user_id ?? payload?.user_id,
+    eventId: payload?.eventId ?? payload?.event_id ?? payload?.id,
+    externalUserId: payload?.externalUserId ?? payload?.external_user_id ?? payload?.user_id
+      ?? payload?.member?.user?.id ?? payload?.user?.id,
     channelId: payload?.channelId ?? payload?.channel_id,
-    text: payload?.text,
+    text: payload?.text ?? payload?.content ?? payload?.data?.content,
   });
   const binding = await bindConnectorMessage({ message, resolveUser, resolveChannel });
   if (typeof persistReceipt !== 'function') throw new Error('connector receipt sink is required');
@@ -69,4 +70,8 @@ export async function receiveInboundConnectorEvent({
     agentInvocation: 'not_performed',
     outboundDelivery: 'not_performed',
   });
+}
+
+export function receiveDiscordInboundEvent(options = {}) {
+  return receiveInboundConnectorEvent({ ...options, provider: 'discord' });
 }
