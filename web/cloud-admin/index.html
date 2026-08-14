@@ -89,6 +89,7 @@
         <button class="nav-item" type="button" data-target="section-governance">Governance</button>
         <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
         <button class="nav-item" type="button" data-target="section-readiness">Readiness</button>
+        <button class="nav-item" type="button" data-target="section-capabilities">Cora capabilities</button>
         <button class="nav-item" type="button" data-target="section-people">People & permissions</button>
         <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
       </nav>
@@ -246,6 +247,15 @@
           <p id="readiness-status" class="note" role="status" aria-live="polite">Loading verifiable source states…</p>
           <div id="readiness-cards" class="config-grid"></div>
           <p class="preview">This is an Organization-scoped source status view, not a global production-ready claim. Registered connectors are not connected, unavailable sources remain unknown, and no provider, OAuth, export, email, or mutation is performed.</p>
+        </section>
+        <section id="section-capabilities" class="card" aria-labelledby="capabilities-heading">
+          <h2 id="capabilities-heading">Cora capability explorer</h2>
+          <p id="capabilities-status" class="note" role="status" aria-live="polite">Loading registered Cora capabilities…</p>
+          <div id="capabilities-normal" class="config-grid"></div>
+          <div id="capabilities-registered" class="config-grid"></div>
+          <div id="capabilities-high-risk" class="config-grid"></div>
+          <div id="capabilities-routing" class="config-grid"></div>
+          <p class="preview">This view reports the fixed manifest and policy only. Normal in-scope work is low-friction; confirmation/approval-required work is explicit. No new action, provider/model call, agent execution, external write, or Plant/facility authority is available here.</p>
         </section>
         <section id="section-people" class="card" aria-labelledby="people-heading">
           <h2 id="people-heading">People & permissions</h2>

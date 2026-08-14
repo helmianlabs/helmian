@@ -23,6 +23,7 @@ import {
   LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH,
   LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH,
   LIVE_ADMIN_ORGANIZATION_READINESS_PATH,
+  LIVE_ADMIN_CORA_CAPABILITIES_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -166,6 +167,17 @@ async function fixture(options = {}) {
     close: async () => { await clm.close(); await admin.close(); },
   };
 }
+
+test('Cora capability explorer exposes fixed policy classes, hides admin routing detail from members, and never executes', async (t) => {
+  const routingPolicy = { format: 'cora.routing-policy.v1', version: 3, entries: ['voice_conversation', 'cited_knowledge', 'safe_action_preparation', 'artifact_execution_request'].map((taskClass) => ({ taskClass, allowedCatalogIds: ['catalog-1'], defaultCatalogId: 'catalog-1', fallbackCatalogIds: [], budgetTier: taskClass === 'artifact_execution_request' ? 'high' : 'low', latencyTier: 'interactive', userSelectable: false, usageWorkflow: 'cora', usageAction: taskClass, modality: 'text' })) };
+  const catalog = [{ id: 'catalog-1', provider: 'approved', model: 'text', version: '1', status: 'approved', source: 'catalog' }];
+  const coraConfigRepository = { async readPublishedConfig() { return { status: 'published', config: { configVersion: 3, config: { routingPolicy, approvedModelCatalog: catalog } } }; } };
+  const memberApp = await fixture({ membershipRoles: { 'customer-a': 'member' }, coraConfigRepository }); t.after(memberApp.close);
+  const member = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_CAPABILITIES_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const memberBody = await member.json(); assert.equal(member.status, 200); assert.equal(memberBody.explorer.routing.detail, 'admin_configuration_only'); assert.equal(memberBody.explorer.routing.approvedModelCatalog, undefined); assert.equal(memberBody.explorer.currentExecution.providerInvocation, 'not_performed');
+  const adminApp = await fixture({ coraConfigRepository }); t.after(adminApp.close);
+  const admin = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_CAPABILITIES_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const adminBody = await admin.json(); assert.equal(admin.status, 200); assert.equal(adminBody.explorer.routing.version, 3); assert.equal(adminBody.explorer.routing.approvedModelCatalog[0].model, 'text'); assert.equal(adminBody.explorer.capabilities.some((item) => item.classification === 'normal_immediate'), true); assert.equal(adminBody.explorer.capabilities.some((item) => item.classification === 'confirmation_or_approval_required'), true);
+  const injected = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_CAPABILITIES_PATH}?provider=x`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
+});
 
 test('Organization readiness reports verifiable source states and preserves member/admin detail boundaries', async (t) => {
   const base = {
