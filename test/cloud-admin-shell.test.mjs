@@ -30,6 +30,11 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /Organization policy, approved catalogs, provider keys, and voice readiness remain admin\/server controlled/iu);
   assert.match(script, /readPersonalPreferences/u);
   assert.match(script, /savePersonalPreferences/u);
+  assert.match(page, /Workspace settings/iu);
+  assert.match(page, /Reset to role default/iu);
+  assert.match(script, /readWorkspaceLayout/u);
+  assert.match(script, /saveWorkspaceLayout/u);
+  assert.match(script, /resetWorkspaceLayout/u);
   assert.match(page, /Routing policy is Organization-published metadata only/iu);
   assert.match(script, /routingPolicy/u);
   assert.match(script, /No generation occurred/u);

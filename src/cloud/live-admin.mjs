@@ -31,6 +31,7 @@ import { createArtifactSourceRepository } from '../cora/artifact-source-reposito
 import { createArtifactScriptRepository } from '../cora/artifact-script-repository.mjs';
 import { createArtifactExecutionRepository } from '../cora/artifact-execution-repository.mjs';
 import { createCoraPersonalPreferencesRepository } from '../cora/personal-preferences-repository.mjs';
+import { createWorkspaceLayoutRepository } from './workspace-layout-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -67,6 +68,8 @@ export const LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH = '/api/admin/cora/artifact-s
 export const LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH = '/api/admin/cora/artifact-execution-requests';
 export const LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH = '/api/admin/cora/personal-preferences';
 export const LIVE_ADMIN_ORGANIZATION_DATABASE_PATH = '/api/admin/control-plane/organization-database';
+export const LIVE_ADMIN_WORKSPACE_LAYOUT_PATH = '/api/admin/workspace/layout-preferences';
+export const LIVE_ADMIN_WORKSPACE_LAYOUT_RESET_PATH = '/api/admin/workspace/layout-preferences/reset';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -183,6 +186,7 @@ export async function createLiveHelmianCloudAdminHandler({
   artifactExecutionRepository: suppliedArtifactExecutionRepository = null,
   personalPreferencesRepository: suppliedPersonalPreferencesRepository = null,
   organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
+  workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
   logger = () => {},
@@ -208,6 +212,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const artifactExecution = suppliedArtifactExecutionRepository ?? createArtifactExecutionRepository(pool);
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
   const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
+  const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
   const streamIntervalMs = Math.max(250, Number(envoyStreamIntervalMs));
@@ -659,6 +664,21 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_DATABASE_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await organizationDatabase.resolve(actor) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 400 ? 'ORGANIZATION_DATABASE_SELECTOR_INVALID' : error?.status === 403 ? 'ORGANIZATION_DATABASE_MEMBERSHIP_REQUIRED' : 'ORGANIZATION_DATABASE_UNAVAILABLE' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.read(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_LAYOUT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'WORKSPACE_LAYOUT_SELECTOR_INVALID' : 'WORKSPACE_LAYOUT_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['defaultEnvoyChannelId', 'density', 'panelOrder', 'visibleShelves']); send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.save(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_LAYOUT_MEMBERSHIP_REQUIRED' : 'WORKSPACE_LAYOUT_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_RESET_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, []); send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.reset(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_LAYOUT_MEMBERSHIP_REQUIRED' : 'WORKSPACE_LAYOUT_RESET_INVALID' })); }
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIGS_PATH) {

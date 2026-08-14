@@ -18,6 +18,9 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     readUsage() { return requestJson(fetchImpl, '/api/admin/cora/usage'); },
     readPersonalPreferences() { return requestJson(fetchImpl, '/api/admin/cora/personal-preferences'); },
     savePersonalPreferences(preferences) { return requestJson(fetchImpl, '/api/admin/cora/personal-preferences', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(preferences) }); },
+    readWorkspaceLayout() { return requestJson(fetchImpl, '/api/admin/workspace/layout-preferences'); },
+    saveWorkspaceLayout(layout) { return requestJson(fetchImpl, '/api/admin/workspace/layout-preferences', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(layout) }); },
+    resetWorkspaceLayout() { return requestJson(fetchImpl, '/api/admin/workspace/layout-preferences/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); },
     readWorkspacePreviews() { return requestJson(fetchImpl, '/api/admin/cora/workspace/previews'); },
     createWorkspacePreview({ mode, intent, department, templateId, title, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/workspace/previews', {
@@ -143,4 +146,9 @@ export function personalPreferencesModel(body = {}) {
   const preferences = body.preferences?.preferences ?? body.preferences ?? {};
   const bounds = body.bounds ?? {};
   return Object.freeze({ preferences, bounds, statusLabel: body.preferences ? 'Personal Cora preferences loaded for this signed-in user.' : 'Personal Cora preferences are unavailable.' });
+}
+
+export function workspaceLayoutModel(body = {}) {
+  const layout = body.layout ?? {};
+  return Object.freeze({ layout, statusLabel: body.layout ? 'Workspace layout loaded for this signed-in user.' : 'Workspace layout is unavailable.' });
 }
