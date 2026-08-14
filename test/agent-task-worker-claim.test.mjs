@@ -28,8 +28,9 @@ test('worker claim contract requires a verified internal worker and never execut
   assert.throws(() => requireAuthorizedWorker({ ...worker, kind: 'user' }), /internal worker/);
   assert.throws(() => requireAuthorizedWorker({ ...worker, verified: false }), /internal worker/);
   assert.throws(() => requireAuthorizedWorker({ ...worker, plantId: 'warehouse-1' }), /internal worker/);
-  const receipt = buildAgentTaskClaimReceipt({ taskId: 1, taskReceiptId: 'task-receipt-1', claimId: 'claim-0001', workerId: 'worker:cloud' });
+  const receipt = buildAgentTaskClaimReceipt({ taskId: 1, taskReceiptId: 'task-receipt-1', taskType: 'workspace_preview', claimId: 'claim-0001', workerId: 'worker:cloud' });
   assert.equal(receipt.claimStatus, 'claimed'); assert.equal(receipt.taskStatus, 'prepared'); assert.equal(receipt.execution, 'not_performed'); assert.equal(receipt.providerInvocation, 'not_performed');
+  assert.equal(receipt.taskType, 'workspace_preview');
 });
 
 test('only an authorized worker can claim prepared tasks, with tenant isolation and replay safety', async () => {
