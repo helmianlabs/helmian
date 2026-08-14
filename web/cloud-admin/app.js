@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraPreparationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraPreparationContextFromCitation, coraPreparationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -670,7 +670,7 @@ function renderCoraKnowledgeQuery(body) {
     card.append(configItem('Excerpt', entry.excerpt), configItem('Citation', entry.citation), configItem('Source', `${entry.title} · ${entry.publisher}`), configItem('Provenance', `${entry.provenance} · ${entry.pack}`));
     const prepare = document.createElement('button'); prepare.className = 'secondary'; prepare.type = 'button'; prepare.textContent = 'Use citation in preparation';
     prepare.onclick = () => {
-      coraPrepareContext.value = `Approved source citation: ${String(entry.citation ?? '').slice(0, 210)}`.slice(0, 240);
+      coraPrepareContext.value = coraPreparationContextFromCitation(entry.citation) ?? '';
       if (!coraPrepareGoal.value.trim()) coraPrepareGoal.value = 'Prepare an in-scope brief using this approved source';
       coraPrepareStatus.textContent = 'Approved citation added to the bounded preparation context. Nothing was executed.';
       coraPrepareGoal.focus();

@@ -27,7 +27,7 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /external execution and browser automation are unavailable/u);
   assert.match(page, /stored excerpts with citations only/u);
   assert.match(script, /Use citation in preparation/u);
-  assert.match(script, /Approved source citation/u);
+  assert.match(script, /coraPreparationContextFromCitation/u);
   assert.match(script, /Nothing was executed/u);
   assert.match(page, /Artifact Studio/u);
   assert.match(page, /Manual script and narration draft/u);

@@ -128,6 +128,11 @@ export function artifactStudioPanelModel(body = {}) {
   });
 }
 
+export function coraPreparationContextFromCitation(citation) {
+  const value = String(citation ?? '').trim().slice(0, 210);
+  return value ? `Approved source citation: ${value}`.slice(0, 240) : null;
+}
+
 export function artifactSourcePanelModel(body = {}) {
   const sources = Array.isArray(body.sources) ? body.sources.slice(0, 100) : [];
   const links = Array.isArray(body.links) ? body.links.slice(0, 100) : [];

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraPreparationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraPreparationContextFromCitation, coraPreparationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
 
 function fakeFetch() {
   const calls = [];
@@ -111,6 +111,13 @@ test('Cora preparation model distinguishes prepared, replay, and unavailable rec
   assert.equal(prepared.status, 'prepared'); assert.equal(prepared.execution, 'not_performed');
   assert.equal(coraPreparationPanelModel({ replayed: true, receipt: { receiptId: 'r1' } }).status, 'replayed');
   assert.equal(coraPreparationPanelModel({ valid: true }).status, 'unavailable');
+});
+
+test('Cora preparation citation context is bounded and empty-safe', () => {
+  const context = coraPreparationContextFromCitation('  manual §1  ');
+  assert.equal(context, 'Approved source citation: manual §1');
+  assert.ok(coraPreparationContextFromCitation('x'.repeat(1000)).length <= 240);
+  assert.equal(coraPreparationContextFromCitation('   '), null);
 });
 
 test('Artifact Studio panel model keeps source-only receipt states truthful', () => {
