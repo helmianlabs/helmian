@@ -237,10 +237,12 @@
             <label>From <input id="audit-from" type="date"></label>
             <label>To <input id="audit-to" type="date"></label>
             <button type="submit">Apply filters</button>
+            <button id="audit-export" class="secondary" type="button">Export filtered CSV</button>
           </form>
+          <p id="audit-export-status" class="note" role="status" aria-live="polite">Export requires a bounded From and To range of no more than 31 days.</p>
           <div id="audit-events" aria-live="polite"></div>
           <button id="audit-next" class="secondary" type="button" hidden>Load older events</button>
-          <p class="preview">Read-only durable audit records from this Organization. No synthetic KPI, export, email, mutation, provider call, or Plant/facility authority is used.</p>
+          <p class="preview">Read-only durable audit records from this Organization. Export is a bounded redacted CSV with an audit receipt; no email, storage, provider call, raw payload, or Plant/facility authority is used.</p>
         </section>
         <section id="section-readiness" class="card" aria-labelledby="readiness-heading">
           <h2 id="readiness-heading">Organization onboarding readiness</h2>

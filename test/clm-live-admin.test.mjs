@@ -20,6 +20,7 @@ import {
   LIVE_CONNECTOR_DISCORD_INBOUND_PATH,
   LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH,
   LIVE_ADMIN_EVENTS_PATH,
+  LIVE_ADMIN_EVENTS_EXPORT_PATH,
   LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH,
   LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH,
   LIVE_ADMIN_ORGANIZATION_READINESS_PATH,
@@ -223,6 +224,40 @@ test('Audit/Analysis is Organization-scoped, filtered, cursor-paginated, and rea
   const firstBody = await first.json(); assert.equal(first.status, 200); assert.equal(firstBody.events[0].actionType, 'cora.config.publish'); assert.equal(firstBody.mutation, 'not_performed'); assert.equal(calls[0].actor.tenantId, 'customer-a'); assert.equal(calls[0].actor.role, 'member'); assert.equal(calls[0].query.limit, '1');
   const next = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_PATH}?cursor=${encodeURIComponent(firstBody.nextCursor)}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(next.status, 200); assert.equal(calls[1].query.cursor, 'cursor-1');
   const injected = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_PATH}?organization_id=customer-b`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400); assert.equal(calls.length, 2);
+});
+
+test('Audit export is bounded, redacted, Organization-derived, and receipt-backed', async (t) => {
+  const calls = [];
+  const auditEventRepository = {
+    async list() { return { events: [] }; },
+    async exportCsv(actor, query) {
+      calls.push({ actor, query });
+      return { csv: 'id,created_at,action_type,decision,actor_subject,actor_role,privacy_summary\r\n"7","2026-08-14T12:00:00.000Z","envoy.send","ALLOW","user-1","member","Message prepared [redacted]"\r\n', empty: false, hasMore: false, receiptId: 'export-receipt-7' };
+    },
+  };
+  const app = await fixture({ membershipRoles: { 'customer-a': 'member' }, auditEventRepository }); t.after(app.close);
+  const response = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_EXPORT_PATH}?format=csv&from=2026-08-01&to=2026-08-15&action=envoy.send&status=ALLOW`, { headers: { cookie: 'helmion_admin_session=active-session' } });
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-disposition'), /helmian-audit-export\.csv/u);
+  assert.equal(response.headers.get('x-helmian-audit-export-receipt'), 'export-receipt-7');
+  assert.match(body, /^id,created_at,action_type,decision,actor_subject,actor_role,privacy_summary/mu);
+  assert.doesNotMatch(body, /canonical_target|provider_payload|secret_ref/iu);
+  assert.equal(calls[0].actor.tenantId, 'customer-a');
+  assert.equal(calls[0].query.from, '2026-08-01T00:00:00.000Z');
+  assert.equal(calls[0].query.status, 'ALLOW');
+  const missingRange = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_EXPORT_PATH}?from=2026-08-01`, { headers: { cookie: 'helmion_admin_session=active-session' } });
+  assert.equal(missingRange.status, 400);
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_EXPORT_PATH}?from=2026-08-01&to=2026-08-15&organization_id=customer-b`, { headers: { cookie: 'helmion_admin_session=active-session' } });
+  assert.equal(injected.status, 400);
+  assert.equal(calls.length, 1);
+});
+
+test('Audit export exposes an honest no-records state without a fake download', async (t) => {
+  const auditEventRepository = { async list() { return { events: [] }; }, async exportCsv() { return { csv: 'id,created_at,action_type,decision,actor_subject,actor_role,privacy_summary\r\n', empty: true, hasMore: false, receiptId: 'export-empty-1' }; } };
+  const app = await fixture({ membershipRoles: { 'customer-a': 'member' }, auditEventRepository }); t.after(app.close);
+  const response = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_EXPORT_PATH}?from=2026-08-01&to=2026-08-15`, { headers: { cookie: 'helmion_admin_session=active-session' } });
+  assert.equal(response.status, 200); assert.equal(response.headers.get('x-helmian-audit-export-empty'), 'true'); assert.match(await response.text(), /^id,created_at/mu);
 });
 
 test('Artifact Studio routes are Organization-scoped and expose only source-only receipts', async (t) => {

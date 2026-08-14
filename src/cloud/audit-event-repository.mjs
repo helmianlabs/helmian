@@ -3,6 +3,9 @@ import { requireActiveTenantMembership, withTenantTransaction } from '../core/te
 
 const DECISIONS = new Set(['AUTO_RUN', 'ALLOW', 'PAUSE_FOR_OWNER', 'BLOCK', 'DENY']);
 const MAX_FILTER = 120;
+const EXPORT_MAX_ROWS = 100;
+const EXPORT_MAX_DAYS = 31;
+export const AUDIT_EXPORT_COLUMNS = Object.freeze(['id', 'created_at', 'action_type', 'decision', 'actor_subject', 'actor_role', 'privacy_summary']);
 
 function text(value, field) {
   const result = String(value ?? '').trim();
@@ -29,6 +32,30 @@ function decodeCursor(value) {
 
 function encodeCursor(row) {
   return Buffer.from(JSON.stringify({ id: String(row.id), createdAt: new Date(row.created_at).toISOString() })).toString('base64url');
+}
+
+function exportText(value, max = 240) {
+  return String(value ?? '')
+    .replace(/[\r\n\t]+/gu, ' ')
+    .replace(/(?:bearer\s+|password\s*=\s*|secret\s*=\s*|api[_-]?key\s*=\s*|provider[_-]?payload\s*=\s*|credential[_-]?ref\s*=\s*)[^\s,;]+/giu, '[redacted]')
+    .replace(/(?:sk-ant-|sk-|ghp_|AIza)[A-Za-z0-9._-]+/gu, '[redacted]')
+    .slice(0, max);
+}
+
+function csvCell(value) {
+  return `"${exportText(value).replace(/"/gu, '""')}"`;
+}
+
+function csv(rows) {
+  return [AUDIT_EXPORT_COLUMNS.join(','), ...rows.map((row) => AUDIT_EXPORT_COLUMNS.map((column) => csvCell(row[column])).join(','))].join('\r\n') + '\r\n';
+}
+
+export function normalizeAuditExportQuery(input = {}) {
+  const query = normalizeAuditQuery({ ...input, limit: Math.min(Number(input.limit ?? EXPORT_MAX_ROWS), EXPORT_MAX_ROWS) });
+  if (!query.from || !query.to) throw Object.assign(new Error('audit export requires from and to dates'), { status: 400, code: 'AUDIT_EXPORT_RANGE_REQUIRED' });
+  const span = new Date(query.to).valueOf() - new Date(query.from).valueOf();
+  if (span < 0 || span > EXPORT_MAX_DAYS * 24 * 60 * 60 * 1000) throw Object.assign(new Error(`audit export range must be no more than ${EXPORT_MAX_DAYS} days`), { status: 400, code: 'AUDIT_EXPORT_RANGE_INVALID' });
+  return query;
 }
 
 export function normalizeAuditQuery(input = {}) {
@@ -76,6 +103,38 @@ export function createAuditEventRepository(pool) {
           source: 'helmion.audit_events',
           mutation: 'not_performed',
         };
+      });
+    },
+    async exportCsv(actor, input = {}) {
+      const query = normalizeAuditExportQuery(input);
+      const context = { tenantId: actor?.tenantId, actorSubject: actor?.subject, actorRole: actor?.role, sessionId: actor?.sessionId ?? randomUUID(), requestId: actor?.requestId ?? randomUUID() };
+      return withTenantTransaction(pool, context, async (client, scoped) => {
+        await requireActiveTenantMembership(client, scoped);
+        const values = [scoped.tenantId];
+        const where = ['tenant_id=$1'];
+        const add = (sql, value) => { values.push(value); where.push(sql.replace('$N', `$${values.length}`)); };
+        if (query.action) add('action_type=$N', query.action);
+        if (query.actor) add('actor_subject=$N', query.actor);
+        if (query.status) add('decision=$N', query.status);
+        add('created_at>=$N', query.from);
+        add('created_at<$N', query.to);
+        const result = await client.query(`select id, created_at, action_type, decision, actor_subject, actor_role, privacy_summary from helmion.audit_events where ${where.join(' and ')} order by created_at desc, id desc limit ${EXPORT_MAX_ROWS + 1}`, values);
+        const rows = result.rows.slice(0, EXPORT_MAX_ROWS).map((row) => ({
+          id: String(row.id), created_at: new Date(row.created_at).toISOString(), action_type: exportText(row.action_type, MAX_FILTER), decision: exportText(row.decision, 32), actor_subject: exportText(row.actor_subject, MAX_FILTER), actor_role: exportText(row.actor_role, 32), privacy_summary: exportText(row.privacy_summary),
+        }));
+        const hasMore = result.rows.length > EXPORT_MAX_ROWS;
+        const receipt = await client.query(
+          `insert into helmion.audit_events
+             (tenant_id, actor_subject, actor_role, session_id, request_id, action_type,
+              canonical_target, policy_version, decision, privacy_summary, result)
+           values ($1,$2,$3,$4,$5,'audit.export',$6::jsonb,'audit-export.v1','ALLOW',$7,$8::jsonb)
+           returning id`,
+          [scoped.tenantId, scoped.actorSubject, scoped.actorRole, scoped.sessionId, scoped.requestId,
+            JSON.stringify({ resource: 'audit_events', format: 'csv', filters: { action: query.action, actor: query.actor, status: query.status, from: query.from, to: query.to }, rowCap: EXPORT_MAX_ROWS }),
+            'Bounded Organization audit export; sensitive payload columns omitted',
+            JSON.stringify({ rows: rows.length, hasMore, columns: AUDIT_EXPORT_COLUMNS, redacted: true })],
+        );
+        return { csv: csv(rows), empty: rows.length === 0, hasMore, rowCount: rows.length, receiptId: receipt.rows[0]?.id == null ? null : String(receipt.rows[0].id), columns: AUDIT_EXPORT_COLUMNS, source: 'helmion.audit_events', mutation: 'export_receipt_only' };
       });
     },
   });
