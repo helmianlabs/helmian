@@ -147,7 +147,8 @@ export function usagePanelModel(body = {}) {
 export function personalPreferencesModel(body = {}) {
   const preferences = body.preferences?.preferences ?? body.preferences ?? {};
   const bounds = body.bounds ?? {};
-  return Object.freeze({ preferences, bounds, statusLabel: body.preferences ? 'Personal Cora preferences loaded for this signed-in user.' : 'Personal Cora preferences are unavailable.' });
+  const published = body.policy?.published === true;
+  return Object.freeze({ preferences, bounds, published, statusLabel: body.preferences ? (published ? 'Personal Cora controls follow the published Organization bounds.' : 'Personal Cora controls use safe defaults; no published Organization preference policy is available.') : 'Personal Cora preferences are unavailable.' });
 }
 
 export function workspaceLayoutModel(body = {}) {

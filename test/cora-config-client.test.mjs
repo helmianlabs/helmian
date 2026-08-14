@@ -59,10 +59,18 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
 });
 
 test('personal preference model exposes own bounded settings without provider controls', () => {
-  const model = personalPreferencesModel({ bounds: { verbosity: ['concise', 'standard'], voiceProfiles: ['emma'] }, preferences: { preferences: { muted: true, volume: 20, verbosity: 'concise', voiceProfile: 'emma' } } });
+  const model = personalPreferencesModel({ policy: { published: true }, bounds: { verbosity: ['concise', 'standard'], voiceProfiles: ['emma'] }, preferences: { preferences: { muted: true, volume: 20, verbosity: 'concise', voiceProfile: 'emma' } } });
   assert.equal(model.preferences.muted, true);
   assert.deepEqual(model.bounds.voiceProfiles, ['emma']);
+  assert.equal(model.published, true);
+  assert.match(model.statusLabel, /published Organization bounds/iu);
   for (const key of ['provider', 'model', 'organizationId', 'plantId']) assert.equal(Object.hasOwn(model.preferences, key), false);
+});
+
+test('personal preference model distinguishes safe-defaults state without a published policy', () => {
+  const model = personalPreferencesModel({ policy: { published: false }, bounds: { verbosity: ['concise'], voiceProfiles: [] }, preferences: { preferences: {} } });
+  assert.equal(model.published, false);
+  assert.match(model.statusLabel, /safe defaults/iu);
 });
 
 test('workspace preview model keeps empty, replay, and not-performed states truthful', () => {

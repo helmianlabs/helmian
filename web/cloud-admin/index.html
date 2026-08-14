@@ -128,16 +128,21 @@
           <div id="cora-knowledge-query-results" class="config-grid"></div>
           <h3>Your Cora preferences</h3>
           <p id="cora-personal-preferences-status" class="note" role="status" aria-live="polite">Loading your personal preferences…</p>
-          <form id="cora-personal-preferences-form" class="config-controls">
-            <label><input id="cora-preference-muted" type="checkbox"> Mute voice</label>
-            <label>Volume <input id="cora-preference-volume" type="range" min="0" max="100" value="80"></label>
-            <label>Response detail <select id="cora-preference-verbosity"><option value="concise">Concise</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select></label>
-            <label>Interrupt <select id="cora-preference-interrupt"><option value="barge_in">Allow interruption</option><option value="after_sentence">After sentence</option></select></label>
-            <label>Turn sensitivity <select id="cora-preference-turn"><option value="concise">Concise turn</option><option value="standard">Standard turn</option></select></label>
-            <label>Voice profile <input id="cora-preference-voice" maxlength="128" placeholder="Approved profile ID or none"></label>
-            <button type="submit">Save my preferences</button>
-          </form>
-          <p class="preview">These controls affect only your signed-in user. Organization policy, approved catalogs, provider keys, and voice readiness remain admin/server controlled.</p>
+          <button id="cora-preferences-open" class="secondary" type="button">Open Cora quick controls</button>
+          <dialog id="cora-preferences-dialog" aria-labelledby="cora-preferences-heading" aria-describedby="cora-personal-preferences-status">
+            <h2 id="cora-preferences-heading">Cora quick controls</h2>
+            <p class="preview">Personal controls only. Cora remains professional and concise; no provider or voice connection is claimed here.</p>
+            <form id="cora-personal-preferences-form" class="config-controls">
+              <label><input id="cora-preference-muted" type="checkbox"> Mute voice</label>
+              <label>Volume <input id="cora-preference-volume" type="range" min="0" max="100" value="80"></label>
+              <label>Response detail <select id="cora-preference-verbosity"></select></label>
+              <label>Interrupt <select id="cora-preference-interrupt"></select></label>
+              <label>Turn sensitivity <select id="cora-preference-turn"></select></label>
+              <label>Approved voice profile <select id="cora-preference-voice"><option value="">No profile selected</option></select></label>
+              <button type="submit">Save my preferences</button><button id="cora-preferences-close" class="secondary" type="button">Close</button>
+            </form>
+            <p class="preview">Organization policy, approved catalogs, provider keys, and voice readiness remain admin/server controlled.</p>
+          </dialog>
           <div id="cora-admin-controls" class="config-controls" hidden>
             <input id="cora-draft-reason" aria-label="Cora draft reason" maxlength="2000" placeholder="Reason for a reviewed Cora draft">
             <textarea id="cora-routing-policy" aria-label="Cora routing policy JSON" maxlength="12000" placeholder="Optional routing-policy JSON; references only approved catalog IDs"></textarea>
