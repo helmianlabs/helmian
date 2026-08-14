@@ -66,6 +66,8 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     createArtifactExecutionRequest(input) { return requestJson(fetchImpl, '/api/admin/cora/artifact-execution-requests', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalRef: null, estimatedAudioSeconds: null, estimatedImageUnits: null, estimatedRequestedTokens: null, estimatedVideoUnits: null, supersedesReceiptId: null, ...input }) }); },
     readApprovals(filters = {}) { const params = new URLSearchParams(); if (filters.status) params.set('status', filters.status); if (filters.requestKind) params.set('request_kind', filters.requestKind); return requestJson(fetchImpl, `/api/admin/cora/approvals${params.toString() ? `?${params}` : ''}`); },
     decideApproval(input) { return requestJson(fetchImpl, '/api/admin/cora/approvals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
+    readConnectors() { return requestJson(fetchImpl, '/api/admin/cora/connectors'); },
+    saveConnector(input) { return requestJson(fetchImpl, '/api/admin/cora/connectors', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     createDraft({ reason, config = null, routingPolicy = null, approvedModelCatalog = [] }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -134,6 +136,11 @@ export function artifactExecutionPanelModel(body = {}) {
 export function approvalInboxPanelModel(body = {}) {
   const items = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
   return Object.freeze({ empty: items.length === 0, items, statusLabel: items.length ? `${items.length} Organization request(s).` : 'No approval requests or prepared task intents are waiting.' });
+}
+
+export function connectorRegistrationPanelModel(body = {}) {
+  const registrations = Array.isArray(body.registrations) ? body.registrations.slice(0, 10) : [];
+  return Object.freeze({ empty: registrations.length === 0, registrations, statusLabel: registrations.length ? `${registrations.length} connector registration(s); provider delivery remains inactive until a separate live setup.` : 'No connector registrations yet. Slack and Discord are not connected by this metadata panel.' });
 }
 
 export function knowledgeQueryModel(body = {}) {

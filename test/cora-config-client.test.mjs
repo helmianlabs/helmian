@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
 
 function fakeFetch() {
   const calls = [];
@@ -63,6 +63,12 @@ test('approval inbox model preserves empty, decision, and no-execution states', 
   assert.equal(approvalInboxPanelModel({ items: [] }).empty, true);
   const model = approvalInboxPanelModel({ items: [{ requestKind: 'artifact_execution_request', status: 'approval_required', decision: 'approve', execution: 'not_performed' }] });
   assert.equal(model.empty, false); assert.equal(model.items[0].decision, 'approve');
+});
+
+test('connector model distinguishes empty metadata from provider connection', () => {
+  assert.equal(connectorRegistrationPanelModel({ registrations: [] }).empty, true);
+  const model = connectorRegistrationPanelModel({ registrations: [{ provider: 'discord', lifecycle: 'testing' }] });
+  assert.equal(model.empty, false); assert.match(model.statusLabel, /delivery remains inactive/u);
 });
 
 test('personal preference model exposes own bounded settings without provider controls', () => {
