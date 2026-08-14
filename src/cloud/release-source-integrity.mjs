@@ -7,6 +7,7 @@ export const RELEASE_SOURCE_INTEGRITY_FORMAT = 'helmian.cloud.release-source-int
 export const REQUIRED_RELEASE_SOURCE_FILES = Object.freeze([
   'src/cloud/live-admin.mjs',
   'src/cloud/release-canary-contract.mjs',
+  'src/cloud/release-canary-observation.mjs',
   'src/cora/clm-server.mjs',
   'src/cora/hume-session-descriptor.mjs',
   'src/cora/session-config-resolver.mjs',
