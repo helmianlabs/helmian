@@ -121,6 +121,21 @@
           <div id="workspace-preview-receipts" class="config-grid"></div>
           <p class="preview">Preview intent prepared; no agent, provider, filesystem, build, or external execution occurred. This slice has no execution button.</p>
         </section>
+        <section class="card" aria-labelledby="agent-task-heading">
+          <h2 id="agent-task-heading">Agent task intents</h2>
+          <p id="agent-task-status" class="note" role="status" aria-live="polite">Loading task receipts…</p>
+          <form id="agent-task-form" class="config-controls">
+            <select id="agent-task-type" aria-label="Task type"><option value="workspace_preview">Workspace preview</option></select>
+            <select id="agent-task-intent" aria-label="Task intent"><option value="draft">Draft</option><option value="prepare">Prepare</option></select>
+            <input id="agent-task-goal" aria-label="Task goal" maxlength="1000" placeholder="What should be prepared?" required>
+            <input id="agent-task-context" aria-label="Context reference" maxlength="240" placeholder="Context reference (optional)">
+            <input id="agent-task-department" aria-label="Task department" maxlength="160" placeholder="Department (optional)">
+            <input id="agent-task-cost-center" aria-label="Cost center" maxlength="120" placeholder="Cost center (optional)">
+            <button id="agent-task-submit" type="submit">Record task intent</button>
+          </form>
+          <div id="agent-task-receipts" class="config-grid"></div>
+          <p class="preview">Draft and prepare are durable intents only. No agent, model, provider, filesystem, build, or external task execution occurred.</p>
+        </section>
         <section class="card" aria-labelledby="policy-heading">
           <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>
           <p>Hume-attached tools: <strong>0</strong>. These switches can only remove fixed Helmian actions from every newly signed AimForge customer session. They cannot grant tenant access or add tools. Active voice sessions keep their starting policy.</p>

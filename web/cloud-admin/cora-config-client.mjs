@@ -22,6 +22,13 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
         body: JSON.stringify({ mode, intent, department, templateId, title, idempotencyKey }),
       });
     },
+    readAgentTasks() { return requestJson(fetchImpl, '/api/admin/cora/tasks'); },
+    createAgentTask({ taskType, goal, contextRef, department, costCenter, intent, idempotencyKey }) {
+      return requestJson(fetchImpl, '/api/admin/cora/tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ taskType, goal, contextRef, department, costCenter, intent, idempotencyKey }),
+      });
+    },
     createDraft({ reason }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -51,6 +58,11 @@ export function workspacePreviewPanelModel(body = {}) {
     providerInvocation: 'not_performed',
     filesystemMutation: 'not_performed',
   });
+}
+
+export function agentTaskPanelModel(body = {}) {
+  const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
+  return Object.freeze({ empty: receipts.length === 0, receipts, execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', statusLabel: body.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : 'Task intent recorded. No worker execution occurred.' });
 }
 
 export function usagePanelModel(body = {}) {

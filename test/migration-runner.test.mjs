@@ -95,6 +95,10 @@ class MigrationPool {
           pool.executedSql.push('012_cora_workspace_preview_intents.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('create table if not exists helmion.cora_agent_task_intents')) {
+          pool.executedSql.push('013_cora_agent_task_intents.sql');
+          return { rowCount: 0, rows: [] };
+        }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
       },
       release() {},
@@ -121,6 +125,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['010_cora_organization_config.sql', true, 'committed'],
       ['011_cora_provider_usage.sql', true, 'committed'],
       ['012_cora_workspace_preview_intents.sql', true, 'committed'],
+      ['013_cora_agent_task_intents.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -138,13 +143,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '010_cora_organization_config.sql',
       '011_cora_provider_usage.sql',
       '012_cora_workspace_preview_intents.sql',
+      '013_cora_agent_task_intents.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -161,9 +167,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '010_cora_organization_config.sql',
       '011_cora_provider_usage.sql',
       '012_cora_workspace_preview_intents.sql',
+      '013_cora_agent_task_intents.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 24);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 26);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 
