@@ -432,7 +432,7 @@ export async function createLiveHelmianCloudAdminHandler({
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_USAGE_PATH) {
-      try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id') || requestUrl.searchParams.has('plant_id')) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const result = requestUrl.searchParams.has('limit') ? await providerUsage.list(actor, requestUrl.searchParams.get('limit')) : await providerUsage.readSummary(actor); send(response, 200, JSON.stringify({ valid: true, ...result })); }
+      try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id') || requestUrl.searchParams.has('plant_id')) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const detailAllowed = ['owner', 'admin'].includes(String(actor.role).toLowerCase()); const result = requestUrl.searchParams.has('limit') && detailAllowed ? await providerUsage.list(actor, requestUrl.searchParams.get('limit')) : await providerUsage.readSummary(actor); send(response, 200, JSON.stringify({ valid: true, ...result })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_USAGE_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_USAGE_SELECTOR_INVALID' : 'CORA_USAGE_READ_FAILED' })); }
       return true;
     }

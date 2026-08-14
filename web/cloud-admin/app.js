@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { createCoraConfigClient } from './cora-config-client.mjs';
+import { createCoraConfigClient, usagePanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -24,6 +24,8 @@ const coraClient = createCoraConfigClient();
 const coraConfigStatus = document.querySelector('#cora-config-status');
 const coraConfigDetails = document.querySelector('#cora-config-details');
 const coraKnowledgeDetails = document.querySelector('#cora-knowledge-details');
+const coraUsageStatus = document.querySelector('#cora-usage-status');
+const coraUsageDetails = document.querySelector('#cora-usage-details');
 const coraAdminControls = document.querySelector('#cora-admin-controls');
 const coraDraftReason = document.querySelector('#cora-draft-reason');
 const coraCreateDraft = document.querySelector('#cora-create-draft');
@@ -233,6 +235,24 @@ function renderCoraKnowledge(body) {
   }
 }
 
+function renderCoraUsage(body) {
+  coraUsageDetails.replaceChildren();
+  const model = usagePanelModel(body);
+  coraUsageStatus.className = `usage-state ${model.state}`;
+  if (model.empty) {
+    coraUsageStatus.textContent = 'No internal provider usage has been recorded for this Organization.';
+    return;
+  }
+  coraUsageStatus.textContent = model.stateLabel;
+  coraUsageDetails.append(
+    configItem('Recorded usage events', String(model.eventCount)),
+    configItem('Estimated ledger cost', model.estimatedCostMinor == null ? 'Unavailable' : String(model.estimatedCostMinor)),
+    configItem('Reconciled provider cost', model.reconciledCostMinor == null ? 'Unavailable — no trusted reconciliation recorded' : String(model.reconciledCostMinor)),
+    configItem('Provider calls', model.providerCalls === 'not_performed' ? 'Not performed by this panel' : model.providerCalls),
+    configItem('Ledger source', 'Organization-scoped append-only internal ledger'),
+  );
+}
+
 function renderCoraAdminControls() {
   coraAdminControls.hidden = !['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase());
   if (!coraDraft) { coraTransition.hidden = true; return; }
@@ -243,13 +263,17 @@ function renderCoraAdminControls() {
 
 async function loadCoraSettings() {
   coraConfigStatus.textContent = 'Loading Cora settings and knowledge metadata…';
+  coraUsageStatus.className = 'usage-state normal';
+  coraUsageStatus.textContent = 'Loading internal usage summary…';
   try {
-    const [config, knowledge] = await Promise.all([coraClient.readConfig(), coraClient.readKnowledgeSources()]);
-    renderCoraConfig(config); renderCoraKnowledge(knowledge); renderCoraAdminControls();
+    const [config, knowledge, usage] = await Promise.all([coraClient.readConfig(), coraClient.readKnowledgeSources(), coraClient.readUsage()]);
+    renderCoraConfig(config); renderCoraKnowledge(knowledge); renderCoraUsage(usage); renderCoraAdminControls();
     if (config.status === 'published') coraConfigStatus.textContent += ' Cora agent/model invocation remains not connected.';
   } catch (error) {
-    coraConfigDetails.replaceChildren(); coraKnowledgeDetails.replaceChildren();
+    coraConfigDetails.replaceChildren(); coraKnowledgeDetails.replaceChildren(); coraUsageDetails.replaceChildren();
     coraConfigStatus.textContent = error.status === 403 ? 'Cora settings unavailable: Organization membership is required.' : `Cora settings unavailable: ${error.message}`;
+    coraUsageStatus.className = 'usage-state hard';
+    coraUsageStatus.textContent = error.status === 403 ? 'Usage summary unavailable: Organization membership is required.' : `Usage summary unavailable: ${error.message}`;
   }
 }
 
