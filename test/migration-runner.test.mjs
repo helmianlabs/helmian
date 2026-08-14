@@ -147,6 +147,10 @@ class MigrationPool {
           pool.executedSql.push('025_cora_approval_decisions.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('create table if not exists helmion.cora_connector_registrations')) {
+          pool.executedSql.push('026_cora_connector_registrations.sql');
+          return { rowCount: 0, rows: [] };
+        }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
       },
       release() {},
@@ -186,6 +190,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['023_cora_knowledge_management.sql', true, 'committed'],
       ['024_cora_usage_budget_allocations.sql', true, 'committed'],
       ['025_cora_approval_decisions.sql', true, 'committed'],
+      ['026_cora_connector_registrations.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -216,13 +221,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '023_cora_knowledge_management.sql',
       '024_cora_usage_budget_allocations.sql',
       '025_cora_approval_decisions.sql',
+      '026_cora_connector_registrations.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -252,9 +258,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '023_cora_knowledge_management.sql',
       '024_cora_usage_budget_allocations.sql',
       '025_cora_approval_decisions.sql',
+      '026_cora_connector_registrations.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 50);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 52);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 

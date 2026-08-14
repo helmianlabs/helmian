@@ -14,6 +14,7 @@ import {
   LIVE_ADMIN_CORA_ARTIFACT_SOURCE_TRANSITION_PATH,
   LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH,
   LIVE_ADMIN_CORA_APPROVALS_PATH,
+  LIVE_ADMIN_CORA_CONNECTORS_PATH,
   LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
@@ -133,6 +134,7 @@ async function fixture(options = {}) {
     artifactScriptRepository: options.artifactScriptRepository ?? undefined,
     artifactExecutionRepository: options.artifactExecutionRepository ?? undefined,
     approvalInboxRepository: options.approvalInboxRepository ?? undefined,
+    connectorRegistrationRepository: options.connectorRegistrationRepository ?? undefined,
     personalPreferencesRepository: options.personalPreferencesRepository ?? undefined,
   });
   const clm = await startCoraClm({
@@ -224,6 +226,20 @@ test('Organization approvals inbox is membership-scoped, admin-decided, and neve
   const injected = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_APPROVALS_PATH}?plant_id=west`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
   const adminApp = await fixture({ approvalInboxRepository }); t.after(adminApp.close);
   const decided = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_APPROVALS_PATH}`, { method: 'POST', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ decision: 'approve', requestKind: 'artifact_execution_request', requestReceiptId: 'execution-0001', reason: 'Reviewed for policy', idempotencyKey: 'approval-0001' }) }); const decidedBody = await decided.json(); assert.equal(decided.status, 200); assert.equal(decidedBody.execution, 'not_performed'); assert.equal(calls.some(({ operation }) => operation === 'decide'), true);
+});
+
+test('connector registration routes expose limited member status and admin metadata only', async (t) => {
+  const calls = [];
+  const connectorRegistrationRepository = {
+    async list(actor) { calls.push({ operation: 'list', actor }); return { registrations: [{ provider: 'slack', lifecycle: 'draft', enabled: false, publicEndpointReady: false, secretReferenceName: null, allowedInboundChannels: [], lastVerifiedStatus: 'not_verified', providerCalls: 'not_performed' }], source: 'organization_connector_registration', providerCalls: 'not_performed' }; },
+    async save(actor, input) { calls.push({ operation: 'save', actor, input }); return { durable: true, registration: { provider: input.provider, lifecycle: input.lifecycle, secretReferenceName: 'vault/ref', providerCalls: 'not_performed' }, source: 'organization_connector_registration' }; },
+  };
+  const memberApp = await fixture({ membershipRoles: { 'customer-a': 'member' }, connectorRegistrationRepository }); t.after(memberApp.close);
+  const member = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_CONNECTORS_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const memberBody = await member.json(); assert.equal(member.status, 200); assert.equal(memberBody.registrations[0].secretReferenceName, null); assert.equal(memberBody.providerCalls, 'not_performed');
+  const denied = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_CONNECTORS_PATH}`, { method: 'PUT', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ provider: 'slack', lifecycle: 'testing', enabled: false, publicEndpointReady: false, secretReferenceName: 'vault/ref', allowedInboundChannels: [] }) }); assert.equal(denied.status, 403);
+  const injected = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_CONNECTORS_PATH}?plant_id=west`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
+  const adminApp = await fixture({ connectorRegistrationRepository }); t.after(adminApp.close);
+  const saved = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_CONNECTORS_PATH}`, { method: 'PUT', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ provider: 'slack', lifecycle: 'testing', enabled: false, publicEndpointReady: false, secretReferenceName: 'vault/ref', allowedInboundChannels: [{ externalChannelId: 'C1', label: 'Ops', enabled: true }] }) }); assert.equal(saved.status, 200); assert.equal(calls.some(({ operation }) => operation === 'save'), true);
 });
 
 test('personal Cora preferences are membership-derived, bounded, and user-owned', async (t) => {

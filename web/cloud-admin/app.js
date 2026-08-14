@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -86,6 +86,14 @@ const agentTaskReceipts = document.querySelector('#agent-task-receipts');
 const approvalInboxStatus = document.querySelector('#approval-inbox-status');
 const approvalInboxFilters = document.querySelector('#approval-inbox-filters');
 const approvalInboxItems = document.querySelector('#approval-inbox-items');
+const connectorStatus = document.querySelector('#connector-status');
+const connectorItems = document.querySelector('#connector-items');
+const connectorForm = document.querySelector('#connector-form');
+const connectorProvider = document.querySelector('#connector-provider');
+const connectorLifecycle = document.querySelector('#connector-lifecycle');
+const connectorSecretRef = document.querySelector('#connector-secret-ref');
+const connectorEndpointReady = document.querySelector('#connector-endpoint-ready');
+const connectorChannels = document.querySelector('#connector-channels');
 const artifactStudioForm = document.querySelector('#artifact-studio-form');
 const artifactStudioType = document.querySelector('#artifact-studio-type');
 const artifactStudioStage = document.querySelector('#artifact-studio-stage');
@@ -543,6 +551,10 @@ function renderApprovalInbox(body) {
 async function loadApprovalInbox() { approvalInboxStatus.textContent = 'Loading Organization approvals…'; try { renderApprovalInbox(await coraClient.readApprovals({ status: approvalInboxFilters.value || null })); } catch (error) { approvalInboxItems.replaceChildren(); approvalInboxStatus.textContent = error.status === 403 ? 'Approvals unavailable: active Organization membership is required.' : `Approvals unavailable: ${error.message}`; } }
 approvalInboxFilters.onchange = () => loadApprovalInbox().catch(() => {});
 
+function renderConnectors(body) { const model = connectorRegistrationPanelModel(body); connectorItems.replaceChildren(); connectorStatus.textContent = model.statusLabel; if (model.empty) { connectorItems.textContent = model.statusLabel; return; } for (const registration of model.registrations) { const item = document.createElement('article'); item.className = 'config-item'; item.textContent = `${registration.provider} · ${registration.lifecycle} · endpoint readiness: ${registration.publicEndpointReady ? 'declared' : 'not declared'} · verifier: ${registration.lastVerifiedStatus} · inbound delivery not enabled by this panel`; connectorItems.append(item); } }
+async function loadConnectors() { connectorStatus.textContent = 'Loading connector registration metadata…'; try { const body = await coraClient.readConnectors(); renderConnectors(body); if (connectorForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) connectorForm.hidden = false; } catch (error) { connectorItems.replaceChildren(); connectorStatus.textContent = error.status === 403 ? 'Connector metadata unavailable: active Organization membership is required.' : `Connector metadata unavailable: ${error.message}`; } }
+connectorForm.onsubmit = async (event) => { event.preventDefault(); connectorStatus.textContent = 'Saving connector metadata…'; try { const channels = connectorChannels.value.split('\n').map((line) => line.split('|').map((part) => part.trim())).filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map(([externalChannelId, label]) => ({ externalChannelId, label, enabled: true })); await coraClient.saveConnector({ provider: connectorProvider.value, lifecycle: connectorLifecycle.value, enabled: connectorLifecycle.value === 'enabled', publicEndpointReady: connectorEndpointReady.checked, secretReferenceName: connectorSecretRef.value.trim() || null, allowedInboundChannels: channels }); connectorStatus.textContent = 'Connector metadata saved. No secret value, webhook, OAuth flow, provider call, or delivery was performed.'; await loadConnectors(); } catch (error) { connectorStatus.textContent = `Connector metadata not saved: ${error.message}`; } };
+
 function renderArtifactStudio(body) {
   const model = artifactStudioPanelModel(body);
   artifactStudioReceipts.replaceChildren();
@@ -639,6 +651,7 @@ async function load() {
   await loadWorkspacePreviews();
   await loadAgentTasks();
   await loadApprovalInbox();
+  await loadConnectors();
   await loadArtifactStudio();
   startEnvoyRealtime();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);

@@ -210,6 +210,13 @@
           <div id="approval-inbox-items" class="config-grid"></div>
           <p class="preview">Approvals are Organization-scoped decisions over existing receipts. Approving or rejecting records a reason and receipt only; no worker, provider, filesystem, media, billing, or external action runs.</p>
         </section>
+        <section id="section-connectors" class="card" aria-labelledby="connector-heading">
+          <h2 id="connector-heading">Connector administration</h2>
+          <p id="connector-status" class="note" role="status" aria-live="polite">Loading connector registration metadata…</p>
+          <div id="connector-items" class="config-grid"></div>
+          <form id="connector-form" class="config-controls" hidden><label>Provider <select id="connector-provider"><option value="slack">Slack</option><option value="discord">Discord</option></select></label><label>Lifecycle <select id="connector-lifecycle"><option value="draft">Draft</option><option value="testing">Testing</option><option value="approved">Approved</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Signing-secret reference name only <input id="connector-secret-ref" maxlength="160" placeholder="Vault reference name; never the secret value"></label><label><input id="connector-endpoint-ready" type="checkbox"> Public endpoint readiness declared</label><label>Allowed inbound channels <textarea id="connector-channels" maxlength="6000" placeholder="external channel ID | display label"></textarea></label><button type="submit">Save connector metadata</button></form>
+          <p class="preview">This is non-secret Organization metadata and readiness only. It does not create a webhook, connect Slack or Discord, run OAuth, write credentials, verify a live provider, or enable outbound delivery. Members see limited status; owners/admins manage lifecycle metadata.</p>
+        </section>
         <section id="section-artifact" class="card" aria-labelledby="artifact-studio-heading">
           <h2 id="artifact-studio-heading">Artifact Studio</h2>
           <p id="artifact-studio-status" class="note" role="status" aria-live="polite">Loading Artifact Studio receipts…</p>

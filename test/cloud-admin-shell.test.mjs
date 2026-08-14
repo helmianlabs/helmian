@@ -26,7 +26,11 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /Manual script and narration draft/u);
   assert.match(page, /Execution request preflight/u);
   assert.match(page, /Organization approvals inbox/u);
+  assert.match(page, /Connector administration/u);
+  assert.match(page, /Signing-secret reference name only/u);
+  assert.match(page, /does not create a webhook/u);
   assert.match(script, /decideApproval/u);
+  assert.match(script, /saveConnector/u);
   assert.match(liveAdmin, /LIVE_ADMIN_CORA_APPROVALS_PATH/u);
   assert.match(page, /approval-required, blocked, and queued states all remain not executed/iu);
   assert.match(page, /Your Cora preferences/iu);
