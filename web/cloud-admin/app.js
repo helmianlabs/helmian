@@ -12,6 +12,15 @@ const policyDiff = document.querySelector('#policy-diff');
 const policyStatus = document.querySelector('#policy-status');
 const scope = document.querySelector('#scope');
 const guardEvents = document.querySelector('#guard-events');
+const auditStatus = document.querySelector('#audit-status');
+const auditFilters = document.querySelector('#audit-filters');
+const auditAction = document.querySelector('#audit-action');
+const auditActor = document.querySelector('#audit-actor');
+const auditStatusFilter = document.querySelector('#audit-status-filter');
+const auditFrom = document.querySelector('#audit-from');
+const auditTo = document.querySelector('#audit-to');
+const auditEvents = document.querySelector('#audit-events');
+const auditNext = document.querySelector('#audit-next');
 const agentCards = document.querySelector('#agent-cards');
 const conversationBody = document.querySelector('#conversation-body');
 const composer = document.querySelector('#composer');
@@ -147,6 +156,7 @@ let envoyTimer = null;
 let envoyStream = null;
 let envoyMessages = [];
 let envoyCursor = null;
+let auditCursor = null;
 let workspaceLayout = null;
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
 document.querySelector('#logout').onclick = () => { window.location.href = '/admin/auth/logout'; };
@@ -205,6 +215,44 @@ function renderWorkspace(body) {
     status.textContent = agent.lastAction ? `${agent.status} · ${agent.lastAction}` : 'No audited status';
     card.append(name, status);
     agentCards.append(card);
+  }
+}
+
+function renderAudit(body, append = false) {
+  if (!append) auditEvents.replaceChildren();
+  const events = Array.isArray(body.events) ? body.events : [];
+  if (!append && !events.length) {
+    auditStatus.textContent = 'No durable audit events match these filters. No KPI was synthesized.';
+  } else if (events.length) {
+    auditStatus.textContent = body.hasMore ? 'Showing durable Organization audit events. Older records are available.' : 'Showing durable Organization audit events. This is the end of the current result set.';
+  }
+  for (const event of events) {
+    const card = document.createElement('article'); card.className = 'audit-event';
+    const title = document.createElement('h3'); title.textContent = `${event.status} · ${event.actionType}`;
+    const detail = document.createElement('p'); detail.textContent = `${event.summary} · actor ${event.actor} (${event.actorRole})`;
+    const time = document.createElement('p'); time.textContent = event.createdAt ? new Date(event.createdAt).toLocaleString() : 'Timestamp unavailable';
+    card.append(title, detail, time); auditEvents.append(card);
+  }
+  auditCursor = body.nextCursor ?? null;
+  auditNext.hidden = !body.hasMore || !auditCursor;
+}
+
+async function loadAudit({ append = false } = {}) {
+  auditStatus.textContent = append ? 'Loading older durable audit events…' : 'Loading durable Organization audit events…';
+  const params = new URLSearchParams();
+  if (append && auditCursor) params.set('cursor', auditCursor);
+  if (!append) {
+    for (const [key, value] of [['action', auditAction.value.trim()], ['actor', auditActor.value.trim()], ['status', auditStatusFilter.value], ['from', auditFrom.value], ['to', auditTo.value]]) if (value) params.set(key, value);
+    params.set('limit', '25');
+  }
+  try {
+    const response = await fetch(`/api/admin/events${params.toString() ? `?${params}` : ''}`, { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body.code || 'Audit analysis unavailable'), { status: response.status });
+    renderAudit(body, append);
+  } catch (error) {
+    if (!append) auditEvents.replaceChildren(); auditNext.hidden = true;
+    auditStatus.textContent = error.status === 403 ? 'Audit analysis unavailable: active Organization membership is required.' : `Audit analysis unavailable: ${error.message}`;
   }
 }
 
@@ -388,10 +436,13 @@ function startEnvoyRealtime() {
 
 async function refreshWorkspacePanels() {
   const events = await fetch('/api/admin/events', { credentials: 'same-origin' });
-  if (events.ok) renderEvents(await events.json());
+  if (events.ok) { const body = await events.json(); renderEvents(body); if (!auditAction.value && !auditActor.value && !auditStatusFilter.value && !auditFrom.value && !auditTo.value) renderAudit(body); }
   const workspace = await fetch('/api/admin/workspace', { credentials: 'same-origin' });
   if (workspace.ok) renderWorkspace(await workspace.json());
 }
+
+auditFilters.onsubmit = async (event) => { event.preventDefault(); auditCursor = null; await loadAudit(); };
+auditNext.onclick = () => loadAudit({ append: true });
 
 function configItem(label, value) {
   const item = document.createElement('div'); item.className = 'config-item';

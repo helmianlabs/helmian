@@ -19,6 +19,7 @@ import {
   LIVE_CONNECTOR_SLACK_INBOUND_PATH,
   LIVE_CONNECTOR_DISCORD_INBOUND_PATH,
   LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH,
+  LIVE_ADMIN_EVENTS_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -143,6 +144,7 @@ async function fixture(options = {}) {
     connectorSecretResolver: options.connectorSecretResolver ?? undefined,
     connectorResolveUser: options.connectorResolveUser ?? undefined,
     connectorResolveChannel: options.connectorResolveChannel ?? undefined,
+    auditEventRepository: options.auditEventRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -157,6 +159,21 @@ async function fixture(options = {}) {
     close: async () => { await clm.close(); await admin.close(); },
   };
 }
+
+test('Audit/Analysis is Organization-scoped, filtered, cursor-paginated, and read-only', async (t) => {
+  const calls = [];
+  const auditEventRepository = {
+    async list(actor, query) {
+      calls.push({ actor, query });
+      return { events: query.cursor ? [{ id: '1', actor: 'user-1', actorRole: 'member', actionType: 'envoy.send', status: 'ALLOW', summary: 'Sent an Envoy message', createdAt: '2026-08-14T12:00:00.000Z' }] : [{ id: '2', actor: 'admin-1', actorRole: 'admin', actionType: 'cora.config.publish', status: 'ALLOW', summary: 'Published approved config', createdAt: '2026-08-14T13:00:00.000Z' }], nextCursor: query.cursor ? null : 'cursor-1', hasMore: !query.cursor, empty: false, source: 'helmion.audit_events', mutation: 'not_performed' };
+    },
+  };
+  const app = await fixture({ membershipRoles: { 'customer-a': 'member' }, auditEventRepository }); t.after(app.close);
+  const first = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_PATH}?action=envoy.send&actor=user-1&status=ALLOW&from=2026-08-01&to=2026-08-15&limit=1`, { headers: { cookie: 'helmion_admin_session=active-session' } });
+  const firstBody = await first.json(); assert.equal(first.status, 200); assert.equal(firstBody.events[0].actionType, 'cora.config.publish'); assert.equal(firstBody.mutation, 'not_performed'); assert.equal(calls[0].actor.tenantId, 'customer-a'); assert.equal(calls[0].actor.role, 'member'); assert.equal(calls[0].query.limit, '1');
+  const next = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_PATH}?cursor=${encodeURIComponent(firstBody.nextCursor)}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(next.status, 200); assert.equal(calls[1].query.cursor, 'cursor-1');
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_PATH}?organization_id=customer-b`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400); assert.equal(calls.length, 2);
+});
 
 test('Artifact Studio routes are Organization-scoped and expose only source-only receipts', async (t) => {
   const receipts = [];
