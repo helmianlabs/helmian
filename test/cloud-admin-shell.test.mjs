@@ -27,6 +27,9 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /Execution request preflight/u);
   assert.match(page, /approval-required, blocked, and queued states all remain not executed/iu);
   assert.match(page, /Your Cora preferences/iu);
+  assert.match(page, /Open Cora quick controls/iu);
+  assert.match(page, /Approved voice profile/iu);
+  assert.match(page, /no provider or voice connection is claimed/iu);
   assert.match(page, /Organization policy, approved catalogs, provider keys, and voice readiness remain admin\/server controlled/iu);
   assert.match(script, /readPersonalPreferences/u);
   assert.match(script, /savePersonalPreferences/u);

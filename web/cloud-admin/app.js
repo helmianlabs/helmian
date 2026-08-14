@@ -38,6 +38,9 @@ const coraPreferenceVerbosity = document.querySelector('#cora-preference-verbosi
 const coraPreferenceInterrupt = document.querySelector('#cora-preference-interrupt');
 const coraPreferenceTurn = document.querySelector('#cora-preference-turn');
 const coraPreferenceVoice = document.querySelector('#cora-preference-voice');
+const coraPreferencesOpen = document.querySelector('#cora-preferences-open');
+const coraPreferencesDialog = document.querySelector('#cora-preferences-dialog');
+const coraPreferencesClose = document.querySelector('#cora-preferences-close');
 const coraAdminControls = document.querySelector('#cora-admin-controls');
 const coraDraftReason = document.querySelector('#cora-draft-reason');
 const coraRoutingPolicy = document.querySelector('#cora-routing-policy');
@@ -434,8 +437,9 @@ function renderCoraUsage(body) {
   );
 }
 
-function renderPersonalPreferences(body) { const model = personalPreferencesModel(body); const prefs = model.preferences; coraPreferenceMuted.checked = prefs.muted === true; coraPreferenceVolume.value = prefs.volume ?? 80; coraPreferenceVerbosity.value = prefs.verbosity ?? 'concise'; coraPreferenceInterrupt.value = prefs.interruptMode ?? 'barge_in'; coraPreferenceTurn.value = prefs.turnMode ?? 'concise'; coraPreferenceVoice.value = prefs.voiceProfile ?? ''; coraPreferencesStatus.textContent = model.statusLabel; }
-async function loadPersonalPreferences() { coraPreferencesStatus.textContent = 'Loading your Cora preferences…'; try { renderPersonalPreferences(await coraClient.readPersonalPreferences()); } catch (error) { coraPreferencesStatus.textContent = error.status === 403 ? 'Personal preferences unavailable: Organization membership is required.' : `Personal preferences unavailable: ${error.message}`; } }
+function renderPreferenceChoices(select, choices, current, emptyLabel = null) { select.replaceChildren(); if (emptyLabel !== null) select.append(new Option(emptyLabel, '')); for (const choice of choices ?? []) select.append(new Option(String(choice), String(choice))); if ([...select.options].some((option) => option.value === String(current ?? ''))) select.value = String(current ?? ''); }
+function renderPersonalPreferences(body) { const model = personalPreferencesModel(body); const prefs = model.preferences; renderPreferenceChoices(coraPreferenceVerbosity, model.bounds.verbosity, prefs.verbosity); renderPreferenceChoices(coraPreferenceInterrupt, model.bounds.interruptMode, prefs.interruptMode); renderPreferenceChoices(coraPreferenceTurn, model.bounds.turnMode, prefs.turnMode); renderPreferenceChoices(coraPreferenceVoice, model.bounds.voiceProfiles, prefs.voiceProfile, 'No profile selected'); coraPreferenceMuted.checked = prefs.muted === true; coraPreferenceVolume.value = prefs.volume ?? 80; coraPreferencesStatus.textContent = model.statusLabel; coraPreferencesOpen.disabled = false; }
+async function loadPersonalPreferences() { coraPreferencesStatus.textContent = 'Loading your Cora preferences…'; coraPreferencesOpen.disabled = true; try { renderPersonalPreferences(await coraClient.readPersonalPreferences()); } catch (error) { coraPreferencesStatus.textContent = error.status === 403 ? 'Personal preferences unavailable: Organization membership is required.' : `Personal preferences unavailable: ${error.message}`; coraPreferencesOpen.disabled = true; } }
 
 function renderWorkspacePreviews(body) {
   const model = workspacePreviewPanelModel(body);
@@ -542,7 +546,9 @@ async function loadCoraSettings() {
   }
 }
 
-coraPreferencesForm.onsubmit = async (event) => { event.preventDefault(); coraPreferencesStatus.textContent = 'Saving your Cora preferences…'; try { await coraClient.savePersonalPreferences({ muted: coraPreferenceMuted.checked, volume: Number(coraPreferenceVolume.value), verbosity: coraPreferenceVerbosity.value, interruptMode: coraPreferenceInterrupt.value, turnMode: coraPreferenceTurn.value, voiceProfile: coraPreferenceVoice.value || null }); coraPreferencesStatus.textContent = 'Your personal Cora preferences were saved. Organization policy and catalog remain unchanged.'; } catch (error) { coraPreferencesStatus.textContent = `Personal preferences not saved: ${error.message}`; } };
+coraPreferencesOpen.onclick = () => coraPreferencesDialog.showModal();
+coraPreferencesClose.onclick = () => coraPreferencesDialog.close();
+coraPreferencesForm.onsubmit = async (event) => { event.preventDefault(); coraPreferencesStatus.textContent = 'Saving your Cora preferences…'; try { const saved = await coraClient.savePersonalPreferences({ muted: coraPreferenceMuted.checked, volume: Number(coraPreferenceVolume.value), verbosity: coraPreferenceVerbosity.value, interruptMode: coraPreferenceInterrupt.value, turnMode: coraPreferenceTurn.value, voiceProfile: coraPreferenceVoice.value || null }); renderPersonalPreferences(saved); coraPreferencesStatus.textContent += ' Saved for this signed-in user; no provider or voice connection was invoked.'; } catch (error) { coraPreferencesStatus.textContent = `Personal preferences not saved: ${error.message}`; } };
 
 async function loadPolicy() {
   const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });
