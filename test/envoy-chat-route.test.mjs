@@ -106,14 +106,23 @@ test('Envoy polling route requires the authenticated membership session', async 
 });
 
 test('authenticated Envoy SSE emits only Organization channel messages and resumes after a cursor', async (t) => {
-  const app = await fixture({ envoyStreamIntervalMs: 250 }); t.after(app.close);
+  const app = await fixture({ envoyStreamIntervalMs: 250, envoyStreamMaxMs: 300 }); t.after(app.close);
   const headers = { cookie: 'helmion_admin_session=active-session' };
   const stream = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_STREAM_PATH}?channel_id=channel-1&after_id=0`, { headers });
   assert.equal(stream.status, 200);
   assert.match(stream.headers.get('content-type') ?? '', /text\/event-stream/u);
+  assert.equal(stream.headers.get('cache-control'), 'no-store, no-cache, max-age=0, no-transform');
+  assert.equal(stream.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(stream.headers.get('x-frame-options'), 'DENY');
   const reader = stream.body.getReader();
-  const first = new TextDecoder().decode((await reader.read()).value);
-  assert.match(first, /event: ready|event: message/u);
+  let chunks = '';
+  for (let index = 0; index < 8 && !/ENVOY_STREAM_ROTATE/u.test(chunks); index += 1) {
+    const part = await reader.read();
+    chunks += new TextDecoder().decode(part.value ?? new Uint8Array());
+    if (part.done) break;
+  }
+  assert.match(chunks, /event: ready|event: message/u);
+  assert.match(chunks, /ENVOY_STREAM_ROTATE/u);
   reader.cancel();
 });
 
@@ -126,4 +135,14 @@ test('Envoy SSE rejects tenant selectors, missing sessions, and unknown Organiza
   assert.equal(unauthenticated.status, 403);
   const unknown = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_STREAM_PATH}?channel_id=org-b-channel`, { headers });
   assert.equal(unknown.status, 400);
+});
+
+test('admin API rejects supplied cross-origin requests but allows the same origin', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  const crossOrigin = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers: { ...headers, origin: 'https://evil.example', 'content-type': 'application/json' }, body: JSON.stringify({ channelId: 'channel-1', body: 'blocked', idempotencyKey: 'message-origin-1' }) });
+  assert.equal(crossOrigin.status, 403);
+  assert.deepEqual(await crossOrigin.json(), { valid: false, code: 'ADMIN_ORIGIN_REQUIRED' });
+  const sameOrigin = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers: { ...headers, origin: new URL(app.url).origin, 'content-type': 'application/json' }, body: JSON.stringify({ channelId: 'channel-1', body: 'allowed', idempotencyKey: 'message-origin-2' }) });
+  assert.equal(sameOrigin.status, 200);
 });
