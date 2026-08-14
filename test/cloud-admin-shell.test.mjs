@@ -23,6 +23,9 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(page, /reports unavailable until that prerequisite is present/iu);
   assert.match(page, /Governance monitor · unavailable/iu);
   assert.match(page, /does not claim production readiness/iu);
+  assert.match(page, /id="guard-check-again"/u);
+  assert.match(script, /Read-only readiness rechecked/iu);
+  assert.match(script, /loadOrganizationReadiness()/u);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);
 });
 

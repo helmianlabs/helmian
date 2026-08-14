@@ -12,6 +12,7 @@ const policyDiff = document.querySelector('#policy-diff');
 const policyStatus = document.querySelector('#policy-status');
 const scope = document.querySelector('#scope');
 const guardEvents = document.querySelector('#guard-events');
+const guardCheckAgain = document.querySelector('#guard-check-again');
 const auditStatus = document.querySelector('#audit-status');
 const auditFilters = document.querySelector('#audit-filters');
 const auditAction = document.querySelector('#audit-action');
@@ -903,6 +904,18 @@ for (const item of document.querySelectorAll('#workspace-nav [data-target]')) {
   };
 }
 document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});
+guardCheckAgain.onclick = async () => {
+  guardCheckAgain.disabled = true;
+  guardEvents.textContent = 'Checking authenticated Organization readiness…';
+  try {
+    await loadOrganizationReadiness();
+    guardEvents.textContent = 'Read-only readiness rechecked. No action, agent, provider, or external write was performed.';
+  } catch {
+    guardEvents.textContent = 'Read-only readiness check unavailable. No action, agent, provider, or external write was performed.';
+  } finally {
+    guardCheckAgain.disabled = false;
+  }
+};
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
 coraCreateDraft.onclick = async () => {
   const reason = coraDraftReason.value.trim();

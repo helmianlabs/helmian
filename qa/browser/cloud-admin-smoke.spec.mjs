@@ -40,6 +40,12 @@ test.describe('Helmian Cloud authenticated fixture smoke', () => {
     await expect(page.getByText('Cora preparation request recorded. Prepared only; nothing was executed.')).toBeVisible();
   });
 
+  test('member can recheck read-only Organization readiness without execution', async ({ page }) => {
+    await page.goto('/admin/?envoy=empty');
+    await page.getByRole('button', { name: 'Check again' }).click();
+    await expect(page.getByText('Read-only readiness rechecked. No action, agent, provider, or external write was performed.')).toBeVisible();
+  });
+
   test.fixme('visual baselines are not generated in this source-only pass', async ({ page }) => {
     await page.goto('/admin/');
     await expect(page).toHaveScreenshot('cloud-admin-member.png', { animations: 'disabled' });
