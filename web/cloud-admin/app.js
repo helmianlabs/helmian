@@ -102,6 +102,10 @@ const workspaceLayoutReset = document.querySelector('#workspace-layout-reset');
 const workspacePanelOrder = document.querySelector('#workspace-panel-order');
 const workspaceDensity = document.querySelector('#workspace-density');
 const workspaceDefaultChannel = document.querySelector('#workspace-default-channel');
+const workspaceRoleDefaultControls = document.querySelector('#workspace-role-default-controls');
+const workspaceRoleDefaultStatus = document.querySelector('#workspace-role-default-status');
+const workspaceRoleDefaultRole = document.querySelector('#workspace-role-default-role');
+const workspaceRoleDefaultSave = document.querySelector('#workspace-role-default-save');
 let coraDraft = null;
 let coraPublishedConfig = null;
 let policyEtag = '';
@@ -231,15 +235,35 @@ function renderWorkspaceLayout(body) {
   workspacePanelOrder.value = (model.layout.panelOrder ?? []).join(',');
   workspaceDensity.value = model.layout.density ?? 'comfortable';
   workspaceDefaultChannel.value = model.layout.defaultEnvoyChannelId ?? '';
+  applyWorkspaceLayout(model.layout);
   workspaceLayoutStatus.textContent = model.statusLabel;
+}
+
+function applyWorkspaceLayout(layout) {
+  const visible = new Set(layout.visibleShelves ?? []);
+  for (const shelf of ['chat', 'cora', 'prepare', 'artifact', 'governance']) {
+    const nav = document.querySelector(`#workspace-nav [data-target="section-${shelf}"]`);
+    const section = document.querySelector(`#section-${shelf}`);
+    if (nav) nav.hidden = !visible.has(shelf);
+    if (section) section.hidden = !visible.has(shelf);
+  }
+  const nav = document.querySelector('#workspace-nav');
+  for (const shelf of layout.panelOrder ?? []) { const item = nav?.querySelector(`[data-target="section-${shelf}"]`); if (item) nav.append(item); }
+  if (layout.defaultEnvoyChannelId && [...envoyChannel.options].some((option) => option.value === layout.defaultEnvoyChannelId)) envoyChannel.value = layout.defaultEnvoyChannelId;
 }
 
 async function loadWorkspaceLayout() {
   workspaceLayoutStatus.textContent = 'Loading your workspace layout…';
   workspaceSettings.setAttribute('aria-busy', 'true');
-  try { renderWorkspaceLayout(await coraClient.readWorkspaceLayout()); }
+  try { renderWorkspaceLayout(await coraClient.readWorkspaceLayout()); if (envoyChannel.value) await loadEnvoyMessages(); }
   catch (error) { workspaceLayoutStatus.textContent = error.status === 403 ? 'Workspace layout unavailable: Organization membership is required.' : `Workspace layout unavailable: ${error.message}`; }
   finally { workspaceSettings.removeAttribute('aria-busy'); }
+}
+
+async function loadWorkspaceRoleDefaults() {
+  workspaceRoleDefaultStatus.textContent = 'Loading role defaults…';
+  try { const body = await coraClient.readWorkspaceRoleDefaults(); workspaceRoleDefaultStatus.textContent = 'Owner/admin-managed role defaults loaded.'; workspaceRoleDefaultRole.onchange = () => { const selected = body.roleDefaults?.find((item) => item.role === workspaceRoleDefaultRole.value)?.layout; if (selected) renderWorkspaceLayout({ layout: selected }); }; }
+  catch (error) { workspaceRoleDefaultStatus.textContent = `Role defaults unavailable: ${error.message}`; }
 }
 
 function layoutInput() {
@@ -529,7 +553,7 @@ async function loadPolicy() {
 
 async function load() {
   const session = await fetch('/api/admin/session', { credentials: 'same-origin' });
-  if (!session.ok) { signedOut.hidden = false; signedIn.hidden = true; workspaceSettingsOpen.hidden = true; return; }
+  if (!session.ok) { signedOut.hidden = false; signedIn.hidden = true; workspaceSettingsOpen.hidden = true; workspaceRoleDefaultControls.hidden = true; return; }
   const sessionBody = await session.json();
   signedOut.hidden = true; signedIn.hidden = false;
   actor.textContent = `Signed in as ${sessionBody.actor.role} for Organization ${sessionBody.actor.tenantId}`;
@@ -537,6 +561,7 @@ async function load() {
   window.helmianActorRole = sessionBody.actor.role;
   const isAdmin = ['owner', 'admin'].includes(String(sessionBody.actor.role ?? '').toLowerCase());
   adminNav.hidden = !isAdmin;
+  workspaceRoleDefaultControls.hidden = !isAdmin;
   workspaceState.textContent = `AUTHENTICATED · ${String(sessionBody.actor.role ?? 'member').toUpperCase()}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
@@ -545,6 +570,7 @@ async function load() {
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();
+  if (isAdmin) await loadWorkspaceRoleDefaults();
   await loadCoraSettings();
   await loadWorkspacePreviews();
   await loadAgentTasks();
@@ -556,6 +582,7 @@ workspaceSettingsOpen.onclick = () => { workspaceSettings.showModal(); loadWorks
 workspaceSettingsClose.onclick = () => workspaceSettings.close();
 workspaceLayoutSave.onclick = async () => { workspaceLayoutStatus.textContent = 'Saving your workspace layout…'; workspaceLayoutSave.disabled = true; try { renderWorkspaceLayout(await coraClient.saveWorkspaceLayout(layoutInput())); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not saved: ${error.message}`; } finally { workspaceLayoutSave.disabled = false; } };
 workspaceLayoutReset.onclick = async () => { workspaceLayoutStatus.textContent = 'Restoring your role default…'; workspaceLayoutReset.disabled = true; try { renderWorkspaceLayout(await coraClient.resetWorkspaceLayout()); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not reset: ${error.message}`; } finally { workspaceLayoutReset.disabled = false; } };
+workspaceRoleDefaultSave.onclick = async () => { workspaceRoleDefaultStatus.textContent = 'Saving role default…'; workspaceRoleDefaultSave.disabled = true; try { await coraClient.saveWorkspaceRoleDefault({ role: workspaceRoleDefaultRole.value, ...layoutInput() }); workspaceRoleDefaultStatus.textContent = `Saved the ${workspaceRoleDefaultRole.value} role default. Personal overrides remain separate.`; } catch (error) { workspaceRoleDefaultStatus.textContent = `Role default not saved: ${error.message}`; } finally { workspaceRoleDefaultSave.disabled = false; } };
 for (const item of document.querySelectorAll('#workspace-nav [data-target]')) {
   item.onclick = () => {
     document.getElementById(item.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });

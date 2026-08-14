@@ -102,6 +102,7 @@
           <label>Density <select id="workspace-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
           <label>Default Envoy channel <select id="workspace-default-channel"><option value="">No default channel</option></select></label>
           <div class="config-controls"><button id="workspace-layout-save" type="button">Save layout</button><button id="workspace-layout-reset" class="secondary" type="button">Reset to role default</button><button id="workspace-settings-close" class="secondary" type="button">Close</button></div>
+          <div id="workspace-role-default-controls" hidden><h3>Organization role defaults</h3><p id="workspace-role-default-status" class="note" role="status" aria-live="polite">Loading role defaults…</p><label>Role default <select id="workspace-role-default-role"><option value="owner">Owner</option><option value="admin">Admin</option><option value="member">Member</option><option value="auditor">Auditor</option></select></label><button id="workspace-role-default-save" type="button">Save role default</button></div>
         </form>
         <p class="preview">These are personal presentation preferences only. Organization policy, roles, modules, routing, and other users’ layouts are not editable here.</p>
       </dialog>

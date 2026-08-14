@@ -34,6 +34,10 @@ alter table helmion.workspace_layout_preferences enable row level security;
 drop policy if exists workspace_layout_role_defaults_tenant_select on helmion.workspace_layout_role_defaults;
 create policy workspace_layout_role_defaults_tenant_select on helmion.workspace_layout_role_defaults
   for select using (tenant_id = current_setting('helmion.tenant_id', true));
+drop policy if exists workspace_layout_role_defaults_admin_write on helmion.workspace_layout_role_defaults;
+create policy workspace_layout_role_defaults_admin_write on helmion.workspace_layout_role_defaults
+  for all using (tenant_id = current_setting('helmion.tenant_id', true) and current_setting('helmion.actor_role', true) in ('owner','admin'))
+  with check (tenant_id = current_setting('helmion.tenant_id', true) and current_setting('helmion.actor_role', true) in ('owner','admin') and updated_by_subject = current_setting('helmion.actor_subject', true));
 drop policy if exists workspace_layout_preferences_user_access on helmion.workspace_layout_preferences;
 create policy workspace_layout_preferences_user_access on helmion.workspace_layout_preferences
   for all using (tenant_id = current_setting('helmion.tenant_id', true) and user_subject = current_setting('helmion.actor_subject', true))
