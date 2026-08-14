@@ -129,6 +129,7 @@ async function fixture(options = {}) {
     artifactStudioRepository: options.artifactStudioRepository ?? undefined,
     artifactSourceRepository: options.artifactSourceRepository ?? undefined,
     artifactScriptRepository: options.artifactScriptRepository ?? undefined,
+    artifactExecutionRepository: options.artifactExecutionRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -192,6 +193,19 @@ test('Artifact script routes preserve manual revision and prepared/not-generated
   const selector = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH}?plant_id=west&artifact_receipt_id=a`, { headers }); assert.equal(selector.status, 400);
   const response = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ artifactReceiptId: 'artifact-1', scriptKind: 'narration', text: 'Manual draft', sourceLinkReceiptIds: [], stage: 'draft', approvalReason: null, idempotencyKey: 'script-0001' }) });
   assert.equal(response.status, 200); const body = await response.json(); assert.equal(body.generation, 'not_generated'); assert.equal(body.draftState, 'prepared');
+});
+
+test('execution request HTTP path reaches the injected fake through CLM', async (t) => {
+  const calls = [];
+  const artifactExecutionRepository = { async list(actor) { calls.push({ operation: 'list', actor }); return { receipts: [{ status: 'approval_required', execution: 'not_executed' }] }; }, async append(actor, input) { calls.push({ operation: 'append', actor, input }); const status = Number(input.estimatedCostMinor) > 100 ? 'blocked' : input.approvalRef ? 'queued' : 'approval_required'; return { status, policyDecision: status === 'blocked' ? 'deny' : status === 'queued' ? 'allow' : 'step-up', execution: 'not_executed', providerInvocation: 'not_performed', media: 'not_generated', receiptId: `execution-${calls.length}` }; } };
+  const body = { approvalRef: null, artifactReceiptId: 'artifact-1', catalogEntryId: 'catalog-1', currency: 'USD', estimatedAudioSeconds: null, estimatedCostMinor: 25, estimatedImageUnits: null, estimatedRequestedTokens: null, estimatedVideoUnits: null, externalExecution: true, idempotencyKey: 'execution-0001', modality: 'text', model: 'model-1', provider: 'model-provider', scriptReceiptId: 'script-1', sourceLinkReceiptIds: ['link-0001'], supersedesReceiptId: null };
+  const memberApp = await fixture({ membershipRoles: { 'customer-a': 'member' }, artifactExecutionRepository }); t.after(memberApp.close); const memberHeaders = { cookie: 'helmion_admin_session=active-session' };
+  const read = await fetch(`${memberApp.url}/api/admin/cora/artifact-execution-requests?artifact_receipt_id=artifact-1`, { headers: memberHeaders }); const readBody = await read.json(); assert.equal(read.status, 200, JSON.stringify(readBody)); assert.equal(readBody.receipts[0].execution, 'not_executed'); assert.equal(calls[0].actor.tenantId, 'customer-a'); assert.equal(calls[0].actor.role, 'member');
+  const normal = await fetch(`${memberApp.url}/api/admin/cora/artifact-execution-requests`, { method: 'POST', headers: { ...memberHeaders, 'content-type': 'application/json' }, body: JSON.stringify(body) }); const normalBody = await normal.json(); assert.equal(normal.status, 200, JSON.stringify(normalBody)); assert.equal(normalBody.status, 'approval_required'); assert.equal(normalBody.execution, 'not_executed'); assert.equal(normalBody.providerInvocation, 'not_performed');
+  const injected = await fetch(`${memberApp.url}/api/admin/cora/artifact-execution-requests`, { method: 'POST', headers: { ...memberHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ ...body, idempotencyKey: 'execution-0002', plantId: 'plant-1' }) }); assert.equal(injected.status, 400);
+  const adminApp = await fixture({ artifactExecutionRepository }); t.after(adminApp.close); const adminHeaders = { cookie: 'helmion_admin_session=active-session' };
+  const queued = await fetch(`${adminApp.url}/api/admin/cora/artifact-execution-requests`, { method: 'POST', headers: { ...adminHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ ...body, approvalRef: 'approval-0001', idempotencyKey: 'execution-0003', supersedesReceiptId: 'execution-0001' }) }); const queuedBody = await queued.json(); assert.equal(queued.status, 200, JSON.stringify(queuedBody)); assert.equal(queuedBody.status, 'queued'); assert.equal(queuedBody.execution, 'not_executed');
+  const blocked = await fetch(`${adminApp.url}/api/admin/cora/artifact-execution-requests`, { method: 'POST', headers: { ...adminHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ ...body, estimatedCostMinor: 101, idempotencyKey: 'execution-0004' }) }); const blockedBody = await blocked.json(); assert.equal(blocked.status, 200, JSON.stringify(blockedBody)); assert.equal(blockedBody.status, 'blocked'); assert.equal(blockedBody.policyDecision, 'deny');
 });
 
 test('live admin is mounted under /admin on the CLM port and never replaces /llm', async (t) => {
