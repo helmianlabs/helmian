@@ -27,9 +27,11 @@ Helmian should combine:
 
 - **RBAC:** owner, admin, dispatcher, supervisor, safety, payroll, driver,
   auditor, and other reviewed roles;
-- **ABAC:** tenant, plant, department, assigned loads, equipment type, record
-  state, action risk, time window, employment/status attributes, and current
-  session surface;
+- **ABAC:** tenant, department, assigned loads, equipment type, record state,
+  action risk, time window, employment/status attributes, and current session
+  surface. A plant or facility is only a physical receiver, distribution, or
+  warehouse business record; it is never an identity, organization, tenant,
+  database-routing, authorization, RBAC/ABAC, or allowed-facility boundary.
 - **ReBAC/resource checks:** whether the caller actually owns, manages, is
   assigned to, or is allowed to act on the requested record;
 - **delegation:** a manager or owner can approve a specific bounded request
@@ -58,6 +60,15 @@ bootstrap six hands.
 Approval is not required for every low-risk action. It is required when the
 policy says the requested impact exceeds the caller's authority or the action
 cannot be safely rolled back.
+
+The normal Cora path is allow-by-standing-role for navigation, reads, drafts,
+and in-scope preparation. Cora may carry those actions through the approved
+surface without asking the human to re-approve ordinary navigation or lookup.
+The step-up path is mandatory for external or irreversible writes, money,
+deletion, publication, credential or permission changes, identity/trust
+changes, safety releases, and any action outside the verified tenant/resource
+scope. A plant/facility record can be selected as data, but it can never grant
+or narrow that authority.
 
 ## Driver Cora
 
