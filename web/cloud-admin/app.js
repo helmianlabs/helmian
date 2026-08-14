@@ -1,3 +1,5 @@
+import { createEnvoyClient } from './envoy-client.mjs';
+
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
 const actor = document.querySelector('#actor');
@@ -10,6 +12,13 @@ const policyStatus = document.querySelector('#policy-status');
 const scope = document.querySelector('#scope');
 const guardEvents = document.querySelector('#guard-events');
 const agentCards = document.querySelector('#agent-cards');
+const conversationBody = document.querySelector('#conversation-body');
+const composer = document.querySelector('#composer');
+const composerInput = document.querySelector('#composer-input');
+const composerSend = document.querySelector('#composer-send');
+const envoyChannel = document.querySelector('#envoy-channel');
+const composerStatus = document.querySelector('#composer-status');
+const envoy = createEnvoyClient();
 let policyEtag = '';
 let previewId = '';
 let workspaceTimer = null;
@@ -73,6 +82,60 @@ function renderWorkspace(body) {
   }
 }
 
+function renderMessages(body) {
+  conversationBody.replaceChildren();
+  if (!body.messages?.length) {
+    const empty = document.createElement('p');
+    empty.className = 'preview';
+    empty.textContent = 'No messages in this Organization channel yet.';
+    conversationBody.append(empty);
+    return;
+  }
+  for (const message of body.messages) {
+    const card = document.createElement('article');
+    card.className = 'message';
+    const meta = document.createElement('div');
+    meta.className = 'message-meta';
+    meta.textContent = `${message.authorKind === 'human' ? 'Member' : message.authorKind} · ${message.createdAt || 'time unavailable'}`;
+    const text = document.createElement('p');
+    text.textContent = message.body;
+    card.append(meta, text);
+    conversationBody.append(card);
+  }
+}
+
+async function loadEnvoyChannels() {
+  const body = await envoy.listChannels();
+  envoyChannel.replaceChildren();
+  for (const channel of body.channels ?? []) {
+    const option = document.createElement('option');
+    option.value = channel.id;
+    option.textContent = channel.title || channel.slug;
+    envoyChannel.append(option);
+  }
+  envoyChannel.disabled = !(body.channels?.length);
+  composerInput.disabled = !(body.channels?.length);
+  composerSend.disabled = !(body.channels?.length);
+  if (!body.channels?.length) {
+    renderMessages({ messages: [] });
+    composerStatus.textContent = 'No Envoy channels are available for this Organization.';
+    return;
+  }
+  composerStatus.textContent = 'Organization Envoy ready. Cora and outbound delivery are not invoked.';
+  await loadEnvoyMessages();
+}
+
+async function loadEnvoyMessages() {
+  if (!envoyChannel.value) return;
+  composerStatus.textContent = 'Loading messages…';
+  try {
+    renderMessages(await envoy.listMessages(envoyChannel.value));
+    composerStatus.textContent = 'Messages loaded.';
+  } catch (error) {
+    composerStatus.textContent = `Messages unavailable: ${error.message}`;
+  }
+}
+
 async function refreshWorkspacePanels() {
   const events = await fetch('/api/admin/events', { credentials: 'same-origin' });
   if (events.ok) renderEvents(await events.json());
@@ -98,10 +161,31 @@ async function load() {
   out.textContent = JSON.stringify(await surface.json(), null, 2);
   await refreshWorkspacePanels();
   await loadPolicy();
+  await loadEnvoyChannels();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
 document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
+envoyChannel.onchange = () => loadEnvoyMessages();
+composer.onsubmit = async (event) => {
+  event.preventDefault();
+  const body = composerInput.value.trim();
+  if (!envoyChannel.value || !body) return;
+  composerInput.disabled = true;
+  composerSend.disabled = true;
+  composerStatus.textContent = 'Sending…';
+  try {
+    const result = await envoy.sendMessage({ channelId: envoyChannel.value, body, idempotencyKey: crypto.randomUUID() });
+    composerInput.value = '';
+    await loadEnvoyMessages();
+    composerStatus.textContent = result.receipt?.replayed ? 'Message already received. Replay receipt confirmed.' : 'Message sent. Durable receipt confirmed; Cora was not invoked.';
+  } catch (error) {
+    composerStatus.textContent = `Message not sent: ${error.message}`;
+  } finally {
+    composerInput.disabled = false;
+    composerSend.disabled = false;
+  }
+};
 policyForm.onsubmit = async (event) => {
   event.preventDefault();
   policyStatus.textContent = 'Creating audited preview…';
