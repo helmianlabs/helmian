@@ -36,6 +36,7 @@ import { createConnectorRegistrationRepository } from '../cora/connector-registr
 import { CONNECTOR_MAX_BODY_BYTES, readCommunicationConnectorStatus, verifyDiscordInteraction, verifySlackRequest } from './communication-connectors.mjs';
 import { receiveInboundConnectorEvent } from './connector-gateway.mjs';
 import { createWorkspaceLayoutRepository } from './workspace-layout-repository.mjs';
+import { createAuditEventRepository } from './audit-event-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -214,6 +215,7 @@ export async function createLiveHelmianCloudAdminHandler({
   personalPreferencesRepository: suppliedPersonalPreferencesRepository = null,
   organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
   workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
+  auditEventRepository: suppliedAuditEventRepository = null,
   envoyStore: suppliedEnvoyStore = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
@@ -243,6 +245,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
   const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
+  const auditEvents = suppliedAuditEventRepository ?? createAuditEventRepository(pool);
   const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
@@ -566,11 +569,14 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_EVENTS_PATH) {
       try {
-        const actor = await activeActor(request);
-        send(response, 200, JSON.stringify({ valid: true, events: await recentAuditEvents(actor) }));
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        send(response, 200, JSON.stringify({ valid: true, ...await auditEvents.list(actor, {
+          action: requestUrl.searchParams.get('action'), actor: requestUrl.searchParams.get('actor'), status: requestUrl.searchParams.get('status'), from: requestUrl.searchParams.get('from'), to: requestUrl.searchParams.get('to'), cursor: requestUrl.searchParams.get('cursor'), limit: requestUrl.searchParams.get('limit'),
+        }) }));
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
-        send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? 'AUDIT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'AUDIT_QUERY_INVALID' : 'AUDIT_DATABASE_READ_FAILED' }));
       }
       return true;
     }

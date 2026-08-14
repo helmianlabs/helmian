@@ -65,6 +65,12 @@
     .usage-state { padding: .7rem; border-radius: .35rem; border: 1px solid #344156; background: #0d1119; }
     .usage-state.soft { border-color: #f2c879; color: #f2c879; }
     .usage-state.hard { border-color: #f07f7f; color: #f07f7f; }
+    .audit-toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .5rem; align-items: end; }
+    .audit-toolbar label { display: grid; gap: .25rem; color: #aebbd0; font-size: .8rem; }
+    .audit-toolbar input, .audit-toolbar select { min-width: 0; background: #0d1119; border: 1px solid #344156; color: #fff; border-radius: .35rem; padding: .6rem; }
+    .audit-event { padding: .75rem; margin: .5rem 0; background: #0d1119; border: 1px solid #344156; border-radius: .4rem; }
+    .audit-event h3 { margin: 0 0 .3rem; font-size: .9rem; }
+    .audit-event p { margin: .2rem 0; color: #aebbd0; font-size: .82rem; }
     .tool { display: block; padding: .5rem 0; }
     #policy-status { min-height: 1.5rem; }
     [hidden] { display: none; }
@@ -81,6 +87,7 @@
         <button class="nav-item" type="button" data-target="section-prepare">Prepare</button>
         <button class="nav-item" type="button" data-target="section-artifact">Artifact Studio</button>
         <button class="nav-item" type="button" data-target="section-governance">Governance</button>
+        <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
         <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
       </nav>
       <p id="workspace-nav-hint" class="preview">Authenticated Organization workspace. Chat and preparation are connected; external execution and browser automation are unavailable.</p>
@@ -216,6 +223,21 @@
           <div id="connector-items" class="config-grid"></div>
           <form id="connector-form" class="config-controls" hidden><label>Provider <select id="connector-provider"><option value="slack">Slack</option><option value="discord">Discord</option></select></label><label>Lifecycle <select id="connector-lifecycle"><option value="draft">Draft</option><option value="testing">Testing</option><option value="approved">Approved</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Signing-secret reference name only <input id="connector-secret-ref" maxlength="160" placeholder="Vault reference name; never the secret value"></label><label><input id="connector-endpoint-ready" type="checkbox"> Public endpoint readiness declared</label><label>Allowed inbound channels <textarea id="connector-channels" maxlength="6000" placeholder="external channel ID | display label"></textarea></label><button type="submit">Save connector metadata</button></form>
           <p class="preview">This is non-secret Organization metadata and readiness only. It does not create a webhook, connect Slack or Discord, run OAuth, write credentials, verify a live provider, or enable outbound delivery. Members see limited status; owners/admins manage lifecycle metadata.</p>
+        </section>
+        <section id="section-audit" class="card" aria-labelledby="audit-heading">
+          <h2 id="audit-heading">Audit / Analysis</h2>
+          <p id="audit-status" class="note" role="status" aria-live="polite">Loading durable Organization audit events…</p>
+          <form id="audit-filters" class="audit-toolbar">
+            <label>Action <input id="audit-action" maxlength="120" placeholder="Exact action type"></label>
+            <label>Actor <input id="audit-actor" maxlength="120" placeholder="Signed-in actor subject"></label>
+            <label>Status <select id="audit-status-filter"><option value="">All decisions</option><option>ALLOW</option><option>AUTO_RUN</option><option>PAUSE_FOR_OWNER</option><option>BLOCK</option><option>DENY</option></select></label>
+            <label>From <input id="audit-from" type="date"></label>
+            <label>To <input id="audit-to" type="date"></label>
+            <button type="submit">Apply filters</button>
+          </form>
+          <div id="audit-events" aria-live="polite"></div>
+          <button id="audit-next" class="secondary" type="button" hidden>Load older events</button>
+          <p class="preview">Read-only durable audit records from this Organization. No synthetic KPI, export, email, mutation, provider call, or Plant/facility authority is used.</p>
         </section>
         <section id="section-artifact" class="card" aria-labelledby="artifact-studio-heading">
           <h2 id="artifact-studio-heading">Artifact Studio</h2>
