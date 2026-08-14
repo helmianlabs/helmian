@@ -23,6 +23,7 @@ import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 import { createCoraOrganizationConfigRepository } from '../cora/organization-config-repository.mjs';
 import { createProviderUsageRepository } from '../cora/provider-usage-repository.mjs';
+import { createOrganizationDatabaseRepository } from './organization-database-repository.mjs';
 import { createWorkspacePreviewRepository } from '../cora/workspace-preview-repository.mjs';
 import { createAgentTaskRepository } from '../cora/agent-task-repository.mjs';
 import { createArtifactStudioRepository } from '../cora/artifact-studio-repository.mjs';
@@ -65,6 +66,7 @@ export const LIVE_ADMIN_CORA_ARTIFACT_SOURCE_TRANSITION_PATH = '/api/admin/cora/
 export const LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH = '/api/admin/cora/artifact-scripts';
 export const LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH = '/api/admin/cora/artifact-execution-requests';
 export const LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH = '/api/admin/cora/personal-preferences';
+export const LIVE_ADMIN_ORGANIZATION_DATABASE_PATH = '/api/admin/control-plane/organization-database';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -180,6 +182,7 @@ export async function createLiveHelmianCloudAdminHandler({
   artifactScriptRepository: suppliedArtifactScriptRepository = null,
   artifactExecutionRepository: suppliedArtifactExecutionRepository = null,
   personalPreferencesRepository: suppliedPersonalPreferencesRepository = null,
+  organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
   logger = () => {},
@@ -204,6 +207,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const artifactScripts = suppliedArtifactScriptRepository ?? createArtifactScriptRepository(pool);
   const artifactExecution = suppliedArtifactExecutionRepository ?? createArtifactExecutionRepository(pool);
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
+  const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
   const streamIntervalMs = Math.max(250, Number(envoyStreamIntervalMs));
@@ -651,6 +655,12 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_PERSONAL_PREFERENCES_MEMBERSHIP_REQUIRED' : 'CORA_PERSONAL_PREFERENCES_INVALID' })); }
       return true;
     }
+
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_DATABASE_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await organizationDatabase.resolve(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 400 ? 'ORGANIZATION_DATABASE_SELECTOR_INVALID' : error?.status === 403 ? 'ORGANIZATION_DATABASE_MEMBERSHIP_REQUIRED' : 'ORGANIZATION_DATABASE_UNAVAILABLE' })); }
+      return true;
+    }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIGS_PATH) {
       try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['config', 'reason', 'provenance']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.createDraft(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONFIG_ADMIN_REQUIRED' : 'CORA_CONFIG_DRAFT_INVALID' })); }
@@ -791,6 +801,7 @@ export async function createLiveHelmianCloudAdminHandler({
     appendArtifactExecution: (actor, input) => artifactExecution.append(actor, input),
     readPersonalPreferences: (actor) => personalPreferences.read(actor),
     savePersonalPreferences: (actor, input) => personalPreferences.save(actor, input),
+    resolveOrganizationDatabase: (actor) => organizationDatabase.resolve(actor),
     claimAgentTask: (workerActor, input) => agentTasks.claimPrepared(workerActor, input),
     close: () => ownsPool ? pool.end() : Promise.resolve(),
   });
