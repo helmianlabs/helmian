@@ -30,6 +30,8 @@
     "agent": "node bin/helmion.mjs agent",
     "cora": "node bin/helmion-cora.mjs",
     "cloud:preflight": "node bin/helmion-cloud-preflight.mjs",
+    "release:preflight": "node bin/helmion-release-preflight.mjs",
+    "check:release-canary": "node --check src/cloud/release-canary-contract.mjs && node --check bin/helmion-release-preflight.mjs",
     "cloud:admin": "node bin/helmion-cloud-admin.mjs",
     "cloud:admin-bootstrap": "node bin/helmion-admin-bootstrap.mjs",
     "jobs:start": "node bin/helmion-jobs.mjs start",
