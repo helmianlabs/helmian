@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const page = await readFile(new URL('../web/cloud-admin/index.html', import.meta.url), 'utf8');
+const script = await readFile(new URL('../web/cloud-admin/app.js', import.meta.url), 'utf8');
+
+test('authenticated shell navigation names real product surfaces and remains role-aware', () => {
+  for (const target of ['section-chat', 'section-cora', 'section-prepare', 'section-governance']) assert.match(page, new RegExp(`data-target="${target}"`, 'u'));
+  assert.match(page, /data-admin-only/iu);
+  assert.match(script, /adminNav\.hidden\s*=\s*!isAdmin/u);
+  assert.match(page, /Organization scope/u);
+  assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);
+});
+
+test('shell does not present Plant/facility authority or fabricated execution', () => {
+  assert.doesNotMatch(page, /plant selector|facility selector|choose a plant|choose a facility/iu);
+  assert.match(page, /No audited status/u);
+  assert.match(page, /no agent execution is implied/u);
+  assert.match(page, /Preview · not executed/u);
+  assert.match(page, /external execution and browser automation are unavailable/u);
+});
