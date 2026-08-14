@@ -861,8 +861,16 @@ async function load() {
   adminNav.hidden = !isAdmin;
   workspaceRoleDefaultControls.hidden = !isAdmin;
   workspaceState.textContent = `AUTHENTICATED · ${String(sessionBody.actor.role ?? 'member').toUpperCase()}`;
-  const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
-  out.textContent = JSON.stringify(await surface.json(), null, 2);
+  try {
+    const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
+    const body = await surface.json();
+    if (!surface.ok) throw Object.assign(new Error(body.code || 'control surface unavailable'), { status: surface.status });
+    out.textContent = JSON.stringify(body, null, 2);
+  } catch (error) {
+    out.textContent = error.status === 403
+      ? 'Control surface unavailable: active Organization membership is required.'
+      : 'Control surface unavailable: authenticated storage/readiness is not configured.';
+  }
   await refreshWorkspacePanels();
   await loadPolicy();
   await loadOrganizationPeople();

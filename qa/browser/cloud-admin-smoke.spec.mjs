@@ -24,6 +24,13 @@ test.describe('Helmian Cloud authenticated fixture smoke', () => {
     await expect(page.getByText('Cora prepare desk')).toBeVisible();
   });
 
+  test('member keeps the authenticated shell when control surface storage is unavailable', async ({ page }) => {
+    await page.goto('/admin/?control=unavailable&envoy=empty');
+    await expect(page.locator('#signed-in')).toBeVisible();
+    await expect(page.locator('#result')).toHaveText('Control surface unavailable: authenticated storage/readiness is not configured.');
+    await expect(page.getByText('Cora prepare desk')).toBeVisible();
+  });
+
   test('member can prepare a bounded Cora request and sees a not-executed receipt', async ({ page }) => {
     await page.goto('/admin/?envoy=empty');
     await page.getByLabel('Cora preparation goal').fill('Prepare an internal orientation outline');
