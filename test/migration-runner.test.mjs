@@ -79,7 +79,7 @@ class MigrationPool {
           pool.executedSql.push('008_equipment_safety_action_policy.sql');
           return { rowCount: 0, rows: [] };
         }
-        if (String(sql).includes('CREATE TABLE IF NOT EXISTS envoy_channels')) {
+        if (String(sql).includes('CREATE TABLE IF NOT EXISTS helmion.envoy_channels')) {
           pool.executedSql.push('009_envoy_chat.sql');
           return { rowCount: 0, rows: [] };
         }

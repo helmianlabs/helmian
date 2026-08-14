@@ -20,6 +20,7 @@ import {
 } from './tenant-action-policy.mjs';
 import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-action.mjs';
 import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
+import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -37,6 +38,8 @@ export const LIVE_ADMIN_WORKSPACE_PATH = '/api/admin/workspace';
 export const LIVE_ADMIN_ACTION_POLICY_PATH = '/api/admin/action-policy';
 export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/preview';
 export const LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH = '/api/admin/action-policy/confirm';
+export const LIVE_ADMIN_ENVOY_CHANNELS_PATH = '/api/admin/envoy/channels';
+export const LIVE_ADMIN_ENVOY_MESSAGES_PATH = '/api/admin/envoy/messages';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -136,6 +139,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const expectedMigrations = suppliedMigrations ?? await listExpectedMigrationManifest();
   const ownsPool = !suppliedPool;
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
+  const envoy = createEnvoyStore(pool);
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
   const prunePreviews = () => {
@@ -171,6 +175,27 @@ export async function createLiveHelmianCloudAdminHandler({
       if (!['owner', 'admin'].includes(role)) throw Object.assign(new Error('Admin tenant membership required'), { status: 403 });
       return { subject: claimed.subject, tenantId: membership.rows[0].tenant_id, role };
     } finally { client.release(); }
+  }
+
+  async function deriveTenantActor(request) {
+    const claimed = sessionIdentity(request);
+    if (!claimed?.subject) throw Object.assign(new Error('Identity required'), { status: 403 });
+    const client = await pool.connect();
+    try {
+      const membership = await client.query(
+        `select tenant_id, role from helmion.tenant_memberships where subject=$1 and active order by tenant_id`,
+        [claimed.subject],
+      );
+      if (membership.rowCount !== 1) throw Object.assign(new Error('Exactly one active organization membership is required'), { status: 403 });
+      return { subject: claimed.subject, tenantId: membership.rows[0].tenant_id, role: membership.rows[0].role };
+    } finally { client.release(); }
+  }
+
+  async function activeTenantActor(request) {
+    const actor = await deriveTenantActor(request);
+    const context = { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: randomUUID(), requestId: randomUUID() };
+    await withTenantTransaction(pool, context, async (client) => { await requireActiveTenantMembership(client, context); return {}; });
+    return { ...actor, sessionId: context.sessionId, requestId: context.requestId };
   }
 
   function actorContext(actor) {
@@ -363,6 +388,26 @@ export async function createLiveHelmianCloudAdminHandler({
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
       }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CHANNELS_PATH) {
+      try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await envoy.listChannels(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_DATABASE_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CHANNELS_PATH) {
+      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['kind', 'slug', 'title']); send(response, 200, JSON.stringify({ valid: true, ...await envoy.createChannel(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_CHANNEL_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {
+      try { const actor = await activeTenantActor(request); const channelId = requestUrl.searchParams.get('channel_id'); if (requestUrl.searchParams.has('tenant_id')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.listMessages(actor, channelId, requestUrl.searchParams.get('limit')) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_MESSAGE_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {
+      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['body', 'channelId', 'idempotencyKey']); if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.appendMessage(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_MESSAGE_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ACTION_POLICY_PATH) {
