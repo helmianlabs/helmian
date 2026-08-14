@@ -11,6 +11,10 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(page, /data-admin-only/iu);
   assert.match(script, /adminNav\.hidden\s*=\s*!isAdmin/u);
   assert.match(page, /Search stored approved sources/iu);
+  assert.match(page, /Cora prepare desk/iu);
+  assert.match(page, /Prepare request/iu);
+  assert.match(script, /coraClient\.createAgentTask/iu);
+  assert.match(script, /Prepared only; nothing was executed/iu);
   assert.match(page, /Organization scope/u);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);
 });

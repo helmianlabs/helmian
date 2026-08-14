@@ -53,6 +53,12 @@ const coraKnowledgeQuery = document.querySelector('#cora-knowledge-query');
 const coraKnowledgeQuerySubmit = document.querySelector('#cora-knowledge-query-submit');
 const coraKnowledgeQueryStatus = document.querySelector('#cora-knowledge-query-status');
 const coraKnowledgeQueryResults = document.querySelector('#cora-knowledge-query-results');
+const coraPrepareForm = document.querySelector('#cora-prepare-form');
+const coraPrepareGoal = document.querySelector('#cora-prepare-goal');
+const coraPrepareContext = document.querySelector('#cora-prepare-context');
+const coraPrepareSubmit = document.querySelector('#cora-prepare-submit');
+const coraPrepareStatus = document.querySelector('#cora-prepare-status');
+const coraPrepareReceipt = document.querySelector('#cora-prepare-receipt');
 const coraUsageStatus = document.querySelector('#cora-usage-status');
 const coraUsageDetails = document.querySelector('#cora-usage-details');
 const coraSessionsStatus = document.querySelector('#cora-sessions-status');
@@ -907,6 +913,24 @@ coraKnowledgeQuerySubmit.onclick = async () => {
   try { renderCoraKnowledgeQuery(await coraClient.queryKnowledge(query)); }
   catch (error) { coraKnowledgeQueryResults.replaceChildren(); coraKnowledgeQueryStatus.textContent = error.status === 403 ? 'Knowledge query unavailable: Organization membership is required.' : `Knowledge query unavailable: ${error.message}`; }
   finally { coraKnowledgeQuerySubmit.disabled = false; }
+};
+coraPrepareForm.onsubmit = async (event) => {
+  event.preventDefault();
+  const goal = coraPrepareGoal.value.trim();
+  if (!goal) { coraPrepareStatus.textContent = 'Enter a bounded preparation goal.'; return; }
+  coraPrepareSubmit.disabled = true;
+  coraPrepareStatus.textContent = 'Recording Cora preparation request…';
+  coraPrepareReceipt.replaceChildren();
+  try {
+    const result = await coraClient.createAgentTask({ taskType: 'workspace_preview', intent: 'prepare', goal, contextRef: coraPrepareContext.value.trim() || undefined, idempotencyKey: crypto.randomUUID() });
+    const receipt = result.receipt ?? result;
+    const card = document.createElement('article'); card.className = 'config-item';
+    card.textContent = `${result.replayed ? 'Replay receipt confirmed' : 'Prepared receipt recorded'} · ${receipt.receiptId ?? 'receipt unavailable'} · status ${receipt.status ?? 'prepared'} · execution not performed`;
+    coraPrepareReceipt.append(card);
+    coraPrepareStatus.textContent = result.replayed ? 'Cora preparation request already exists. Replay receipt confirmed; nothing was executed.' : 'Cora preparation request recorded. Prepared only; nothing was executed.';
+    coraPrepareGoal.value = ''; coraPrepareContext.value = '';
+  } catch (error) { coraPrepareStatus.textContent = error.status === 403 ? 'Cora preparation unavailable: active Organization membership is required.' : `Cora preparation not recorded: ${error.message}`; }
+  finally { coraPrepareSubmit.disabled = false; }
 };
 workspacePreviewForm.onsubmit = async (event) => {
   event.preventDefault();

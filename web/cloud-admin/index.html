@@ -137,6 +137,17 @@
           </div>
           <p id="cora-knowledge-query-status" class="note" role="status" aria-live="polite">No knowledge query run. Results will be stored excerpts with citations only.</p>
           <div id="cora-knowledge-query-results" class="config-grid"></div>
+          <section class="config-item" aria-labelledby="cora-prepare-heading">
+            <h3 id="cora-prepare-heading">Cora prepare desk</h3>
+            <p class="preview">Describe normal in-scope work for Cora to prepare. This records a bounded Organization task intent; it does not invoke Cora, an agent, a provider, a filesystem, or an external action.</p>
+            <form id="cora-prepare-form" class="config-controls">
+              <input id="cora-prepare-goal" aria-label="Cora preparation goal" maxlength="1000" placeholder="What should be prepared?" required>
+              <input id="cora-prepare-context" aria-label="Cora preparation context" maxlength="240" placeholder="Context reference (optional)">
+              <button id="cora-prepare-submit" type="submit">Prepare request</button>
+            </form>
+            <p id="cora-prepare-status" class="note" role="status" aria-live="polite">No Cora preparation request recorded.</p>
+            <div id="cora-prepare-receipt" class="config-grid"></div>
+          </section>
           <section id="cora-knowledge-admin" hidden aria-labelledby="cora-knowledge-admin-heading">
             <h3 id="cora-knowledge-admin-heading">Curated knowledge management</h3>
             <p id="cora-knowledge-admin-status" class="note" role="status" aria-live="polite">Owner/admin source management is loading…</p>
