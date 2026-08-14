@@ -9,7 +9,7 @@ function validObservation() {
     steps: EXACT_CANARY_SEQUENCE.map((name) => ({ name, status: 'pass' })),
     authority: { organizationSource: 'verified_active_membership', clientTenantSelectorUsed: false, clientPlantSelectorUsed: false, plantAuthority: 'business_data_only', crossOrganizationAccess: 'denied' },
     normalWork: { readPrepare: 'allowed_without_approval' },
-    providerSessionReceipt: { durable: true, organizationConfigPinned: true, usageUnknownAllowed: true },
+    providerSessionReceipt: { durable: true, organizationConfigPinned: true, usageUnknownAllowed: true, receiptIdPresent: true, configVersion: 4, configHash: 'a'.repeat(64), toolManifestHash: 'b'.repeat(64), routingPolicyHash: 'c'.repeat(64) },
     providerClaimWithoutReceipt: false,
     connectorInbound: { provider: 'slack', signatureVerified: true, timestampFresh: true, exactIdentityBinding: true, organizationDerivedFromBinding: true, durableReceipt: true, replayIdempotent: true, outboundDelivery: 'not_performed', agentInvocation: 'not_performed' },
   };
@@ -49,4 +49,13 @@ test('observation rejects connector evidence that skips exact binding or claims 
   const result = validateReleaseCanaryObservation(observation);
   assert.equal(result.valid, false);
   assert.match(result.errors.join(' '), /connector inbound evidence|outbound/u);
+});
+
+test('observation rejects boolean-only session readiness without signed receipt correlation and hashes', () => {
+  const observation = validObservation();
+  delete observation.providerSessionReceipt.receiptIdPresent;
+  delete observation.providerSessionReceipt.configHash;
+  const result = validateReleaseCanaryObservation(observation);
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join(' '), /correlation\/config evidence/u);
 });

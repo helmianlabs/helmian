@@ -2,6 +2,7 @@ import { EXACT_CANARY_SEQUENCE } from './release-canary-contract.mjs';
 
 export const RELEASE_CANARY_OBSERVATION_FORMAT = 'helmian.cloud.release-canary-observation.v1';
 const SECRET_KEY = /(secret|token|password|api[_-]?key|credential|private[_-]?key|database[_-]?url|connection[_-]?string)/iu;
+const SHA256 = /^[a-f0-9]{64}$/u;
 
 function rejectSecrets(value, path = 'observation') {
   if (!value || typeof value !== 'object') return;
@@ -35,6 +36,7 @@ export function validateReleaseCanaryObservation(observation = {}) {
     if (input.normalWork?.readPrepare !== 'allowed_without_approval') throw new Error('normal read/prepare was not low-friction');
     const receipt = requireObject(input.providerSessionReceipt, 'provider session receipt observation');
     if (receipt.durable !== true || receipt.organizationConfigPinned !== true || receipt.usageUnknownAllowed !== true) throw new Error('provider session receipt evidence is incomplete');
+    if (typeof receipt.receiptIdPresent !== 'boolean' || receipt.receiptIdPresent !== true || !Number.isSafeInteger(receipt.configVersion) || receipt.configVersion < 1 || !SHA256.test(String(receipt.configHash ?? '')) || !SHA256.test(String(receipt.toolManifestHash ?? '')) || !SHA256.test(String(receipt.routingPolicyHash ?? ''))) throw new Error('signed session receipt correlation/config evidence is incomplete');
     if (input.providerClaimWithoutReceipt !== false) throw new Error('provider claim without source receipt was observed');
     const connector = requireObject(input.connectorInbound, 'connector inbound observation');
     if (!['slack', 'discord'].includes(connector.provider) || connector.signatureVerified !== true || connector.timestampFresh !== true || connector.exactIdentityBinding !== true || connector.organizationDerivedFromBinding !== true || connector.durableReceipt !== true || connector.replayIdempotent !== true) throw new Error('connector inbound evidence is incomplete');
