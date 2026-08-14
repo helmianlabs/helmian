@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentTaskPanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
+import { agentTaskPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
 
 function fakeFetch() {
   const calls = [];
@@ -13,6 +13,7 @@ function fakeFetch() {
     if (url.endsWith('/workspace/previews')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/tasks')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/artifacts')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
+    if (url.endsWith('/artifact-sources')) return new Response(JSON.stringify({ sources: [], links: [] }), { status: 200 });
     return new Response(JSON.stringify({ config: { id: 'c1', lifecycle: 'draft' } }), { status: 200 });
   };
   fetchImpl.calls = calls;
@@ -32,6 +33,9 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.createAgentTask({ taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
   await client.readArtifacts();
   await client.createArtifact({ artifactType: 'training', title: 'Orientation', department: 'operations', objective: 'Explain steps', sourceRefs: [], stage: 'draft', idempotencyKey: 'artifact-0001', approvalReason: null });
+  await client.readArtifactSources();
+  await client.createArtifactSource({ sourceKey: 'dock-sop', title: 'Dock SOP', publisher: 'Ops', classification: 'sop', provenance: 'reviewed', reference: 'manual://dock-sop', idempotencyKey: 'source-0001' });
+  await client.linkArtifactSource({ artifactReceiptId: 'artifact-1', sourceId: '1', linkReason: 'orientation', idempotencyKey: 'link-0001' });
   await client.createDraft({ reason: 'reviewed brief defaults' });
   await client.transition({ id: 'c1', lifecycle: 'testing', reason: 'begin test' });
   assert.equal(fetchImpl.calls.every(({ options }) => options.credentials === 'same-origin'), true);
@@ -41,7 +45,7 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   assert.equal(JSON.parse(artifactCall.options.body).stage, 'draft');
   assert.deepEqual(JSON.parse(fetchImpl.calls[5].options.body), { mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
   assert.deepEqual(JSON.parse(fetchImpl.calls[7].options.body), { taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
-  assert.deepEqual(JSON.parse(fetchImpl.calls[10].options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' });
+  assert.deepEqual(JSON.parse(fetchImpl.calls[13].options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' });
 });
 
 test('workspace preview model keeps empty, replay, and not-performed states truthful', () => {
@@ -65,6 +69,12 @@ test('Artifact Studio panel model keeps source-only receipt states truthful', ()
   const model = artifactStudioPanelModel({ replayed: true, receipts: [{ artifactType: 'training', status: 'draft', receiptId: 'r1' }] });
   assert.equal(model.empty, false); assert.match(model.statusLabel, /replay receipt/); assert.equal(model.availableThrough, 'approval_requested');
   assert.equal(model.execution, 'not_performed'); assert.equal(model.media, 'not_generated'); assert.equal(model.providerInvocation, 'not_performed');
+});
+
+test('Artifact source panel model distinguishes empty metadata and immutable links', () => {
+  assert.equal(artifactSourcePanelModel({ sources: [], links: [] }).empty, true);
+  const model = artifactSourcePanelModel({ sources: [{ sourceKey: 'dock-sop' }], links: [{ linkReceiptId: 'l1' }] });
+  assert.equal(model.empty, false); assert.equal(model.links.length, 1); assert.match(model.statusLabel, /immutable/);
 });
 
 test('knowledge query model never exposes an answer and distinguishes no-source state', () => {

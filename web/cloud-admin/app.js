@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -63,6 +63,7 @@ const artifactStudioSources = document.querySelector('#artifact-studio-sources')
 const artifactStudioSubmit = document.querySelector('#artifact-studio-submit');
 const artifactStudioStatus = document.querySelector('#artifact-studio-status');
 const artifactStudioReceipts = document.querySelector('#artifact-studio-receipts');
+const artifactSourceDetails = document.querySelector('#artifact-source-details');
 const workspaceState = document.querySelector('#workspace-state');
 const adminNav = document.querySelector('[data-admin-only]');
 let coraDraft = null;
@@ -405,10 +406,18 @@ function renderArtifactStudio(body) {
   }
 }
 
+function renderArtifactSources(body) {
+  const model = artifactSourcePanelModel(body);
+  artifactSourceDetails.replaceChildren();
+  if (model.empty) { artifactSourceDetails.textContent = model.statusLabel; return; }
+  for (const source of model.sources) { const item = document.createElement('div'); item.className = 'config-item'; item.textContent = `${source.sourceKey} · ${source.lifecycle} · ${source.classification} · ${source.title}`; artifactSourceDetails.append(item); }
+  for (const link of model.links) { const item = document.createElement('div'); item.className = 'config-item'; item.textContent = `Linked ${link.sourceKey} to artifact ${link.artifactReceiptId} · immutable receipt ${link.linkReceiptId}`; artifactSourceDetails.append(item); }
+}
+
 async function loadArtifactStudio({ replayed = false } = {}) {
   artifactStudioStatus.textContent = 'Loading Artifact Studio receipts…';
-  try { renderArtifactStudio({ ...(await coraClient.readArtifacts()), replayed }); }
-  catch (error) { artifactStudioReceipts.replaceChildren(); artifactStudioStatus.textContent = error.status === 403 ? 'Artifact receipts unavailable: Organization membership is required.' : `Artifact receipts unavailable: ${error.message}`; }
+  try { const [artifacts, sources] = await Promise.all([coraClient.readArtifacts(), coraClient.readArtifactSources()]); renderArtifactStudio({ ...artifacts, replayed }); renderArtifactSources(sources); }
+  catch (error) { artifactStudioReceipts.replaceChildren(); artifactSourceDetails.textContent = ''; artifactStudioStatus.textContent = error.status === 403 ? 'Artifact receipts unavailable: Organization membership is required.' : `Artifact receipts unavailable: ${error.message}`; }
 }
 
 function renderCoraAdminControls() {
