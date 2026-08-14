@@ -38,6 +38,8 @@ import {
   restoreOwnerKey,
   reviewAndSignOwnerConfirmation,
 } from '../src/windows/owner-key-store.mjs';
+import { readFile as readTextFile } from 'node:fs/promises';
+import { validateNeonTargetIdentityManifest } from '../src/core/neon-target-identity.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -70,7 +72,21 @@ function expectedEndpointId() {
   return value;
 }
 
+function expectedNeonTargetIdentity() {
+  const manifestPath = requiredOption('--target-identity-manifest');
+  const expected = {
+    projectName: option('--expect-project-name', process.env.HELMION_EXPECTED_NEON_PROJECT_NAME),
+    projectId: option('--expect-project-id', process.env.HELMION_EXPECTED_NEON_PROJECT_ID),
+    branchName: option('--expect-branch', process.env.HELMION_EXPECTED_NEON_BRANCH),
+    databaseName: option('--expect-database', process.env.HELMION_EXPECTED_NEON_DATABASE),
+    endpointId: expectedEndpointId(),
+  };
+  return readTextFile(resolve(manifestPath), 'utf8')
+    .then((raw) => validateNeonTargetIdentityManifest(JSON.parse(raw), expected));
+}
+
 async function guardedNeonStore() {
+  await expectedNeonTargetIdentity();
   return createNeonStore(undefined, { expectedEndpointId: expectedEndpointId() });
 }
 
@@ -1556,8 +1572,8 @@ Governance / Maestro (existing kernel):
   helmion confirmation-action-hash
   helmion pilot-policy
   helmion owner-key …
-  helmion db-inspect --expect-endpoint <ep-id>
-  helmion migrate --expect-endpoint <ep-id>
+  helmion db-inspect --target-identity-manifest <path> --expect-project-name "Helmion Development" --expect-project-id <id> --expect-branch main --expect-database neondb --expect-endpoint <ep-id>
+  helmion migrate --target-identity-manifest <path> --expect-project-name "Helmion Development" --expect-project-id <id> --expect-branch main --expect-database neondb --expect-endpoint <ep-id>
   helmion phase-two-switch-test --expect-endpoint <ep-id>
   helmion blockers [project]
   helmion maestro-state <project>
