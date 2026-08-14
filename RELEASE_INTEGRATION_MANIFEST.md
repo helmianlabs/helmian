@@ -76,6 +76,12 @@ ba2950c Add Cora Hume session descriptor preflight
 be870f2 Expose Cora Hume preflight visibility
 ```
 
+Post-manifest source gate: `fbd0cb9` adds the executable local source-integrity
+check. The current branch is 54 commits ahead of the observed local origin ref:
+the 52 functional commits above, this manifest commit, and `fbd0cb9`. The gate
+verifies the required 009–026 migration set and required Cora/Cloud source seams;
+it does not inspect Git, Neon, Fly, Hume, credentials, providers, or deployed state.
+
 ## 3. Additive migration order
 
 The source contains this exact ordered set; the release validator carries the required order in `src/cloud/release-canary-contract.mjs:2-20`.
