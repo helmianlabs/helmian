@@ -21,6 +21,7 @@ import {
 import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-action.mjs';
 import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
+import { createCoraOrganizationConfigRepository } from '../cora/organization-config-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -40,6 +41,10 @@ export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/p
 export const LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH = '/api/admin/action-policy/confirm';
 export const LIVE_ADMIN_ENVOY_CHANNELS_PATH = '/api/admin/envoy/channels';
 export const LIVE_ADMIN_ENVOY_MESSAGES_PATH = '/api/admin/envoy/messages';
+export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
+export const LIVE_ADMIN_CORA_CONFIGS_PATH = '/api/admin/cora/configs';
+export const LIVE_ADMIN_CORA_TRANSITION_PATH = '/api/admin/cora/configs/transition';
+export const LIVE_ADMIN_CORA_KNOWLEDGE_PATH = '/api/admin/cora/knowledge-sources';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -127,6 +132,7 @@ export async function createLiveHelmianCloudAdminHandler({
   page: suppliedPage = null,
   script: suppliedScript = null,
   expectedMigrations: suppliedMigrations = null,
+  coraConfigRepository: suppliedCoraConfigRepository = null,
   logger = () => {},
 } = {}) {
   const connectionString = String(env.HELMION_DATABASE_URL ?? '').trim();
@@ -140,6 +146,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const ownsPool = !suppliedPool;
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
   const envoy = createEnvoyStore(pool);
+  const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
   const prunePreviews = () => {
@@ -408,6 +415,26 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {
       try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['body', 'channelId', 'idempotencyKey']); if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.appendMessage(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_MESSAGE_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_PATH) {
+      try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.readPublishedConfig(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_SELECTOR_INVALID' : 'CORA_CONFIG_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_PATH) {
+      try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.listKnowledgeSources(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_SELECTOR_INVALID' : 'CORA_KNOWLEDGE_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIGS_PATH) {
+      try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['config', 'reason', 'provenance']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.createDraft(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONFIG_ADMIN_REQUIRED' : 'CORA_CONFIG_DRAFT_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_TRANSITION_PATH) {
+      try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['id', 'lifecycle', 'reason']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.transition(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONFIG_ADMIN_REQUIRED' : 'CORA_CONFIG_TRANSITION_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ACTION_POLICY_PATH) {

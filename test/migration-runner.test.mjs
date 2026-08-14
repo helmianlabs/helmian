@@ -83,6 +83,10 @@ class MigrationPool {
           pool.executedSql.push('009_envoy_chat.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('create table if not exists helmion.cora_configs')) {
+          pool.executedSql.push('010_cora_organization_config.sql');
+          return { rowCount: 0, rows: [] };
+        }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
       },
       release() {},
@@ -106,6 +110,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['007_platform_action_policy.sql', true, 'committed'],
       ['008_equipment_safety_action_policy.sql', true, 'committed'],
       ['009_envoy_chat.sql', true, 'committed'],
+      ['010_cora_organization_config.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -120,13 +125,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '007_platform_action_policy.sql',
       '008_equipment_safety_action_policy.sql',
       '009_envoy_chat.sql',
+      '010_cora_organization_config.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -140,9 +146,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '007_platform_action_policy.sql',
       '008_equipment_safety_action_policy.sql',
       '009_envoy_chat.sql',
+      '010_cora_organization_config.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 18);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 20);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 
