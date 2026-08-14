@@ -36,6 +36,9 @@ export function validateReleaseCanaryObservation(observation = {}) {
     const receipt = requireObject(input.providerSessionReceipt, 'provider session receipt observation');
     if (receipt.durable !== true || receipt.organizationConfigPinned !== true || receipt.usageUnknownAllowed !== true) throw new Error('provider session receipt evidence is incomplete');
     if (input.providerClaimWithoutReceipt !== false) throw new Error('provider claim without source receipt was observed');
+    const connector = requireObject(input.connectorInbound, 'connector inbound observation');
+    if (!['slack', 'discord'].includes(connector.provider) || connector.signatureVerified !== true || connector.timestampFresh !== true || connector.exactIdentityBinding !== true || connector.organizationDerivedFromBinding !== true || connector.durableReceipt !== true || connector.replayIdempotent !== true) throw new Error('connector inbound evidence is incomplete');
+    if (connector.outboundDelivery !== 'not_performed' || connector.agentInvocation !== 'not_performed') throw new Error('connector observation claims outbound or agent work');
   } catch (error) {
     errors.push(error?.message ?? String(error));
   }

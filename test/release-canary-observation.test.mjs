@@ -11,6 +11,7 @@ function validObservation() {
     normalWork: { readPrepare: 'allowed_without_approval' },
     providerSessionReceipt: { durable: true, organizationConfigPinned: true, usageUnknownAllowed: true },
     providerClaimWithoutReceipt: false,
+    connectorInbound: { provider: 'slack', signatureVerified: true, timestampFresh: true, exactIdentityBinding: true, organizationDerivedFromBinding: true, durableReceipt: true, replayIdempotent: true, outboundDelivery: 'not_performed', agentInvocation: 'not_performed' },
   };
 }
 
@@ -39,4 +40,13 @@ test('observation rejects provider claims without a durable source receipt and r
   const secretResult = validateReleaseCanaryObservation(secret);
   assert.equal(secretResult.valid, false);
   assert.match(secretResult.errors.join(' '), /secret-bearing/u);
+});
+
+test('observation rejects connector evidence that skips exact binding or claims delivery', () => {
+  const observation = validObservation();
+  observation.connectorInbound.exactIdentityBinding = false;
+  observation.connectorInbound.outboundDelivery = 'performed';
+  const result = validateReleaseCanaryObservation(observation);
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join(' '), /connector inbound evidence|outbound/u);
 });
