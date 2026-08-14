@@ -88,6 +88,7 @@
         <button class="nav-item" type="button" data-target="section-artifact">Artifact Studio</button>
         <button class="nav-item" type="button" data-target="section-governance">Governance</button>
         <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
+        <button class="nav-item" type="button" data-target="section-people">People & permissions</button>
         <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
       </nav>
       <p id="workspace-nav-hint" class="preview">Authenticated Organization workspace. Chat and preparation are connected; external execution and browser automation are unavailable.</p>
@@ -238,6 +239,19 @@
           <div id="audit-events" aria-live="polite"></div>
           <button id="audit-next" class="secondary" type="button" hidden>Load older events</button>
           <p class="preview">Read-only durable audit records from this Organization. No synthetic KPI, export, email, mutation, provider call, or Plant/facility authority is used.</p>
+        </section>
+        <section id="section-people" class="card" aria-labelledby="people-heading">
+          <h2 id="people-heading">People & permissions</h2>
+          <p id="people-status" class="note" role="status" aria-live="polite">Loading Organization membership and capabilities…</p>
+          <div id="people-members" class="config-grid"></div>
+          <div id="people-role-catalog" class="config-grid"></div>
+          <form id="people-role-plan-form" class="config-controls" hidden>
+            <label>Member subject <input id="people-plan-subject" maxlength="200" required placeholder="Verified member subject"></label>
+            <label>Job-title profile <select id="people-plan-title"></select></label>
+            <label>Reason <input id="people-plan-reason" maxlength="1000" required placeholder="Why this role plan is needed"></label>
+            <button type="submit">Prepare role plan</button>
+          </form>
+          <p class="preview">The fixed job-title profiles summarize capabilities; server role remains the authority consumed by Cora and action policy. This slice does not write Clerk/identity membership, send invites, or change membership. Prepared plans require the external identity/admin step and are recorded as not performed.</p>
         </section>
         <section id="section-artifact" class="card" aria-labelledby="artifact-studio-heading">
           <h2 id="artifact-studio-heading">Artifact Studio</h2>

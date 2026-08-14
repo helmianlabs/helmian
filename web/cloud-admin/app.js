@@ -21,6 +21,13 @@ const auditFrom = document.querySelector('#audit-from');
 const auditTo = document.querySelector('#audit-to');
 const auditEvents = document.querySelector('#audit-events');
 const auditNext = document.querySelector('#audit-next');
+const peopleStatus = document.querySelector('#people-status');
+const peopleMembers = document.querySelector('#people-members');
+const peopleRoleCatalog = document.querySelector('#people-role-catalog');
+const peopleRolePlanForm = document.querySelector('#people-role-plan-form');
+const peoplePlanSubject = document.querySelector('#people-plan-subject');
+const peoplePlanTitle = document.querySelector('#people-plan-title');
+const peoplePlanReason = document.querySelector('#people-plan-reason');
 const agentCards = document.querySelector('#agent-cards');
 const conversationBody = document.querySelector('#conversation-body');
 const composer = document.querySelector('#composer');
@@ -256,6 +263,20 @@ async function loadAudit({ append = false } = {}) {
   }
 }
 
+function renderOrganizationPeople(body) {
+  peopleMembers.replaceChildren(); peopleRoleCatalog.replaceChildren(); peoplePlanTitle.replaceChildren();
+  for (const member of body.memberships ?? []) peopleMembers.append(configItem(`${member.serverRole} · ${member.active ? 'active' : 'inactive'}`, `${member.subject} · ${member.jobTitle ?? 'job title not assigned'} · ${member.capabilities?.join(', ') || 'no capability summary'}`));
+  for (const role of body.roles ?? []) { peopleRoleCatalog.append(configItem(role.jobTitle, `${role.serverRole} authority · ${role.capabilities.join(', ')}`)); peoplePlanTitle.append(new Option(role.jobTitle, role.jobTitle)); }
+  peopleRolePlanForm.hidden = !['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase());
+  peopleStatus.textContent = body.externalIdentityMutation === 'not_performed' ? 'Memberships are read from the verified Organization source. Job-title plans are prepared only; no membership or invite changed.' : 'Organization membership loaded.';
+}
+
+async function loadOrganizationPeople() {
+  peopleStatus.textContent = 'Loading Organization membership and capabilities…';
+  try { renderOrganizationPeople(await coraClient.readOrganizationMemberships()); }
+  catch (error) { peopleMembers.replaceChildren(); peopleRoleCatalog.replaceChildren(); peopleRolePlanForm.hidden = true; peopleStatus.textContent = error.status === 403 ? 'People and permissions unavailable: active Organization membership is required.' : `People and permissions unavailable: ${error.message}`; }
+}
+
 function renderMessages(body) {
   envoyMessages = body.messages ?? [];
   envoyCursor = body.nextCursor ?? envoyMessages.at(-1)?.id ?? null;
@@ -443,6 +464,11 @@ async function refreshWorkspacePanels() {
 
 auditFilters.onsubmit = async (event) => { event.preventDefault(); auditCursor = null; await loadAudit(); };
 auditNext.onclick = () => loadAudit({ append: true });
+peopleRolePlanForm.onsubmit = async (event) => {
+  event.preventDefault(); peopleStatus.textContent = 'Preparing a reviewed role plan…';
+  try { const result = await coraClient.prepareOrganizationRolePlan({ subject: peoplePlanSubject.value.trim(), jobTitle: peoplePlanTitle.value, reason: peoplePlanReason.value.trim(), idempotencyKey: `role-plan-${crypto.randomUUID()}` }); peopleStatus.textContent = `Role plan ${result.receiptId || 'prepared'} recorded. Membership unchanged; external identity mutation not performed.`; peoplePlanReason.value = ''; }
+  catch (error) { peopleStatus.textContent = error.status === 409 ? 'Role plan refused: self-lockout is not permitted.' : `Role plan not prepared: ${error.message}`; }
+};
 
 function configItem(label, value) {
   const item = document.createElement('div'); item.className = 'config-item';
@@ -694,6 +720,7 @@ async function load() {
   out.textContent = JSON.stringify(await surface.json(), null, 2);
   await refreshWorkspacePanels();
   await loadPolicy();
+  await loadOrganizationPeople();
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();

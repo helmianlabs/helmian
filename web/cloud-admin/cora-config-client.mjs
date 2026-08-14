@@ -68,6 +68,8 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     decideApproval(input) { return requestJson(fetchImpl, '/api/admin/cora/approvals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     readConnectors() { return requestJson(fetchImpl, '/api/admin/cora/connectors'); },
     saveConnector(input) { return requestJson(fetchImpl, '/api/admin/cora/connectors', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
+    readOrganizationMemberships() { return requestJson(fetchImpl, '/api/admin/organization/memberships'); },
+    prepareOrganizationRolePlan(input) { return requestJson(fetchImpl, '/api/admin/organization/membership-role-plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     createDraft({ reason, config = null, routingPolicy = null, approvedModelCatalog = [] }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
