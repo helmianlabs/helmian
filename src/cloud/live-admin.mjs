@@ -36,7 +36,7 @@ import { createConnectorRegistrationRepository } from '../cora/connector-registr
 import { CONNECTOR_MAX_BODY_BYTES, readCommunicationConnectorStatus, verifyDiscordInteraction, verifySlackRequest } from './communication-connectors.mjs';
 import { receiveInboundConnectorEvent } from './connector-gateway.mjs';
 import { createWorkspaceLayoutRepository } from './workspace-layout-repository.mjs';
-import { createAuditEventRepository } from './audit-event-repository.mjs';
+import { createAuditEventRepository, normalizeAuditExportQuery } from './audit-event-repository.mjs';
 import { createOrganizationRoleRepository } from './organization-role-repository.mjs';
 import { readOrganizationReadiness } from './organization-readiness.mjs';
 import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
@@ -53,6 +53,7 @@ export const LIVE_ADMIN_LOGOUT_PATH = '/admin/auth/logout';
 export const LIVE_ADMIN_SESSION_PATH = '/api/admin/session';
 export const LIVE_ADMIN_CONTROL_PATH = '/api/admin/control-surface';
 export const LIVE_ADMIN_EVENTS_PATH = '/api/admin/events';
+export const LIVE_ADMIN_EVENTS_EXPORT_PATH = '/api/admin/events/export';
 export const LIVE_ADMIN_WORKSPACE_PATH = '/api/admin/workspace';
 export const LIVE_ADMIN_ACTION_POLICY_PATH = '/api/admin/action-policy';
 export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/preview';
@@ -573,6 +574,30 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_EVENTS_EXPORT_PATH) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'provider', 'model', 'include_payload'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('export selector is not accepted'), { status: 400 });
+        const format = requestUrl.searchParams.get('format');
+        if (format && format !== 'csv') throw Object.assign(new Error('export format is invalid'), { status: 400 });
+        const exportQuery = normalizeAuditExportQuery({
+          action: requestUrl.searchParams.get('action'), actor: requestUrl.searchParams.get('actor'), status: requestUrl.searchParams.get('status'), from: requestUrl.searchParams.get('from'), to: requestUrl.searchParams.get('to'), limit: requestUrl.searchParams.get('limit'),
+        });
+        const actor = await activeTenantActor(request);
+        const result = await auditEvents.exportCsv(actor, {
+          ...exportQuery,
+        });
+        send(response, 200, result.csv, 'text/csv; charset=utf-8', {
+          'content-disposition': 'attachment; filename="helmian-audit-export.csv"',
+          'x-helmian-audit-export-empty': String(result.empty),
+          'x-helmian-audit-export-truncated': String(result.hasMore),
+          'x-helmian-audit-export-receipt': result.receiptId ?? '',
+        });
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? 'AUDIT_MEMBERSHIP_REQUIRED' : error?.code ?? (error?.status === 400 ? 'AUDIT_EXPORT_INVALID' : 'AUDIT_EXPORT_UNAVAILABLE') }));
       }
       return true;
     }

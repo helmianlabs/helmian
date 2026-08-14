@@ -21,6 +21,8 @@ const auditFrom = document.querySelector('#audit-from');
 const auditTo = document.querySelector('#audit-to');
 const auditEvents = document.querySelector('#audit-events');
 const auditNext = document.querySelector('#audit-next');
+const auditExport = document.querySelector('#audit-export');
+const auditExportStatus = document.querySelector('#audit-export-status');
 const peopleStatus = document.querySelector('#people-status');
 const peopleMembers = document.querySelector('#people-members');
 const peopleRoleCatalog = document.querySelector('#people-role-catalog');
@@ -270,6 +272,35 @@ async function loadAudit({ append = false } = {}) {
   }
 }
 
+async function exportAudit() {
+  const from = auditFrom.value;
+  const to = auditTo.value;
+  if (!from || !to) { auditExportStatus.textContent = 'Choose both From and To before exporting. The range is capped at 31 days.'; return; }
+  auditExport.disabled = true;
+  auditExportStatus.textContent = 'Preparing bounded redacted CSV…';
+  const params = new URLSearchParams({ format: 'csv', from, to });
+  for (const [key, value] of [['action', auditAction.value.trim()], ['actor', auditActor.value.trim()], ['status', auditStatusFilter.value]]) if (value) params.set(key, value);
+  try {
+    const response = await fetch(`/api/admin/events/export?${params}`, { credentials: 'same-origin' });
+    if (!response.ok) {
+      let body = null; try { body = await response.json(); } catch {}
+      throw Object.assign(new Error(body?.code || 'Audit export unavailable'), { status: response.status });
+    }
+    if (response.headers.get('x-helmian-audit-export-empty') === 'true') {
+      auditExportStatus.textContent = 'No durable records matched these filters. No file was downloaded.';
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = 'helmian-audit-export.csv'; link.click(); URL.revokeObjectURL(url);
+    const receipt = response.headers.get('x-helmian-audit-export-receipt');
+    const truncated = response.headers.get('x-helmian-audit-export-truncated') === 'true';
+    auditExportStatus.textContent = `CSV downloaded${truncated ? ' at the 100-row cap' : ''}. Receipt ${receipt || 'unavailable'} recorded; sensitive payload columns were omitted.`;
+  } catch (error) {
+    auditExportStatus.textContent = error.status === 403 ? 'Audit export unavailable: active Organization membership is required.' : `Audit export unavailable: ${error.message}`;
+  } finally { auditExport.disabled = false; }
+}
+
 function renderOrganizationPeople(body) {
   peopleMembers.replaceChildren(); peopleRoleCatalog.replaceChildren(); peoplePlanTitle.replaceChildren();
   for (const member of body.memberships ?? []) peopleMembers.append(configItem(`${member.serverRole} · ${member.active ? 'active' : 'inactive'}`, `${member.subject} · ${member.jobTitle ?? 'job title not assigned'} · ${member.capabilities?.join(', ') || 'no capability summary'}`));
@@ -504,6 +535,7 @@ async function refreshWorkspacePanels() {
 
 auditFilters.onsubmit = async (event) => { event.preventDefault(); auditCursor = null; await loadAudit(); };
 auditNext.onclick = () => loadAudit({ append: true });
+auditExport.onclick = exportAudit;
 peopleRolePlanForm.onsubmit = async (event) => {
   event.preventDefault(); peopleStatus.textContent = 'Preparing a reviewed role plan…';
   try { const result = await coraClient.prepareOrganizationRolePlan({ subject: peoplePlanSubject.value.trim(), jobTitle: peoplePlanTitle.value, reason: peoplePlanReason.value.trim(), idempotencyKey: `role-plan-${crypto.randomUUID()}` }); peopleStatus.textContent = `Role plan ${result.receiptId || 'prepared'} recorded. Membership unchanged; external identity mutation not performed.`; peoplePlanReason.value = ''; }
