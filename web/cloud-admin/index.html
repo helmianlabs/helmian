@@ -107,6 +107,20 @@
           <div id="cora-usage-details" class="config-grid"></div>
           <p class="preview">Internal tenant usage ledger only. This is not provider invoice reconciliation, vendor pricing, or a billing control.</p>
         </section>
+        <section class="card" aria-labelledby="workspace-preview-heading">
+          <h2 id="workspace-preview-heading">Workspace preview intents</h2>
+          <p id="workspace-preview-status" class="note" role="status" aria-live="polite">Loading preview receipts…</p>
+          <form id="workspace-preview-form" class="config-controls">
+            <select id="workspace-preview-mode" aria-label="Preview mode"><option value="workspace">Workspace</option><option value="builder">Builder</option></select>
+            <select id="workspace-preview-intent" aria-label="Preview intent"><option value="draft">Draft</option><option value="prepare">Prepare</option></select>
+            <input id="workspace-preview-department" aria-label="Department" maxlength="160" placeholder="Department (optional)">
+            <input id="workspace-preview-template" aria-label="Template ID" maxlength="48" placeholder="Template ID (optional)">
+            <input id="workspace-preview-title" aria-label="Preview title" maxlength="240" placeholder="What should be prepared?" required>
+            <button id="workspace-preview-submit" type="submit">Prepare preview intent</button>
+          </form>
+          <div id="workspace-preview-receipts" class="config-grid"></div>
+          <p class="preview">Preview intent prepared; no agent, provider, filesystem, build, or external execution occurred. This slice has no execution button.</p>
+        </section>
         <section class="card" aria-labelledby="policy-heading">
           <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>
           <p>Hume-attached tools: <strong>0</strong>. These switches can only remove fixed Helmian actions from every newly signed AimForge customer session. They cannot grant tenant access or add tools. Active voice sessions keep their starting policy.</p>

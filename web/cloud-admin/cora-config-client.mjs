@@ -15,6 +15,13 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     readConfig() { return requestJson(fetchImpl, '/api/admin/cora/config'); },
     readKnowledgeSources() { return requestJson(fetchImpl, '/api/admin/cora/knowledge-sources'); },
     readUsage() { return requestJson(fetchImpl, '/api/admin/cora/usage'); },
+    readWorkspacePreviews() { return requestJson(fetchImpl, '/api/admin/cora/workspace/previews'); },
+    createWorkspacePreview({ mode, intent, department, templateId, title, idempotencyKey }) {
+      return requestJson(fetchImpl, '/api/admin/cora/workspace/previews', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode, intent, department, templateId, title, idempotencyKey }),
+      });
+    },
     createDraft({ reason }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -30,6 +37,19 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
         body: JSON.stringify({ id, lifecycle, reason }),
       });
     },
+  });
+}
+
+export function workspacePreviewPanelModel(body = {}) {
+  const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
+  return Object.freeze({
+    empty: receipts.length === 0,
+    receipts,
+    statusLabel: body.replayed ? 'Preview intent already received. Durable replay receipt confirmed.' : 'Preview intent prepared. Durable receipt confirmed.',
+    execution: 'not_performed',
+    agentInvocation: 'not_performed',
+    providerInvocation: 'not_performed',
+    filesystemMutation: 'not_performed',
   });
 }
 
