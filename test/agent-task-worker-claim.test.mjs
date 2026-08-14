@@ -33,6 +33,10 @@ function listPool({ claimsTable = true } = {}) {
       if (!claimsTable) throw Object.assign(new Error('relation does not exist'), { code: '42P01' });
       return { rowCount: 0, rows: [] };
     }
+    if (q.includes('from helmion.cora_agent_task_worker_lifecycle')) {
+      if (!claimsTable) throw Object.assign(new Error('relation does not exist'), { code: '42P01' });
+      return { rowCount: 0, rows: [] };
+    }
     if (q.includes('from helmion.cora_agent_task_claims')) {
       if (!claimsTable) throw Object.assign(new Error('relation does not exist'), { code: '42P01' });
       return { rowCount: 1, rows: [{ claim_status: 'claimed' }] };

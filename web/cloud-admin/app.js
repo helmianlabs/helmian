@@ -759,7 +759,8 @@ function renderAgentTasks(body) {
     const card = document.createElement('article'); card.className = 'config-item';
     const taskState = receipt.claimStatus === 'claimed' ? 'claimed' : receipt.claimStatus === 'unavailable' ? `${receipt.status} · claim unavailable` : receipt.status;
     const completionState = receipt.completion?.completionStatus ?? 'unavailable';
-    card.append(configItem('Task', `${receipt.taskType} · ${taskState}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Completion', completionState === 'not_executed' ? 'Not executed · no worker evidence' : completionState === 'unavailable' ? 'Unavailable · completion schema not present' : completionState), configItem('Execution', 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
+    const lifecycle = receipt.lifecycle?.status === 'available' ? `${receipt.lifecycle.events.length} event(s); evidence references are source-backed` : 'Unavailable · lifecycle schema not present';
+    card.append(configItem('Task', `${receipt.taskType} · ${taskState}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Completion', completionState === 'not_executed' ? 'Not executed · no worker evidence' : completionState === 'unavailable' ? 'Unavailable · completion schema not present' : completionState), configItem('Worker history', lifecycle), configItem('Execution', 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
     agentTaskReceipts.append(card);
   }
 }

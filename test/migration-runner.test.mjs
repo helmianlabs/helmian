@@ -159,6 +159,10 @@ class MigrationPool {
           pool.executedSql.push('028_cora_agent_task_completion_receipts.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('create table if not exists helmion.cora_agent_task_worker_lifecycle')) {
+          pool.executedSql.push('029_cora_agent_task_worker_lifecycle.sql');
+          return { rowCount: 0, rows: [] };
+        }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
       },
       release() {},
@@ -201,6 +205,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['026_cora_connector_registrations.sql', true, 'committed'],
       ['027_cora_browser_check_task_type.sql', true, 'committed'],
       ['028_cora_agent_task_completion_receipts.sql', true, 'committed'],
+      ['029_cora_agent_task_worker_lifecycle.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -234,13 +239,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '026_cora_connector_registrations.sql',
       '027_cora_browser_check_task_type.sql',
       '028_cora_agent_task_completion_receipts.sql',
+      '029_cora_agent_task_worker_lifecycle.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -273,9 +279,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '026_cora_connector_registrations.sql',
       '027_cora_browser_check_task_type.sql',
       '028_cora_agent_task_completion_receipts.sql',
+      '029_cora_agent_task_worker_lifecycle.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 56);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 58);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 

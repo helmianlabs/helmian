@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildAgentTaskCompletionReceipt, buildNotExecutedTaskCompletion, normalizeAgentTaskCompletion } from '../src/cora/agent-task-completion-receipt.mjs';
 import { createAgentTaskRepository } from '../src/cora/agent-task-repository.mjs';
+import { buildWorkerLifecycleEvent, normalizeWorkerLifecycleEvent } from '../src/cora/agent-task-worker-lifecycle.mjs';
 
 const worker = { kind: 'internal_worker', verified: true, membershipVerified: true, role: 'worker', membershipRole: 'member', subject: 'worker-service', workerId: 'worker:cloud', tenantId: 'org-a', sessionId: 'worker-session', requestId: 'worker-request' };
 
@@ -16,6 +17,13 @@ function pool() {
       return { rowCount: found.length, rows: found };
     }
     if (q.includes('from helmion.cora_agent_task_claims')) return values[0] === 'org-a' && values[1] === 7 ? { rowCount: 1, rows: [{ task_id: 7, claim_id: 'claim-0007', worker_id: 'worker:cloud' }] } : { rowCount: 0, rows: [] };
+    if (q.includes('from helmion.cora_agent_task_worker_lifecycle')) {
+      const found = rows.filter((row) => row.lifecycle && row.tenant_id === values[0] && row.idempotency_key === values[1]);
+      return { rowCount: found.length, rows: found };
+    }
+    if (q.startsWith('insert into helmion.cora_agent_task_worker_lifecycle')) {
+      const row = { lifecycle: true, tenant_id: values[0], task_id: values[1], claim_id: values[2], worker_id: values[4], attempt_no: values[5], lifecycle_status: values[6], execution: values[7], evidence_ref: values[8], evidence_sha256: values[9], failure_code: values[10], idempotency_key: values[11] }; rows.push(row); return { rowCount: 1, rows: [row] };
+    }
     if (q.startsWith('insert into helmion.cora_agent_task_completion_receipts')) {
       if (rows.some((row) => row.tenant_id === values[0] && row.task_id === values[1])) return { rowCount: 0, rows: [] };
       const row = { tenant_id: values[0], task_id: values[1], claim_id: values[2], worker_id: values[4], completion_status: values[5], execution: values[6], evidence_ref: values[7], failure_code: values[8], idempotency_key: values[9] }; rows.push(row); return { rowCount: 1, rows: [row] };
@@ -31,6 +39,8 @@ test('completion contract defaults missing worker evidence to not executed', () 
   assert.throws(() => normalizeAgentTaskCompletion({ status: 'finished', execution: 'not_performed', evidenceRef: 'evidence-1', idempotencyKey: 'complete-0001' }), /performed execution evidence/);
   assert.throws(() => normalizeAgentTaskCompletion({ status: 'finished', execution: 'performed', evidenceRef: 'evidence-1', idempotencyKey: 'complete-0001', plantId: 'plant-1' }), /Plant/);
   assert.equal(buildAgentTaskCompletionReceipt({ taskId: 7, claimId: 'claim-0007', workerId: 'worker:cloud', status: 'failed', evidenceRef: 'evidence-1', failureCode: 'browser_unavailable', idempotencyKey: 'complete-0001' }).execution, 'performed');
+  assert.throws(() => normalizeWorkerLifecycleEvent({ status: 'retry_scheduled', attemptNo: 2, execution: 'performed', evidenceRef: 'evidence-1', evidenceSha256: 'a'.repeat(64), idempotencyKey: 'retry-0001' }), /execution state/);
+  assert.equal(buildWorkerLifecycleEvent({ taskId: 7, claimId: 'claim-0007', workerId: 'worker:cloud', status: 'retry_scheduled', attemptNo: 2, execution: 'not_performed', evidenceRef: 'evidence-1', evidenceSha256: 'a'.repeat(64), idempotencyKey: 'retry-0001' }).lifecycleStatus, 'retry_scheduled');
 });
 
 test('only the verified worker claim can append an Organization completion receipt, with replay safety', async () => {
@@ -40,4 +50,14 @@ test('only the verified worker claim can append an Organization completion recei
   assert.equal(first.completionStatus, 'failed'); assert.equal(first.execution, 'performed'); assert.equal(replay.replayed, true);
   await assert.rejects(() => repo.recordCompletion({ ...worker, tenantId: 'org-b' }, { taskId: 7, claimId: 'claim-0007', status: 'finished', execution: 'performed', evidenceRef: 'evidence-2', idempotencyKey: 'complete-0002' }), /membership|tenant/u);
   await assert.rejects(() => repo.recordCompletion({ ...worker, role: 'member' }, { taskId: 7, claimId: 'claim-0007', status: 'finished', execution: 'performed', evidenceRef: 'evidence-2', idempotencyKey: 'complete-0002' }), /internal worker/u);
+});
+
+test('only the verified worker claim can append a replay-safe retry lifecycle event', async () => {
+  const repo = createAgentTaskRepository(pool());
+  const input = { taskId: 7, claimId: 'claim-0007', attemptNo: 2, evidenceRef: 'retry-evidence-1', evidenceSha256: 'b'.repeat(64), idempotencyKey: 'retry-0001' };
+  const first = await repo.recordRetry(worker, input);
+  const replay = await repo.recordRetry(worker, input);
+  assert.equal(first.lifecycleStatus, 'retry_scheduled'); assert.equal(first.execution, 'not_performed'); assert.equal(replay.replayed, true);
+  await assert.rejects(() => repo.recordRetry({ ...worker, tenantId: 'org-b' }, input), /membership|tenant/u);
+  await assert.rejects(() => repo.recordRetry(worker, { ...input, plantId: 'plant-1', idempotencyKey: 'retry-0002' }), /Plant/);
 });

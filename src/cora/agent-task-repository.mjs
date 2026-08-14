@@ -3,10 +3,11 @@ import { requireActiveTenantMembership, withTenantTransaction } from '../core/te
 import { buildAgentTaskReceipt, normalizeAgentTaskIntent } from './agent-task-intent.mjs';
 import { buildAgentTaskClaimReceipt, requireAuthorizedWorker } from './agent-task-worker-claim.mjs';
 import { buildAgentTaskCompletionReceipt, buildNotExecutedTaskCompletion, normalizeAgentTaskCompletion } from './agent-task-completion-receipt.mjs';
+import { buildWorkerLifecycleEvent, normalizeWorkerLifecycleEvent } from './agent-task-worker-lifecycle.mjs';
 
 function context(actor) { if (!actor?.tenantId || !actor.subject || !actor.role || !actor.sessionId || !actor.requestId) throw new Error('verified Organization membership is required'); return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.membershipRole ?? actor.role, sessionId: actor.sessionId, requestId: actor.requestId }; }
 const SELECT = 'id, task_type, goal, context_ref, department, cost_center, intent, status, receipt_id, idempotency_key, created_at';
-function rowToReceipt(row, replayed = false, claimStatus = 'unavailable', completion = null) { return { ...buildAgentTaskReceipt({ task: { taskType: row.task_type, goal: row.goal, contextRef: row.context_ref, department: row.department, costCenter: row.cost_center, intent: row.intent, idempotencyKey: row.idempotency_key }, status: row.status, receiptId: row.receipt_id, replayed }), claimStatus, completion: completion ?? buildNotExecutedTaskCompletion({ taskId: row.id, claimStatus }) }; }
+function rowToReceipt(row, replayed = false, claimStatus = 'unavailable', completion = null, lifecycle = null) { return { ...buildAgentTaskReceipt({ task: { taskType: row.task_type, goal: row.goal, contextRef: row.context_ref, department: row.department, costCenter: row.cost_center, intent: row.intent, idempotencyKey: row.idempotency_key }, status: row.status, receiptId: row.receipt_id, replayed }), claimStatus, completion: completion ?? buildNotExecutedTaskCompletion({ taskId: row.id, claimStatus }), lifecycle: lifecycle ?? { status: 'unavailable', events: [], source: 'lifecycle_schema_unavailable' } }; }
 
 export function createAgentTaskRepository(pool) {
   return Object.freeze({
@@ -44,7 +45,14 @@ export function createAgentTaskRepository(pool) {
             if (error?.code === '42P01') completion = { completionStatus: 'unavailable', execution: 'not_performed', evidenceRef: null, failureCode: null, source: 'completion_schema_unavailable' };
             else throw error;
           }
-          receipts.push(rowToReceipt(row, false, claimStatus, completion));
+          let lifecycle = { status: 'unavailable', events: [], source: 'lifecycle_schema_unavailable' };
+          try {
+            const result = await client.query('select claim_id, worker_id, attempt_no, lifecycle_status, execution, evidence_ref, evidence_sha256, failure_code, idempotency_key, created_at from helmion.cora_agent_task_worker_lifecycle where tenant_id=$1 and task_id=$2 order by attempt_no desc, id desc limit 20', [active.tenantId, row.id]);
+            lifecycle = { status: 'available', events: result.rows.map((event) => ({ claimId: event.claim_id, workerId: event.worker_id, attemptNo: event.attempt_no, lifecycleStatus: event.lifecycle_status, execution: event.execution, evidenceRef: event.evidence_ref, evidenceSha256: event.evidence_sha256, failureCode: event.failure_code ?? null, idempotencyKey: event.idempotency_key, createdAt: event.created_at })) };
+          } catch (error) {
+            if (error?.code !== '42P01') throw error;
+          }
+          receipts.push(rowToReceipt(row, false, claimStatus, completion, lifecycle));
         }
         return { receipts, claimStatusSource: receipts.some((receipt) => receipt.claimStatus === 'unavailable') ? 'unavailable' : 'cora_agent_task_claims' };
       });
@@ -83,6 +91,20 @@ export function createAgentTaskRepository(pool) {
         const inserted = await client.query('insert into helmion.cora_agent_task_completion_receipts (tenant_id, task_id, claim_id, worker_subject, worker_id, completion_status, execution, evidence_ref, failure_code, idempotency_key) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (tenant_id, task_id) do nothing returning task_id, claim_id, worker_id, completion_status, execution, evidence_ref, failure_code, idempotency_key', [active.tenantId, taskId, claimId, worker.subject, worker.workerId, completion.status, 'performed', completion.evidenceRef, completion.failureCode, completion.idempotencyKey]);
         if (inserted.rowCount !== 1) throw new Error('task completion already recorded');
         return buildAgentTaskCompletionReceipt({ taskId, claimId, workerId: worker.workerId, status: completion.status, evidenceRef: completion.evidenceRef, failureCode: completion.failureCode, idempotencyKey: completion.idempotencyKey });
+      });
+    },
+    async recordRetry(workerActor, input = {}) {
+      const worker = requireAuthorizedWorker(workerActor); const active = context(worker); const event = normalizeWorkerLifecycleEvent({ ...input, status: 'retry_scheduled', execution: 'not_performed' }); const taskId = Number(input.taskId); const claimId = String(input.claimId ?? '').trim();
+      if (!Number.isSafeInteger(taskId) || taskId < 1 || !/^.{8,256}$/u.test(claimId)) throw new Error('retry task or claim identity is invalid');
+      return withTenantTransaction(pool, active, async (client) => {
+        await requireActiveTenantMembership(client, active);
+        const existing = await client.query('select task_id, claim_id, worker_id, attempt_no, lifecycle_status, execution, evidence_ref, evidence_sha256, failure_code, idempotency_key from helmion.cora_agent_task_worker_lifecycle where tenant_id=$1 and idempotency_key=$2', [active.tenantId, event.idempotencyKey]);
+        if (existing.rowCount === 1) { const row = existing.rows[0]; return buildWorkerLifecycleEvent({ taskId: row.task_id, claimId: row.claim_id, workerId: row.worker_id, status: row.lifecycle_status, attemptNo: row.attempt_no, execution: row.execution, evidenceRef: row.evidence_ref, evidenceSha256: row.evidence_sha256, failureCode: row.failure_code, idempotencyKey: row.idempotency_key, replayed: true }); }
+        const claim = await client.query('select task_id, claim_id, worker_id from helmion.cora_agent_task_claims where tenant_id=$1 and task_id=$2', [active.tenantId, taskId]);
+        if (claim.rowCount !== 1 || claim.rows[0].claim_id !== claimId || claim.rows[0].worker_id !== worker.workerId) throw new Error('authorized worker claim is required for retry');
+        const inserted = await client.query('insert into helmion.cora_agent_task_worker_lifecycle (tenant_id, task_id, claim_id, worker_subject, worker_id, attempt_no, lifecycle_status, execution, evidence_ref, evidence_sha256, failure_code, idempotency_key) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict (tenant_id, task_id, attempt_no) do nothing returning task_id, claim_id, worker_id, attempt_no, lifecycle_status, execution, evidence_ref, evidence_sha256, failure_code, idempotency_key', [active.tenantId, taskId, claimId, worker.subject, worker.workerId, event.attemptNo, event.status, event.execution, event.evidenceRef, event.evidenceSha256, event.failureCode, event.idempotencyKey]);
+        if (inserted.rowCount !== 1) throw new Error('task retry attempt already recorded');
+        return buildWorkerLifecycleEvent({ taskId, claimId, workerId: worker.workerId, status: event.status, attemptNo: event.attemptNo, execution: event.execution, evidenceRef: event.evidenceRef, evidenceSha256: event.evidenceSha256, failureCode: event.failureCode, idempotencyKey: event.idempotencyKey });
       });
     },
   });

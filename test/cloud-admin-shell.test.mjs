@@ -43,7 +43,7 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /External execution and browser automation are unavailable/u);
   assert.match(page, /Browser check preparation/u);
   assert.match(page, /bounded target reference; no browser.*execution occurred/iu);
-  assert.match(page, /Completion changes require future internal-worker evidence/iu);
+  assert.match(page, /Completion and retry history require future internal-worker evidence/iu);
   assert.match(script, /Completion.*not executed/iu);
   assert.match(page, /stored excerpts with citations only/u);
   assert.match(script, /Use citation in preparation/u);
