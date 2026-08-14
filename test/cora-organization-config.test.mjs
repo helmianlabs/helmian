@@ -5,6 +5,7 @@ import {
   DEFAULT_CORA_PUBLISHED_DEFAULTS,
   evaluateCoraActionPolicy,
   lookupApprovedKnowledge,
+  normalizeCoraPolicyConfig,
 } from '../src/cora/organization-config.mjs';
 
 const membership = { organizationId: 'org-a', role: 'member', active: true, membershipVerified: true };
@@ -57,6 +58,15 @@ test('Organization config keeps routing policy separate from personal preference
   assert.equal(config.userPreferences.verbosity, 'standard');
   assert.throws(() => buildCoraOrganizationConfig({ verifiedMembership: membership, approvedModelCatalog: catalog, routingPolicy: { ...routingPolicy, entries: routingPolicy.entries.map((entry) => ({ ...entry, provider: 'not-allowed' })) } }), /unsupported/);
   assert.throws(() => buildCoraOrganizationConfig({ verifiedMembership: membership, approvedModelCatalog: [{ ...catalog[0], status: 'draft' }], routingPolicy }), /not approved/);
+});
+
+test('structured admin policy config normalizes bounded controls and rejects authority or unapproved metadata', () => {
+  const catalog = [{ id: 'text-primary', provider: 'openai', model: 'text-v1', version: '1', status: 'approved', source: 'reviewed catalog' }];
+  const policy = normalizeCoraPolicyConfig({ style: 'professional_brief', maxSpokenChars: 700, interruptMode: 'barge_in', turnMode: 'concise', allowedUserPreferences: { verbosity: ['concise', 'standard'], interruptMode: ['barge_in'], turnMode: ['concise'], voiceProfiles: ['emma'] }, voiceProfiles: ['emma'], approvedModelCatalog: catalog, routingPolicy: null, knowledgePacks: [{ id: 'sop', version: '1', source: 'manual', provenance: 'reviewed', status: 'approved' }] });
+  assert.deepEqual(policy.allowedUserPreferences.voiceProfiles, ['emma']);
+  assert.equal(policy.knowledgePacks[0].status, 'approved');
+  assert.throws(() => normalizeCoraPolicyConfig({ plantId: 'warehouse-1' }), /Plant or facility/);
+  assert.throws(() => normalizeCoraPolicyConfig({ style: 'professional_brief', approvedModelCatalog: [{ ...catalog[0], status: 'draft' }] }), /not approved/);
 });
 
 test('normal Cora work stays frictionless while high-risk actions step up', () => {

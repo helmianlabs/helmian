@@ -42,6 +42,10 @@ const coraPreferencesOpen = document.querySelector('#cora-preferences-open');
 const coraPreferencesDialog = document.querySelector('#cora-preferences-dialog');
 const coraPreferencesClose = document.querySelector('#cora-preferences-close');
 const coraAdminControls = document.querySelector('#cora-admin-controls');
+const coraConfigHistory = document.querySelector('#cora-config-history');
+const coraMaxSpokenChars = document.querySelector('#cora-max-spoken-chars');
+const coraVoiceProfiles = document.querySelector('#cora-voice-profiles');
+const coraKnowledgePacks = document.querySelector('#cora-knowledge-packs');
 const coraDraftReason = document.querySelector('#cora-draft-reason');
 const coraRoutingPolicy = document.querySelector('#cora-routing-policy');
 const coraCreateDraft = document.querySelector('#cora-create-draft');
@@ -379,6 +383,9 @@ function renderCoraConfig(body) {
   }
   const config = body.config;
   const effective = config.config?.effective ?? config.config ?? {};
+  coraMaxSpokenChars.value = String(config.config?.maxSpokenChars ?? effective.maxSpokenChars ?? 900);
+  coraVoiceProfiles.value = (config.config?.voiceProfiles ?? config.config?.allowedUserPreferences?.voiceProfiles ?? []).join(', ');
+  coraKnowledgePacks.value = (config.config?.knowledgePacks ?? []).map((pack) => `${pack.id} | ${pack.version} | ${pack.source} | ${pack.provenance}`).join('\n');
   coraConfigStatus.textContent = `Published config v${config.configVersion} · ${config.lifecycle} · reviewed reason: ${config.reason}`;
   coraConfigDetails.append(
     configItem('Style', effective.style || 'professional_brief'),
@@ -394,6 +401,13 @@ function renderCoraConfig(body) {
   const policy = config.config?.routingPolicy;
   coraConfigDetails.append(configItem('Routing policy', policy ? `v${policy.version} · ${policy.entries?.length ?? 0} task classes · provider calls remain disconnected` : 'Not published'));
   coraPublishedConfig = config.config;
+}
+
+function renderCoraConfigHistory(body) {
+  coraConfigHistory.replaceChildren();
+  const configs = Array.isArray(body.configs) ? body.configs : [];
+  if (!configs.length) { coraConfigHistory.textContent = 'No Cora drafts or published versions are recorded.'; return; }
+  for (const item of configs) coraConfigHistory.append(configItem(`Config v${item.configVersion} · ${item.lifecycle}`, `${item.reason} · actor ${item.createdBySubject} · ${item.createdAt ?? 'timestamp unavailable'}${item.isCurrent ? ' · current' : ''}`));
 }
 
 function renderCoraKnowledge(body) {
@@ -534,8 +548,9 @@ async function loadCoraSettings() {
   coraUsageStatus.className = 'usage-state normal';
   coraUsageStatus.textContent = 'Loading internal usage summary…';
   try {
-    const [config, knowledge, usage] = await Promise.all([coraClient.readConfig(), coraClient.readKnowledgeSources(), coraClient.readUsage()]);
+    const [config, knowledge, usage, history] = await Promise.all([coraClient.readConfig(), coraClient.readKnowledgeSources(), coraClient.readUsage(), coraClient.readConfigHistory().catch(() => ({ configs: [] }))]);
     renderCoraConfig(config); renderCoraKnowledge(knowledge); renderCoraUsage(usage); renderCoraAdminControls();
+    renderCoraConfigHistory(history);
     await loadPersonalPreferences();
     if (config.status === 'published') coraConfigStatus.textContent += ' Cora agent/model invocation remains not connected.';
   } catch (error) {
@@ -602,11 +617,12 @@ coraCreateDraft.onclick = async () => {
   if (!reason) { coraConfigStatus.textContent = 'Enter a reason before creating a draft.'; return; }
   coraCreateDraft.disabled = true;
   try {
-    let routingPolicy = null;
-    if (coraRoutingPolicy.value.trim()) {
-      try { routingPolicy = JSON.parse(coraRoutingPolicy.value); } catch { coraConfigStatus.textContent = 'Routing policy must be valid JSON.'; return; }
-    }
-    const result = await coraClient.createDraft({ reason, routingPolicy, approvedModelCatalog: coraPublishedConfig?.approvedModelCatalog ?? [] }); coraDraft = result.config; coraDraftReason.value = '';
+    const checked = (selector) => [...document.querySelectorAll(selector)].filter((input) => input.checked).map((input) => input.dataset[selector.includes('verbosity') ? 'coraVerbosity' : selector.includes('interrupt') ? 'coraInterrupt' : 'coraTurn']);
+    const packs = coraKnowledgePacks.value.split('\n').map((line) => line.split('|').map((part) => part.trim())).filter((parts) => parts.length === 4 && parts.every(Boolean)).map(([id, version, source, provenance]) => ({ id, version, source, provenance, status: 'approved' }));
+    const voiceProfiles = coraVoiceProfiles.value.split(',').map((value) => value.trim()).filter(Boolean);
+    const config = { style: 'professional_brief', maxSpokenChars: Number(coraMaxSpokenChars.value), interruptMode: checked('[data-cora-interrupt]')[0] ?? 'barge_in', turnMode: checked('[data-cora-turn]')[0] ?? 'concise', allowedUserPreferences: { verbosity: checked('[data-cora-verbosity]'), interruptMode: checked('[data-cora-interrupt]'), turnMode: checked('[data-cora-turn]'), voiceProfiles }, voiceProfiles, approvedModelCatalog: coraPublishedConfig?.approvedModelCatalog ?? [], routingPolicy: coraPublishedConfig?.routingPolicy ?? null, knowledgePacks: packs };
+    if (!config.allowedUserPreferences.verbosity.length || !config.allowedUserPreferences.interruptMode.length || !config.allowedUserPreferences.turnMode.length) { coraConfigStatus.textContent = 'Keep at least one choice in each allowed member control.'; return; }
+    const result = await coraClient.createDraft({ reason, config }); coraDraft = result.config; coraDraftReason.value = '';
     coraConfigStatus.textContent = `Draft ${coraDraft.id} created. No config is published.`; renderCoraAdminControls();
   } catch (error) { coraConfigStatus.textContent = `Draft refused: ${error.message}`; }
   finally { coraCreateDraft.disabled = false; }

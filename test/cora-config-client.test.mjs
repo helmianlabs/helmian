@@ -55,7 +55,7 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   const preferenceSave = fetchImpl.calls.find(({ url, options }) => url.endsWith('/personal-preferences') && options.method === 'PUT');
   assert.deepEqual(JSON.parse(preferenceSave.options.body), { muted: true, volume: 40, verbosity: 'concise', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' });
   const draftCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/configs') && options.method === 'POST');
-  assert.deepEqual(JSON.parse(draftCall.options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise', approvedModelCatalog: [], routingPolicy: null });
+  assert.deepEqual(JSON.parse(draftCall.options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise', allowedUserPreferences: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in', 'after_sentence'], turnMode: ['concise', 'standard'], voiceProfiles: [] }, voiceProfiles: [], approvedModelCatalog: [], routingPolicy: null, knowledgePacks: [] });
 });
 
 test('personal preference model exposes own bounded settings without provider controls', () => {

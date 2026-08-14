@@ -46,6 +46,7 @@ async function fixture() {
     async readPublishedConfig(actor) { calls.push(['read', actor]); return { status: 'published', config: { organizationId: actor.tenantId, lifecycle: 'published' } }; },
     async listKnowledgeSources(actor) { calls.push(['knowledge', actor]); return { sources: [{ sourceKey: 'manual', lifecycle: 'approved' }] }; },
     async queryApprovedKnowledge(actor, query) { calls.push(['knowledge-query', actor, query]); return { format: 'cora.approved-knowledge-retrieval.v1', status: 'approved_sources_only', query, answer: null, providerCall: 'not_performed', excerpts: [{ excerpt: 'Stored hours-of-service excerpt.', citation: 'FMCSA §3', provenance: 'reviewed source' }], citations: ['FMCSA §3'] }; },
+    async listConfigs(actor) { calls.push(['config-history', actor]); return { configs: [{ configVersion: 2, lifecycle: 'draft', reason: 'review', createdBySubject: actor.subject, isCurrent: false }] }; },
     async createDraft(actor, input) { calls.push(['draft', actor, input]); return { config: { lifecycle: 'draft', organizationId: actor.tenantId } }; },
     async transition() { throw new Error('not used'); },
   };
@@ -86,6 +87,17 @@ test('normal members cannot create Cora drafts; admin draft route has no body Or
   const draft = await fetch(`${app.url}${LIVE_ADMIN_CORA_CONFIGS_PATH}`, { method: 'POST', headers: { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' }, body: JSON.stringify({ config: {}, reason: 'review', provenance: {} }) });
   assert.equal(draft.status, 200);
   assert.equal((await draft.json()).config.organizationId, 'org-a');
+});
+
+test('Cora config history is admin-only, Organization-derived, and rejects selectors', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const member = await fetch(`${app.url}${LIVE_ADMIN_CORA_CONFIGS_PATH}`, { headers: { cookie: 'helmion_admin_session=member-session' } });
+  assert.equal(member.status, 403);
+  const admin = await fetch(`${app.url}${LIVE_ADMIN_CORA_CONFIGS_PATH}`, { headers: { cookie: 'helmion_admin_session=admin-session' } });
+  assert.equal(admin.status, 200); assert.equal((await admin.json()).configs[0].lifecycle, 'draft');
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_CONFIGS_PATH}?plant_id=warehouse-1`, { headers: { cookie: 'helmion_admin_session=admin-session' } });
+  assert.equal(injected.status, 400);
+  assert.equal(app.calls.some(([name, actor]) => name === 'config-history' && actor.tenantId === 'org-a'), true);
 });
 
 test('authenticated usage metadata derives Organization from membership and rejects selectors', async (t) => {
