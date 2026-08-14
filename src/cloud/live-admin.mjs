@@ -401,7 +401,7 @@ export async function createLiveHelmianCloudAdminHandler({
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {
-      try { const actor = await activeTenantActor(request); const channelId = requestUrl.searchParams.get('channel_id'); if (requestUrl.searchParams.has('tenant_id')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.listMessages(actor, channelId, requestUrl.searchParams.get('limit')) })); }
+      try { const actor = await activeTenantActor(request); const channelId = requestUrl.searchParams.get('channel_id'); if (requestUrl.searchParams.has('tenant_id')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.listMessages(actor, channelId, requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('after_id')) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_MESSAGE_INVALID' })); }
       return true;
     }

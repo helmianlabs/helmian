@@ -22,6 +22,9 @@ const envoy = createEnvoyClient();
 let policyEtag = '';
 let previewId = '';
 let workspaceTimer = null;
+let envoyTimer = null;
+let envoyMessages = [];
+let envoyCursor = null;
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
 document.querySelector('#logout').onclick = () => { window.location.href = '/admin/auth/logout'; };
 
@@ -83,15 +86,21 @@ function renderWorkspace(body) {
 }
 
 function renderMessages(body) {
+  envoyMessages = body.messages ?? [];
+  envoyCursor = body.nextCursor ?? envoyMessages.at(-1)?.id ?? null;
+  renderMessageList();
+}
+
+function renderMessageList() {
   conversationBody.replaceChildren();
-  if (!body.messages?.length) {
+  if (!envoyMessages.length) {
     const empty = document.createElement('p');
     empty.className = 'preview';
     empty.textContent = 'No messages in this Organization channel yet.';
     conversationBody.append(empty);
     return;
   }
-  for (const message of body.messages) {
+  for (const message of envoyMessages) {
     const card = document.createElement('article');
     card.className = 'message';
     const meta = document.createElement('div');
@@ -136,6 +145,36 @@ async function loadEnvoyMessages() {
   }
 }
 
+async function pollEnvoyMessages() {
+  if (!envoyChannel.value || !envoyCursor) return;
+  try {
+    const body = await envoy.listMessages(envoyChannel.value, { afterId: envoyCursor });
+    const seen = new Set(envoyMessages.map((message) => message.id));
+    for (const message of body.messages ?? []) {
+      if (!seen.has(message.id)) envoyMessages.push(message);
+    }
+    envoyCursor = body.nextCursor ?? envoyCursor;
+    renderMessageList();
+    composerStatus.textContent = body.messages?.length ? 'New messages loaded.' : 'Envoy connected; no new messages.';
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) {
+      if (envoyTimer) window.clearInterval(envoyTimer);
+      envoyTimer = null;
+      envoyChannel.disabled = true;
+      composerInput.disabled = true;
+      composerSend.disabled = true;
+      composerStatus.textContent = 'Session expired or Envoy membership was revoked. Sign in again.';
+      return;
+    }
+    composerStatus.textContent = `Envoy update unavailable: ${error.message}. Retrying…`;
+  }
+}
+
+function startEnvoyPolling() {
+  if (envoyTimer) window.clearInterval(envoyTimer);
+  envoyTimer = window.setInterval(() => pollEnvoyMessages(), 5000);
+}
+
 async function refreshWorkspacePanels() {
   const events = await fetch('/api/admin/events', { credentials: 'same-origin' });
   if (events.ok) renderEvents(await events.json());
@@ -162,6 +201,7 @@ async function load() {
   await refreshWorkspacePanels();
   await loadPolicy();
   await loadEnvoyChannels();
+  startEnvoyPolling();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
 document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});

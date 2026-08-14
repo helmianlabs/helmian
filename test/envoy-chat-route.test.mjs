@@ -37,8 +37,12 @@ function fakePool() {
       if (q.startsWith('insert into helmion.envoy_messages')) {
         const existing = messages.find((row) => row.tenant_id === values[0] && row.channel_id === values[1] && row.author_subject === values[2] && row.idempotency_key === values[5]);
         if (existing) return { rowCount: 0, rows: [] };
-        const row = { id: `message-${messages.length + 1}`, tenant_id: values[0], channel_id: values[1], author_subject: values[2], author_kind: values[3], body: values[4], idempotency_key: values[5], created_at: 'now' };
+        const row = { id: String(messages.length + 1), tenant_id: values[0], channel_id: values[1], author_subject: values[2], author_kind: values[3], body: values[4], idempotency_key: values[5], created_at: 'now' };
         messages.push(row); return { rowCount: 1, rows: [row] };
+      }
+      if (q.includes(' from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and id > $3')) {
+        const rows = messages.filter((row) => row.tenant_id === values[0] && row.channel_id === values[1] && Number(row.id) > Number(values[2]));
+        return { rowCount: rows.length, rows };
       }
       if (q.startsWith('select id, channel_id, author_subject, author_kind, body, idempotency_key')) {
         const rows = messages.filter((row) => row.tenant_id === values[0] && row.channel_id === values[1]
@@ -74,7 +78,13 @@ test('authenticated Envoy route resolves organization from membership and replay
   assert.equal((await first.json()).receipt.replayed, false);
   assert.equal((await replay.json()).receipt.replayed, true);
   const listed = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=${channelId}`, { headers });
-  assert.equal((await listed.json()).messages.length, 1);
+  const initial = await listed.json();
+  assert.equal(initial.messages.length, 1);
+  assert.equal(initial.nextCursor, '1');
+  const incremental = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=${channelId}&after_id=1`, { headers });
+  assert.deepEqual((await incremental.json()).messages, []);
+  const invalidCursor = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=${channelId}&after_id=not-a-cursor`, { headers });
+  assert.equal(invalidCursor.status, 400);
 });
 
 test('Envoy rejects tenant selectors instead of allowing body or URL cross-organization injection', async (t) => {
@@ -84,4 +94,10 @@ test('Envoy rejects tenant selectors instead of allowing body or URL cross-organ
   assert.equal(urlTenant.status, 400);
   const bodyTenant = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ channelId: 'channel-1', body: 'nope', idempotencyKey: 'message-0002', tenantId: 'org-b' }) });
   assert.equal(bodyTenant.status, 400);
+});
+
+test('Envoy polling route requires the authenticated membership session', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const response = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=channel-1&after_id=1`);
+  assert.equal(response.status, 403);
 });

@@ -19,10 +19,12 @@ test('Envoy client uses same-origin auth and never sends a tenant selector', asy
   const client = createEnvoyClient({ fetchImpl });
   await client.listChannels();
   await client.listMessages('c-1');
+  await client.listMessages('c-1', { afterId: '12' });
   await client.sendMessage({ channelId: 'c-1', body: 'hello', idempotencyKey: 'm-1' });
   assert.equal(fetchImpl.calls.every(({ options }) => options.credentials === 'same-origin'), true);
   assert.equal(fetchImpl.calls.some(({ url }) => url.includes('tenant')), false);
-  assert.deepEqual(JSON.parse(fetchImpl.calls[2].options.body), { channelId: 'c-1', body: 'hello', idempotencyKey: 'm-1' });
+  assert.match(fetchImpl.calls[2].url, /after_id=12/);
+  assert.deepEqual(JSON.parse(fetchImpl.calls[3].options.body), { channelId: 'c-1', body: 'hello', idempotencyKey: 'm-1' });
 });
 
 test('empty channel selection does not make a network request', async () => {
@@ -31,3 +33,7 @@ test('empty channel selection does not make a network request', async () => {
   assert.equal(fetchImpl.calls.length, 0);
 });
 
+test('client preserves unauthorized status for the shell to stop polling', async () => {
+  const client = createEnvoyClient({ fetchImpl: async () => new Response(JSON.stringify({ code: 'ENVOY_MEMBERSHIP_REQUIRED' }), { status: 403 }) });
+  await assert.rejects(() => client.listChannels(), (error) => error.status === 403 && /ENVOY_MEMBERSHIP_REQUIRED/.test(error.message));
+});

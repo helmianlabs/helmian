@@ -7,6 +7,13 @@ function text(value, name, max) {
   return result;
 }
 
+function cursor(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const result = String(value).trim();
+  if (!/^\d{1,20}$/.test(result)) throw new Error('message cursor is invalid');
+  return result;
+}
+
 export function normalizeEnvoyChannel(input) {
   const slug = text(input?.slug, 'channel slug', 64).toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) throw new Error('channel slug is invalid');
@@ -76,19 +83,28 @@ export function createEnvoyStore(pool) {
         return { channel: Object.freeze({ id: String(result.rows[0].id), slug: String(result.rows[0].slug), title: String(result.rows[0].title), kind: String(result.rows[0].kind), createdBySubject: String(result.rows[0].created_by_subject), createdAt: result.rows[0].created_at }) };
       });
     },
-    async listMessages(actor, channelId, limit = 50) {
+    async listMessages(actor, channelId, limit = 50, afterId = null) {
       const normalizedChannelId = text(channelId, 'channel id', 64);
       const boundedLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+      const normalizedCursor = cursor(afterId);
       const context = contextFor(actor);
       return withTenantTransaction(pool, context, async (client) => {
         await requireActiveTenantMembership(client, context);
-        const result = await client.query(
-          `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
-           from helmion.envoy_messages where tenant_id=$1 and channel_id=$2
-           order by created_at desc, id desc limit $3`,
-          [context.tenantId, normalizedChannelId, boundedLimit],
-        );
-        return { messages: result.rows.map(rowMessage).reverse() };
+        const result = normalizedCursor
+          ? await client.query(
+            `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
+             from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and id > $3
+             order by id asc limit $4`,
+            [context.tenantId, normalizedChannelId, normalizedCursor, boundedLimit],
+          )
+          : await client.query(
+            `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
+             from helmion.envoy_messages where tenant_id=$1 and channel_id=$2
+             order by created_at desc, id desc limit $3`,
+            [context.tenantId, normalizedChannelId, boundedLimit],
+          );
+        const messages = normalizedCursor ? result.rows.map(rowMessage) : result.rows.map(rowMessage).reverse();
+        return { messages, nextCursor: messages.at(-1)?.id ?? normalizedCursor };
       });
     },
     async appendMessage(actor, input) {
