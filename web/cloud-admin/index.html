@@ -226,7 +226,7 @@
           <h2 id="agent-task-heading">Agent task intents</h2>
           <p id="agent-task-status" class="note" role="status" aria-live="polite">Loading task receipts…</p>
           <form id="agent-task-form" class="config-controls">
-            <select id="agent-task-type" aria-label="Task type"><option value="workspace_preview">Workspace preview</option></select>
+            <select id="agent-task-type" aria-label="Task type"><option value="workspace_preview">Workspace preview</option><option value="browser_check">Browser check preparation</option></select>
             <select id="agent-task-intent" aria-label="Task intent"><option value="draft">Draft</option><option value="prepare">Prepare</option></select>
             <input id="agent-task-goal" aria-label="Task goal" maxlength="1000" placeholder="What should be prepared?" required>
             <input id="agent-task-context" aria-label="Context reference" maxlength="240" placeholder="Context reference (optional)">
@@ -235,7 +235,7 @@
             <button id="agent-task-submit" type="submit">Record task intent</button>
           </form>
           <div id="agent-task-receipts" class="config-grid"></div>
-          <p class="preview">Draft and prepare are durable intents only. No agent, model, provider, filesystem, build, or external task execution occurred.</p>
+          <p class="preview">Draft and prepare are durable intents only. Browser check preparation stores a bounded target reference; no browser, agent, model, provider, filesystem, build, or external task execution occurred.</p>
         </section>
         <section id="section-approvals" class="card" aria-labelledby="approval-inbox-heading">
           <h2 id="approval-inbox-heading">Organization approvals inbox</h2>

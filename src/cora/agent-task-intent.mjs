@@ -1,5 +1,5 @@
 export const CORA_AGENT_TASK_FORMAT = 'cora.agent-task-intent.v1';
-const TASK_TYPES = new Set(['workspace_preview']);
+const TASK_TYPES = new Set(['workspace_preview', 'browser_check']);
 const INTENTS = new Set(['draft', 'prepare']);
 const ALLOWED_KEYS = new Set(['taskType', 'task_type', 'goal', 'contextRef', 'context_ref', 'department', 'costCenter', 'cost_center', 'intent', 'idempotencyKey', 'idempotency_key']);
 
@@ -16,10 +16,12 @@ export function normalizeAgentTaskIntent(input = {}) {
   const taskType = text(input.taskType ?? input.task_type, 'task type', 48).toLowerCase();
   const intent = text(input.intent, 'task intent', 16).toLowerCase();
   if (!TASK_TYPES.has(taskType) || !INTENTS.has(intent)) throw new Error('task type or intent is unsupported');
+  const contextRef = text(input.contextRef ?? input.context_ref, 'task context reference', 240, true);
+  if (taskType === 'browser_check' && (!contextRef || !/^browser-target:[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(contextRef))) throw new Error('browser check requires a bounded browser-target reference');
   return Object.freeze({
     taskType, intent,
     goal: text(input.goal, 'task goal', 1000),
-    contextRef: text(input.contextRef ?? input.context_ref, 'task context reference', 240, true),
+    contextRef,
     department: text(input.department, 'task department', 160, true),
     costCenter: text(input.costCenter ?? input.cost_center, 'task cost center', 120, true),
     idempotencyKey: text(input.idempotencyKey ?? input.idempotency_key, 'task idempotency key', 200),

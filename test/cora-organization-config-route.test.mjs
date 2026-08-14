@@ -70,7 +70,7 @@ async function fixture() {
     async list(actor) { calls.push(['preview-list', actor]); return { receipts: [] }; },
   };
   const agentTaskRepository = {
-    async append(actor, input) { calls.push(['task-append', actor, input]); return { durable: true, format: 'cora.agent-task-intent.v1', taskType: input.taskType, status: input.intent === 'prepare' ? 'prepared' : 'draft', receiptId: 'task-receipt-1', execution: 'not_performed', agentInvocation: 'not_performed' }; },
+    async append(actor, input) { calls.push(['task-append', actor, input]); return { durable: true, format: 'cora.agent-task-intent.v1', taskType: input.taskType, status: input.intent === 'prepare' ? 'prepared' : 'draft', receiptId: 'task-receipt-1', execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed' }; },
     async list(actor) { calls.push(['task-list', actor]); return { receipts: [] }; },
   };
   const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, agentTaskRepository });
@@ -157,6 +157,18 @@ test('authenticated task intents derive Organization, reject selectors and remai
   const listed = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}`, { headers }); assert.equal(listed.status, 200);
   const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}?plant_id=warehouse-1`, { headers }); assert.equal(injected.status, 400);
   assert.equal(app.calls.some(([name, actor]) => name === 'task-append' && actor.tenantId === 'org-a'), true);
+});
+
+test('browser check preparation uses the authenticated task receipt path without browser execution', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=member-session', 'content-type': 'application/json' };
+  const response = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ taskType: 'browser_check', intent: 'prepare', goal: 'Prepare an orientation check', contextRef: 'browser-target:orientation', idempotencyKey: 'browser-0001' }) });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.taskType, 'browser_check');
+  assert.equal(body.execution, 'not_performed');
+  assert.equal(body.providerInvocation, 'not_performed');
+  assert.equal(body.filesystemMutation, 'not_performed');
 });
 
 test('authenticated knowledge query returns stored citations only and rejects authority selectors', async (t) => {

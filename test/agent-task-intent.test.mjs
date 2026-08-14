@@ -31,6 +31,9 @@ test('agent task intent is bounded, allowlisted, and never executed', () => {
   assert.throws(() => normalizeAgentTaskIntent({ ...task, taskType: 'send_email' }), /unsupported/);
   assert.throws(() => normalizeAgentTaskIntent({ ...task, plantId: 'warehouse-1' }), /Plant/);
   assert.throws(() => normalizeAgentTaskIntent({ ...task, organizationId: 'org-b' }), /Organization/);
+  assert.equal(normalizeAgentTaskIntent({ ...task, taskType: 'browser_check', contextRef: 'browser-target:orientation' }).taskType, 'browser_check');
+  assert.throws(() => normalizeAgentTaskIntent({ ...task, taskType: 'browser_check', contextRef: 'https://example.com' }), /browser-target/);
+  assert.throws(() => normalizeAgentTaskIntent({ ...task, taskType: 'browser_check' }), /browser-target/);
 });
 
 test('agent task repository is Organization-derived, append-only, and replay-safe', async () => {

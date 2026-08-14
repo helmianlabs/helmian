@@ -41,6 +41,8 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /no agent execution is implied/u);
   assert.match(page, /Preview intent prepared; no agent, provider, filesystem, build, or external execution occurred/iu);
   assert.match(page, /External execution and browser automation are unavailable/u);
+  assert.match(page, /Browser check preparation/u);
+  assert.match(page, /bounded target reference; no browser.*execution occurred/iu);
   assert.match(page, /stored excerpts with citations only/u);
   assert.match(script, /Use citation in preparation/u);
   assert.match(script, /coraPreparationContextFromCitation/u);
