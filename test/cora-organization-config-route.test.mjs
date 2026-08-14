@@ -6,6 +6,7 @@ import {
   LIVE_ADMIN_CORA_CONFIG_PATH,
   LIVE_ADMIN_CORA_CONFIGS_PATH,
   LIVE_ADMIN_CORA_KNOWLEDGE_PATH,
+  LIVE_ADMIN_CORA_USAGE_PATH,
 } from '../src/cloud/live-admin.mjs';
 
 const env = {
@@ -44,7 +45,11 @@ async function fixture() {
     async createDraft(actor, input) { calls.push(['draft', actor, input]); return { config: { lifecycle: 'draft', organizationId: actor.tenantId } }; },
     async transition() { throw new Error('not used'); },
   };
-  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository });
+  const usageRepository = {
+    async readSummary(actor) { calls.push(['usage-summary', actor]); return { budget: null, totals: { eventCount: 0, estimatedCostMinor: 0, reconciledCostMinor: null }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' }; },
+    async list(actor, limit) { calls.push(['usage-list', actor, limit]); return { events: [] }; },
+  };
+  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository });
   const clm = await startCoraClm({ host: '127.0.0.1', port: 0, runTurn: async () => ({ text: 'ok', model: 'test' }), notifyBackgroundAgents: false, httpRequestHandler: admin.handler });
   return { url: clm.healthUrl.replace('/healthz', ''), calls, close: async () => { await clm.close(); await admin.close(); } };
 }
@@ -69,4 +74,14 @@ test('normal members cannot create Cora drafts; admin draft route has no body Or
   const draft = await fetch(`${app.url}${LIVE_ADMIN_CORA_CONFIGS_PATH}`, { method: 'POST', headers: { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' }, body: JSON.stringify({ config: {}, reason: 'review', provenance: {} }) });
   assert.equal(draft.status, 200);
   assert.equal((await draft.json()).config.organizationId, 'org-a');
+});
+
+test('authenticated usage metadata derives Organization from membership and rejects selectors', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=member-session' };
+  const summary = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}`, { headers });
+  assert.equal(summary.status, 200);
+  assert.equal((await summary.json()).providerCalls, 'not_performed');
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}?organization_id=org-b`, { headers });
+  assert.equal(injected.status, 400);
 });
