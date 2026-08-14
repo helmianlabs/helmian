@@ -593,6 +593,7 @@ test('SIGNED AIMFORGE SESSION enables tools, binds its receipt, and audits autho
   const ws = tempWorkspace('signed-bridge');
   const contexts = [];
   const authorizations = [];
+  const usageOutcomes = [];
   const sessionId = signedAimForgeSession();
   const server = await startCoraClm({
     workspace: ws.dir,
@@ -604,6 +605,7 @@ test('SIGNED AIMFORGE SESSION enables tools, binds its receipt, and audits autho
       authorizations.push(context);
       return { logged: true };
     },
+    providerSessionUsageSink: async (input) => { usageOutcomes.push(input); return { recorded: true, durable: true, replayed: false }; },
     runTurn: async ({ session, onEvent }) => {
       contexts.push({
         id: session.id,
@@ -621,6 +623,7 @@ test('SIGNED AIMFORGE SESSION enables tools, binds its receipt, and audits autho
     await waitFor(() => first.ends().length === 1, { label: 'signed first turn' });
     first.sendTurn([{ role: 'user', content: 'second' }], sessionId);
     await waitFor(() => first.ends().length === 2, { label: 'idempotent signed second turn' });
+    await settle(30);
 
     assert.equal(contexts.length, 2, 'the owner connection may reuse its session');
     assert.equal(contexts.every((context) => context.helmionMode), true);
@@ -628,6 +631,9 @@ test('SIGNED AIMFORGE SESSION enables tools, binds its receipt, and audits autho
     assert.equal(contexts[0].bridgeContext.tenantId, 'tenant-a');
     assert.equal(contexts[0].bridgeContext.subjectId, 'driver:driver-7');
     assert.equal(authorizations.length, 1, 'one receipt produces one authorization audit');
+    assert.equal(usageOutcomes.length, 1, 'one signed bridge receipt produces one usage outcome');
+    assert.equal(usageOutcomes[0].outcome, 'success');
+    assert.equal(usageOutcomes[0].bridgeContext.tenantId, 'tenant-a');
     assert.equal(
       first.inputs().some((message) => 'custom_session_id' in message),
       false,
