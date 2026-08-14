@@ -26,7 +26,10 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(page, /id="guard-check-again"/u);
   assert.match(page, /id="preview-tab"[^>]*>Preview · intents/u);
   assert.doesNotMatch(page, /id="preview-tab"[^>]*disabled/u);
+  assert.match(page, /id="canvas-tab"[^>]*>Canvas · task receipts/u);
+  assert.doesNotMatch(page, /id="canvas-tab"[^>]*disabled/u);
   assert.match(script, /section-prepare.*scrollIntoView/iu);
+  assert.match(script, /section-tasks.*scrollIntoView/iu);
   assert.match(script, /Read-only readiness rechecked/iu);
   assert.match(script, /loadOrganizationReadiness()/u);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);

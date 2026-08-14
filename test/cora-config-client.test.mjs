@@ -103,7 +103,8 @@ test('workspace preview model keeps empty, replay, and not-performed states trut
 test('agent task panel model reports empty, replay, and not-performed states', () => {
   assert.equal(agentTaskPanelModel({ receipts: [] }).empty, true);
   const model = agentTaskPanelModel({ replayed: true, receipts: [{ taskType: 'workspace_preview', status: 'prepared', goal: 'SOP', receiptId: 'r1' }] });
-  assert.equal(model.empty, false); assert.match(model.statusLabel, /replay receipt/); assert.equal(model.execution, 'not_performed'); assert.equal(model.agentInvocation, 'not_performed');
+  assert.equal(model.empty, false); assert.match(model.statusLabel, /replay receipt/); assert.equal(model.claimsUnavailable, true); assert.equal(model.execution, 'not_performed'); assert.equal(model.agentInvocation, 'not_performed');
+  assert.match(agentTaskPanelModel({ receipts: [{ status: 'prepared', claimStatus: 'claimed' }] }).statusLabel, /claim state is shown/);
 });
 
 test('Cora preparation model distinguishes prepared, replay, and unavailable receipts', () => {

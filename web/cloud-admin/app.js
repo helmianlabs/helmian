@@ -14,6 +14,7 @@ const scope = document.querySelector('#scope');
 const guardEvents = document.querySelector('#guard-events');
 const guardCheckAgain = document.querySelector('#guard-check-again');
 const previewTab = document.querySelector('#preview-tab');
+const canvasTab = document.querySelector('#canvas-tab');
 const auditStatus = document.querySelector('#audit-status');
 const auditFilters = document.querySelector('#audit-filters');
 const auditAction = document.querySelector('#audit-action');
@@ -756,7 +757,8 @@ function renderAgentTasks(body) {
   agentTaskStatus.textContent = model.statusLabel;
   for (const receipt of model.receipts) {
     const card = document.createElement('article'); card.className = 'config-item';
-    card.append(configItem('Task', `${receipt.taskType} · ${receipt.status}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Execution', 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
+    const taskState = receipt.claimStatus === 'claimed' ? 'claimed' : receipt.claimStatus === 'unavailable' ? `${receipt.status} · claim unavailable` : receipt.status;
+    card.append(configItem('Task', `${receipt.taskType} · ${taskState}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Execution', 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
     agentTaskReceipts.append(card);
   }
 }
@@ -918,6 +920,7 @@ guardCheckAgain.onclick = async () => {
   }
 };
 previewTab.onclick = () => document.querySelector('#section-prepare')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+canvasTab.onclick = () => document.querySelector('#section-tasks')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
 coraCreateDraft.onclick = async () => {
   const reason = coraDraftReason.value.trim();

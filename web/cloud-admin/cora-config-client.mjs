@@ -107,7 +107,8 @@ export function workspacePreviewPanelModel(body = {}) {
 
 export function agentTaskPanelModel(body = {}) {
   const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
-  return Object.freeze({ empty: receipts.length === 0, receipts, execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', statusLabel: body.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : 'Task intent recorded. No worker execution occurred.' });
+  const claimsUnavailable = receipts.some((receipt) => !['claimed', 'unclaimed'].includes(receipt.claimStatus));
+  return Object.freeze({ empty: receipts.length === 0, receipts, claimsUnavailable, execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', statusLabel: body.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : claimsUnavailable ? 'Task intents loaded. Claim state is unavailable until the claims schema is present; no worker execution occurred.' : 'Task intents loaded. Worker claim state is shown; no execution occurred.' });
 }
 
 export function coraPreparationPanelModel(body = {}) {

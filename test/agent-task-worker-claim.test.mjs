@@ -23,6 +23,21 @@ function fakePool() {
   return { connect: async () => client };
 }
 
+function listPool({ claimsTable = true } = {}) {
+  const client = { async query(sql, values = []) {
+    const q = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+    if (['begin', 'commit', 'rollback'].includes(q) || q.startsWith('select set_config')) return { rowCount: 0, rows: [] };
+    if (q.includes('from helmion.tenant_memberships')) return { rowCount: 1, rows: [{ role: 'member' }] };
+    if (q.includes('from helmion.cora_agent_task_intents')) return { rowCount: 1, rows: [{ id: 7, task_type: 'workspace_preview', goal: 'Prepare SOP', context_ref: null, department: null, cost_center: null, intent: 'prepare', status: 'prepared', receipt_id: 'task-receipt-7', idempotency_key: 'task-0007', created_at: '2026-08-14T00:00:00.000Z' }] };
+    if (q.includes('from helmion.cora_agent_task_claims')) {
+      if (!claimsTable) throw Object.assign(new Error('relation does not exist'), { code: '42P01' });
+      return { rowCount: 1, rows: [{ claim_status: 'claimed' }] };
+    }
+    throw new Error(`Unexpected list query: ${q}`);
+  }, release() {} };
+  return { connect: async () => client };
+}
+
 test('worker claim contract requires a verified internal worker and never executes', () => {
   assert.deepEqual(requireAuthorizedWorker(worker).workerId, 'worker:cloud');
   assert.throws(() => requireAuthorizedWorker({ ...worker, kind: 'user' }), /internal worker/);
@@ -41,4 +56,20 @@ test('only an authorized worker can claim prepared tasks, with tenant isolation 
   await assert.rejects(() => repo.claimPrepared({ ...worker, tenantId: 'org-b' }, { taskId: 1, idempotencyKey: 'claim-0002' }), /membership|tenant/u);
   await assert.rejects(() => repo.claimPrepared({ ...worker, role: 'member' }, { taskId: 1, idempotencyKey: 'claim-0003' }), /internal worker/u);
   await assert.rejects(() => repo.claimPrepared(worker, { taskId: 2, idempotencyKey: 'claim-0004' }), /prepared/u);
+});
+
+test('member task read projects claimed state and isolates the Organization source', async () => {
+  const actor = { tenantId: 'org-a', subject: 'user-a', role: 'member', membershipRole: 'member', sessionId: 'session-a', requestId: 'request-a' };
+  const result = await createAgentTaskRepository(listPool()).list(actor);
+  assert.equal(result.claimStatusSource, 'cora_agent_task_claims');
+  assert.equal(result.receipts[0].claimStatus, 'claimed');
+  assert.equal(result.receipts[0].execution, 'not_performed');
+});
+
+test('member task read is truthful when the additive claims schema is unavailable', async () => {
+  const actor = { tenantId: 'org-a', subject: 'user-a', role: 'member', membershipRole: 'member', sessionId: 'session-a', requestId: 'request-a' };
+  const result = await createAgentTaskRepository(listPool({ claimsTable: false })).list(actor);
+  assert.equal(result.claimStatusSource, 'unavailable');
+  assert.equal(result.receipts[0].claimStatus, 'unavailable');
+  assert.equal(result.receipts[0].execution, 'not_performed');
 });
