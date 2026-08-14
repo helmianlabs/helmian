@@ -28,6 +28,7 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.readKnowledgeSources();
   await client.queryKnowledge('hours service');
   await client.readUsage();
+  await client.saveUsagePolicy({ period: 'monthly', currency: 'USD', softLimitMinor: 100, hardLimitMinor: 200, lowCostLimitMinor: 20, policyState: 'active', allocations: [] });
   await client.readWorkspacePreviews();
   await client.createWorkspacePreview({ mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
   await client.readAgentTasks();

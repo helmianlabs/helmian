@@ -22,6 +22,7 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     createKnowledgeSnippet(input) { return requestJson(fetchImpl, '/api/admin/cora/knowledge/snippets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     transitionKnowledge(input) { return requestJson(fetchImpl, '/api/admin/cora/knowledge/transition', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     readUsage() { return requestJson(fetchImpl, '/api/admin/cora/usage'); },
+    saveUsagePolicy(policy) { return requestJson(fetchImpl, '/api/admin/cora/usage', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(policy) }); },
     readPersonalPreferences() { return requestJson(fetchImpl, '/api/admin/cora/personal-preferences'); },
     savePersonalPreferences(preferences) { return requestJson(fetchImpl, '/api/admin/cora/personal-preferences', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(preferences) }); },
     readWorkspaceLayout() { return requestJson(fetchImpl, '/api/admin/workspace/layout-preferences'); },
@@ -145,6 +146,8 @@ export function usagePanelModel(body = {}) {
     eventCount,
     estimatedCostMinor: totals.estimatedCostMinor ?? null,
     reconciledCostMinor: totals.reconciledCostMinor ?? null,
+    budget,
+    allocations: Array.isArray(budget?.allocations) ? budget.allocations : [],
     source: body.source === 'tenant_append_only_ledger' ? body.source : 'tenant_append_only_ledger',
     providerCalls: body.providerCalls === 'not_performed' ? body.providerCalls : 'not_performed',
   });
