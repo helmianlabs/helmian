@@ -30,6 +30,13 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
         body: JSON.stringify({ taskType, goal, contextRef, department, costCenter, intent, idempotencyKey }),
       });
     },
+    readArtifacts() { return requestJson(fetchImpl, '/api/admin/cora/artifacts'); },
+    createArtifact({ artifactType, title, department, objective, sourceRefs, stage = 'draft', idempotencyKey, approvalReason = null }) {
+      return requestJson(fetchImpl, '/api/admin/cora/artifacts', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ artifactType, title, department, objective, sourceRefs, stage, idempotencyKey, approvalReason }),
+      });
+    },
     createDraft({ reason }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -64,6 +71,19 @@ export function workspacePreviewPanelModel(body = {}) {
 export function agentTaskPanelModel(body = {}) {
   const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
   return Object.freeze({ empty: receipts.length === 0, receipts, execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', statusLabel: body.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : 'Task intent recorded. No worker execution occurred.' });
+}
+
+export function artifactStudioPanelModel(body = {}) {
+  const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
+  return Object.freeze({
+    empty: receipts.length === 0,
+    receipts,
+    availableThrough: 'approval_requested',
+    execution: 'not_performed',
+    media: 'not_generated',
+    providerInvocation: 'not_performed',
+    statusLabel: body.replayed ? 'Artifact intent already received. Durable replay receipt confirmed.' : 'Artifact intent recorded. No media or provider execution occurred.',
+  });
 }
 
 export function knowledgeQueryModel(body = {}) {
