@@ -101,6 +101,36 @@ function normalizeKnowledgePacks(entries = []) {
   }));
 }
 
+export function normalizeCoraPolicyConfig(input = {}) {
+  rejectPhysicalAuthority(input, 'Cora policy config');
+  exactKeys(input, ['style', 'maxSpokenChars', 'interruptMode', 'turnMode', 'allowedUserPreferences', 'voiceProfiles', 'approvedModelCatalog', 'routingPolicy', 'knowledgePacks'], 'Cora policy config');
+  const defaults = normalizePublishedDefaults({ style: input.style ?? DEFAULT_CORA_PUBLISHED_DEFAULTS.style, maxSpokenChars: input.maxSpokenChars ?? DEFAULT_CORA_PUBLISHED_DEFAULTS.maxSpokenChars, interruptMode: input.interruptMode ?? DEFAULT_CORA_PUBLISHED_DEFAULTS.interruptMode, turnMode: input.turnMode ?? DEFAULT_CORA_PUBLISHED_DEFAULTS.turnMode });
+  const bounds = input.allowedUserPreferences ?? {};
+  rejectPhysicalAuthority(bounds, 'Cora user preference bounds');
+  exactKeys(bounds, ['verbosity', 'interruptMode', 'turnMode', 'voiceProfiles'], 'Cora user preference bounds');
+  const allowedUserPreferences = Object.freeze({
+    verbosity: [...new Set((bounds.verbosity ?? ['concise', 'standard', 'detailed']).map((value) => bounded(value, 'allowed verbosity', 32)))],
+    interruptMode: [...new Set((bounds.interruptMode ?? ['barge_in', 'after_sentence']).map((value) => bounded(value, 'allowed interrupt mode', 32)))],
+    turnMode: [...new Set((bounds.turnMode ?? ['concise', 'standard']).map((value) => bounded(value, 'allowed turn mode', 32)))],
+    voiceProfiles: [...new Set((bounds.voiceProfiles ?? input.voiceProfiles ?? []).map((value) => bounded(value, 'allowed voice profile', 128)))],
+  });
+  if (allowedUserPreferences.voiceProfiles.length > 16) throw new Error('allowed voice profiles are invalid');
+  if (!allowedUserPreferences.verbosity.every((value) => ['concise', 'standard', 'detailed'].includes(value))) throw new Error('allowed verbosity is unsupported');
+  if (!allowedUserPreferences.interruptMode.every((value) => INTERRUPT_MODES.has(value))) throw new Error('allowed interrupt mode is unsupported');
+  if (!allowedUserPreferences.turnMode.every((value) => TURN_MODES.has(value))) throw new Error('allowed turn mode is unsupported');
+  return Object.freeze({
+    style: defaults.style,
+    maxSpokenChars: defaults.maxSpokenChars,
+    interruptMode: defaults.interruptMode,
+    turnMode: defaults.turnMode,
+    allowedUserPreferences,
+    voiceProfiles: allowedUserPreferences.voiceProfiles,
+    approvedModelCatalog: normalizeCoraApprovedModelCatalog(input.approvedModelCatalog ?? []),
+    routingPolicy: normalizeCoraRoutingPolicy(input.routingPolicy ?? null, normalizeCoraApprovedModelCatalog(input.approvedModelCatalog ?? [])),
+    knowledgePacks: normalizeKnowledgePacks(input.knowledgePacks ?? []),
+  });
+}
+
 function effectiveDefaults(published, prefs) {
   return Object.freeze({
     style: published.style,

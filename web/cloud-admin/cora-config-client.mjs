@@ -13,6 +13,7 @@ async function requestJson(fetchImpl, url, options = {}) {
 export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
   return Object.freeze({
     readConfig() { return requestJson(fetchImpl, '/api/admin/cora/config'); },
+    readConfigHistory() { return requestJson(fetchImpl, '/api/admin/cora/configs'); },
     readKnowledgeSources() { return requestJson(fetchImpl, '/api/admin/cora/knowledge-sources'); },
     queryKnowledge(query) { return requestJson(fetchImpl, `/api/admin/cora/knowledge/query?q=${encodeURIComponent(query)}`); },
     readUsage() { return requestJson(fetchImpl, '/api/admin/cora/usage'); },
@@ -57,11 +58,11 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     },
     readArtifactExecutionRequests(artifactReceiptId) { return requestJson(fetchImpl, `/api/admin/cora/artifact-execution-requests?artifact_receipt_id=${encodeURIComponent(artifactReceiptId)}`); },
     createArtifactExecutionRequest(input) { return requestJson(fetchImpl, '/api/admin/cora/artifact-execution-requests', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalRef: null, estimatedAudioSeconds: null, estimatedImageUnits: null, estimatedRequestedTokens: null, estimatedVideoUnits: null, supersedesReceiptId: null, ...input }) }); },
-    createDraft({ reason, routingPolicy = null, approvedModelCatalog = [] }) {
+    createDraft({ reason, config = null, routingPolicy = null, approvedModelCatalog = [] }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          config: { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise', approvedModelCatalog, routingPolicy },
+          config: config ?? { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise', allowedUserPreferences: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in', 'after_sentence'], turnMode: ['concise', 'standard'], voiceProfiles: [] }, voiceProfiles: [], approvedModelCatalog, routingPolicy, knowledgePacks: [] },
           reason, provenance: { source: 'cloud-admin-ui', providerCall: 'not_performed' },
         }),
       });

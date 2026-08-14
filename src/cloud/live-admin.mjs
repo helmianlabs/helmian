@@ -697,6 +697,11 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONFIG_ADMIN_REQUIRED' : 'CORA_CONFIG_DRAFT_INVALID' })); }
       return true;
     }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIGS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.listConfigs(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONFIG_ADMIN_REQUIRED' : error?.status === 400 ? 'CORA_CONFIG_SELECTOR_INVALID' : 'CORA_CONFIG_HISTORY_READ_FAILED' })); }
+      return true;
+    }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_TRANSITION_PATH) {
       try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['id', 'lifecycle', 'reason']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.transition(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONFIG_ADMIN_REQUIRED' : 'CORA_CONFIG_TRANSITION_INVALID' })); }

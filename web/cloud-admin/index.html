@@ -145,11 +145,17 @@
           </dialog>
           <div id="cora-admin-controls" class="config-controls" hidden>
             <input id="cora-draft-reason" aria-label="Cora draft reason" maxlength="2000" placeholder="Reason for a reviewed Cora draft">
-            <textarea id="cora-routing-policy" aria-label="Cora routing policy JSON" maxlength="12000" placeholder="Optional routing-policy JSON; references only approved catalog IDs"></textarea>
+            <label>Max spoken characters <input id="cora-max-spoken-chars" type="number" min="240" max="1200" step="1" value="900"></label>
+            <fieldset><legend>Allowed member response detail</legend><label><input type="checkbox" data-cora-verbosity="concise" checked> Concise</label><label><input type="checkbox" data-cora-verbosity="standard" checked> Standard</label><label><input type="checkbox" data-cora-verbosity="detailed" checked> Detailed</label></fieldset>
+            <fieldset><legend>Allowed interruption</legend><label><input type="checkbox" data-cora-interrupt="barge_in" checked> Barge in</label><label><input type="checkbox" data-cora-interrupt="after_sentence" checked> After sentence</label></fieldset>
+            <fieldset><legend>Allowed turn behavior</legend><label><input type="checkbox" data-cora-turn="concise" checked> Concise</label><label><input type="checkbox" data-cora-turn="standard" checked> Standard</label></fieldset>
+            <label>Approved voice profiles <input id="cora-voice-profiles" maxlength="1000" placeholder="Profile IDs, comma-separated"></label>
+            <label>Approved knowledge packs <textarea id="cora-knowledge-packs" maxlength="6000" placeholder="One pack per line: id | version | source | provenance"></textarea></label>
             <button id="cora-create-draft" type="button">Create reviewed draft</button>
             <button id="cora-transition" class="secondary" type="button" hidden></button>
           </div>
-          <p class="preview">Routing policy is Organization-published metadata only. It may select among approved catalog IDs for the four supported task classes; it never stores keys or invokes a provider.</p>
+          <div id="cora-config-history" class="config-list" aria-live="polite">Admin config history is unavailable until loaded.</div>
+          <p class="preview">Routing policy is Organization-published metadata only. Provider/model catalog metadata and routing policy are server-validated; this editor never accepts keys or secrets, and never invokes a provider. Knowledge packs are metadata only; no URL or file is fetched.</p>
         </section>
         <section id="section-usage" class="card" aria-labelledby="cora-usage-heading">
           <h2 id="cora-usage-heading">Internal provider usage ledger</h2>

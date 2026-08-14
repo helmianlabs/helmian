@@ -1,6 +1,5 @@
 import { requireActiveTenantMembership, TenantAuthorizationError, withTenantTransaction } from '../core/tenant-context.mjs';
-import { normalizeCoraRoutingPolicy } from './routing-policy.mjs';
-import { normalizeCoraApprovedModelCatalog } from './organization-config.mjs';
+import { normalizeCoraPolicyConfig } from './organization-config.mjs';
 
 const ADMIN_ROLES = new Set(['owner', 'admin']);
 const LIFECYCLES = new Set(['draft', 'testing', 'approved', 'published', 'rolled_back']);
@@ -36,6 +35,21 @@ function requireAdmin(actor) {
 
 function configRow(row) {
   return Object.freeze({
+    async listConfigs(actor) {
+      requireAdmin(actor);
+      const context = actorContext(actor);
+      return withTenantTransaction(pool, context, async (client) => {
+        await requireActiveTenantMembership(client, context);
+        const result = await client.query(
+          `select id, tenant_id, config_version, lifecycle, config, reason, provenance, is_current,
+                  created_by_subject, created_at, approved_by_subject, approved_at,
+                  published_by_subject, published_at, rollback_by_subject, rollback_at, rollback_reason
+           from helmion.cora_configs where tenant_id=$1 order by config_version desc limit 32`,
+          [context.tenantId],
+        );
+        return { configs: result.rows.map(configRow) };
+      });
+    },
     id: String(row.id), organizationId: String(row.tenant_id), configVersion: Number(row.config_version), lifecycle: String(row.lifecycle),
     config: row.config, reason: String(row.reason), provenance: row.provenance, isCurrent: row.is_current === true,
     createdBySubject: String(row.created_by_subject), createdAt: row.created_at, approvedBySubject: row.approved_by_subject ?? null,
@@ -118,11 +132,7 @@ export function createCoraOrganizationConfigRepository(pool) {
       requireAdmin(actor);
       const body = object(input, 'Cora config draft');
       const config = object(body.config, 'Cora config');
-      if (config.approvedModelCatalog !== undefined) config.approvedModelCatalog = normalizeCoraApprovedModelCatalog(config.approvedModelCatalog);
-      if (config.routingPolicy !== undefined) {
-        const normalizedRoutingPolicy = normalizeCoraRoutingPolicy(config.routingPolicy, config.approvedModelCatalog ?? []);
-        config.routingPolicy = normalizedRoutingPolicy;
-      }
+      const normalizedConfig = normalizeCoraPolicyConfig(config);
       const reason = text(body.reason, 'Cora config reason', 2000);
       const provenance = object(body.provenance ?? {}, 'Cora config provenance');
       const context = actorContext(actor);
@@ -134,7 +144,7 @@ export function createCoraOrganizationConfigRepository(pool) {
            values ($1,$2,'draft',$3::jsonb,$4,$5::jsonb,$6,$7)
            returning id, tenant_id, config_version, lifecycle, config, reason, provenance, is_current, created_by_subject, created_at,
                      approved_by_subject, approved_at, published_by_subject, published_at, rollback_by_subject, rollback_at, rollback_reason`,
-          [context.tenantId, Number(version.rows[0].next_version), JSON.stringify(config), reason, JSON.stringify(provenance), context.actorSubject, context.actorRole],
+          [context.tenantId, Number(version.rows[0].next_version), JSON.stringify(normalizedConfig), reason, JSON.stringify(provenance), context.actorSubject, context.actorRole],
         );
         return { config: configRow(result.rows[0]) };
       });
