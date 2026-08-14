@@ -37,3 +37,19 @@ test('client preserves unauthorized status for the shell to stop polling', async
   const client = createEnvoyClient({ fetchImpl: async () => new Response(JSON.stringify({ code: 'ENVOY_MEMBERSHIP_REQUIRED' }), { status: 403 }) });
   await assert.rejects(() => client.listChannels(), (error) => error.status === 403 && /ENVOY_MEMBERSHIP_REQUIRED/.test(error.message));
 });
+
+test('Envoy client opens same-origin SSE without tenant selectors and handles message/error events', () => {
+  const calls = []; const listeners = {};
+  class FakeEventSource {
+    constructor(url) { this.url = url; calls.push(this); }
+    addEventListener(name, handler) { listeners[name] = handler; }
+    close() { this.closed = true; }
+  }
+  const messages = []; const errors = [];
+  const stream = createEnvoyClient().openMessageStream('c-1', { afterId: '7', EventSourceImpl: FakeEventSource, onMessage: (message) => messages.push(message), onError: (error) => errors.push(error) });
+  assert.match(calls[0].url, /channel_id=c-1&after_id=7/u); assert.doesNotMatch(calls[0].url, /tenant|organization|plant|facility/u);
+  listeners.message({ data: JSON.stringify({ id: '8', body: 'hello' }) });
+  listeners.envoy_error({ data: JSON.stringify({ code: 'ENVOY_MEMBERSHIP_REVOKED', retryable: false }) });
+  assert.equal(messages[0].id, '8'); assert.equal(errors[0].status, 403);
+  stream.close(); assert.equal(calls[0].closed, true);
+});

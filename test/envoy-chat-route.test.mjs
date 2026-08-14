@@ -5,6 +5,7 @@ import {
   createLiveHelmianCloudAdminHandler,
   LIVE_ADMIN_ENVOY_CHANNELS_PATH,
   LIVE_ADMIN_ENVOY_MESSAGES_PATH,
+  LIVE_ADMIN_ENVOY_STREAM_PATH,
 } from '../src/cloud/live-admin.mjs';
 
 const env = {
@@ -30,6 +31,7 @@ function fakePool() {
         return { rowCount: 1, rows: [{ role: memberships[values[1]]?.role ?? 'member' }] };
       }
       if (q.startsWith('select id, slug, title, kind, created_by_subject')) return { rowCount: channels.length, rows: channels };
+      if (q.startsWith('select id from helmion.envoy_channels')) return channels.some((row) => row.id === values[1]) ? { rowCount: 1, rows: [{ id: values[1] }] } : { rowCount: 0, rows: [] };
       if (q.startsWith('insert into helmion.envoy_channels')) {
         const row = { id: 'channel-2', slug: values[1], title: values[2], kind: values[3], created_by_subject: values[4], created_at: 'now' };
         channels.push(row); return { rowCount: 1, rows: [row] };
@@ -58,9 +60,10 @@ function fakePool() {
 
 function identity() { return { getSession: (id) => id === 'active-session' ? { subject: 'user-1' } : null }; }
 
-async function fixture() {
+async function fixture(options = {}) {
   const admin = await createLiveHelmianCloudAdminHandler({
     env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [],
+    ...options,
   });
   const clm = await startCoraClm({ host: '127.0.0.1', port: 0, runTurn: async () => ({ text: 'ok', model: 'test' }), notifyBackgroundAgents: false, httpRequestHandler: admin.handler });
   return { url: clm.healthUrl.replace('/healthz', ''), close: async () => { await clm.close(); await admin.close(); } };
@@ -100,4 +103,27 @@ test('Envoy polling route requires the authenticated membership session', async 
   const app = await fixture(); t.after(app.close);
   const response = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=channel-1&after_id=1`);
   assert.equal(response.status, 403);
+});
+
+test('authenticated Envoy SSE emits only Organization channel messages and resumes after a cursor', async (t) => {
+  const app = await fixture({ envoyStreamIntervalMs: 250 }); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  const stream = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_STREAM_PATH}?channel_id=channel-1&after_id=0`, { headers });
+  assert.equal(stream.status, 200);
+  assert.match(stream.headers.get('content-type') ?? '', /text\/event-stream/u);
+  const reader = stream.body.getReader();
+  const first = new TextDecoder().decode((await reader.read()).value);
+  assert.match(first, /event: ready|event: message/u);
+  reader.cancel();
+});
+
+test('Envoy SSE rejects tenant selectors, missing sessions, and unknown Organization channels', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  const selected = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_STREAM_PATH}?channel_id=channel-1&plant_id=plant-1`, { headers });
+  assert.equal(selected.status, 400);
+  const unauthenticated = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_STREAM_PATH}?channel_id=channel-1`);
+  assert.equal(unauthenticated.status, 403);
+  const unknown = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_STREAM_PATH}?channel_id=org-b-channel`, { headers });
+  assert.equal(unknown.status, 400);
 });
