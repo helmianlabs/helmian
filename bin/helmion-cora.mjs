@@ -32,6 +32,7 @@ import {
 } from '../src/cora/provider-readiness.mjs';
 import { runCoraSelfTest } from '../src/cora/self-test.mjs';
 import { createLiveHelmianCloudAdminHandler, shouldMountLiveAdmin } from '../src/cloud/live-admin.mjs';
+import { recordProviderSessionUsage } from '../src/cora/provider-session-usage.mjs';
 
 function parseFlags(argv) {
   const out = {
@@ -166,6 +167,7 @@ try {
     notifyBackgroundAgents: flags.agentNotify,
     httpRequestHandler: liveAdmin?.handler,
     globalActionPolicyResolver: liveAdmin?.resolveActionPolicy,
+    providerSessionUsageSink: liveAdmin ? ({ bridgeContext, outcome }) => recordProviderSessionUsage({ append: liveAdmin.appendProviderUsage, bridgeContext, outcome }) : null,
     logger,
   });
 } catch (err) {

@@ -354,6 +354,7 @@ export async function startCoraClm({
   httpRequestHandler = null,
   globalActionPolicyResolver = null,
   logger = () => {},
+  providerSessionUsageSink = null,
 } = {}) {
   const { requiresToken } = resolveAccess({ host, token });
   if (requireSignedSessions && Buffer.byteLength(String(bridgeSecret ?? ''), 'utf8') < 32) {
@@ -511,6 +512,11 @@ export async function startCoraClm({
           role: bridgeContext.role,
           surface: bridgeContext.surface,
         });
+        if (providerSessionUsageSink) {
+          Promise.resolve(providerSessionUsageSink({ bridgeContext, outcome: 'success' }))
+            .then((receipt) => { if (receipt?.recorded === false) logger({ level: 'warn', event: 'provider_session_usage_not_recorded', reason: receipt.reason }); })
+            .catch((error) => logger({ level: 'error', event: 'provider_session_usage_failed', reason: error?.message ?? String(error) }));
+        }
       }
     }
     session.lastSeen = Date.now();

@@ -566,6 +566,7 @@ export async function createLiveHelmianCloudAdminHandler({
   return Object.freeze({
     handler,
     resolveActionPolicy: () => resolvePlatformActionPolicy(pool),
+    appendProviderUsage: (actor, input) => providerUsage.append(actor, input),
     close: () => ownsPool ? pool.end() : Promise.resolve(),
   });
 }
