@@ -1,4 +1,5 @@
 import { resolvePublishedCoraSessionConfig } from './session-config-resolver.mjs';
+import { resolveServerHumeBinding } from './hume-server-binding.mjs';
 
 export const CORA_HUME_SESSION_DESCRIPTOR_FORMAT = 'cora.hume-session-descriptor.v1';
 export const CORA_HUME_SESSION_DESCRIPTOR_STATES = Object.freeze(['ready', 'unavailable']);
@@ -45,6 +46,7 @@ export function compileCoraHumeSessionDescriptor({
   sessionConfig,
   humeConfigId = null,
   serverCredentialReady,
+  serverBinding,
 } = {}) {
   if (!sessionConfig || typeof sessionConfig !== 'object' || Array.isArray(sessionConfig)) throw new Error('resolved Cora session config is required');
   if (sessionConfig.format !== 'cora.published-session-config.v1') throw new Error('resolved Cora session config format is invalid');
@@ -56,13 +58,15 @@ export function compileCoraHumeSessionDescriptor({
   if (!behavior || behavior.style !== 'professional_brief' || !Number.isSafeInteger(behavior.maxSpokenChars) || behavior.maxSpokenChars < 240 || behavior.maxSpokenChars > 1_200) throw new Error('published Cora professional behavior is invalid');
   const interruptMode = boundedText(behavior.interruptMode, 'Cora interrupt mode', 32);
   const turnMode = boundedText(behavior.turnMode, 'Cora turn mode', 32);
-  if (typeof serverCredentialReady !== 'boolean') throw new Error('server Hume credential readiness must be explicit');
-  const humeId = optionalText(humeConfigId, 'server Hume config id', MAX_CONFIG_ID_CHARS);
+  const binding = serverBinding === undefined
+    ? (typeof serverCredentialReady !== 'boolean' ? (() => { throw new Error('server Hume credential readiness must be explicit'); })() : resolveServerHumeBinding({ source: 'injected_test', configured: Boolean(humeConfigId), configId: humeConfigId, credentialReady: serverCredentialReady }))
+    : resolveServerHumeBinding(serverBinding);
+  const humeId = optionalText(binding.configId, 'server Hume config id', MAX_CONFIG_ID_CHARS);
   const descriptor = Object.freeze({
     format: CORA_HUME_SESSION_DESCRIPTOR_FORMAT,
-    state: humeId && serverCredentialReady ? 'ready' : 'unavailable',
+    state: binding.state,
     organizationConfig: Object.freeze({ id: configId, version: sessionConfig.configVersion }),
-    hume: Object.freeze({ configId: humeId, credentialReady: serverCredentialReady, acceptance: 'not_verified' }),
+    hume: Object.freeze({ configId: humeId, credentialReady: binding.credentialReady, acceptance: 'not_verified' }),
     voiceProfile,
     prompt: buildPrompt({ style: behavior.style, maxSpokenChars: behavior.maxSpokenChars, interruptMode, turnMode }, voiceProfile),
     turn: Object.freeze({ style: behavior.style, maxSpokenChars: behavior.maxSpokenChars, interruptMode, turnMode }),
@@ -74,7 +78,7 @@ export function compileCoraHumeSessionDescriptor({
 }
 
 /** Resolve the verified Organization config and compile the server preflight. */
-export async function buildCoraHumeSessionPreflight({ repository, signedContext, sessionToolManifest, humeConfigId = null, serverCredentialReady } = {}) {
+export async function buildCoraHumeSessionPreflight({ repository, signedContext, sessionToolManifest, humeConfigId = null, serverCredentialReady, serverBinding } = {}) {
   const sessionConfig = await resolvePublishedCoraSessionConfig({ repository, signedContext, sessionToolManifest });
-  return compileCoraHumeSessionDescriptor({ sessionConfig, humeConfigId, serverCredentialReady });
+  return compileCoraHumeSessionDescriptor({ sessionConfig, humeConfigId, serverCredentialReady, serverBinding });
 }

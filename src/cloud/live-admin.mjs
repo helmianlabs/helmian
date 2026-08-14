@@ -265,8 +265,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const coraHumeSessionPreflight = suppliedCoraHumeSessionPreflight ?? ((actor) => buildCoraHumeSessionPreflight({
     repository: coraConfig,
     signedContext: { verified: true, tenantId: actor.tenantId, subjectId: actor.subject, role: actor.role, sessionId: actor.sessionId, receiptId: actor.requestId },
-    humeConfigId: env.HELMION_HUME_CONFIG_ID ?? null,
-    serverCredentialReady: humeServerCredentialReady === true,
+    serverBinding: { source: 'server_process_env', configured: Boolean(String(env.HELMION_HUME_CONFIG_ID ?? '').trim()), configId: env.HELMION_HUME_CONFIG_ID ?? null, credentialReady: humeServerCredentialReady === true },
   }));
   const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
