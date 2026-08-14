@@ -44,6 +44,7 @@ export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/p
 export const LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH = '/api/admin/action-policy/confirm';
 export const LIVE_ADMIN_ENVOY_CHANNELS_PATH = '/api/admin/envoy/channels';
 export const LIVE_ADMIN_ENVOY_MESSAGES_PATH = '/api/admin/envoy/messages';
+export const LIVE_ADMIN_ENVOY_STREAM_PATH = '/api/admin/envoy/stream';
 export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
 export const LIVE_ADMIN_CORA_CONFIGS_PATH = '/api/admin/cora/configs';
 export const LIVE_ADMIN_CORA_TRANSITION_PATH = '/api/admin/cora/configs/transition';
@@ -143,6 +144,7 @@ export async function createLiveHelmianCloudAdminHandler({
   providerUsageRepository: suppliedProviderUsageRepository = null,
   workspacePreviewRepository: suppliedWorkspacePreviewRepository = null,
   agentTaskRepository: suppliedAgentTaskRepository = null,
+  envoyStreamIntervalMs = 1000,
   logger = () => {},
 } = {}) {
   const connectionString = String(env.HELMION_DATABASE_URL ?? '').trim();
@@ -162,6 +164,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const agentTasks = suppliedAgentTaskRepository ?? createAgentTaskRepository(pool);
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
+  const streamIntervalMs = Math.max(250, Number(envoyStreamIntervalMs));
   const prunePreviews = () => {
     const now = Date.now();
     for (const [id, preview] of pendingPreviews) if (preview.expiresAt <= now) pendingPreviews.delete(id);
@@ -216,6 +219,57 @@ export async function createLiveHelmianCloudAdminHandler({
     const context = { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: randomUUID(), requestId: randomUUID() };
     await withTenantTransaction(pool, context, async (client) => { await requireActiveTenantMembership(client, context); return {}; });
     return { ...actor, sessionId: context.sessionId, requestId: context.requestId };
+  }
+
+  async function streamEnvoyMessages(request, response, initialActor, channelId, afterId) {
+    let cursor = afterId || null;
+    const initialResult = await envoy.listMessages(initialActor, channelId, 100, cursor);
+    let closed = false;
+    let timer = null;
+    const close = () => { closed = true; if (timer) clearTimeout(timer); };
+    request.once?.('close', close);
+    response.once?.('close', close);
+    response.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+    response.write('retry: 3000\n\n');
+    const writeEvent = (event, data, id = null) => {
+      if (closed) return;
+      if (id != null) response.write(`id: ${id}\n`);
+      response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const tick = async (actor, suppliedResult = null) => {
+      if (closed) return;
+      try {
+        const result = suppliedResult ?? await envoy.listMessages(actor, channelId, 100, cursor);
+        for (const message of result.messages ?? []) {
+          cursor = message.id;
+          writeEvent('message', message, message.id);
+        }
+        if (!result.messages?.length) writeEvent('ready', { status: 'connected', cursor });
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError || /membership|Organization|channel/u.test(error?.message ?? '');
+        writeEvent('envoy_error', { code: denied ? 'ENVOY_MEMBERSHIP_REVOKED' : 'ENVOY_STREAM_UNAVAILABLE', retryable: !denied });
+        close();
+        response.end();
+        return;
+      }
+      if (closed) return;
+      timer = setTimeout(async () => {
+        try {
+          const actor = await activeTenantActor(request);
+          await tick(actor);
+        } catch (error) {
+          writeEvent('envoy_error', { code: 'ENVOY_MEMBERSHIP_REVOKED', retryable: false });
+          close();
+          response.end();
+        }
+      }, streamIntervalMs);
+    };
+    await tick(initialActor, initialResult);
   }
 
   function actorContext(actor) {
@@ -423,6 +477,18 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {
       try { const actor = await activeTenantActor(request); const channelId = requestUrl.searchParams.get('channel_id'); if (requestUrl.searchParams.has('tenant_id')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.listMessages(actor, channelId, requestUrl.searchParams.get('limit'), requestUrl.searchParams.get('after_id')) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_MESSAGE_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_STREAM_PATH) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        const channelId = requestUrl.searchParams.get('channel_id');
+        const afterId = requestUrl.searchParams.get('after_id') ?? request.headers['last-event-id'] ?? null;
+        await streamEnvoyMessages(request, response, actor, channelId, afterId);
+      } catch (error) {
+        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_STREAM_INVALID' }));
+      }
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {

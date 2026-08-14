@@ -60,6 +60,7 @@ let policyEtag = '';
 let previewId = '';
 let workspaceTimer = null;
 let envoyTimer = null;
+let envoyStream = null;
 let envoyMessages = [];
 let envoyCursor = null;
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
@@ -195,6 +196,7 @@ async function pollEnvoyMessages() {
     composerStatus.textContent = body.messages?.length ? 'New messages loaded.' : 'Envoy connected; no new messages.';
   } catch (error) {
     if (error.status === 401 || error.status === 403) {
+      envoyStream?.close(); envoyStream = null;
       if (envoyTimer) window.clearInterval(envoyTimer);
       envoyTimer = null;
       envoyChannel.disabled = true;
@@ -210,6 +212,34 @@ async function pollEnvoyMessages() {
 function startEnvoyPolling() {
   if (envoyTimer) window.clearInterval(envoyTimer);
   envoyTimer = window.setInterval(() => pollEnvoyMessages(), 5000);
+}
+
+function startEnvoyRealtime() {
+  envoyStream?.close(); envoyStream = null;
+  if (!envoyChannel.value) return;
+  try {
+    envoyStream = envoy.openMessageStream(envoyChannel.value, {
+      afterId: envoyCursor,
+      onOpen: () => { composerStatus.textContent = 'Envoy realtime connected; polling fallback ready.'; },
+      onMessage: (message) => {
+        if (!envoyMessages.some((item) => item.id === message.id)) envoyMessages.push(message);
+        envoyCursor = message.id;
+        renderMessageList();
+        composerStatus.textContent = 'New Envoy message received.';
+      },
+      onError: (error) => {
+        envoyStream?.close(); envoyStream = null;
+        startEnvoyPolling();
+        composerStatus.textContent = error.status === 403 ? 'Envoy membership was revoked. Sign in again.' : 'Realtime unavailable; cursor polling fallback active.';
+      },
+    });
+    if (!envoyStream) throw new Error('Envoy realtime is unavailable');
+    if (envoyTimer) window.clearInterval(envoyTimer);
+    envoyTimer = null;
+  } catch (error) {
+    startEnvoyPolling();
+    composerStatus.textContent = `Realtime unavailable; cursor polling fallback active: ${error.message}`;
+  }
 }
 
 async function refreshWorkspacePanels() {
@@ -390,7 +420,7 @@ async function load() {
   await loadCoraSettings();
   await loadWorkspacePreviews();
   await loadAgentTasks();
-  startEnvoyPolling();
+  startEnvoyRealtime();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
 for (const item of document.querySelectorAll('#workspace-nav [data-target]')) {
@@ -460,7 +490,7 @@ agentTaskForm.onsubmit = async (event) => {
   } catch (error) { agentTaskStatus.textContent = `Task intent not recorded: ${error.message}`; }
   finally { agentTaskSubmit.disabled = false; }
 };
-envoyChannel.onchange = () => loadEnvoyMessages();
+envoyChannel.onchange = async () => { envoyStream?.close(); envoyStream = null; await loadEnvoyMessages(); startEnvoyRealtime(); };
 composer.onsubmit = async (event) => {
   event.preventDefault();
   const body = composerInput.value.trim();

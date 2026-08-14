@@ -90,6 +90,8 @@ export function createEnvoyStore(pool) {
       const context = contextFor(actor);
       return withTenantTransaction(pool, context, async (client) => {
         await requireActiveTenantMembership(client, context);
+        const channel = await client.query('select id from helmion.envoy_channels where tenant_id=$1 and id=$2', [context.tenantId, normalizedChannelId]);
+        if (channel.rowCount !== 1) throw new Error('Envoy channel was not found in this Organization');
         const result = normalizedCursor
           ? await client.query(
             `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
