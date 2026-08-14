@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, createCoraConfigClient, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -24,6 +24,10 @@ const coraClient = createCoraConfigClient();
 const coraConfigStatus = document.querySelector('#cora-config-status');
 const coraConfigDetails = document.querySelector('#cora-config-details');
 const coraKnowledgeDetails = document.querySelector('#cora-knowledge-details');
+const coraKnowledgeQuery = document.querySelector('#cora-knowledge-query');
+const coraKnowledgeQuerySubmit = document.querySelector('#cora-knowledge-query-submit');
+const coraKnowledgeQueryStatus = document.querySelector('#cora-knowledge-query-status');
+const coraKnowledgeQueryResults = document.querySelector('#cora-knowledge-query-results');
 const coraUsageStatus = document.querySelector('#cora-usage-status');
 const coraUsageDetails = document.querySelector('#cora-usage-details');
 const coraAdminControls = document.querySelector('#cora-admin-controls');
@@ -256,6 +260,17 @@ function renderCoraKnowledge(body) {
   }
 }
 
+function renderCoraKnowledgeQuery(body) {
+  const model = knowledgeQueryModel(body); coraKnowledgeQueryResults.replaceChildren();
+  if (model.empty) { coraKnowledgeQueryStatus.textContent = 'No approved, effective, nonexpired source matched. No answer was generated.'; return; }
+  coraKnowledgeQueryStatus.textContent = 'Stored approved source excerpts only. No legal conclusion or model answer was generated.';
+  for (const entry of model.excerpts) {
+    const card = document.createElement('article'); card.className = 'config-item';
+    card.append(configItem('Excerpt', entry.excerpt), configItem('Citation', entry.citation), configItem('Source', `${entry.title} · ${entry.publisher}`), configItem('Provenance', `${entry.provenance} · ${entry.pack}`));
+    coraKnowledgeQueryResults.append(card);
+  }
+}
+
 function renderCoraUsage(body) {
   coraUsageDetails.replaceChildren();
   const model = usagePanelModel(body);
@@ -408,6 +423,14 @@ coraTransition.onclick = async () => {
     await loadCoraSettings();
   } catch (error) { coraConfigStatus.textContent = `Transition refused: ${error.message}`; }
   finally { coraTransition.disabled = false; }
+};
+coraKnowledgeQuerySubmit.onclick = async () => {
+  const query = coraKnowledgeQuery.value.trim();
+  if (!query) { coraKnowledgeQueryStatus.textContent = 'Enter a bounded knowledge query.'; return; }
+  coraKnowledgeQuerySubmit.disabled = true; coraKnowledgeQueryStatus.textContent = 'Searching stored approved sources…';
+  try { renderCoraKnowledgeQuery(await coraClient.queryKnowledge(query)); }
+  catch (error) { coraKnowledgeQueryResults.replaceChildren(); coraKnowledgeQueryStatus.textContent = error.status === 403 ? 'Knowledge query unavailable: Organization membership is required.' : `Knowledge query unavailable: ${error.message}`; }
+  finally { coraKnowledgeQuerySubmit.disabled = false; }
 };
 workspacePreviewForm.onsubmit = async (event) => {
   event.preventDefault();

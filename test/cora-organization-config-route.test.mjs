@@ -6,6 +6,7 @@ import {
   LIVE_ADMIN_CORA_CONFIG_PATH,
   LIVE_ADMIN_CORA_CONFIGS_PATH,
   LIVE_ADMIN_CORA_KNOWLEDGE_PATH,
+  LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH,
   LIVE_ADMIN_CORA_USAGE_PATH,
   LIVE_ADMIN_CORA_PREVIEW_PATH,
   LIVE_ADMIN_CORA_TASKS_PATH,
@@ -44,6 +45,7 @@ async function fixture() {
   const repository = {
     async readPublishedConfig(actor) { calls.push(['read', actor]); return { status: 'published', config: { organizationId: actor.tenantId, lifecycle: 'published' } }; },
     async listKnowledgeSources(actor) { calls.push(['knowledge', actor]); return { sources: [{ sourceKey: 'manual', lifecycle: 'approved' }] }; },
+    async queryApprovedKnowledge(actor, query) { calls.push(['knowledge-query', actor, query]); return { format: 'cora.approved-knowledge-retrieval.v1', status: 'approved_sources_only', query, answer: null, providerCall: 'not_performed', excerpts: [{ excerpt: 'Stored hours-of-service excerpt.', citation: 'FMCSA §3', provenance: 'reviewed source' }], citations: ['FMCSA §3'] }; },
     async createDraft(actor, input) { calls.push(['draft', actor, input]); return { config: { lifecycle: 'draft', organizationId: actor.tenantId } }; },
     async transition() { throw new Error('not used'); },
   };
@@ -123,4 +125,13 @@ test('authenticated task intents derive Organization, reject selectors and remai
   const listed = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}`, { headers }); assert.equal(listed.status, 200);
   const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}?plant_id=warehouse-1`, { headers }); assert.equal(injected.status, 400);
   assert.equal(app.calls.some(([name, actor]) => name === 'task-append' && actor.tenantId === 'org-a'), true);
+});
+
+test('authenticated knowledge query returns stored citations only and rejects authority selectors', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=member-session' };
+  const result = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH}?q=hours%20service`, { headers });
+  assert.equal(result.status, 200); const body = await result.json(); assert.equal(body.status, 'approved_sources_only'); assert.equal(body.answer, null); assert.equal(body.providerCall, 'not_performed'); assert.equal(body.excerpts[0].citation, 'FMCSA §3');
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH}?q=hours&organization_id=org-b`, { headers }); assert.equal(injected.status, 400);
+  assert.equal(app.calls.some(([name, actor, query]) => name === 'knowledge-query' && actor.tenantId === 'org-a' && query === 'hours service'), true);
 });
