@@ -84,6 +84,12 @@ test('Artifact script client model keeps manual revision truth', async () => {
   await client.readArtifactScripts('artifact-1');
 });
 
+test('Artifact execution client model keeps approval and non-execution truth', async () => {
+  const { artifactExecutionPanelModel } = await import('../web/cloud-admin/cora-config-client.mjs');
+  const model = artifactExecutionPanelModel({ receipts: [{ status: 'approval_required', execution: 'not_executed' }] });
+  assert.equal(model.receipts[0].status, 'approval_required'); assert.equal(model.execution, 'not_executed'); assert.equal(model.providerInvocation, 'not_performed'); assert.equal(model.media, 'not_generated');
+});
+
 test('knowledge query model never exposes an answer and distinguishes no-source state', () => {
   assert.equal(knowledgeQueryModel({ status: 'no_approved_source_match', excerpts: [], answer: 'forged' }).empty, true);
   const model = knowledgeQueryModel({ status: 'approved_sources_only', excerpts: [{ excerpt: 'stored', citation: 'manual §1' }], answer: null, providerCall: 'not_performed' });
