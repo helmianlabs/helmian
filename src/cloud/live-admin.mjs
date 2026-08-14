@@ -38,6 +38,7 @@ import { receiveInboundConnectorEvent } from './connector-gateway.mjs';
 import { createWorkspaceLayoutRepository } from './workspace-layout-repository.mjs';
 import { createAuditEventRepository } from './audit-event-repository.mjs';
 import { createOrganizationRoleRepository } from './organization-role-repository.mjs';
+import { readOrganizationReadiness } from './organization-readiness.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -88,6 +89,7 @@ export const LIVE_ADMIN_WORKSPACE_LAYOUT_RESET_PATH = '/api/admin/workspace/layo
 export const LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH = '/api/admin/workspace/role-defaults';
 export const LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH = '/api/admin/organization/memberships';
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/membership-role-plan';
+export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -219,7 +221,7 @@ export async function createLiveHelmianCloudAdminHandler({
   organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
   workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
   auditEventRepository: suppliedAuditEventRepository = null,
-  organizationRoleRepository: suppliedOrganizationRoleRepository = null,
+    organizationRoleRepository: suppliedOrganizationRoleRepository = null,
   envoyStore: suppliedEnvoyStore = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
@@ -786,6 +788,11 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...organizationRoles.list ? await organizationRoles.list(actor) : organizationRoles.catalog() })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'ORGANIZATION_SELECTOR_INVALID' : 'ORGANIZATION_MEMBERSHIP_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_READINESS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, readiness: await readOrganizationReadiness({ actor, organizationRoles, coraConfig, providerUsage, connectors: connectorRegistrations, workspaceLayout: workspaceLayout, auditEvents }) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_READINESS_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'ORGANIZATION_READINESS_SELECTOR_INVALID' : 'ORGANIZATION_READINESS_UNAVAILABLE' })); }
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH) {

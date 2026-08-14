@@ -28,6 +28,8 @@ const peopleRolePlanForm = document.querySelector('#people-role-plan-form');
 const peoplePlanSubject = document.querySelector('#people-plan-subject');
 const peoplePlanTitle = document.querySelector('#people-plan-title');
 const peoplePlanReason = document.querySelector('#people-plan-reason');
+const readinessStatus = document.querySelector('#readiness-status');
+const readinessCards = document.querySelector('#readiness-cards');
 const agentCards = document.querySelector('#agent-cards');
 const conversationBody = document.querySelector('#conversation-body');
 const composer = document.querySelector('#composer');
@@ -275,6 +277,24 @@ async function loadOrganizationPeople() {
   peopleStatus.textContent = 'Loading Organization membership and capabilities…';
   try { renderOrganizationPeople(await coraClient.readOrganizationMemberships()); }
   catch (error) { peopleMembers.replaceChildren(); peopleRoleCatalog.replaceChildren(); peopleRolePlanForm.hidden = true; peopleStatus.textContent = error.status === 403 ? 'People and permissions unavailable: active Organization membership is required.' : `People and permissions unavailable: ${error.message}`; }
+}
+
+function readinessLabel(value) { return String(value ?? 'unknown').replaceAll('_', ' '); }
+function renderOrganizationReadiness(body) {
+  const readiness = body.readiness ?? {}; readinessCards.replaceChildren();
+  for (const [key, value] of Object.entries(readiness)) {
+    if (['format', 'claim', 'externalCalls'].includes(key) || !value || typeof value !== 'object') continue;
+    const state = value.state ?? 'unknown';
+    const details = key === 'knowledge' ? `${value.approvedSourceCount ?? 'unknown'} approved source(s), ${value.approvedPackCount ?? 'unknown'} approved pack(s)` : key === 'connectors' ? `${value.registrations?.length ?? 0} registration(s); connected=${value.connected === true}` : key === 'organization' ? `role=${value.role ?? 'unknown'}${value.memberCount == null ? '' : ` · members=${value.memberCount}`}` : key === 'budget' ? `policy=${value.policyState ?? 'unknown'} · reconciled cost=${value.reconciledCost == null ? 'unavailable' : value.reconciledCost}` : key === 'rolePlans' ? `${value.preparedReceiptCount ?? 0} prepared receipt(s); membership mutation=${value.membershipMutation ?? 'unknown'}` : `source=${value.source ?? 'unknown'}`;
+    readinessCards.append(configItem(key.replace(/([A-Z])/gu, ' $1'), `${readinessLabel(state)} · ${details}`));
+  }
+  const unavailable = Object.values(readiness).filter((value) => value?.state === 'unavailable').length;
+  readinessStatus.textContent = unavailable ? `${unavailable} source(s) unavailable. This dashboard does not infer readiness.` : 'Verifiable Organization source states loaded. This is not a global production-ready claim.';
+}
+async function loadOrganizationReadiness() {
+  readinessStatus.textContent = 'Loading verifiable source states…';
+  try { renderOrganizationReadiness(await coraClient.readOrganizationReadiness()); }
+  catch (error) { readinessCards.replaceChildren(); readinessStatus.textContent = error.status === 403 ? 'Readiness unavailable: active Organization membership is required.' : `Readiness unavailable: ${error.message}`; }
 }
 
 function renderMessages(body) {
@@ -721,6 +741,7 @@ async function load() {
   await refreshWorkspacePanels();
   await loadPolicy();
   await loadOrganizationPeople();
+  await loadOrganizationReadiness();
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();
