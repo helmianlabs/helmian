@@ -22,5 +22,7 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /external execution and browser automation are unavailable/u);
   assert.match(page, /stored excerpts with citations only/u);
   assert.match(page, /Artifact Studio/u);
+  assert.match(page, /Manual script and narration draft/u);
+  assert.match(script, /No generation occurred/u);
   assert.match(page, /approved, queued, running, provider result, accepted, and rejected execution stages are not performed/u);
 });

@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -64,6 +64,13 @@ const artifactStudioSubmit = document.querySelector('#artifact-studio-submit');
 const artifactStudioStatus = document.querySelector('#artifact-studio-status');
 const artifactStudioReceipts = document.querySelector('#artifact-studio-receipts');
 const artifactSourceDetails = document.querySelector('#artifact-source-details');
+const artifactScriptForm = document.querySelector('#artifact-script-form');
+const artifactScriptReceipt = document.querySelector('#artifact-script-receipt');
+const artifactScriptText = document.querySelector('#artifact-script-text');
+const artifactScriptSources = document.querySelector('#artifact-script-sources');
+const artifactScriptStage = document.querySelector('#artifact-script-stage');
+const artifactScriptStatus = document.querySelector('#artifact-script-status');
+const artifactScriptReceipts = document.querySelector('#artifact-script-receipts');
 const workspaceState = document.querySelector('#workspace-state');
 const adminNav = document.querySelector('[data-admin-only]');
 let coraDraft = null;
@@ -413,6 +420,8 @@ function renderArtifactSources(body) {
   for (const source of model.sources) { const item = document.createElement('div'); item.className = 'config-item'; item.textContent = `${source.sourceKey} · ${source.lifecycle} · ${source.classification} · ${source.title}`; artifactSourceDetails.append(item); }
   for (const link of model.links) { const item = document.createElement('div'); item.className = 'config-item'; item.textContent = `Linked ${link.sourceKey} to artifact ${link.artifactReceiptId} · immutable receipt ${link.linkReceiptId}`; artifactSourceDetails.append(item); }
 }
+function renderArtifactScripts(body) { const model = artifactScriptPanelModel(body); artifactScriptReceipts.replaceChildren(); artifactScriptStatus.textContent = model.statusLabel; for (const receipt of model.receipts) { const item = document.createElement('div'); item.className = 'config-item'; const meta = document.createElement('strong'); meta.textContent = `Revision ${receipt.revision} · ${receipt.stage} · ${receipt.receiptId}`; const provenance = document.createElement('span'); provenance.textContent = `${receipt.createdBySubject || 'verified member'} · ${receipt.createdAt || 'timestamp unavailable'} · prepared, not generated`; const text = document.createElement('p'); text.textContent = receipt.text || 'Manual text unavailable.'; item.append(meta, provenance, text); artifactScriptReceipts.append(item); } }
+async function loadArtifactScripts(receiptId) { if (!receiptId) { artifactScriptReceipts.replaceChildren(); artifactScriptStatus.textContent = 'Enter an artifact receipt to read manual script revisions.'; return; } artifactScriptStatus.textContent = 'Loading manual script revisions…'; try { renderArtifactScripts(await coraClient.readArtifactScripts(receiptId)); } catch (error) { artifactScriptReceipts.replaceChildren(); artifactScriptStatus.textContent = error.status === 403 ? 'Script revisions unavailable: Organization membership is required.' : `Script revisions unavailable: ${error.message}`; } }
 
 async function loadArtifactStudio({ replayed = false } = {}) {
   artifactStudioStatus.textContent = 'Loading Artifact Studio receipts…';
@@ -553,6 +562,7 @@ artifactStudioForm.onsubmit = async (event) => {
   } catch (error) { artifactStudioStatus.textContent = `Artifact intent not recorded: ${error.message}`; }
   finally { artifactStudioSubmit.disabled = false; }
 };
+artifactScriptForm.onsubmit = async (event) => { event.preventDefault(); if (!artifactScriptReceipt.value.trim() || !artifactScriptText.value.trim()) { artifactScriptStatus.textContent = 'Enter an artifact receipt and bounded manual script text.'; return; } artifactScriptStatus.textContent = 'Recording manual script revision…'; try { const sourceLinkReceiptIds = artifactScriptSources.value.split('\n').map((value) => value.trim()).filter(Boolean); const result = await coraClient.createArtifactScript({ artifactReceiptId: artifactScriptReceipt.value.trim(), scriptKind: 'narration', text: artifactScriptText.value.trim(), sourceLinkReceiptIds, stage: artifactScriptStage.value, approvalReason: null, idempotencyKey: crypto.randomUUID() }); artifactScriptText.value = ''; artifactScriptStatus.textContent = result.replayed ? 'Script revision replay receipt confirmed.' : 'Manual script revision prepared. No generation occurred.'; await loadArtifactScripts(artifactScriptReceipt.value.trim()); } catch (error) { artifactScriptStatus.textContent = `Script revision not recorded: ${error.message}`; } };
 envoyChannel.onchange = async () => { envoyStream?.close(); envoyStream = null; await loadEnvoyMessages(); startEnvoyRealtime(); };
 composer.onsubmit = async (event) => {
   event.preventDefault();

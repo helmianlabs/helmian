@@ -12,6 +12,7 @@ import {
   LIVE_ADMIN_CORA_ARTIFACT_SOURCES_PATH,
   LIVE_ADMIN_CORA_ARTIFACT_SOURCE_LINKS_PATH,
   LIVE_ADMIN_CORA_ARTIFACT_SOURCE_TRANSITION_PATH,
+  LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -127,6 +128,7 @@ async function fixture(options = {}) {
     ],
     artifactStudioRepository: options.artifactStudioRepository ?? undefined,
     artifactSourceRepository: options.artifactSourceRepository ?? undefined,
+    artifactScriptRepository: options.artifactScriptRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -182,6 +184,14 @@ test('Artifact source routes derive Organization, support metadata/link receipts
   assert.equal(transitioned.status, 200);
   const linked = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SOURCE_LINKS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ artifactReceiptId: 'artifact-1', sourceId: '1', linkReason: 'Use for orientation', idempotencyKey: 'link-0001' }) });
   assert.equal(linked.status, 200); assert.equal((await linked.json()).link.linkReceiptId, 'link-1');
+});
+
+test('Artifact script routes preserve manual revision and prepared/not-generated truth', async (t) => {
+  const artifactScriptRepository = { async list() { return { receipts: [] }; }, async append(actor, input) { if (input.stage === 'approval_requested' && actor.role !== 'admin') throw Object.assign(new Error('admin required'), { status: 403 }); return { durable: true, replayed: false, receiptId: 'script-1', revision: 1, stage: input.stage, draftState: 'prepared', generation: 'not_generated', providerInvocation: 'not_performed' }; } };
+  const app = await fixture({ artifactScriptRepository }); t.after(app.close); const headers = { cookie: 'helmion_admin_session=active-session' };
+  const selector = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH}?plant_id=west&artifact_receipt_id=a`, { headers }); assert.equal(selector.status, 400);
+  const response = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ artifactReceiptId: 'artifact-1', scriptKind: 'narration', text: 'Manual draft', sourceLinkReceiptIds: [], stage: 'draft', approvalReason: null, idempotencyKey: 'script-0001' }) });
+  assert.equal(response.status, 200); const body = await response.json(); assert.equal(body.generation, 'not_generated'); assert.equal(body.draftState, 'prepared');
 });
 
 test('live admin is mounted under /admin on the CLM port and never replaces /llm', async (t) => {
