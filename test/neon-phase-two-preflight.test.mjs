@@ -95,6 +95,7 @@ test('database preflight reports a fresh Helmion schema without writing', async 
       ['022_workspace_layout_preferences.sql', 'pending'],
       ['023_cora_knowledge_management.sql', 'pending'],
       ['024_cora_usage_budget_allocations.sql', 'pending'],
+      ['025_cora_approval_decisions.sql', 'pending'],
     ],
   );
   assert.equal(inspection.migrationsReady, false);

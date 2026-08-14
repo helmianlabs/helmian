@@ -30,6 +30,7 @@ import { createArtifactStudioRepository } from '../cora/artifact-studio-reposito
 import { createArtifactSourceRepository } from '../cora/artifact-source-repository.mjs';
 import { createArtifactScriptRepository } from '../cora/artifact-script-repository.mjs';
 import { createArtifactExecutionRepository } from '../cora/artifact-execution-repository.mjs';
+import { createApprovalInboxRepository } from '../cora/approval-inbox.mjs';
 import { createCoraPersonalPreferencesRepository } from '../cora/personal-preferences-repository.mjs';
 import { createWorkspaceLayoutRepository } from './workspace-layout-repository.mjs';
 
@@ -71,6 +72,7 @@ export const LIVE_ADMIN_CORA_ARTIFACT_SOURCE_LINKS_PATH = '/api/admin/cora/artif
 export const LIVE_ADMIN_CORA_ARTIFACT_SOURCE_TRANSITION_PATH = '/api/admin/cora/artifact-sources/transition';
 export const LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH = '/api/admin/cora/artifact-scripts';
 export const LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH = '/api/admin/cora/artifact-execution-requests';
+export const LIVE_ADMIN_CORA_APPROVALS_PATH = '/api/admin/cora/approvals';
 export const LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH = '/api/admin/cora/personal-preferences';
 export const LIVE_ADMIN_ORGANIZATION_DATABASE_PATH = '/api/admin/control-plane/organization-database';
 export const LIVE_ADMIN_WORKSPACE_LAYOUT_PATH = '/api/admin/workspace/layout-preferences';
@@ -190,6 +192,7 @@ export async function createLiveHelmianCloudAdminHandler({
   artifactSourceRepository: suppliedArtifactSourceRepository = null,
   artifactScriptRepository: suppliedArtifactScriptRepository = null,
   artifactExecutionRepository: suppliedArtifactExecutionRepository = null,
+  approvalInboxRepository: suppliedApprovalInboxRepository = null,
   personalPreferencesRepository: suppliedPersonalPreferencesRepository = null,
   organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
   workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
@@ -216,6 +219,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const artifactSources = suppliedArtifactSourceRepository ?? createArtifactSourceRepository(pool);
   const artifactScripts = suppliedArtifactScriptRepository ?? createArtifactScriptRepository(pool);
   const artifactExecution = suppliedArtifactExecutionRepository ?? createArtifactExecutionRepository(pool);
+  const approvals = suppliedApprovalInboxRepository ?? createApprovalInboxRepository(pool);
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
   const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
@@ -684,6 +688,16 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH) {
       try { const body = await readJsonObject(request); exactKeys(body, ['approvalRef', 'artifactReceiptId', 'catalogEntryId', 'currency', 'estimatedAudioSeconds', 'estimatedCostMinor', 'estimatedImageUnits', 'estimatedRequestedTokens', 'estimatedVideoUnits', 'externalExecution', 'idempotencyKey', 'modality', 'model', 'provider', 'scriptReceiptId', 'sourceLinkReceiptIds', 'supersedesReceiptId']); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await artifactExecution.append(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_ARTIFACT_EXECUTION_APPROVAL_REQUIRED' : 'CORA_ARTIFACT_EXECUTION_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_APPROVALS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await approvals.list(actor, { status: requestUrl.searchParams.get('status'), requestKind: requestUrl.searchParams.get('request_kind'), limit: requestUrl.searchParams.get('limit') }) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APPROVAL_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_APPROVAL_SELECTOR_INVALID' : 'CORA_APPROVAL_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APPROVALS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['decision', 'idempotencyKey', 'reason', 'requestKind', 'requestReceiptId']); send(response, 200, JSON.stringify({ valid: true, ...await approvals.decide(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APPROVAL_ADMIN_REQUIRED' : 'CORA_APPROVAL_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH) {

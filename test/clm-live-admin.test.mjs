@@ -13,6 +13,7 @@ import {
   LIVE_ADMIN_CORA_ARTIFACT_SOURCE_LINKS_PATH,
   LIVE_ADMIN_CORA_ARTIFACT_SOURCE_TRANSITION_PATH,
   LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH,
+  LIVE_ADMIN_CORA_APPROVALS_PATH,
   LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
@@ -131,6 +132,7 @@ async function fixture(options = {}) {
     artifactSourceRepository: options.artifactSourceRepository ?? undefined,
     artifactScriptRepository: options.artifactScriptRepository ?? undefined,
     artifactExecutionRepository: options.artifactExecutionRepository ?? undefined,
+    approvalInboxRepository: options.approvalInboxRepository ?? undefined,
     personalPreferencesRepository: options.personalPreferencesRepository ?? undefined,
   });
   const clm = await startCoraClm({
@@ -208,6 +210,20 @@ test('execution request HTTP path reaches the injected fake through CLM', async 
   const adminApp = await fixture({ artifactExecutionRepository }); t.after(adminApp.close); const adminHeaders = { cookie: 'helmion_admin_session=active-session' };
   const queued = await fetch(`${adminApp.url}/api/admin/cora/artifact-execution-requests`, { method: 'POST', headers: { ...adminHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ ...body, approvalRef: 'approval-0001', idempotencyKey: 'execution-0003', supersedesReceiptId: 'execution-0001' }) }); const queuedBody = await queued.json(); assert.equal(queued.status, 200, JSON.stringify(queuedBody)); assert.equal(queuedBody.status, 'queued'); assert.equal(queuedBody.execution, 'not_executed');
   const blocked = await fetch(`${adminApp.url}/api/admin/cora/artifact-execution-requests`, { method: 'POST', headers: { ...adminHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ ...body, estimatedCostMinor: 101, idempotencyKey: 'execution-0004' }) }); const blockedBody = await blocked.json(); assert.equal(blocked.status, 200, JSON.stringify(blockedBody)); assert.equal(blockedBody.status, 'blocked'); assert.equal(blockedBody.policyDecision, 'deny');
+});
+
+test('Organization approvals inbox is membership-scoped, admin-decided, and never executes', async (t) => {
+  const calls = [];
+  const approvalInboxRepository = {
+    async list(actor, filters) { calls.push({ operation: 'list', actor, filters }); return { items: [{ requestKind: 'artifact_execution_request', requestReceiptId: 'execution-0001', status: 'approval_required', approvalRequired: true, decision: null, summary: 'provider/model · text', execution: 'not_performed', providerInvocation: 'not_performed' }], source: 'organization_approval_receipts', providerCalls: 'not_performed' }; },
+    async decide(actor, input) { calls.push({ operation: 'decide', actor, input }); return { durable: true, format: 'cora.approval-decision.v1', requestKind: input.requestKind, requestReceiptId: input.requestReceiptId, decision: input.decision, reason: input.reason, receiptId: 'approval-0001', execution: 'not_performed', providerInvocation: 'not_performed' }; },
+  };
+  const memberApp = await fixture({ membershipRoles: { 'customer-a': 'member' }, approvalInboxRepository }); t.after(memberApp.close);
+  const member = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_APPROVALS_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(member.status, 200); assert.equal((await member.json()).items[0].execution, 'not_performed');
+  const denied = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_APPROVALS_PATH}`, { method: 'POST', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ decision: 'approve', requestKind: 'artifact_execution_request', requestReceiptId: 'execution-0001', reason: 'reviewed', idempotencyKey: 'approval-0001' }) }); assert.equal(denied.status, 403);
+  const injected = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_APPROVALS_PATH}?plant_id=west`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
+  const adminApp = await fixture({ approvalInboxRepository }); t.after(adminApp.close);
+  const decided = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_APPROVALS_PATH}`, { method: 'POST', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ decision: 'approve', requestKind: 'artifact_execution_request', requestReceiptId: 'execution-0001', reason: 'Reviewed for policy', idempotencyKey: 'approval-0001' }) }); const decidedBody = await decided.json(); assert.equal(decided.status, 200); assert.equal(decidedBody.execution, 'not_performed'); assert.equal(calls.some(({ operation }) => operation === 'decide'), true);
 });
 
 test('personal Cora preferences are membership-derived, bounded, and user-owned', async (t) => {
