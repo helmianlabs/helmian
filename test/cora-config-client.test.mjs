@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
 
 function fakeFetch() {
   const calls = [];
@@ -10,6 +10,7 @@ function fakeFetch() {
     if (url.endsWith('/knowledge-sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
     if (url.includes('/knowledge/query')) return new Response(JSON.stringify({ status: 'no_approved_source_match', excerpts: [], answer: null, providerCall: 'not_performed' }), { status: 200 });
     if (url.endsWith('/usage')) return new Response(JSON.stringify({ budget: { policyState: 'active' }, totals: { eventCount: 1, estimatedCostMinor: 12, reconciledCostMinor: null }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' }), { status: 200 });
+    if (url.includes('/cora/sessions')) return new Response(JSON.stringify({ sessions: [], empty: true, mutation: 'not_performed' }), { status: 200 });
     if (url.endsWith('/workspace/previews')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/tasks')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/personal-preferences')) return new Response(JSON.stringify({ bounds: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in'], turnMode: ['concise'], voiceProfiles: ['emma'] }, preferences: { format: 'cora.personal-preferences.v1', valid: true, organizationId: 'customer-a', subject: 'user-1', preferences: { muted: false, volume: 80, verbosity: 'standard', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' } } }), { status: 200 });
@@ -28,6 +29,7 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.readKnowledgeSources();
   await client.queryKnowledge('hours service');
   await client.readUsage();
+  await client.readCoraSessions();
   await client.saveUsagePolicy({ period: 'monthly', currency: 'USD', softLimitMinor: 100, hardLimitMinor: 200, lowCostLimitMinor: 20, policyState: 'active', allocations: [] });
   await client.readWorkspacePreviews();
   await client.createWorkspacePreview({ mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
@@ -141,6 +143,16 @@ test('usage panel model exposes truthful empty, soft, hard, and unavailable reco
   assert.equal(hard.state, 'hard');
   assert.equal(hard.reconciledCostMinor, null);
   assert.equal(hard.providerCalls, 'not_performed');
+});
+
+test('Cora session history model exposes truthful empty and unknown usage states', () => {
+  assert.equal(coraSessionHistoryModel({ sessions: [] }).empty, true);
+  const unknown = coraSessionHistoryModel({ sessions: [{ phase: 'started', providerEvidence: false, actualCostMinor: null }] });
+  assert.equal(unknown.empty, false);
+  assert.match(unknown.providerEvidence, /No provider evidence/);
+  assert.equal(unknown.mutation, 'not_performed');
+  const verified = coraSessionHistoryModel({ sessions: [{ phase: 'ended', providerEvidence: true, actualCostMinor: 12 }] });
+  assert.match(verified.providerEvidence, /Some records/);
 });
 
 test('Cora config client preserves unauthorized status for UI error state', async () => {

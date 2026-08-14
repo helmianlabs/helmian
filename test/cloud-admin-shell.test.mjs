@@ -7,7 +7,7 @@ const script = await readFile(new URL('../web/cloud-admin/app.js', import.meta.u
 const liveAdmin = await readFile(new URL('../src/cloud/live-admin.mjs', import.meta.url), 'utf8');
 
 test('authenticated shell navigation names real product surfaces and remains role-aware', () => {
-  for (const target of ['section-chat', 'section-cora', 'section-prepare', 'section-artifact', 'section-governance']) assert.match(page, new RegExp(`data-target="${target}"`, 'u'));
+  for (const target of ['section-chat', 'section-cora', 'section-cora-sessions', 'section-prepare', 'section-artifact', 'section-governance']) assert.match(page, new RegExp(`data-target="${target}"`, 'u'));
   assert.match(page, /data-admin-only/iu);
   assert.match(script, /adminNav\.hidden\s*=\s*!isAdmin/u);
   assert.match(page, /Search stored approved sources/iu);
@@ -69,4 +69,8 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(liveAdmin, /LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH = '\/api\/admin\/cora\/artifact-execution-requests'/u);
   assert.match(liveAdmin, /artifactExecution\.append\(actor, body\)/u);
   assert.match(page, /approved, queued, running, provider result, accepted, and rejected execution stages are not performed/u);
+  assert.match(page, /Cora Sessions/u);
+  assert.match(script, /readCoraSessions/u);
+  assert.match(page, /No provider evidence recorded|Unknown usage/u);
+  assert.match(page, /No session close or mutation is available/iu);
 });

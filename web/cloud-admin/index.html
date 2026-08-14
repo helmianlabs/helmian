@@ -84,6 +84,7 @@
       <nav id="workspace-nav" aria-label="Workspace sections">
         <button class="nav-item active" type="button" data-target="section-chat" aria-current="page">Chat</button>
         <button class="nav-item" type="button" data-target="section-cora">Cora</button>
+        <button class="nav-item" type="button" data-target="section-cora-sessions">Cora Sessions</button>
         <button class="nav-item" type="button" data-target="section-prepare">Prepare</button>
         <button class="nav-item" type="button" data-target="section-artifact">Artifact Studio</button>
         <button class="nav-item" type="button" data-target="section-governance">Governance</button>
@@ -183,6 +184,12 @@
           <form id="cora-usage-policy-form" class="config-controls" hidden><label>Period <select id="cora-usage-period"><option value="monthly">Monthly</option><option value="calendar_month">Calendar month</option><option value="rolling_30d">Rolling 30 days</option></select></label><label>Currency <input id="cora-usage-currency" value="USD" maxlength="3" pattern="[A-Za-z]{3}" required></label><label>Soft limit (minor units) <input id="cora-usage-soft-limit" type="number" min="0" step="any"></label><label>Hard limit (minor units) <input id="cora-usage-hard-limit" type="number" min="0" step="any"></label><label>Low-cost limit (minor units) <input id="cora-usage-low-limit" type="number" min="0" step="any"></label><label>Allocations <textarea id="cora-usage-allocations" maxlength="6000" placeholder="One per line: key | department | cost center | soft limit | hard limit"></textarea></label><button type="submit">Save budget policy</button></form>
           <p id="cora-usage-policy-status" class="note" role="status" aria-live="polite"></p>
           <p class="preview">Internal tenant usage ledger only. This is not provider invoice reconciliation, vendor pricing, or a billing control.</p>
+        </section>
+        <section id="section-cora-sessions" class="card" aria-labelledby="cora-sessions-heading">
+          <h2 id="cora-sessions-heading">Cora Sessions</h2>
+          <p id="cora-sessions-status" class="note" role="status" aria-live="polite">Loading signed Cora session receipts…</p>
+          <div id="cora-sessions-timeline" class="config-grid" aria-live="polite"></div>
+          <p class="preview">Read-only Organization session history. Config/version and server hashes are shown for canary observability; provider connection is not inferred. Unknown usage and cost remain unavailable unless verified provider evidence exists. No session close or mutation is available here.</p>
         </section>
         <section id="section-prepare" class="card" aria-labelledby="workspace-preview-heading">
           <h2 id="workspace-preview-heading">Workspace preview intents</h2>

@@ -72,6 +72,7 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     prepareOrganizationRolePlan(input) { return requestJson(fetchImpl, '/api/admin/organization/membership-role-plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     readOrganizationReadiness() { return requestJson(fetchImpl, '/api/admin/organization/readiness'); },
     readCoraCapabilities() { return requestJson(fetchImpl, '/api/admin/cora/capabilities'); },
+    readCoraSessions(limit = 50) { return requestJson(fetchImpl, `/api/admin/cora/sessions?limit=${encodeURIComponent(limit)}`); },
     createDraft({ reason, config = null, routingPolicy = null, approvedModelCatalog = [] }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -168,6 +169,17 @@ export function usagePanelModel(body = {}) {
     allocations: Array.isArray(budget?.allocations) ? budget.allocations : [],
     source: body.source === 'tenant_append_only_ledger' ? body.source : 'tenant_append_only_ledger',
     providerCalls: body.providerCalls === 'not_performed' ? body.providerCalls : 'not_performed',
+  });
+}
+
+export function coraSessionHistoryModel(body = {}) {
+  const sessions = Array.isArray(body.sessions) ? body.sessions.slice(0, 100) : [];
+  return Object.freeze({
+    sessions,
+    empty: sessions.length === 0,
+    statusLabel: body.empty === true || sessions.length === 0 ? 'No signed Cora session receipts are recorded for this Organization.' : `${sessions.length} signed Cora session receipt(s) loaded.`,
+    providerEvidence: sessions.some((session) => session.providerEvidence === true) ? 'Some records include verified provider evidence.' : 'No provider evidence recorded; usage and cost remain unknown.',
+    mutation: body.mutation === 'not_performed' ? body.mutation : 'not_performed',
   });
 }
 

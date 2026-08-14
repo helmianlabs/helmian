@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -55,6 +55,8 @@ const coraKnowledgeQueryStatus = document.querySelector('#cora-knowledge-query-s
 const coraKnowledgeQueryResults = document.querySelector('#cora-knowledge-query-results');
 const coraUsageStatus = document.querySelector('#cora-usage-status');
 const coraUsageDetails = document.querySelector('#cora-usage-details');
+const coraSessionsStatus = document.querySelector('#cora-sessions-status');
+const coraSessionsTimeline = document.querySelector('#cora-sessions-timeline');
 const coraUsagePolicyForm = document.querySelector('#cora-usage-policy-form');
 const coraUsagePolicyStatus = document.querySelector('#cora-usage-policy-status');
 const coraUsagePeriod = document.querySelector('#cora-usage-period');
@@ -346,6 +348,27 @@ async function loadCoraCapabilities() {
   capabilitiesStatus.textContent = 'Loading registered Cora capabilities…';
   try { renderCoraCapabilities(await coraClient.readCoraCapabilities()); }
   catch (error) { capabilitiesNormal.replaceChildren(); capabilitiesRegistered.replaceChildren(); capabilitiesHighRisk.replaceChildren(); capabilitiesRouting.replaceChildren(); capabilitiesStatus.textContent = error.status === 403 ? 'Cora capabilities unavailable: active Organization membership is required.' : `Cora capabilities unavailable: ${error.message}`; }
+}
+
+function renderCoraSessions(body) {
+  const model = coraSessionHistoryModel(body);
+  coraSessionsTimeline.replaceChildren();
+  for (const session of model.sessions) {
+    const card = document.createElement('article'); card.className = 'config-item';
+    const title = document.createElement('h3'); title.textContent = `${session.phase.toUpperCase()} · ${session.receiptId || 'receipt unavailable'}`;
+    const detail = document.createElement('p'); detail.textContent = `Session ${session.sessionId || 'unavailable'} · actor ${session.actor || 'unavailable'} (${session.actorRole || 'role unavailable'}) · config v${session.configVersion ?? 'unknown'}`;
+    const hashes = document.createElement('p'); hashes.textContent = `Config hash ${session.configHash || 'unavailable'} · tool manifest ${session.toolManifestHash || 'unavailable'} · routing ${session.routingPolicyHash || 'unavailable'}`;
+    const times = document.createElement('p'); times.textContent = `Started ${session.startedAt || 'unknown'} · ended ${session.endedAt || 'unknown'} · recorded ${session.createdAt || 'unknown'}`;
+    const usage = document.createElement('p'); usage.textContent = session.providerEvidence === true ? `Verified provider evidence · actual tokens ${session.actualTokens ?? 'unknown'} · audio seconds ${session.audioSeconds ?? 'unknown'} · cost ${session.actualCostMinor ?? 'unknown'}` : 'No verified provider evidence. Usage and cost unavailable.';
+    card.append(title, detail, hashes, times, usage); if (session.failureReason) { const failure = document.createElement('p'); failure.textContent = `Failure reason: ${session.failureReason}`; card.append(failure); } coraSessionsTimeline.append(card);
+  }
+  coraSessionsStatus.textContent = `${model.statusLabel} ${model.providerEvidence} Session mutations: ${model.mutation}.`;
+}
+
+async function loadCoraSessions() {
+  coraSessionsStatus.textContent = 'Loading signed Cora session receipts…';
+  try { renderCoraSessions(await coraClient.readCoraSessions(50)); }
+  catch (error) { coraSessionsTimeline.replaceChildren(); coraSessionsStatus.textContent = error.status === 403 ? 'Cora session history unavailable: active Organization membership is required.' : `Cora session history unavailable: ${error.message}`; }
 }
 
 function renderMessages(body) {
@@ -795,6 +818,7 @@ async function load() {
   await loadOrganizationPeople();
   await loadOrganizationReadiness();
   await loadCoraCapabilities();
+  await loadCoraSessions();
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();
