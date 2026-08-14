@@ -1,7 +1,7 @@
 {
   "format": "helmian.cloud.release-canary.v1",
   "api": {"sourceCommit": "8fce0b5"},
-  "migrations": ["009_envoy_chat.sql", "010_cora_organization_config.sql", "011_cora_provider_usage.sql", "012_cora_workspace_preview_intents.sql", "013_cora_agent_task_intents.sql", "014_cora_agent_task_claims.sql", "015_cora_knowledge_retrieval_metadata.sql", "016_cora_artifact_studio_intents.sql", "017_cora_artifact_sources.sql", "018_cora_artifact_script_revisions.sql", "019_cora_artifact_execution_requests.sql", "020_cora_personal_preferences.sql", "021_organization_database_registry.sql", "022_workspace_layout_preferences.sql"],
+  "migrations": ["009_envoy_chat.sql", "010_cora_organization_config.sql", "011_cora_provider_usage.sql", "012_cora_workspace_preview_intents.sql", "013_cora_agent_task_intents.sql", "014_cora_agent_task_claims.sql", "015_cora_knowledge_retrieval_metadata.sql", "016_cora_artifact_studio_intents.sql", "017_cora_artifact_sources.sql", "018_cora_artifact_script_revisions.sql", "019_cora_artifact_execution_requests.sql", "020_cora_personal_preferences.sql", "021_organization_database_registry.sql", "022_workspace_layout_preferences.sql", "023_cora_knowledge_management.sql"],
   "organizationConfig": {"publishedState": "published", "version": 4},
   "hume": {"readiness": "source_only_not_live", "configRevision": "cora-clm-contract-v1", "tokenMode": "server_only"},
   "providerUsageLedger": {"enabled": true},

@@ -48,6 +48,11 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.doesNotMatch(page, /Cora routing policy JSON/iu);
   assert.match(page, /Allowed member response detail/iu);
   assert.match(page, /Approved knowledge packs/iu);
+  assert.match(page, /Curated knowledge management/iu);
+  assert.match(page, /Add draft source/iu);
+  assert.match(page, /Bounded stored excerpt/iu);
+  assert.match(script, /readKnowledgeAdmin/u);
+  assert.match(script, /transitionKnowledge/u);
   assert.match(script, /routingPolicy/u);
   assert.match(script, /No generation occurred/u);
   assert.match(liveAdmin, /LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH = '\/api\/admin\/cora\/artifact-execution-requests'/u);

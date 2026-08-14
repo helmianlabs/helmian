@@ -103,7 +103,7 @@ class MigrationPool {
           pool.executedSql.push('014_cora_agent_task_claims.sql');
           return { rowCount: 0, rows: [] };
         }
-        if (String(sql).includes('alter table helmion.cora_knowledge_sources')) {
+        if (String(sql).includes('alter table helmion.cora_knowledge_sources') && !String(sql).includes('cora_knowledge_sources_effective_idx')) {
           pool.executedSql.push('015_cora_knowledge_retrieval_metadata.sql');
           return { rowCount: 0, rows: [] };
         }
@@ -133,6 +133,10 @@ class MigrationPool {
         }
         if (String(sql).includes('create table if not exists helmion.workspace_layout_role_defaults')) {
           pool.executedSql.push('022_workspace_layout_preferences.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (String(sql).includes('cora_knowledge_sources_effective_idx')) {
+          pool.executedSql.push('023_cora_knowledge_management.sql');
           return { rowCount: 0, rows: [] };
         }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
@@ -171,6 +175,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['020_cora_personal_preferences.sql', true, 'committed'],
       ['021_organization_database_registry.sql', true, 'committed'],
       ['022_workspace_layout_preferences.sql', true, 'committed'],
+      ['023_cora_knowledge_management.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -198,13 +203,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '020_cora_personal_preferences.sql',
       '021_organization_database_registry.sql',
       '022_workspace_layout_preferences.sql',
+      '023_cora_knowledge_management.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -231,9 +237,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '020_cora_personal_preferences.sql',
       '021_organization_database_registry.sql',
       '022_workspace_layout_preferences.sql',
+      '023_cora_knowledge_management.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 44);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 46);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 

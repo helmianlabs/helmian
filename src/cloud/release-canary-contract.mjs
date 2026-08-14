@@ -14,6 +14,7 @@ export const REQUIRED_MIGRATIONS = Object.freeze([
   '020_cora_personal_preferences.sql',
   '021_organization_database_registry.sql',
   '022_workspace_layout_preferences.sql',
+  '023_cora_knowledge_management.sql',
 ]);
 export const EXACT_CANARY_SEQUENCE = Object.freeze([
   'verify-release-manifest',

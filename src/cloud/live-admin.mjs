@@ -57,6 +57,11 @@ export const LIVE_ADMIN_CORA_CONFIGS_PATH = '/api/admin/cora/configs';
 export const LIVE_ADMIN_CORA_TRANSITION_PATH = '/api/admin/cora/configs/transition';
 export const LIVE_ADMIN_CORA_KNOWLEDGE_PATH = '/api/admin/cora/knowledge-sources';
 export const LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH = '/api/admin/cora/knowledge/query';
+export const LIVE_ADMIN_CORA_KNOWLEDGE_MANAGE_PATH = '/api/admin/cora/knowledge/manage';
+export const LIVE_ADMIN_CORA_KNOWLEDGE_SOURCES_PATH = '/api/admin/cora/knowledge/sources';
+export const LIVE_ADMIN_CORA_KNOWLEDGE_PACKS_PATH = '/api/admin/cora/knowledge/packs';
+export const LIVE_ADMIN_CORA_KNOWLEDGE_SNIPPETS_PATH = '/api/admin/cora/knowledge/snippets';
+export const LIVE_ADMIN_CORA_KNOWLEDGE_TRANSITION_PATH = '/api/admin/cora/knowledge/transition';
 export const LIVE_ADMIN_CORA_USAGE_PATH = '/api/admin/cora/usage';
 export const LIVE_ADMIN_CORA_PREVIEW_PATH = '/api/admin/cora/workspace/previews';
 export const LIVE_ADMIN_CORA_TASKS_PATH = '/api/admin/cora/tasks';
@@ -574,6 +579,31 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const query = requestUrl.searchParams.get('q'); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.queryApprovedKnowledge(actor, query, requestUrl.searchParams.get('limit')) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_QUERY_INVALID' : 'CORA_KNOWLEDGE_QUERY_UNAVAILABLE' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_MANAGE_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.listKnowledgeAdmin(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_KNOWLEDGE_ADMIN_REQUIRED' : error?.status === 400 ? 'CORA_KNOWLEDGE_SELECTOR_INVALID' : 'CORA_KNOWLEDGE_MANAGE_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_SOURCES_PATH) {
+      try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['canonicalUri', 'effectiveAt', 'expiresAt', 'provenance', 'publisher', 'sourceKey', 'title']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.createKnowledgeSource(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_KNOWLEDGE_ADMIN_REQUIRED' : 'CORA_KNOWLEDGE_SOURCE_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_PACKS_PATH) {
+      try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['effectiveAt', 'expiresAt', 'packKey', 'provenance', 'sourceId', 'version']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.createKnowledgePack(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_KNOWLEDGE_ADMIN_REQUIRED' : 'CORA_KNOWLEDGE_PACK_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_SNIPPETS_PATH) {
+      try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['citation', 'contentSha256', 'excerpt', 'expiresAt', 'packId', 'textReference']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.createKnowledgeSnippet(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_KNOWLEDGE_ADMIN_REQUIRED' : 'CORA_KNOWLEDGE_SNIPPET_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_TRANSITION_PATH) {
+      try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['id', 'kind', 'lifecycle', 'reason']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.transitionKnowledge(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_KNOWLEDGE_ADMIN_REQUIRED' : 'CORA_KNOWLEDGE_TRANSITION_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_USAGE_PATH) {
