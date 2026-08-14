@@ -17,6 +17,15 @@ test.describe('Helmian Cloud authenticated fixture smoke', () => {
     await expect(page.getByText('No audited status')).toHaveCount(5);
   });
 
+  test('member can prepare a bounded Cora request and sees a not-executed receipt', async ({ page }) => {
+    await page.goto('/admin/?envoy=empty');
+    await page.getByLabel('Cora preparation goal').fill('Prepare an internal orientation outline');
+    await page.getByLabel('Cora preparation context').fill('training-draft-1');
+    await page.getByRole('button', { name: 'Prepare request' }).click();
+    await expect(page.getByText(/Prepared receipt recorded.*fixture-cora-receipt.*execution not_performed/u)).toBeVisible();
+    await expect(page.getByText('Cora preparation request recorded. Prepared only; nothing was executed.')).toBeVisible();
+  });
+
   test.fixme('visual baselines are not generated in this source-only pass', async ({ page }) => {
     await page.goto('/admin/');
     await expect(page).toHaveScreenshot('cloud-admin-member.png', { animations: 'disabled' });

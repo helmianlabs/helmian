@@ -7,6 +7,8 @@ import { CLOUD_ADMIN_UI_FIXTURES, createCloudAdminFixtureFetch } from './fixture
 
 const page = await readFile(new URL('../web/cloud-admin/index.html', import.meta.url), 'utf8');
 const script = await readFile(new URL('../web/cloud-admin/app.js', import.meta.url), 'utf8');
+const browserSmoke = await readFile(new URL('../qa/browser/cloud-admin-smoke.spec.mjs', import.meta.url), 'utf8');
+const browserFixtureServer = await readFile(new URL('../qa/browser/fixture-server.mjs', import.meta.url), 'utf8');
 
 test('local UI fixtures cover every requested authenticated state without secrets or authority selectors', () => {
   assert.deepEqual(Object.keys(CLOUD_ADMIN_UI_FIXTURES.session).sort(), ['admin', 'member']);
@@ -39,4 +41,14 @@ test('fixture models preserve truthful empty and unavailable states', () => {
   assert.equal(usagePanelModel(CLOUD_ADMIN_UI_FIXTURES.cora.usageHard).state, 'hard');
   assert.equal(workspacePreviewPanelModel(CLOUD_ADMIN_UI_FIXTURES.preparation.empty).empty, true);
   assert.equal(agentTaskPanelModel(CLOUD_ADMIN_UI_FIXTURES.preparation.prepared).execution, 'not_performed');
+});
+
+test('browser fixture covers the real Cora preparation receipt path without execution claims', () => {
+  assert.match(browserSmoke, /Cora preparation goal/u);
+  assert.match(browserSmoke, /Prepared receipt recorded.*execution not_performed/u);
+  assert.match(browserSmoke, /Prepared only; nothing was executed/u);
+  assert.match(browserFixtureServer, /api\/admin\/cora\/tasks.*POST/u);
+  assert.match(browserFixtureServer, /taskStatus: 'prepared'/u);
+  assert.match(browserFixtureServer, /execution: 'not_performed'/u);
+  assert.match(browserFixtureServer, /providerInvocation: 'not_performed'/u);
 });
