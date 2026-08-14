@@ -9,6 +9,9 @@ import {
   LIVE_ADMIN_ACTION_POLICY_PATH,
   LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH,
   LIVE_ADMIN_CORA_ARTIFACTS_PATH,
+  LIVE_ADMIN_CORA_ARTIFACT_SOURCES_PATH,
+  LIVE_ADMIN_CORA_ARTIFACT_SOURCE_LINKS_PATH,
+  LIVE_ADMIN_CORA_ARTIFACT_SOURCE_TRANSITION_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -123,6 +126,7 @@ async function fixture(options = {}) {
       { version: '002', name: '002_maestro.sql', checksum: 'b'.repeat(64) },
     ],
     artifactStudioRepository: options.artifactStudioRepository ?? undefined,
+    artifactSourceRepository: options.artifactSourceRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -160,6 +164,24 @@ test('Artifact Studio routes are Organization-scoped and expose only source-only
   assert.equal(approval.status, 200); assert.equal((await approval.json()).status, 'approval_requested');
   const replay = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACTS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ artifactType: 'training', title: 'Orientation', department: 'operations', objective: 'Explain steps', sourceRefs: [], stage: 'draft', idempotencyKey: 'artifact-0001', approvalReason: null, organizationId: 'other' }) });
   assert.equal(replay.status, 400);
+});
+
+test('Artifact source routes derive Organization, support metadata/link receipts, and gate review', async (t) => {
+  const sourceRepository = {
+    async list() { return { sources: [{ sourceId: '1', sourceKey: 'dock-sop', lifecycle: 'draft' }], links: [] }; },
+    async append() { return { durable: true, replayed: false, source: { sourceId: '1', sourceKey: 'dock-sop', lifecycle: 'draft' } }; },
+    async transition() { return { source: { sourceId: '1', lifecycle: 'approved' }, reviewReceiptId: 'review-1' }; },
+    async link() { return { durable: true, replayed: false, link: { linkReceiptId: 'link-1', artifactReceiptId: 'artifact-1', sourceId: '1' } }; },
+  };
+  const app = await fixture({ artifactSourceRepository: sourceRepository }); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SOURCES_PATH}?plant_id=west`, { headers })).status, 400);
+  const created = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SOURCES_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ sourceKey: 'dock-sop', title: 'Dock SOP', publisher: 'Ops', classification: 'sop', provenance: 'reviewed metadata', reference: 'manual://dock-sop', effectiveAt: null, expiresAt: null, idempotencyKey: 'source-0001' }) });
+  assert.equal(created.status, 200);
+  const transitioned = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SOURCE_TRANSITION_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ sourceId: '1', lifecycle: 'approved', reason: 'Reviewed by admin' }) });
+  assert.equal(transitioned.status, 200);
+  const linked = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACT_SOURCE_LINKS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ artifactReceiptId: 'artifact-1', sourceId: '1', linkReason: 'Use for orientation', idempotencyKey: 'link-0001' }) });
+  assert.equal(linked.status, 200); assert.equal((await linked.json()).link.linkReceiptId, 'link-1');
 });
 
 test('live admin is mounted under /admin on the CLM port and never replaces /llm', async (t) => {

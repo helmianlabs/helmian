@@ -37,6 +37,13 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
         body: JSON.stringify({ artifactType, title, department, objective, sourceRefs, stage, idempotencyKey, approvalReason }),
       });
     },
+    readArtifactSources() { return requestJson(fetchImpl, '/api/admin/cora/artifact-sources'); },
+    createArtifactSource({ sourceKey, title, publisher, classification, provenance, reference, effectiveAt = null, expiresAt = null, idempotencyKey }) {
+      return requestJson(fetchImpl, '/api/admin/cora/artifact-sources', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sourceKey, title, publisher, classification, provenance, reference, effectiveAt, expiresAt, idempotencyKey }) });
+    },
+    linkArtifactSource({ artifactReceiptId, sourceId, linkReason, idempotencyKey }) {
+      return requestJson(fetchImpl, '/api/admin/cora/artifact-source-links', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ artifactReceiptId, sourceId, linkReason, idempotencyKey }) });
+    },
     createDraft({ reason }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -84,6 +91,12 @@ export function artifactStudioPanelModel(body = {}) {
     providerInvocation: 'not_performed',
     statusLabel: body.replayed ? 'Artifact intent already received. Durable replay receipt confirmed.' : 'Artifact intent recorded. No media or provider execution occurred.',
   });
+}
+
+export function artifactSourcePanelModel(body = {}) {
+  const sources = Array.isArray(body.sources) ? body.sources.slice(0, 100) : [];
+  const links = Array.isArray(body.links) ? body.links.slice(0, 100) : [];
+  return Object.freeze({ empty: sources.length === 0 && links.length === 0, sources, links, unavailable: body.unavailable === true, statusLabel: links.length ? `${links.length} immutable source link receipt(s).` : sources.length ? 'No Artifact Studio source links recorded yet.' : 'No Artifact Studio source metadata is available.' });
 }
 
 export function knowledgeQueryModel(body = {}) {
