@@ -1,0 +1,13 @@
+{
+  "format": "helmian.cloud.release-canary.v1",
+  "api": {"sourceCommit": "8fce0b5"},
+  "migrations": ["009_envoy_chat.sql", "010_cora_organization_config.sql", "011_cora_provider_usage.sql"],
+  "organizationConfig": {"publishedState": "published", "version": 4},
+  "hume": {"readiness": "source_only_not_live", "configRevision": "cora-clm-contract-v1", "tokenMode": "server_only"},
+  "providerUsageLedger": {"enabled": true},
+  "ui": {"bundleRevision": "cloud-admin-76cd412"},
+  "connector": {"mode": "inbound_only"},
+  "cora": {"sessionToolManifestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "tests": {"fixtureVersion": "helmian-tests-1154"},
+  "canary": {"sequence": ["verify-release-manifest", "verify-readiness", "deploy-canary", "health-check", "authenticated-organization-read", "normal-read-prepare", "provider-session-receipt-check", "observe", "rollback-on-criteria"], "rollbackCriteria": ["health_or_auth_failure", "migration_mismatch", "cross_organization_access", "usage_receipt_duplicate_or_missing", "provider_session_claim_without_source_receipt"]}
+}
