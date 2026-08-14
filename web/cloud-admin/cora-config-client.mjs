@@ -48,6 +48,8 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     createArtifactScript({ artifactReceiptId, scriptKind, text, sourceLinkReceiptIds, stage = 'draft', approvalReason = null, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/artifact-scripts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ artifactReceiptId, scriptKind, text, sourceLinkReceiptIds, stage, approvalReason, idempotencyKey }) });
     },
+    readArtifactExecutionRequests(artifactReceiptId) { return requestJson(fetchImpl, `/api/admin/cora/artifact-execution-requests?artifact_receipt_id=${encodeURIComponent(artifactReceiptId)}`); },
+    createArtifactExecutionRequest(input) { return requestJson(fetchImpl, '/api/admin/cora/artifact-execution-requests', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalRef: null, estimatedAudioSeconds: null, estimatedImageUnits: null, estimatedRequestedTokens: null, estimatedVideoUnits: null, supersedesReceiptId: null, ...input }) }); },
     createDraft({ reason }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -106,6 +108,11 @@ export function artifactSourcePanelModel(body = {}) {
 export function artifactScriptPanelModel(body = {}) {
   const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
   return Object.freeze({ empty: receipts.length === 0, receipts, statusLabel: receipts.length ? `${receipts.length} manual script revision(s).` : 'No manual script revisions recorded.', generation: 'not_generated', providerInvocation: 'not_performed', media: 'not_generated' });
+}
+
+export function artifactExecutionPanelModel(body = {}) {
+  const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
+  return Object.freeze({ empty: receipts.length === 0, receipts, execution: 'not_executed', providerInvocation: 'not_performed', media: 'not_generated', statusLabel: receipts.length ? `${receipts.length} execution request receipt(s).` : 'No execution request receipts recorded.' });
 }
 
 export function knowledgeQueryModel(body = {}) {

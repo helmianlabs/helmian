@@ -176,6 +176,21 @@
           </form>
           <div id="artifact-script-receipts" class="config-grid"></div>
           <p class="preview">This source-only slice records draft and source-check metadata. Approval is an explicit step-up intent; approved, queued, running, provider result, accepted, and rejected execution stages are not performed. No media, prompt secret, provider key, or external call is stored.</p>
+          <h3>Execution request preflight</h3>
+          <p id="artifact-execution-status" class="note" role="status" aria-live="polite">No execution request prepared. Catalog and source approval are checked server-side.</p>
+          <form id="artifact-execution-form" class="config-controls">
+            <input id="artifact-execution-receipt" aria-label="Execution artifact receipt" maxlength="256" placeholder="Approved artifact receipt" required>
+            <input id="artifact-execution-script" aria-label="Execution script receipt" maxlength="256" placeholder="Source-checked script receipt" required>
+            <textarea id="artifact-execution-sources" aria-label="Execution source links" maxlength="4000" placeholder="Approved source link receipts, one per line" required></textarea>
+            <input id="artifact-execution-catalog" aria-label="Approved catalog entry" maxlength="128" placeholder="Approved catalog entry ID" required>
+            <input id="artifact-execution-provider" aria-label="Catalog provider" maxlength="64" placeholder="Provider from catalog" required>
+            <input id="artifact-execution-model" aria-label="Catalog model" maxlength="128" placeholder="Model from catalog" required>
+            <select id="artifact-execution-modality" aria-label="Execution modality"><option value="text">Text</option><option value="audio">Audio</option><option value="image">Image</option><option value="video">Video</option><option value="multimodal">Multimodal</option></select>
+            <input id="artifact-execution-cost" aria-label="Estimated cost minor" inputmode="decimal" maxlength="32" placeholder="Estimated cost minor units (optional)">
+            <button type="submit">Request execution approval</button>
+          </form>
+          <div id="artifact-execution-receipts" class="config-grid"></div>
+          <p class="preview">This is a policy/approval receipt only. Approval-required, blocked, and queued states all remain not executed; no provider, model, media, billing, or external write occurs.</p>
         </section>
         <section id="section-governance" class="card" aria-labelledby="policy-heading">
           <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>

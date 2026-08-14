@@ -10,6 +10,7 @@ export const REQUIRED_MIGRATIONS = Object.freeze([
   '016_cora_artifact_studio_intents.sql',
   '017_cora_artifact_sources.sql',
   '018_cora_artifact_script_revisions.sql',
+  '019_cora_artifact_execution_requests.sql',
 ]);
 export const EXACT_CANARY_SEQUENCE = Object.freeze([
   'verify-release-manifest',
@@ -93,6 +94,11 @@ export function validateReleaseManifest(manifest = {}, expected = {}) {
     const actual = manifest.artifactSourceRegistry;
     const required = expected.artifactSourceRegistry;
     if (actual?.mode !== required?.mode || actual?.fetch !== required?.fetch || actual?.linkReceipts !== required?.linkReceipts || actual?.approval !== required?.approval) throw new Error('Artifact source registry contract mismatch');
+  });
+  check('Artifact Studio execution request contract', () => {
+    const actual = manifest.artifactExecution;
+    const required = expected.artifactExecution;
+    if (actual?.mode !== required?.mode || actual?.approval !== required?.approval || actual?.execution !== required?.execution || actual?.providerInvocation !== required?.providerInvocation || actual?.media !== required?.media) throw new Error('Artifact Studio execution request contract mismatch');
   });
   check('UI bundle revision', () => {
     if (clean(manifest.ui?.bundleRevision, 'ui.bundleRevision') !== clean(expected.ui?.bundleRevision, 'expected UI bundle revision')) throw new Error('UI bundle revision mismatch');
