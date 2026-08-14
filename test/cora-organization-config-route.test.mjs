@@ -84,4 +84,10 @@ test('authenticated usage metadata derives Organization from membership and reje
   assert.equal((await summary.json()).providerCalls, 'not_performed');
   const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}?organization_id=org-b`, { headers });
   assert.equal(injected.status, 400);
+  const memberDetail = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}?limit=10`, { headers });
+  assert.equal(memberDetail.status, 200);
+  assert.equal(app.calls.some(([name]) => name === 'usage-list'), false);
+  const adminDetail = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}?limit=10`, { headers: { cookie: 'helmion_admin_session=admin-session' } });
+  assert.equal(adminDetail.status, 200);
+  assert.equal(app.calls.some(([name]) => name === 'usage-list'), true);
 });

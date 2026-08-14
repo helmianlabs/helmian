@@ -54,6 +54,9 @@
     .config-item span, .config-list { color: #aebbd0; font-size: .85rem; }
     .config-controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .9rem; }
     .config-controls input { flex: 1; min-width: 14rem; background: #0d1119; border: 1px solid #344156; color: #fff; border-radius: .35rem; padding: .65rem; }
+    .usage-state { padding: .7rem; border-radius: .35rem; border: 1px solid #344156; background: #0d1119; }
+    .usage-state.soft { border-color: #f2c879; color: #f2c879; }
+    .usage-state.hard { border-color: #f07f7f; color: #f07f7f; }
     .tool { display: block; padding: .5rem 0; }
     #policy-status { min-height: 1.5rem; }
     [hidden] { display: none; }
@@ -97,6 +100,12 @@
             <button id="cora-create-draft" type="button">Create reviewed draft</button>
             <button id="cora-transition" class="secondary" type="button" hidden></button>
           </div>
+        </section>
+        <section class="card" aria-labelledby="cora-usage-heading">
+          <h2 id="cora-usage-heading">Internal provider usage ledger</h2>
+          <p id="cora-usage-status" class="note" role="status" aria-live="polite">Loading internal usage summary…</p>
+          <div id="cora-usage-details" class="config-grid"></div>
+          <p class="preview">Internal tenant usage ledger only. This is not provider invoice reconciliation, vendor pricing, or a billing control.</p>
         </section>
         <section class="card" aria-labelledby="policy-heading">
           <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>
