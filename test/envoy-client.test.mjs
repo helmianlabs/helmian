@@ -53,3 +53,28 @@ test('Envoy client opens same-origin SSE without tenant selectors and handles me
   assert.equal(messages[0].id, '8'); assert.equal(errors[0].status, 403);
   stream.close(); assert.equal(calls[0].closed, true);
 });
+
+test('Envoy client reconnects with the last durable cursor using bounded exponential retry', () => {
+  const sources = []; const timers = []; const statuses = []; const messages = []; const errors = [];
+  class FakeEventSource {
+    constructor(url) { this.url = url; this.listeners = {}; this.closed = false; sources.push(this); }
+    addEventListener(name, handler) { this.listeners[name] = handler; }
+    close() { this.closed = true; }
+    emit(name, data) { this.listeners[name]?.({ data: JSON.stringify(data) }); }
+  }
+  const stream = createEnvoyClient().openMessageStream('c-1', {
+    EventSourceImpl: FakeEventSource, retryBaseMs: 10, retryMaxMs: 20, maxRetries: 3,
+    setTimeoutImpl: (callback, delay) => { timers.push({ callback, delay }); return timers.length; },
+    clearTimeoutImpl: () => {}, onStatus: (status, detail) => statuses.push({ status, detail }),
+    onMessage: (message) => messages.push(message), onError: (error) => errors.push(error),
+  });
+  sources[0].onopen();
+  sources[0].emit('message', { id: '8', body: 'hello' });
+  sources[0].emit('envoy_error', { code: 'ENVOY_STREAM_ROTATE', retryable: true });
+  assert.equal(messages[0].id, '8'); assert.equal(timers[0].delay, 10); assert.equal(errors.length, 0);
+  timers[0].callback();
+  assert.match(sources[1].url, /channel_id=c-1&after_id=8/u);
+  sources[1].onerror();
+  assert.equal(timers[1].delay, 20); assert.match(statuses.map((entry) => entry.status).join(','), /stale,reconnecting/u);
+  stream.close(); assert.equal(sources[1].closed, true);
+});

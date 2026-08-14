@@ -30,22 +30,53 @@ export function createEnvoyClient({ fetchImpl = fetch } = {}) {
         body: JSON.stringify({ channelId, body, idempotencyKey }),
       });
     },
-    openMessageStream(channelId, { afterId = null, EventSourceImpl = globalThis.EventSource, onOpen = () => {}, onMessage = () => {}, onError = () => {} } = {}) {
+    openMessageStream(channelId, { afterId = null, EventSourceImpl = globalThis.EventSource, onOpen = () => {}, onMessage = () => {}, onStatus = () => {}, onError = () => {}, retryBaseMs = 500, retryMaxMs = 8000, maxRetries = 5, setTimeoutImpl = globalThis.setTimeout, clearTimeoutImpl = globalThis.clearTimeout } = {}) {
       const id = String(channelId ?? '').trim();
       if (!id) return null;
       if (typeof EventSourceImpl !== 'function') throw new Error('Envoy realtime is unavailable');
-      const cursor = afterId ? `&after_id=${encodeURIComponent(afterId)}` : '';
-      const source = new EventSourceImpl(`/api/admin/envoy/stream?channel_id=${encodeURIComponent(id)}${cursor}`);
-      source.onopen = () => onOpen();
-      source.addEventListener('message', (event) => {
-        try { onMessage(JSON.parse(event.data)); } catch { onError(Object.assign(new Error('Envoy realtime message was invalid'), { status: 502 })); }
-      });
-      source.addEventListener('envoy_error', (event) => {
-        let body = null; try { body = JSON.parse(event.data); } catch { /* bounded error event */ }
-        onError(Object.assign(new Error(body?.code ?? 'Envoy realtime stream failed'), { status: body?.retryable === false ? 403 : 503, code: body?.code }));
-      });
-      source.onerror = () => onError(Object.assign(new Error('Envoy realtime connection failed'), { status: 503 }));
-      return Object.freeze({ close: () => source.close?.() });
+      let cursor = afterId ? String(afterId) : null;
+      let source = null;
+      let retryTimer = null;
+      let retryCount = 0;
+      let closed = false;
+      const status = (value, detail = {}) => onStatus(value, Object.freeze({ ...detail, cursor }));
+      const stopSource = () => { source?.close?.(); source = null; };
+      const fatal = (error) => { if (closed) return; closed = true; if (retryTimer) clearTimeoutImpl?.(retryTimer); retryTimer = null; stopSource(); onError(error); };
+      const reconnect = (reason) => {
+        if (closed || retryTimer) return;
+        if (retryCount >= Math.max(0, Number(maxRetries))) {
+          fatal(Object.assign(new Error('Envoy realtime retry limit reached'), { status: 503, code: 'ENVOY_REALTIME_RETRY_EXHAUSTED', reason }));
+          return;
+        }
+        const delay = Math.min(Math.max(0, Number(retryMaxMs)), Math.max(0, Number(retryBaseMs)) * (2 ** retryCount));
+        retryCount += 1;
+        stopSource();
+        status('reconnecting', { delay, reason, attempt: retryCount });
+        retryTimer = setTimeoutImpl(() => { retryTimer = null; connect(); }, delay);
+      };
+      const connect = () => {
+        if (closed) return;
+        const cursorQuery = cursor ? `&after_id=${encodeURIComponent(cursor)}` : '';
+        source = new EventSourceImpl(`/api/admin/envoy/stream?channel_id=${encodeURIComponent(id)}${cursorQuery}`);
+        source.onopen = () => { retryCount = 0; status('connected'); onOpen(); };
+        source.addEventListener('message', (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (!message || typeof message !== 'object' || !message.id) throw new Error('message id missing');
+            cursor = String(message.id);
+            onMessage(message);
+          } catch { status('stale', { reason: 'invalid_message' }); reconnect('invalid_message'); }
+        });
+        source.addEventListener('envoy_error', (event) => {
+          let body = null; try { body = JSON.parse(event.data); } catch { /* bounded error event */ }
+          const error = Object.assign(new Error(body?.code ?? 'Envoy realtime stream failed'), { status: body?.retryable === false ? 403 : 503, code: body?.code });
+          if (body?.retryable === false || body?.code === 'ENVOY_MEMBERSHIP_REVOKED') { status('revoked', { reason: error.code }); fatal(error); return; }
+          status('stale', { reason: error.code ?? 'stream_error' }); reconnect(error.code ?? 'stream_error');
+        });
+        source.onerror = () => { status('stale', { reason: 'connection' }); reconnect('connection'); };
+      };
+      connect();
+      return Object.freeze({ close: () => { if (closed) return; closed = true; if (retryTimer) clearTimeoutImpl?.(retryTimer); retryTimer = null; stopSource(); } });
     },
   });
 }
