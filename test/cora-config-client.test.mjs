@@ -39,7 +39,7 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.readArtifactSources();
   await client.createArtifactSource({ sourceKey: 'dock-sop', title: 'Dock SOP', publisher: 'Ops', classification: 'sop', provenance: 'reviewed', reference: 'manual://dock-sop', idempotencyKey: 'source-0001' });
   await client.linkArtifactSource({ artifactReceiptId: 'artifact-1', sourceId: '1', linkReason: 'orientation', idempotencyKey: 'link-0001' });
-  await client.createDraft({ reason: 'reviewed brief defaults' });
+  await client.createDraft({ reason: 'reviewed brief defaults', routingPolicy: null, approvedModelCatalog: [] });
   await client.transition({ id: 'c1', lifecycle: 'testing', reason: 'begin test' });
   assert.equal(fetchImpl.calls.every(({ options }) => options.credentials === 'same-origin'), true);
   assert.equal(fetchImpl.calls.some(({ url, options }) => url.includes('tenant') || url.includes('plant') || String(options.body).includes('tenant') || String(options.body).includes('plant')), false);
@@ -55,7 +55,7 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   const preferenceSave = fetchImpl.calls.find(({ url, options }) => url.endsWith('/personal-preferences') && options.method === 'PUT');
   assert.deepEqual(JSON.parse(preferenceSave.options.body), { muted: true, volume: 40, verbosity: 'concise', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' });
   const draftCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/configs') && options.method === 'POST');
-  assert.deepEqual(JSON.parse(draftCall.options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' });
+  assert.deepEqual(JSON.parse(draftCall.options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise', approvedModelCatalog: [], routingPolicy: null });
 });
 
 test('personal preference model exposes own bounded settings without provider controls', () => {

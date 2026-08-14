@@ -40,6 +40,7 @@ const coraPreferenceTurn = document.querySelector('#cora-preference-turn');
 const coraPreferenceVoice = document.querySelector('#cora-preference-voice');
 const coraAdminControls = document.querySelector('#cora-admin-controls');
 const coraDraftReason = document.querySelector('#cora-draft-reason');
+const coraRoutingPolicy = document.querySelector('#cora-routing-policy');
 const coraCreateDraft = document.querySelector('#cora-create-draft');
 const coraTransition = document.querySelector('#cora-transition');
 const workspacePreviewForm = document.querySelector('#workspace-preview-form');
@@ -93,6 +94,7 @@ const artifactExecutionReceipts = document.querySelector('#artifact-execution-re
 const workspaceState = document.querySelector('#workspace-state');
 const adminNav = document.querySelector('[data-admin-only]');
 let coraDraft = null;
+let coraPublishedConfig = null;
 let policyEtag = '';
 let previewId = '';
 let workspaceTimer = null;
@@ -327,6 +329,9 @@ function renderCoraConfig(body) {
   for (const entry of config.config?.approvedModelCatalog ?? []) {
     coraConfigDetails.append(configItem(`Approved model · ${entry.provider}`, `${entry.model} ${entry.version} · ${entry.source}`));
   }
+  const policy = config.config?.routingPolicy;
+  coraConfigDetails.append(configItem('Routing policy', policy ? `v${policy.version} · ${policy.entries?.length ?? 0} task classes · provider calls remain disconnected` : 'Not published'));
+  coraPublishedConfig = config.config;
 }
 
 function renderCoraKnowledge(body) {
@@ -523,7 +528,11 @@ coraCreateDraft.onclick = async () => {
   if (!reason) { coraConfigStatus.textContent = 'Enter a reason before creating a draft.'; return; }
   coraCreateDraft.disabled = true;
   try {
-    const result = await coraClient.createDraft({ reason }); coraDraft = result.config; coraDraftReason.value = '';
+    let routingPolicy = null;
+    if (coraRoutingPolicy.value.trim()) {
+      try { routingPolicy = JSON.parse(coraRoutingPolicy.value); } catch { coraConfigStatus.textContent = 'Routing policy must be valid JSON.'; return; }
+    }
+    const result = await coraClient.createDraft({ reason, routingPolicy, approvedModelCatalog: coraPublishedConfig?.approvedModelCatalog ?? [] }); coraDraft = result.config; coraDraftReason.value = '';
     coraConfigStatus.textContent = `Draft ${coraDraft.id} created. No config is published.`; renderCoraAdminControls();
   } catch (error) { coraConfigStatus.textContent = `Draft refused: ${error.message}`; }
   finally { coraCreateDraft.disabled = false; }

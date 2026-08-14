@@ -49,6 +49,16 @@ test('knowledge lookup returns only allowlisted cited snippets and no legal answ
   assert.throws(() => lookupApprovedKnowledge({ config, query: 'hours', snippets: [{ packId: pack.id, version: pack.version, source: 'unapproved', citation: 'x', text: 'hours' }] }), /allowlist/);
 });
 
+test('Organization config keeps routing policy separate from personal preferences and binds it to approved catalog', () => {
+  const catalog = [{ id: 'text-primary', provider: 'openai', model: 'text-v1', version: '1', status: 'approved', source: 'reviewed catalog' }];
+  const routingPolicy = { version: 2, entries: ['voice_conversation', 'cited_knowledge', 'safe_action_preparation', 'artifact_execution_request'].map((taskClass) => ({ taskClass, allowedCatalogIds: ['text-primary'], defaultCatalogId: 'text-primary', fallbackCatalogIds: [], budgetTier: 'low', latencyTier: 'interactive', userSelectable: false, usageWorkflow: 'cora.workflow', usageAction: taskClass, modality: 'text' })) };
+  const config = buildCoraOrganizationConfig({ verifiedMembership: membership, approvedModelCatalog: catalog, routingPolicy, userPreferences: { verbosity: 'standard' } });
+  assert.equal(config.routingPolicy.version, 2);
+  assert.equal(config.userPreferences.verbosity, 'standard');
+  assert.throws(() => buildCoraOrganizationConfig({ verifiedMembership: membership, approvedModelCatalog: catalog, routingPolicy: { ...routingPolicy, entries: routingPolicy.entries.map((entry) => ({ ...entry, provider: 'not-allowed' })) } }), /unsupported/);
+  assert.throws(() => buildCoraOrganizationConfig({ verifiedMembership: membership, approvedModelCatalog: [{ ...catalog[0], status: 'draft' }], routingPolicy }), /not approved/);
+});
+
 test('normal Cora work stays frictionless while high-risk actions step up', () => {
   assert.equal(evaluateCoraActionPolicy({ action: 'read', in_scope: true, role_verified: true }).decision, 'allow');
   assert.equal(evaluateCoraActionPolicy({ action: 'prepare', in_scope: true, role_verified: true }).approval_required, false);
