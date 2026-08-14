@@ -5,6 +5,7 @@
   "hume": {"readiness": "source_only_not_live", "configRevision": "cora-clm-contract-v1", "tokenMode": "server_only"},
   "providerUsageLedger": {"enabled": true},
   "agentExecutionAdapter": {"taskClass": "approved_knowledge_lookup", "mode": "provider_free_receipt_only", "execution": "not_performed", "providerInvocation": "not_performed", "publicEndpoint": false, "usageEvidence": "actual_only"},
+  "routingPolicy": {"format": "cora.routing-policy.v1", "enforcement": "internal_worker_claim_only", "noRoute": "closed", "approvalRequired": "step_up", "blocked": "not_performed", "providerInvocation": "not_performed", "publicEndpoint": false},
   "artifactStudio": {"mode": "source_only_receipts", "availableStages": ["draft", "source_checked", "approval_requested"], "execution": "not_performed", "media": "not_generated", "providerInvocation": "not_performed", "publicExecutionEndpoint": false},
   "artifactSourceRegistry": {"mode": "organization_metadata_only", "fetch": "not_performed", "linkReceipts": "append_only", "approval": "admin_only"},
   "artifactExecution": {"mode": "approval_preflight_only", "approval": "admin_step_up_for_queue", "execution": "not_executed", "providerInvocation": "not_performed", "media": "not_generated"},

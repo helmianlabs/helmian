@@ -45,3 +45,11 @@ test('release manifest validator rejects a public or provider-performing executi
   assert.equal(result.valid, false);
   assert.match(result.errors.join(' '), /execution adapter (publicEndpoint|providerInvocation) mismatch/u);
 });
+
+test('release manifest validator rejects a missing or provider-performing routing policy contract', async () => {
+  const manifest = await fixture('release-canary-valid.json');
+  manifest.routingPolicy.providerInvocation = 'performed';
+  const result = validateReleaseManifest(manifest, await fixture('release-canary-expected.json'));
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join(' '), /routing policy providerInvocation mismatch/u);
+});

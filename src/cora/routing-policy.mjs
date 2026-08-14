@@ -68,5 +68,21 @@ export function resolveCoraRouting({ policy, taskClass, requestedCatalogId, appr
   if (!entry) throw new Error('routing task class is not configured');
   const requested = requestedCatalogId == null ? null : text(requestedCatalogId, 'requested catalog id', 128);
   const selected = requested && entry.userSelectable && entry.allowedCatalogIds.includes(requested) ? requested : entry.defaultCatalogId;
-  return Object.freeze({ status: 'policy_selected', policyVersion: normalized.version, taskClass, catalogId: selected, selection: requested === selected ? 'user_selected' : 'policy_selected', budgetTier: entry.budgetTier, latencyTier: entry.latencyTier, usageLedger: Object.freeze({ workflow: entry.usageWorkflow, action: entry.usageAction, modality: entry.modality }), fallbackCatalogIds: entry.fallbackCatalogIds });
+  const catalogEntry = approvedCatalog.find((candidate) => candidate.id === selected);
+  return Object.freeze({ status: 'policy_selected', policyVersion: normalized.version, taskClass, catalogId: selected, provider: catalogEntry.provider, model: catalogEntry.model, selection: requested === selected ? 'user_selected' : 'policy_selected', budgetTier: entry.budgetTier, latencyTier: entry.latencyTier, usageLedger: Object.freeze({ workflow: entry.usageWorkflow, action: entry.usageAction, modality: entry.modality }), fallbackCatalogIds: entry.fallbackCatalogIds });
+}
+
+const BUDGET_ORDER = Object.freeze({ low: 0, standard: 1, high: 2 });
+const ROUTE_TASK_CLASS = Object.freeze({ approved_knowledge_lookup: 'cited_knowledge', workspace_preview: 'safe_action_preparation', artifact_execution_request: 'artifact_execution_request' });
+
+export function resolveCoraExecutionRoute({ policy, approvedCatalog = [], taskType, requestedCatalogId = null, requestedBudgetTier = null, requestedLatencyTier = null, external = false } = {}) {
+  const taskClass = ROUTE_TASK_CLASS[taskType] ?? taskType;
+  let route;
+  try { route = resolveCoraRouting({ policy, approvedCatalog, taskClass, requestedCatalogId }); } catch (error) { return Object.freeze({ status: 'no_route', taskType, taskClass, reason: error.message }); }
+  if (route.status === 'unavailable') return Object.freeze({ status: 'no_route', taskType, taskClass, reason: 'published routing policy is unavailable' });
+  if (requestedBudgetTier && BUDGET_ORDER[requestedBudgetTier] === undefined) return Object.freeze({ status: 'blocked', taskType, taskClass, reason: 'requested budget tier is invalid', route });
+  if (requestedBudgetTier && BUDGET_ORDER[requestedBudgetTier] > BUDGET_ORDER[route.budgetTier]) return Object.freeze({ status: 'blocked', taskType, taskClass, reason: 'requested budget tier exceeds Organization policy', route });
+  if (requestedLatencyTier && requestedLatencyTier !== route.latencyTier) return Object.freeze({ status: 'blocked', taskType, taskClass, reason: 'requested latency tier is outside Organization policy', route });
+  if (external === true || taskClass === 'artifact_execution_request' || route.budgetTier === 'high') return Object.freeze({ status: 'approval_required', taskType, taskClass, reason: 'external or high-cost route requires step-up', route });
+  return Object.freeze({ status: 'allowed', taskType, taskClass, reason: 'normal in-scope route allowed', route });
 }
