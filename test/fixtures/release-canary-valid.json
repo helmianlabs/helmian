@@ -5,6 +5,7 @@
   "organizationConfig": {"publishedState": "published", "version": 4},
   "hume": {"readiness": "source_only_not_live", "configRevision": "cora-clm-contract-v1", "tokenMode": "server_only"},
   "providerUsageLedger": {"enabled": true},
+  "agentExecutionAdapter": {"taskClass": "approved_knowledge_lookup", "mode": "provider_free_receipt_only", "execution": "not_performed", "providerInvocation": "not_performed", "publicEndpoint": false, "usageEvidence": "actual_only"},
   "ui": {"bundleRevision": "cloud-admin-76cd412"},
   "connector": {"mode": "inbound_only"},
   "cora": {"sessionToolManifestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},

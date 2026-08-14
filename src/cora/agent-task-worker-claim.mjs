@@ -9,8 +9,8 @@ export function requireAuthorizedWorker(actor = {}) {
   return Object.freeze({ ...actor, workerId: String(actor.workerId) });
 }
 
-export function buildAgentTaskClaimReceipt({ taskId, taskReceiptId, claimId = randomUUID(), workerId, replayed = false } = {}) {
+export function buildAgentTaskClaimReceipt({ taskId, taskReceiptId, taskType = null, claimId = randomUUID(), workerId, replayed = false } = {}) {
   const id = Number(taskId);
   if (!Number.isSafeInteger(id) || id < 1 || !/^worker:[a-z0-9][a-z0-9._:-]{0,95}$/u.test(String(workerId ?? ''))) throw new Error('task claim identity is invalid');
-  return Object.freeze({ format: CORA_AGENT_TASK_CLAIM_FORMAT, valid: true, taskId: id, taskReceiptId: String(taskReceiptId ?? '').slice(0, 256), claimId: String(claimId).slice(0, 256), workerId: String(workerId), claimStatus: 'claimed', taskStatus: 'prepared', replayed: replayed === true, execution: 'not_performed', providerInvocation: 'not_performed', agentInvocation: 'not_performed', filesystemMutation: 'not_performed' });
+  return Object.freeze({ format: CORA_AGENT_TASK_CLAIM_FORMAT, valid: true, taskId: id, taskReceiptId: String(taskReceiptId ?? '').slice(0, 256), ...(taskType == null ? {} : { taskType: String(taskType).trim() }), claimId: String(claimId).slice(0, 256), workerId: String(workerId), claimStatus: 'claimed', taskStatus: 'prepared', replayed: replayed === true, execution: 'not_performed', providerInvocation: 'not_performed', agentInvocation: 'not_performed', filesystemMutation: 'not_performed' });
 }

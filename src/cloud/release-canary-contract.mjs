@@ -73,6 +73,13 @@ export function validateReleaseManifest(manifest = {}, expected = {}) {
   check('provider usage ledger enabled', () => {
     if (manifest.providerUsageLedger?.enabled !== true || manifest.providerUsageLedger?.enabled !== expected.providerUsageLedger?.enabled) throw new Error('provider usage ledger is not enabled as expected');
   });
+  check('provider-free read-only execution adapter', () => {
+    const actual = manifest.agentExecutionAdapter;
+    const required = expected.agentExecutionAdapter;
+    for (const field of ['taskClass', 'mode', 'execution', 'providerInvocation', 'publicEndpoint', 'usageEvidence']) {
+      if (actual?.[field] !== required?.[field]) throw new Error(`agent execution adapter ${field} mismatch`);
+    }
+  });
   check('UI bundle revision', () => {
     if (clean(manifest.ui?.bundleRevision, 'ui.bundleRevision') !== clean(expected.ui?.bundleRevision, 'expected UI bundle revision')) throw new Error('UI bundle revision mismatch');
   });

@@ -31,16 +31,20 @@ export function createAgentTaskRepository(pool) {
       return withTenantTransaction(pool, active, async (client) => {
         await requireActiveTenantMembership(client, active);
         const existingByKey = await client.query('select task_id, task_receipt_id, claim_id, idempotency_key from helmion.cora_agent_task_claims where tenant_id=$1 and idempotency_key=$2', [active.tenantId, idem]);
-        if (existingByKey.rowCount === 1) return buildAgentTaskClaimReceipt({ taskId: existingByKey.rows[0].task_id, taskReceiptId: existingByKey.rows[0].task_receipt_id, claimId: existingByKey.rows[0].claim_id, workerId: worker.workerId, replayed: true });
-        const taskResult = await client.query('select id, receipt_id, status from helmion.cora_agent_task_intents where tenant_id=$1 and id=$2', [active.tenantId, id]);
+        if (existingByKey.rowCount === 1) {
+          const task = await client.query('select task_type from helmion.cora_agent_task_intents where tenant_id=$1 and id=$2', [active.tenantId, existingByKey.rows[0].task_id]);
+          return buildAgentTaskClaimReceipt({ taskId: existingByKey.rows[0].task_id, taskReceiptId: existingByKey.rows[0].task_receipt_id, taskType: task.rows[0]?.task_type, claimId: existingByKey.rows[0].claim_id, workerId: worker.workerId, replayed: true });
+        }
+        const taskResult = await client.query('select id, task_type, receipt_id, status from helmion.cora_agent_task_intents where tenant_id=$1 and id=$2', [active.tenantId, id]);
         if (taskResult.rowCount !== 1) throw new Error('prepared task was not found');
         if (taskResult.rows[0].status !== 'prepared') throw new Error('only prepared tasks may be claimed');
         const claimId = randomUUID();
         const inserted = await client.query('insert into helmion.cora_agent_task_claims (tenant_id, task_id, task_receipt_id, worker_subject, worker_id, claim_id, idempotency_key) values ($1,$2,$3,$4,$5,$6,$7) on conflict (tenant_id, task_id) do nothing returning task_id, task_receipt_id, claim_id, idempotency_key', [active.tenantId, id, taskResult.rows[0].receipt_id, worker.subject, worker.workerId, claimId, idem]);
-        if (inserted.rowCount === 1) return buildAgentTaskClaimReceipt({ taskId: id, taskReceiptId: taskResult.rows[0].receipt_id, claimId, workerId: worker.workerId });
+        if (inserted.rowCount === 1) return buildAgentTaskClaimReceipt({ taskId: id, taskReceiptId: taskResult.rows[0].receipt_id, taskType: taskResult.rows[0].task_type, claimId, workerId: worker.workerId });
         const claimed = await client.query('select task_id, task_receipt_id, claim_id, idempotency_key from helmion.cora_agent_task_claims where tenant_id=$1 and task_id=$2', [active.tenantId, id]);
         if (claimed.rowCount !== 1 || claimed.rows[0].idempotency_key !== idem) throw new Error('prepared task is already claimed');
-        return buildAgentTaskClaimReceipt({ taskId: claimed.rows[0].task_id, taskReceiptId: claimed.rows[0].task_receipt_id, claimId: claimed.rows[0].claim_id, workerId: worker.workerId, replayed: true });
+        const task = await client.query('select task_type from helmion.cora_agent_task_intents where tenant_id=$1 and id=$2', [active.tenantId, claimed.rows[0].task_id]);
+        return buildAgentTaskClaimReceipt({ taskId: claimed.rows[0].task_id, taskReceiptId: claimed.rows[0].task_receipt_id, taskType: task.rows[0]?.task_type, claimId: claimed.rows[0].claim_id, workerId: worker.workerId, replayed: true });
       });
     },
   });

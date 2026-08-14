@@ -36,3 +36,12 @@ test('release manifest validator rejects secret-bearing fields and source self-a
   assert.equal(result.valid, false);
   assert.match(result.errors[0], /secret-bearing/u);
 });
+
+test('release manifest validator rejects a public or provider-performing execution adapter', async () => {
+  const manifest = await fixture('release-canary-valid.json');
+  manifest.agentExecutionAdapter.publicEndpoint = true;
+  manifest.agentExecutionAdapter.providerInvocation = 'performed';
+  const result = validateReleaseManifest(manifest, await fixture('release-canary-expected.json'));
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join(' '), /execution adapter (publicEndpoint|providerInvocation) mismatch/u);
+});
