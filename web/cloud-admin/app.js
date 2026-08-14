@@ -59,6 +59,7 @@ const coraPrepareContext = document.querySelector('#cora-prepare-context');
 const coraPrepareSubmit = document.querySelector('#cora-prepare-submit');
 const coraPrepareStatus = document.querySelector('#cora-prepare-status');
 const coraPrepareReceipt = document.querySelector('#cora-prepare-receipt');
+let coraPrepareIdempotencyKey = crypto.randomUUID();
 const coraUsageStatus = document.querySelector('#cora-usage-status');
 const coraUsageDetails = document.querySelector('#cora-usage-details');
 const coraSessionsStatus = document.querySelector('#cora-sessions-status');
@@ -930,13 +931,14 @@ coraPrepareForm.onsubmit = async (event) => {
   coraPrepareStatus.textContent = 'Recording Cora preparation request…';
   coraPrepareReceipt.replaceChildren();
   try {
-    const result = await coraClient.createAgentTask({ taskType: 'workspace_preview', intent: 'prepare', goal, contextRef: coraPrepareContext.value.trim() || undefined, idempotencyKey: crypto.randomUUID() });
+    const result = await coraClient.createAgentTask({ taskType: 'workspace_preview', intent: 'prepare', goal, contextRef: coraPrepareContext.value.trim() || undefined, idempotencyKey: coraPrepareIdempotencyKey });
     const model = coraPreparationPanelModel(result);
     const card = document.createElement('article'); card.className = 'config-item';
     card.textContent = `${model.status === 'replayed' ? 'Replay receipt confirmed' : model.status === 'prepared' ? 'Prepared receipt recorded' : 'Receipt unavailable'} · ${model.receiptId ?? 'receipt unavailable'} · status ${model.taskStatus} · execution ${model.execution}`;
     coraPrepareReceipt.append(card);
     coraPrepareStatus.textContent = result.replayed ? 'Cora preparation request already exists. Replay receipt confirmed; nothing was executed.' : 'Cora preparation request recorded. Prepared only; nothing was executed.';
     coraPrepareGoal.value = ''; coraPrepareContext.value = '';
+    coraPrepareIdempotencyKey = crypto.randomUUID();
   } catch (error) { coraPrepareStatus.textContent = error.status === 403 ? 'Cora preparation unavailable: active Organization membership is required.' : `Cora preparation not recorded: ${error.message}`; }
   finally { coraPrepareSubmit.disabled = false; }
 };

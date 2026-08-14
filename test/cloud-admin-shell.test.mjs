@@ -15,6 +15,8 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(page, /Prepare request/iu);
   assert.match(script, /coraClient\.createAgentTask/iu);
   assert.match(script, /Prepared only; nothing was executed/iu);
+  assert.match(script, /let coraPrepareIdempotencyKey = crypto\.randomUUID\(\)/u);
+  assert.match(script, /idempotencyKey: coraPrepareIdempotencyKey/u);
   assert.match(page, /Organization scope/u);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);
 });
