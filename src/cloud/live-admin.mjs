@@ -57,6 +57,7 @@ export const LIVE_ADMIN_CORA_TASKS_PATH = '/api/admin/cora/tasks';
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
 const PREVIEW_TTL_MS = 5 * 60 * 1000;
+const MAX_ENVOY_STREAM_MS = 30 * 60 * 1000;
 
 const SECURITY_HEADERS = Object.freeze({
   'content-security-policy': "default-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; script-src 'self'; style-src 'unsafe-inline'",
@@ -64,6 +65,8 @@ const SECURITY_HEADERS = Object.freeze({
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
+  'cross-origin-resource-policy': 'same-origin',
+  'cross-origin-opener-policy': 'same-origin',
 });
 
 export function shouldMountLiveAdmin(env = process.env) {
@@ -86,6 +89,22 @@ function cookieValue(request, name) {
 
 function cookieOptions(path) {
   return `Path=${path}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function requestOrigin(request, env) {
+  const configured = String(env.HELMION_ADMIN_ORIGIN ?? '').trim();
+  if (configured) {
+    try { return new URL(configured).origin; } catch { return null; }
+  }
+  const protocol = String(request.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim().toLowerCase() || 'http';
+  try { return new URL(`${protocol}://${request.headers.host ?? 'localhost'}`).origin; } catch { return null; }
+}
+
+function originAllowed(request, env) {
+  const presented = String(request.headers.origin ?? '').trim();
+  if (!presented) return true;
+  if (presented === 'null') return false;
+  try { return new URL(presented).origin === requestOrigin(request, env); } catch { return false; }
 }
 
 function policyEtag(version) {
@@ -145,6 +164,7 @@ export async function createLiveHelmianCloudAdminHandler({
   workspacePreviewRepository: suppliedWorkspacePreviewRepository = null,
   agentTaskRepository: suppliedAgentTaskRepository = null,
   envoyStreamIntervalMs = 1000,
+  envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
   logger = () => {},
 } = {}) {
   const connectionString = String(env.HELMION_DATABASE_URL ?? '').trim();
@@ -165,6 +185,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
   const streamIntervalMs = Math.max(250, Number(envoyStreamIntervalMs));
+  const streamMaxMs = Math.max(streamIntervalMs, Number(envoyStreamMaxMs));
   const prunePreviews = () => {
     const now = Date.now();
     for (const [id, preview] of pendingPreviews) if (preview.expiresAt <= now) pendingPreviews.delete(id);
@@ -226,14 +247,16 @@ export async function createLiveHelmianCloudAdminHandler({
     const initialResult = await envoy.listMessages(initialActor, channelId, 100, cursor);
     let closed = false;
     let timer = null;
-    const close = () => { closed = true; if (timer) clearTimeout(timer); };
+    let expiryTimer = null;
+    const close = () => { closed = true; if (timer) clearTimeout(timer); if (expiryTimer) clearTimeout(expiryTimer); };
     request.once?.('close', close);
     response.once?.('close', close);
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
+      'cache-control': 'no-store, no-cache, max-age=0, no-transform',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
+      ...SECURITY_HEADERS,
     });
     response.write('retry: 3000\n\n');
     const writeEvent = (event, data, id = null) => {
@@ -241,6 +264,12 @@ export async function createLiveHelmianCloudAdminHandler({
       if (id != null) response.write(`id: ${id}\n`);
       response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
+    expiryTimer = setTimeout(() => {
+      if (closed) return;
+      writeEvent('envoy_error', { code: 'ENVOY_STREAM_ROTATE', retryable: true });
+      close();
+      response.end();
+    }, streamMaxMs);
     const tick = async (actor, suppliedResult = null) => {
       if (closed) return;
       try {
@@ -393,6 +422,10 @@ export async function createLiveHelmianCloudAdminHandler({
   }
 
   async function handler(request, response, requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)) {
+    if (requestUrl.pathname.startsWith('/api/admin/') && !originAllowed(request, env)) {
+      send(response, 403, JSON.stringify({ valid: false, code: 'ADMIN_ORIGIN_REQUIRED' }));
+      return true;
+    }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/` }); return true; }
     if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_PAGE_PATH}/`) { send(response, 200, page, 'text/html; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SCRIPT_PATH) { send(response, 200, script, 'text/javascript; charset=utf-8'); return true; }
