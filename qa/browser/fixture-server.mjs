@@ -51,6 +51,7 @@ const server = createServer(async (request, response) => {
     if (url.pathname === '/api/admin/cora/knowledge-sources') return json(response, { sources: [] });
     if (url.pathname === '/api/admin/cora/knowledge/query') return json(response, { status: 'no_approved_source_match', excerpts: [], answer: null, providerCall: 'not_performed' });
     if (url.pathname === '/api/admin/cora/usage') return json(response, { source: 'tenant_append_only_ledger', budget: null, totals: { eventCount: 0, estimatedCostMinor: null, reconciledCostMinor: null }, providerCalls: 'not_performed' });
+    if (url.pathname === '/api/admin/workspace/layout-preferences' && request.method === 'GET') return json(response, { layout: { visibleShelves: ['chat', 'cora', 'prepare', 'artifact', 'governance'], panelOrder: ['chat', 'cora', 'prepare', 'artifact', 'governance'], density: 'comfortable', defaultEnvoyChannelId: null } });
     if (url.pathname === '/api/admin/cora/tasks' && request.method === 'POST') {
       return json(response, { replayed: false, receipt: { receiptId: 'fixture-cora-receipt', taskStatus: 'prepared', execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed' } });
     }

@@ -14,7 +14,7 @@ test.describe('Helmian Cloud authenticated fixture smoke', () => {
     await page.goto('/admin/?role=admin&envoy=revoked');
     await expect(page.locator('[data-admin-only]')).toBeVisible();
     await expect(page.getByText('Envoy membership was revoked. Sign in again.')).toBeVisible();
-    await expect(page.getByText('No audited status')).toHaveCount(5);
+    await expect(page.getByText('No audited status')).toHaveCount(6);
   });
 
   test('member can prepare a bounded Cora request and sees a not-executed receipt', async ({ page }) => {
