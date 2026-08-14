@@ -165,6 +165,16 @@
           <div id="artifact-studio-receipts" class="config-grid"></div>
           <div id="artifact-source-details" class="config-list" aria-live="polite">No Artifact Studio source metadata is available.</div>
           <p class="preview">Members may prepare and link bounded source metadata through authenticated routes. Source review and approval are admin-only; links capture the source state at linkage and do not fetch the referenced URL or file.</p>
+          <h3>Manual script and narration draft</h3>
+          <p id="artifact-script-status" class="note" role="status" aria-live="polite">Enter an Artifact receipt to prepare a manual revision.</p>
+          <form id="artifact-script-form" class="config-controls">
+            <input id="artifact-script-receipt" aria-label="Artifact receipt for script" maxlength="256" placeholder="Artifact receipt ID" required>
+            <select id="artifact-script-stage" aria-label="Script stage"><option value="draft">Draft</option><option value="source_checked">Source-checked</option></select>
+            <textarea id="artifact-script-text" aria-label="Manual script text" maxlength="12000" placeholder="Write the training or orientation narration manually…" required></textarea>
+            <textarea id="artifact-script-sources" aria-label="Source link receipts" maxlength="4000" placeholder="Source link receipt IDs, one per line"></textarea>
+            <button type="submit">Prepare script revision</button>
+          </form>
+          <div id="artifact-script-receipts" class="config-grid"></div>
           <p class="preview">This source-only slice records draft and source-check metadata. Approval is an explicit step-up intent; approved, queued, running, provider result, accepted, and rejected execution stages are not performed. No media, prompt secret, provider key, or external call is stored.</p>
         </section>
         <section id="section-governance" class="card" aria-labelledby="policy-heading">

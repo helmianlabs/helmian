@@ -9,6 +9,7 @@ export const REQUIRED_MIGRATIONS = Object.freeze([
   '015_cora_knowledge_retrieval_metadata.sql',
   '016_cora_artifact_studio_intents.sql',
   '017_cora_artifact_sources.sql',
+  '018_cora_artifact_script_revisions.sql',
 ]);
 export const EXACT_CANARY_SEQUENCE = Object.freeze([
   'verify-release-manifest',

@@ -77,6 +77,13 @@ test('Artifact source panel model distinguishes empty metadata and immutable lin
   assert.equal(model.empty, false); assert.equal(model.links.length, 1); assert.match(model.statusLabel, /immutable/);
 });
 
+test('Artifact script client model keeps manual revision truth', async () => {
+  const client = createCoraConfigClient({ fetchImpl: async () => new Response(JSON.stringify({ receipts: [] }), { status: 200 }) });
+  const model = (await import('../web/cloud-admin/cora-config-client.mjs')).artifactScriptPanelModel({ receipts: [] });
+  assert.equal(model.empty, true); assert.equal(model.generation, 'not_generated'); assert.equal(model.providerInvocation, 'not_performed');
+  await client.readArtifactScripts('artifact-1');
+});
+
 test('knowledge query model never exposes an answer and distinguishes no-source state', () => {
   assert.equal(knowledgeQueryModel({ status: 'no_approved_source_match', excerpts: [], answer: 'forged' }).empty, true);
   const model = knowledgeQueryModel({ status: 'approved_sources_only', excerpts: [{ excerpt: 'stored', citation: 'manual §1' }], answer: null, providerCall: 'not_performed' });

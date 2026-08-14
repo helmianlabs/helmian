@@ -44,6 +44,10 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     linkArtifactSource({ artifactReceiptId, sourceId, linkReason, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/artifact-source-links', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ artifactReceiptId, sourceId, linkReason, idempotencyKey }) });
     },
+    readArtifactScripts(artifactReceiptId) { return requestJson(fetchImpl, `/api/admin/cora/artifact-scripts?artifact_receipt_id=${encodeURIComponent(artifactReceiptId)}`); },
+    createArtifactScript({ artifactReceiptId, scriptKind, text, sourceLinkReceiptIds, stage = 'draft', approvalReason = null, idempotencyKey }) {
+      return requestJson(fetchImpl, '/api/admin/cora/artifact-scripts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ artifactReceiptId, scriptKind, text, sourceLinkReceiptIds, stage, approvalReason, idempotencyKey }) });
+    },
     createDraft({ reason }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -97,6 +101,11 @@ export function artifactSourcePanelModel(body = {}) {
   const sources = Array.isArray(body.sources) ? body.sources.slice(0, 100) : [];
   const links = Array.isArray(body.links) ? body.links.slice(0, 100) : [];
   return Object.freeze({ empty: sources.length === 0 && links.length === 0, sources, links, unavailable: body.unavailable === true, statusLabel: links.length ? `${links.length} immutable source link receipt(s).` : sources.length ? 'No Artifact Studio source links recorded yet.' : 'No Artifact Studio source metadata is available.' });
+}
+
+export function artifactScriptPanelModel(body = {}) {
+  const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
+  return Object.freeze({ empty: receipts.length === 0, receipts, statusLabel: receipts.length ? `${receipts.length} manual script revision(s).` : 'No manual script revisions recorded.', generation: 'not_generated', providerInvocation: 'not_performed', media: 'not_generated' });
 }
 
 export function knowledgeQueryModel(body = {}) {
