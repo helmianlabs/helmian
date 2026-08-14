@@ -3,6 +3,7 @@ export const REQUIRED_MIGRATIONS = Object.freeze([
   '009_envoy_chat.sql',
   '010_cora_organization_config.sql',
   '011_cora_provider_usage.sql',
+  '012_cora_workspace_preview_intents.sql',
 ]);
 export const EXACT_CANARY_SEQUENCE = Object.freeze([
   'verify-release-manifest',
