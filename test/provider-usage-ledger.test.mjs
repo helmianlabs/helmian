@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { evaluateUsageBudget, normalizeBudgetPolicy, normalizeUsageRecord } from '../src/cora/provider-usage-ledger.mjs';
+import { evaluateUsageBudget, normalizeBudgetAllocation, normalizeBudgetPolicy, normalizeUsageRecord } from '../src/cora/provider-usage-ledger.mjs';
 
 const base = { userSubject: 'user-a', actionType: 'read', provider: 'openai', model: 'unknown-until-receipt', modality: 'text', idempotencyKey: 'usage-0001', status: 'completed' };
 
@@ -29,6 +29,13 @@ test('budget contract allows low-cost normal reads, steps up external work, and 
   assert.equal(evaluateUsageBudget({ budget, action: 'prepare', estimatedCostMinor: 2500 }).decision, 'deny');
   assert.equal(evaluateUsageBudget({ budget, action: 'read', estimatedCostMinor: null }).state, 'cost_unknown');
   assert.equal(evaluateUsageBudget({ budget, action: 'write', external: true, estimatedCostMinor: 10 }).decision, 'step-up');
+});
+
+test('budget allocations are bounded Organization metadata and preserve unknown actuals', () => {
+  const policy = normalizeBudgetPolicy({ softLimitMinor: 1000, hardLimitMinor: 2000, allocations: [{ allocationKey: 'ops', department: 'operations', softLimitMinor: 500, hardLimitMinor: 800 }] });
+  assert.equal(policy.allocations[0].allocationKey, 'ops');
+  assert.throws(() => normalizeBudgetAllocation({ allocationKey: 'bad', plantId: 'warehouse-1', department: 'operations' }), /authority/);
+  assert.throws(() => normalizeBudgetAllocation({ allocationKey: 'bad' }), /department or cost center/);
 });
 
 test('usage schema is append-only and tenant idempotency is durable', async () => {

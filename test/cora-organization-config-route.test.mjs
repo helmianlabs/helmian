@@ -61,7 +61,8 @@ async function fixture() {
     async transition() { throw new Error('not used'); },
   };
   const usageRepository = {
-    async readSummary(actor) { calls.push(['usage-summary', actor]); return { budget: null, totals: { eventCount: 0, estimatedCostMinor: 0, reconciledCostMinor: null }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' }; },
+    async readSummary(actor) { calls.push(['usage-summary', actor]); return { budget: { period: 'monthly', currency: 'USD', softLimitMinor: null, hardLimitMinor: null, lowCostLimitMinor: null, policyState: 'active', allocations: [] }, totals: { eventCount: 0, estimatedCostMinor: null, reconciledCostMinor: null }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' }; },
+    async savePolicy(actor, input) { calls.push(['usage-policy-save', actor, input]); return { policy: input, updatedBySubject: actor.subject, source: 'organization_budget_policy', providerCalls: 'not_performed' }; },
     async list(actor, limit) { calls.push(['usage-list', actor, limit]); return { events: [] }; },
   };
   const previewRepository = {
@@ -124,6 +125,15 @@ test('authenticated usage metadata derives Organization from membership and reje
   const adminDetail = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}?limit=10`, { headers: { cookie: 'helmion_admin_session=admin-session' } });
   assert.equal(adminDetail.status, 200);
   assert.equal(app.calls.some(([name]) => name === 'usage-list'), true);
+});
+
+test('budget policy changes are owner/admin-only and reject Organization, Plant, and provider selectors', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const body = { period: 'monthly', currency: 'USD', softLimitMinor: 1000, hardLimitMinor: 2000, lowCostLimitMinor: 100, policyState: 'active', allocations: [{ allocationKey: 'ops', department: 'operations', costCenter: null, softLimitMinor: 500, hardLimitMinor: 1000, enabled: true }] };
+  const member = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}`, { method: 'PUT', headers: { cookie: 'helmion_admin_session=member-session', 'content-type': 'application/json' }, body: JSON.stringify(body) }); assert.equal(member.status, 403);
+  const admin = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}`, { method: 'PUT', headers: { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' }, body: JSON.stringify(body) }); assert.equal(admin.status, 200); assert.equal((await admin.json()).policy.allocations[0].allocationKey, 'ops');
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}`, { method: 'PUT', headers: { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' }, body: JSON.stringify({ ...body, plantId: 'warehouse-1' }) }); assert.equal(injected.status, 400);
+  const urlInjected = await fetch(`${app.url}${LIVE_ADMIN_CORA_USAGE_PATH}?facility_id=warehouse-1`, { method: 'PUT', headers: { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' }, body: JSON.stringify(body) }); assert.equal(urlInjected.status, 400);
 });
 
 test('authenticated preview intent derives Organization, rejects selectors, and never executes', async (t) => {

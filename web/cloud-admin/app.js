@@ -30,6 +30,14 @@ const coraKnowledgeQueryStatus = document.querySelector('#cora-knowledge-query-s
 const coraKnowledgeQueryResults = document.querySelector('#cora-knowledge-query-results');
 const coraUsageStatus = document.querySelector('#cora-usage-status');
 const coraUsageDetails = document.querySelector('#cora-usage-details');
+const coraUsagePolicyForm = document.querySelector('#cora-usage-policy-form');
+const coraUsagePolicyStatus = document.querySelector('#cora-usage-policy-status');
+const coraUsagePeriod = document.querySelector('#cora-usage-period');
+const coraUsageCurrency = document.querySelector('#cora-usage-currency');
+const coraUsageSoftLimit = document.querySelector('#cora-usage-soft-limit');
+const coraUsageHardLimit = document.querySelector('#cora-usage-hard-limit');
+const coraUsageLowLimit = document.querySelector('#cora-usage-low-limit');
+const coraUsageAllocations = document.querySelector('#cora-usage-allocations');
 const coraPreferencesForm = document.querySelector('#cora-personal-preferences-form');
 const coraPreferencesStatus = document.querySelector('#cora-personal-preferences-status');
 const coraPreferenceMuted = document.querySelector('#cora-preference-muted');
@@ -455,6 +463,7 @@ function renderCoraUsage(body) {
   coraUsageStatus.className = `usage-state ${model.state}`;
   if (model.empty) {
     coraUsageStatus.textContent = 'No internal provider usage has been recorded for this Organization.';
+    if (coraUsagePolicyForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) { coraUsagePolicyForm.hidden = false; coraUsagePeriod.value = 'monthly'; coraUsageCurrency.value = 'USD'; coraUsageSoftLimit.value = ''; coraUsageHardLimit.value = ''; coraUsageLowLimit.value = ''; coraUsageAllocations.value = ''; }
     return;
   }
   coraUsageStatus.textContent = model.stateLabel;
@@ -465,6 +474,7 @@ function renderCoraUsage(body) {
     configItem('Provider calls', model.providerCalls === 'not_performed' ? 'Not performed by this panel' : model.providerCalls),
     configItem('Ledger source', 'Organization-scoped append-only internal ledger'),
   );
+  if (coraUsagePolicyForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) { coraUsagePolicyForm.hidden = false; const budget = model.budget ?? {}; coraUsagePeriod.value = budget.period ?? 'monthly'; coraUsageCurrency.value = budget.currency ?? 'USD'; coraUsageSoftLimit.value = budget.softLimitMinor ?? ''; coraUsageHardLimit.value = budget.hardLimitMinor ?? ''; coraUsageLowLimit.value = budget.lowCostLimitMinor ?? ''; coraUsageAllocations.value = model.allocations.map((item) => `${item.allocationKey} | ${item.department ?? ''} | ${item.costCenter ?? ''} | ${item.softLimitMinor ?? ''} | ${item.hardLimitMinor ?? ''}`).join('\n'); }
 }
 
 function renderPreferenceChoices(select, choices, current, emptyLabel = null) { select.replaceChildren(); if (emptyLabel !== null) select.append(new Option(emptyLabel, '')); for (const choice of choices ?? []) select.append(new Option(String(choice), String(choice))); if ([...select.options].some((option) => option.value === String(current ?? ''))) select.value = String(current ?? ''); }
@@ -582,6 +592,7 @@ async function loadCoraSettings() {
 coraPreferencesOpen.onclick = () => coraPreferencesDialog.showModal();
 coraPreferencesClose.onclick = () => coraPreferencesDialog.close();
 coraPreferencesForm.onsubmit = async (event) => { event.preventDefault(); coraPreferencesStatus.textContent = 'Saving your Cora preferences…'; try { const saved = await coraClient.savePersonalPreferences({ muted: coraPreferenceMuted.checked, volume: Number(coraPreferenceVolume.value), verbosity: coraPreferenceVerbosity.value, interruptMode: coraPreferenceInterrupt.value, turnMode: coraPreferenceTurn.value, voiceProfile: coraPreferenceVoice.value || null }); renderPersonalPreferences(saved); coraPreferencesStatus.textContent += ' Saved for this signed-in user; no provider or voice connection was invoked.'; } catch (error) { coraPreferencesStatus.textContent = `Personal preferences not saved: ${error.message}`; } };
+coraUsagePolicyForm.onsubmit = async (event) => { event.preventDefault(); coraUsagePolicyStatus.textContent = 'Saving Organization budget policy…'; try { const allocations = coraUsageAllocations.value.split('\n').map((line) => line.split('|').map((part) => part.trim())).filter((parts) => parts.length === 5 && parts[0] && (parts[1] || parts[2])).map(([allocationKey, department, costCenter, softLimitMinor, hardLimitMinor]) => ({ allocationKey, department: department || null, costCenter: costCenter || null, softLimitMinor: softLimitMinor || null, hardLimitMinor: hardLimitMinor || null, enabled: true })); const result = await coraClient.saveUsagePolicy({ period: coraUsagePeriod.value, currency: coraUsageCurrency.value.trim().toUpperCase(), softLimitMinor: coraUsageSoftLimit.value || null, hardLimitMinor: coraUsageHardLimit.value || null, lowCostLimitMinor: coraUsageLowLimit.value || null, policyState: 'active', allocations }); coraUsagePolicyStatus.textContent = `Budget policy saved for this Organization. ${result.providerCalls === 'not_performed' ? 'No provider call or invoice reconciliation was performed.' : ''}`; renderCoraUsage(await coraClient.readUsage()); } catch (error) { coraUsagePolicyStatus.textContent = `Budget policy not saved: ${error.message}`; } };
 coraKnowledgeSourceForm.onsubmit = async (event) => { event.preventDefault(); coraKnowledgeAdminStatus.textContent = 'Recording draft source metadata…'; try { await coraClient.createKnowledgeSource({ sourceKey: document.querySelector('#knowledge-source-key').value, title: document.querySelector('#knowledge-source-title').value, publisher: document.querySelector('#knowledge-source-publisher').value, canonicalUri: document.querySelector('#knowledge-source-uri').value, provenance: document.querySelector('#knowledge-source-provenance').value, effectiveAt: null, expiresAt: null }); await loadKnowledgeAdmin(); coraKnowledgeSourceForm.reset(); } catch (error) { coraKnowledgeAdminStatus.textContent = `Source not recorded: ${error.message}`; } };
 coraKnowledgePackForm.onsubmit = async (event) => { event.preventDefault(); coraKnowledgeAdminStatus.textContent = 'Recording draft pack metadata…'; try { await coraClient.createKnowledgePack({ sourceId: document.querySelector('#knowledge-pack-source').value, packKey: document.querySelector('#knowledge-pack-key').value, version: document.querySelector('#knowledge-pack-version').value, provenance: document.querySelector('#knowledge-pack-provenance').value, effectiveAt: null, expiresAt: null }); await loadKnowledgeAdmin(); coraKnowledgePackForm.reset(); } catch (error) { coraKnowledgeAdminStatus.textContent = `Pack not recorded: ${error.message}`; } };
 coraKnowledgeSnippetForm.onsubmit = async (event) => { event.preventDefault(); coraKnowledgeAdminStatus.textContent = 'Recording bounded cited excerpt…'; try { await coraClient.createKnowledgeSnippet({ packId: document.querySelector('#knowledge-snippet-pack').value, citation: document.querySelector('#knowledge-snippet-citation').value, textReference: document.querySelector('#knowledge-snippet-reference').value, excerpt: document.querySelector('#knowledge-snippet-excerpt').value, contentSha256: null, expiresAt: null }); await loadKnowledgeAdmin(); coraKnowledgeSnippetForm.reset(); } catch (error) { coraKnowledgeAdminStatus.textContent = `Excerpt not recorded: ${error.message}`; } };

@@ -1,5 +1,5 @@
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
-import { normalizeBudgetPolicy, normalizeUsageRecord } from './provider-usage-ledger.mjs';
+import { normalizeBudgetAllocation, normalizeBudgetPolicy, normalizeUsageRecord } from './provider-usage-ledger.mjs';
 
 function context(actor) {
   if (!actor?.tenantId || !actor.subject || !actor.role) throw new Error('verified Organization membership is required');
@@ -12,16 +12,39 @@ function usageRow(row) {
 
 export function createProviderUsageRepository(pool) {
   return Object.freeze({
+    async readPolicy(actor) {
+      const active = context(actor);
+      return withTenantTransaction(pool, active, async (client) => {
+        await requireActiveTenantMembership(client, active);
+        const [budget, allocations] = await Promise.all([
+          client.query('select period, currency, soft_limit_minor, hard_limit_minor, low_cost_limit_minor, policy_state, updated_by_subject, updated_at from helmion.cora_usage_budgets where tenant_id=$1', [active.tenantId]),
+          client.query('select allocation_key, department, cost_center, soft_limit_minor, hard_limit_minor, enabled from helmion.cora_usage_budget_allocations where tenant_id=$1 order by allocation_key', [active.tenantId]),
+        ]);
+        const row = budget.rows[0];
+        return { policy: normalizeBudgetPolicy(row ? { period: row.period, currency: row.currency, softLimitMinor: row.soft_limit_minor, hardLimitMinor: row.hard_limit_minor, lowCostLimitMinor: row.low_cost_limit_minor, policyState: row.policy_state, allocations: allocations.rows.map((item) => normalizeBudgetAllocation(item)) } : { allocations: [] }), updatedBySubject: row?.updated_by_subject ?? null, updatedAt: row?.updated_at ?? null, source: 'organization_budget_policy', providerCalls: 'not_performed' };
+      });
+    },
+    async savePolicy(actor, input) {
+      if (!['owner', 'admin'].includes(String(actor?.role ?? '').toLowerCase())) throw Object.assign(new Error('budget policy admin membership required'), { status: 403 });
+      const active = context(actor); const policy = normalizeBudgetPolicy(input); return withTenantTransaction(pool, active, async (client) => {
+        await requireActiveTenantMembership(client, active);
+        await client.query(`insert into helmion.cora_usage_budgets (tenant_id, period, currency, soft_limit_minor, hard_limit_minor, low_cost_limit_minor, policy_state, updated_by_subject) values ($1,$2,$3,$4,$5,$6,$7,$8) on conflict (tenant_id) do update set period=excluded.period, currency=excluded.currency, soft_limit_minor=excluded.soft_limit_minor, hard_limit_minor=excluded.hard_limit_minor, low_cost_limit_minor=excluded.low_cost_limit_minor, policy_state=excluded.policy_state, updated_by_subject=excluded.updated_by_subject, updated_at=clock_timestamp()`, [active.tenantId, policy.period, policy.currency, policy.softLimitMinor, policy.hardLimitMinor, policy.lowCostLimitMinor, policy.policyState, active.actorSubject]);
+        await client.query('delete from helmion.cora_usage_budget_allocations where tenant_id=$1', [active.tenantId]);
+        for (const allocation of policy.allocations) await client.query(`insert into helmion.cora_usage_budget_allocations (tenant_id, allocation_key, department, cost_center, soft_limit_minor, hard_limit_minor, enabled, updated_by_subject) values ($1,$2,$3,$4,$5,$6,$7,$8)`, [active.tenantId, allocation.allocationKey, allocation.department, allocation.costCenter, allocation.softLimitMinor, allocation.hardLimitMinor, allocation.enabled, active.actorSubject]);
+        return { policy, updatedBySubject: active.actorSubject, source: 'organization_budget_policy', providerCalls: 'not_performed' };
+      });
+    },
     async readSummary(actor) {
       const active = context(actor);
       return withTenantTransaction(pool, active, async (client) => {
         await requireActiveTenantMembership(client, active);
-        const [budget, totals] = await Promise.all([
+        const [budget, allocations, totals] = await Promise.all([
           client.query('select period, currency, soft_limit_minor, hard_limit_minor, low_cost_limit_minor, policy_state from helmion.cora_usage_budgets where tenant_id=$1', [active.tenantId]),
+          client.query('select allocation_key, department, cost_center, soft_limit_minor, hard_limit_minor, enabled from helmion.cora_usage_budget_allocations where tenant_id=$1 order by allocation_key', [active.tenantId]),
           client.query(`select count(*)::integer as event_count, coalesce(sum(estimated_cost_minor),0) as estimated_cost_minor, sum(reconciled_cost_minor) as reconciled_cost_minor from helmion.cora_provider_usage where tenant_id=$1`, [active.tenantId]),
         ]);
         const row = budget.rows[0] ?? null;
-        return { budget: row ? normalizeBudgetPolicy({ period: row.period, currency: row.currency, softLimitMinor: row.soft_limit_minor, hardLimitMinor: row.hard_limit_minor, lowCostLimitMinor: row.low_cost_limit_minor, policyState: row.policy_state }) : null, totals: { eventCount: Number(totals.rows[0]?.event_count ?? 0), estimatedCostMinor: Number(totals.rows[0]?.estimated_cost_minor ?? 0), reconciledCostMinor: totals.rows[0]?.reconciled_cost_minor == null ? null : Number(totals.rows[0].reconciled_cost_minor) }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' };
+        return { budget: row ? normalizeBudgetPolicy({ period: row.period, currency: row.currency, softLimitMinor: row.soft_limit_minor, hardLimitMinor: row.hard_limit_minor, lowCostLimitMinor: row.low_cost_limit_minor, policyState: row.policy_state, allocations: allocations.rows.map((item) => normalizeBudgetAllocation(item)) }) : null, totals: { eventCount: Number(totals.rows[0]?.event_count ?? 0), estimatedCostMinor: Number(totals.rows[0]?.estimated_cost_minor ?? 0), reconciledCostMinor: totals.rows[0]?.reconciled_cost_minor == null ? null : Number(totals.rows[0].reconciled_cost_minor) }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' };
       });
     },
     async list(actor, limit = 50) {
@@ -47,4 +70,3 @@ export function createProviderUsageRepository(pool) {
     },
   });
 }
-

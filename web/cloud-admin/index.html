@@ -170,6 +170,8 @@
           <h2 id="cora-usage-heading">Internal provider usage ledger</h2>
           <p id="cora-usage-status" class="note" role="status" aria-live="polite">Loading internal usage summary…</p>
           <div id="cora-usage-details" class="config-grid"></div>
+          <form id="cora-usage-policy-form" class="config-controls" hidden><label>Period <select id="cora-usage-period"><option value="monthly">Monthly</option><option value="calendar_month">Calendar month</option><option value="rolling_30d">Rolling 30 days</option></select></label><label>Currency <input id="cora-usage-currency" value="USD" maxlength="3" pattern="[A-Za-z]{3}" required></label><label>Soft limit (minor units) <input id="cora-usage-soft-limit" type="number" min="0" step="any"></label><label>Hard limit (minor units) <input id="cora-usage-hard-limit" type="number" min="0" step="any"></label><label>Low-cost limit (minor units) <input id="cora-usage-low-limit" type="number" min="0" step="any"></label><label>Allocations <textarea id="cora-usage-allocations" maxlength="6000" placeholder="One per line: key | department | cost center | soft limit | hard limit"></textarea></label><button type="submit">Save budget policy</button></form>
+          <p id="cora-usage-policy-status" class="note" role="status" aria-live="polite"></p>
           <p class="preview">Internal tenant usage ledger only. This is not provider invoice reconciliation, vendor pricing, or a billing control.</p>
         </section>
         <section id="section-prepare" class="card" aria-labelledby="workspace-preview-heading">

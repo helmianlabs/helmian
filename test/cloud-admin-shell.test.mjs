@@ -48,6 +48,10 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.doesNotMatch(page, /Cora routing policy JSON/iu);
   assert.match(page, /Allowed member response detail/iu);
   assert.match(page, /Approved knowledge packs/iu);
+  assert.match(page, /Save budget policy/iu);
+  assert.match(page, /not provider invoice reconciliation/iu);
+  assert.match(script, /saveUsagePolicy/u);
+  assert.match(script, /allocationKey/u);
   assert.match(page, /Curated knowledge management/iu);
   assert.match(page, /Add draft source/iu);
   assert.match(page, /Bounded stored excerpt/iu);

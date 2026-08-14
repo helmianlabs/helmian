@@ -65,7 +65,20 @@ export function normalizeBudgetPolicy(input = {}) {
   if (lowCostLimitMinor != null && softLimitMinor != null && lowCostLimitMinor > softLimitMinor) throw new Error('low-cost limit exceeds soft limit');
   const policyState = text(input.policyState ?? 'active', 'budget policy state', 32).toLowerCase();
   if (!BUDGET_STATES.has(policyState)) throw new Error('budget policy state is invalid');
-  return Object.freeze({ period, currency, softLimitMinor, hardLimitMinor, lowCostLimitMinor, policyState });
+  const allocations = Array.isArray(input.allocations) ? input.allocations.slice(0, 32).map(normalizeBudgetAllocation) : [];
+  return Object.freeze({ period, currency, softLimitMinor, hardLimitMinor, lowCostLimitMinor, policyState, allocations: Object.freeze(allocations) });
+}
+
+export function normalizeBudgetAllocation(input = {}) {
+  rejectAuthority(input, 'budget allocation');
+  const department = optionalText(input.department, 'allocation department', 160);
+  const costCenter = optionalText(input.costCenter ?? input.cost_center, 'allocation cost center', 160);
+  const allocationKey = text(input.allocationKey ?? input.allocation_key, 'allocation key', 160);
+  if (!department && !costCenter) throw new Error('allocation department or cost center is required');
+  const softLimitMinor = nonNegative(input.softLimitMinor ?? input.soft_limit_minor, 'allocation soft limit');
+  const hardLimitMinor = nonNegative(input.hardLimitMinor ?? input.hard_limit_minor, 'allocation hard limit');
+  if (softLimitMinor != null && hardLimitMinor != null && softLimitMinor > hardLimitMinor) throw new Error('allocation soft limit exceeds hard limit');
+  return Object.freeze({ allocationKey, department, costCenter, softLimitMinor, hardLimitMinor, enabled: input.enabled !== false });
 }
 
 export function evaluateUsageBudget({ budget = {}, spentMinor = 0, estimatedCostMinor = null, action, roleVerified = true, inScope = true, external = false } = {}) {

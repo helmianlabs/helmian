@@ -611,6 +611,11 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_USAGE_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_USAGE_SELECTOR_INVALID' : 'CORA_USAGE_READ_FAILED' })); }
       return true;
     }
+    if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_CORA_USAGE_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['allocations', 'currency', 'hardLimitMinor', 'lowCostLimitMinor', 'period', 'policyState', 'softLimitMinor']); send(response, 200, JSON.stringify({ valid: true, ...await providerUsage.savePolicy(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_USAGE_POLICY_ADMIN_REQUIRED' : 'CORA_USAGE_POLICY_INVALID' })); }
+      return true;
+    }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_PREVIEW_PATH) {
       try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id') || requestUrl.searchParams.has('plant_id')) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const result = await workspacePreviews.list(actor, requestUrl.searchParams.get('limit')); send(response, 200, JSON.stringify({ valid: true, ...result })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_PREVIEW_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_PREVIEW_SELECTOR_INVALID' : 'CORA_PREVIEW_READ_FAILED' })); }
