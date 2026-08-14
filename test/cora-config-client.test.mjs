@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentTaskPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
+import { agentTaskPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspacePreviewPanelModel } from '../web/cloud-admin/cora-config-client.mjs';
 
 function fakeFetch() {
   const calls = [];
@@ -12,6 +12,7 @@ function fakeFetch() {
     if (url.endsWith('/usage')) return new Response(JSON.stringify({ budget: { policyState: 'active' }, totals: { eventCount: 1, estimatedCostMinor: 12, reconciledCostMinor: null }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' }), { status: 200 });
     if (url.endsWith('/workspace/previews')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/tasks')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
+    if (url.endsWith('/personal-preferences')) return new Response(JSON.stringify({ bounds: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in'], turnMode: ['concise'], voiceProfiles: ['emma'] }, preferences: { format: 'cora.personal-preferences.v1', valid: true, organizationId: 'customer-a', subject: 'user-1', preferences: { muted: false, volume: 80, verbosity: 'standard', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' } } }), { status: 200 });
     if (url.endsWith('/artifacts')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/artifact-sources')) return new Response(JSON.stringify({ sources: [], links: [] }), { status: 200 });
     return new Response(JSON.stringify({ config: { id: 'c1', lifecycle: 'draft' } }), { status: 200 });
@@ -30,6 +31,8 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.readWorkspacePreviews();
   await client.createWorkspacePreview({ mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
   await client.readAgentTasks();
+  await client.readPersonalPreferences();
+  await client.savePersonalPreferences({ muted: true, volume: 40, verbosity: 'concise', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' });
   await client.createAgentTask({ taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
   await client.readArtifacts();
   await client.createArtifact({ artifactType: 'training', title: 'Orientation', department: 'operations', objective: 'Explain steps', sourceRefs: [], stage: 'draft', idempotencyKey: 'artifact-0001', approvalReason: null });
@@ -43,9 +46,23 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   assert.match(fetchImpl.calls[2].url, /knowledge\/query\?q=hours%20service/);
   const artifactCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/artifacts') && options.method === 'POST');
   assert.equal(JSON.parse(artifactCall.options.body).stage, 'draft');
-  assert.deepEqual(JSON.parse(fetchImpl.calls[5].options.body), { mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
-  assert.deepEqual(JSON.parse(fetchImpl.calls[7].options.body), { taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
-  assert.deepEqual(JSON.parse(fetchImpl.calls[13].options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' });
+  const previewCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/workspace/previews') && options.method === 'POST');
+  assert.deepEqual(JSON.parse(previewCall.options.body), { mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
+  const taskCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/tasks') && options.method === 'POST');
+  assert.deepEqual(JSON.parse(taskCall.options.body), { taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
+  const preferencesCall = fetchImpl.calls.find(({ url }) => url.endsWith('/personal-preferences'));
+  assert.equal(preferencesCall.options.method, undefined);
+  const preferenceSave = fetchImpl.calls.find(({ url, options }) => url.endsWith('/personal-preferences') && options.method === 'PUT');
+  assert.deepEqual(JSON.parse(preferenceSave.options.body), { muted: true, volume: 40, verbosity: 'concise', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' });
+  const draftCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/configs') && options.method === 'POST');
+  assert.deepEqual(JSON.parse(draftCall.options.body).config, { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' });
+});
+
+test('personal preference model exposes own bounded settings without provider controls', () => {
+  const model = personalPreferencesModel({ bounds: { verbosity: ['concise', 'standard'], voiceProfiles: ['emma'] }, preferences: { preferences: { muted: true, volume: 20, verbosity: 'concise', voiceProfile: 'emma' } } });
+  assert.equal(model.preferences.muted, true);
+  assert.deepEqual(model.bounds.voiceProfiles, ['emma']);
+  for (const key of ['provider', 'model', 'organizationId', 'plantId']) assert.equal(Object.hasOwn(model.preferences, key), false);
 });
 
 test('workspace preview model keeps empty, replay, and not-performed states truthful', () => {
