@@ -22,6 +22,7 @@ import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-act
 import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 import { createCoraOrganizationConfigRepository } from '../cora/organization-config-repository.mjs';
+import { createProviderUsageRepository } from '../cora/provider-usage-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -45,6 +46,7 @@ export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
 export const LIVE_ADMIN_CORA_CONFIGS_PATH = '/api/admin/cora/configs';
 export const LIVE_ADMIN_CORA_TRANSITION_PATH = '/api/admin/cora/configs/transition';
 export const LIVE_ADMIN_CORA_KNOWLEDGE_PATH = '/api/admin/cora/knowledge-sources';
+export const LIVE_ADMIN_CORA_USAGE_PATH = '/api/admin/cora/usage';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -133,6 +135,7 @@ export async function createLiveHelmianCloudAdminHandler({
   script: suppliedScript = null,
   expectedMigrations: suppliedMigrations = null,
   coraConfigRepository: suppliedCoraConfigRepository = null,
+  providerUsageRepository: suppliedProviderUsageRepository = null,
   logger = () => {},
 } = {}) {
   const connectionString = String(env.HELMION_DATABASE_URL ?? '').trim();
@@ -147,6 +150,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
   const envoy = createEnvoyStore(pool);
   const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
+  const providerUsage = suppliedProviderUsageRepository ?? createProviderUsageRepository(pool);
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
   const prunePreviews = () => {
@@ -425,6 +429,11 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_PATH) {
       try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.listKnowledgeSources(actor) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_SELECTOR_INVALID' : 'CORA_KNOWLEDGE_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_USAGE_PATH) {
+      try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id') || requestUrl.searchParams.has('plant_id')) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const result = requestUrl.searchParams.has('limit') ? await providerUsage.list(actor, requestUrl.searchParams.get('limit')) : await providerUsage.readSummary(actor); send(response, 200, JSON.stringify({ valid: true, ...result })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_USAGE_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_USAGE_SELECTOR_INVALID' : 'CORA_USAGE_READ_FAILED' })); }
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIGS_PATH) {
