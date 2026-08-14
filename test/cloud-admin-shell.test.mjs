@@ -19,6 +19,9 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(script, /let coraPrepareIdempotencyKey = crypto\.randomUUID\(\)/u);
   assert.match(script, /idempotencyKey: coraPrepareIdempotencyKey/u);
   assert.match(page, /Organization scope/u);
+  assert.match(page, /reports unavailable until that prerequisite is present/iu);
+  assert.match(page, /Governance monitor · unavailable/iu);
+  assert.match(page, /does not claim production readiness/iu);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);
 });
 
@@ -27,7 +30,7 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /No audited status/u);
   assert.match(page, /no agent execution is implied/u);
   assert.match(page, /Preview · not executed/u);
-  assert.match(page, /external execution and browser automation are unavailable/u);
+  assert.match(page, /External execution and browser automation are unavailable/u);
   assert.match(page, /stored excerpts with citations only/u);
   assert.match(script, /Use citation in preparation/u);
   assert.match(script, /coraPreparationContextFromCitation/u);

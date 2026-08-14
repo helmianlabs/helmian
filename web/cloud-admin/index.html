@@ -94,7 +94,7 @@
         <button class="nav-item" type="button" data-target="section-people">People & permissions</button>
         <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
       </nav>
-      <p id="workspace-nav-hint" class="preview">Authenticated Organization workspace. Chat and preparation are connected; external execution and browser automation are unavailable.</p>
+      <p id="workspace-nav-hint" class="preview">Authenticated Organization workspace. Chat and preparation use authenticated server routes when their reviewed storage is configured; this runtime reports unavailable until that prerequisite is present. External execution and browser automation are unavailable.</p>
     </aside>
     <main id="workspace-main" class="workspace">
       <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Organization scope: loading…</div></div><div><button id="workspace-settings-open" class="secondary" type="button" hidden>Workspace settings</button><span id="workspace-state" class="preview" role="status">AUTHENTICATED WORKSPACE</span></div></div>
@@ -379,7 +379,7 @@
       <p class="preview">Read-only governance preview. Live findings will come from the Neon event ledger.</p>
       <div class="guard-card critical"><h3>Browser guard · not connected</h3><p>The hosted workspace has no browser-control authority in this slice.</p></div>
       <div class="guard-card warn"><h3>Builder activity · waiting</h3><p>No builder is selected. No model can write or deploy from this panel.</p></div>
-      <div class="guard-card"><h3>Governance · ready to wire</h3><p>Risk, approval and rollback cards will appear after the ledger and monitor service are implemented.</p></div>
+      <div class="guard-card warn"><h3>Governance monitor · unavailable</h3><p>No live monitor route is configured in this release. Risk, approval and rollback cards remain unavailable; this panel does not claim production readiness.</p></div>
       <div id="guard-events" aria-live="polite"></div>
       <div class="guard-actions"><button type="button" disabled>Check again</button><button type="button" disabled>Ack all</button><button type="button" disabled>Quarantine</button><button type="button" disabled>Tests</button></div>
     </aside>
