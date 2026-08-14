@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -83,6 +83,9 @@ const agentTaskCostCenter = document.querySelector('#agent-task-cost-center');
 const agentTaskSubmit = document.querySelector('#agent-task-submit');
 const agentTaskStatus = document.querySelector('#agent-task-status');
 const agentTaskReceipts = document.querySelector('#agent-task-receipts');
+const approvalInboxStatus = document.querySelector('#approval-inbox-status');
+const approvalInboxFilters = document.querySelector('#approval-inbox-filters');
+const approvalInboxItems = document.querySelector('#approval-inbox-items');
 const artifactStudioForm = document.querySelector('#artifact-studio-form');
 const artifactStudioType = document.querySelector('#artifact-studio-type');
 const artifactStudioStage = document.querySelector('#artifact-studio-stage');
@@ -532,6 +535,14 @@ async function loadAgentTasks({ replayed = false } = {}) {
   catch (error) { agentTaskReceipts.replaceChildren(); agentTaskStatus.textContent = error.status === 403 ? 'Task receipts unavailable: Organization membership is required.' : `Task receipts unavailable: ${error.message}`; }
 }
 
+function renderApprovalInbox(body) {
+  const model = approvalInboxPanelModel(body); approvalInboxItems.replaceChildren(); approvalInboxStatus.textContent = model.statusLabel;
+  if (model.empty) { approvalInboxItems.textContent = 'No pending approval requests or prepared task intents.'; return; }
+  for (const item of model.items) { const card = document.createElement('article'); card.className = 'config-item'; card.append(configItem('Request', `${item.requestKind} · ${item.status}`), configItem('Summary', item.summary || 'Summary unavailable'), configItem('Receipt', item.requestReceiptId), configItem('Decision', item.decision ? `${item.decision} · ${item.decisionReceiptId}` : 'No decision recorded'), configItem('Execution', 'Not performed')); if (item.approvalRequired && !item.decision && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) { for (const decision of ['approve', 'reject']) { const button = document.createElement('button'); button.type = 'button'; button.className = decision === 'reject' ? 'danger' : 'secondary'; button.textContent = decision === 'approve' ? 'Approve request' : 'Reject request'; button.onclick = async () => { button.disabled = true; approvalInboxStatus.textContent = `Recording ${decision} decision…`; try { await coraClient.decideApproval({ decision, requestKind: item.requestKind, requestReceiptId: item.requestReceiptId, reason: `${decision === 'approve' ? 'Approved' : 'Rejected'} in Organization approvals inbox`, idempotencyKey: crypto.randomUUID() }); approvalInboxStatus.textContent = `${decision === 'approve' ? 'Approved' : 'Rejected'} with a durable no-execution receipt.`; await loadApprovalInbox(); } catch (error) { approvalInboxStatus.textContent = `Decision not recorded: ${error.message}`; button.disabled = false; } }; card.append(button); } } approvalInboxItems.append(card); }
+}
+async function loadApprovalInbox() { approvalInboxStatus.textContent = 'Loading Organization approvals…'; try { renderApprovalInbox(await coraClient.readApprovals({ status: approvalInboxFilters.value || null })); } catch (error) { approvalInboxItems.replaceChildren(); approvalInboxStatus.textContent = error.status === 403 ? 'Approvals unavailable: active Organization membership is required.' : `Approvals unavailable: ${error.message}`; } }
+approvalInboxFilters.onchange = () => loadApprovalInbox().catch(() => {});
+
 function renderArtifactStudio(body) {
   const model = artifactStudioPanelModel(body);
   artifactStudioReceipts.replaceChildren();
@@ -627,6 +638,7 @@ async function load() {
   await loadCoraSettings();
   await loadWorkspacePreviews();
   await loadAgentTasks();
+  await loadApprovalInbox();
   await loadArtifactStudio();
   startEnvoyRealtime();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);

@@ -64,6 +64,8 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     },
     readArtifactExecutionRequests(artifactReceiptId) { return requestJson(fetchImpl, `/api/admin/cora/artifact-execution-requests?artifact_receipt_id=${encodeURIComponent(artifactReceiptId)}`); },
     createArtifactExecutionRequest(input) { return requestJson(fetchImpl, '/api/admin/cora/artifact-execution-requests', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalRef: null, estimatedAudioSeconds: null, estimatedImageUnits: null, estimatedRequestedTokens: null, estimatedVideoUnits: null, supersedesReceiptId: null, ...input }) }); },
+    readApprovals(filters = {}) { const params = new URLSearchParams(); if (filters.status) params.set('status', filters.status); if (filters.requestKind) params.set('request_kind', filters.requestKind); return requestJson(fetchImpl, `/api/admin/cora/approvals${params.toString() ? `?${params}` : ''}`); },
+    decideApproval(input) { return requestJson(fetchImpl, '/api/admin/cora/approvals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     createDraft({ reason, config = null, routingPolicy = null, approvedModelCatalog = [] }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -127,6 +129,11 @@ export function artifactScriptPanelModel(body = {}) {
 export function artifactExecutionPanelModel(body = {}) {
   const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
   return Object.freeze({ empty: receipts.length === 0, receipts, execution: 'not_executed', providerInvocation: 'not_performed', media: 'not_generated', statusLabel: receipts.length ? `${receipts.length} execution request receipt(s).` : 'No execution request receipts recorded.' });
+}
+
+export function approvalInboxPanelModel(body = {}) {
+  const items = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
+  return Object.freeze({ empty: items.length === 0, items, statusLabel: items.length ? `${items.length} Organization request(s).` : 'No approval requests or prepared task intents are waiting.' });
 }
 
 export function knowledgeQueryModel(body = {}) {

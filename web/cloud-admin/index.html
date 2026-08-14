@@ -203,6 +203,13 @@
           <div id="agent-task-receipts" class="config-grid"></div>
           <p class="preview">Draft and prepare are durable intents only. No agent, model, provider, filesystem, build, or external task execution occurred.</p>
         </section>
+        <section id="section-approvals" class="card" aria-labelledby="approval-inbox-heading">
+          <h2 id="approval-inbox-heading">Organization approvals inbox</h2>
+          <p id="approval-inbox-status" class="note" role="status" aria-live="polite">Loading Organization approvals…</p>
+          <label>Filter <select id="approval-inbox-filters"><option value="">All prepared and approval states</option><option value="approval_required">Approval required</option><option value="prepared">Prepared task intents</option><option value="approved_not_executed">Approved, not executed</option><option value="rejected_not_executed">Rejected, not executed</option></select></label>
+          <div id="approval-inbox-items" class="config-grid"></div>
+          <p class="preview">Approvals are Organization-scoped decisions over existing receipts. Approving or rejecting records a reason and receipt only; no worker, provider, filesystem, media, billing, or external action runs.</p>
+        </section>
         <section id="section-artifact" class="card" aria-labelledby="artifact-studio-heading">
           <h2 id="artifact-studio-heading">Artifact Studio</h2>
           <p id="artifact-studio-status" class="note" role="status" aria-live="polite">Loading Artifact Studio receipts…</p>
