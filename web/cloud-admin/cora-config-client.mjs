@@ -108,7 +108,8 @@ export function workspacePreviewPanelModel(body = {}) {
 export function agentTaskPanelModel(body = {}) {
   const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
   const claimsUnavailable = receipts.some((receipt) => !['claimed', 'unclaimed'].includes(receipt.claimStatus));
-  return Object.freeze({ empty: receipts.length === 0, receipts, claimsUnavailable, execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', statusLabel: body.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : claimsUnavailable ? 'Task intents loaded. Claim state is unavailable until the claims schema is present; no worker execution occurred.' : 'Task intents loaded. Worker claim state is shown; no execution occurred.' });
+  const completionUnavailable = receipts.some((receipt) => !receipt.completion || receipt.completion.completionStatus === 'unavailable');
+  return Object.freeze({ empty: receipts.length === 0, receipts, claimsUnavailable, completionUnavailable, execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', statusLabel: body.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : completionUnavailable ? 'Task intents loaded. Worker completion evidence is unavailable; tasks remain not executed.' : claimsUnavailable ? 'Task intents loaded. Claim state is unavailable until the claims schema is present; no worker execution occurred.' : 'Task intents loaded. Worker claim and completion state is shown; no execution occurred.' });
 }
 
 export function coraPreparationPanelModel(body = {}) {

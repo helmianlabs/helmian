@@ -758,7 +758,8 @@ function renderAgentTasks(body) {
   for (const receipt of model.receipts) {
     const card = document.createElement('article'); card.className = 'config-item';
     const taskState = receipt.claimStatus === 'claimed' ? 'claimed' : receipt.claimStatus === 'unavailable' ? `${receipt.status} · claim unavailable` : receipt.status;
-    card.append(configItem('Task', `${receipt.taskType} · ${taskState}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Execution', 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
+    const completionState = receipt.completion?.completionStatus ?? 'unavailable';
+    card.append(configItem('Task', `${receipt.taskType} · ${taskState}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Completion', completionState === 'not_executed' ? 'Not executed · no worker evidence' : completionState === 'unavailable' ? 'Unavailable · completion schema not present' : completionState), configItem('Execution', 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
     agentTaskReceipts.append(card);
   }
 }

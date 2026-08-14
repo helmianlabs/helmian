@@ -19,6 +19,7 @@ export const REQUIRED_MIGRATIONS = Object.freeze([
   '025_cora_approval_decisions.sql',
   '026_cora_connector_registrations.sql',
   '027_cora_browser_check_task_type.sql',
+  '028_cora_agent_task_completion_receipts.sql',
 ]);
 export const EXACT_CANARY_SEQUENCE = Object.freeze([
   'verify-release-manifest',

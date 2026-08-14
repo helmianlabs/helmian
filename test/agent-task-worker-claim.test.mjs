@@ -29,6 +29,10 @@ function listPool({ claimsTable = true } = {}) {
     if (['begin', 'commit', 'rollback'].includes(q) || q.startsWith('select set_config')) return { rowCount: 0, rows: [] };
     if (q.includes('from helmion.tenant_memberships')) return { rowCount: 1, rows: [{ role: 'member' }] };
     if (q.includes('from helmion.cora_agent_task_intents')) return { rowCount: 1, rows: [{ id: 7, task_type: 'workspace_preview', goal: 'Prepare SOP', context_ref: null, department: null, cost_center: null, intent: 'prepare', status: 'prepared', receipt_id: 'task-receipt-7', idempotency_key: 'task-0007', created_at: '2026-08-14T00:00:00.000Z' }] };
+    if (q.includes('from helmion.cora_agent_task_completion_receipts')) {
+      if (!claimsTable) throw Object.assign(new Error('relation does not exist'), { code: '42P01' });
+      return { rowCount: 0, rows: [] };
+    }
     if (q.includes('from helmion.cora_agent_task_claims')) {
       if (!claimsTable) throw Object.assign(new Error('relation does not exist'), { code: '42P01' });
       return { rowCount: 1, rows: [{ claim_status: 'claimed' }] };
@@ -64,6 +68,7 @@ test('member task read projects claimed state and isolates the Organization sour
   assert.equal(result.claimStatusSource, 'cora_agent_task_claims');
   assert.equal(result.receipts[0].claimStatus, 'claimed');
   assert.equal(result.receipts[0].execution, 'not_performed');
+  assert.equal(result.receipts[0].completion.completionStatus, 'not_executed');
 });
 
 test('member task read is truthful when the additive claims schema is unavailable', async () => {
@@ -72,4 +77,5 @@ test('member task read is truthful when the additive claims schema is unavailabl
   assert.equal(result.claimStatusSource, 'unavailable');
   assert.equal(result.receipts[0].claimStatus, 'unavailable');
   assert.equal(result.receipts[0].execution, 'not_performed');
+  assert.equal(result.receipts[0].completion.completionStatus, 'unavailable');
 });

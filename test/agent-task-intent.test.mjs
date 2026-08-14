@@ -13,6 +13,7 @@ function fakePool() {
     if (['begin', 'commit', 'rollback'].includes(q) || q.startsWith('select set_config')) return { rowCount: 0, rows: [] };
     if (q.includes('from helmion.tenant_memberships')) return values[0] === 'org-a' ? { rowCount: 1, rows: [{ role: 'member' }] } : { rowCount: 0, rows: [] };
     if (q.includes('from helmion.cora_agent_task_claims')) return { rowCount: 0, rows: [] };
+    if (q.includes('from helmion.cora_agent_task_completion_receipts')) return { rowCount: 0, rows: [] };
     if (q.startsWith('insert into helmion.cora_agent_task_intents')) {
       if (rows.some((row) => row.idempotency_key === values[10] && row.tenant_id === values[0])) return { rowCount: 0, rows: [] };
       const row = { id: rows.length + 1, tenant_id: values[0], task_type: values[2], goal: values[3], context_ref: values[4], department: values[5], cost_center: values[6], intent: values[7], status: values[7] === 'prepare' ? 'prepared' : 'draft', receipt_id: values[9], idempotency_key: values[10], created_at: 'now' }; rows.push(row); return { rowCount: 1, rows: [row] };
