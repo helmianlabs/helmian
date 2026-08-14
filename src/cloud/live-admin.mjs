@@ -70,6 +70,7 @@ export const LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH = '/api/admin/cora/person
 export const LIVE_ADMIN_ORGANIZATION_DATABASE_PATH = '/api/admin/control-plane/organization-database';
 export const LIVE_ADMIN_WORKSPACE_LAYOUT_PATH = '/api/admin/workspace/layout-preferences';
 export const LIVE_ADMIN_WORKSPACE_LAYOUT_RESET_PATH = '/api/admin/workspace/layout-preferences/reset';
+export const LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH = '/api/admin/workspace/role-defaults';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -679,6 +680,16 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_RESET_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, []); send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.reset(actor) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_LAYOUT_MEMBERSHIP_REQUIRED' : 'WORKSPACE_LAYOUT_RESET_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); const scoped = { ...actor, ...actorContext(actor) }; send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.readRoleDefaults(scoped) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_ROLE_DEFAULTS_ADMIN_REQUIRED' : error?.status === 400 ? 'WORKSPACE_ROLE_DEFAULTS_SELECTOR_INVALID' : 'WORKSPACE_ROLE_DEFAULTS_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['defaultEnvoyChannelId', 'density', 'panelOrder', 'role', 'visibleShelves']); const { role, ...layoutInput } = body; const scoped = { ...actor, ...actorContext(actor) }; send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.saveRoleDefault(scoped, role, layoutInput) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_ROLE_DEFAULTS_ADMIN_REQUIRED' : 'WORKSPACE_ROLE_DEFAULTS_INVALID' })); }
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIGS_PATH) {

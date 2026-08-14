@@ -21,6 +21,8 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     readWorkspaceLayout() { return requestJson(fetchImpl, '/api/admin/workspace/layout-preferences'); },
     saveWorkspaceLayout(layout) { return requestJson(fetchImpl, '/api/admin/workspace/layout-preferences', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(layout) }); },
     resetWorkspaceLayout() { return requestJson(fetchImpl, '/api/admin/workspace/layout-preferences/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); },
+    readWorkspaceRoleDefaults() { return requestJson(fetchImpl, '/api/admin/workspace/role-defaults'); },
+    saveWorkspaceRoleDefault(layout) { return requestJson(fetchImpl, '/api/admin/workspace/role-defaults', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(layout) }); },
     readWorkspacePreviews() { return requestJson(fetchImpl, '/api/admin/cora/workspace/previews'); },
     createWorkspacePreview({ mode, intent, department, templateId, title, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/workspace/previews', {

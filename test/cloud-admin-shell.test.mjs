@@ -35,6 +35,12 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(script, /readWorkspaceLayout/u);
   assert.match(script, /saveWorkspaceLayout/u);
   assert.match(script, /resetWorkspaceLayout/u);
+  assert.match(page, /Organization role defaults/iu);
+  assert.match(page, /Save role default/iu);
+  assert.match(script, /readWorkspaceRoleDefaults/u);
+  assert.match(script, /saveWorkspaceRoleDefault/u);
+  assert.match(script, /applyWorkspaceLayout/u);
+  assert.match(script, /data-target=.{0,20}section-\$\{shelf\}/u);
   assert.match(page, /Routing policy is Organization-published metadata only/iu);
   assert.match(script, /routingPolicy/u);
   assert.match(script, /No generation occurred/u);
