@@ -73,4 +73,8 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(script, /readCoraSessions/u);
   assert.match(page, /No provider evidence recorded|Unknown usage/u);
   assert.match(page, /No session close or mutation is available/iu);
+  assert.match(page, /Hume session preflight/iu);
+  assert.match(page, /does not mean Hume is connected or accepted/iu);
+  assert.match(script, /readCoraHumePreflight/u);
+  assert.match(liveAdmin, /LIVE_ADMIN_CORA_HUME_PREFLIGHT_PATH/u);
 });

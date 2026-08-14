@@ -73,6 +73,7 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     readOrganizationReadiness() { return requestJson(fetchImpl, '/api/admin/organization/readiness'); },
     readCoraCapabilities() { return requestJson(fetchImpl, '/api/admin/cora/capabilities'); },
     readCoraSessions(limit = 50) { return requestJson(fetchImpl, `/api/admin/cora/sessions?limit=${encodeURIComponent(limit)}`); },
+    readCoraHumePreflight() { return requestJson(fetchImpl, '/api/admin/cora/hume-preflight'); },
     createDraft({ reason, config = null, routingPolicy = null, approvedModelCatalog = [] }) {
       return requestJson(fetchImpl, '/api/admin/cora/configs', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -180,6 +181,17 @@ export function coraSessionHistoryModel(body = {}) {
     statusLabel: body.empty === true || sessions.length === 0 ? 'No signed Cora session receipts are recorded for this Organization.' : `${sessions.length} signed Cora session receipt(s) loaded.`,
     providerEvidence: sessions.some((session) => session.providerEvidence === true) ? 'Some records include verified provider evidence.' : 'No provider evidence recorded; usage and cost remain unknown.',
     mutation: body.mutation === 'not_performed' ? body.mutation : 'not_performed',
+  });
+}
+
+export function coraHumePreflightModel(body = {}) {
+  const admin = body.visibility === 'admin_detail' && body.preflight && typeof body.preflight === 'object';
+  return Object.freeze({
+    admin,
+    status: admin ? body.preflight.state === 'ready' ? 'ready' : 'unavailable' : body.status === 'published_config_available' ? 'published_config_available' : 'unavailable',
+    detail: admin ? body.preflight : null,
+    providerInvocation: admin ? body.preflight.providerInvocation : body.providerInvocation ?? 'not_performed',
+    humeMutation: admin ? body.preflight.humeMutation : body.humeMutation ?? 'not_performed',
   });
 }
 

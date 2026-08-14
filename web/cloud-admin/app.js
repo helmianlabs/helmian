@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -78,6 +78,8 @@ const coraPreferencesDialog = document.querySelector('#cora-preferences-dialog')
 const coraPreferencesClose = document.querySelector('#cora-preferences-close');
 const coraAdminControls = document.querySelector('#cora-admin-controls');
 const coraConfigHistory = document.querySelector('#cora-config-history');
+const coraHumePreflightStatus = document.querySelector('#cora-hume-preflight-status');
+const coraHumePreflightDetails = document.querySelector('#cora-hume-preflight-details');
 const coraMaxSpokenChars = document.querySelector('#cora-max-spoken-chars');
 const coraVoiceProfiles = document.querySelector('#cora-voice-profiles');
 const coraKnowledgePacks = document.querySelector('#cora-knowledge-packs');
@@ -348,6 +350,30 @@ async function loadCoraCapabilities() {
   capabilitiesStatus.textContent = 'Loading registered Cora capabilities…';
   try { renderCoraCapabilities(await coraClient.readCoraCapabilities()); }
   catch (error) { capabilitiesNormal.replaceChildren(); capabilitiesRegistered.replaceChildren(); capabilitiesHighRisk.replaceChildren(); capabilitiesRouting.replaceChildren(); capabilitiesStatus.textContent = error.status === 403 ? 'Cora capabilities unavailable: active Organization membership is required.' : `Cora capabilities unavailable: ${error.message}`; }
+}
+
+function renderCoraHumePreflight(body) {
+  const model = coraHumePreflightModel(body);
+  coraHumePreflightDetails.replaceChildren();
+  if (!model.admin) {
+    coraHumePreflightStatus.textContent = model.status === 'published_config_available' ? 'Published Cora configuration is available for this Organization.' : 'Cora Hume preflight is unavailable.';
+    return;
+  }
+  const detail = model.detail;
+  coraHumePreflightStatus.textContent = model.status === 'ready' ? 'Server preflight is ready for a future canary; Hume connection and acceptance are not verified.' : 'Server preflight is unavailable; Hume connection and acceptance are not verified.';
+  const values = [
+    ['State', model.status], ['Config', `${detail.organizationConfig?.id ?? 'unavailable'} · version ${detail.organizationConfig?.version ?? 'unknown'}`],
+    ['Voice reference', detail.voiceProfile ?? 'unavailable'], ['Professional behavior', detail.turn?.style ?? 'unavailable'],
+    ['Turn', detail.turn ? `${detail.turn.turnMode} · ${detail.turn.maxSpokenChars} spoken characters` : 'unavailable'], ['Interruption', detail.turn?.interruptMode ?? 'unavailable'],
+    ['Config hash', detail.hashes?.config ?? 'unavailable'], ['Tool manifest hash', detail.hashes?.toolManifest ?? 'unavailable'], ['Routing hash', detail.hashes?.routingPolicy ?? 'unavailable'],
+    ['Server readiness', detail.hume?.credentialReady === true ? 'ready' : 'unavailable'], ['Acceptance', detail.hume?.acceptance ?? 'not_verified'],
+  ];
+  for (const [label, value] of values) coraHumePreflightDetails.append(configItem(label, value));
+}
+async function loadCoraHumePreflight() {
+  coraHumePreflightStatus.textContent = 'Loading verified Organization preflight…';
+  try { renderCoraHumePreflight(await coraClient.readCoraHumePreflight()); }
+  catch (error) { coraHumePreflightDetails.replaceChildren(); coraHumePreflightStatus.textContent = error.status === 403 ? 'Cora Hume preflight unavailable: active Organization membership is required.' : 'Cora Hume preflight unavailable.'; }
 }
 
 function renderCoraSessions(body) {
@@ -818,6 +844,7 @@ async function load() {
   await loadOrganizationPeople();
   await loadOrganizationReadiness();
   await loadCoraCapabilities();
+  await loadCoraHumePreflight();
   await loadCoraSessions();
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;

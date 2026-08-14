@@ -40,6 +40,7 @@ import { createAuditEventRepository, normalizeAuditExportQuery } from './audit-e
 import { createOrganizationRoleRepository } from './organization-role-repository.mjs';
 import { readOrganizationReadiness } from './organization-readiness.mjs';
 import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
+import { buildCoraHumeSessionPreflight } from '../cora/hume-session-descriptor.mjs';
 import { resolvePublishedCoraSessionConfig } from '../cora/session-config-resolver.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -95,6 +96,7 @@ export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/m
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
 export const LIVE_ADMIN_CORA_SESSIONS_PATH = '/api/admin/cora/sessions';
+export const LIVE_ADMIN_CORA_HUME_PREFLIGHT_PATH = '/api/admin/cora/hume-preflight';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -226,6 +228,8 @@ export async function createLiveHelmianCloudAdminHandler({
   organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
   workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
   auditEventRepository: suppliedAuditEventRepository = null,
+  coraHumeSessionPreflight: suppliedCoraHumeSessionPreflight = null,
+  humeServerCredentialReady = false,
     organizationRoleRepository: suppliedOrganizationRoleRepository = null,
   envoyStore: suppliedEnvoyStore = null,
   envoyStreamIntervalMs = 1000,
@@ -258,6 +262,12 @@ export async function createLiveHelmianCloudAdminHandler({
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
   const auditEvents = suppliedAuditEventRepository ?? createAuditEventRepository(pool);
   const organizationRoles = suppliedOrganizationRoleRepository ?? createOrganizationRoleRepository(pool);
+  const coraHumeSessionPreflight = suppliedCoraHumeSessionPreflight ?? ((actor) => buildCoraHumeSessionPreflight({
+    repository: coraConfig,
+    signedContext: { verified: true, tenantId: actor.tenantId, subjectId: actor.subject, role: actor.role, sessionId: actor.sessionId, receiptId: actor.requestId },
+    humeConfigId: env.HELMION_HUME_CONFIG_ID ?? null,
+    serverCredentialReady: humeServerCredentialReady === true,
+  }));
   const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
@@ -835,6 +845,19 @@ export async function createLiveHelmianCloudAdminHandler({
         const actor = await activeTenantActor(request);
         send(response, 200, JSON.stringify({ valid: true, ...await auditEvents.listSessionHistory(actor, { limit: requestUrl.searchParams.get('limit') }) }));
       } catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_SESSION_HISTORY_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_SESSION_HISTORY_SELECTOR_INVALID' : 'CORA_SESSION_HISTORY_UNAVAILABLE' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_HUME_PREFLIGHT_PATH) {
+      try {
+        if ([...requestUrl.searchParams.keys()].length) throw Object.assign(new Error('Hume preflight selectors are not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        const preflight = await coraHumeSessionPreflight(actor);
+        const admin = ['owner', 'admin'].includes(String(actor.role).toLowerCase());
+        const body = admin
+          ? { valid: true, visibility: 'admin_detail', preflight: { state: preflight.state, organizationConfig: preflight.organizationConfig, hume: preflight.hume, voiceProfile: preflight.voiceProfile, prompt: preflight.prompt, turn: preflight.turn, hashes: preflight.hashes, providerInvocation: preflight.providerInvocation, humeMutation: preflight.humeMutation } }
+          : { valid: true, visibility: 'published_status', status: preflight.state === 'ready' ? 'published_config_available' : 'unavailable', providerInvocation: 'not_performed', humeMutation: 'not_performed' };
+        send(response, 200, JSON.stringify(body));
+      } catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_HUME_PREFLIGHT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_HUME_PREFLIGHT_SELECTOR_INVALID' : 'CORA_HUME_PREFLIGHT_UNAVAILABLE' })); }
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH) {

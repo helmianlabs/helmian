@@ -26,6 +26,7 @@ import {
   LIVE_ADMIN_ORGANIZATION_READINESS_PATH,
   LIVE_ADMIN_CORA_CAPABILITIES_PATH,
   LIVE_ADMIN_CORA_SESSIONS_PATH,
+  LIVE_ADMIN_CORA_HUME_PREFLIGHT_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -155,6 +156,8 @@ async function fixture(options = {}) {
     coraConfigRepository: options.coraConfigRepository ?? undefined,
     providerUsageRepository: options.providerUsageRepository ?? undefined,
     workspaceLayoutRepository: options.workspaceLayoutRepository ?? undefined,
+    coraHumeSessionPreflight: options.coraHumeSessionPreflight ?? undefined,
+    humeServerCredentialReady: options.humeServerCredentialReady ?? false,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -268,6 +271,17 @@ test('signed Cora session history is Organization-scoped, bounded, and read-only
   const response = await fetch(`${app.url}${LIVE_ADMIN_CORA_SESSIONS_PATH}?limit=25`, { headers: { cookie: 'helmion_admin_session=active-session' } });
   const body = await response.json(); assert.equal(response.status, 200); assert.equal(body.sessions[0].providerEvidence, false); assert.equal(body.sessions[0].actualCostMinor, null); assert.equal(calls[0].actor.tenantId, 'customer-a'); assert.equal(calls[0].query.limit, '25');
   const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_SESSIONS_PATH}?plant_id=west`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400); assert.equal(calls.length, 1);
+});
+
+test('Cora Hume preflight is membership-scoped, role-limited, truthful, and selector-free', async (t) => {
+  const preflight = async (actor) => ({ state: 'ready', organizationConfig: { id: 'config-4', version: 4 }, hume: { configId: 'hume-config-server', credentialReady: true, acceptance: 'not_verified' }, voiceProfile: 'cora-professional', prompt: 'bounded prompt', turn: { style: 'professional_brief', maxSpokenChars: 900, interruptMode: 'barge_in', turnMode: 'concise' }, hashes: { config: 'a'.repeat(64), toolManifest: 'b'.repeat(64), routingPolicy: 'c'.repeat(64) }, providerInvocation: 'not_performed', humeMutation: 'not_performed', actorTenant: actor.tenantId });
+  const memberApp = await fixture({ membershipRoles: { 'customer-a': 'member' }, coraHumeSessionPreflight: preflight }); t.after(memberApp.close);
+  const member = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_HUME_PREFLIGHT_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const memberBody = await member.json();
+  assert.equal(member.status, 200); assert.equal(memberBody.visibility, 'published_status'); assert.equal(memberBody.status, 'published_config_available'); assert.equal(memberBody.preflight, undefined); assert.equal(memberBody.providerInvocation, 'not_performed');
+  const adminApp = await fixture({ coraHumeSessionPreflight: preflight }); t.after(adminApp.close);
+  const admin = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_HUME_PREFLIGHT_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const adminBody = await admin.json();
+  assert.equal(admin.status, 200); assert.equal(adminBody.visibility, 'admin_detail'); assert.equal(adminBody.preflight.organizationConfig.version, 4); assert.equal(adminBody.preflight.hume.acceptance, 'not_verified'); assert.equal(adminBody.preflight.hashes.config, 'a'.repeat(64)); assert.equal(adminBody.preflight.hume.credentialReady, true); assert.equal(adminBody.preflight.actorTenant, undefined);
+  const injected = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_HUME_PREFLIGHT_PATH}?plant_id=west`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
 });
 
 test('Artifact Studio routes are Organization-scoped and expose only source-only receipts', async (t) => {
