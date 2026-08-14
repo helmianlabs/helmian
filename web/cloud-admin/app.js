@@ -193,7 +193,7 @@ async function pollEnvoyMessages() {
     }
     envoyCursor = body.nextCursor ?? envoyCursor;
     renderMessageList();
-    composerStatus.textContent = body.messages?.length ? 'New messages loaded.' : 'Envoy connected; no new messages.';
+    if (!envoyStream) composerStatus.textContent = body.messages?.length ? 'New messages loaded.' : 'Envoy connected; no new messages.';
   } catch (error) {
     if (error.status === 401 || error.status === 403) {
       envoyStream?.close(); envoyStream = null;
@@ -221,6 +221,20 @@ function startEnvoyRealtime() {
     envoyStream = envoy.openMessageStream(envoyChannel.value, {
       afterId: envoyCursor,
       onOpen: () => { composerStatus.textContent = 'Envoy realtime connected; polling fallback ready.'; },
+      onStatus: (status, detail) => {
+        if (status === 'connected') {
+          if (envoyTimer) window.clearInterval(envoyTimer);
+          envoyTimer = null;
+          composerStatus.textContent = 'Envoy realtime connected.';
+        } else if (status === 'stale') {
+          composerStatus.textContent = 'Envoy realtime is stale; reconnecting…';
+        } else if (status === 'reconnecting') {
+          startEnvoyPolling();
+          composerStatus.textContent = `Envoy reconnecting (attempt ${detail.attempt}); cursor polling fallback active.`;
+        } else if (status === 'revoked') {
+          composerStatus.textContent = 'Envoy membership was revoked. Sign in again.';
+        }
+      },
       onMessage: (message) => {
         if (!envoyMessages.some((item) => item.id === message.id)) envoyMessages.push(message);
         envoyCursor = message.id;
