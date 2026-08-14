@@ -131,6 +131,12 @@ export function createEnvoyStore(pool) {
         return { receipt: Object.freeze({ format: 'helmion.envoy-message-receipt.v1', durable: true, replayed: result.rowCount !== 1, message: rowMessage(row) }) };
       });
     },
+    async appendConnectorMessage(binding) {
+      const actor = { tenantId: binding.tenantId, subject: binding.subject, role: binding.role, sessionId: binding.sessionId, requestId: binding.requestId };
+      const message = normalizeEnvoyMessage({ channelId: binding.channelId, authorSubject: binding.subject, authorKind: 'human', body: binding.text });
+      const context = contextFor(actor); const idempotencyKey = text(`${binding.provider}:${binding.eventId}`, 'connector idempotency key', 300);
+      return withTenantTransaction(pool, context, async (client) => { await requireActiveTenantMembership(client, context); const channel = await client.query('select id from helmion.envoy_channels where tenant_id=$1 and id=$2', [context.tenantId, message.channelId]); if (channel.rowCount !== 1) throw new Error('Envoy channel was not found in this Organization'); const result = await client.query(`insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key) values ($1,$2,$3,$4,$5,$6) on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing returning id, channel_id, author_subject, author_kind, body, idempotency_key, created_at`, [context.tenantId, message.channelId, message.authorSubject, message.authorKind, message.body, idempotencyKey]); const row = result.rowCount === 1 ? result.rows[0] : (await client.query(`select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject=$3 and idempotency_key=$4`, [context.tenantId, message.channelId, message.authorSubject, idempotencyKey])).rows[0]; if (!row) throw new Error('Envoy connector message receipt was not durable'); return { durable: true, replayed: result.rowCount !== 1, message: rowMessage(row) }; });
+    },
   });
 }
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';

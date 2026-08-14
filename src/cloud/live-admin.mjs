@@ -33,7 +33,8 @@ import { createArtifactExecutionRepository } from '../cora/artifact-execution-re
 import { createApprovalInboxRepository } from '../cora/approval-inbox.mjs';
 import { createCoraPersonalPreferencesRepository } from '../cora/personal-preferences-repository.mjs';
 import { createConnectorRegistrationRepository } from '../cora/connector-registration-repository.mjs';
-import { readCommunicationConnectorStatus } from './communication-connectors.mjs';
+import { CONNECTOR_MAX_BODY_BYTES, readCommunicationConnectorStatus, verifyDiscordInteraction, verifySlackRequest } from './communication-connectors.mjs';
+import { receiveInboundConnectorEvent } from './connector-gateway.mjs';
 import { createWorkspaceLayoutRepository } from './workspace-layout-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -76,6 +77,8 @@ export const LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH = '/api/admin/cora/artifact-s
 export const LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH = '/api/admin/cora/artifact-execution-requests';
 export const LIVE_ADMIN_CORA_APPROVALS_PATH = '/api/admin/cora/approvals';
 export const LIVE_ADMIN_CORA_CONNECTORS_PATH = '/api/admin/cora/connectors';
+export const LIVE_CONNECTOR_SLACK_INBOUND_PATH = '/api/connectors/slack/inbound';
+export const LIVE_CONNECTOR_DISCORD_INBOUND_PATH = '/api/connectors/discord/inbound';
 export const LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH = '/api/admin/cora/personal-preferences';
 export const LIVE_ADMIN_ORGANIZATION_DATABASE_PATH = '/api/admin/control-plane/organization-database';
 export const LIVE_ADMIN_WORKSPACE_LAYOUT_PATH = '/api/admin/workspace/layout-preferences';
@@ -171,6 +174,14 @@ async function readJsonObject(request) {
   return value;
 }
 
+async function readRawBody(request, maxBytes = CONNECTOR_MAX_BODY_BYTES) {
+  const declared = Number(request.headers['content-length']);
+  if (Number.isFinite(declared) && declared > maxBytes) throw Object.assign(new Error('connector body is too large'), { status: 413 });
+  const chunks = []; let total = 0;
+  for await (const chunk of request) { total += chunk.length; if (total > maxBytes) throw Object.assign(new Error('connector body is too large'), { status: 413 }); chunks.push(chunk); }
+  return Buffer.concat(chunks, total).toString('utf8');
+}
+
 function exactKeys(value, keys) {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
@@ -197,9 +208,13 @@ export async function createLiveHelmianCloudAdminHandler({
   artifactExecutionRepository: suppliedArtifactExecutionRepository = null,
   approvalInboxRepository: suppliedApprovalInboxRepository = null,
   connectorRegistrationRepository: suppliedConnectorRegistrationRepository = null,
+  connectorSecretResolver = null,
+  connectorResolveUser = null,
+  connectorResolveChannel = null,
   personalPreferencesRepository: suppliedPersonalPreferencesRepository = null,
   organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
   workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
+  envoyStore: suppliedEnvoyStore = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
   logger = () => {},
@@ -214,7 +229,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const expectedMigrations = suppliedMigrations ?? await listExpectedMigrationManifest();
   const ownsPool = !suppliedPool;
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
-  const envoy = createEnvoyStore(pool);
+  const envoy = suppliedEnvoyStore ?? createEnvoyStore(pool);
   const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
   const providerUsage = suppliedProviderUsageRepository ?? createProviderUsageRepository(pool);
   const workspacePreviews = suppliedWorkspacePreviewRepository ?? createWorkspacePreviewRepository(pool);
@@ -228,6 +243,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
   const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
+  const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
   const streamIntervalMs = Math.max(250, Number(envoyStreamIntervalMs));
@@ -468,6 +484,31 @@ export async function createLiveHelmianCloudAdminHandler({
   }
 
   async function handler(request, response, requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)) {
+    const inboundProvider = requestUrl.pathname === LIVE_CONNECTOR_SLACK_INBOUND_PATH ? 'slack' : requestUrl.pathname === LIVE_CONNECTOR_DISCORD_INBOUND_PATH ? 'discord' : null;
+    if (inboundProvider) {
+      if (request.method !== 'POST') { send(response, 405, JSON.stringify({ valid: false, code: 'CONNECTOR_METHOD_NOT_ALLOWED' }), 'application/json; charset=utf-8', { allow: 'POST' }); return true; }
+      try {
+        if (typeof connectorRegistrations.resolveEnabled !== 'function' || typeof resolveConnectorSecret !== 'function' || typeof connectorResolveUser !== 'function' || typeof connectorResolveChannel !== 'function') throw Object.assign(new Error('connector inbound runtime is not configured'), { status: 503 });
+        const resolved = await connectorRegistrations.resolveEnabled(inboundProvider);
+        if (resolved.registration.lifecycle !== 'enabled' || resolved.registration.enabled !== true || resolved.registration.publicEndpointReady !== true) throw Object.assign(new Error('connector registration is not ready'), { status: 503 });
+        const reference = resolved.registration.secretReferenceName;
+        if (!reference) throw Object.assign(new Error('connector signing reference is unavailable'), { status: 503 });
+        const credential = await resolveConnectorSecret({ provider: inboundProvider, secretReferenceName: reference });
+        if (!credential) throw Object.assign(new Error('connector signing credential is unavailable'), { status: 503 });
+        const rawBody = await readRawBody(request);
+        const timestamp = inboundProvider === 'slack' ? request.headers['x-slack-request-timestamp'] : request.headers['x-signature-timestamp'];
+        const signature = inboundProvider === 'slack' ? request.headers['x-slack-signature'] : request.headers['x-signature-ed25519'];
+        if (inboundProvider === 'slack') verifySlackRequest({ rawBody, timestamp, signature, signingSecret: credential });
+        else verifyDiscordInteraction({ rawBody, timestamp, signature, publicKey: credential });
+        let payload; try { payload = JSON.parse(rawBody); } catch { throw Object.assign(new Error('connector payload is not valid JSON'), { status: 400 }); }
+        const channelId = String(payload?.channelId ?? payload?.channel_id ?? '').trim();
+        if (!channelId || !resolved.registration.allowedInboundChannels.some((channel) => channel.enabled && channel.externalChannelId === channelId)) throw Object.assign(new Error('connector channel is not registered for inbound delivery'), { status: 403 });
+        const sessionId = `connector-${inboundProvider}-${String(payload?.eventId ?? payload?.event_id ?? payload?.id ?? '').slice(0, 160)}`;
+        const result = await receiveInboundConnectorEvent({ provider: inboundProvider, rawBody, payload, headers: { timestamp, signature }, signingSecret: inboundProvider === 'slack' ? credential : undefined, publicKey: inboundProvider === 'discord' ? credential : undefined, resolveUser: connectorResolveUser, resolveChannel: connectorResolveChannel, persistReceipt: async (binding) => { if (binding.tenantId !== resolved.tenantId) throw new Error('connector registration Organization mismatch'); return envoy.appendConnectorMessage({ ...binding, sessionId, requestId: sessionId }); } });
+        send(response, 200, JSON.stringify({ valid: true, ...result }));
+      } catch (error) { const status = error?.status === 503 ? 503 : error?.status === 413 ? 413 : error?.status === 403 ? 403 : error?.status === 409 ? 409 : 400; send(response, status, JSON.stringify({ valid: false, code: status === 503 ? 'CONNECTOR_RUNTIME_UNAVAILABLE' : status === 403 ? 'CONNECTOR_NOT_REGISTERED' : status === 409 ? 'CONNECTOR_REGISTRATION_AMBIGUOUS' : 'CONNECTOR_INBOUND_INVALID' })); }
+      return true;
+    }
     if (requestUrl.pathname.startsWith('/api/admin/') && !originAllowed(request, env)) {
       send(response, 403, JSON.stringify({ valid: false, code: 'ADMIN_ORIGIN_REQUIRED' }));
       return true;

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createHmac, generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
 import { startCoraClm } from '../src/cora/clm-server.mjs';
 import {
@@ -15,6 +16,8 @@ import {
   LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH,
   LIVE_ADMIN_CORA_APPROVALS_PATH,
   LIVE_ADMIN_CORA_CONNECTORS_PATH,
+  LIVE_CONNECTOR_SLACK_INBOUND_PATH,
+  LIVE_CONNECTOR_DISCORD_INBOUND_PATH,
   LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
@@ -136,6 +139,10 @@ async function fixture(options = {}) {
     approvalInboxRepository: options.approvalInboxRepository ?? undefined,
     connectorRegistrationRepository: options.connectorRegistrationRepository ?? undefined,
     personalPreferencesRepository: options.personalPreferencesRepository ?? undefined,
+    envoyStore: options.envoyStore ?? undefined,
+    connectorSecretResolver: options.connectorSecretResolver ?? undefined,
+    connectorResolveUser: options.connectorResolveUser ?? undefined,
+    connectorResolveChannel: options.connectorResolveChannel ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -240,6 +247,33 @@ test('connector registration routes expose limited member status and admin metad
   const injected = await fetch(`${memberApp.url}${LIVE_ADMIN_CORA_CONNECTORS_PATH}?plant_id=west`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
   const adminApp = await fixture({ connectorRegistrationRepository }); t.after(adminApp.close);
   const saved = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_CONNECTORS_PATH}`, { method: 'PUT', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ provider: 'slack', lifecycle: 'testing', enabled: false, publicEndpointReady: false, secretReferenceName: 'vault/ref', allowedInboundChannels: [{ externalChannelId: 'C1', label: 'Ops', enabled: true }] }) }); assert.equal(saved.status, 200); assert.equal(calls.some(({ operation }) => operation === 'save'), true);
+});
+
+test('public Slack inbound route verifies raw body, binds one Organization, and persists Envoy replay safely', async (t) => {
+  const messages = []; const seen = new Set();
+  const connectorRegistrationRepository = { async resolveEnabled(provider) { assert.equal(provider, 'slack'); return { tenantId: 'customer-a', registration: { provider: 'slack', lifecycle: 'enabled', enabled: true, publicEndpointReady: true, secretReferenceName: 'vault/slack', allowedInboundChannels: [{ externalChannelId: 'C1', label: 'Ops', enabled: true }] } }; }, async list() { return { registrations: [] }; } };
+  const envoyStore = { async appendConnectorMessage(binding) { const replayed = seen.has(binding.eventId); if (!replayed) { seen.add(binding.eventId); messages.push(binding); } return { durable: true, replayed, message: { channelId: binding.channelId, body: binding.text } }; } };
+  const connectorResolveUser = async ({ provider, externalUserId }) => provider === 'slack' && externalUserId === 'U1' ? [{ active: true, subject: 'user-1', tenantId: 'customer-a', role: 'member' }] : [];
+  const connectorResolveChannel = async ({ provider, channelId, tenantId }) => provider === 'slack' && channelId === 'C1' && tenantId === 'customer-a' ? [{ active: true, tenantId }] : [];
+  const app = await fixture({ connectorRegistrationRepository, envoyStore, connectorSecretResolver: async ({ secretReferenceName }) => secretReferenceName === 'vault/slack' ? 'slack-secret' : null, connectorResolveUser, connectorResolveChannel }); t.after(app.close);
+  const body = JSON.stringify({ event_id: 'evt-public-1', user_id: 'U1', channel_id: 'C1', text: 'hello Envoy' }); const timestamp = Math.floor(Date.now() / 1000); const signature = `v0=${createHmac('sha256', 'slack-secret').update(`v0:${timestamp}:${body}`).digest('hex')}`; const headers = { 'content-type': 'application/json', 'x-slack-request-timestamp': String(timestamp), 'x-slack-signature': signature };
+  const first = await fetch(`${app.url}${LIVE_CONNECTOR_SLACK_INBOUND_PATH}`, { method: 'POST', headers, body }); const firstBody = await first.json(); assert.equal(first.status, 200, JSON.stringify(firstBody)); assert.equal(firstBody.tenantId, 'customer-a'); assert.equal(firstBody.outboundDelivery, 'not_performed');
+  const replay = await fetch(`${app.url}${LIVE_CONNECTOR_SLACK_INBOUND_PATH}`, { method: 'POST', headers, body }); assert.equal((await replay.json()).replayed, true); assert.equal(messages.length, 1);
+  const bad = await fetch(`${app.url}${LIVE_CONNECTOR_SLACK_INBOUND_PATH}`, { method: 'POST', headers: { ...headers, 'x-slack-signature': `v0=${'0'.repeat(64)}` }, body }); assert.equal(bad.status, 400); assert.equal(messages.length, 1);
+  const injectedBody = JSON.stringify({ ...JSON.parse(body), tenant_id: 'customer-b' }); const injectedTimestamp = String(Math.floor(Date.now() / 1000)); const injectedSignature = `v0=${createHmac('sha256', 'slack-secret').update(`v0:${injectedTimestamp}:${injectedBody}`).digest('hex')}`;
+  const injected = await fetch(`${app.url}${LIVE_CONNECTOR_SLACK_INBOUND_PATH}`, { method: 'POST', headers: { ...headers, 'x-slack-request-timestamp': injectedTimestamp, 'x-slack-signature': injectedSignature }, body: injectedBody }); assert.equal(injected.status, 400); assert.equal(messages.length, 1);
+});
+
+test('public Discord inbound route selects its path verifier and rejects an unregistered channel', async (t) => {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519'); const publicKeyHex = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('hex'); const messages = [];
+  const connectorRegistrationRepository = { async resolveEnabled(provider) { assert.equal(provider, 'discord'); return { tenantId: 'customer-d', registration: { provider: 'discord', lifecycle: 'enabled', enabled: true, publicEndpointReady: true, secretReferenceName: 'discord/public-key', allowedInboundChannels: [{ externalChannelId: 'D1', label: 'Ops', enabled: true }] } }; }, async list() { return { registrations: [] }; } };
+  const envoyStore = { async appendConnectorMessage(binding) { messages.push(binding); return { durable: true, replayed: false, message: { channelId: binding.channelId } }; } };
+  const connectorResolveUser = async ({ provider, externalUserId }) => provider === 'discord' && externalUserId === 'DU1' ? [{ active: true, subject: 'user-d', tenantId: 'customer-d', role: 'member' }] : [];
+  const connectorResolveChannel = async ({ provider, channelId, tenantId }) => provider === 'discord' && channelId === 'D1' && tenantId === 'customer-d' ? [{ active: true, tenantId }] : [];
+  const app = await fixture({ connectorRegistrationRepository, envoyStore, connectorSecretResolver: async () => publicKeyHex, connectorResolveUser, connectorResolveChannel }); t.after(app.close);
+  const body = JSON.stringify({ id: 'discord-http-1', member: { user: { id: 'DU1' } }, channel_id: 'D1', content: 'hello Discord' }); const timestamp = String(Math.floor(Date.now() / 1000)); const headers = { 'content-type': 'application/json', 'x-signature-timestamp': timestamp, 'x-signature-ed25519': sign(null, Buffer.from(timestamp + body), privateKey).toString('hex') };
+  const response = await fetch(`${app.url}${LIVE_CONNECTOR_DISCORD_INBOUND_PATH}`, { method: 'POST', headers, body }); const responseBody = await response.json(); assert.equal(response.status, 200, JSON.stringify(responseBody)); assert.equal(responseBody.provider, 'discord'); assert.equal(messages.length, 1);
+  const denied = await fetch(`${app.url}${LIVE_CONNECTOR_DISCORD_INBOUND_PATH}`, { method: 'POST', headers: { ...headers, 'x-signature-ed25519': sign(null, Buffer.from(timestamp + JSON.stringify({ ...JSON.parse(body), channel_id: 'D2' })), privateKey).toString('hex') }, body: JSON.stringify({ ...JSON.parse(body), channel_id: 'D2' }) }); assert.equal(denied.status, 403); assert.equal(messages.length, 1);
 });
 
 test('personal Cora preferences are membership-derived, bounded, and user-owned', async (t) => {
