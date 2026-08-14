@@ -7,6 +7,7 @@ export const REQUIRED_MIGRATIONS = Object.freeze([
   '013_cora_agent_task_intents.sql',
   '014_cora_agent_task_claims.sql',
   '015_cora_knowledge_retrieval_metadata.sql',
+  '016_cora_artifact_studio_intents.sql',
 ]);
 export const EXACT_CANARY_SEQUENCE = Object.freeze([
   'verify-release-manifest',
@@ -79,6 +80,12 @@ export function validateReleaseManifest(manifest = {}, expected = {}) {
     for (const field of ['taskClass', 'mode', 'execution', 'providerInvocation', 'publicEndpoint', 'usageEvidence']) {
       if (actual?.[field] !== required?.[field]) throw new Error(`agent execution adapter ${field} mismatch`);
     }
+  });
+  check('Artifact Studio source-only receipt contract', () => {
+    const actual = manifest.artifactStudio;
+    const required = expected.artifactStudio;
+    if (actual?.mode !== required?.mode || actual?.execution !== required?.execution || actual?.media !== required?.media || actual?.providerInvocation !== required?.providerInvocation || actual?.publicExecutionEndpoint !== required?.publicExecutionEndpoint) throw new Error('Artifact Studio source-only mode mismatch');
+    sameArray(actual?.availableStages, required?.availableStages, 'Artifact Studio available stages');
   });
   check('UI bundle revision', () => {
     if (clean(manifest.ui?.bundleRevision, 'ui.bundleRevision') !== clean(expected.ui?.bundleRevision, 'expected UI bundle revision')) throw new Error('UI bundle revision mismatch');

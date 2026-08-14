@@ -25,6 +25,7 @@ import { createCoraOrganizationConfigRepository } from '../cora/organization-con
 import { createProviderUsageRepository } from '../cora/provider-usage-repository.mjs';
 import { createWorkspacePreviewRepository } from '../cora/workspace-preview-repository.mjs';
 import { createAgentTaskRepository } from '../cora/agent-task-repository.mjs';
+import { createArtifactStudioRepository } from '../cora/artifact-studio-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -53,6 +54,7 @@ export const LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH = '/api/admin/cora/knowledge/q
 export const LIVE_ADMIN_CORA_USAGE_PATH = '/api/admin/cora/usage';
 export const LIVE_ADMIN_CORA_PREVIEW_PATH = '/api/admin/cora/workspace/previews';
 export const LIVE_ADMIN_CORA_TASKS_PATH = '/api/admin/cora/tasks';
+export const LIVE_ADMIN_CORA_ARTIFACTS_PATH = '/api/admin/cora/artifacts';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -163,6 +165,7 @@ export async function createLiveHelmianCloudAdminHandler({
   providerUsageRepository: suppliedProviderUsageRepository = null,
   workspacePreviewRepository: suppliedWorkspacePreviewRepository = null,
   agentTaskRepository: suppliedAgentTaskRepository = null,
+  artifactStudioRepository: suppliedArtifactStudioRepository = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
   logger = () => {},
@@ -182,6 +185,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const providerUsage = suppliedProviderUsageRepository ?? createProviderUsageRepository(pool);
   const workspacePreviews = suppliedWorkspacePreviewRepository ?? createWorkspacePreviewRepository(pool);
   const agentTasks = suppliedAgentTaskRepository ?? createAgentTaskRepository(pool);
+  const artifacts = suppliedArtifactStudioRepository ?? createArtifactStudioRepository(pool);
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
   const streamIntervalMs = Math.max(250, Number(envoyStreamIntervalMs));
@@ -569,6 +573,16 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_TASK_MEMBERSHIP_REQUIRED' : 'CORA_TASK_INTENT_INVALID' })); }
       return true;
     }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_ARTIFACTS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const result = await artifacts.list(actor, requestUrl.searchParams.get('limit')); send(response, 200, JSON.stringify({ valid: true, ...result })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_ARTIFACT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_ARTIFACT_SELECTOR_INVALID' : 'CORA_ARTIFACT_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_ARTIFACTS_PATH) {
+      try { const body = await readJsonObject(request); exactKeys(body, ['approvalReason', 'artifactType', 'department', 'idempotencyKey', 'objective', 'sourceRefs', 'stage', 'title']); const actor = body.stage === 'approval_requested' ? { ...(await activeActor(request)), sessionId: randomUUID(), requestId: randomUUID() } : await activeTenantActor(request); const result = await artifacts.append(actor, body); send(response, 200, JSON.stringify({ valid: true, ...result })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_ARTIFACT_APPROVAL_REQUIRED' : 'CORA_ARTIFACT_INTENT_INVALID' })); }
+      return true;
+    }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIGS_PATH) {
       try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['config', 'reason', 'provenance']); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.createDraft(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONFIG_ADMIN_REQUIRED' : 'CORA_CONFIG_DRAFT_INVALID' })); }
@@ -702,6 +716,7 @@ export async function createLiveHelmianCloudAdminHandler({
     appendProviderUsage: (actor, input) => providerUsage.append(actor, input),
     appendWorkspacePreview: (actor, input) => workspacePreviews.append(actor, input),
     appendAgentTask: (actor, input) => agentTasks.append(actor, input),
+    appendArtifactStudio: (actor, input) => artifacts.append(actor, input),
     claimAgentTask: (workerActor, input) => agentTasks.claimPrepared(workerActor, input),
     close: () => ownsPool ? pool.end() : Promise.resolve(),
   });

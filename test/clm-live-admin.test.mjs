@@ -8,6 +8,7 @@ import {
   LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH,
   LIVE_ADMIN_ACTION_POLICY_PATH,
   LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH,
+  LIVE_ADMIN_CORA_ARTIFACTS_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -41,6 +42,10 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
         if (text.includes("role in ('owner','admin')")) {
           const rows = Object.entries(membershipRoles).map(([tenant_id, role]) => ({ tenant_id, role }));
           return { rowCount: rows.length, rows };
+        }
+        if (text.includes('where subject=$1')) {
+          const rows = Object.entries(membershipRoles).map(([tenant_id, role]) => ({ tenant_id, role }));
+          return rows.length === 1 ? { rowCount: 1, rows } : { rowCount: 0, rows: [] };
         }
         const role = membershipRoles[values[0]] ?? null;
         return role ? { rowCount: 1, rows: [{ role }] } : { rowCount: 0, rows: [] };
@@ -117,6 +122,7 @@ async function fixture(options = {}) {
       { version: '001', name: '001_helmion.sql', checksum: 'a'.repeat(64) },
       { version: '002', name: '002_maestro.sql', checksum: 'b'.repeat(64) },
     ],
+    artifactStudioRepository: options.artifactStudioRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -131,6 +137,30 @@ async function fixture(options = {}) {
     close: async () => { await clm.close(); await admin.close(); },
   };
 }
+
+test('Artifact Studio routes are Organization-scoped and expose only source-only receipts', async (t) => {
+  const receipts = [];
+  const artifactStudioRepository = {
+    async list() { return { receipts }; },
+    async append(actor, input) {
+      if (input.stage === 'approval_requested' && !['owner', 'admin'].includes(actor.role)) throw Object.assign(new Error('admin required'), { status: 403 });
+      const existing = receipts.find((receipt) => receipt.idempotencyKey === input.idempotencyKey);
+      if (existing) return { durable: true, replayed: true, ...existing };
+      const result = { receiptId: 'artifact-receipt-1', idempotencyKey: input.idempotencyKey, status: input.stage, execution: 'not_performed', media: 'not_generated', providerInvocation: 'not_performed' };
+      receipts.push(result); return { durable: true, replayed: false, ...result };
+    },
+  };
+  const app = await fixture({ artifactStudioRepository }); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  const selector = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACTS_PATH}?tenant_id=other`, { headers });
+  assert.equal(selector.status, 400);
+  const draft = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACTS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ artifactType: 'training', title: 'Orientation', department: 'operations', objective: 'Explain steps', sourceRefs: [], stage: 'draft', idempotencyKey: 'artifact-0001', approvalReason: null }) });
+  const draftBody = await draft.json(); assert.equal(draft.status, 200, JSON.stringify(draftBody)); assert.equal(draftBody.execution, 'not_performed');
+  const approval = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACTS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ artifactType: 'training', title: 'Orientation', department: 'operations', objective: 'Explain steps', sourceRefs: [], stage: 'approval_requested', idempotencyKey: 'artifact-0002', approvalReason: 'Request review' }) });
+  assert.equal(approval.status, 200); assert.equal((await approval.json()).status, 'approval_requested');
+  const replay = await fetch(`${app.url}${LIVE_ADMIN_CORA_ARTIFACTS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ artifactType: 'training', title: 'Orientation', department: 'operations', objective: 'Explain steps', sourceRefs: [], stage: 'draft', idempotencyKey: 'artifact-0001', approvalReason: null, organizationId: 'other' }) });
+  assert.equal(replay.status, 400);
+});
 
 test('live admin is mounted under /admin on the CLM port and never replaces /llm', async (t) => {
   const app = await fixture();

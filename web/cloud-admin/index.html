@@ -75,6 +75,7 @@
         <button class="nav-item active" type="button" data-target="section-chat" aria-current="page">Chat</button>
         <button class="nav-item" type="button" data-target="section-cora">Cora</button>
         <button class="nav-item" type="button" data-target="section-prepare">Prepare</button>
+        <button class="nav-item" type="button" data-target="section-artifact">Artifact Studio</button>
         <button class="nav-item" type="button" data-target="section-governance">Governance</button>
         <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
       </nav>
@@ -148,6 +149,21 @@
           </form>
           <div id="agent-task-receipts" class="config-grid"></div>
           <p class="preview">Draft and prepare are durable intents only. No agent, model, provider, filesystem, build, or external task execution occurred.</p>
+        </section>
+        <section id="section-artifact" class="card" aria-labelledby="artifact-studio-heading">
+          <h2 id="artifact-studio-heading">Artifact Studio</h2>
+          <p id="artifact-studio-status" class="note" role="status" aria-live="polite">Loading Artifact Studio receipts…</p>
+          <form id="artifact-studio-form" class="config-controls">
+            <select id="artifact-studio-type" aria-label="Artifact type"><option value="training">Training</option><option value="orientation">Orientation</option></select>
+            <select id="artifact-studio-stage" aria-label="Artifact stage"><option value="draft">Draft</option><option value="source_checked">Source-checked metadata</option></select>
+            <input id="artifact-studio-title" aria-label="Artifact title" maxlength="240" placeholder="Training or orientation title" required>
+            <input id="artifact-studio-department" aria-label="Artifact department" maxlength="160" placeholder="Department (optional)">
+            <textarea id="artifact-studio-objective" aria-label="Artifact objective" maxlength="1200" placeholder="What should this material help people do?" required></textarea>
+            <textarea id="artifact-studio-sources" aria-label="Artifact source references" maxlength="4000" placeholder="Approved source citations, one per line (optional)"></textarea>
+            <button id="artifact-studio-submit" type="submit">Record artifact intent</button>
+          </form>
+          <div id="artifact-studio-receipts" class="config-grid"></div>
+          <p class="preview">This source-only slice records draft and source-check metadata. Approval is an explicit step-up intent; approved, queued, running, provider result, accepted, and rejected execution stages are not performed. No media, prompt secret, provider key, or external call is stored.</p>
         </section>
         <section id="section-governance" class="card" aria-labelledby="policy-heading">
           <h2 id="policy-heading">Global Helmian real-hands kill switches</h2>

@@ -1,10 +1,11 @@
 {
   "sourceCommit": "8fce0b5",
-  "migrations": ["009_envoy_chat.sql", "010_cora_organization_config.sql", "011_cora_provider_usage.sql", "012_cora_workspace_preview_intents.sql", "013_cora_agent_task_intents.sql", "014_cora_agent_task_claims.sql", "015_cora_knowledge_retrieval_metadata.sql"],
+  "migrations": ["009_envoy_chat.sql", "010_cora_organization_config.sql", "011_cora_provider_usage.sql", "012_cora_workspace_preview_intents.sql", "013_cora_agent_task_intents.sql", "014_cora_agent_task_claims.sql", "015_cora_knowledge_retrieval_metadata.sql", "016_cora_artifact_studio_intents.sql"],
   "organizationConfig": {"publishedState": "published", "version": 4},
   "hume": {"readiness": "source_only_not_live", "configRevision": "cora-clm-contract-v1", "tokenMode": "server_only"},
   "providerUsageLedger": {"enabled": true},
   "agentExecutionAdapter": {"taskClass": "approved_knowledge_lookup", "mode": "provider_free_receipt_only", "execution": "not_performed", "providerInvocation": "not_performed", "publicEndpoint": false, "usageEvidence": "actual_only"},
+  "artifactStudio": {"mode": "source_only_receipts", "availableStages": ["draft", "source_checked", "approval_requested"], "execution": "not_performed", "media": "not_generated", "providerInvocation": "not_performed", "publicExecutionEndpoint": false},
   "ui": {"bundleRevision": "cloud-admin-76cd412"},
   "connector": {"mode": "inbound_only"},
   "cora": {"sessionToolManifestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},

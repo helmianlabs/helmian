@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, artifactStudioPanelModel, createCoraConfigClient, knowledgeQueryModel, usagePanelModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -53,6 +53,16 @@ const agentTaskCostCenter = document.querySelector('#agent-task-cost-center');
 const agentTaskSubmit = document.querySelector('#agent-task-submit');
 const agentTaskStatus = document.querySelector('#agent-task-status');
 const agentTaskReceipts = document.querySelector('#agent-task-receipts');
+const artifactStudioForm = document.querySelector('#artifact-studio-form');
+const artifactStudioType = document.querySelector('#artifact-studio-type');
+const artifactStudioStage = document.querySelector('#artifact-studio-stage');
+const artifactStudioTitle = document.querySelector('#artifact-studio-title');
+const artifactStudioDepartment = document.querySelector('#artifact-studio-department');
+const artifactStudioObjective = document.querySelector('#artifact-studio-objective');
+const artifactStudioSources = document.querySelector('#artifact-studio-sources');
+const artifactStudioSubmit = document.querySelector('#artifact-studio-submit');
+const artifactStudioStatus = document.querySelector('#artifact-studio-status');
+const artifactStudioReceipts = document.querySelector('#artifact-studio-receipts');
 const workspaceState = document.querySelector('#workspace-state');
 const adminNav = document.querySelector('[data-admin-only]');
 let coraDraft = null;
@@ -384,6 +394,23 @@ async function loadAgentTasks({ replayed = false } = {}) {
   catch (error) { agentTaskReceipts.replaceChildren(); agentTaskStatus.textContent = error.status === 403 ? 'Task receipts unavailable: Organization membership is required.' : `Task receipts unavailable: ${error.message}`; }
 }
 
+function renderArtifactStudio(body) {
+  const model = artifactStudioPanelModel(body);
+  artifactStudioReceipts.replaceChildren();
+  artifactStudioStatus.textContent = model.empty ? 'No Artifact Studio receipts yet. Drafting and source metadata are available without approval.' : model.statusLabel;
+  for (const receipt of model.receipts) {
+    const card = document.createElement('article'); card.className = 'config-item';
+    card.append(configItem('Artifact', `${receipt.artifactType} · ${receipt.status}`), configItem('Title', receipt.title), configItem('Sources', `${receipt.sourceRefs?.length ?? 0} reference(s)`), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Execution', 'Not performed'), configItem('Media / provider', 'Not generated / not invoked'));
+    artifactStudioReceipts.append(card);
+  }
+}
+
+async function loadArtifactStudio({ replayed = false } = {}) {
+  artifactStudioStatus.textContent = 'Loading Artifact Studio receipts…';
+  try { renderArtifactStudio({ ...(await coraClient.readArtifacts()), replayed }); }
+  catch (error) { artifactStudioReceipts.replaceChildren(); artifactStudioStatus.textContent = error.status === 403 ? 'Artifact receipts unavailable: Organization membership is required.' : `Artifact receipts unavailable: ${error.message}`; }
+}
+
 function renderCoraAdminControls() {
   coraAdminControls.hidden = !['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase());
   if (!coraDraft) { coraTransition.hidden = true; return; }
@@ -434,6 +461,7 @@ async function load() {
   await loadCoraSettings();
   await loadWorkspacePreviews();
   await loadAgentTasks();
+  await loadArtifactStudio();
   startEnvoyRealtime();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
@@ -503,6 +531,18 @@ agentTaskForm.onsubmit = async (event) => {
     agentTaskGoal.value = ''; agentTaskStatus.textContent = result.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : 'Task intent recorded. No worker execution occurred.'; await loadAgentTasks({ replayed: result.replayed === true });
   } catch (error) { agentTaskStatus.textContent = `Task intent not recorded: ${error.message}`; }
   finally { agentTaskSubmit.disabled = false; }
+};
+artifactStudioForm.onsubmit = async (event) => {
+  event.preventDefault();
+  if (!artifactStudioTitle.value.trim() || !artifactStudioObjective.value.trim()) { artifactStudioStatus.textContent = 'Enter a bounded artifact title and objective.'; return; }
+  artifactStudioSubmit.disabled = true; artifactStudioStatus.textContent = 'Recording Artifact Studio receipt…';
+  const sourceRefs = artifactStudioSources.value.split('\n').map((citation) => citation.trim()).filter(Boolean).map((citation) => ({ citation, title: citation }));
+  try {
+    const result = await coraClient.createArtifact({ artifactType: artifactStudioType.value, stage: artifactStudioStage.value, title: artifactStudioTitle.value.trim(), department: artifactStudioDepartment.value.trim() || 'general', objective: artifactStudioObjective.value.trim(), sourceRefs, idempotencyKey: crypto.randomUUID(), approvalReason: null });
+    artifactStudioStatus.textContent = result.replayed ? 'Artifact intent already received. Durable replay receipt confirmed.' : 'Artifact intent recorded. No media or provider execution occurred.';
+    artifactStudioTitle.value = ''; artifactStudioObjective.value = ''; artifactStudioSources.value = ''; await loadArtifactStudio({ replayed: result.replayed === true });
+  } catch (error) { artifactStudioStatus.textContent = `Artifact intent not recorded: ${error.message}`; }
+  finally { artifactStudioSubmit.disabled = false; }
 };
 envoyChannel.onchange = async () => { envoyStream?.close(); envoyStream = null; await loadEnvoyMessages(); startEnvoyRealtime(); };
 composer.onsubmit = async (event) => {

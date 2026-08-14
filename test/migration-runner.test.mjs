@@ -107,6 +107,10 @@ class MigrationPool {
           pool.executedSql.push('015_cora_knowledge_retrieval_metadata.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('create table if not exists helmion.cora_artifact_studio_intents')) {
+          pool.executedSql.push('016_cora_artifact_studio_intents.sql');
+          return { rowCount: 0, rows: [] };
+        }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
       },
       release() {},
@@ -136,6 +140,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['013_cora_agent_task_intents.sql', true, 'committed'],
       ['014_cora_agent_task_claims.sql', true, 'committed'],
       ['015_cora_knowledge_retrieval_metadata.sql', true, 'committed'],
+      ['016_cora_artifact_studio_intents.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -156,13 +161,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '013_cora_agent_task_intents.sql',
       '014_cora_agent_task_claims.sql',
       '015_cora_knowledge_retrieval_metadata.sql',
+      '016_cora_artifact_studio_intents.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -182,9 +188,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '013_cora_agent_task_intents.sql',
       '014_cora_agent_task_claims.sql',
       '015_cora_knowledge_retrieval_metadata.sql',
+      '016_cora_artifact_studio_intents.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 30);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 32);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 
