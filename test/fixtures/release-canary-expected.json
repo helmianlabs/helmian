@@ -1,6 +1,6 @@
 {
   "sourceCommit": "8fce0b5",
-  "migrations": ["009_envoy_chat.sql", "010_cora_organization_config.sql", "011_cora_provider_usage.sql"],
+  "migrations": ["009_envoy_chat.sql", "010_cora_organization_config.sql", "011_cora_provider_usage.sql", "012_cora_workspace_preview_intents.sql"],
   "organizationConfig": {"publishedState": "published", "version": 4},
   "hume": {"readiness": "source_only_not_live", "configRevision": "cora-clm-contract-v1", "tokenMode": "server_only"},
   "providerUsageLedger": {"enabled": true},
