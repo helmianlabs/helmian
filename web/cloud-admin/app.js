@@ -50,6 +50,12 @@ const coraDraftReason = document.querySelector('#cora-draft-reason');
 const coraRoutingPolicy = document.querySelector('#cora-routing-policy');
 const coraCreateDraft = document.querySelector('#cora-create-draft');
 const coraTransition = document.querySelector('#cora-transition');
+const coraKnowledgeAdmin = document.querySelector('#cora-knowledge-admin');
+const coraKnowledgeAdminStatus = document.querySelector('#cora-knowledge-admin-status');
+const coraKnowledgeAdminList = document.querySelector('#cora-knowledge-admin-list');
+const coraKnowledgeSourceForm = document.querySelector('#cora-knowledge-source-form');
+const coraKnowledgePackForm = document.querySelector('#cora-knowledge-pack-form');
+const coraKnowledgeSnippetForm = document.querySelector('#cora-knowledge-snippet-form');
 const workspacePreviewForm = document.querySelector('#workspace-preview-form');
 const workspacePreviewMode = document.querySelector('#workspace-preview-mode');
 const workspacePreviewIntent = document.querySelector('#workspace-preview-intent');
@@ -422,6 +428,16 @@ function renderCoraKnowledge(body) {
   }
 }
 
+function renderKnowledgeAdmin(body) {
+  coraKnowledgeAdminList.replaceChildren();
+  const sources = body.sources ?? []; const packs = body.packs ?? []; const snippets = body.snippets ?? [];
+  coraKnowledgeAdminStatus.textContent = `${sources.length} source(s), ${packs.length} pack(s), ${snippets.length} stored excerpt(s). Drafts remain unavailable to member search.`;
+  for (const source of sources) { const item = configItem(`Source · ${source.lifecycle}`, `${source.sourceKey} · ${source.title} · ${source.sourceId}`); if (source.lifecycle !== 'approved') { const button = document.createElement('button'); button.className = 'secondary'; button.type = 'button'; button.textContent = 'Approve source'; button.onclick = () => coraClient.transitionKnowledge({ kind: 'source', id: source.sourceId, lifecycle: 'approved', reason: 'Reviewed in Cloud knowledge manager' }).then(loadKnowledgeAdmin).catch((error) => { coraKnowledgeAdminStatus.textContent = `Source review failed: ${error.message}`; }); item.append(button); } coraKnowledgeAdminList.append(item); }
+  for (const pack of packs) { const item = configItem(`Pack · ${pack.lifecycle}`, `${pack.packKey} v${pack.version} · ${pack.packId} · ${pack.allowlisted ? 'published allowlist' : 'not published'}`); if (pack.lifecycle !== 'approved') { const button = document.createElement('button'); button.className = 'secondary'; button.type = 'button'; button.textContent = 'Approve pack'; button.onclick = () => coraClient.transitionKnowledge({ kind: 'pack', id: pack.packId, lifecycle: 'approved', reason: 'Reviewed in Cloud knowledge manager' }).then(loadKnowledgeAdmin).catch((error) => { coraKnowledgeAdminStatus.textContent = `Pack review failed: ${error.message}`; }); item.append(button); } coraKnowledgeAdminList.append(item); }
+  for (const snippet of snippets) coraKnowledgeAdminList.append(configItem(`Excerpt · ${snippet.citation}`, `${snippet.packId} · ${snippet.excerpt ? 'stored excerpt' : 'reference only'} · ${snippet.textReference}`));
+}
+async function loadKnowledgeAdmin() { try { renderKnowledgeAdmin(await coraClient.readKnowledgeAdmin()); } catch (error) { coraKnowledgeAdminList.replaceChildren(); coraKnowledgeAdminStatus.textContent = error.status === 403 ? 'Knowledge management is available only to Organization owners/admins.' : `Knowledge management unavailable: ${error.message}`; } }
+
 function renderCoraKnowledgeQuery(body) {
   const model = knowledgeQueryModel(body); coraKnowledgeQueryResults.replaceChildren();
   if (model.empty) { coraKnowledgeQueryStatus.textContent = 'No approved, effective, nonexpired source matched. No answer was generated.'; return; }
@@ -537,6 +553,7 @@ async function loadArtifactStudio({ replayed = false } = {}) {
 
 function renderCoraAdminControls() {
   coraAdminControls.hidden = !['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase());
+  coraKnowledgeAdmin.hidden = coraAdminControls.hidden;
   if (!coraDraft) { coraTransition.hidden = true; return; }
   const next = { draft: 'testing', testing: 'approved', approved: 'published' }[coraDraft.lifecycle];
   coraTransition.hidden = !next;
@@ -551,6 +568,7 @@ async function loadCoraSettings() {
     const [config, knowledge, usage, history] = await Promise.all([coraClient.readConfig(), coraClient.readKnowledgeSources(), coraClient.readUsage(), coraClient.readConfigHistory().catch(() => ({ configs: [] }))]);
     renderCoraConfig(config); renderCoraKnowledge(knowledge); renderCoraUsage(usage); renderCoraAdminControls();
     renderCoraConfigHistory(history);
+    if (!coraKnowledgeAdmin.hidden) await loadKnowledgeAdmin();
     await loadPersonalPreferences();
     if (config.status === 'published') coraConfigStatus.textContent += ' Cora agent/model invocation remains not connected.';
   } catch (error) {
@@ -564,6 +582,9 @@ async function loadCoraSettings() {
 coraPreferencesOpen.onclick = () => coraPreferencesDialog.showModal();
 coraPreferencesClose.onclick = () => coraPreferencesDialog.close();
 coraPreferencesForm.onsubmit = async (event) => { event.preventDefault(); coraPreferencesStatus.textContent = 'Saving your Cora preferences…'; try { const saved = await coraClient.savePersonalPreferences({ muted: coraPreferenceMuted.checked, volume: Number(coraPreferenceVolume.value), verbosity: coraPreferenceVerbosity.value, interruptMode: coraPreferenceInterrupt.value, turnMode: coraPreferenceTurn.value, voiceProfile: coraPreferenceVoice.value || null }); renderPersonalPreferences(saved); coraPreferencesStatus.textContent += ' Saved for this signed-in user; no provider or voice connection was invoked.'; } catch (error) { coraPreferencesStatus.textContent = `Personal preferences not saved: ${error.message}`; } };
+coraKnowledgeSourceForm.onsubmit = async (event) => { event.preventDefault(); coraKnowledgeAdminStatus.textContent = 'Recording draft source metadata…'; try { await coraClient.createKnowledgeSource({ sourceKey: document.querySelector('#knowledge-source-key').value, title: document.querySelector('#knowledge-source-title').value, publisher: document.querySelector('#knowledge-source-publisher').value, canonicalUri: document.querySelector('#knowledge-source-uri').value, provenance: document.querySelector('#knowledge-source-provenance').value, effectiveAt: null, expiresAt: null }); await loadKnowledgeAdmin(); coraKnowledgeSourceForm.reset(); } catch (error) { coraKnowledgeAdminStatus.textContent = `Source not recorded: ${error.message}`; } };
+coraKnowledgePackForm.onsubmit = async (event) => { event.preventDefault(); coraKnowledgeAdminStatus.textContent = 'Recording draft pack metadata…'; try { await coraClient.createKnowledgePack({ sourceId: document.querySelector('#knowledge-pack-source').value, packKey: document.querySelector('#knowledge-pack-key').value, version: document.querySelector('#knowledge-pack-version').value, provenance: document.querySelector('#knowledge-pack-provenance').value, effectiveAt: null, expiresAt: null }); await loadKnowledgeAdmin(); coraKnowledgePackForm.reset(); } catch (error) { coraKnowledgeAdminStatus.textContent = `Pack not recorded: ${error.message}`; } };
+coraKnowledgeSnippetForm.onsubmit = async (event) => { event.preventDefault(); coraKnowledgeAdminStatus.textContent = 'Recording bounded cited excerpt…'; try { await coraClient.createKnowledgeSnippet({ packId: document.querySelector('#knowledge-snippet-pack').value, citation: document.querySelector('#knowledge-snippet-citation').value, textReference: document.querySelector('#knowledge-snippet-reference').value, excerpt: document.querySelector('#knowledge-snippet-excerpt').value, contentSha256: null, expiresAt: null }); await loadKnowledgeAdmin(); coraKnowledgeSnippetForm.reset(); } catch (error) { coraKnowledgeAdminStatus.textContent = `Excerpt not recorded: ${error.message}`; } };
 
 async function loadPolicy() {
   const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });

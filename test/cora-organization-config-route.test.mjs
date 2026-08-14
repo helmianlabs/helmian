@@ -7,6 +7,11 @@ import {
   LIVE_ADMIN_CORA_CONFIGS_PATH,
   LIVE_ADMIN_CORA_KNOWLEDGE_PATH,
   LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH,
+  LIVE_ADMIN_CORA_KNOWLEDGE_MANAGE_PATH,
+  LIVE_ADMIN_CORA_KNOWLEDGE_SOURCES_PATH,
+  LIVE_ADMIN_CORA_KNOWLEDGE_PACKS_PATH,
+  LIVE_ADMIN_CORA_KNOWLEDGE_SNIPPETS_PATH,
+  LIVE_ADMIN_CORA_KNOWLEDGE_TRANSITION_PATH,
   LIVE_ADMIN_CORA_USAGE_PATH,
   LIVE_ADMIN_CORA_PREVIEW_PATH,
   LIVE_ADMIN_CORA_TASKS_PATH,
@@ -45,6 +50,11 @@ async function fixture() {
   const repository = {
     async readPublishedConfig(actor) { calls.push(['read', actor]); return { status: 'published', config: { organizationId: actor.tenantId, lifecycle: 'published' } }; },
     async listKnowledgeSources(actor) { calls.push(['knowledge', actor]); return { sources: [{ sourceKey: 'manual', lifecycle: 'approved' }] }; },
+    async listKnowledgeAdmin(actor) { calls.push(['knowledge-admin', actor]); return { sources: [{ sourceId: 'source-1', sourceKey: 'manual', lifecycle: 'draft' }], packs: [], snippets: [] }; },
+    async createKnowledgeSource(actor, input) { calls.push(['knowledge-source-create', actor, input]); return { source: { sourceId: 'source-1', lifecycle: 'draft' } }; },
+    async createKnowledgePack(actor, input) { calls.push(['knowledge-pack-create', actor, input]); return { pack: { packId: 'pack-1', lifecycle: 'draft' } }; },
+    async createKnowledgeSnippet(actor, input) { calls.push(['knowledge-snippet-create', actor, input]); return { snippet: { snippetId: 'snippet-1', citation: input.citation } }; },
+    async transitionKnowledge(actor, input) { calls.push(['knowledge-transition', actor, input]); return { kind: input.kind, id: input.id, lifecycle: input.lifecycle, reviewReceiptId: 'review-1' }; },
     async queryApprovedKnowledge(actor, query) { calls.push(['knowledge-query', actor, query]); return { format: 'cora.approved-knowledge-retrieval.v1', status: 'approved_sources_only', query, answer: null, providerCall: 'not_performed', excerpts: [{ excerpt: 'Stored hours-of-service excerpt.', citation: 'FMCSA §3', provenance: 'reviewed source' }], citations: ['FMCSA §3'] }; },
     async listConfigs(actor) { calls.push(['config-history', actor]); return { configs: [{ configVersion: 2, lifecycle: 'draft', reason: 'review', createdBySubject: actor.subject, isCurrent: false }] }; },
     async createDraft(actor, input) { calls.push(['draft', actor, input]); return { config: { lifecycle: 'draft', organizationId: actor.tenantId } }; },
@@ -146,4 +156,18 @@ test('authenticated knowledge query returns stored citations only and rejects au
   assert.equal(result.status, 200); const body = await result.json(); assert.equal(body.status, 'approved_sources_only'); assert.equal(body.answer, null); assert.equal(body.providerCall, 'not_performed'); assert.equal(body.excerpts[0].citation, 'FMCSA §3');
   const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH}?q=hours&organization_id=org-b`, { headers }); assert.equal(injected.status, 400);
   assert.equal(app.calls.some(([name, actor, query]) => name === 'knowledge-query' && actor.tenantId === 'org-a' && query === 'hours service'), true);
+});
+
+test('knowledge management is admin-only, bounded, and Organization-derived', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const memberHeaders = { cookie: 'helmion_admin_session=member-session' };
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_MANAGE_PATH}`, { headers: memberHeaders })).status, 403);
+  const adminHeaders = { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' };
+  const managed = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_MANAGE_PATH}`, { headers: adminHeaders }); assert.equal(managed.status, 200);
+  const source = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_SOURCES_PATH}`, { method: 'POST', headers: adminHeaders, body: JSON.stringify({ sourceKey: 'manual', title: 'Manual', publisher: 'Ops', canonicalUri: 'manual://ops', provenance: 'reviewed', effectiveAt: null, expiresAt: null }) }); assert.equal(source.status, 200);
+  const pack = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_PACKS_PATH}`, { method: 'POST', headers: adminHeaders, body: JSON.stringify({ sourceId: 'source-1', packKey: 'ops', version: '1', provenance: 'reviewed', effectiveAt: null, expiresAt: null }) }); assert.equal(pack.status, 200);
+  const snippet = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_SNIPPETS_PATH}`, { method: 'POST', headers: adminHeaders, body: JSON.stringify({ packId: 'pack-1', citation: 'Manual §1', textReference: 'manual://ops#1', excerpt: 'Stored approved excerpt.', contentSha256: null, expiresAt: null }) }); assert.equal(snippet.status, 200);
+  const transition = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_TRANSITION_PATH}`, { method: 'POST', headers: adminHeaders, body: JSON.stringify({ kind: 'source', id: 'source-1', lifecycle: 'approved', reason: 'Reviewed' }) }); assert.equal(transition.status, 200);
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_KNOWLEDGE_SOURCES_PATH}`, { method: 'POST', headers: adminHeaders, body: JSON.stringify({ sourceKey: 'x', title: 'x', publisher: 'x', canonicalUri: 'x', provenance: 'x', effectiveAt: null, expiresAt: null, plantId: 'warehouse-1' }) }); assert.equal(injected.status, 400);
+  assert.equal(app.calls.some(([name, actor]) => name === 'knowledge-admin' && actor.tenantId === 'org-a'), true);
 });
