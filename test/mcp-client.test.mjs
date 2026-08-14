@@ -229,7 +229,7 @@ test('closing twice is safe, and closing rejects anything in flight', async () =
   assert.equal(client.closed, true);
 });
 
-test('LIVE CONFORMANCE: it talks to Helmion\'s own MCP server', async () => {
+test('LIVE CONFORMANCE: it talks to Helmion\'s own MCP server', { skip: !process.env.HELMION_DATABASE_URL }, async () => {
   // The repo's own server is the primary source for the wire format this client
   // speaks — src/mcp/server.mjs reads lines and writes `${json}\n`. If this ever
   // fails, the client and the server have drifted.

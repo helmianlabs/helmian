@@ -56,8 +56,11 @@ outcomes also emit bounded logs without policy bodies, subjects, tenant IDs, or
 secrets.
 
 The runtime reads this one global policy when it creates **every new
-cryptographically signed AimForge session**, regardless of that customer's or
-facility's tenant ID, and intersects it with the fixed compiled tool release.
+cryptographically signed AimForge session**, regardless of the customer's
+tenant ID, and intersects it with the fixed compiled tool release. A facility
+or plant is only a physical business record and is not an identity,
+organization, tenant, routing, authorization, RBAC/ABAC, or allowed-facility
+scope.
 The signed bridge and AimForge APIs still derive and enforce the actual customer
 tenant, subject, role, focus, and action authorization; the platform policy does
 not replace or widen those checks. Active sessions are not mutated. A missing
