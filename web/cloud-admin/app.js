@@ -49,6 +49,8 @@ const agentTaskCostCenter = document.querySelector('#agent-task-cost-center');
 const agentTaskSubmit = document.querySelector('#agent-task-submit');
 const agentTaskStatus = document.querySelector('#agent-task-status');
 const agentTaskReceipts = document.querySelector('#agent-task-receipts');
+const workspaceState = document.querySelector('#workspace-state');
+const adminNav = document.querySelector('[data-admin-only]');
 let coraDraft = null;
 let policyEtag = '';
 let previewId = '';
@@ -110,7 +112,7 @@ function renderWorkspace(body) {
     name.textContent = agent.label;
     const status = document.createElement('div');
     status.className = 'agent-status';
-    status.textContent = `${agent.status} · ${agent.lastAction || 'no recorded action'}`;
+    status.textContent = agent.lastAction ? `${agent.status} · ${agent.lastAction}` : 'No audited status';
     card.append(name, status);
     agentCards.append(card);
   }
@@ -359,9 +361,12 @@ async function load() {
   if (!session.ok) { signedOut.hidden = false; signedIn.hidden = true; return; }
   const sessionBody = await session.json();
   signedOut.hidden = true; signedIn.hidden = false;
-  actor.textContent = `Signed in as ${sessionBody.actor.role} for tenant ${sessionBody.actor.tenantId}`;
-  scope.textContent = `Scope: ${sessionBody.actor.tenantId} · ${sessionBody.actor.role}`;
+  actor.textContent = `Signed in as ${sessionBody.actor.role} for Organization ${sessionBody.actor.tenantId}`;
+  scope.textContent = `Organization scope: ${sessionBody.actor.tenantId} · ${sessionBody.actor.role}`;
   window.helmianActorRole = sessionBody.actor.role;
+  const isAdmin = ['owner', 'admin'].includes(String(sessionBody.actor.role ?? '').toLowerCase());
+  adminNav.hidden = !isAdmin;
+  workspaceState.textContent = `AUTHENTICATED · ${String(sessionBody.actor.role ?? 'member').toUpperCase()}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
   await refreshWorkspacePanels();
@@ -372,6 +377,12 @@ async function load() {
   await loadAgentTasks();
   startEnvoyPolling();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
+}
+for (const item of document.querySelectorAll('#workspace-nav [data-target]')) {
+  item.onclick = () => {
+    document.getElementById(item.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    for (const peer of document.querySelectorAll('#workspace-nav [data-target]')) { peer.classList.toggle('active', peer === item); if (peer === item) peer.setAttribute('aria-current', 'page'); else peer.removeAttribute('aria-current'); }
+  };
 }
 document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
