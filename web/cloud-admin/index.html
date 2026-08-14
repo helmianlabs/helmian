@@ -21,7 +21,11 @@
     .conversation { min-height: 390px; display: flex; flex-direction: column; }
     .conversation-body { flex: 1; padding: 1rem; background: #0d1119; border: 1px solid #344156; border-radius: .5rem; }
     .composer { margin-top: 1rem; display: flex; gap: .5rem; }
+    .composer select { background: #171e29; border: 1px solid #344156; color: #fff; border-radius: .35rem; padding: .7rem; max-width: 12rem; }
     .composer input { flex: 1; min-width: 0; background: #171e29; border: 1px solid #344156; color: #fff; border-radius: .35rem; padding: .7rem; }
+    .composer-status { min-height: 1.25rem; color: #a9c7ff; font-size: .85rem; }
+    .message { margin: .7rem 0; padding: .65rem .75rem; border-radius: .35rem; background: #171e29; }
+    .message-meta { color: #9eacc2; font-size: .75rem; }
     .agent-card { padding: .75rem; margin: .65rem 0; background: #171e29; border: 1px solid #344156; border-radius: .5rem; }
     .agent-status { color: #7ee2a8; font-size: .8rem; }
     .guard-tabs { display: flex; gap: .35rem; margin-bottom: 1rem; }
@@ -64,8 +68,9 @@
       <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Scope: loading…</div></div><span class="preview">READ-ONLY PREVIEW</span></div>
       <section class="card conversation" aria-labelledby="conversation-heading">
         <h2 id="conversation-heading">Conversation</h2>
-        <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>The hosted Maestro surface is staged. I can show scope and agent readiness here; no builder or monitor action is executed from this preview.</p></div>
-        <form id="composer" class="composer"><input aria-label="Message Maestro" placeholder="Ask Maestro about this workspace…" disabled><button type="submit" disabled>Send</button></form>
+        <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>Sign in to read and send normal Organization Envoy messages. Cora and outbound delivery are not invoked in this slice.</p></div>
+        <form id="composer" class="composer"><select id="envoy-channel" aria-label="Envoy channel" disabled><option value="">No channels available</option></select><input id="composer-input" aria-label="Message Maestro" placeholder="Send a normal workspace message…" maxlength="4000" disabled><button id="composer-send" type="submit" disabled>Send</button></form>
+        <p id="composer-status" class="composer-status" role="status" aria-live="polite"></p>
       </section>
       <section id="signed-out" class="card">
         <h2>Owner access</h2>
@@ -122,6 +127,6 @@
       <div class="guard-actions"><button type="button" disabled>Check again</button><button type="button" disabled>Ack all</button><button type="button" disabled>Quarantine</button><button type="button" disabled>Tests</button></div>
     </aside>
   </div>
-  <script src="/admin/assets/app.js"></script>
+  <script type="module" src="/admin/assets/app.js"></script>
 </body>
 </html>
