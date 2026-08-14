@@ -597,6 +597,7 @@ export async function createLiveHelmianCloudAdminHandler({
     appendProviderUsage: (actor, input) => providerUsage.append(actor, input),
     appendWorkspacePreview: (actor, input) => workspacePreviews.append(actor, input),
     appendAgentTask: (actor, input) => agentTasks.append(actor, input),
+    claimAgentTask: (workerActor, input) => agentTasks.claimPrepared(workerActor, input),
     close: () => ownsPool ? pool.end() : Promise.resolve(),
   });
 }
