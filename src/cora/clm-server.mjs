@@ -119,7 +119,7 @@ export const DEFAULT_SESSION_IDLE_MS = 30 * 60_000;
 
 export const DEFAULT_MAX_SESSIONS = 8;
 
-const AIMFORGE_HAND_LABELS = Object.freeze({
+export const AIMFORGE_HAND_LABELS = Object.freeze({
   aimforge_get_dispatch_board_summary: 'read aggregate dispatch-board counts',
   aimforge_prepare_driver_message: 'prepare a driver message proposal for the already-focused assignment; it is not sent',
   aimforge_create_department_handoff: 'stage an internal department handoff that requires a later explicit confirmation',

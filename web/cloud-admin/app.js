@@ -30,6 +30,11 @@ const peoplePlanTitle = document.querySelector('#people-plan-title');
 const peoplePlanReason = document.querySelector('#people-plan-reason');
 const readinessStatus = document.querySelector('#readiness-status');
 const readinessCards = document.querySelector('#readiness-cards');
+const capabilitiesStatus = document.querySelector('#capabilities-status');
+const capabilitiesNormal = document.querySelector('#capabilities-normal');
+const capabilitiesRegistered = document.querySelector('#capabilities-registered');
+const capabilitiesHighRisk = document.querySelector('#capabilities-high-risk');
+const capabilitiesRouting = document.querySelector('#capabilities-routing');
 const agentCards = document.querySelector('#agent-cards');
 const conversationBody = document.querySelector('#conversation-body');
 const composer = document.querySelector('#composer');
@@ -295,6 +300,21 @@ async function loadOrganizationReadiness() {
   readinessStatus.textContent = 'Loading verifiable source states…';
   try { renderOrganizationReadiness(await coraClient.readOrganizationReadiness()); }
   catch (error) { readinessCards.replaceChildren(); readinessStatus.textContent = error.status === 403 ? 'Readiness unavailable: active Organization membership is required.' : `Readiness unavailable: ${error.message}`; }
+}
+
+function renderCoraCapabilities(body) {
+  const explorer = body.explorer ?? {}; capabilitiesNormal.replaceChildren(); capabilitiesRegistered.replaceChildren(); capabilitiesHighRisk.replaceChildren(); capabilitiesRouting.replaceChildren();
+  for (const item of explorer.normalWork ?? []) capabilitiesNormal.append(configItem(`Normal · ${item.name}`, `${item.policyDecision} · ${item.policyReason} · execution ${item.execution}`));
+  for (const item of explorer.capabilities ?? []) (item.classification === 'confirmation_or_approval_required' ? capabilitiesHighRisk : capabilitiesRegistered).append(configItem(item.name, `${item.classification} · ${item.policyDecision} · ${item.policyReason} · execution ${item.execution}`));
+  for (const item of explorer.highRisk ?? []) capabilitiesHighRisk.append(configItem(`High risk · ${item.name}`, `${item.classification} · ${item.policyReason} · execution ${item.execution}`));
+  capabilitiesRouting.append(configItem('Routing policy', `${explorer.routing?.state ?? 'unavailable'} · ${explorer.routing?.detail ?? 'admin configuration detail shown only to authorized admins'}`));
+  for (const item of explorer.taskClasses ?? []) capabilitiesRouting.append(configItem(item.taskClass, `${item.state} · execution ${item.execution} · provider ${item.providerInvocation}`));
+  capabilitiesStatus.textContent = `Fixed manifest loaded. Current execution: ${explorer.currentExecution?.execution ?? 'unknown'}; provider calls: ${explorer.providerCalls ?? 'unknown'}.`;
+}
+async function loadCoraCapabilities() {
+  capabilitiesStatus.textContent = 'Loading registered Cora capabilities…';
+  try { renderCoraCapabilities(await coraClient.readCoraCapabilities()); }
+  catch (error) { capabilitiesNormal.replaceChildren(); capabilitiesRegistered.replaceChildren(); capabilitiesHighRisk.replaceChildren(); capabilitiesRouting.replaceChildren(); capabilitiesStatus.textContent = error.status === 403 ? 'Cora capabilities unavailable: active Organization membership is required.' : `Cora capabilities unavailable: ${error.message}`; }
 }
 
 function renderMessages(body) {
@@ -742,6 +762,7 @@ async function load() {
   await loadPolicy();
   await loadOrganizationPeople();
   await loadOrganizationReadiness();
+  await loadCoraCapabilities();
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();

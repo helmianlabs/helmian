@@ -39,6 +39,7 @@ import { createWorkspaceLayoutRepository } from './workspace-layout-repository.m
 import { createAuditEventRepository } from './audit-event-repository.mjs';
 import { createOrganizationRoleRepository } from './organization-role-repository.mjs';
 import { readOrganizationReadiness } from './organization-readiness.mjs';
+import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -90,6 +91,7 @@ export const LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH = '/api/admin/workspace/rol
 export const LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH = '/api/admin/organization/memberships';
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/membership-role-plan';
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
+export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -793,6 +795,11 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_READINESS_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, readiness: await readOrganizationReadiness({ actor, organizationRoles, coraConfig, providerUsage, connectors: connectorRegistrations, workspaceLayout: workspaceLayout, auditEvents }) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_READINESS_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'ORGANIZATION_READINESS_SELECTOR_INVALID' : 'ORGANIZATION_READINESS_UNAVAILABLE' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CAPABILITIES_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'provider', 'model'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority or route selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const configResult = await coraConfig.readPublishedConfig(actor); send(response, 200, JSON.stringify({ valid: true, explorer: buildCoraCapabilityExplorer({ configResult, admin: ['owner', 'admin'].includes(String(actor.role).toLowerCase()) }) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CAPABILITY_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_CAPABILITY_SELECTOR_INVALID' : 'CORA_CAPABILITY_UNAVAILABLE' })); }
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH) {
