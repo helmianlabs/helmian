@@ -20,6 +20,8 @@ import {
   LIVE_CONNECTOR_DISCORD_INBOUND_PATH,
   LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH,
   LIVE_ADMIN_EVENTS_PATH,
+  LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH,
+  LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -145,6 +147,7 @@ async function fixture(options = {}) {
     connectorResolveUser: options.connectorResolveUser ?? undefined,
     connectorResolveChannel: options.connectorResolveChannel ?? undefined,
     auditEventRepository: options.auditEventRepository ?? undefined,
+    organizationRoleRepository: options.organizationRoleRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -159,6 +162,20 @@ async function fixture(options = {}) {
     close: async () => { await clm.close(); await admin.close(); },
   };
 }
+
+test('Organization role administration exposes fixed capabilities and only prepares external membership changes', async (t) => {
+  const calls = [];
+  const organizationRoleRepository = {
+    async list(actor) { calls.push({ operation: 'list', actor }); return { memberships: [{ subject: actor.subject, serverRole: actor.role, active: true, jobTitle: null, capabilities: ['read_envoy'] }], roles: [{ jobTitle: 'dispatcher', serverRole: 'member', capabilities: ['read_envoy', 'send_envoy'] }], pending: [], source: 'helmion.tenant_memberships', externalIdentityMutation: 'not_performed' }; },
+    async prepareRolePlan(actor, input) { if (!['owner', 'admin'].includes(actor.role)) throw Object.assign(new Error('owner or admin membership is required'), { status: 403 }); calls.push({ operation: 'prepare', actor, input }); return { durable: true, replayed: false, receiptId: '41', status: 'prepared', membershipChanged: false, externalIdentityMutation: 'not_performed', plan: { subject: input.subject, currentServerRole: 'member', requestedJobTitle: input.jobTitle, requestedServerRole: 'member' }, approval: 'external_identity_or_admin_action_required' }; },
+  };
+  const memberApp = await fixture({ membershipRoles: { 'customer-a': 'member' }, organizationRoleRepository }); t.after(memberApp.close);
+  const member = await fetch(`${memberApp.url}${LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const memberBody = await member.json(); assert.equal(member.status, 200); assert.equal(memberBody.externalIdentityMutation, 'not_performed'); assert.equal(memberBody.memberships[0].subject, 'user-1');
+  const denied = await fetch(`${memberApp.url}${LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH}`, { method: 'POST', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ subject: 'user-1', jobTitle: 'dispatcher', reason: 'dispatch role', idempotencyKey: 'role-plan-0001' }) }); assert.equal(denied.status, 403);
+  const adminApp = await fixture({ organizationRoleRepository }); t.after(adminApp.close);
+  const plan = await fetch(`${adminApp.url}${LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH}?plant_id=west`, { method: 'POST', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ subject: 'user-2', jobTitle: 'dispatcher', reason: 'Dispatch coverage', idempotencyKey: 'role-plan-0001' }) }); assert.equal(plan.status, 400); assert.equal(calls.some(({ operation }) => operation === 'prepare'), false);
+  const prepared = await fetch(`${adminApp.url}${LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH}`, { method: 'POST', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ subject: 'user-2', jobTitle: 'dispatcher', reason: 'Dispatch coverage', idempotencyKey: 'role-plan-0001' }) }); const preparedBody = await prepared.json(); assert.equal(prepared.status, 200); assert.equal(preparedBody.membershipChanged, false); assert.equal(preparedBody.externalIdentityMutation, 'not_performed'); assert.equal(calls.some(({ operation }) => operation === 'prepare'), true);
+});
 
 test('Audit/Analysis is Organization-scoped, filtered, cursor-paginated, and read-only', async (t) => {
   const calls = [];
