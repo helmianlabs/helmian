@@ -26,6 +26,10 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /Manual script and narration draft/u);
   assert.match(page, /Execution request preflight/u);
   assert.match(page, /approval-required, blocked, and queued states all remain not executed/iu);
+  assert.match(page, /Your Cora preferences/iu);
+  assert.match(page, /Organization policy, approved catalogs, provider keys, and voice readiness remain admin\/server controlled/iu);
+  assert.match(script, /readPersonalPreferences/u);
+  assert.match(script, /savePersonalPreferences/u);
   assert.match(script, /No generation occurred/u);
   assert.match(liveAdmin, /LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH = '\/api\/admin\/cora\/artifact-execution-requests'/u);
   assert.match(liveAdmin, /artifactExecution\.append\(actor, body\)/u);

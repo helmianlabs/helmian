@@ -16,6 +16,8 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     readKnowledgeSources() { return requestJson(fetchImpl, '/api/admin/cora/knowledge-sources'); },
     queryKnowledge(query) { return requestJson(fetchImpl, `/api/admin/cora/knowledge/query?q=${encodeURIComponent(query)}`); },
     readUsage() { return requestJson(fetchImpl, '/api/admin/cora/usage'); },
+    readPersonalPreferences() { return requestJson(fetchImpl, '/api/admin/cora/personal-preferences'); },
+    savePersonalPreferences(preferences) { return requestJson(fetchImpl, '/api/admin/cora/personal-preferences', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(preferences) }); },
     readWorkspacePreviews() { return requestJson(fetchImpl, '/api/admin/cora/workspace/previews'); },
     createWorkspacePreview({ mode, intent, department, templateId, title, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/workspace/previews', {
@@ -135,4 +137,10 @@ export function usagePanelModel(body = {}) {
     source: body.source === 'tenant_append_only_ledger' ? body.source : 'tenant_append_only_ledger',
     providerCalls: body.providerCalls === 'not_performed' ? body.providerCalls : 'not_performed',
   });
+}
+
+export function personalPreferencesModel(body = {}) {
+  const preferences = body.preferences?.preferences ?? body.preferences ?? {};
+  const bounds = body.bounds ?? {};
+  return Object.freeze({ preferences, bounds, statusLabel: body.preferences ? 'Personal Cora preferences loaded for this signed-in user.' : 'Personal Cora preferences are unavailable.' });
 }

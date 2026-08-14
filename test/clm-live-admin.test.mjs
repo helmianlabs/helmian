@@ -13,6 +13,7 @@ import {
   LIVE_ADMIN_CORA_ARTIFACT_SOURCE_LINKS_PATH,
   LIVE_ADMIN_CORA_ARTIFACT_SOURCE_TRANSITION_PATH,
   LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH,
+  LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
@@ -130,6 +131,7 @@ async function fixture(options = {}) {
     artifactSourceRepository: options.artifactSourceRepository ?? undefined,
     artifactScriptRepository: options.artifactScriptRepository ?? undefined,
     artifactExecutionRepository: options.artifactExecutionRepository ?? undefined,
+    personalPreferencesRepository: options.personalPreferencesRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -206,6 +208,39 @@ test('execution request HTTP path reaches the injected fake through CLM', async 
   const adminApp = await fixture({ artifactExecutionRepository }); t.after(adminApp.close); const adminHeaders = { cookie: 'helmion_admin_session=active-session' };
   const queued = await fetch(`${adminApp.url}/api/admin/cora/artifact-execution-requests`, { method: 'POST', headers: { ...adminHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ ...body, approvalRef: 'approval-0001', idempotencyKey: 'execution-0003', supersedesReceiptId: 'execution-0001' }) }); const queuedBody = await queued.json(); assert.equal(queued.status, 200, JSON.stringify(queuedBody)); assert.equal(queuedBody.status, 'queued'); assert.equal(queuedBody.execution, 'not_executed');
   const blocked = await fetch(`${adminApp.url}/api/admin/cora/artifact-execution-requests`, { method: 'POST', headers: { ...adminHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ ...body, estimatedCostMinor: 101, idempotencyKey: 'execution-0004' }) }); const blockedBody = await blocked.json(); assert.equal(blocked.status, 200, JSON.stringify(blockedBody)); assert.equal(blockedBody.status, 'blocked'); assert.equal(blockedBody.policyDecision, 'deny');
+});
+
+test('personal Cora preferences are membership-derived, bounded, and user-owned', async (t) => {
+  const calls = [];
+  const personalPreferencesRepository = {
+    async read(actor) {
+      calls.push({ operation: 'read', actor });
+      return { bounds: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in'], turnMode: ['concise'], voiceProfiles: ['emma'] }, preferences: { format: 'cora.personal-preferences.v1', valid: true, organizationId: actor.tenantId, subject: actor.subject, preferences: {}, updatedAt: null } };
+    },
+    async save(actor, input) {
+      calls.push({ operation: 'save', actor, input });
+      return { bounds: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in'], turnMode: ['concise'], voiceProfiles: ['emma'] }, preferences: { format: 'cora.personal-preferences.v1', valid: true, organizationId: actor.tenantId, subject: actor.subject, preferences: input, updatedAt: '2026-08-14T00:00:00.000Z' } };
+    },
+  };
+  const app = await fixture({ membershipRoles: { 'customer-a': 'member' }, personalPreferencesRepository }); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session' };
+  const read = await fetch(`${app.url}${LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH}`, { headers });
+  const readBody = await read.json();
+  assert.equal(read.status, 200, JSON.stringify(readBody));
+  assert.equal(readBody.preferences.subject, 'user-1');
+  assert.equal(readBody.preferences.organizationId, 'customer-a');
+  assert.equal(calls[0].actor.tenantId, 'customer-a');
+  assert.equal(calls[0].actor.subject, 'user-1');
+  const saved = await fetch(`${app.url}${LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH}`, { method: 'PUT', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ interruptMode: 'barge_in', muted: true, turnMode: 'concise', verbosity: 'detailed', volume: 35, voiceProfile: 'emma' }) });
+  const savedBody = await saved.json();
+  assert.equal(saved.status, 200, JSON.stringify(savedBody));
+  assert.equal(savedBody.preferences.preferences.voiceProfile, 'emma');
+  assert.equal(calls[1].actor.tenantId, 'customer-a');
+  assert.equal(calls[1].actor.subject, 'user-1');
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH}?organization_id=other`, { headers })).status, 400);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH}?subject=user-2`, { headers })).status, 400);
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH}`, { method: 'PUT', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ interruptMode: 'barge_in', muted: false, turnMode: 'concise', verbosity: 'concise', volume: 80, voiceProfile: null, provider: 'claude' }) });
+  assert.equal(injected.status, 400);
 });
 
 test('live admin is mounted under /admin on the CLM port and never replaces /llm', async (t) => {
