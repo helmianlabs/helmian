@@ -167,6 +167,7 @@ try {
     notifyBackgroundAgents: flags.agentNotify,
     httpRequestHandler: liveAdmin?.handler,
     globalActionPolicyResolver: liveAdmin?.resolveActionPolicy,
+    publishedConfigResolver: liveAdmin?.resolvePublishedCoraSessionConfig,
     providerSessionUsageSink: liveAdmin ? ({ bridgeContext, outcome }) => recordProviderSessionUsage({ append: liveAdmin.appendProviderUsage, bridgeContext, outcome }) : null,
     logger,
   });

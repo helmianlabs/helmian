@@ -11,7 +11,7 @@
   "artifactExecution": {"mode": "approval_preflight_only", "approval": "admin_step_up_for_queue", "execution": "not_executed", "providerInvocation": "not_performed", "media": "not_generated"},
   "ui": {"bundleRevision": "cloud-admin-76cd412"},
   "connector": {"mode": "inbound_only"},
-  "cora": {"sessionToolManifestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "cora": {"sessionToolManifestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sessionConfigResolution": "organization_published_at_session_time"},
   "tests": {"fixtureVersion": "helmian-tests-1154"},
   "canary": {
     "sequence": ["verify-release-manifest", "verify-readiness", "deploy-canary", "health-check", "authenticated-organization-read", "normal-read-prepare", "provider-session-receipt-check", "observe", "rollback-on-criteria"],

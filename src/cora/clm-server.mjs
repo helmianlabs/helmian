@@ -355,6 +355,7 @@ export async function startCoraClm({
   globalActionPolicyResolver = null,
   logger = () => {},
   providerSessionUsageSink = null,
+  publishedConfigResolver = null,
 } = {}) {
   const { requiresToken } = resolveAccess({ host, token });
   if (requireSignedSessions && Buffer.byteLength(String(bridgeSecret ?? ''), 'utf8') < 32) {
@@ -428,7 +429,7 @@ export async function startCoraClm({
     }
   };
 
-  const sessionFor = (customSessionId, connectionId) => {
+  const sessionFor = async (customSessionId, connectionId) => {
     evictIdle();
     const isSignedShape = String(customSessionId ?? '').startsWith(AIMFORGE_BRIDGE_MARKER);
     const verification = (requireSignedSessions || isSignedShape)
@@ -444,6 +445,15 @@ export async function startCoraClm({
     }
 
     const bridgeContext = verification.ok ? verification.context : null;
+    let sessionConfig = null;
+    if (bridgeContext && requireSignedSessions) {
+      if (typeof publishedConfigResolver !== 'function') return { session: null, refused: 'published Organization Cora config resolver is unavailable', bridgeContext: null };
+      try {
+        sessionConfig = await publishedConfigResolver({ ...bridgeContext, verified: true });
+      } catch (error) {
+        return { session: null, refused: error?.code ?? 'published Organization Cora config is unavailable', bridgeContext: null };
+      }
+    }
     if (bridgeContext) {
       const receiptAccess = authorizeAimForgeBridgeReceipt(
         bridgeReceipts, bridgeContext, connectionId,
@@ -480,6 +490,7 @@ export async function startCoraClm({
         connectionId,
         helmionMode: bridgeContext ? true : isHelmionSession(customSessionId, sessionPrefix),
         bridgeContext,
+        sessionConfig,
         // Bearer-like raw bridge is kept only in memory for the fixed AimForge
         // action request. Activity/log paths receive bridgeContext, never this.
         signedBridge: bridgeContext ? customSessionId : null,
@@ -616,7 +627,7 @@ export async function startCoraClm({
     // service. Invalid labels are a refused request, not session context.
     const sessionId = sessionIdCheck.ok ? sessionIdCheck.id : null;
     const sessionResult = sessionIdCheck.ok
-      ? sessionFor(sessionId, connection.id)
+      ? await sessionFor(sessionId, connection.id)
       : { session: null, refused: sessionIdCheck.reason };
     const session = sessionResult.session;
     const logSessionId = session?.bridgeContext?.receiptId ?? sessionId;
@@ -627,7 +638,7 @@ export async function startCoraClm({
       : sessionId;
 
     let ended = false;
-    let spokenBudget = maxSpokenChars;
+    let spokenBudget = session?.sessionConfig?.professionalBehavior?.maxSpokenChars ?? maxSpokenChars;
     let saidAnything = false;
     let announcedTruncation = false;
     const spokenPieces = [];
@@ -1013,6 +1024,7 @@ export async function startCoraClm({
           customLanguageModel: true,
           requiredSessionPrefix: `${sessionPrefix}:`,
           signedSessionsRequired: requireSignedSessions,
+          sessionConfigResolution: typeof publishedConfigResolver === 'function' ? 'organization_published_at_session_time' : 'unavailable',
         },
         requiresToken,
         allowedOriginCount: Array.isArray(allowedOrigins) ? allowedOrigins.length : 0,

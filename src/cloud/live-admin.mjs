@@ -40,6 +40,7 @@ import { createAuditEventRepository, normalizeAuditExportQuery } from './audit-e
 import { createOrganizationRoleRepository } from './organization-role-repository.mjs';
 import { readOrganizationReadiness } from './organization-readiness.mjs';
 import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
+import { resolvePublishedCoraSessionConfig } from '../cora/session-config-resolver.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -1003,6 +1004,7 @@ export async function createLiveHelmianCloudAdminHandler({
     readPersonalPreferences: (actor) => personalPreferences.read(actor),
     savePersonalPreferences: (actor, input) => personalPreferences.save(actor, input),
     resolveOrganizationDatabase: (actor) => organizationDatabase.resolve(actor),
+    resolvePublishedCoraSessionConfig: (signedContext) => resolvePublishedCoraSessionConfig({ repository: coraConfig, signedContext }),
     claimAgentTask: (workerActor, input) => agentTasks.claimPrepared(workerActor, input),
     close: () => ownsPool ? pool.end() : Promise.resolve(),
   });
