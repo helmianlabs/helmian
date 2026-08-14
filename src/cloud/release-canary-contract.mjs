@@ -85,6 +85,13 @@ export function validateReleaseManifest(manifest = {}, expected = {}) {
       if (actual?.[field] !== required?.[field]) throw new Error(`agent execution adapter ${field} mismatch`);
     }
   });
+  check('Cora routing policy enforcement', () => {
+    const actual = manifest.routingPolicy;
+    const required = expected.routingPolicy;
+    for (const field of ['format', 'enforcement', 'noRoute', 'approvalRequired', 'blocked', 'providerInvocation', 'publicEndpoint']) {
+      if (actual?.[field] !== required?.[field]) throw new Error(`Cora routing policy ${field} mismatch`);
+    }
+  });
   check('Artifact Studio source-only receipt contract', () => {
     const actual = manifest.artifactStudio;
     const required = expected.artifactStudio;
