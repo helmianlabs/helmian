@@ -14,6 +14,7 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
   return Object.freeze({
     readConfig() { return requestJson(fetchImpl, '/api/admin/cora/config'); },
     readKnowledgeSources() { return requestJson(fetchImpl, '/api/admin/cora/knowledge-sources'); },
+    queryKnowledge(query) { return requestJson(fetchImpl, `/api/admin/cora/knowledge/query?q=${encodeURIComponent(query)}`); },
     readUsage() { return requestJson(fetchImpl, '/api/admin/cora/usage'); },
     readWorkspacePreviews() { return requestJson(fetchImpl, '/api/admin/cora/workspace/previews'); },
     createWorkspacePreview({ mode, intent, department, templateId, title, idempotencyKey }) {
@@ -63,6 +64,11 @@ export function workspacePreviewPanelModel(body = {}) {
 export function agentTaskPanelModel(body = {}) {
   const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
   return Object.freeze({ empty: receipts.length === 0, receipts, execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', statusLabel: body.replayed ? 'Task intent already received. Durable replay receipt confirmed.' : 'Task intent recorded. No worker execution occurred.' });
+}
+
+export function knowledgeQueryModel(body = {}) {
+  const excerpts = Array.isArray(body.excerpts) ? body.excerpts.slice(0, 20) : [];
+  return Object.freeze({ empty: excerpts.length === 0, excerpts, status: body.status === 'approved_sources_only' && excerpts.length ? 'approved_sources_only' : 'no_approved_source_match', answer: null, providerCall: 'not_performed' });
 }
 
 export function usagePanelModel(body = {}) {

@@ -80,6 +80,38 @@ export function createCoraOrganizationConfigRepository(pool) {
         })) };
       });
     },
+    async queryApprovedKnowledge(actor, query, limit = 8) {
+      const context = actorContext(actor);
+      const search = text(query, 'knowledge query', 500).toLowerCase();
+      const bounded = Math.min(Math.max(Number(limit) || 8, 1), 20);
+      return withTenantTransaction(pool, context, async (client) => {
+        await requireActiveTenantMembership(client, context);
+        const result = await client.query(
+          `select s.source_key, s.title, s.publisher, s.canonical_uri, s.provenance,
+                  p.pack_key, p.version, p.provenance as pack_provenance,
+                  k.citation, k.text_reference, k.excerpt, k.content_sha256
+           from helmion.cora_knowledge_sources s
+           join helmion.cora_knowledge_packs p on p.tenant_id=s.tenant_id and p.source_id=s.id
+           join helmion.cora_knowledge_snippets k on k.tenant_id=p.tenant_id and k.pack_id=p.id
+           where s.tenant_id=$1 and s.lifecycle='approved' and p.lifecycle='approved' and p.allowlisted=true
+             and k.excerpt is not null
+             and (s.expires_at is null or s.expires_at > clock_timestamp())
+             and (p.expires_at is null or p.expires_at > clock_timestamp())
+             and (k.expires_at is null or k.expires_at > clock_timestamp())
+           order by s.source_key, p.pack_key, p.version, k.id
+           limit $2`,
+          [context.tenantId, bounded * 4],
+        );
+        const terms = search.split(/\s+/u).filter(Boolean);
+        const matches = result.rows.filter((row) => terms.every((term) => `${row.excerpt} ${row.text_reference} ${row.citation}`.toLowerCase().includes(term))).slice(0, bounded);
+        return {
+          format: 'cora.approved-knowledge-retrieval.v1', status: matches.length ? 'approved_sources_only' : 'no_approved_source_match', query: search,
+          answer: null, legalConclusion: 'not_provided', providerCall: 'not_performed', modelCall: 'not_performed',
+          excerpts: matches.map((row) => Object.freeze({ excerpt: String(row.excerpt), citation: String(row.citation), source: String(row.source_key), title: String(row.title), publisher: String(row.publisher), canonicalUri: String(row.canonical_uri), provenance: String(row.provenance), pack: `${String(row.pack_key)} v${String(row.version)}`, packProvenance: String(row.pack_provenance), textReference: String(row.text_reference), contentSha256: row.content_sha256 ?? null })),
+          citations: matches.map((row) => String(row.citation)),
+        };
+      });
+    },
     async createDraft(actor, input) {
       requireAdmin(actor);
       const body = object(input, 'Cora config draft');
@@ -136,4 +168,3 @@ export function createCoraOrganizationConfigRepository(pool) {
     },
   });
 }
-

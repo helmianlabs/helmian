@@ -48,6 +48,7 @@ export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
 export const LIVE_ADMIN_CORA_CONFIGS_PATH = '/api/admin/cora/configs';
 export const LIVE_ADMIN_CORA_TRANSITION_PATH = '/api/admin/cora/configs/transition';
 export const LIVE_ADMIN_CORA_KNOWLEDGE_PATH = '/api/admin/cora/knowledge-sources';
+export const LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH = '/api/admin/cora/knowledge/query';
 export const LIVE_ADMIN_CORA_USAGE_PATH = '/api/admin/cora/usage';
 export const LIVE_ADMIN_CORA_PREVIEW_PATH = '/api/admin/cora/workspace/previews';
 export const LIVE_ADMIN_CORA_TASKS_PATH = '/api/admin/cora/tasks';
@@ -437,6 +438,11 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_PATH) {
       try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.listKnowledgeSources(actor) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_SELECTOR_INVALID' : 'CORA_KNOWLEDGE_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_KNOWLEDGE_QUERY_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const query = requestUrl.searchParams.get('q'); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.queryApprovedKnowledge(actor, query, requestUrl.searchParams.get('limit')) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_QUERY_INVALID' : 'CORA_KNOWLEDGE_QUERY_UNAVAILABLE' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_USAGE_PATH) {

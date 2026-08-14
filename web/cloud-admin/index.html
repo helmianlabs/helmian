@@ -102,6 +102,12 @@
           <p id="cora-config-status" class="note" role="status">Loading Organization Cora settings…</p>
           <div id="cora-config-details" class="config-grid"></div>
           <div id="cora-knowledge-details" class="config-list"></div>
+          <div class="config-controls">
+            <input id="cora-knowledge-query" aria-label="Query approved knowledge" maxlength="500" placeholder="Search stored approved sources…">
+            <button id="cora-knowledge-query-submit" type="button">Search sources</button>
+          </div>
+          <p id="cora-knowledge-query-status" class="note" role="status" aria-live="polite">No knowledge query run. Results will be stored excerpts with citations only.</p>
+          <div id="cora-knowledge-query-results" class="config-grid"></div>
           <div id="cora-admin-controls" class="config-controls" hidden>
             <input id="cora-draft-reason" aria-label="Cora draft reason" maxlength="2000" placeholder="Reason for a reviewed Cora draft">
             <button id="cora-create-draft" type="button">Create reviewed draft</button>
