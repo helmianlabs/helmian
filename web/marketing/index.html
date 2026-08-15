@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="styles.css">
     <script src="site-config.js" defer></script>
     <script src="site.js" defer></script>
+    <script src="guard-checkout.js" defer></script>
     <title>Helmian — keep the boundaries visible</title>
   </head>
   <body>
@@ -122,6 +123,19 @@
             <span>Source · Capabilities · Review state</span>
           </article>
         </div>
+      </section>
+
+      <section class="section shell" id="plans" aria-labelledby="plans-title">
+        <div class="section-heading narrow">
+          <p class="eyebrow"><span></span> Access</p>
+          <h2 id="plans-title">Choose the workspace that fits the work.</h2>
+          <p>Checkout is server-routed and remains unavailable until approved Stripe products and an entitlement store are configured.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card"><h3>Helmian Individual</h3><p>Personal workspace access for one operator.</p><button type="button" data-guard-checkout data-product="helmian_individual">Request Individual checkout</button></article>
+          <article class="feature-card"><h3>Helmian Guard</h3><p>Browser posture and evidence review package.</p><button type="button" data-guard-checkout data-product="helmian_guard">Request Guard checkout</button></article>
+        </div>
+        <p data-guard-checkout-status>Checkout is not configured yet. No payment was started.</p>
       </section>
 
       <section class="section section-rule shell" id="workflow" aria-labelledby="workflow-title">
