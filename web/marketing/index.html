@@ -51,11 +51,8 @@
             Not another free-for-all agent hive.
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#product">Explore the product</a>
             <a class="button button-primary" href="/api/billing/checkout?product=helmian_individual">Buy Helmian · $10 one-time</a>
             <a class="button button-secondary" href="/api/billing/checkout?product=helmian_guard">Buy Guard · $10 one-time</a>
-            <a class="button button-secondary" href="/herald/">Open Herald</a>
-            <a class="button button-secondary" href="#demos">Watch demos</a>
           </div>
           <ul class="posture-list" aria-label="Product posture">
             <li>Guard armed</li>
@@ -135,8 +132,8 @@
           <p>One-time purchase. Helmian Individual is $10; Helmian Guard is $10. Checkout opens Stripe securely.</p>
         </div>
         <div class="feature-grid">
-          <article class="feature-card"><h3>Helmian Individual · $10</h3><p>Personal workspace access for one operator. One-time purchase.</p><button type="button" data-guard-checkout data-product="helmian_individual">Buy Helmian Individual</button></article>
-          <article class="feature-card"><h3>Helmian Guard · $10</h3><p>Browser posture and evidence review package. One-time purchase.</p><button type="button" data-guard-checkout data-product="helmian_guard">Buy Helmian Guard</button></article>
+          <article class="feature-card"><h3>Helmian Individual · $10</h3><p>Personal workspace access for one operator. One-time purchase.</p><a class="button button-primary" href="/api/billing/checkout?product=helmian_individual">Buy Helmian · $10 one-time</a></article>
+          <article class="feature-card"><h3>Helmian Guard · $10</h3><p>Browser posture and evidence review package. One-time purchase.</p><a class="button button-primary" href="/api/billing/checkout?product=helmian_guard">Buy Guard · $10 one-time</a></article>
         </div>
         <p data-guard-checkout-status>Choose a product to open secure Stripe Checkout.</p>
       </section>
