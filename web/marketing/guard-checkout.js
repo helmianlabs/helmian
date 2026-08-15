@@ -1,5 +1,8 @@
 const checkoutButtons = document.querySelectorAll('[data-guard-checkout]');
 const checkoutStatus = document.querySelector('[data-guard-checkout-status]');
+const checkoutState = new URLSearchParams(window.location.search).get('checkout');
+if (checkoutStatus && checkoutState === 'success') checkoutStatus.textContent = 'Payment received. Access remains pending until the signed webhook grants your entitlement.';
+if (checkoutStatus && checkoutState === 'cancelled') checkoutStatus.textContent = 'Checkout cancelled. No entitlement was created.';
 
 if (checkoutButtons.length && checkoutStatus) {
   checkoutButtons.forEach((checkoutButton) => checkoutButton.addEventListener('click', async () => {
