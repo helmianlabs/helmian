@@ -36,7 +36,7 @@ window.HELMION_SITE_CONFIG = Object.freeze({
     firefox: { label: 'Firefox package', status: 'AMO signing required', href: '' },
   },
   billing: {
-    product: 'helmion-guard',
-    status: 'checkout_not_configured',
+    products: { individual: 'helmian_individual', guard: 'helmian_guard', bundle: 'helmian_bundle' },
+    status: 'server_config_required',
   },
 });
