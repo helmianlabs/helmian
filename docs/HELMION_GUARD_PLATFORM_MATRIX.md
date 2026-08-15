@@ -20,6 +20,24 @@ write only to ignored local `artifacts/` directories and print the selected
 manifest, permissions, host matches, and signing boundary. They do not upload,
 sign, or contact a browser store.
 
+### Firefox signing handoff (not performed)
+
+1. Replace the placeholder `browser_specific_settings.gecko.id` in the Firefox
+   staging manifest with the add-on ID owned by the Mozilla account.
+2. Run `npm run guard:package:firefox` and review the generated
+   `STAGING-MANIFEST.json`, permissions, host matches, and source diff.
+3. Install `web-ext` in a disposable tool environment or use the Mozilla Add-on
+   Developer Hub. Run `web-ext lint --source-dir <staging-directory>` first.
+4. Submit the reviewed package through AMO, or use `web-ext sign` with the
+   Mozilla API credentials held outside the repository. Mozilla signing is the
+   only step that creates an installable Firefox artifact.
+5. Record the signed artifact hash and AMO version before placing a public link
+   in the product page. Until then, the page keeps the Firefox download slot
+   disabled and says “AMO signing required.”
+
+No Mozilla account, API credential, signing command, or public artifact was used
+in this source-only pass.
+
 ## Permission and compatibility boundary
 
 Both manifests request only `storage` and match the four supported AI hosts.
