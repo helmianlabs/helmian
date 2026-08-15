@@ -34,11 +34,15 @@ export const CLOUD_ADMIN_UI_FIXTURES = freeze({
     prepared: { receipts: [{ receiptId: 'fixture-preview-receipt', status: 'prepared', execution: 'not_performed', providerInvocation: 'not_performed' }] },
     replayed: { receipts: [{ receiptId: 'fixture-task-receipt', status: 'prepared', replayed: true, execution: 'not_performed', agentInvocation: 'not_performed' }] },
   },
+  workspace: {
+    layout: { visibleShelves: ['chat', 'cora', 'prepare', 'artifact', 'governance'], panelOrder: ['chat', 'cora', 'prepare', 'artifact', 'governance'], density: 'comfortable', defaultEnvoyChannelId: null },
+  },
 });
 
 export function createCloudAdminFixtureFetch({ role = 'member', envoy = 'connected', knowledge = 'knowledgeEmpty', usage = 'usageEmpty', preparation = 'empty' } = {}) {
   const calls = [];
   const selected = CLOUD_ADMIN_UI_FIXTURES;
+  let workspaceLayout = structuredClone(selected.workspace.layout);
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
     const path = new URL(url, 'https://fixture.local').pathname;
@@ -52,6 +56,15 @@ export function createCloudAdminFixtureFetch({ role = 'member', envoy = 'connect
     if (path === '/api/admin/cora/usage') return json(selected.cora[usage]);
     if (path === '/api/admin/cora/workspace/previews') return json(selected.preparation[preparation]);
     if (path === '/api/admin/cora/tasks') return json(selected.preparation[preparation]);
+    if (path === '/api/admin/workspace/layout-preferences' && options.method === 'PUT') {
+      workspaceLayout = JSON.parse(options.body ?? '{}');
+      return json({ layout: workspaceLayout, source: 'fixture_organization_workspace' });
+    }
+    if (path === '/api/admin/workspace/layout-preferences') return json({ layout: workspaceLayout, source: 'fixture_organization_workspace' });
+    if (path === '/api/admin/workspace/layout-preferences/reset' && options.method === 'POST') {
+      workspaceLayout = structuredClone(selected.workspace.layout);
+      return json({ layout: workspaceLayout, source: 'fixture_organization_workspace' });
+    }
     if (path === '/api/admin/events') return json({ events: [] });
     if (path === '/api/admin/workspace') return json({ workspace: { agents: [] } });
     if (path === '/api/admin/control-surface') return json({ result: { authorization: 'fixture_membership_verified' } });
