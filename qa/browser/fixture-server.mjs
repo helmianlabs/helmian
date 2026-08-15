@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../web/cloud-admin/', import.meta.url));
 const port = Number(process.env.HELMION_UI_FIXTURE_PORT ?? 4177);
 const MIME = Object.freeze({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' });
+let workspaceLayout = { visibleShelves: ['chat', 'cora', 'prepare', 'artifact', 'governance'], panelOrder: ['chat', 'cora', 'prepare', 'artifact', 'governance'], density: 'comfortable', defaultEnvoyChannelId: null };
 
 function cookie(request, name) {
   const prefix = `${name}=`;
@@ -52,6 +53,17 @@ const server = createServer(async (request, response) => {
     if (url.pathname === '/api/admin/cora/knowledge/query') return json(response, { status: 'no_approved_source_match', excerpts: [], answer: null, providerCall: 'not_performed' });
     if (url.pathname === '/api/admin/cora/usage') return json(response, { source: 'tenant_append_only_ledger', budget: null, totals: { eventCount: 0, estimatedCostMinor: null, reconciledCostMinor: null }, providerCalls: 'not_performed' });
     if (url.pathname === '/api/admin/cora/workspace/previews' || url.pathname === '/api/admin/cora/tasks') return json(response, { receipts: [] });
+    if (url.pathname === '/api/admin/workspace/layout-preferences' && request.method === 'PUT') {
+      let body = {};
+      try { body = JSON.parse(await new Promise((resolve, reject) => { let raw = ''; request.on('data', (chunk) => { raw += chunk; }); request.on('end', () => resolve(raw)); request.on('error', reject); })); } catch { return json(response, { code: 'INVALID_JSON' }, 400); }
+      workspaceLayout = body;
+      return json(response, { layout: workspaceLayout, source: 'fixture_organization_workspace' });
+    }
+    if (url.pathname === '/api/admin/workspace/layout-preferences/reset' && request.method === 'POST') {
+      workspaceLayout = { visibleShelves: ['chat', 'cora', 'prepare', 'artifact', 'governance'], panelOrder: ['chat', 'cora', 'prepare', 'artifact', 'governance'], density: 'comfortable', defaultEnvoyChannelId: null };
+      return json(response, { layout: workspaceLayout, source: 'fixture_organization_workspace' });
+    }
+    if (url.pathname === '/api/admin/workspace/layout-preferences') return json(response, { layout: workspaceLayout, source: 'fixture_organization_workspace' });
     return json(response, { valid: true, receipt: { durable: true, replayed: false } });
   }
   response.writeHead(404); response.end('not found');
