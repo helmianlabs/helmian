@@ -41,6 +41,9 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(script, /readPersonalPreferences/u);
   assert.match(script, /savePersonalPreferences/u);
   assert.match(page, /Workspace settings/iu);
+  assert.match(page, /id="guard-check-again"/u);
+  assert.match(script, /loadOrganizationReadiness()/u);
+  assert.match(script, /guardCheckAgain/u);
   assert.match(page, /Reset to role default/iu);
   assert.match(page, /workspace-preset-operations/iu);
   assert.match(page, /workspace-preset-focus/iu);
