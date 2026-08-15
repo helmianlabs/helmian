@@ -16,6 +16,26 @@ namespace Helmion.Desktop;
 /// </summary>
 public partial class MainWindow
 {
+    private const string DefaultHeraldOrigin = "https://helmian.vercel.app";
+
+    // Keep the hosted origin configurable for the Fly migration, while
+    // refusing arbitrary hosts from a copied desktop environment. The web
+    // routes on helmian-cloud.fly.dev still need to be proven before making it
+    // the default.
+    internal static string ResolveHeraldOrigin()
+    {
+        var configured = Environment.GetEnvironmentVariable("HELMION_HERALD_ORIGIN")?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(configured)) return DefaultHeraldOrigin;
+        if (!Uri.TryCreate(configured, UriKind.Absolute, out var uri)
+            || uri.Scheme != Uri.UriSchemeHttps
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || uri.Host is not ("helmian.vercel.app" or "helmian-cloud.fly.dev"))
+        {
+            return DefaultHeraldOrigin;
+        }
+        return uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+    }
+
     private HeraldDesktopGateway? _heraldGateway;
     private CancellationTokenSource? _heraldSharingCancellation;
     private Task? _heraldPipeTask;
@@ -90,7 +110,7 @@ public partial class MainWindow
             start.ArgumentList.Add("herald");
             start.ArgumentList.Add("--remote");
             start.ArgumentList.Add("--origin");
-            start.ArgumentList.Add("https://helmian.vercel.app");
+            start.ArgumentList.Add(ResolveHeraldOrigin());
             start.ArgumentList.Add("--desktop-pipe");
             start.ArgumentList.Add("--desktop-pipe-name");
             start.ArgumentList.Add(pipeName);
@@ -248,7 +268,7 @@ public partial class MainWindow
     {
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
             || uri.Scheme != Uri.UriSchemeHttps
-            || !string.Equals(uri.Host, "helmian.vercel.app", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(uri.Host, new Uri(ResolveHeraldOrigin()).Host, StringComparison.OrdinalIgnoreCase)
             || !uri.AbsolutePath.StartsWith("/herald", StringComparison.Ordinal))
         {
             return;
