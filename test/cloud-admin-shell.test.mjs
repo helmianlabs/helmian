@@ -19,7 +19,7 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.doesNotMatch(page, /plant selector|facility selector|choose a plant|choose a facility/iu);
   assert.match(page, /No audited status/u);
   assert.match(page, /no agent execution is implied/u);
-  assert.match(page, /Preview · not executed/u);
+  assert.match(page, /Preview · intents/u);
   assert.match(page, /external execution and browser automation are unavailable/u);
   assert.match(page, /stored excerpts with citations only/u);
   assert.match(page, /Artifact Studio/u);
@@ -42,6 +42,8 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(script, /savePersonalPreferences/u);
   assert.match(page, /Workspace settings/iu);
   assert.match(page, /id="guard-check-again"/u);
+  assert.match(page, /id="guard-preview-tab"/u);
+  assert.match(script, /guardPreviewTab/u);
   assert.match(script, /loadOrganizationReadiness()/u);
   assert.match(script, /guardCheckAgain/u);
   assert.match(page, /Reset to role default/iu);
