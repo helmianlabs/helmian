@@ -40,3 +40,12 @@ test('fixture models preserve truthful empty and unavailable states', () => {
   assert.equal(workspacePreviewPanelModel(CLOUD_ADMIN_UI_FIXTURES.preparation.empty).empty, true);
   assert.equal(agentTaskPanelModel(CLOUD_ADMIN_UI_FIXTURES.preparation.prepared).execution, 'not_performed');
 });
+
+test('fixture persists Organization workspace layout presets through the real client contract', async () => {
+  const fetchImpl = createCloudAdminFixtureFetch();
+  const cora = createCoraConfigClient({ fetchImpl });
+  const focus = { visibleShelves: ['chat', 'prepare'], panelOrder: ['chat', 'prepare'], density: 'comfortable', defaultEnvoyChannelId: null };
+  assert.deepEqual((await cora.saveWorkspaceLayout(focus)).layout, focus);
+  assert.deepEqual((await cora.readWorkspaceLayout()).layout, focus);
+  assert.match(fetchImpl.calls.map(({ url }) => url).join('\n'), /workspace\/layout-preferences/u);
+});
