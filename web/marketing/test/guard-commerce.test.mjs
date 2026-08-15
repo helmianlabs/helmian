@@ -4,6 +4,7 @@ import test from 'node:test';
 import checkoutHandler from '../api/billing/checkout.js';
 import { createDownloadHandler, } from '../api/billing/download.js';
 import { createCheckoutSession, createEntitlementWebhookHandler, verifyStripeSignature } from '../api/billing/stripe-contract.js';
+import { createArtifactResolver, createEntitlementStore } from '../api/billing/entitlement-store.js';
 import { createHmac } from 'node:crypto';
 
 const page = await readFile(new URL('../guard.html', import.meta.url), 'utf8');
@@ -72,4 +73,17 @@ test('download gate requires entitlement and never exposes artifact publicly', a
   const denied = response(); await handler({ method: 'GET', url: '/api/billing/download?product=helmian_guard' }, denied); assert.equal(denied.statusCode, 403);
   const allowed = createDownloadHandler({ env: { STRIPE_PRODUCT_HELMIAN_GUARD: 'prod_guard' }, resolveCustomer: async () => 'cus_1', entitlementStore: { hasEntitlement: async () => true }, resolveArtifact: async () => ({ url: 'https://private.invalid/file' }) });
   const redirected = response(); await allowed({ method: 'GET', url: '/api/billing/download?product=helmian_guard' }, redirected); assert.equal(redirected.statusCode, 302); assert.equal(redirected.headers.location, 'https://private.invalid/file'); assert.equal(redirected.headers['cache-control'], 'no-store');
+});
+
+test('durable entitlement adapter keeps event and grant writes parameterized', async () => {
+  const calls = []; const store = createEntitlementStore({ query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; } });
+  assert.equal(await store.hasEvent('evt_1'), true); await store.recordEvent('evt_1'); await store.grant({ customerId: 'cus_1', product: 'helmian_guard', sessionId: 'cs_1' }); assert.equal(await store.hasEntitlement('cus_1', 'helmian_guard'), true);
+  assert.equal(calls.length, 4); assert.ok(calls.every((call) => Array.isArray(call.params)));
+});
+
+test('artifact resolver rejects absent or non-HTTPS package targets', async () => {
+  const resolver = createArtifactResolver({ HELMION_ARTIFACT_HELMIAN_GUARD_URL: 'http://public.invalid/file.zip' });
+  assert.equal(await resolver({ product: 'helmian_guard' }), null);
+  const approved = createArtifactResolver({ HELMION_ARTIFACT_HELMIAN_GUARD_URL: 'https://private.invalid/file.zip' });
+  assert.equal((await approved({ product: 'helmian_guard' })).url, 'https://private.invalid/file.zip');
 });
