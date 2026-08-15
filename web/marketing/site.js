@@ -37,6 +37,21 @@ for (const link of document.querySelectorAll('[data-link-key]')) {
   }
 }
 
+for (const card of document.querySelectorAll('[data-download-key]')) {
+  const slot = config.downloads?.[card.dataset.downloadKey];
+  const status = card.querySelector('[data-download-status]');
+  const link = card.querySelector('a');
+  if (!slot) continue;
+  if (status) status.textContent = slot.status || 'Artifact unavailable';
+  if (link && slot.href) {
+    link.href = slot.href;
+    link.removeAttribute('aria-disabled');
+  } else if (link) {
+    link.setAttribute('aria-disabled', 'true');
+    link.addEventListener('click', (event) => event.preventDefault());
+  }
+}
+
 const year = document.querySelector('[data-current-year]');
 if (year) year.textContent = String(new Date().getFullYear());
 

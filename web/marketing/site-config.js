@@ -31,4 +31,12 @@ window.HELMION_SITE_CONFIG = Object.freeze({
       label: 'Contact',
     },
   },
+  downloads: {
+    chromium: { label: 'Chromium package', status: 'Artifact pending review', href: '' },
+    firefox: { label: 'Firefox package', status: 'AMO signing required', href: '' },
+  },
+  billing: {
+    product: 'helmion-guard',
+    status: 'checkout_not_configured',
+  },
 });
