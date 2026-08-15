@@ -42,6 +42,9 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(script, /savePersonalPreferences/u);
   assert.match(page, /Workspace settings/iu);
   assert.match(page, /Reset to role default/iu);
+  assert.match(page, /workspace-preset-operations/iu);
+  assert.match(page, /workspace-preset-focus/iu);
+  assert.match(page, /workspace-preset-full/iu);
   assert.match(script, /readWorkspaceLayout/u);
   assert.match(script, /saveWorkspaceLayout/u);
   assert.match(script, /resetWorkspaceLayout/u);
@@ -50,6 +53,8 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(script, /readWorkspaceRoleDefaults/u);
   assert.match(script, /saveWorkspaceRoleDefault/u);
   assert.match(script, /applyWorkspaceLayout/u);
+  assert.match(script, /applyWorkspacePreset/u);
+  assert.match(script, /Saving the \$\{name\} workspace layout/u);
   assert.match(script, /data-target=.{0,20}section-\$\{shelf\}/u);
   assert.match(page, /Routing policy is Organization-published metadata only/iu);
   assert.doesNotMatch(page, /Cora routing policy JSON/iu);

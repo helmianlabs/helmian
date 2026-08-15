@@ -156,6 +156,9 @@ const workspaceSettingsClose = document.querySelector('#workspace-settings-close
 const workspaceLayoutStatus = document.querySelector('#workspace-layout-status');
 const workspaceLayoutSave = document.querySelector('#workspace-layout-save');
 const workspaceLayoutReset = document.querySelector('#workspace-layout-reset');
+const workspacePresetOperations = document.querySelector('#workspace-preset-operations');
+const workspacePresetFocus = document.querySelector('#workspace-preset-focus');
+const workspacePresetFull = document.querySelector('#workspace-preset-full');
 const workspacePanelOrder = document.querySelector('#workspace-panel-order');
 const workspaceDensity = document.querySelector('#workspace-density');
 const workspaceDefaultChannel = document.querySelector('#workspace-default-channel');
@@ -810,8 +813,29 @@ async function load() {
 }
 workspaceSettingsOpen.onclick = () => { workspaceSettings.showModal(); loadWorkspaceLayout().catch(() => {}); };
 workspaceSettingsClose.onclick = () => workspaceSettings.close();
-workspaceLayoutSave.onclick = async () => { workspaceLayoutStatus.textContent = 'Saving your workspace layout…'; workspaceLayoutSave.disabled = true; try { renderWorkspaceLayout(await coraClient.saveWorkspaceLayout(layoutInput())); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not saved: ${error.message}`; } finally { workspaceLayoutSave.disabled = false; } };
+async function saveWorkspaceLayout(input = layoutInput(), status = 'Saving your workspace layout…') {
+  workspaceLayoutStatus.textContent = status;
+  workspaceLayoutSave.disabled = true;
+  try { renderWorkspaceLayout(await coraClient.saveWorkspaceLayout(input)); }
+  catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not saved: ${error.message}`; }
+  finally { workspaceLayoutSave.disabled = false; }
+}
+function applyWorkspacePreset(name) {
+  const presets = {
+    operations: { visibleShelves: ['chat', 'cora', 'prepare', 'governance'], panelOrder: ['chat', 'prepare', 'cora', 'governance'], density: 'compact', defaultEnvoyChannelId: null },
+    focus: { visibleShelves: ['chat', 'prepare'], panelOrder: ['chat', 'prepare'], density: 'comfortable', defaultEnvoyChannelId: null },
+    full: { visibleShelves: ['chat', 'cora', 'prepare', 'artifact', 'governance'], panelOrder: ['chat', 'cora', 'prepare', 'artifact', 'governance'], density: 'comfortable', defaultEnvoyChannelId: null },
+  };
+  const preset = presets[name];
+  if (!preset) return;
+  renderWorkspaceLayout({ layout: preset });
+  saveWorkspaceLayout(preset, `Saving the ${name} workspace layout…`);
+}
+workspaceLayoutSave.onclick = () => saveWorkspaceLayout();
 workspaceLayoutReset.onclick = async () => { workspaceLayoutStatus.textContent = 'Restoring your role default…'; workspaceLayoutReset.disabled = true; try { renderWorkspaceLayout(await coraClient.resetWorkspaceLayout()); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not reset: ${error.message}`; } finally { workspaceLayoutReset.disabled = false; } };
+workspacePresetOperations.onclick = () => applyWorkspacePreset('operations');
+workspacePresetFocus.onclick = () => applyWorkspacePreset('focus');
+workspacePresetFull.onclick = () => applyWorkspacePreset('full');
 workspaceRoleDefaultSave.onclick = async () => { workspaceRoleDefaultStatus.textContent = 'Saving role default…'; workspaceRoleDefaultSave.disabled = true; try { await coraClient.saveWorkspaceRoleDefault({ role: workspaceRoleDefaultRole.value, ...layoutInput() }); workspaceRoleDefaultStatus.textContent = `Saved the ${workspaceRoleDefaultRole.value} role default. Personal overrides remain separate.`; } catch (error) { workspaceRoleDefaultStatus.textContent = `Role default not saved: ${error.message}`; } finally { workspaceRoleDefaultSave.disabled = false; } };
 for (const item of document.querySelectorAll('#workspace-nav [data-target]')) {
   item.onclick = () => {
