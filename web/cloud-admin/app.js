@@ -32,6 +32,7 @@ const peoplePlanTitle = document.querySelector('#people-plan-title');
 const peoplePlanReason = document.querySelector('#people-plan-reason');
 const readinessStatus = document.querySelector('#readiness-status');
 const readinessCards = document.querySelector('#readiness-cards');
+const guardCheckAgain = document.querySelector('#guard-check-again');
 const capabilitiesStatus = document.querySelector('#capabilities-status');
 const capabilitiesNormal = document.querySelector('#capabilities-normal');
 const capabilitiesRegistered = document.querySelector('#capabilities-registered');
@@ -820,6 +821,12 @@ async function saveWorkspaceLayout(input = layoutInput(), status = 'Saving your 
   catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not saved: ${error.message}`; }
   finally { workspaceLayoutSave.disabled = false; }
 }
+guardCheckAgain?.addEventListener('click', async () => {
+  guardCheckAgain.disabled = true;
+  guardCheckAgain.textContent = 'Checking…';
+  try { await loadOrganizationReadiness(); }
+  finally { guardCheckAgain.disabled = false; guardCheckAgain.textContent = 'Check again'; }
+});
 function applyWorkspacePreset(name) {
   const presets = {
     operations: { visibleShelves: ['chat', 'cora', 'prepare', 'governance'], panelOrder: ['chat', 'prepare', 'cora', 'governance'], density: 'compact', defaultEnvoyChannelId: null },
