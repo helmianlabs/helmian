@@ -4,7 +4,7 @@ import test from 'node:test';
 import checkoutHandler from '../api/billing/checkout.js';
 import { createDownloadHandler, } from '../api/billing/download.js';
 import { createCheckoutSession, createEntitlementWebhookHandler, verifyStripeSignature } from '../api/billing/stripe-contract.js';
-import { createArtifactResolver, createEntitlementStore } from '../api/billing/entitlement-store.js';
+import { createArtifactResolver, createEntitlementStore, createRuntimeEntitlementStore } from '../api/billing/entitlement-store.js';
 import { createHmac } from 'node:crypto';
 
 const page = await readFile(new URL('../guard.html', import.meta.url), 'utf8');
@@ -79,6 +79,13 @@ test('durable entitlement adapter keeps event and grant writes parameterized', a
   const calls = []; const store = createEntitlementStore({ query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; } });
   assert.equal(await store.hasEvent('evt_1'), true); await store.recordEvent('evt_1'); await store.grant({ customerId: 'cus_1', product: 'helmian_guard', sessionId: 'cs_1' }); assert.equal(await store.hasEntitlement('cus_1', 'helmian_guard'), true);
   assert.equal(calls.length, 4); assert.ok(calls.every((call) => Array.isArray(call.params)));
+});
+
+test('runtime entitlement adapter is opt-in and never falls back to another database', () => {
+  assert.equal(createRuntimeEntitlementStore({}), null);
+  assert.equal(createRuntimeEntitlementStore({ HELMION_HERALD_DATABASE_URL: 'postgres://wrong-database' }), null);
+  const store = createRuntimeEntitlementStore({ HELMION_BILLING_DATABASE_URL: 'postgres://billing-database' });
+  assert.equal(typeof store.hasEntitlement, 'function');
 });
 
 test('artifact resolver rejects absent or non-HTTPS package targets', async () => {
