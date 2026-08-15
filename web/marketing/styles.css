@@ -78,7 +78,7 @@ nav { display: flex; align-items: center; gap: 30px; }
 nav a { color: var(--soft); font-size: 13px; font-weight: 650; text-decoration: none; }
 nav a:hover { color: var(--accent); }
 
-.hero { display: grid; grid-template-columns: 0.92fr 1.08fr; gap: clamp(44px, 7vw, 92px); align-items: center; min-height: calc(100vh - 76px); padding-block: 56px 92px; }
+.hero { display: grid; grid-template-columns: 0.92fr 1.08fr; gap: clamp(44px, 7vw, 92px); align-items: start; min-height: calc(100vh - 76px); padding-block: 56px 92px; }
 .hero > *, .interface-map > *, .mock-grid > * { min-width: 0; }
 
 /* Cockpit hero (Claude-designed radar) */
