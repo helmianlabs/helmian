@@ -7,7 +7,7 @@
   <style>
     :root { color-scheme: dark; }
     body { font: 16px system-ui, sans-serif; margin: 0; min-height: 100vh; background: #0b0e14; color: #e8edf5; }
-    .shell { display: grid; grid-template-columns: 220px minmax(0, 1fr) 270px 300px; min-height: 100vh; }
+    .shell { display: grid; grid-template-columns: var(--navigation-width, 220px) minmax(0, 1fr) var(--agents-width, 270px) var(--guard-width, 300px); min-height: 100vh; }
     .rail, .agents, .guard { background: #111620; border-color: #293346; padding: 1rem; }
     .rail { border-right: 1px solid #293346; }
     .agents { border-left: 1px solid #293346; }
@@ -46,7 +46,7 @@
     .guard-actions button { margin: 0; padding: .55rem .4rem; font-size: .78rem; background: #2b3547; color: #e8edf5; }
     .guard-actions button:disabled { opacity: .65; cursor: not-allowed; }
     .preview { color: #f2c879; font-size: .85rem; }
-    @media (max-width: 1380px) { .shell { grid-template-columns: 180px minmax(0, 1fr) 230px 260px; } }
+    @media (max-width: 1380px) { .shell { grid-template-columns: var(--navigation-width, 180px) minmax(0, 1fr) var(--agents-width, 230px) var(--guard-width, 260px); } }
     @media (max-width: 960px) { .shell { grid-template-columns: 1fr; } .rail, .agents, .guard { border: 0; } .rail { display: block; } .brand { margin: 0 0 .75rem; } .nav-item { display: inline-block; width: auto; margin: 0 .25rem .25rem 0; } }
     button { padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #7db4ff; color: #09111d; font-weight: 700; cursor: pointer; margin-right: .5rem; }
     button.secondary { background: #2b3547; color: #e8edf5; }
@@ -103,7 +103,7 @@
       <p id="workspace-nav-hint" class="preview">Authenticated Organization workspace. Chat and preparation use authenticated server routes when their reviewed storage is configured; this runtime reports unavailable until that prerequisite is present. External execution and browser automation are unavailable.</p>
     </aside>
     <main id="workspace-main" class="workspace">
-      <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Organization scope: loading…</div></div><div><button id="local-density-toggle" class="secondary" type="button" aria-pressed="false">Compact view</button><button id="workspace-settings-open" class="secondary" type="button" hidden>Workspace settings</button><span id="workspace-state" class="preview" role="status">AUTHENTICATED WORKSPACE</span><p id="local-view-status" class="note" role="status">View preference is stored in this browser only.</p></div></div>
+      <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Organization scope: loading…</div></div><div><button id="local-density-toggle" class="secondary" type="button" aria-pressed="false">Compact view</button><button id="local-navigation-toggle" class="secondary" type="button" aria-pressed="true">Hide navigation</button><button id="local-agents-toggle" class="secondary" type="button" aria-pressed="true">Hide agents</button><button id="local-guard-toggle" class="secondary" type="button" aria-pressed="true">Hide Guard</button><button id="workspace-settings-open" class="secondary" type="button" hidden>Workspace settings</button><span id="workspace-state" class="preview" role="status">AUTHENTICATED WORKSPACE</span><p id="local-view-status" class="note" role="status">View preference is stored in this browser only.</p></div></div>
       <section id="section-chat" class="card conversation" aria-labelledby="conversation-heading">
         <h2 id="conversation-heading">Conversation</h2>
         <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>Sign in to read and send normal Organization Envoy messages. Cora and outbound delivery are not invoked in this slice.</p></div>

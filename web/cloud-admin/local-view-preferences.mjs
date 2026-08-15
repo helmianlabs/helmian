@@ -4,7 +4,7 @@ const DENSITIES = new Set(['comfortable', 'compact']);
 
 export function normalizeLocalViewPreferences(value = {}) {
   const density = DENSITIES.has(value?.density) ? value.density : 'comfortable';
-  return Object.freeze({ density });
+  return Object.freeze({ density, navigationVisible: value?.navigationVisible !== false, agentsVisible: value?.agentsVisible !== false, guardVisible: value?.guardVisible !== false });
 }
 
 export function readLocalViewPreferences(storage) {

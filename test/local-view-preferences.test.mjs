@@ -11,15 +11,15 @@ function storage(initial = null) {
   };
 }
 
-test('local view preferences only allow presentation density', () => {
-  assert.deepEqual(normalizeLocalViewPreferences({ density: 'compact', organizationId: 'other', plantId: 'x' }), { density: 'compact' });
-  assert.deepEqual(normalizeLocalViewPreferences({ density: 'invalid' }), { density: 'comfortable' });
+test('local view preferences only allow presentation density and rails', () => {
+  assert.deepEqual(normalizeLocalViewPreferences({ density: 'compact', navigationVisible: false, agentsVisible: true, guardVisible: false, organizationId: 'other', plantId: 'x' }), { density: 'compact', navigationVisible: false, agentsVisible: true, guardVisible: false });
+  assert.deepEqual(normalizeLocalViewPreferences({ density: 'invalid' }), { density: 'comfortable', navigationVisible: true, agentsVisible: true, guardVisible: true });
 });
 
 test('local view preferences persist in this browser and tolerate unavailable storage', () => {
   const local = storage();
-  assert.deepEqual(saveLocalViewPreferences(local, { density: 'compact' }), { density: 'compact' });
-  assert.equal(local.value(), '{"density":"compact"}');
-  assert.deepEqual(readLocalViewPreferences(local), { density: 'compact' });
-  assert.deepEqual(readLocalViewPreferences({ getItem() { throw new Error('blocked'); } }), { density: 'comfortable' });
+  assert.deepEqual(saveLocalViewPreferences(local, { density: 'compact', navigationVisible: false }), { density: 'compact', navigationVisible: false, agentsVisible: true, guardVisible: true });
+  assert.equal(local.value(), '{"density":"compact","navigationVisible":false,"agentsVisible":true,"guardVisible":true}');
+  assert.deepEqual(readLocalViewPreferences(local), { density: 'compact', navigationVisible: false, agentsVisible: true, guardVisible: true });
+  assert.deepEqual(readLocalViewPreferences({ getItem() { throw new Error('blocked'); } }), { density: 'comfortable', navigationVisible: true, agentsVisible: true, guardVisible: true });
 });

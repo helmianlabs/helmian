@@ -22,10 +22,14 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(page, /Organization scope/u);
   assert.match(page, /Helmian Cloud/u);
   assert.match(page, /id="local-density-toggle"/u);
+  for (const id of ['local-navigation-toggle', 'local-agents-toggle', 'local-guard-toggle']) assert.match(page, new RegExp(`id="${id}"`, 'u'));
   assert.match(page, /stored in this browser only/iu);
   assert.match(script, /readLocalViewPreferences/u);
   assert.match(script, /saveLocalViewPreferences/u);
   assert.match(script, /Organization settings are unchanged/u);
+  assert.match(script, /navigationVisible/u);
+  assert.match(script, /agentsVisible/u);
+  assert.match(script, /guardVisible/u);
   assert.match(page, /reports unavailable until that prerequisite is present/iu);
   assert.match(page, /Governance monitor · unavailable/iu);
   assert.match(page, /does not claim production readiness/iu);

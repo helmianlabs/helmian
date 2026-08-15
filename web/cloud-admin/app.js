@@ -165,7 +165,14 @@ const artifactExecutionStatus = document.querySelector('#artifact-execution-stat
 const artifactExecutionReceipts = document.querySelector('#artifact-execution-receipts');
 const workspaceState = document.querySelector('#workspace-state');
 const localDensityToggle = document.querySelector('#local-density-toggle');
+const localNavigationToggle = document.querySelector('#local-navigation-toggle');
+const localAgentsToggle = document.querySelector('#local-agents-toggle');
+const localGuardToggle = document.querySelector('#local-guard-toggle');
 const localViewStatus = document.querySelector('#local-view-status');
+const cloudShell = document.querySelector('.shell');
+const navigationRail = document.querySelector('.rail');
+const agentsRail = document.querySelector('.agents');
+const guardRail = document.querySelector('.guard');
 const adminNav = document.querySelector('[data-admin-only]');
 const workspaceSettings = document.querySelector('#workspace-settings');
 const workspaceSettingsOpen = document.querySelector('#workspace-settings-open');
@@ -196,9 +203,19 @@ let localViewPreferences = readLocalViewPreferences(window.localStorage);
 function applyLocalViewPreferences(preferences = localViewPreferences) {
   localViewPreferences = preferences;
   document.documentElement.dataset.workspaceDensity = preferences.density;
+  cloudShell.style.setProperty('--navigation-width', preferences.navigationVisible ? '' : '0px');
+  cloudShell.style.setProperty('--agents-width', preferences.agentsVisible ? '' : '0px');
+  cloudShell.style.setProperty('--guard-width', preferences.guardVisible ? '' : '0px');
+  navigationRail.hidden = !preferences.navigationVisible;
+  agentsRail.hidden = !preferences.agentsVisible;
+  guardRail.hidden = !preferences.guardVisible;
   localDensityToggle.setAttribute('aria-pressed', String(preferences.density === 'compact'));
   localDensityToggle.textContent = preferences.density === 'compact' ? 'Comfortable view' : 'Compact view';
-  localViewStatus.textContent = `View: ${preferences.density}. Stored in this browser only; Organization settings are unchanged.`;
+  for (const [button, visible, label] of [[localNavigationToggle, preferences.navigationVisible, 'navigation'], [localAgentsToggle, preferences.agentsVisible, 'agents'], [localGuardToggle, preferences.guardVisible, 'Guard']]) {
+    button.setAttribute('aria-pressed', String(visible));
+    button.textContent = `${visible ? 'Hide' : 'Show'} ${label}`;
+  }
+  localViewStatus.textContent = `View: ${preferences.density}. Navigation, agent, and Guard rails are stored in this browser only; Organization settings are unchanged.`;
 }
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
 document.querySelector('#logout').onclick = () => { window.location.href = '/admin/auth/logout'; };
@@ -911,6 +928,9 @@ async function load() {
 }
 workspaceSettingsOpen.onclick = () => { workspaceSettings.showModal(); loadWorkspaceLayout().catch(() => {}); };
 localDensityToggle.onclick = () => applyLocalViewPreferences(saveLocalViewPreferences(window.localStorage, { density: localViewPreferences.density === 'compact' ? 'comfortable' : 'compact' }));
+localNavigationToggle.onclick = () => applyLocalViewPreferences(saveLocalViewPreferences(window.localStorage, { ...localViewPreferences, navigationVisible: !localViewPreferences.navigationVisible }));
+localAgentsToggle.onclick = () => applyLocalViewPreferences(saveLocalViewPreferences(window.localStorage, { ...localViewPreferences, agentsVisible: !localViewPreferences.agentsVisible }));
+localGuardToggle.onclick = () => applyLocalViewPreferences(saveLocalViewPreferences(window.localStorage, { ...localViewPreferences, guardVisible: !localViewPreferences.guardVisible }));
 workspaceSettingsClose.onclick = () => workspaceSettings.close();
 workspaceLayoutSave.onclick = async () => { workspaceLayoutStatus.textContent = 'Saving your workspace layout…'; workspaceLayoutSave.disabled = true; try { renderWorkspaceLayout(await coraClient.saveWorkspaceLayout(layoutInput())); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not saved: ${error.message}`; } finally { workspaceLayoutSave.disabled = false; } };
 workspaceLayoutReset.onclick = async () => { workspaceLayoutStatus.textContent = 'Restoring your role default…'; workspaceLayoutReset.disabled = true; try { renderWorkspaceLayout(await coraClient.resetWorkspaceLayout()); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not reset: ${error.message}`; } finally { workspaceLayoutReset.disabled = false; } };
