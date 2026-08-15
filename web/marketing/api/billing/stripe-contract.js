@@ -21,7 +21,7 @@ export function resolveProductKey(value, env = process.env) {
 
 function stripeAuth(secret) {
   const value = String(secret ?? '').trim();
-  if (!value.startsWith('sk_')) throw Object.assign(new Error('Stripe server secret is not configured'), { code: 'STRIPE_NOT_CONFIGURED', status: 503 });
+  if (!/^(?:sk|rk)_(?:test|live)_/u.test(value)) throw Object.assign(new Error('Stripe server secret is not configured'), { code: 'STRIPE_NOT_CONFIGURED', status: 503 });
   return `Basic ${Buffer.from(`${value}:`).toString('base64')}`;
 }
 

@@ -43,6 +43,13 @@ test('Stripe product default price maps to one-time checkout without exposing se
   assert.doesNotMatch(JSON.stringify(result), /sk_test/u);
 });
 
+test('restricted Stripe server keys are accepted without being returned', async () => {
+  const fetchImpl = async (url) => ({ ok: true, async json() { return url.includes('/products/') ? { default_price: 'price_guard' } : { id: 'cs_rk', url: 'https://checkout.stripe.test/cs_rk' }; } });
+  const result = await createCheckoutSession({ product: 'helmian_guard', env: { STRIPE_PRODUCT_HELMIAN_GUARD: 'prod_guard', STRIPE_SECRET_KEY: 'rk_live_restricted' }, fetchImpl, origin: 'https://helmian.example' });
+  assert.equal(result.sessionId, 'cs_rk');
+  assert.doesNotMatch(JSON.stringify(result), /rk_live/u);
+});
+
 test('signed checkout webhook is idempotent and grants only paid customer sessions', async () => {
   const events = new Set(); const grants = [];
   const store = { hasEvent: async (id) => events.has(id), recordEvent: async (id) => events.add(id), grant: async (value) => grants.push(value) };
