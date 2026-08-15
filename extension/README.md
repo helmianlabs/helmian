@@ -26,6 +26,10 @@ It works on four sites: claude.ai, chatgpt.com, gemini.google.com and grok.com.
 No model. No network. No account. It is regular expressions running on your own
 machine, and nothing leaves the browser.
 
+The Phase 1/2 permission matrix, local-first redaction boundary, and zero-data-
+retention behavior are documented in
+[`docs/HELMION_GUARD_PHASE_1_PRIVACY.md`](../docs/HELMION_GUARD_PHASE_1_PRIVACY.md).
+
 ---
 
 ## Install it
