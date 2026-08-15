@@ -7,7 +7,10 @@ const script = await readFile(new URL('../web/cloud-admin/app.js', import.meta.u
 const liveAdmin = await readFile(new URL('../src/cloud/live-admin.mjs', import.meta.url), 'utf8');
 
 test('authenticated shell navigation names real product surfaces and remains role-aware', () => {
-  for (const target of ['section-chat', 'section-cora', 'section-prepare', 'section-artifact', 'section-governance']) assert.match(page, new RegExp(`data-target="${target}"`, 'u'));
+  for (const target of ['section-chat', 'section-cora', 'section-prepare', 'section-artifact', 'section-approvals', 'section-connectors', 'section-tasks', 'section-governance']) {
+    assert.match(page, new RegExp(`data-target="${target}"`, 'u'));
+    assert.match(page, new RegExp(`id="${target}"`, 'u'));
+  }
   assert.match(page, /data-admin-only/iu);
   assert.match(script, /adminNav\.hidden\s*=\s*!isAdmin/u);
   assert.match(page, /Search stored approved sources/iu);
