@@ -33,6 +33,7 @@ const peoplePlanReason = document.querySelector('#people-plan-reason');
 const readinessStatus = document.querySelector('#readiness-status');
 const readinessCards = document.querySelector('#readiness-cards');
 const guardCheckAgain = document.querySelector('#guard-check-again');
+const guardPreviewTab = document.querySelector('#guard-preview-tab');
 const capabilitiesStatus = document.querySelector('#capabilities-status');
 const capabilitiesNormal = document.querySelector('#capabilities-normal');
 const capabilitiesRegistered = document.querySelector('#capabilities-registered');
@@ -826,6 +827,10 @@ guardCheckAgain?.addEventListener('click', async () => {
   guardCheckAgain.textContent = 'Checking…';
   try { await loadOrganizationReadiness(); }
   finally { guardCheckAgain.disabled = false; guardCheckAgain.textContent = 'Check again'; }
+});
+guardPreviewTab?.addEventListener('click', () => {
+  document.querySelector('#section-prepare')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.querySelector('#workspace-preview-title')?.focus({ preventScroll: true });
 });
 function applyWorkspacePreset(name) {
   const presets = {
