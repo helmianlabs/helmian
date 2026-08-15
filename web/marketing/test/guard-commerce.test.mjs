@@ -87,3 +87,12 @@ test('artifact resolver rejects absent or non-HTTPS package targets', async () =
   const approved = createArtifactResolver({ HELMION_ARTIFACT_HELMIAN_GUARD_URL: 'https://private.invalid/file.zip' });
   assert.equal((await approved({ product: 'helmian_guard' })).url, 'https://private.invalid/file.zip');
 });
+
+test('download gate fails closed when auth, entitlement, or artifact stores throw', async () => {
+  const authFail = createDownloadHandler({ resolveCustomer: async () => { throw new Error('session unavailable'); }, entitlementStore: { hasEntitlement: async () => true }, resolveArtifact: async () => ({ url: 'https://private.invalid/file' }) });
+  const authResponse = response(); await authFail({ method: 'GET', url: '/api/billing/download?product=helmian_guard' }, authResponse); assert.equal(authResponse.statusCode, 401);
+  const entitlementFail = createDownloadHandler({ env: { STRIPE_PRODUCT_HELMIAN_GUARD: 'prod_guard' }, resolveCustomer: async () => 'cus_1', entitlementStore: { hasEntitlement: async () => { throw new Error('db unavailable'); } }, resolveArtifact: async () => ({ url: 'https://private.invalid/file' }) });
+  const entitlementResponse = response(); await entitlementFail({ method: 'GET', url: '/api/billing/download?product=helmian_guard' }, entitlementResponse); assert.equal(entitlementResponse.statusCode, 503);
+  const artifactFail = createDownloadHandler({ env: { STRIPE_PRODUCT_HELMIAN_GUARD: 'prod_guard' }, resolveCustomer: async () => 'cus_1', entitlementStore: { hasEntitlement: async () => true }, resolveArtifact: async () => { throw new Error('artifact unavailable'); } });
+  const artifactResponse = response(); await artifactFail({ method: 'GET', url: '/api/billing/download?product=helmian_guard' }, artifactResponse); assert.equal(artifactResponse.statusCode, 503);
+});

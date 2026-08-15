@@ -11,13 +11,17 @@ export function createDownloadHandler({ entitlementStore, resolveCustomer, resol
   return async function handler(request, response) {
     if (request.method !== 'GET') return json(response, 405, { code: 'method_not_allowed' });
     if (!entitlementStore?.hasEntitlement || typeof resolveCustomer !== 'function' || typeof resolveArtifact !== 'function') return json(response, 503, { code: 'DOWNLOAD_NOT_CONFIGURED' });
-    const customerId = await resolveCustomer(request);
+    let customerId;
+    try { customerId = await resolveCustomer(request); } catch { return json(response, 401, { code: 'AUTH_REQUIRED' }); }
     if (!customerId) return json(response, 401, { code: 'AUTH_REQUIRED' });
     const product = new URL(request.url || '/', 'https://helmion.invalid').searchParams.get('product');
     let key;
     try { key = resolveProductKey(product, env); } catch (error) { return json(response, Number(error?.status) || 503, { code: error?.code || 'PRODUCT_NOT_CONFIGURED' }); }
-    if (!await entitlementStore.hasEntitlement(customerId, key)) return json(response, 403, { code: 'ENTITLEMENT_REQUIRED' });
-    const artifact = await resolveArtifact({ customerId, product: key });
+    let entitled;
+    try { entitled = await entitlementStore.hasEntitlement(customerId, key); } catch { return json(response, 503, { code: 'ENTITLEMENT_UNAVAILABLE' }); }
+    if (!entitled) return json(response, 403, { code: 'ENTITLEMENT_REQUIRED' });
+    let artifact;
+    try { artifact = await resolveArtifact({ customerId, product: key }); } catch { return json(response, 503, { code: 'ARTIFACT_UNAVAILABLE' }); }
     if (!artifact?.url) return json(response, 503, { code: 'ARTIFACT_NOT_READY' });
     response.statusCode = 302;
     response.setHeader?.('cache-control', 'no-store');
