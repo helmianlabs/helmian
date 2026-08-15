@@ -20,11 +20,13 @@ installer was built, published, uploaded, or installed.
 
 ## Blocking finding: stale hosted origin
 
-The desktop Herald path hard-codes `https://helmian.vercel.app` in
-`MainWindow.Herald.cs`; its QR validator accepts only that host. The Local
+The desktop Herald path previously hard-coded `https://helmian.vercel.app` in
+`MainWindow.Herald.cs`; commit `2170c9e` now accepts the explicit
+`HELMION_HERALD_ORIGIN` environment override, restricted to the approved
+Vercel and Fly hosts, and applies the same origin to QR validation. The Local
 Service default in `Helmion.LocalService/Program.cs` and the hosted OAuth setup
-copy in `Helmion.LocalService.Security/TeamProviderAdapters.cs` use the same
-Vercel origin. The canonical cloud deployment is the Fly app
+copy in `Helmion.LocalService.Security/TeamProviderAdapters.cs` still use the
+Vercel default. The canonical cloud deployment is the Fly app
 `helmian-cloud` (`https://helmian-cloud.fly.dev`).
 
 Do not call a desktop build production-ready until the hosted origin is chosen
