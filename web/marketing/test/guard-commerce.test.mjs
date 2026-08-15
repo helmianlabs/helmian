@@ -26,7 +26,9 @@ test('Guard page exposes reviewed package slots and honest checkout handoff', ()
 test('checkout remains inert without Stripe configuration', async () => {
   const get = response();
   checkoutHandler({ method: 'GET' }, get);
-  assert.equal(get.statusCode, 405);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(get.statusCode, 503);
+  assert.equal(JSON.parse(get.body).code, 'PRODUCT_NOT_CONFIGURED');
   const post = response();
   await checkoutHandler({ method: 'POST', body: { product: 'helmian_guard' } }, post);
   assert.equal(post.statusCode, 503);
