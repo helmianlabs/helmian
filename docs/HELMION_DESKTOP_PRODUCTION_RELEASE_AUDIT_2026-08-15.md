@@ -14,6 +14,9 @@ installer was built, published, uploaded, or installed.
   found in the inspected source files or the release output filenames. Values
   must still be scanned by CI before packaging; this audit never prints or
   reads secret values.
+- A bounded release-payload scan found zero long-form matches for `sk-*`,
+  `sk-ant-*`, `AIza*`, `ghp_*`, `xai-*`, or credential-bearing Postgres URLs.
+  Short `sk-`/`sk-ant-` hits are UI hint strings, not credential-shaped values.
 - The desktop UI intentionally accepts user credentials and passes them to
   child provider processes. That is a desktop-local credential boundary, not a
   reason to embed credentials in an installer.
