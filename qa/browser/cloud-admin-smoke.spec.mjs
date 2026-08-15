@@ -17,6 +17,17 @@ test.describe('Helmian Cloud authenticated fixture smoke', () => {
     await expect(page.getByText('No audited status')).toHaveCount(5);
   });
 
+  test('admin can apply a real workspace preset and persist it', async ({ page }) => {
+    await page.goto('/admin/?role=admin');
+    await page.getByRole('button', { name: 'Workspace settings' }).click();
+    await page.getByRole('button', { name: 'Focus prepare' }).click();
+    await expect(page.locator('#workspace-layout-status')).toContainText('focus workspace layout');
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.locator('#section-chat')).toBeVisible();
+    await expect(page.locator('#section-cora')).toBeHidden();
+    await expect(page.locator('#section-prepare')).toBeVisible();
+  });
+
   test.fixme('visual baselines are not generated in this source-only pass', async ({ page }) => {
     await page.goto('/admin/');
     await expect(page).toHaveScreenshot('cloud-admin-member.png', { animations: 'disabled' });
