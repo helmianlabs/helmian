@@ -64,6 +64,7 @@ import {
   authorizeAimForgeBridgeReceipt,
   verifyAimForgeSessionBridge,
 } from '../src/cora/aimforge-session-bridge.mjs';
+import { validateSessionId } from '../src/cora/session-context.mjs';
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -531,6 +532,19 @@ test('AimForge bridge verification authenticates tenant/user/role and rejects ta
     /already used/i,
     'a second socket cannot replay the receipt',
   );
+});
+
+test('the signed AimForge envelope remains within the accepted session-label boundary', () => {
+  const signed = signedAimForgeSession({
+    tid: 'organization-with-a-bounded-identifier',
+    sub: 'driver:driver-with-a-bounded-identifier',
+    sid: 'session-with-a-bounded-identifier',
+    jti: 'receipt-with-a-bounded-identifier',
+  });
+  assert.ok(signed.length > 128, 'the signed envelope must exercise the signed-token boundary');
+  const checked = validateSessionId(signed);
+  assert.equal(checked.ok, true, checked.reason);
+  assert.equal(checked.id, signed);
 });
 
 test('a cloud Cora process refuses to start without the bridge verification secret', async () => {
