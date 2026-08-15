@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Helmion Guard",
+  "version": "0.2.3",
+  "description": "Catches destructive commands and unsourced claims in AI chat replies, and keeps a durable local log of every flag.",
+  "permissions": ["storage"],
+  "background": {
+    "scripts": ["background/worker.js"],
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*", "https://chatgpt.com/*", "https://gemini.google.com/*", "https://grok.com/*"],
+      "js": ["content/prompt-risk.js", "content/extract.js", "content/stream-watch.js", "content/ui.js", "content/guard.js"],
+      "css": ["content/guard.css"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "action": { "default_title": "Helmion Guard", "default_popup": "popup/popup.html" },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "guard@helmion.example",
+      "strict_min_version": "121.0"
+    }
+  }
+}
