@@ -12,7 +12,9 @@
     .rail { border-right: 1px solid #293346; }
     .agents { border-left: 1px solid #293346; }
     .guard { border-left: 1px solid #293346; }
-    .brand { font-weight: 800; letter-spacing: .04em; margin-bottom: 2rem; }
+    .brand { display: flex; gap: .55rem; align-items: center; font-weight: 800; letter-spacing: .04em; margin-bottom: 2rem; }
+    .brand-mark { display: grid; place-items: center; width: 1.8rem; height: 1.8rem; border-radius: .5rem; color: #09111d; background: linear-gradient(135deg, #7db4ff, #7ee2a8); font-size: .9rem; }
+    .brand small { display: block; color: #9eacc2; font-size: .65rem; letter-spacing: .12em; }
     .nav-item { display: block; width: 100%; border: 0; text-align: left; color: #9eacc2; padding: .65rem .75rem; border-radius: .35rem; margin: .25rem 0; background: transparent; font: inherit; font-weight: 600; }
     .nav-item.active { color: #fff; background: #25314a; }
     .workspace { padding: 1.25rem; min-width: 0; }
@@ -72,6 +74,10 @@
     .audit-event h3 { margin: 0 0 .3rem; font-size: .9rem; }
     .audit-event p { margin: .2rem 0; color: #aebbd0; font-size: .82rem; }
     .tool { display: block; padding: .5rem 0; }
+    :root[data-workspace-density="compact"] .workspace { padding: .85rem; }
+    :root[data-workspace-density="compact"] .card { margin: .85rem 0; padding: .85rem; }
+    :root[data-workspace-density="compact"] .config-item { padding: .5rem; }
+    :root[data-workspace-density="compact"] .conversation { min-height: 300px; }
     #policy-status { min-height: 1.5rem; }
     [hidden] { display: none; }
   </style>
@@ -80,7 +86,7 @@
   <a class="skip-link" href="#section-chat">Skip to workspace chat</a>
   <div class="shell">
     <aside class="rail" aria-label="Helmian navigation">
-      <div class="brand">HELMian</div>
+      <div class="brand" aria-label="Helmian Cloud"><span class="brand-mark" aria-hidden="true">H</span><span>Helmian<small>CLOUD WORKSPACE</small></span></div>
       <nav id="workspace-nav" aria-label="Workspace sections">
         <button class="nav-item active" type="button" data-target="section-chat" aria-current="page">Chat</button>
         <button class="nav-item" type="button" data-target="section-cora">Cora</button>
@@ -97,7 +103,7 @@
       <p id="workspace-nav-hint" class="preview">Authenticated Organization workspace. Chat and preparation use authenticated server routes when their reviewed storage is configured; this runtime reports unavailable until that prerequisite is present. External execution and browser automation are unavailable.</p>
     </aside>
     <main id="workspace-main" class="workspace">
-      <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Organization scope: loading…</div></div><div><button id="workspace-settings-open" class="secondary" type="button" hidden>Workspace settings</button><span id="workspace-state" class="preview" role="status">AUTHENTICATED WORKSPACE</span></div></div>
+      <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Organization scope: loading…</div></div><div><button id="local-density-toggle" class="secondary" type="button" aria-pressed="false">Compact view</button><button id="workspace-settings-open" class="secondary" type="button" hidden>Workspace settings</button><span id="workspace-state" class="preview" role="status">AUTHENTICATED WORKSPACE</span><p id="local-view-status" class="note" role="status">View preference is stored in this browser only.</p></div></div>
       <section id="section-chat" class="card conversation" aria-labelledby="conversation-heading">
         <h2 id="conversation-heading">Conversation</h2>
         <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>Sign in to read and send normal Organization Envoy messages. Cora and outbound delivery are not invoked in this slice.</p></div>

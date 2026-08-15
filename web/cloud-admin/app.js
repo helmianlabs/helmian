@@ -1,5 +1,6 @@
 import { createEnvoyClient } from './envoy-client.mjs';
 import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, coraHumePreflightModel, coraPreparationContextFromCitation, coraPreparationPanelModel, coraSessionHistoryModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { readLocalViewPreferences, saveLocalViewPreferences } from './local-view-preferences.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -163,6 +164,8 @@ const artifactExecutionCost = document.querySelector('#artifact-execution-cost')
 const artifactExecutionStatus = document.querySelector('#artifact-execution-status');
 const artifactExecutionReceipts = document.querySelector('#artifact-execution-receipts');
 const workspaceState = document.querySelector('#workspace-state');
+const localDensityToggle = document.querySelector('#local-density-toggle');
+const localViewStatus = document.querySelector('#local-view-status');
 const adminNav = document.querySelector('[data-admin-only]');
 const workspaceSettings = document.querySelector('#workspace-settings');
 const workspaceSettingsOpen = document.querySelector('#workspace-settings-open');
@@ -188,6 +191,15 @@ let envoyMessages = [];
 let envoyCursor = null;
 let auditCursor = null;
 let workspaceLayout = null;
+let localViewPreferences = readLocalViewPreferences(window.localStorage);
+
+function applyLocalViewPreferences(preferences = localViewPreferences) {
+  localViewPreferences = preferences;
+  document.documentElement.dataset.workspaceDensity = preferences.density;
+  localDensityToggle.setAttribute('aria-pressed', String(preferences.density === 'compact'));
+  localDensityToggle.textContent = preferences.density === 'compact' ? 'Comfortable view' : 'Compact view';
+  localViewStatus.textContent = `View: ${preferences.density}. Stored in this browser only; Organization settings are unchanged.`;
+}
 document.querySelector('#login').onclick = () => { window.location.href = '/admin/auth/login'; };
 document.querySelector('#logout').onclick = () => { window.location.href = '/admin/auth/logout'; };
 
@@ -898,6 +910,7 @@ async function load() {
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
 }
 workspaceSettingsOpen.onclick = () => { workspaceSettings.showModal(); loadWorkspaceLayout().catch(() => {}); };
+localDensityToggle.onclick = () => applyLocalViewPreferences(saveLocalViewPreferences(window.localStorage, { density: localViewPreferences.density === 'compact' ? 'comfortable' : 'compact' }));
 workspaceSettingsClose.onclick = () => workspaceSettings.close();
 workspaceLayoutSave.onclick = async () => { workspaceLayoutStatus.textContent = 'Saving your workspace layout…'; workspaceLayoutSave.disabled = true; try { renderWorkspaceLayout(await coraClient.saveWorkspaceLayout(layoutInput())); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not saved: ${error.message}`; } finally { workspaceLayoutSave.disabled = false; } };
 workspaceLayoutReset.onclick = async () => { workspaceLayoutStatus.textContent = 'Restoring your role default…'; workspaceLayoutReset.disabled = true; try { renderWorkspaceLayout(await coraClient.resetWorkspaceLayout()); } catch (error) { workspaceLayoutStatus.textContent = `Workspace layout not reset: ${error.message}`; } finally { workspaceLayoutReset.disabled = false; } };
@@ -924,6 +937,7 @@ guardCheckAgain.onclick = async () => {
 previewTab.onclick = () => document.querySelector('#section-prepare')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 canvasTab.onclick = () => document.querySelector('#section-tasks')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
+applyLocalViewPreferences();
 coraCreateDraft.onclick = async () => {
   const reason = coraDraftReason.value.trim();
   if (!reason) { coraConfigStatus.textContent = 'Enter a reason before creating a draft.'; return; }
