@@ -13,6 +13,10 @@ export function productIds(env = process.env) {
     .filter(([, id]) => id)));
 }
 
+function stripeSecret(env) {
+  return env.STRIPE_SECRET_KEY ?? env.stripe_secret_key ?? env.STRIPE_RESTRICTED_KEY;
+}
+
 export function resolveProductKey(value, env = process.env) {
   const key = String(value ?? '').trim();
   if (!PRODUCT_KEYS.includes(key) || !productIds(env)[key]) throw Object.assign(new Error('product is not configured'), { code: 'PRODUCT_NOT_CONFIGURED', status: 503 });
@@ -39,13 +43,14 @@ async function stripeRequest(path, { secret, fetchImpl = fetch, method = 'GET', 
 export async function createCheckoutSession({ product, env = process.env, fetchImpl = fetch, origin }) {
   const key = resolveProductKey(product, env);
   const productId = productIds(env)[key];
-  const productBody = await stripeRequest(`products/${encodeURIComponent(productId)}`, { secret: env.STRIPE_SECRET_KEY, fetchImpl });
+  const secret = stripeSecret(env);
+  const productBody = await stripeRequest(`products/${encodeURIComponent(productId)}`, { secret, fetchImpl });
   const priceId = typeof productBody.default_price === 'string' ? productBody.default_price : productBody.default_price?.id;
   if (!priceId) throw Object.assign(new Error('Stripe product has no default price'), { code: 'PRICE_NOT_CONFIGURED', status: 503 });
   const siteOrigin = new URL(String(origin || env.HELMION_SITE_ORIGIN || '')).origin;
   const returnPage = key === 'helmian_guard' ? '/guard.html' : '/index.html';
   const form = new URLSearchParams({ mode: 'payment', 'line_items[0][price]': priceId, 'line_items[0][quantity]': '1', success_url: `${siteOrigin}${returnPage}?checkout=success`, cancel_url: `${siteOrigin}${returnPage}?checkout=cancelled`, 'metadata[product]': key });
-  const session = await stripeRequest('checkout/sessions', { secret: env.STRIPE_SECRET_KEY, fetchImpl, method: 'POST', form });
+  const session = await stripeRequest('checkout/sessions', { secret, fetchImpl, method: 'POST', form });
   if (!session.url) throw Object.assign(new Error('Stripe did not return a checkout URL'), { code: 'CHECKOUT_URL_MISSING', status: 502 });
   return Object.freeze({ checkoutUrl: session.url, product: key, sessionId: session.id ?? null });
 }

@@ -50,6 +50,12 @@ test('restricted Stripe server keys are accepted without being returned', async 
   assert.doesNotMatch(JSON.stringify(result), /rk_live/u);
 });
 
+test('lowercase Vercel secret variable alias remains server-only', async () => {
+  const fetchImpl = async (url) => ({ ok: true, async json() { return url.includes('/products/') ? { default_price: 'price_guard' } : { id: 'cs_alias', url: 'https://checkout.stripe.test/cs_alias' }; } });
+  const result = await createCheckoutSession({ product: 'helmian_guard', env: { STRIPE_PRODUCT_HELMIAN_GUARD: 'prod_guard', stripe_secret_key: 'rk_live_restricted' }, fetchImpl, origin: 'https://helmian.example' });
+  assert.equal(result.sessionId, 'cs_alias');
+});
+
 test('signed checkout webhook is idempotent and grants only paid customer sessions', async () => {
   const events = new Set(); const grants = [];
   const store = { hasEvent: async (id) => events.has(id), recordEvent: async (id) => events.add(id), grant: async (value) => grants.push(value) };
