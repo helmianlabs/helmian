@@ -30,7 +30,7 @@ test('workspace project registry is tenant-scoped and read-only for members', as
 
 test('workspace project registration is owner/admin-only and exact-keyed', async (t) => {
   const calls = [];
-  const repository = { async list(actor) { calls.push(['list', actor]); return { projects: [], canManage: true }; }, async save(actor, input) { calls.push(['save', actor, input]); return { durable: true, project: { projectKey: input.projectKey, execution: 'not_performed' }, source: 'tenant_workspace_project_registry' }; } };
+  const repository = { async list(actor) { calls.push(['list', actor]); return { projects: [], canManage: true }; }, async save(actor, input) { calls.push(['save', actor, input]); return { durable: true, receiptId: 'audit-1', project: { projectKey: input.projectKey, execution: 'not_performed' }, source: 'tenant_workspace_project_registry' }; } };
   const admin = await createLiveHelmianCloudAdminHandler({ env, pool: pool('admin'), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], workspaceProjectRepository: repository });
   const clm = await startCoraClm({ host: '127.0.0.1', port: 0, runTurn: async () => ({ text: 'ok', model: 'test' }), notifyBackgroundAgents: false, httpRequestHandler: admin.handler });
   t.after(async () => { await clm.close(); await admin.close(); });
@@ -39,7 +39,7 @@ test('workspace project registration is owner/admin-only and exact-keyed', async
   const body = { projectKey: 'helmion-cloud', displayName: 'Helmion Cloud', sourceKind: 'cloud', defaultBranch: 'main', lifecycle: 'active' };
   const saved = await fetch(`${base}${LIVE_ADMIN_WORKSPACE_PROJECTS_PATH}`, { method: 'POST', headers, body: JSON.stringify(body) });
   assert.equal(saved.status, 200);
-  assert.equal((await saved.json()).durable, true);
+  assert.deepEqual(await saved.json(), { valid: true, durable: true, receiptId: 'audit-1', project: { projectKey: 'helmion-cloud', execution: 'not_performed' }, source: 'tenant_workspace_project_registry' });
   assert.equal(calls[0][1].tenantId, 'customer-a');
   const injected = await fetch(`${base}${LIVE_ADMIN_WORKSPACE_PROJECTS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ ...body, tenantId: 'other' }) });
   assert.equal(injected.status, 400);

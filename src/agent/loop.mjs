@@ -96,6 +96,8 @@ export async function runAgentTurn({
   // Tests may still inject a localProvider to exercise the legacy routing and
   // provenance machinery, but no production caller supplies one.
   localProvider = null,
+  credentialResolver = null,
+  credentialReference = null,
   // Groups this turn's provenance rows with the rest of its conversation. The
   // default identifies the running agent process, which IS the session for both
   // callers: the bridge is one process per app run (bridge.mjs) and the CLI REPL
@@ -147,6 +149,8 @@ export async function runAgentTurn({
     return chatWithTools({
       providerId: active.id,
       apiKey: active.key,
+      credentialResolver,
+      credentialReference: active.credentialReference || credentialReference,
       // Context for the provenance ledger. NOT the record itself — the record is
       // written inside chatWithTools once the response has arrived, so that a
       // fallback cannot leave a row naming the model that failed. What travels

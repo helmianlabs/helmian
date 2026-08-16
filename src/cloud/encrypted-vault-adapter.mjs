@@ -22,6 +22,9 @@ export function createUnavailableEncryptedVaultAdapter() {
       }
       return { status: 'external_vault_not_configured', accepted: false, tenantId, providerId, credentialReference, secretMaterial: 'not_persisted', providerInvocation: 'not_performed' };
     },
+    async resolveCredential() {
+      return { status: 'external_vault_not_configured', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+    },
   });
 }
 

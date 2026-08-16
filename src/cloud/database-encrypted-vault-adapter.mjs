@@ -31,6 +31,20 @@ function encryptedTokenBundle(input, key) {
   return { ciphertext, iv, authTag: cipher.getAuthTag() };
 }
 
+function decryptTokenBundle(input, row, key) {
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', key, row.iv);
+    decipher.setAAD(aad(input));
+    decipher.setAuthTag(row.auth_tag);
+    const plaintext = Buffer.concat([decipher.update(row.ciphertext), decipher.final()]);
+    const bundle = JSON.parse(plaintext.toString('utf8'));
+    if (typeof bundle?.accessToken !== 'string' || bundle.accessToken.length < 1) throw new Error('missing access token');
+    return bundle;
+  } catch {
+    throw new Error('encrypted vault credential could not be decrypted');
+  }
+}
+
 export function createDatabaseEncryptedVaultAdapter({ pool, key } = {}) {
   const masterKey = keyBytes(key);
   if (!pool || typeof pool.connect !== 'function') throw new TypeError('database encrypted vault requires a pool');
@@ -55,6 +69,18 @@ export function createDatabaseEncryptedVaultAdapter({ pool, key } = {}) {
         const result = await client.query(`insert into helmion.provider_oauth_tokens (tenant_id, provider_id, credential_reference, ciphertext, iv, auth_tag, token_type, scope, expires_at, updated_by_subject) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (tenant_id,provider_id,credential_reference) do update set ciphertext=excluded.ciphertext, iv=excluded.iv, auth_tag=excluded.auth_tag, token_type=excluded.token_type, scope=excluded.scope, expires_at=excluded.expires_at, updated_by_subject=excluded.updated_by_subject, updated_at=clock_timestamp(), revoked_at=null returning id`, [input.tenantId, input.providerId, input.credentialReference, encrypted.ciphertext, encrypted.iv, encrypted.authTag, input.tokenType ?? 'Bearer', input.scope ?? null, expiresAt, input.actorSubject]);
         if (result.rowCount !== 1) throw new Error('encrypted vault write was not durable');
         return { status: 'stored_in_database_encrypted_vault', accepted: true, credentialReference: input.credentialReference, vaultRecordId: String(result.rows[0].id), secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+      });
+    },
+    async resolveCredential(input = {}) {
+      validateReference(input);
+      if (!input.actorSubject || !input.actorRole || !input.sessionId || !input.requestId) throw new TypeError('encrypted vault actor context is required');
+      const context = { tenantId: input.tenantId, actorSubject: input.actorSubject, actorRole: input.actorRole, sessionId: input.sessionId, requestId: input.requestId };
+      return withTenantTransaction(pool, context, async (client) => {
+        await requireActiveTenantMembership(client, context);
+        const result = await client.query('select ciphertext, iv, auth_tag, token_type from helmion.provider_oauth_tokens where tenant_id=$1 and provider_id=$2 and credential_reference=$3 and revoked_at is null and (expires_at is null or expires_at > clock_timestamp())', [input.tenantId, input.providerId, input.credentialReference]);
+        if (result.rowCount !== 1) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+        const bundle = decryptTokenBundle(input, result.rows[0], masterKey);
+        return { status: 'credential_resolved_for_adapter', accepted: true, credential: bundle.accessToken, tokenType: result.rows[0].token_type ?? 'Bearer', credentialReference: input.credentialReference, secretMaterial: 'adapter_only', providerInvocation: 'not_performed' };
       });
     },
   });
