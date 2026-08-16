@@ -55,6 +55,10 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
       queries.push({ text, values });
       if (text.includes('tenant_memberships')) {
         if (membershipError) throw new Error('database unavailable');
+        if (text.includes('select subject, role, active')) {
+          const role = membershipRoles[values[0]] ?? null;
+          return role ? { rowCount: 1, rows: [{ subject: values[1] ?? 'user-2', role, active: true }] } : { rowCount: 0, rows: [] };
+        }
         if (text.includes("role in ('owner','admin')")) {
           const rows = Object.entries(membershipRoles).map(([tenant_id, role]) => ({ tenant_id, role }));
           return { rowCount: rows.length, rows };
@@ -67,6 +71,7 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
         return role ? { rowCount: 1, rows: [{ role }] } : { rowCount: 0, rows: [] };
       }
       if (text.includes('from helmion.tenants')) return { rowCount: 1, rows: [{ tenant_id: values[0], display_name: 'Helmian Platform' }] };
+      if (text.includes('select id, result, created_at from helmion.audit_events')) return { rowCount: 0, rows: [] };
       if (text.includes('from helmion.audit_events')) return { rowCount: 1, rows: [{ count: 7 }] };
       if (text.includes('from helmion.audit_outbox')) return { rowCount: 1, rows: [{ count: 1 }] };
       if (text.includes('from helmion.platform_action_policy')) {
@@ -99,8 +104,11 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
         return { rowCount: 1, rows: [actionPolicy] };
       }
       if (text.includes('insert into helmion.audit_events')) {
-        auditEntries.push({ actionType: values[5], decision: values[7], reason: JSON.parse(values[11]).reason });
-        return { rowCount: 1, rows: [] };
+        const result = JSON.parse(values.at(-1));
+        const actionType = text.includes("'organization.membership_role_plan'") ? 'organization.membership_role_plan' : values[5];
+        const decision = text.includes("'PAUSE_FOR_OWNER'") ? 'PAUSE_FOR_OWNER' : values[7];
+        auditEntries.push({ actionType, decision, result });
+        return { rowCount: 1, rows: [{ id: String(auditEntries.length) }] };
       }
       if (text.includes("to_regclass('helmion.schema_migrations')")) return { rowCount: 1, rows: [{ migration_table: 'helmion.schema_migrations' }] };
       if (text.includes('from helmion.schema_migrations')) {
@@ -503,6 +511,50 @@ test('a current role change from admin to member immediately removes admin acces
   t.after(app.close);
   const headers = { cookie: 'helmion_admin_session=active-session' };
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers })).status, 403);
+});
+
+test('deterministic owner/admin/member role matrix traces identity to policy, receipt, and UI-facing API result', async (t) => {
+  const cases = [
+    { role: 'owner', control: 200, plan: 200 },
+    { role: 'admin', control: 200, plan: 200 },
+    { role: 'member', control: 403, plan: 403 },
+  ];
+  for (const { role, control, plan } of cases) {
+    const app = await fixture({ membershipRoles: { 'helmian-platform': role } });
+    t.after(app.close);
+    const headers = { cookie: 'helmion_admin_session=active-session' };
+
+    const session = await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers });
+    assert.equal(session.status, role === 'member' ? 403 : 200, `${role} admin-session boundary`);
+    if (role !== 'member') assert.equal((await session.json()).actor.role, role);
+
+    const memberships = await fetch(`${app.url}${LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH}`, { headers });
+    const membershipsBody = await memberships.json();
+    assert.equal(memberships.status, 200, `${role} membership route must return the UI contract`);
+    assert.equal(membershipsBody.source, 'helmion.tenant_memberships');
+    assert.ok(Array.isArray(membershipsBody.memberships));
+
+    const controlResponse = await fetch(`${app.url}${LIVE_ADMIN_CONTROL_PATH}`, { headers });
+    const controlBody = await controlResponse.text();
+    assert.equal(controlResponse.status, control, `${role} control-plane decision: ${controlBody}`);
+
+    const planResponse = await fetch(`${app.url}${LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH}`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ idempotencyKey: `role-matrix-${role}`, jobTitle: 'dispatcher', reason: 'deterministic role matrix', subject: 'user-2' }),
+    });
+    const planBody = await planResponse.json();
+    assert.equal(planResponse.status, plan, `${role} role-plan policy decision`);
+    if (plan === 200) {
+      assert.equal(planBody.durable, true);
+      assert.match(planBody.receiptId, /^\d+$/u);
+      assert.equal(app.pool.auditEntries.at(-1).actionType, 'organization.membership_role_plan');
+      assert.equal(app.pool.auditEntries.at(-1).decision, 'PAUSE_FOR_OWNER');
+      assert.equal(app.pool.auditEntries.at(-1).result.status, 'prepared');
+    } else {
+      assert.equal(app.pool.auditEntries.length, 0, 'denied member must not create a receipt');
+    }
+  }
 });
 
 test('database outages fail closed without being mislabeled as membership revocation', async (t) => {
