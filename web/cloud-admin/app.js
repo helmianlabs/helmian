@@ -56,6 +56,13 @@ const workspaceProjectName = document.querySelector('#workspace-project-name');
 const workspaceProjectSource = document.querySelector('#workspace-project-source');
 const workspaceProjectBranch = document.querySelector('#workspace-project-branch');
 const workspaceProjectSave = document.querySelector('#workspace-project-save');
+const workspaceConsoleStatus = document.querySelector('#workspace-console-status');
+const workspaceConsoleForm = document.querySelector('#workspace-console-form');
+const workspaceConsoleCommand = document.querySelector('#workspace-console-command');
+const workspaceConsoleArguments = document.querySelector('#workspace-console-arguments');
+const workspaceConsoleReason = document.querySelector('#workspace-console-reason');
+const workspaceConsoleSubmit = document.querySelector('#workspace-console-submit');
+const workspaceConsoleReceipts = document.querySelector('#workspace-console-receipts');
 const envoy = createEnvoyClient();
 const coraClient = createCoraConfigClient();
 const coraConfigStatus = document.querySelector('#cora-config-status');
@@ -510,6 +517,31 @@ async function loadWorkspaceProjects() {
   }
 }
 
+function renderWorkspaceConsole(body) {
+  workspaceConsoleReceipts.replaceChildren();
+  const commands = Array.isArray(body.commands) ? body.commands : [];
+  workspaceConsoleStatus.textContent = commands.length ? `${commands.length} console request${commands.length === 1 ? '' : 's'} recorded. Execution remains not performed.` : 'No console command intents recorded for this Organization.';
+  for (const command of commands) {
+    const card = document.createElement('article');
+    card.className = 'config-item';
+    card.append(configItem('Command', `${command.commandName} · ${command.status}`), configItem('Reason', command.reason), configItem('Receipt', command.receiptId), configItem('Execution', command.execution || 'not_performed'));
+    workspaceConsoleReceipts.append(card);
+  }
+}
+
+async function loadWorkspaceConsole() {
+  workspaceConsoleStatus.textContent = 'Loading console command receipts…';
+  try {
+    const response = await fetch('/api/admin/workspace/console/commands', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body.code || 'Console commands unavailable'), { status: response.status });
+    renderWorkspaceConsole(body);
+  } catch (error) {
+    workspaceConsoleReceipts.replaceChildren();
+    workspaceConsoleStatus.textContent = error.status === 403 ? 'Console commands unavailable: Organization membership is required.' : `Console commands unavailable: ${error.message}`;
+  }
+}
+
 async function loadWorkspaceRoleDefaults() {
   workspaceRoleDefaultStatus.textContent = 'Loading role defaults…';
   try { const body = await coraClient.readWorkspaceRoleDefaults(); workspaceRoleDefaultStatus.textContent = 'Owner/admin-managed role defaults loaded.'; workspaceRoleDefaultRole.onchange = () => { const selected = body.roleDefaults?.find((item) => item.role === workspaceRoleDefaultRole.value)?.layout; if (selected) renderWorkspaceLayout({ layout: selected }); }; }
@@ -882,6 +914,7 @@ async function load() {
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();
   await loadWorkspaceProjects();
+  await loadWorkspaceConsole();
   activateWorkspaceNav(window.location.hash.slice(1) || 'section-chat', { smooth: false, writeHash: false });
   if (isAdmin) await loadWorkspaceRoleDefaults();
   await loadCoraSettings();
@@ -909,6 +942,23 @@ workspaceProjectForm.onsubmit = async (event) => {
     await loadWorkspaceProjects();
   } catch (error) { workspaceProjectsStatus.textContent = `Project metadata not saved: ${error.message}`; }
   finally { workspaceProjectSave.disabled = false; }
+};
+workspaceConsoleForm.onsubmit = async (event) => {
+  event.preventDefault();
+  let argumentsValue = {};
+  try { argumentsValue = workspaceConsoleArguments.value.trim() ? JSON.parse(workspaceConsoleArguments.value) : {}; } catch { workspaceConsoleStatus.textContent = 'Arguments must be a JSON object.'; return; }
+  if (!argumentsValue || typeof argumentsValue !== 'object' || Array.isArray(argumentsValue)) { workspaceConsoleStatus.textContent = 'Arguments must be a JSON object.'; return; }
+  workspaceConsoleSubmit.disabled = true;
+  workspaceConsoleStatus.textContent = 'Recording tenant console command intent…';
+  try {
+    const response = await fetch('/api/admin/workspace/console/commands', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ commandName: workspaceConsoleCommand.value, arguments: argumentsValue, reason: workspaceConsoleReason.value, idempotencyKey: crypto.randomUUID() }) });
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body.code || 'Console command not recorded'), { status: response.status });
+    workspaceConsoleReason.value = '';
+    workspaceConsoleArguments.value = '';
+    await loadWorkspaceConsole();
+  } catch (error) { workspaceConsoleStatus.textContent = `Console command not recorded: ${error.message}`; }
+  finally { workspaceConsoleSubmit.disabled = false; }
 };
 async function saveWorkspaceLayout(input = layoutInput(), status = 'Saving your workspace layout…') {
   workspaceLayoutStatus.textContent = status;

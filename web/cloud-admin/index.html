@@ -119,6 +119,18 @@
           </form>
           <p class="preview">Project registration is tenant metadata only. It does not grant filesystem, source, worker, or provider execution access.</p>
         </section>
+        <section id="workspace-console" class="card" aria-labelledby="workspace-console-heading">
+          <h3 id="workspace-console-heading">Console command intents</h3>
+          <p id="workspace-console-status" class="note" role="status" aria-live="polite">Loading console command receipts…</p>
+          <form id="workspace-console-form" class="config-controls">
+            <select id="workspace-console-command" aria-label="Console command"><option value="workspace_context">Workspace context</option><option value="list_agents">List agents</option><option value="open_project">Open project</option><option value="run_project_task">Run project task</option><option value="start_project_preview">Start project preview</option><option value="stop_project_preview">Stop project preview</option></select>
+            <input id="workspace-console-arguments" aria-label="Console arguments JSON" maxlength="4000" placeholder='Arguments JSON, for example {"project":"aimforge"}'>
+            <input id="workspace-console-reason" aria-label="Console command reason" maxlength="500" placeholder="Reason for this bounded request" required>
+            <button id="workspace-console-submit" type="submit">Record command intent</button>
+          </form>
+          <div id="workspace-console-receipts" class="config-grid"></div>
+          <p class="preview">This mirrors the desktop console request boundary. It records a tenant receipt only; no command, filesystem action, worker, provider, build, or desktop action runs.</p>
+        </section>
       </section>
       <dialog id="workspace-settings" aria-labelledby="workspace-settings-heading" aria-describedby="workspace-layout-status">
         <form method="dialog"><h2 id="workspace-settings-heading">Workspace settings</h2><p id="workspace-layout-status" class="note" role="status" aria-live="polite">Loading your layout…</p>
