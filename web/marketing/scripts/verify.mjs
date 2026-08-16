@@ -87,11 +87,21 @@ try {
 
 const localReferences = [...html.matchAll(/(?:href|src)="(?!https?:|#|\/\/)([^"#?]+)"/g)]
   .map((match) => match[1]);
+// These routes are served by the authenticated Helmian Cloud CLM service
+// behind the canonical host, not by this static Vercel marketing project.
+// Keep them explicit so a marketing link can be checked without pretending
+// the static project owns the private cloud surface.
+const externalCloudRoutes = new Set([
+  'admin/',
+  'admin/auth/login',
+  'admin/auth/signup',
+]);
 for (const path of new Set(localReferences)) {
   // path is a site-root-relative URL (e.g. "/herald/"), never a filesystem
   // path — resolve() treats a leading "/" as drive-absolute on Windows and
   // silently checks the wrong location, so it must be stripped first.
   const relative = path.replace(/^\/+/, '');
+  if (externalCloudRoutes.has(relative)) continue;
   try { await access(resolve(root, relative)); }
   catch { failures.push(`missing local asset: /${relative}`); }
 }
