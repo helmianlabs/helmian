@@ -55,6 +55,6 @@ Write-Host "     $envFile"
 Write-Host "     then re-run this script and Connect Discord"
 Write-Host ""
 Write-Host "Discord redirect URL to paste in Discord portal:"
-Write-Host "  https://helmian.vercel.app/api/team-oauth/discord/callback" -ForegroundColor Yellow
+Write-Host "  https://helmian.cloud/api/team-oauth/discord/callback" -ForegroundColor Yellow
 Write-Host ""
 pause

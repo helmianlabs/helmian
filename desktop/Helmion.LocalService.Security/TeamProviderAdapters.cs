@@ -63,7 +63,7 @@ internal sealed record TeamProviderConfiguration(
         ],
         _ when UsesHostedHandoff && ProviderId == TeamConnectorContract.DiscordProviderId =>
         [
-            "Register https://helmian.vercel.app/api/team-oauth/discord/callback on the Discord app OAuth2 Redirects.",
+            "Register https://helmian.cloud/api/team-oauth/discord/callback on the Discord app OAuth2 Redirects.",
             "Set HELMION_DISCORD_CLIENT_ID and HELMION_DISCORD_CLIENT_SECRET on Local Service.",
             "Set HELMION_DISCORD_HANDOFF_BASE_URI and HELMION_DISCORD_HANDOFF_TOKEN.",
             "Connect Discord = sign in as that person only (identify + guilds). No server ownership. No bot install on Connect.",
@@ -71,10 +71,10 @@ internal sealed record TeamProviderConfiguration(
         ],
         _ when UsesHostedHandoff =>
         [
-            $"Register https://helmian.vercel.app/api/team-oauth/{ProviderId}/callback as the OAuth Redirect URL on the {ProviderId} application.",
+            $"Register https://helmian.cloud/api/team-oauth/{ProviderId}/callback as the OAuth Redirect URL on the {ProviderId} application.",
             $"Set HELMION_{ProviderId.ToUpperInvariant()}_CLIENT_ID and _CLIENT_SECRET on Local Service for pilot token exchange.",
             "Slack bot scopes: channels:read, channels:history, groups:read, groups:history (no chat:write).",
-            $"Set HELMION_{ProviderId.ToUpperInvariant()}_HANDOFF_BASE_URI=https://helmian.vercel.app/api/team-oauth/{ProviderId}/ and the matching HANDOFF_TOKEN.",
+            $"Set HELMION_{ProviderId.ToUpperInvariant()}_HANDOFF_BASE_URI=https://helmian.cloud/api/team-oauth/{ProviderId}/ and the matching HANDOFF_TOKEN.",
             "Each person authorizes their own account; the handoff stores only a short-lived encrypted code until Local Service redeems and exchanges it."
         ],
         _ =>
