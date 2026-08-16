@@ -6,7 +6,7 @@
  */
 
 import { redactSecrets } from './redact.mjs';
-import { recordCompletion } from '../core/provenance-log.mjs';
+import { recordCompletion, recordFailure } from '../core/provenance-log.mjs';
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const XAI_URL = 'https://api.x.ai/v1/chat/completions';
@@ -108,6 +108,35 @@ function recordTurnProvenance(reply, {
   return { ...reply, provenance: written };
 }
 
+function recordTurnFailure({ providerId, model, url, isLocal, provenance, startedAt }, error) {
+  const context = provenance || {};
+  return recordFailure(context.workspace || process.cwd(), {
+    providerId,
+    model,
+    url,
+    isLocal,
+    sessionId: context.sessionId,
+    providerLabel: context.providerLabel,
+    tier: context.tier,
+    reason: context.reason,
+    round: context.round,
+    routedLocal: context.routedLocal,
+    latencyMs: Number.isFinite(startedAt) ? Date.now() - startedAt : undefined,
+    failureCode: error?.code || 'provider_call_failed',
+    httpStatus: error?.providerStatus,
+  });
+}
+
+async function runProviderTurn(call, metadata) {
+  try {
+    return recordTurnProvenance(await call(), metadata);
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    error.provenance = recordTurnFailure(metadata, error);
+    throw error;
+  }
+}
+
 /**
  * @param {boolean} [reasoningEffortNone]
  *   Opt-in: send `reasoning_effort: 'none'` on a tool-bearing turn. Set ONLY by
@@ -166,7 +195,7 @@ export async function chatWithTools({
       throw new Error('Custom provider is missing its endpoint URL');
     }
     const resolvedModel = model || 'default';
-    const reply = await openAiCompatibleTurn({
+    return runProviderTurn(() => openAiCompatibleTurn({
       url,
       apiKey,
       model: resolvedModel,
@@ -175,8 +204,7 @@ export async function chatWithTools({
       signal,
       reasoningEffortNone,
       images,
-    });
-    return recordTurnProvenance(reply, {
+    }), {
       providerId,
       images,
       model: resolvedModel,
@@ -202,7 +230,7 @@ export async function chatWithTools({
     // Fallback fires only when no model was routed (unrecognized caller path).
     // Keep in sync with the standard tier in model-router.mjs.
     const resolvedModel = model || (providerId === 'xai' ? 'grok-4.3' : 'gpt-5.6-terra');
-    const reply = await openAiCompatibleTurn({
+    return runProviderTurn(() => openAiCompatibleTurn({
       url: resolvedUrl,
       apiKey,
       model: resolvedModel,
@@ -212,15 +240,14 @@ export async function chatWithTools({
       images,
       providerId,
       credentialType,
-    });
-    return recordTurnProvenance(reply, {
+    }), {
       providerId, model: resolvedModel, url: resolvedUrl, isLocal: false, provenance, startedAt,
     });
   }
 
   if (providerId === 'anthropic') {
     const resolvedModel = model || 'claude-sonnet-5';
-    const reply = await anthropicTurn({
+    return runProviderTurn(() => anthropicTurn({
       apiKey,
       model: resolvedModel,
       messages,
@@ -228,15 +255,14 @@ export async function chatWithTools({
       signal,
       images,
       credentialType,
-    });
-    return recordTurnProvenance(reply, {
+    }), {
       providerId, model: resolvedModel, url: ANTHROPIC_URL, isLocal: false, provenance, startedAt,
     });
   }
 
   if (providerId === 'gemini') {
     const resolvedModel = model || 'gemini-flash-latest';
-    const reply = await geminiTurn({
+    return runProviderTurn(() => geminiTurn({
       apiKey,
       model: resolvedModel,
       messages,
@@ -244,8 +270,7 @@ export async function chatWithTools({
       signal,
       images,
       credentialType,
-    });
-    return recordTurnProvenance(reply, {
+    }), {
       providerId,
       model: resolvedModel,
       // The key-bearing query string is NOT passed to the ledger. geminiTurn
@@ -360,7 +385,10 @@ async function openAiCompatibleTurn({
   });
   const raw = await res.text();
   if (!res.ok) {
-    throw new Error(`${url} HTTP ${res.status}: ${raw.slice(0, 400)}`);
+    const error = new Error(`${url} HTTP ${res.status}: ${raw.slice(0, 400)}`);
+    error.code = 'provider_http_error';
+    error.providerStatus = res.status;
+    throw error;
   }
   const data = JSON.parse(raw);
   const choice = data.choices?.[0]?.message;
@@ -467,7 +495,10 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images
   });
   const raw = await res.text();
   if (!res.ok) {
-    throw new Error(`Anthropic HTTP ${res.status}: ${raw.slice(0, 400)}`);
+    const error = new Error(`Anthropic HTTP ${res.status}: ${raw.slice(0, 400)}`);
+    error.code = 'provider_http_error';
+    error.providerStatus = res.status;
+    throw error;
   }
   const data = JSON.parse(raw);
   const blocks = data.content || [];
@@ -599,7 +630,10 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = 
     } else {
       detail = raw.slice(0, 400);
     }
-    throw new Error(`Gemini HTTP ${res.status}: ${detail}`);
+    const error = new Error(`Gemini HTTP ${res.status}: ${detail}`);
+    error.code = 'provider_http_error';
+    error.providerStatus = res.status;
+    throw error;
   }
   const data = JSON.parse(raw);
   const parts = data.candidates?.[0]?.content?.parts || [];
