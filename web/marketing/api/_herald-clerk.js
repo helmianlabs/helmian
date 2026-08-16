@@ -88,7 +88,7 @@ function toWebRequest(request) {
   }
   const forwarded = String(headers.get('x-forwarded-proto') ?? '').split(',')[0].trim();
   const protocol = forwarded === 'http' ? 'http' : 'https';
-  const host = headers.get('host') ?? 'helmian.vercel.app';
+  const host = headers.get('host') ?? 'helmian.cloud';
   const path = String(request?.url ?? '/');
   return new Request(new URL(path, `${protocol}://${host}`), {
     method: String(request?.method ?? 'GET').toUpperCase(),
