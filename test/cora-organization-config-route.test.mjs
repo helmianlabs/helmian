@@ -14,7 +14,10 @@ import {
   LIVE_ADMIN_CORA_KNOWLEDGE_TRANSITION_PATH,
   LIVE_ADMIN_CORA_USAGE_PATH,
   LIVE_ADMIN_CORA_PREVIEW_PATH,
+  LIVE_ADMIN_CORA_APP_BUILDS_PATH,
   LIVE_ADMIN_CORA_TASKS_PATH,
+  LIVE_ADMIN_CORA_TASK_RESULTS_PATH,
+  LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH,
   LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH,
 } from '../src/cloud/live-admin.mjs';
 
@@ -74,11 +77,21 @@ async function fixture() {
     async append(actor, input) { calls.push(['task-append', actor, input]); return { durable: true, format: 'cora.agent-task-intent.v1', taskType: input.taskType, status: input.intent === 'prepare' ? 'prepared' : 'draft', receiptId: 'task-receipt-1', execution: 'not_performed', agentInvocation: 'not_performed' }; },
     async list(actor) { calls.push(['task-list', actor]); return { receipts: [] }; },
   };
+  const agentTaskResultRepository = {
+    async list(actor, taskId, limit) { calls.push(['task-result-list', actor, taskId, limit]); return { results: [] }; },
+  };
+  const approvedKnowledgeTaskWorker = {
+    async run(input) { calls.push(['approved-knowledge-run', input]); return { status: 'source_ready', execution: 'not_performed', agentInvocation: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', excerpts: [{ citation: 'FMCSA §3', excerpt: 'Stored excerpt.' }] }; },
+  };
+  const appBuildRepository = {
+    async append(actor, input) { calls.push(['app-build-append', actor, input]); return { durable: true, format: 'cora.app-build-request.v1', status: 'draft-recorded', route: input.route, receiptId: 'app-build-receipt-1', execution: 'not_performed', filesystemMutation: 'not_performed', publication: 'not_performed' }; },
+    async list(actor) { calls.push(['app-build-list', actor]); return { receipts: [] }; },
+  };
   const providerConnectionRepository = {
     async list(actor) { calls.push(['provider-list', actor]); return { connections: [], source: 'tenant_provider_connection_metadata', invocation: 'not_performed', tools: 'not_granted' }; },
     async save(actor, input) { calls.push(['provider-save', actor, input]); return { durable: true, connection: { providerId: input.providerId, credentialReference: input.credentialReference, lifecycle: 'pending' }, vaultStatus: 'external_encrypted_vault_required', invocation: 'not_performed', tools: 'not_granted' }; },
   };
-  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, agentTaskRepository, providerConnectionRepository });
+  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, appBuildRepository, agentTaskRepository, agentTaskResultRepository, approvedKnowledgeTaskWorker, providerConnectionRepository });
   const clm = await startCoraClm({ host: '127.0.0.1', port: 0, runTurn: async () => ({ text: 'ok', model: 'test' }), notifyBackgroundAgents: false, httpRequestHandler: admin.handler });
   return { url: clm.healthUrl.replace('/healthz', ''), calls, close: async () => { await clm.close(); await admin.close(); } };
 }
@@ -162,6 +175,31 @@ test('authenticated task intents derive Organization, reject selectors and remai
   const listed = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}`, { headers }); assert.equal(listed.status, 200);
   const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}?plant_id=warehouse-1`, { headers }); assert.equal(injected.status, 400);
   assert.equal(app.calls.some(([name, actor]) => name === 'task-append' && actor.tenantId === 'org-a'), true);
+});
+
+test('only an Organization admin can run the provider-free knowledge worker, while result reads remain tenant-derived', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const memberHeaders = { cookie: 'helmion_admin_session=member-session', 'content-type': 'application/json' };
+  const adminHeaders = { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' };
+  const body = { taskId: 7, claimIdempotencyKey: 'knowledge-run-0007' };
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH}`, { method: 'POST', headers: memberHeaders, body: JSON.stringify(body) })).status, 403);
+  const run = await fetch(`${app.url}${LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH}`, { method: 'POST', headers: adminHeaders, body: JSON.stringify(body) });
+  assert.equal(run.status, 200); assert.equal((await run.json()).providerInvocation, 'not_performed');
+  const results = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASK_RESULTS_PATH}?task_id=7`, { headers: memberHeaders }); assert.equal(results.status, 200);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_TASK_RESULTS_PATH}?tenant_id=org-b`, { headers: memberHeaders })).status, 400);
+  assert.equal(app.calls.some(([name, input]) => name === 'approved-knowledge-run' && input.actor.tenantId === 'org-a' && input.worker.role === 'worker'), true);
+  assert.equal(app.calls.some(([name, actor]) => name === 'task-result-list' && actor.tenantId === 'org-a'), true);
+});
+
+test('authenticated app-build drafts derive Organization, reject selectors, and never execute or publish', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=member-session', 'content-type': 'application/json' };
+  const body = { intent: 'draft', title: 'Driver onboarding', department: 'hr', route: '/hr/onboarding', description: 'Draft driver onboarding page.', components: [{ type: 'heading', text: 'Onboarding' }], idempotencyKey: 'app-build-0001' };
+  const created = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_PATH}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  assert.equal(created.status, 200); const receipt = await created.json(); assert.equal(receipt.execution, 'not_performed'); assert.equal(receipt.publication, 'not_performed');
+  const listed = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_PATH}`, { headers }); assert.equal(listed.status, 200);
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_PATH}?plant_id=warehouse-1`, { headers }); assert.equal(injected.status, 400);
+  assert.equal(app.calls.some(([name, actor]) => name === 'app-build-append' && actor.tenantId === 'org-a'), true);
 });
 
 test('provider connection route derives Organization, stores only vault references, and never invokes providers', async (t) => {

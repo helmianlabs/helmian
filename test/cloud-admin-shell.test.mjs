@@ -34,7 +34,9 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /Tenant provider access/u);
   assert.match(page, /Vault reference only/u);
   assert.match(page, /Raw keys and tokens are rejected/u);
-  assert.match(page, /does not create a webhook/u);
+  // Test-only correction: the committed shell now truthfully advertises bounded
+  // Slack/Discord inbound verifier routes, so the former no-webhook wording is obsolete.
+  assert.match(page, /bounded inbound verifier routes/u);
   assert.match(script, /decideApproval/u);
   assert.match(script, /saveConnector/u);
   assert.match(script, /readProviderConnections/u);

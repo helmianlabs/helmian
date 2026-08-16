@@ -50,6 +50,10 @@ class MigrationPool {
           pool.executedSql.push('034_helmion_provider_oauth.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('helmion.cora_app_build_requests')) {
+          pool.executedSql.push('035_cora_app_build_requests.sql');
+          return { rowCount: 0, rows: [] };
+        }
         if (normalized.includes('create schema if not exists helmion')) {
           if (String(sql).includes('helmion.projects')) pool.executedSql.push('001_helmion.sql');
           return { rowCount: 0, rows: [] };
@@ -121,6 +125,10 @@ class MigrationPool {
         }
         if (String(sql).includes('create table if not exists helmion.cora_agent_task_claims')) {
           pool.executedSql.push('014_cora_agent_task_claims.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (String(sql).includes('create table if not exists helmion.cora_agent_task_execution_results')) {
+          pool.executedSql.push('036_cora_approved_knowledge_task_results.sql');
           return { rowCount: 0, rows: [] };
         }
         if (String(sql).includes('alter table helmion.cora_knowledge_sources') && !String(sql).includes('cora_knowledge_sources_effective_idx')) {
@@ -216,6 +224,8 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['032_workspace_projects.sql', true, 'committed'],
       ['033_console_command_intents.sql', true, 'committed'],
       ['034_helmion_provider_oauth.sql', true, 'committed'],
+      ['035_cora_app_build_requests.sql', true, 'committed'],
+      ['036_cora_approved_knowledge_task_results.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -252,13 +262,15 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '032_workspace_projects.sql',
       '033_console_command_intents.sql',
       '034_helmion_provider_oauth.sql',
+      '035_cora_app_build_requests.sql',
+      '036_cora_approved_knowledge_task_results.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    Array(31).fill(false),
+    Array(33).fill(false),
   );
   assert.deepEqual(
     pool.executedSql,
@@ -294,9 +306,11 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '032_workspace_projects.sql',
       '033_console_command_intents.sql',
       '034_helmion_provider_oauth.sql',
+      '035_cora_app_build_requests.sql',
+      '036_cora_approved_knowledge_task_results.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 62);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 66);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 

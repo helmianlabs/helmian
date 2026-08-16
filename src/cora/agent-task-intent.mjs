@@ -1,5 +1,7 @@
 export const CORA_AGENT_TASK_FORMAT = 'cora.agent-task-intent.v1';
-const TASK_TYPES = new Set(['workspace_preview']);
+// This allowlist is deliberately narrow. A task type is not an authority grant;
+// each type still needs a dedicated worker and durable result path.
+const TASK_TYPES = new Set(['workspace_preview', 'approved_knowledge_lookup']);
 const INTENTS = new Set(['draft', 'prepare']);
 const ALLOWED_KEYS = new Set(['taskType', 'task_type', 'goal', 'contextRef', 'context_ref', 'department', 'costCenter', 'cost_center', 'intent', 'idempotencyKey', 'idempotency_key']);
 

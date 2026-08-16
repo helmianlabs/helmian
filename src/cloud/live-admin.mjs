@@ -25,7 +25,10 @@ import { createCoraOrganizationConfigRepository } from '../cora/organization-con
 import { createProviderUsageRepository } from '../cora/provider-usage-repository.mjs';
 import { createOrganizationDatabaseRepository } from './organization-database-repository.mjs';
 import { createWorkspacePreviewRepository } from '../cora/workspace-preview-repository.mjs';
+import { createAppBuildRepository } from '../cora/app-build-repository.mjs';
 import { createAgentTaskRepository } from '../cora/agent-task-repository.mjs';
+import { createAgentTaskResultRepository } from '../cora/agent-task-result-repository.mjs';
+import { createApprovedKnowledgeTaskWorker } from '../cora/approved-knowledge-task-worker.mjs';
 import { createArtifactStudioRepository } from '../cora/artifact-studio-repository.mjs';
 import { createArtifactSourceRepository } from '../cora/artifact-source-repository.mjs';
 import { createArtifactScriptRepository } from '../cora/artifact-script-repository.mjs';
@@ -87,7 +90,10 @@ export const LIVE_ADMIN_CORA_KNOWLEDGE_SNIPPETS_PATH = '/api/admin/cora/knowledg
 export const LIVE_ADMIN_CORA_KNOWLEDGE_TRANSITION_PATH = '/api/admin/cora/knowledge/transition';
 export const LIVE_ADMIN_CORA_USAGE_PATH = '/api/admin/cora/usage';
 export const LIVE_ADMIN_CORA_PREVIEW_PATH = '/api/admin/cora/workspace/previews';
+export const LIVE_ADMIN_CORA_APP_BUILDS_PATH = '/api/admin/cora/app-builds';
 export const LIVE_ADMIN_CORA_TASKS_PATH = '/api/admin/cora/tasks';
+export const LIVE_ADMIN_CORA_TASK_RESULTS_PATH = '/api/admin/cora/tasks/results';
+export const LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH = '/api/admin/cora/tasks/approved-knowledge/run';
 export const LIVE_ADMIN_CORA_ARTIFACTS_PATH = '/api/admin/cora/artifacts';
 export const LIVE_ADMIN_CORA_ARTIFACT_SOURCES_PATH = '/api/admin/cora/artifact-sources';
 export const LIVE_ADMIN_CORA_ARTIFACT_SOURCE_LINKS_PATH = '/api/admin/cora/artifact-source-links';
@@ -236,7 +242,10 @@ export async function createLiveHelmianCloudAdminHandler({
   coraConfigRepository: suppliedCoraConfigRepository = null,
   providerUsageRepository: suppliedProviderUsageRepository = null,
   workspacePreviewRepository: suppliedWorkspacePreviewRepository = null,
+  appBuildRepository: suppliedAppBuildRepository = null,
   agentTaskRepository: suppliedAgentTaskRepository = null,
+  agentTaskResultRepository: suppliedAgentTaskResultRepository = null,
+  approvedKnowledgeTaskWorker: suppliedApprovedKnowledgeTaskWorker = null,
   artifactStudioRepository: suppliedArtifactStudioRepository = null,
   artifactSourceRepository: suppliedArtifactSourceRepository = null,
   artifactScriptRepository: suppliedArtifactScriptRepository = null,
@@ -276,7 +285,9 @@ export async function createLiveHelmianCloudAdminHandler({
   const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
   const providerUsage = suppliedProviderUsageRepository ?? createProviderUsageRepository(pool);
   const workspacePreviews = suppliedWorkspacePreviewRepository ?? createWorkspacePreviewRepository(pool);
+  const appBuilds = suppliedAppBuildRepository ?? createAppBuildRepository(pool);
   const agentTasks = suppliedAgentTaskRepository ?? createAgentTaskRepository(pool);
+  const agentTaskResults = suppliedAgentTaskResultRepository ?? createAgentTaskResultRepository(pool);
   const artifacts = suppliedArtifactStudioRepository ?? createArtifactStudioRepository(pool);
   const artifactSources = suppliedArtifactSourceRepository ?? createArtifactSourceRepository(pool);
   const artifactScripts = suppliedArtifactScriptRepository ?? createArtifactScriptRepository(pool);
@@ -846,6 +857,42 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_PREVIEW_PATH) {
       try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['department', 'idempotencyKey', 'intent', 'mode', 'templateId', 'title']); const result = await workspacePreviews.append(actor, body); send(response, 200, JSON.stringify({ valid: true, ...result })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_PREVIEW_MEMBERSHIP_REQUIRED' : 'CORA_PREVIEW_INTENT_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILDS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await appBuilds.list(actor, requestUrl.searchParams.get('limit')) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_APP_BUILD_SELECTOR_INVALID' : 'CORA_APP_BUILD_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILDS_PATH) {
+      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['components', 'department', 'description', 'idempotencyKey', 'intent', 'route', 'title']); send(response, 200, JSON.stringify({ valid: true, ...await appBuilds.append(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_MEMBERSHIP_REQUIRED' : 'CORA_APP_BUILD_REQUEST_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_TASK_RESULTS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await agentTaskResults.list(actor, requestUrl.searchParams.get('task_id'), requestUrl.searchParams.get('limit')) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_TASK_RESULT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_TASK_RESULT_SELECTOR_INVALID' : 'CORA_TASK_RESULT_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH) {
+      try {
+        const actor = await activeTenantActor(request);
+        if (!['owner', 'admin'].includes(String(actor.role).toLowerCase())) throw new TenantAuthorizationError('approved knowledge worker requires owner or admin membership');
+        const body = await readJsonObject(request); exactKeys(body, ['claimIdempotencyKey', 'taskId']);
+        const worker = Object.freeze({ kind: 'internal_worker', verified: true, membershipVerified: true, role: 'worker', membershipRole: actor.role, subject: actor.subject, workerId: 'worker:approved-knowledge', tenantId: actor.tenantId, sessionId: randomUUID(), requestId: randomUUID() });
+        const knowledgeWorker = suppliedApprovedKnowledgeTaskWorker ?? createApprovedKnowledgeTaskWorker({
+          taskRepository: agentTasks,
+          resultRepository: agentTaskResults,
+          knowledgeRepository: coraConfig,
+          routingPolicyLookup: async ({ tenantId, subjectId }) => {
+            if (tenantId !== actor.tenantId || subjectId !== actor.subject) throw new TenantAuthorizationError('approved knowledge routing context does not match authenticated actor');
+            const published = await coraConfig.readPublishedConfig(actor);
+            return { tenantId, routingPolicy: published.config?.config?.routingPolicy ?? null, approvedCatalog: published.config?.config?.approvedModelCatalog ?? [] };
+          },
+        });
+        const result = await knowledgeWorker.run({ worker, actor, taskId: body.taskId, claimIdempotencyKey: body.claimIdempotencyKey });
+        send(response, 200, JSON.stringify({ valid: true, ...result }));
+      } catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APPROVED_KNOWLEDGE_ADMIN_REQUIRED' : 'CORA_APPROVED_KNOWLEDGE_RUN_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_TASKS_PATH) {
