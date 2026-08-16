@@ -83,3 +83,11 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(liveAdmin, /artifactExecution\.append\(actor, body\)/u);
   assert.match(page, /approved, queued, running, provider result, accepted, and rejected execution stages are not performed/u);
 });
+
+test('workspace navigation restores a visible tenant layout section from the URL hash', () => {
+  assert.match(script, /function activateWorkspaceNav\(target/u);
+  assert.match(script, /window\.history\.replaceState\(null, '', `#\$\{target\}`\)/u);
+  assert.match(script, /window\.addEventListener\('hashchange'/u);
+  assert.match(script, /activateWorkspaceNav\(window\.location\.hash\.slice\(1\) \|\| 'section-chat'/u);
+  assert.match(script, /item\.hidden \|\| section\.hidden/u);
+});
