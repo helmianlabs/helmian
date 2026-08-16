@@ -26,6 +26,9 @@ import {
   LIVE_ADMIN_ORGANIZATION_READINESS_PATH,
   LIVE_ADMIN_CORA_CAPABILITIES_PATH,
   LIVE_ADMIN_PAGE_PATH,
+  LIVE_ADMIN_SCRIPT_PATH,
+  LIVE_ADMIN_ENVOY_CLIENT_PATH,
+  LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH,
   LIVE_ADMIN_SESSION_PATH,
 } from '../src/cloud/live-admin.mjs';
 
@@ -178,6 +181,16 @@ test('Cora capability explorer exposes fixed policy classes, hides admin routing
   const adminApp = await fixture({ coraConfigRepository }); t.after(adminApp.close);
   const admin = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_CAPABILITIES_PATH}`, { headers: { cookie: 'helmion_admin_session=active-session' } }); const adminBody = await admin.json(); assert.equal(admin.status, 200); assert.equal(adminBody.explorer.routing.version, 3); assert.equal(adminBody.explorer.routing.approvedModelCatalog[0].model, 'text'); assert.equal(adminBody.explorer.capabilities.some((item) => item.classification === 'normal_immediate'), true); assert.equal(adminBody.explorer.capabilities.some((item) => item.classification === 'confirmation_or_approval_required'), true);
   const injected = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_CAPABILITIES_PATH}?provider=x`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
+});
+
+test('cloud admin serves every ES module imported by the browser entrypoint', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  for (const path of [LIVE_ADMIN_SCRIPT_PATH, LIVE_ADMIN_ENVOY_CLIENT_PATH, LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH]) {
+    const response = await fetch(`${app.url}${path}`);
+    assert.equal(response.status, 200, path);
+    assert.match(response.headers.get('content-type') ?? '', /javascript/);
+    assert.notEqual((await response.text()).trim(), '');
+  }
 });
 
 test('Organization readiness reports verifiable source states and preserves member/admin detail boundaries', async (t) => {

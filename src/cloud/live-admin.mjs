@@ -52,9 +52,13 @@ import { createConsoleCommandRepository } from './console-command-repository.mjs
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
 const scriptPath = join(here, '..', '..', 'web', 'cloud-admin', 'app.js');
+const envoyClientPath = join(here, '..', '..', 'web', 'cloud-admin', 'envoy-client.mjs');
+const coraConfigClientPath = join(here, '..', '..', 'web', 'cloud-admin', 'cora-config-client.mjs');
 
 export const LIVE_ADMIN_PAGE_PATH = '/admin';
 export const LIVE_ADMIN_SCRIPT_PATH = '/admin/assets/app.js';
+export const LIVE_ADMIN_ENVOY_CLIENT_PATH = '/admin/assets/envoy-client.mjs';
+export const LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH = '/admin/assets/cora-config-client.mjs';
 export const LIVE_ADMIN_LOGIN_PATH = '/admin/auth/login';
 export const LIVE_ADMIN_CALLBACK_PATH = '/admin/auth/callback';
 export const LIVE_ADMIN_LOGOUT_PATH = '/admin/auth/logout';
@@ -224,6 +228,8 @@ export async function createLiveHelmianCloudAdminHandler({
   identity: suppliedIdentity = null,
   page: suppliedPage = null,
   script: suppliedScript = null,
+  envoyClientScript: suppliedEnvoyClientScript = null,
+  coraConfigClientScript: suppliedCoraConfigClientScript = null,
   expectedMigrations: suppliedMigrations = null,
   coraConfigRepository: suppliedCoraConfigRepository = null,
   providerUsageRepository: suppliedProviderUsageRepository = null,
@@ -259,6 +265,8 @@ export async function createLiveHelmianCloudAdminHandler({
   const identity = suppliedIdentity ?? createIdentityGateway({ env, fetchImpl });
   const page = suppliedPage ?? await readFile(pagePath, 'utf8');
   const script = suppliedScript ?? await readFile(scriptPath, 'utf8');
+  const envoyClientScript = suppliedEnvoyClientScript ?? await readFile(envoyClientPath, 'utf8');
+  const coraConfigClientScript = suppliedCoraConfigClientScript ?? await readFile(coraConfigClientPath, 'utf8');
   const expectedMigrations = suppliedMigrations ?? await listExpectedMigrationManifest();
   const ownsPool = !suppliedPool;
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
@@ -555,6 +563,8 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/` }); return true; }
     if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_PAGE_PATH}/`) { send(response, 200, page, 'text/html; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SCRIPT_PATH) { send(response, 200, script, 'text/javascript; charset=utf-8'); return true; }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CLIENT_PATH) { send(response, 200, envoyClientScript, 'text/javascript; charset=utf-8'); return true; }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH) { send(response, 200, coraConfigClientScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGIN_PATH) {
       try { const login = await identity.beginLogin(); send(response, 302, '', 'text/plain; charset=utf-8', { location: login.url, 'set-cookie': `helmion_admin_login_state=${login.state}; ${cookieOptions('/admin')}` }); }
       catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
