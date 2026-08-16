@@ -45,6 +45,7 @@ import { buildDesktopParityManifest } from './desktop-parity.mjs';
 import { createProviderConnectionRepository } from './provider-connection-repository.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
+import { authorizeTenantAction, persistTenantActionDecision } from './tenant-action-authorization.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -896,12 +897,19 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_PROJECTS_PATH) {
       try {
-        const actor = await activeActor(request);
+        const actor = await activeTenantActor(request);
+        const authorization = authorizeTenantAction(actor, { action: 'workspace.project.write', tenantId: actor.tenantId });
+        if (!authorization.allowed) {
+          const receipt = await persistTenantActionDecision(pool, actor, authorization);
+          send(response, 403, JSON.stringify({ valid: false, code: 'WORKSPACE_PROJECTS_ACTION_DENIED', receiptId: receipt.receiptId, authorization }));
+          return true;
+        }
         const body = await readJsonObject(request);
         exactKeys(body, ['defaultBranch', 'displayName', 'lifecycle', 'projectKey', 'sourceKind']);
-        send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.save(actor, body) }));
+        send(response, 200, JSON.stringify({ valid: true, authorization, ...await workspaceProjects.save(actor, body) }));
       } catch (error) {
-        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_PROJECTS_ADMIN_REQUIRED' : 'WORKSPACE_PROJECTS_INVALID' }));
+        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 503 ? 503 : 400;
+        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'WORKSPACE_PROJECTS_MEMBERSHIP_REQUIRED' : status === 503 ? 'WORKSPACE_PROJECTS_AUTHORIZATION_RECEIPT_FAILED' : 'WORKSPACE_PROJECTS_INVALID' }));
       }
       return true;
     }

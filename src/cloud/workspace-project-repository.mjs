@@ -41,14 +41,17 @@ export function createWorkspaceProjectRepository(pool) {
     },
     async save(actor, input) {
       if (!['owner', 'admin'].includes(String(actor?.role ?? '').toLowerCase())) throw Object.assign(new Error('workspace project registry requires owner or admin membership'), { status: 403 });
-      const active = context(actor);
-      const project = normalizeProject(input);
-      return withTenantTransaction(pool, active, async (client) => {
-        await requireActiveTenantMembership(client, active);
-        const result = await client.query(`insert into helmion.workspace_projects (tenant_id, project_key, display_name, source_kind, default_branch, lifecycle, created_by_subject) values ($1,$2,$3,$4,$5,$6,$7) on conflict (tenant_id,project_key) do update set display_name=excluded.display_name, source_kind=excluded.source_kind, default_branch=excluded.default_branch, lifecycle=excluded.lifecycle, updated_at=clock_timestamp() returning ${SELECT}`, [active.tenantId, project.projectKey, project.displayName, project.sourceKind, project.defaultBranch, project.lifecycle, active.actorSubject]);
-        return { durable: true, project: row(result.rows[0]), source: 'tenant_workspace_project_registry', execution: 'not_performed' };
-      });
-    },
+        const active = context(actor);
+        const project = normalizeProject(input);
+        return withTenantTransaction(pool, active, async (client) => {
+          await requireActiveTenantMembership(client, active);
+          const result = await client.query(`insert into helmion.workspace_projects (tenant_id, project_key, display_name, source_kind, default_branch, lifecycle, created_by_subject) values ($1,$2,$3,$4,$5,$6,$7) on conflict (tenant_id,project_key) do update set display_name=excluded.display_name, source_kind=excluded.source_kind, default_branch=excluded.default_branch, lifecycle=excluded.lifecycle, updated_at=clock_timestamp() returning ${SELECT}`, [active.tenantId, project.projectKey, project.displayName, project.sourceKind, project.defaultBranch, project.lifecycle, active.actorSubject]);
+          const projectView = row(result.rows[0]);
+          const receipt = await client.query(`insert into helmion.audit_events (tenant_id, actor_subject, actor_role, session_id, request_id, action_type, canonical_target, policy_version, decision, privacy_summary, result) values ($1,$2,$3,$4,$5,'workspace.project.write',$6::jsonb,'tenant-rbac-abac.v1','ALLOW',$7,$8::jsonb) returning id`, [active.tenantId, active.actorSubject, active.actorRole, active.sessionId, active.requestId, JSON.stringify({ resource: 'workspace.project', projectKey: project.projectKey }), 'Tenant workspace project metadata registered', JSON.stringify({ projectKey: project.projectKey, durableSource: 'helmion.workspace_projects' })]);
+          if (receipt.rowCount !== 1 || receipt.rows[0]?.id == null) throw new Error('workspace project receipt was not durable');
+          return { durable: true, receiptId: String(receipt.rows[0].id), project: projectView, source: 'tenant_workspace_project_registry', execution: 'not_performed' };
+        });
+      },
   });
 }
 

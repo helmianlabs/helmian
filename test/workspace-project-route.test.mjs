@@ -6,7 +6,7 @@ import { createLiveHelmianCloudAdminHandler, LIVE_ADMIN_WORKSPACE_PROJECTS_PATH 
 const env = { HELMION_CLOUD_ENVIRONMENT: 'staging', HELMION_DATABASE_URL: 'postgresql://app:x@ep-silent-rain-a1b2c3d4.us-east-2.aws.neon.tech/neondb?sslmode=require', HELMION_EXPECTED_ENDPOINT_ID: 'ep-silent-rain-a1b2c3d4', HELMION_ADMIN_ISSUER: 'https://identity.example.com', HELMION_ADMIN_CLIENT_ID: 'helmian', HELMION_ADMIN_REDIRECT_URI: 'https://helmian.example.com/admin/auth/callback' };
 
 function pool(role = 'member') {
-  const client = { async query(sql) { const q = String(sql).replace(/\s+/g, ' ').trim().toLowerCase(); if (['begin', 'commit', 'rollback'].includes(q) || q.startsWith('select set_config')) return { rowCount: 0, rows: [] }; if (q.includes('from helmion.tenant_memberships')) return { rowCount: 1, rows: [{ tenant_id: 'customer-a', role }] }; throw new Error(`unexpected query ${q}`); }, release() {} };
+  const client = { async query(sql) { const q = String(sql).replace(/\s+/g, ' ').trim().toLowerCase(); if (['begin', 'commit', 'rollback'].includes(q) || q.startsWith('select set_config')) return { rowCount: 0, rows: [] }; if (q.includes('from helmion.tenant_memberships')) return { rowCount: 1, rows: [{ tenant_id: 'customer-a', role }] }; if (q.includes('insert into helmion.audit_events')) return { rowCount: 1, rows: [{ id: 'rbac-receipt-1' }] }; throw new Error(`unexpected query ${q}`); }, release() {} };
   return { connect: async () => client };
 }
 
@@ -25,7 +25,11 @@ test('workspace project registry is tenant-scoped and read-only for members', as
   assert.equal((await read.json()).projects[0].projectKey, 'aimforge');
   assert.equal(calls[0][1].tenantId, 'customer-a');
   assert.equal((await fetch(`${base}${LIVE_ADMIN_WORKSPACE_PROJECTS_PATH}?organization_id=other`, { headers })).status, 400);
-  assert.equal((await fetch(`${base}${LIVE_ADMIN_WORKSPACE_PROJECTS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ projectKey: 'bad', displayName: 'Bad', sourceKind: 'cloud', defaultBranch: 'main', lifecycle: 'active' }) })).status, 403);
+  const denied = await fetch(`${base}${LIVE_ADMIN_WORKSPACE_PROJECTS_PATH}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ projectKey: 'bad', displayName: 'Bad', sourceKind: 'cloud', defaultBranch: 'main', lifecycle: 'active' }) });
+  assert.equal(denied.status, 403);
+  const deniedBody = await denied.json();
+  assert.equal(deniedBody.code, 'WORKSPACE_PROJECTS_ACTION_DENIED');
+  assert.equal(deniedBody.receiptId, 'rbac-receipt-1');
 });
 
 test('workspace project registration is owner/admin-only and exact-keyed', async (t) => {
