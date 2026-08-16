@@ -1,6 +1,21 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
   "trailingSlash": false,
+  "rewrites": [
+    {
+      "source": "/admin",
+      "destination": "https://helmian-cloud.fly.dev/admin/"
+    },
+    {
+      "source": "/admin/:path*",
+      "destination": "https://helmian-cloud.fly.dev/admin/:path*"
+    },
+    {
+      "source": "/api/admin/:path*",
+      "destination": "https://helmian-cloud.fly.dev/api/admin/:path*"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
