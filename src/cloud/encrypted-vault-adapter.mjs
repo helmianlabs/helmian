@@ -16,6 +16,12 @@ export function createUnavailableEncryptedVaultAdapter() {
         providerInvocation: 'not_performed',
       };
     },
+    async storeOAuthTokens({ tenantId, providerId, credentialReference } = {}) {
+      if (!tenantId || !providerId || !VAULT_REFERENCE.test(String(credentialReference ?? ''))) {
+        return { status: 'external_vault_input_invalid', accepted: false, secretMaterial: 'not_received', providerInvocation: 'not_performed' };
+      }
+      return { status: 'external_vault_not_configured', accepted: false, tenantId, providerId, credentialReference, secretMaterial: 'not_persisted', providerInvocation: 'not_performed' };
+    },
   });
 }
 
