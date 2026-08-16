@@ -64,5 +64,6 @@ provider endpoint or authorization URL
 
 - Focused tests: `node --test test/cloud-oauth-connection-contract.test.mjs test/provider-oauth-flow.test.mjs test/provider-connection-repository.test.mjs` — 13 passed, 0 failed.
 - Static checks: `node --check` passed for the four changed cloud modules.
+- Deployment: Fly app `helmian-cloud` release version `46` is started with one passing machine check; live `https://helmian.cloud/admin` returned HTTP 200 and unauthenticated `https://helmian.cloud/api/admin/session` returned HTTP 403. The direct `/healthz` probe returned HTTP 401 without its bearer token, so authenticated readiness is not claimed here.
 - The storage seam is intentionally not live-complete: the default adapter returns `external_vault_not_configured` in `src/cloud/encrypted-vault-adapter.mjs`; no production vault implementation or Gemini client registration was present in the reviewed code.
 - This slice is not “all four providers wired.” The remaining live evidence is a registered Gemini OAuth client, deployed callback route, production encrypted vault adapter, and non-mutating Gemini canary. OpenAI Codex, Claude, and direct Grok API OAuth remain provider-authority blockers.
