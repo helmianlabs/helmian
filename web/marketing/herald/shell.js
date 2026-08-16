@@ -31,10 +31,6 @@ let remoteApi = createAccountRemoteControlApi();
 let remoteTransport = null;
 let selectedControl = null;
 let activeAccountId = null;
-const requestedAccountMode = new URLSearchParams(window.location.search).get('auth') === 'signup'
-  ? 'signup'
-  : 'signin';
-let accountMode = requestedAccountMode;
 const delivery = createDeliveryTracker();
 
 function readStorage(key, fallback = '') {
@@ -193,13 +189,8 @@ function runAction(action, source) {
     if (clerk?.isSignedIn) void clerk.signOut().then(resetRemoteUi);
     else {
       accountDialog.showModal();
-      mountAccount(accountMode);
+      if (clerk) clerk.mountSignIn($('#clerkMount'));
     }
-  } else if (action === 'account-signup') {
-    accountDialog.showModal();
-    mountAccount('signup');
-  } else if (action === 'account-mode') {
-    mountAccount(source?.dataset.mode === 'signup' ? 'signup' : 'signin');
   } else if (action === 'close-account') {
     accountDialog.close();
   } else if (action === 'toggle-team') {
@@ -215,24 +206,6 @@ function runAction(action, source) {
     else document.exitFullscreen?.();
   }
   closeMenus();
-}
-
-function mountAccount(mode) {
-  if (!clerk) return;
-  accountMode = mode === 'signup' ? 'signup' : 'signin';
-  const mount = $('#clerkMount');
-  const title = $('#accountDialogTitle');
-  try { clerk.unmountSignIn?.(mount); } catch { /* no sign-in component mounted */ }
-  try { clerk.unmountSignUp?.(mount); } catch { /* no sign-up component mounted */ }
-  mount.replaceChildren();
-  title.textContent = accountMode === 'signup'
-    ? 'Create your Helmian Cloud account'
-    : 'Sign in to Helmian Cloud';
-  if (accountMode === 'signup' && typeof clerk.mountSignUp === 'function') {
-    clerk.mountSignUp(mount);
-  } else {
-    clerk.mountSignIn(mount);
-  }
 }
 
 document.addEventListener('click', (event) => {
@@ -377,15 +350,10 @@ async function applyAccountState(config) {
     remoteTransport?.close(); remoteTransport = null; selectedControl = null;
     activeAccountId = null;
     $('#accountButton').textContent = 'Sign in';
-    $('#accountSignupButton').hidden = false;
     setRemoteStatus('Sign in to see only the Desktops owned by your Helmian account.', false);
     $('#desktopList').replaceChildren();
     $('#desktopEmpty').hidden = false;
-    if (accountDialog.open) mountAccount(accountMode);
-    else if (requestedAccountMode !== 'signin') {
-      accountDialog.showModal();
-      mountAccount(requestedAccountMode);
-    }
+    if (accountDialog.open) clerk.mountSignIn($('#clerkMount'));
     return;
   }
   const nextAccountId = clerk.user?.id ?? null;
@@ -395,7 +363,6 @@ async function applyAccountState(config) {
   activeAccountId = nextAccountId;
   accountDialog.close();
   $('#accountButton').textContent = 'Sign out';
-  $('#accountSignupButton').hidden = true;
   setRemoteStatus('Signed in. Checking your account-owned Desktop sessions…', false);
   await refreshDesktopList();
   if (config?.transport?.realtimeClientActive !== true) {
@@ -528,7 +495,6 @@ function resetRemoteUi() {
   $('#selectedProjectName').textContent = 'No project open';
   $('#desktopList').replaceChildren(); $('#desktopEmpty').hidden = false;
   $('#accountButton').textContent = 'Sign in';
-  $('#accountSignupButton').hidden = false;
   setRemoteStatus('Signed out. No Desktop control is active.', false);
 }
 

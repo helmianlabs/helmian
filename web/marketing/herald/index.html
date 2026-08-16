@@ -32,7 +32,6 @@
       <div class="top-actions">
         <span class="connection-state" id="connectionState"><span></span>Desktop not connected</span>
         <button class="text-button" id="accountButton" data-action="account">Sign in</button>
-        <button class="text-button" id="accountSignupButton" data-action="account-signup">Sign up</button>
         <button class="icon-button theme-button" data-menu-trigger="theme" aria-label="Choose theme" aria-haspopup="menu" aria-expanded="false" title="Theme">
           <svg aria-hidden="true"><use href="/herald/icons.svg#sun"></use></svg>
         </button>
@@ -252,11 +251,7 @@
     <dl><div><dt>Focus message</dt><dd><kbd>Ctrl K</kbd></dd></div><div><dt>Team pane</dt><dd><kbd>Ctrl 1</kbd></dd></div><div><dt>Maestro pane</dt><dd><kbd>Ctrl 2</kbd></dd></div><div><dt>Context drawer</dt><dd><kbd>Ctrl 3</kbd></dd></div><div><dt>Close menus or drawer</dt><dd><kbd>Esc</kbd></dd></div></dl>
   </dialog>
   <dialog id="accountDialog" class="shortcuts-dialog">
-    <div class="dialog-heading"><div><p class="eyebrow">HELMIAN ACCOUNT</p><h2 id="accountDialogTitle">Sign in to Helmian Cloud</h2></div><button class="icon-button" data-action="close-account" aria-label="Close account dialog"><svg><use href="/herald/icons.svg#close"></use></svg></button></div>
-    <div class="account-mode-switch" role="tablist" aria-label="Account access">
-      <button class="text-button" type="button" data-action="account-mode" data-mode="signin">Sign in</button>
-      <button class="text-button" type="button" data-action="account-mode" data-mode="signup">Create account</button>
-    </div>
+    <div class="dialog-heading"><div><p class="eyebrow">HELMIAN ACCOUNT</p><h2>Sign in</h2></div><button class="icon-button" data-action="close-account" aria-label="Close sign in"><svg><use href="/herald/icons.svg#close"></use></svg></button></div>
     <div id="clerkMount"><p>Account sign-in is loading…</p></div>
   </dialog>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
