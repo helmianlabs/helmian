@@ -830,6 +830,7 @@ async function load() {
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();
+  activateWorkspaceNav(window.location.hash.slice(1) || 'section-chat', { smooth: false, writeHash: false });
   if (isAdmin) await loadWorkspaceRoleDefaults();
   await loadCoraSettings();
   await loadWorkspacePreviews();
@@ -876,12 +877,17 @@ workspacePresetOperations.onclick = () => applyWorkspacePreset('operations');
 workspacePresetFocus.onclick = () => applyWorkspacePreset('focus');
 workspacePresetFull.onclick = () => applyWorkspacePreset('full');
 workspaceRoleDefaultSave.onclick = async () => { workspaceRoleDefaultStatus.textContent = 'Saving role default…'; workspaceRoleDefaultSave.disabled = true; try { await coraClient.saveWorkspaceRoleDefault({ role: workspaceRoleDefaultRole.value, ...layoutInput() }); workspaceRoleDefaultStatus.textContent = `Saved the ${workspaceRoleDefaultRole.value} role default. Personal overrides remain separate.`; } catch (error) { workspaceRoleDefaultStatus.textContent = `Role default not saved: ${error.message}`; } finally { workspaceRoleDefaultSave.disabled = false; } };
-for (const item of document.querySelectorAll('#workspace-nav [data-target]')) {
-  item.onclick = () => {
-    document.getElementById(item.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    for (const peer of document.querySelectorAll('#workspace-nav [data-target]')) { peer.classList.toggle('active', peer === item); if (peer === item) peer.setAttribute('aria-current', 'page'); else peer.removeAttribute('aria-current'); }
-  };
+function activateWorkspaceNav(target, { smooth = true, writeHash = true } = {}) {
+  const item = document.querySelector(`#workspace-nav [data-target="${CSS.escape(target)}"]`);
+  const section = document.getElementById(target);
+  if (!item || !section || item.hidden || section.hidden) return false;
+  section.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
+  for (const peer of document.querySelectorAll('#workspace-nav [data-target]')) { peer.classList.toggle('active', peer === item); if (peer === item) peer.setAttribute('aria-current', 'page'); else peer.removeAttribute('aria-current'); }
+  if (writeHash && window.location.hash !== `#${target}`) window.history.replaceState(null, '', `#${target}`);
+  return true;
 }
+for (const item of document.querySelectorAll('#workspace-nav [data-target]')) item.onclick = () => activateWorkspaceNav(item.dataset.target);
+window.addEventListener('hashchange', () => activateWorkspaceNav(window.location.hash.slice(1), { smooth: false, writeHash: false }));
 document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
 coraCreateDraft.onclick = async () => {
