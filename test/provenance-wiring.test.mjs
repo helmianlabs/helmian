@@ -435,12 +435,12 @@ test('THE BRIDGE EMITS A provenance EVENT AND THE ROW IS ON DISK IN THE WORKSPAC
 
 // ═══ 4. WHAT MUST *NOT* BE RECORDED ══════════════════════════════════════════
 
-test('A FAILED CALL RECORDS NOTHING — no completion arrived, so no model answered', async () => {
+test('A FAILED CALL WRITES ONLY A SANITIZED ATTEMPT RECEIPT — no completion arrived', async () => {
   const workspace = makeProvenanceWorkspace('helmion-prov-fail-');
   const original = globalThis.fetch;
   try {
     globalThis.fetch = async () => ({
-      ok: false, status: 500, text: async () => 'upstream exploded',
+      ok: false, status: 500, text: async () => '{"error":"upstream exploded","api_key":"sk-live-provider-secret"}',
     });
     await assert.rejects(() => chatWithTools({
       providerId: 'openai',
@@ -453,6 +453,22 @@ test('A FAILED CALL RECORDS NOTHING — no completion arrived, so no model answe
 
     assert.deepEqual(readCompletions(workspace).entries, [],
       'a failed request was recorded as though something had answered');
+    const failures = readCompletions(workspace, { outcome: 'failed' }).entries;
+    assert.equal(failures.length, 1);
+    assert.deepEqual({
+      outcome: failures[0].outcome,
+      provider: failures[0].provider,
+      providerId: failures[0].providerId,
+      model: failures[0].model,
+      endpointHost: failures[0].endpointHost,
+      failureCode: failures[0].failureCode,
+      httpStatus: failures[0].httpStatus,
+    }, {
+      outcome: 'failed', provider: 'openai', providerId: 'openai', model: 'gpt-5.6-terra', endpointHost: 'api.openai.com', failureCode: 'provider_http_error', httpStatus: 500,
+    });
+    const onDisk = readFileSync(failures[0] && readCompletions(workspace, { outcome: 'failed' }).files[0], 'utf8');
+    assert.equal(onDisk.includes('upstream exploded'), false, 'provider response body leaked into the receipt');
+    assert.equal(onDisk.includes('sk-live-provider-secret'), false, 'provider credential leaked into the receipt');
   } finally {
     globalThis.fetch = original;
     cleanProvenanceWorkspace(workspace);

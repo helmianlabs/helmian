@@ -239,6 +239,53 @@ export function recordCompletion(workspace, event = {}, { now = new Date() } = {
 }
 
 /**
+ * Write a provider-attempt failure without pretending that a model answered.
+ * Failed rows carry the completion identity fields plus outcome='failed'; the
+ * thrown error and provider response body are deliberately never persisted.
+ */
+export function recordFailure(workspace, event = {}, { now = new Date() } = {}) {
+  if (typeof event.isLocal !== 'boolean') {
+    return { logged: false, file: null, entry: null, reason: `isLocal must be a boolean, got ${JSON.stringify(event.isLocal)}` };
+  }
+  const { endpointHost, endpoint, redacted } = endpointParts(event.url);
+  const entry = {
+    schema: PROVENANCE_SCHEMA_VERSION,
+    outcome: 'failed',
+    timestamp: new Date(now).toISOString(),
+    sessionId: String(event.sessionId || processSessionId()),
+    provider: providerName(event.providerId, { isLocal: event.isLocal }),
+    providerId: String(event.providerId ?? ''),
+    model: String(event.model ?? ''),
+    endpointHost,
+    endpoint,
+    isLocal: event.isLocal,
+    failureCode: /^[a-z0-9_.-]{1,64}$/u.test(String(event.failureCode ?? '')) ? String(event.failureCode) : 'provider_call_failed',
+  };
+  if (redacted) entry.redacted = true;
+  if (typeof event.routedLocal === 'boolean') entry.routedLocal = event.routedLocal;
+  if (event.providerLabel) entry.providerLabel = String(event.providerLabel);
+  if (event.tier) entry.tier = String(event.tier);
+  if (event.reason) entry.reason = String(event.reason);
+  if (Number.isInteger(event.httpStatus) && event.httpStatus >= 100 && event.httpStatus <= 599) entry.httpStatus = event.httpStatus;
+  if (Number.isFinite(event.round)) entry.round = Math.trunc(event.round);
+  if (Number.isFinite(event.latencyMs)) entry.latencyMs = Math.round(event.latencyMs);
+  const missing = REQUIRED.filter((key) => {
+    const value = entry[key];
+    if (typeof value === 'boolean') return false;
+    return value === undefined || value === null || value === '';
+  });
+  if (missing.length) return { logged: false, file: null, entry, reason: `missing required field(s): ${missing.join(', ')}` };
+  const file = provenanceFile(workspace, { now });
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
+    return { logged: true, file, entry, reason: '' };
+  } catch (err) {
+    return { logged: false, file, entry, reason: `could not append to ${file} (${err.message})` };
+  }
+}
+
+/**
  * Read completions back — for `helmion provenance`, for the Pilot's Console, and
  * for anyone who has to answer "who answered me in the last hour".
  *
@@ -255,7 +302,7 @@ export function recordCompletion(workspace, event = {}, { now = new Date() } = {
  * @returns {{entries: object[], malformed: {file: string, line: number, raw: string}[], files: string[]}}
  */
 export function readCompletions(workspace, {
-  limit = null, provider = null, isLocal = null, since = null, sessionId = null,
+  limit = null, provider = null, isLocal = null, since = null, sessionId = null, outcome = 'completed',
 } = {}) {
   const dir = auditDir(workspace);
   let names;
@@ -286,6 +333,8 @@ export function readCompletions(workspace, {
         malformed.push({ file, line: index + 1, raw: line.slice(0, 200) });
         continue;
       }
+      if (outcome === 'completed' && parsed.outcome === 'failed') continue;
+      if (outcome && outcome !== 'completed' && parsed.outcome !== outcome) continue;
       if (provider && parsed.provider !== provider) continue;
       if (isLocal !== null && Boolean(parsed.isLocal) !== isLocal) continue;
       if (sessionId && parsed.sessionId !== sessionId) continue;
