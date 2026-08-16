@@ -40,7 +40,7 @@ test('Clerk configuration is explicit, complete, and origin-allowlisted', async 
   assert.equal(readClerkConfiguration({
     CLERK_PUBLISHABLE_KEY: 'pk_live_abcdefghijk',
     CLERK_SECRET_KEY: 'sk_live_abcdefghijk',
-    HELMION_HERALD_CLERK_AUTHORIZED_PARTIES: 'https://helmian.vercel.app/path',
+    HELMION_HERALD_CLERK_AUTHORIZED_PARTIES: 'https://helmian.cloud/path',
   }).state, CLERK_CONFIGURATION_STATES.MISCONFIGURED);
 
   let verifiedRequest;
@@ -48,7 +48,7 @@ test('Clerk configuration is explicit, complete, and origin-allowlisted', async 
     environment: {
       CLERK_PUBLISHABLE_KEY: 'pk_live_abcdefghijk',
       CLERK_SECRET_KEY: 'sk_live_abcdefghijk',
-      HELMION_HERALD_CLERK_AUTHORIZED_PARTIES: 'https://helmian.vercel.app',
+      HELMION_HERALD_CLERK_AUTHORIZED_PARTIES: 'https://helmian.cloud',
     },
     authenticateRequest: async (request) => {
       verifiedRequest = request;
@@ -60,9 +60,9 @@ test('Clerk configuration is explicit, complete, and origin-allowlisted', async 
   assert.doesNotMatch(JSON.stringify(verifier), /sk_live_/);
   assert.deepEqual(await verifier.verify({
     method: 'POST', url: '/api/herald-enrollment',
-    headers: { host: 'helmian.vercel.app', cookie: '__session=redacted' },
+    headers: { host: 'helmian.cloud', cookie: '__session=redacted' },
   }), { provider: 'clerk', subject: 'user_troy123', displayName: null });
-  assert.equal(new URL(verifiedRequest.url).origin, 'https://helmian.vercel.app');
+  assert.equal(new URL(verifiedRequest.url).origin, 'https://helmian.cloud');
 });
 
 test('account control routes never fall back to pairing identity', async () => {
@@ -363,7 +363,7 @@ function jsonRequest(body, headers = {}, method = 'POST') {
   const request = Readable.from(input);
   request.method = method;
   request.url = '/api/test';
-  request.headers = { host: 'helmian.vercel.app', ...headers };
+  request.headers = { host: 'helmian.cloud', ...headers };
   return request;
 }
 

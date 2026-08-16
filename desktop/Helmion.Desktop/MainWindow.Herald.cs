@@ -90,7 +90,7 @@ public partial class MainWindow
             start.ArgumentList.Add("herald");
             start.ArgumentList.Add("--remote");
             start.ArgumentList.Add("--origin");
-            start.ArgumentList.Add("https://helmian.vercel.app");
+            start.ArgumentList.Add("https://helmian.cloud");
             start.ArgumentList.Add("--desktop-pipe");
             start.ArgumentList.Add("--desktop-pipe-name");
             start.ArgumentList.Add(pipeName);
@@ -248,7 +248,7 @@ public partial class MainWindow
     {
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
             || uri.Scheme != Uri.UriSchemeHttps
-            || !string.Equals(uri.Host, "helmian.vercel.app", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(uri.Host, "helmian.cloud", StringComparison.OrdinalIgnoreCase)
             || !uri.AbsolutePath.StartsWith("/herald", StringComparison.Ordinal))
         {
             return;
