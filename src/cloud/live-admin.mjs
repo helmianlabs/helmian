@@ -43,6 +43,9 @@ import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
 import { resolvePublishedCoraSessionConfig } from '../cora/session-config-resolver.mjs';
 import { buildDesktopParityManifest } from './desktop-parity.mjs';
 import { createProviderConnectionRepository } from './provider-connection-repository.mjs';
+import { createCloudOAuthAuthorization } from './oauth-connection-contract.mjs';
+import { createEncryptedVaultAdapterFromEnv } from './database-encrypted-vault-adapter.mjs';
+import { createGeminiOAuthPkce, geminiCredentialReference, resolveGeminiOAuthConfig } from './provider-oauth-config.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
 
@@ -100,6 +103,8 @@ export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/r
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
 export const LIVE_ADMIN_DESKTOP_PARITY_PATH = '/api/admin/desktop-parity';
 export const LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH = '/api/admin/provider-connections';
+export const LIVE_ADMIN_GEMINI_OAUTH_START_PATH = '/api/admin/provider-oauth/gemini/start';
+export const LIVE_ADMIN_GEMINI_OAUTH_CALLBACK_PATH = '/api/admin/provider-oauth/gemini/callback';
 export const LIVE_ADMIN_WORKSPACE_PROJECTS_PATH = '/api/admin/workspace/projects';
 export const LIVE_ADMIN_CONSOLE_COMMANDS_PATH = '/api/admin/workspace/console/commands';
 
@@ -138,6 +143,10 @@ function cookieValue(request, name) {
 
 function cookieOptions(path) {
   return `Path=${path}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function oauthCookie(name, value, maxAge = 600) {
+  return `${name}=${value}; Max-Age=${maxAge}; ${cookieOptions('/api/admin/provider-oauth')}`;
 }
 
 function requestOrigin(request, env) {
@@ -235,6 +244,7 @@ export async function createLiveHelmianCloudAdminHandler({
   auditEventRepository: suppliedAuditEventRepository = null,
   organizationRoleRepository: suppliedOrganizationRoleRepository = null,
   providerConnectionRepository: suppliedProviderConnectionRepository = null,
+  providerVaultAdapter: suppliedProviderVaultAdapter = null,
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
   consoleCommandRepository: suppliedConsoleCommandRepository = null,
   envoyStore: suppliedEnvoyStore = null,
@@ -268,7 +278,8 @@ export async function createLiveHelmianCloudAdminHandler({
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
   const auditEvents = suppliedAuditEventRepository ?? createAuditEventRepository(pool);
   const organizationRoles = suppliedOrganizationRoleRepository ?? createOrganizationRoleRepository(pool);
-  const providerConnections = suppliedProviderConnectionRepository ?? createProviderConnectionRepository(pool);
+  const providerVaultAdapter = suppliedProviderVaultAdapter ?? createEncryptedVaultAdapterFromEnv({ pool, env });
+  const providerConnections = suppliedProviderConnectionRepository ?? createProviderConnectionRepository(pool, { fetchImpl, vaultAdapter: providerVaultAdapter ?? undefined });
   const workspaceProjects = suppliedWorkspaceProjectRepository ?? createWorkspaceProjectRepository(pool);
   const consoleCommands = suppliedConsoleCommandRepository ?? createConsoleCommandRepository(pool);
   const resolveConnectorSecret = connectorSecretResolver;
@@ -570,6 +581,54 @@ export async function createLiveHelmianCloudAdminHandler({
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         send(response, denied ? 403 : 503, JSON.stringify({ authenticated: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_GEMINI_OAUTH_START_PATH) {
+      try {
+        const actor = await activeTenantActor(request);
+        if (!['owner', 'admin'].includes(String(actor.role).toLowerCase())) throw Object.assign(new Error('Provider OAuth requires owner or admin membership'), { status: 403, code: 'PROVIDER_OAUTH_MEMBERSHIP_REQUIRED' });
+        const config = resolveGeminiOAuthConfig(env, requestOrigin(request, env));
+        if (!config.configured) throw Object.assign(new Error('Gemini OAuth client registration is not configured'), { status: 503, code: config.code });
+        const pkce = createGeminiOAuthPkce();
+        const authorization = createCloudOAuthAuthorization({ tenant_id: actor.tenantId, actor_role: actor.role, provider_id: 'gemini', client_id: config.clientId, state: pkce.state, code_challenge: pkce.codeChallenge, code_challenge_method: pkce.codeChallengeMethod, redirect_uri: config.redirectUri, scopes: config.scopes });
+        if (!authorization.valid) throw Object.assign(new Error('Gemini OAuth authorization contract rejected configuration'), { status: 503, code: 'GEMINI_OAUTH_CONFIGURATION_INVALID' });
+        const transaction = await providerConnections.createOAuthTransaction(actor, { providerId: 'gemini', state: pkce.state, clientId: config.clientId, redirectUri: config.redirectUri, codeChallenge: pkce.codeChallenge, credentialReference: geminiCredentialReference(actor.tenantId) });
+        send(response, 302, '', 'text/plain; charset=utf-8', { location: authorization.result.authorization_url, 'set-cookie': [oauthCookie('helmion_gemini_oauth_state', pkce.state), oauthCookie('helmion_gemini_oauth_verifier', pkce.codeVerifier)] });
+        noteAttempt('provider.oauth.start', 'allowed', { providerId: 'gemini', transactionId: transaction.transaction.id });
+      } catch (error) {
+        const status = error?.status === 403 ? 403 : error?.status === 503 ? 503 : error?.status === 400 || error instanceof TypeError ? 400 : 503;
+        send(response, status, JSON.stringify({ valid: false, code: error?.code ?? (status === 403 ? 'PROVIDER_OAUTH_MEMBERSHIP_REQUIRED' : status === 503 ? 'GEMINI_OAUTH_UNAVAILABLE' : 'GEMINI_OAUTH_INPUT_INVALID') }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_GEMINI_OAUTH_CALLBACK_PATH) {
+      const clearCookies = [oauthCookie('helmion_gemini_oauth_state', '', 0), oauthCookie('helmion_gemini_oauth_verifier', '', 0)];
+      let callbackActor = null;
+      let claimedTransaction = null;
+      try {
+        const actor = await activeTenantActor(request);
+        callbackActor = actor;
+        if (!['owner', 'admin'].includes(String(actor.role).toLowerCase())) throw Object.assign(new Error('Provider OAuth requires owner or admin membership'), { status: 403, code: 'PROVIDER_OAUTH_MEMBERSHIP_REQUIRED' });
+        const state = requestUrl.searchParams.get('state') ?? '';
+        const code = requestUrl.searchParams.get('code') ?? '';
+        if (!state || !code || state !== cookieValue(request, 'helmion_gemini_oauth_state')) throw Object.assign(new Error('Gemini OAuth callback state is invalid'), { status: 400, code: 'GEMINI_OAUTH_CALLBACK_STATE_INVALID' });
+        const claimed = await providerConnections.claimOAuthTransaction(actor, { providerId: 'gemini', state });
+        if (!claimed.durable) throw Object.assign(new Error('Gemini OAuth transaction is not pending'), { status: 400, code: claimed.code });
+        claimedTransaction = claimed.transaction;
+        const verifier = cookieValue(request, 'helmion_gemini_oauth_verifier');
+        if (!verifier) throw Object.assign(new Error('Gemini OAuth verifier is missing'), { status: 400, code: 'GEMINI_OAUTH_VERIFIER_MISSING' });
+        const result = await providerConnections.exchangeOAuth(actor, { providerId: claimed.transaction.providerId, clientId: claimed.transaction.clientId, code, codeVerifier: verifier, codeChallenge: claimed.transaction.codeChallenge, redirectUri: claimed.transaction.redirectUri, credentialReference: claimed.transaction.credentialReference });
+        await providerConnections.finishOAuthTransaction(actor, { transactionId: claimed.transaction.id, status: result.durable ? 'completed' : 'failed', errorCode: result.durable ? null : result.exchange?.status ?? 'OAUTH_EXCHANGE_FAILED' });
+        const outcome = result.durable ? 'connected' : 'error';
+        send(response, 302, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/?provider_oauth=${outcome}`, 'set-cookie': clearCookies });
+        noteAttempt('provider.oauth.callback', result.durable ? 'allowed' : 'blocked', { providerId: 'gemini', transactionId: claimed.transaction.id, outcome });
+      } catch (error) {
+        if (callbackActor && claimedTransaction?.id) {
+          try { await providerConnections.finishOAuthTransaction(callbackActor, { transactionId: claimedTransaction.id, status: 'failed', errorCode: error?.code ?? 'GEMINI_OAUTH_CALLBACK_FAILED' }); } catch { /* preserve the original bounded callback error */ }
+        }
+        const status = error?.status === 403 ? 403 : error?.status === 400 || error instanceof TypeError ? 400 : 503;
+        send(response, status, JSON.stringify({ valid: false, code: error?.code ?? (status === 403 ? 'PROVIDER_OAUTH_MEMBERSHIP_REQUIRED' : status === 400 ? 'GEMINI_OAUTH_CALLBACK_INVALID' : 'GEMINI_OAUTH_UNAVAILABLE') }), 'application/json; charset=utf-8', { 'set-cookie': clearCookies });
       }
       return true;
     }

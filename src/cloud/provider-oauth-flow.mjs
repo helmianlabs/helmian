@@ -28,7 +28,7 @@ function tokenPayload(payload) {
   return { accessToken, refreshToken, expiresIn: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : null, scope: typeof payload?.scope === 'string' ? payload.scope : null, tokenType: typeof payload?.token_type === 'string' ? payload.token_type : 'Bearer' };
 }
 
-export async function exchangeCloudOAuthCode(input, { fetchImpl = globalThis.fetch, vaultAdapter = createUnavailableEncryptedVaultAdapter() } = {}) {
+export async function exchangeCloudOAuthCode(input, { fetchImpl = globalThis.fetch, vaultAdapter = createUnavailableEncryptedVaultAdapter(), vaultContext = null } = {}) {
   const request = cleanInput(input);
   const authority = getCloudProviderOAuthAuthority(request.providerId);
   if (!authority) throw new Error('unknown cloud OAuth provider');
@@ -46,6 +46,6 @@ export async function exchangeCloudOAuthCode(input, { fetchImpl = globalThis.fet
 
   const token = tokenPayload(payload);
   if (typeof vaultAdapter?.storeOAuthTokens !== 'function') throw new TypeError('encrypted vault adapter must expose storeOAuthTokens');
-  const stored = await vaultAdapter.storeOAuthTokens({ tenantId: request.tenantId, providerId: request.providerId, credentialReference: request.credentialReference, accessToken: token.accessToken, refreshToken: token.refreshToken, expiresIn: token.expiresIn, scope: token.scope, tokenType: token.tokenType });
+  const stored = await vaultAdapter.storeOAuthTokens({ tenantId: request.tenantId, providerId: request.providerId, credentialReference: request.credentialReference, accessToken: token.accessToken, refreshToken: token.refreshToken, expiresIn: token.expiresIn, scope: token.scope, tokenType: token.tokenType, ...(vaultContext ? { actorSubject: vaultContext.actorSubject, actorRole: vaultContext.actorRole, sessionId: vaultContext.sessionId, requestId: vaultContext.requestId } : {}) });
   return Object.freeze({ valid: stored?.accepted === true, status: stored?.accepted === true ? 'token_stored' : 'token_storage_unavailable', providerId: request.providerId, tokenExchange: 'completed', tokenStorage: stored?.status ?? 'unknown', credentialReference: request.credentialReference, providerInvocation: 'not_performed', tools: 'not_granted' });
 }

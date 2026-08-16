@@ -1,6 +1,6 @@
 const GEMINI_AUTHORIZATION_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GEMINI_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
-const GEMINI_SCOPES = Object.freeze([
+export const GEMINI_SCOPES = Object.freeze([
   'https://www.googleapis.com/auth/cloud-platform',
   'https://www.googleapis.com/auth/generative-language.retriever',
 ]);
