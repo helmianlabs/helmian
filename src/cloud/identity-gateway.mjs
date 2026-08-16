@@ -1,8 +1,11 @@
-import { createHash, randomBytes, randomUUID, webcrypto } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual, webcrypto } from 'node:crypto';
 
 const OIDC_FETCH_TIMEOUT_MS = 10_000;
 const OIDC_MAX_JSON_BYTES = 64 * 1024;
 const MAX_IDENTITY_STATE_ENTRIES = 256;
+const SESSION_VERSION = 1;
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const SESSION_SECRET_MIN_CHARS = 32;
 
 function base64url(value) {
   return Buffer.from(value).toString('base64url');
@@ -27,6 +30,40 @@ function requiredHttpsUrl(value, name, { callback = false } = {}) {
     throw new Error(`${name} must be an HTTPS URL${callback ? ' ending exactly /admin/auth/callback' : ''}`);
   }
   return url.toString().replace(/\/$/u, '');
+}
+
+function sessionSecret(env) {
+  const configured = String(env.HELMION_ADMIN_SESSION_SECRET ?? '').trim();
+  if (configured.length >= SESSION_SECRET_MIN_CHARS) return configured;
+  if (String(env.HELMION_CLOUD_ENVIRONMENT ?? '').trim().toLowerCase() === 'production') {
+    throw new Error(`HELMION_ADMIN_SESSION_SECRET must be at least ${SESSION_SECRET_MIN_CHARS} characters`);
+  }
+  return randomBytes(32).toString('base64url');
+}
+
+function signSession(payload, secret) {
+  return createHmac('sha256', secret).update(payload).digest('base64url');
+}
+
+function issueSession(subject, expiresAt, secret) {
+  const payload = Buffer.from(JSON.stringify({ v: SESSION_VERSION, sub: subject, exp: expiresAt, jti: randomUUID() })).toString('base64url');
+  return `hs${SESSION_VERSION}.${payload}.${signSession(payload, secret)}`;
+}
+
+function readSession(token, secret) {
+  const parts = String(token ?? '').split('.');
+  if (parts.length !== 3 || parts[0] !== `hs${SESSION_VERSION}`) return null;
+  const [, payload, signature] = parts;
+  const expected = signSession(payload, secret);
+  const actualBytes = Buffer.from(signature);
+  const expectedBytes = Buffer.from(expected);
+  if (!signature || actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) return null;
+  try {
+    const claims = decodeJson(payload);
+    if (claims.v !== SESSION_VERSION || typeof claims.sub !== 'string' || !claims.sub || typeof claims.jti !== 'string' || !claims.jti
+      || !Number.isSafeInteger(Number(claims.exp)) || Number(claims.exp) <= Date.now()) return null;
+    return { subject: claims.sub, expiresAt: Number(claims.exp), jti: claims.jti };
+  } catch { return null; }
 }
 
 async function boundedJson(response, label) {
@@ -101,14 +138,15 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
   const issuer = requiredHttpsUrl(env.HELMION_ADMIN_ISSUER, 'HELMION_ADMIN_ISSUER');
   const clientId = required(env.HELMION_ADMIN_CLIENT_ID, 'HELMION_ADMIN_CLIENT_ID');
   const redirectUri = requiredHttpsUrl(env.HELMION_ADMIN_REDIRECT_URI, 'HELMION_ADMIN_REDIRECT_URI', { callback: true });
-  const sessions = new Map();
+  const sessionSigningSecret = sessionSecret(env);
+  const revokedSessions = new Map();
   const pending = new Map();
   let metadataPromise = null;
   const metadata = () => metadataPromise ?? (metadataPromise = discover(issuer, fetchImpl));
   const prune = () => {
     const now = Date.now();
     for (const [key, value] of pending) if (value.expiresAt < now) pending.delete(key);
-    for (const [key, value] of sessions) if (value.expiresAt < now) sessions.delete(key);
+    for (const [key, value] of revokedSessions) if (value < now) revokedSessions.delete(key);
   };
 
   async function beginLogin() {
@@ -141,17 +179,16 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
       body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: clientId, code_verifier: attempt.verifier }),
     }, fetchImpl, 'OIDC token exchange');
     const claims = await verifyJwt(tokenBody.id_token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl });
-    const sessionId = randomUUID();
-    prune();
-    if (sessions.size >= MAX_IDENTITY_STATE_ENTRIES) throw new Error('OIDC session capacity reached');
     const tokenExpiry = Number(claims.exp) * 1_000;
-    sessions.set(sessionId, { subject: claims.sub, expiresAt: Math.min(Date.now() + 8 * 60 * 60_000, tokenExpiry) });
-    return { sessionId, identity: { subject: claims.sub } };
+    const expiresAt = Math.min(Date.now() + SESSION_TTL_MS, tokenExpiry);
+    const sessionId = issueSession(claims.sub, expiresAt, sessionSigningSecret);
+    return { sessionId, identity: { subject: claims.sub }, expiresAt };
   }
 
   function getSession(sessionId) {
-    const session = sessions.get(sessionId);
-    if (!session || session.expiresAt < Date.now()) { if (session) sessions.delete(sessionId); return null; }
+    prune();
+    const session = readSession(sessionId, sessionSigningSecret);
+    if (!session || revokedSessions.has(session.jti)) return null;
     return session;
   }
 
@@ -162,7 +199,12 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     beginLogin,
     finishLogin,
     getSession,
-    revokeSession: (sessionId) => sessions.delete(sessionId),
+    revokeSession: (sessionId) => {
+      const session = readSession(sessionId, sessionSigningSecret);
+      if (!session) return false;
+      revokedSessions.set(session.jti, session.expiresAt);
+      return true;
+    },
     verifyAccessToken: (token) => metadata().then((endpoints) => verifyJwt(token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl })),
   });
 }
