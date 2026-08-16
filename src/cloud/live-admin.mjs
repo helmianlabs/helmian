@@ -42,6 +42,7 @@ import { readOrganizationReadiness } from './organization-readiness.mjs';
 import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
 import { resolvePublishedCoraSessionConfig } from '../cora/session-config-resolver.mjs';
 import { buildDesktopParityManifest } from './desktop-parity.mjs';
+import { createProviderConnectionRepository } from './provider-connection-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -96,6 +97,7 @@ export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/m
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
 export const LIVE_ADMIN_DESKTOP_PARITY_PATH = '/api/admin/desktop-parity';
+export const LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH = '/api/admin/provider-connections';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -227,7 +229,8 @@ export async function createLiveHelmianCloudAdminHandler({
   organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
   workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
   auditEventRepository: suppliedAuditEventRepository = null,
-    organizationRoleRepository: suppliedOrganizationRoleRepository = null,
+  organizationRoleRepository: suppliedOrganizationRoleRepository = null,
+  providerConnectionRepository: suppliedProviderConnectionRepository = null,
   envoyStore: suppliedEnvoyStore = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
@@ -259,6 +262,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
   const auditEvents = suppliedAuditEventRepository ?? createAuditEventRepository(pool);
   const organizationRoles = suppliedOrganizationRoleRepository ?? createOrganizationRoleRepository(pool);
+  const providerConnections = suppliedProviderConnectionRepository ?? createProviderConnectionRepository(pool);
   const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
@@ -587,6 +591,28 @@ export async function createLiveHelmianCloudAdminHandler({
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'DESKTOP_PARITY_MEMBERSHIP_REQUIRED' : 'DESKTOP_PARITY_UNAVAILABLE' }));
+      }
+      return true;
+    }
+    if (requestUrl.pathname === LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH && (request.method === 'GET' || request.method === 'POST')) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) {
+          throw Object.assign(new Error('authority selector is not accepted'), { status: 400, code: 'PROVIDER_CONNECTION_SELECTOR_INVALID' });
+        }
+        const actor = await activeTenantActor(request);
+        if (request.method === 'GET') {
+          send(response, 200, JSON.stringify({ valid: true, ...await providerConnections.list(actor) }));
+        } else {
+          const body = await readJsonObject(request);
+          const allowed = new Set(['authMode', 'codeChallenge', 'codeChallengeMethod', 'credentialReference', 'providerId', 'state']);
+          if (Object.keys(body).some((key) => !allowed.has(key))) throw Object.assign(new Error('Request body has unexpected fields'), { status: 400, code: 'PROVIDER_CONNECTION_INPUT_INVALID' });
+          send(response, 200, JSON.stringify({ valid: true, ...await providerConnections.save(actor, body) }));
+        }
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        const status = denied ? 403 : error?.status === 400 || error instanceof TypeError ? 400 : 503;
+        const code = denied ? 'PROVIDER_CONNECTION_MEMBERSHIP_REQUIRED' : error?.code ?? (status === 400 ? 'PROVIDER_CONNECTION_INPUT_INVALID' : 'PROVIDER_CONNECTION_UNAVAILABLE');
+        send(response, status, JSON.stringify({ valid: false, code }));
       }
       return true;
     }

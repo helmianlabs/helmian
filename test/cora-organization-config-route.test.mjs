@@ -15,6 +15,7 @@ import {
   LIVE_ADMIN_CORA_USAGE_PATH,
   LIVE_ADMIN_CORA_PREVIEW_PATH,
   LIVE_ADMIN_CORA_TASKS_PATH,
+  LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH,
 } from '../src/cloud/live-admin.mjs';
 
 const env = {
@@ -73,7 +74,11 @@ async function fixture() {
     async append(actor, input) { calls.push(['task-append', actor, input]); return { durable: true, format: 'cora.agent-task-intent.v1', taskType: input.taskType, status: input.intent === 'prepare' ? 'prepared' : 'draft', receiptId: 'task-receipt-1', execution: 'not_performed', agentInvocation: 'not_performed' }; },
     async list(actor) { calls.push(['task-list', actor]); return { receipts: [] }; },
   };
-  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, agentTaskRepository });
+  const providerConnectionRepository = {
+    async list(actor) { calls.push(['provider-list', actor]); return { connections: [], source: 'tenant_provider_connection_metadata', invocation: 'not_performed', tools: 'not_granted' }; },
+    async save(actor, input) { calls.push(['provider-save', actor, input]); return { durable: true, connection: { providerId: input.providerId, credentialReference: input.credentialReference, lifecycle: 'pending' }, vaultStatus: 'external_encrypted_vault_required', invocation: 'not_performed', tools: 'not_granted' }; },
+  };
+  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, agentTaskRepository, providerConnectionRepository });
   const clm = await startCoraClm({ host: '127.0.0.1', port: 0, runTurn: async () => ({ text: 'ok', model: 'test' }), notifyBackgroundAgents: false, httpRequestHandler: admin.handler });
   return { url: clm.healthUrl.replace('/healthz', ''), calls, close: async () => { await clm.close(); await admin.close(); } };
 }
@@ -157,6 +162,22 @@ test('authenticated task intents derive Organization, reject selectors and remai
   const listed = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}`, { headers }); assert.equal(listed.status, 200);
   const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_TASKS_PATH}?plant_id=warehouse-1`, { headers }); assert.equal(injected.status, 400);
   assert.equal(app.calls.some(([name, actor]) => name === 'task-append' && actor.tenantId === 'org-a'), true);
+});
+
+test('provider connection route derives Organization, stores only vault references, and never invokes providers', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' };
+  const body = { providerId: 'claude', authMode: 'api_key', credentialReference: 'vault://tenant/org-a/claude' };
+  const saved = await fetch(`${app.url}${LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  assert.equal(saved.status, 200);
+  const savedBody = await saved.json();
+  assert.equal(savedBody.connection.credentialReference, body.credentialReference);
+  assert.equal(savedBody.invocation, 'not_performed');
+  assert.equal(app.calls.some(([name, actor]) => name === 'provider-save' && actor.tenantId === 'org-a'), true);
+  const raw = await fetch(`${app.url}${LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ ...body, apiKey: 'sk_raw_never_accept' }) });
+  assert.equal(raw.status, 400);
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH}?plant_id=yard-1`, { headers });
+  assert.equal(injected.status, 400);
 });
 
 test('authenticated knowledge query returns stored citations only and rejects authority selectors', async (t) => {
