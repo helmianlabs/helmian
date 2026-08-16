@@ -10,6 +10,7 @@ function pool() {
     async query(sql) {
       const text = String(sql);
       if (['begin', 'commit', 'rollback'].includes(text) || text.startsWith('select set_config')) return { rowCount: 0, rows: [] };
+      if (text.includes("to_regclass('helmion.provider_connections')")) return { rowCount: 1, rows: [{ provider_connections: 'helmion.provider_connections', provider_oauth_transactions: 'helmion.provider_oauth_transactions', provider_oauth_tokens: 'helmion.provider_oauth_tokens' }] };
       if (text.includes('tenant_memberships')) return { rowCount: 1, rows: [{ tenant_id: 'helmian-platform', role: 'owner' }] };
       return { rowCount: 0, rows: [] };
     },
@@ -30,7 +31,7 @@ function startServer(handler) {
 async function fixture(envOverrides = {}, providerConnectionRepository = null) {
   const handler = await createLiveHelmianCloudAdminHandler({
     env: { HELMION_CLOUD_ENVIRONMENT: 'staging', HELMION_DATABASE_URL: databaseUrl, HELMION_EXPECTED_ENDPOINT_ID: 'ep-silent-rain-a1b2c3d4', ...envOverrides },
-    pool: pool(), identity: identity(), page: '<!doctype html><title>Admin</title>', script: 'void 0;',
+    pool: pool(), identity: identity(), providerVaultAdapter: { prepareReference() {}, storeOAuthTokens() {} }, page: '<!doctype html><title>Admin</title>', script: 'void 0;',
     expectedMigrations: [], providerConnectionRepository,
   });
   const live = await startServer(handler.handler);
