@@ -1,5 +1,7 @@
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
 import { createCloudProviderConnectionIntent } from './oauth-connection-contract.mjs';
+import { assertEncryptedVaultAdapter, createUnavailableEncryptedVaultAdapter } from './encrypted-vault-adapter.mjs';
+import { createProviderConnectionAuditIntent } from './provider-connection-audit-intent.mjs';
 
 function context(actor) {
   if (!actor?.tenantId || !actor.subject || !actor.role || !actor.sessionId || !actor.requestId) throw new Error('verified Organization membership is required');
@@ -22,7 +24,8 @@ function row(item) {
 
 const SELECT = 'provider_id, auth_mode, credential_reference, lifecycle, adapter, updated_at';
 
-export function createProviderConnectionRepository(pool) {
+export function createProviderConnectionRepository(pool, { vaultAdapter = createUnavailableEncryptedVaultAdapter() } = {}) {
+  assertEncryptedVaultAdapter(vaultAdapter);
   return Object.freeze({
     async list(actor) {
       const active = context(actor);
@@ -47,10 +50,12 @@ export function createProviderConnectionRepository(pool) {
         code_challenge_method: input?.codeChallengeMethod,
       });
       if (!intent.valid) throw Object.assign(new Error('provider connection metadata is invalid'), { status: 400 });
+      const vault = await vaultAdapter.prepareReference({ tenantId: active.tenantId, providerId: intent.result.provider_id, credentialReference: intent.result.credential_reference });
+      const auditIntent = createProviderConnectionAuditIntent({ actor: active, intent: intent.result, vaultStatus: vault.status });
       return withTenantTransaction(pool, active, async (client) => {
         await requireActiveTenantMembership(client, active);
         const result = await client.query(`insert into helmion.provider_connections (tenant_id, provider_id, auth_mode, credential_reference, lifecycle, adapter, updated_by_subject) values ($1,$2,$3,$4,'pending',$5,$6) on conflict (tenant_id,provider_id) do update set auth_mode=excluded.auth_mode, credential_reference=excluded.credential_reference, lifecycle='pending', adapter=excluded.adapter, updated_by_subject=excluded.updated_by_subject, updated_at=clock_timestamp() returning ${SELECT}`, [active.tenantId, intent.result.provider_id, intent.result.auth_mode, intent.result.credential_reference, intent.result.adapter, active.actorSubject]);
-        return { durable: true, connection: row(result.rows[0]), source: 'tenant_provider_connection_metadata', vaultStatus: 'external_encrypted_vault_required', invocation: 'not_performed', tools: 'not_granted' };
+        return { durable: true, connection: row(result.rows[0]), source: 'tenant_provider_connection_metadata', vaultStatus: vault.status, auditIntent, invocation: 'not_performed', tools: 'not_granted' };
       });
     },
   });

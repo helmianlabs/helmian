@@ -27,7 +27,20 @@ test('provider metadata save persists only tenant-scoped vault references', asyn
   assert.equal(result.durable, true);
   assert.equal(result.connection.vaultStatus, 'external_encrypted_vault_required');
   assert.equal(result.connection.invocation, 'not_performed');
+  assert.equal(result.vaultStatus, 'external_vault_not_configured');
+  assert.equal(result.auditIntent.persisted, false);
+  assert.equal(result.auditIntent.secretMaterial, 'not_received');
   assert.equal(pool.calls.at(-1).params.includes('raw-secret'), false);
+});
+
+test('injected vault adapter receives reference metadata only and fail-closed status is surfaced', async () => {
+  const calls = [];
+  const vaultAdapter = { async prepareReference(input) { calls.push(input); return { status: 'external_vault_not_configured', accepted: false, secretMaterial: 'not_received' }; } };
+  const result = await createProviderConnectionRepository(fakePool(), { vaultAdapter }).save(actor, { providerId: 'gemini', authMode: 'api_key', credentialReference: 'vault://tenant/acme/gemini' });
+  assert.deepEqual(calls, [{ tenantId: 'acme-operations', providerId: 'gemini', credentialReference: 'vault://tenant/acme/gemini' }]);
+  assert.equal(result.vaultStatus, 'external_vault_not_configured');
+  assert.equal(result.auditIntent.durableReceiptRequired, true);
+  assert.equal(result.auditIntent.providerInvocation, 'not_performed');
 });
 
 test('provider metadata list is Organization-scoped and never grants tools', async () => {
