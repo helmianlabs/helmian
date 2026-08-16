@@ -1,4 +1,4 @@
-const PROVIDERS = new Set(['slack', 'discord']);
+const PROVIDERS = new Set(['slack', 'discord', 'github']);
 const LIFECYCLES = new Set(['draft', 'testing', 'approved', 'enabled', 'disabled']);
 const TRANSITIONS = new Map([
   ['draft', new Set(['draft', 'testing', 'disabled'])],

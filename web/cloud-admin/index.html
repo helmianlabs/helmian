@@ -59,6 +59,9 @@
     .config-item span, .config-list { color: #aebbd0; font-size: .85rem; }
     .config-controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .9rem; }
     .config-controls input { flex: 1; min-width: 14rem; background: #0d1119; border: 1px solid #344156; color: #fff; border-radius: .35rem; padding: .65rem; }
+    .surface-toggle { display: flex; flex-wrap: wrap; gap: .45rem; margin: .75rem 0 1rem; }
+    .surface-toggle button { margin: 0; padding: .5rem .7rem; background: #2b3547; color: #e8edf5; }
+    .surface-toggle button.active { background: #7db4ff; color: #09111d; }
     dialog { max-width: 34rem; width: calc(100% - 2rem); background: #171e29; color: #e8edf5; border: 1px solid #52627d; border-radius: .6rem; padding: 1.25rem; }
     dialog::backdrop { background: rgb(0 0 0 / .65); }
     .layout-shelves { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem; margin: .75rem 0; }
@@ -254,10 +257,17 @@
         </section>
         <section id="section-connectors" class="card" aria-labelledby="connector-heading">
           <h2 id="connector-heading">Connector administration</h2>
+          <div class="surface-toggle" role="tablist" aria-label="Communication surface">
+            <button type="button" class="active" data-connector-surface="envoy" role="tab" aria-selected="true">Envoy</button>
+            <button type="button" data-connector-surface="discord" role="tab" aria-selected="false">Discord</button>
+            <button type="button" data-connector-surface="slack" role="tab" aria-selected="false">Slack</button>
+            <button type="button" data-connector-surface="github" role="tab" aria-selected="false">GitHub</button>
+          </div>
+          <p id="connector-surface-status" class="note" role="status" aria-live="polite">Envoy is the built-in Helmian conversation surface.</p>
           <p id="connector-status" class="note" role="status" aria-live="polite">Loading connector registration metadata…</p>
           <div id="connector-items" class="config-grid"></div>
-          <form id="connector-form" class="config-controls" hidden><label>Provider <select id="connector-provider"><option value="slack">Slack</option><option value="discord">Discord</option></select></label><label>Lifecycle <select id="connector-lifecycle"><option value="draft">Draft</option><option value="testing">Testing</option><option value="approved">Approved</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Signing-secret reference name only <input id="connector-secret-ref" maxlength="160" placeholder="Vault reference name; never the secret value"></label><label><input id="connector-endpoint-ready" type="checkbox"> Public endpoint readiness declared</label><label>Allowed inbound channels <textarea id="connector-channels" maxlength="6000" placeholder="external channel ID | display label"></textarea></label><button type="submit">Save connector metadata</button></form>
-          <p class="preview">This is non-secret Organization metadata and readiness only. It does not create a webhook, connect Slack or Discord, run OAuth, write credentials, verify a live provider, or enable outbound delivery. Members see limited status; owners/admins manage lifecycle metadata.</p>
+          <form id="connector-form" class="config-controls" hidden><label>Provider <select id="connector-provider"><option value="slack">Slack</option><option value="discord">Discord</option><option value="github">GitHub</option></select></label><label>Lifecycle <select id="connector-lifecycle"><option value="draft">Draft</option><option value="testing">Testing</option><option value="approved">Approved</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Signing-secret reference name only <input id="connector-secret-ref" maxlength="160" placeholder="Vault reference name; never the secret value"></label><label><input id="connector-endpoint-ready" type="checkbox"> Public endpoint readiness declared</label><label>Allowed inbound channels <textarea id="connector-channels" maxlength="6000" placeholder="external channel ID | display label"></textarea></label><button type="submit">Save connector metadata</button></form>
+          <p class="preview">This is non-secret Organization metadata and readiness only. Slack and Discord have bounded inbound verifier routes. GitHub is represented in the selector and registration ledger, but GitHub OAuth, repository reads, and delivery are not wired yet.</p>
           <h3 id="provider-connections-heading">Tenant provider access</h3>
           <p id="provider-connections-status" class="note" role="status" aria-live="polite">Loading tenant provider references…</p>
           <div id="provider-connections-items" class="config-grid"></div>

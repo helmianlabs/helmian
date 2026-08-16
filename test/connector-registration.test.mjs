@@ -12,6 +12,16 @@ test('connector registration is bounded metadata and never accepts secrets or au
   assert.throws(() => normalizeConnectorRegistration({ ...base, secretReferenceName: 'raw-secret-value' }), /non-sensitive/u);
 });
 
+test('GitHub is represented as a non-secret connector registration surface', () => {
+  const registration = normalizeConnectorRegistration({
+    ...base,
+    provider: 'github',
+    secretReferenceName: null,
+  });
+  assert.equal(registration.provider, 'github');
+  assert.equal(registration.lifecycle, 'draft');
+});
+
 test('enabled connector requires declared readiness and an enabled channel', () => {
   assert.throws(() => normalizeConnectorRegistration({ ...base, lifecycle: 'enabled' }), /requires readiness/u);
   const enabled = normalizeConnectorRegistration({ ...base, lifecycle: 'enabled', publicEndpointReady: true });
