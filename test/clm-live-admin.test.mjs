@@ -27,6 +27,8 @@ import {
   LIVE_ADMIN_CORA_CAPABILITIES_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SCRIPT_PATH,
+  LIVE_ADMIN_LOGIN_PATH,
+  LIVE_ADMIN_SIGNUP_PATH,
   LIVE_ADMIN_ENVOY_CLIENT_PATH,
   LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH,
   LIVE_ADMIN_SESSION_PATH,
@@ -121,6 +123,7 @@ function fakePool({ membershipRoles = { 'helmian-platform': 'admin' }, membershi
 
 function identity() {
   return {
+    issuer: 'https://identity.example.com',
     getSession: (sessionId) => sessionId === 'active-session'
       ? { subject: 'user-1' }
       : sessionId === 'second-session' ? { subject: 'user-2' } : null,
@@ -448,6 +451,12 @@ test('live admin is mounted under /admin on the CLM port and never replaces /llm
   const login = await fetch(`${app.url}/admin/auth/login`, { redirect: 'manual' });
   assert.equal(login.status, 302);
   assert.match(login.headers.get('set-cookie') ?? '', /Path=\/admin; HttpOnly; Secure; SameSite=Lax/u);
+  const signup = await fetch(`${app.url}${LIVE_ADMIN_SIGNUP_PATH}`, { redirect: 'manual' });
+  assert.equal(signup.status, 302);
+  assert.equal(
+    signup.headers.get('location'),
+    `https://identity.example.com/sign-up?redirect_url=${encodeURIComponent(`${app.url}${LIVE_ADMIN_LOGIN_PATH}`)}`,
+  );
   const callback = await fetch(`${app.url}/admin/auth/callback?code=code&state=state-1`, {
     redirect: 'manual', headers: { cookie: 'helmion_admin_login_state=state-1' },
   });

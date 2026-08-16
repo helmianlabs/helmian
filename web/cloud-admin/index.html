@@ -48,6 +48,7 @@
     @media (max-width: 960px) { .shell { grid-template-columns: 1fr; } .rail, .agents, .guard { border: 0; } .rail { display: block; } .brand { margin: 0 0 .75rem; } .nav-item { display: inline-block; width: auto; margin: 0 .25rem .25rem 0; } }
     button { padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #7db4ff; color: #09111d; font-weight: 700; cursor: pointer; margin-right: .5rem; }
     button.secondary { background: #2b3547; color: #e8edf5; }
+    .button-link { display: inline-block; padding: .65rem 1rem; border-radius: .35rem; background: #2b3547; color: #e8edf5; font-weight: 700; text-decoration: none; }
     button.danger { background: #f0b4a8; }
     pre { padding: 1rem; background: #1c2431; overflow: auto; border-radius: .35rem; }
     .note { color: #a9c7ff; }
@@ -150,6 +151,7 @@
         <h2>Owner access</h2>
         <p class="note">Sign in to view the authenticated control surface and global Helmian policy.</p>
         <button id="login" type="button">Sign in with organization identity</button>
+        <a class="button-link" href="/admin/auth/signup">Sign up for Helmian Cloud</a>
       </section>
       <section id="signed-in" hidden>
         <p id="actor"></p>
