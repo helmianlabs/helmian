@@ -61,6 +61,7 @@ export const LIVE_ADMIN_SCRIPT_PATH = '/admin/assets/app.js';
 export const LIVE_ADMIN_ENVOY_CLIENT_PATH = '/admin/assets/envoy-client.mjs';
 export const LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH = '/admin/assets/cora-config-client.mjs';
 export const LIVE_ADMIN_LOGIN_PATH = '/admin/auth/login';
+export const LIVE_ADMIN_SIGNUP_PATH = '/admin/auth/signup';
 export const LIVE_ADMIN_CALLBACK_PATH = '/admin/auth/callback';
 export const LIVE_ADMIN_LOGOUT_PATH = '/admin/auth/logout';
 export const LIVE_ADMIN_SESSION_PATH = '/api/admin/session';
@@ -569,6 +570,18 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGIN_PATH) {
       try { const login = await identity.beginLogin(); send(response, 302, '', 'text/plain; charset=utf-8', { location: login.url, 'set-cookie': `helmion_admin_login_state=${login.state}; ${cookieOptions('/admin')}` }); }
       catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SIGNUP_PATH) {
+      try {
+        // Clerk's hosted Account Portal owns registration. Returning to the
+        // existing OIDC login route after signup preserves the server-side
+        // Helmian session boundary instead of pretending signup itself created
+        // an admin session.
+        const signup = new URL('/sign-up', identity.issuer);
+        signup.searchParams.set('redirect_url', new URL(LIVE_ADMIN_LOGIN_PATH, requestOrigin(request, env)).toString());
+        send(response, 302, '', 'text/plain; charset=utf-8', { location: signup.toString() });
+      } catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CALLBACK_PATH) {
