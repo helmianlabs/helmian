@@ -106,6 +106,19 @@
         <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>Sign in to read and send normal Organization Envoy messages. Cora and outbound delivery are not invoked in this slice.</p></div>
         <form id="composer" class="composer"><select id="envoy-channel" aria-label="Envoy channel" disabled><option value="">No channels available</option></select><input id="composer-input" aria-label="Message Maestro" placeholder="Send a normal workspace message…" maxlength="4000" disabled><button id="composer-send" type="submit" disabled>Send</button></form>
         <p id="composer-status" class="composer-status" role="status" aria-live="polite"></p>
+        <section id="workspace-projects" class="card" aria-labelledby="workspace-projects-heading">
+          <h3 id="workspace-projects-heading">Cloud workspace projects</h3>
+          <p id="workspace-projects-status" class="note" role="status" aria-live="polite">Loading tenant project registry…</p>
+          <div id="workspace-project-cards" class="config-grid"></div>
+          <form id="workspace-project-form" class="config-controls" hidden>
+            <input id="workspace-project-key" aria-label="Project key" maxlength="96" placeholder="Project key" required>
+            <input id="workspace-project-name" aria-label="Project display name" maxlength="160" placeholder="Display name" required>
+            <select id="workspace-project-source" aria-label="Project source"><option value="cloud">Cloud</option><option value="desktop_mirror">Desktop mirror</option><option value="external">External</option></select>
+            <input id="workspace-project-branch" aria-label="Default branch" maxlength="160" value="main" placeholder="Default branch" required>
+            <button id="workspace-project-save" type="submit">Register project</button>
+          </form>
+          <p class="preview">Project registration is tenant metadata only. It does not grant filesystem, source, worker, or provider execution access.</p>
+        </section>
       </section>
       <dialog id="workspace-settings" aria-labelledby="workspace-settings-heading" aria-describedby="workspace-layout-status">
         <form method="dialog"><h2 id="workspace-settings-heading">Workspace settings</h2><p id="workspace-layout-status" class="note" role="status" aria-live="polite">Loading your layout…</p>
