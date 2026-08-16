@@ -80,7 +80,7 @@ OIDC Authorization Code + PKCE client with these exact settings:
 
 - issuer: `HELMION_ADMIN_ISSUER` (the chosen organization's HTTPS OIDC issuer);
 - client ID: `HELMION_ADMIN_CLIENT_ID`;
-- redirect URI: `https://<verified-helmian-host>/admin/auth/callback` exactly.
+- redirect URI: `https://helmian.cloud/admin/auth/callback` exactly for the current canonical Helmian Cloud deployment. The Fly runtime also receives `HELMION_ADMIN_ORIGIN=https://helmian.cloud`; this prevents the Vercel-to-Fly proxy from emitting the Fly hostname as the OAuth callback.
 
 No issuer or client ID is invented in source. The deployment preflight reports
 only missing environment-variable names, never their values. OIDC proves only

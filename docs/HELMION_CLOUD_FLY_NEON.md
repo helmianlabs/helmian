@@ -36,9 +36,13 @@ and that the Neon URL points at the asserted endpoint. It never prints secrets.
 The same preflight now requires the live admin OIDC names
 `HELMION_ADMIN_ISSUER`, `HELMION_ADMIN_CLIENT_ID`, and
 `HELMION_ADMIN_REDIRECT_URI`. The redirect must be the deployed HTTPS Helmian
-origin plus `/admin/auth/callback`. Do not deploy the admin mount until an
-external identity administrator has registered that exact client and redirect.
-Then deploy with Fly from this repository. The Fly app should pass its TCP
+origin plus `/admin/auth/callback`; for the current canonical deployment that is
+`https://helmian.cloud/admin/auth/callback`. The Fly app is already mounted
+behind the canonical Vercel `/admin` and `/api/admin` rewrites, but external
+Clerk callback completion remains an open release gate until the owner completes
+one real sign-in. Before enabling that gate, the external identity administrator
+must register the exact client and redirect. Then deploy with Fly from this
+repository. The Fly app should pass its TCP
 readiness check; authenticated `GET /healthz` is the application health check.
 
 ## Verify and rollback
