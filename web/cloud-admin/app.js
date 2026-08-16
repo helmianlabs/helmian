@@ -48,6 +48,14 @@ const composerInput = document.querySelector('#composer-input');
 const composerSend = document.querySelector('#composer-send');
 const envoyChannel = document.querySelector('#envoy-channel');
 const composerStatus = document.querySelector('#composer-status');
+const workspaceProjectsStatus = document.querySelector('#workspace-projects-status');
+const workspaceProjectCards = document.querySelector('#workspace-project-cards');
+const workspaceProjectForm = document.querySelector('#workspace-project-form');
+const workspaceProjectKey = document.querySelector('#workspace-project-key');
+const workspaceProjectName = document.querySelector('#workspace-project-name');
+const workspaceProjectSource = document.querySelector('#workspace-project-source');
+const workspaceProjectBranch = document.querySelector('#workspace-project-branch');
+const workspaceProjectSave = document.querySelector('#workspace-project-save');
 const envoy = createEnvoyClient();
 const coraClient = createCoraConfigClient();
 const coraConfigStatus = document.querySelector('#cora-config-status');
@@ -469,6 +477,39 @@ async function loadWorkspaceLayout() {
   finally { workspaceSettings.removeAttribute('aria-busy'); }
 }
 
+function renderWorkspaceProjects(body) {
+  workspaceProjectCards.replaceChildren();
+  const projects = Array.isArray(body.projects) ? body.projects : [];
+  workspaceProjectsStatus.textContent = projects.length ? `${projects.length} tenant project${projects.length === 1 ? '' : 's'} registered. Execution remains not performed.` : 'No tenant projects are registered yet.';
+  workspaceProjectForm.hidden = body.canManage !== true;
+  for (const project of projects) {
+    const card = document.createElement('article');
+    card.className = 'config-item';
+    card.append(
+      configItem('Project', `${project.displayName} · ${project.projectKey}`),
+      configItem('Source', `${project.sourceKind} · branch ${project.defaultBranch}`),
+      configItem('Lifecycle', project.lifecycle),
+      configItem('Execution', project.execution || 'not_performed'),
+      configItem('Source inventory', project.sourceInventory || 'not_connected'),
+    );
+    workspaceProjectCards.append(card);
+  }
+}
+
+async function loadWorkspaceProjects() {
+  workspaceProjectsStatus.textContent = 'Loading tenant project registry…';
+  try {
+    const response = await fetch('/api/admin/workspace/projects', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body.code || 'Workspace projects unavailable'), { status: response.status });
+    renderWorkspaceProjects(body);
+  } catch (error) {
+    workspaceProjectCards.replaceChildren();
+    workspaceProjectForm.hidden = true;
+    workspaceProjectsStatus.textContent = error.status === 403 ? 'Project registry unavailable: Organization membership is required.' : `Project registry unavailable: ${error.message}`;
+  }
+}
+
 async function loadWorkspaceRoleDefaults() {
   workspaceRoleDefaultStatus.textContent = 'Loading role defaults…';
   try { const body = await coraClient.readWorkspaceRoleDefaults(); workspaceRoleDefaultStatus.textContent = 'Owner/admin-managed role defaults loaded.'; workspaceRoleDefaultRole.onchange = () => { const selected = body.roleDefaults?.find((item) => item.role === workspaceRoleDefaultRole.value)?.layout; if (selected) renderWorkspaceLayout({ layout: selected }); }; }
@@ -840,6 +881,7 @@ async function load() {
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();
+  await loadWorkspaceProjects();
   activateWorkspaceNav(window.location.hash.slice(1) || 'section-chat', { smooth: false, writeHash: false });
   if (isAdmin) await loadWorkspaceRoleDefaults();
   await loadCoraSettings();
@@ -854,6 +896,20 @@ async function load() {
 }
 workspaceSettingsOpen.onclick = () => { workspaceSettings.showModal(); loadWorkspaceLayout().catch(() => {}); };
 workspaceSettingsClose.onclick = () => workspaceSettings.close();
+workspaceProjectForm.onsubmit = async (event) => {
+  event.preventDefault();
+  workspaceProjectSave.disabled = true;
+  workspaceProjectsStatus.textContent = 'Registering tenant project metadata…';
+  try {
+    const response = await fetch('/api/admin/workspace/projects', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey: workspaceProjectKey.value, displayName: workspaceProjectName.value, sourceKind: workspaceProjectSource.value, defaultBranch: workspaceProjectBranch.value, lifecycle: 'active' }) });
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body.code || 'Project registration failed'), { status: response.status });
+    workspaceProjectForm.reset();
+    workspaceProjectBranch.value = 'main';
+    await loadWorkspaceProjects();
+  } catch (error) { workspaceProjectsStatus.textContent = `Project metadata not saved: ${error.message}`; }
+  finally { workspaceProjectSave.disabled = false; }
+};
 async function saveWorkspaceLayout(input = layoutInput(), status = 'Saving your workspace layout…') {
   workspaceLayoutStatus.textContent = status;
   workspaceLayoutSave.disabled = true;
