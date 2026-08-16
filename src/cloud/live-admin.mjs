@@ -46,6 +46,7 @@ import { createProviderConnectionRepository } from './provider-connection-reposi
 import { createCloudOAuthAuthorization } from './oauth-connection-contract.mjs';
 import { createEncryptedVaultAdapterFromEnv } from './database-encrypted-vault-adapter.mjs';
 import { createGeminiOAuthPkce, geminiCredentialReference, resolveGeminiOAuthConfig } from './provider-oauth-config.mjs';
+import { readGeminiOAuthReadiness } from './provider-oauth-readiness.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
 
@@ -600,6 +601,8 @@ export async function createLiveHelmianCloudAdminHandler({
         if (!['owner', 'admin'].includes(String(actor.role).toLowerCase())) throw Object.assign(new Error('Provider OAuth requires owner or admin membership'), { status: 403, code: 'PROVIDER_OAUTH_MEMBERSHIP_REQUIRED' });
         const config = resolveGeminiOAuthConfig(env, requestOrigin(request, env));
         if (!config.configured) throw Object.assign(new Error('Gemini OAuth client registration is not configured'), { status: 503, code: config.code });
+        const readiness = await readGeminiOAuthReadiness({ pool, config, vaultAdapter: providerVaultAdapter });
+        if (!readiness.ready) throw Object.assign(new Error('Gemini OAuth deployment is not ready'), { status: 503, code: readiness.code });
         const pkce = createGeminiOAuthPkce();
         const authorization = createCloudOAuthAuthorization({ tenant_id: actor.tenantId, actor_role: actor.role, provider_id: 'gemini', client_id: config.clientId, state: pkce.state, code_challenge: pkce.codeChallenge, code_challenge_method: pkce.codeChallengeMethod, redirect_uri: config.redirectUri, scopes: config.scopes });
         if (!authorization.valid) throw Object.assign(new Error('Gemini OAuth authorization contract rejected configuration'), { status: 503, code: 'GEMINI_OAUTH_CONFIGURATION_INVALID' });
