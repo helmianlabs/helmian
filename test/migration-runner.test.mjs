@@ -46,6 +46,10 @@ class MigrationPool {
           pool.executedSql.push('033_console_command_intents.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('helmion.provider_oauth_transactions')) {
+          pool.executedSql.push('034_helmion_provider_oauth.sql');
+          return { rowCount: 0, rows: [] };
+        }
         if (normalized.includes('create schema if not exists helmion')) {
           if (String(sql).includes('helmion.projects')) pool.executedSql.push('001_helmion.sql');
           return { rowCount: 0, rows: [] };
@@ -211,6 +215,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['031_helmion_provider_connections.sql', true, 'committed'],
       ['032_workspace_projects.sql', true, 'committed'],
       ['033_console_command_intents.sql', true, 'committed'],
+      ['034_helmion_provider_oauth.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -246,13 +251,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '031_helmion_provider_connections.sql',
       '032_workspace_projects.sql',
       '033_console_command_intents.sql',
+      '034_helmion_provider_oauth.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+    Array(31).fill(false),
   );
   assert.deepEqual(
     pool.executedSql,
@@ -287,9 +293,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '031_helmion_provider_connections.sql',
       '032_workspace_projects.sql',
       '033_console_command_intents.sql',
+      '034_helmion_provider_oauth.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 60);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 62);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 
