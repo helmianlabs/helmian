@@ -43,6 +43,7 @@ import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
 import { resolvePublishedCoraSessionConfig } from '../cora/session-config-resolver.mjs';
 import { buildDesktopParityManifest } from './desktop-parity.mjs';
 import { createProviderConnectionRepository } from './provider-connection-repository.mjs';
+import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -98,6 +99,7 @@ export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/r
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
 export const LIVE_ADMIN_DESKTOP_PARITY_PATH = '/api/admin/desktop-parity';
 export const LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH = '/api/admin/provider-connections';
+export const LIVE_ADMIN_WORKSPACE_PROJECTS_PATH = '/api/admin/workspace/projects';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -231,6 +233,7 @@ export async function createLiveHelmianCloudAdminHandler({
   auditEventRepository: suppliedAuditEventRepository = null,
   organizationRoleRepository: suppliedOrganizationRoleRepository = null,
   providerConnectionRepository: suppliedProviderConnectionRepository = null,
+  workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
   envoyStore: suppliedEnvoyStore = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
@@ -263,6 +266,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const auditEvents = suppliedAuditEventRepository ?? createAuditEventRepository(pool);
   const organizationRoles = suppliedOrganizationRoleRepository ?? createOrganizationRoleRepository(pool);
   const providerConnections = suppliedProviderConnectionRepository ?? createProviderConnectionRepository(pool);
+  const workspaceProjects = suppliedWorkspaceProjectRepository ?? createWorkspaceProjectRepository(pool);
   const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
@@ -874,6 +878,27 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.read(actor) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_LAYOUT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'WORKSPACE_LAYOUT_SELECTOR_INVALID' : 'WORKSPACE_LAYOUT_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_PROJECTS_PATH) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.list(actor) }));
+      } catch (error) {
+        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_PROJECTS_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'WORKSPACE_PROJECTS_SELECTOR_INVALID' : 'WORKSPACE_PROJECTS_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_PROJECTS_PATH) {
+      try {
+        const actor = await activeActor(request);
+        const body = await readJsonObject(request);
+        exactKeys(body, ['defaultBranch', 'displayName', 'lifecycle', 'projectKey', 'sourceKind']);
+        send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.save(actor, body) }));
+      } catch (error) {
+        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_PROJECTS_ADMIN_REQUIRED' : 'WORKSPACE_PROJECTS_INVALID' }));
+      }
       return true;
     }
     if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {
