@@ -92,6 +92,7 @@
         <button class="nav-item" type="button" data-target="section-governance">Governance</button>
         <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
         <button class="nav-item" type="button" data-target="section-readiness">Readiness</button>
+        <button class="nav-item" type="button" data-target="section-desktop-parity">Desktop parity</button>
         <button class="nav-item" type="button" data-target="section-capabilities">Cora capabilities</button>
         <button class="nav-item" type="button" data-target="section-people">People & permissions</button>
         <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
@@ -253,6 +254,12 @@
           <p id="readiness-status" class="note" role="status" aria-live="polite">Loading verifiable source states…</p>
           <div id="readiness-cards" class="config-grid"></div>
           <p class="preview">This is an Organization-scoped source status view, not a global production-ready claim. Registered connectors are not connected, unavailable sources remain unknown, and no provider, OAuth, export, email, or mutation is performed.</p>
+        </section>
+        <section id="section-desktop-parity" class="card" aria-labelledby="desktop-parity-heading">
+          <h2 id="desktop-parity-heading">Desktop parity</h2>
+          <p id="desktop-parity-status" class="note" role="status" aria-live="polite">Loading the source-traced desktop/cloud parity ledger…</p>
+          <div id="desktop-parity-cards" class="config-grid"></div>
+          <p class="preview">This ledger is an inventory, not a production-ready claim. Each row links the desktop control to the current Cloud surface and names the missing transition. A row is not complete until its full path is implemented and exercised.</p>
         </section>
         <section id="section-capabilities" class="card" aria-labelledby="capabilities-heading">
           <h2 id="capabilities-heading">Cora capability explorer</h2>

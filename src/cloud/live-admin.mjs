@@ -41,6 +41,7 @@ import { createOrganizationRoleRepository } from './organization-role-repository
 import { readOrganizationReadiness } from './organization-readiness.mjs';
 import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
 import { resolvePublishedCoraSessionConfig } from '../cora/session-config-resolver.mjs';
+import { buildDesktopParityManifest } from './desktop-parity.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -94,6 +95,7 @@ export const LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH = '/api/admin/organization
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/membership-role-plan';
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
+export const LIVE_ADMIN_DESKTOP_PARITY_PATH = '/api/admin/desktop-parity';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
@@ -575,6 +577,16 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_DESKTOP_PARITY_PATH) {
+      try {
+        const actor = await activeTenantActor(request);
+        send(response, 200, JSON.stringify({ valid: true, tenantId: actor.tenantId, ...buildDesktopParityManifest() }));
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'DESKTOP_PARITY_MEMBERSHIP_REQUIRED' : 'DESKTOP_PARITY_UNAVAILABLE' }));
       }
       return true;
     }

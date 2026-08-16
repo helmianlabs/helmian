@@ -32,6 +32,8 @@ const peoplePlanTitle = document.querySelector('#people-plan-title');
 const peoplePlanReason = document.querySelector('#people-plan-reason');
 const readinessStatus = document.querySelector('#readiness-status');
 const readinessCards = document.querySelector('#readiness-cards');
+const desktopParityStatus = document.querySelector('#desktop-parity-status');
+const desktopParityCards = document.querySelector('#desktop-parity-cards');
 const guardCheckAgain = document.querySelector('#guard-check-again');
 const guardPreviewTab = document.querySelector('#guard-preview-tab');
 const capabilitiesStatus = document.querySelector('#capabilities-status');
@@ -336,6 +338,30 @@ async function loadOrganizationReadiness() {
   readinessStatus.textContent = 'Loading verifiable source states…';
   try { renderOrganizationReadiness(await coraClient.readOrganizationReadiness()); }
   catch (error) { readinessCards.replaceChildren(); readinessStatus.textContent = error.status === 403 ? 'Readiness unavailable: active Organization membership is required.' : `Readiness unavailable: ${error.message}`; }
+}
+
+function renderDesktopParity(body) {
+  desktopParityCards.replaceChildren();
+  const entries = Array.isArray(body.entries) ? body.entries : [];
+  for (const entry of entries) {
+    desktopParityCards.append(configItem(`${entry.id} · ${entry.status}`, `Desktop: ${entry.desktop} Cloud: ${entry.cloud} Missing: ${entry.missing} Evidence: ${entry.desktopEvidence} → ${entry.cloudEvidence}`));
+  }
+  desktopParityStatus.textContent = body.claim === 'inventory_only'
+    ? `${entries.length} source-traced slices loaded. Parity complete: ${body.parityComplete === true ? 'yes' : 'no'}.`
+    : 'Parity ledger claim is not recognized; no completion inferred.';
+}
+
+async function loadDesktopParity() {
+  desktopParityStatus.textContent = 'Loading the source-traced desktop/cloud parity ledger…';
+  try {
+    const response = await fetch('/api/admin/desktop-parity', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body.code ?? 'Desktop parity unavailable'), { status: response.status });
+    renderDesktopParity(body);
+  } catch (error) {
+    desktopParityCards.replaceChildren();
+    desktopParityStatus.textContent = error.status === 403 ? 'Desktop parity unavailable: active Organization membership is required.' : `Desktop parity unavailable: ${error.message}`;
+  }
 }
 
 function renderCoraCapabilities(body) {
@@ -799,6 +825,7 @@ async function load() {
   await loadPolicy();
   await loadOrganizationPeople();
   await loadOrganizationReadiness();
+  await loadDesktopParity();
   await loadCoraCapabilities();
   await loadEnvoyChannels();
   workspaceSettingsOpen.hidden = false;
