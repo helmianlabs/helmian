@@ -5,23 +5,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Helmian Cloud Admin</title>
   <style>
-    :root { color-scheme: dark; }
-    body { font: 16px system-ui, sans-serif; margin: 3rem auto; max-width: 900px; padding: 0 1rem; background: #10141d; color: #e8edf5; }
+    :root { color-scheme: dark; --bg: #10141d; --panel: #1c2431; --line: #33445e; --text: #e8edf5; --muted: #a9c7ff; --good: #8ee2af; --quiet: #aab4c4; }
+    body { font: 16px system-ui, sans-serif; margin: 3rem auto; max-width: 980px; padding: 0 1rem 4rem; background: var(--bg); color: var(--text); }
     button { padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #7db4ff; color: #09111d; font-weight: 700; cursor: pointer; }
-    pre { padding: 1rem; background: #1c2431; overflow: auto; border-radius: .35rem; }
-    .note { color: #a9c7ff; }
+    button[disabled] { cursor: wait; opacity: .6; }
+    pre { padding: 1rem; background: var(--panel); overflow: auto; border-radius: .35rem; }
+    .note, .muted { color: var(--muted); }
     [hidden] { display: none; }
+    .toolbar, .integration-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    .toolbar { margin: 1rem 0; }
+    .integration-grid { display: grid; gap: .75rem; margin: 1rem 0 2rem; }
+    .integration-row { padding: 1rem; background: var(--panel); border: 1px solid var(--line); border-radius: .45rem; }
+    .integration-row h3, .integration-row p { margin: 0; }
+    .integration-row p { color: var(--quiet); font-size: .9rem; margin-top: .3rem; }
+    .integration-state { color: var(--good); font-size: .85rem; white-space: nowrap; }
+    .phone-only { border-color: #695b39; }
+    .phone-only .integration-state { color: #f0cb76; }
+    section { margin-top: 1.5rem; }
   </style>
 </head>
 <body>
   <h1>Helmian Cloud Admin</h1>
-  <p class="note">This is the live, read-only control surface. Sign in with your organization identity to view the tenant-scoped Neon and deployment status.</p>
+  <p class="note">Authenticated tenant control surface for cloud configuration and live audit posture. Integration toggles change availability only; this page never claims provider credentials, OAuth completion, or an invocation.</p>
   <section id="signed-out">
     <button id="login" type="button">Sign in with organization identity</button>
   </section>
   <section id="signed-in" hidden>
-    <p id="actor"></p>
-    <button id="refresh" type="button">Refresh control surface</button>
+    <div class="toolbar">
+      <p id="actor"></p>
+      <button id="refresh" type="button">Refresh control surface</button>
+    </div>
+    <h2>Integrations</h2>
+    <p class="muted">These four switches are durable tenant configuration. “Enabled” does not mean the external provider is connected.</p>
+    <div id="integrations" class="integration-grid" aria-live="polite"></div>
+    <h2>Herald boundary</h2>
+    <div id="herald" class="integration-row phone-only"></div>
+    <h2>Authenticated control surface</h2>
     <pre id="result">Loading…</pre>
   </section>
   <script>
@@ -29,18 +48,79 @@
     const signedIn = document.querySelector('#signed-in');
     const actor = document.querySelector('#actor');
     const out = document.querySelector('#result');
+    const integrations = document.querySelector('#integrations');
+    const herald = document.querySelector('#herald');
     document.querySelector('#login').onclick = () => { window.location.href = '/auth/login'; };
+
+    function setSignedOut() {
+      signedOut.hidden = false;
+      signedIn.hidden = true;
+    }
+
+    function setSignedIn(sessionBody) {
+      signedOut.hidden = true;
+      signedIn.hidden = false;
+      actor.textContent = `Signed in as ${sessionBody.actor.role} for tenant ${sessionBody.actor.tenantId}`;
+    }
+
+    function renderIntegrations(surface) {
+      integrations.replaceChildren();
+      for (const integration of surface.integrations || []) {
+        const row = document.createElement('article');
+        row.className = 'integration-row';
+        row.innerHTML = `<div><h3>${integration.label}</h3><p>${integration.description} · ${integration.connection_mode}</p></div>`;
+        const controls = document.createElement('div');
+        const state = document.createElement('span');
+        state.className = 'integration-state';
+        state.textContent = integration.enabled ? 'Enabled' : 'Disabled';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.textContent = integration.enabled ? 'Disable' : 'Enable';
+        toggle.onclick = async () => {
+          toggle.disabled = true;
+          try {
+            const response = await fetch(`/api/admin/integrations/${encodeURIComponent(integration.integration_id)}`, {
+              method: 'PATCH', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ enabled: !integration.enabled }),
+            });
+            if (response.status === 401) { setSignedOut(); return; }
+            const body = await response.json();
+            if (!response.ok || body.valid !== true) throw new Error(body.code || 'toggle_failed');
+            await load();
+          } catch { out.textContent = 'Integration change was not committed.'; }
+          finally { toggle.disabled = false; }
+        };
+        controls.append(state, toggle);
+        row.append(controls);
+        integrations.append(row);
+      }
+    }
+
+    function renderHerald(companion) {
+      herald.replaceChildren();
+      const copy = document.createElement('div');
+      copy.innerHTML = `<h3>${companion.label}</h3><p>${companion.description} · ${companion.connection_mode}</p>`;
+      const state = document.createElement('span');
+      state.className = 'integration-state';
+      state.textContent = 'Phone app only';
+      herald.append(copy, state);
+    }
+
     async function load() {
       const session = await fetch('/api/session', { credentials: 'same-origin' });
-      if (!session.ok) { signedOut.hidden = false; signedIn.hidden = true; return; }
+      if (!session.ok) { setSignedOut(); return; }
       const sessionBody = await session.json();
-      signedOut.hidden = true; signedIn.hidden = false;
-      actor.textContent = `Signed in as ${sessionBody.actor.role} for tenant ${sessionBody.actor.tenantId}`;
+      setSignedIn(sessionBody);
       const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
-      out.textContent = JSON.stringify(await surface.json(), null, 2);
+      const surfaceBody = await surface.json();
+      if (!surface.ok || surfaceBody.valid !== true) throw new Error(surfaceBody.code || 'control_surface_unavailable');
+      renderIntegrations(surfaceBody.result);
+      renderHerald(surfaceBody.result.phone_companion);
+      out.textContent = JSON.stringify(surfaceBody, null, 2);
     }
+
     document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
-    load().catch(() => { signedOut.hidden = false; signedIn.hidden = true; });
+    load().catch(() => setSignedOut());
   </script>
 </body>
 </html>
