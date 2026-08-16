@@ -936,11 +936,11 @@ workspaceProjectForm.onsubmit = async (event) => {
   try {
     const response = await fetch('/api/admin/workspace/projects', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey: workspaceProjectKey.value, displayName: workspaceProjectName.value, sourceKind: workspaceProjectSource.value, defaultBranch: workspaceProjectBranch.value, lifecycle: 'active' }) });
     const body = await response.json();
-    if (!response.ok) throw Object.assign(new Error(body.code || 'Project registration failed'), { status: response.status });
+    if (!response.ok) throw Object.assign(new Error(body.code || 'Project registration failed'), { status: response.status, receiptId: body.receiptId || null });
     workspaceProjectForm.reset();
     workspaceProjectBranch.value = 'main';
     await loadWorkspaceProjects();
-  } catch (error) { workspaceProjectsStatus.textContent = `Project metadata not saved: ${error.message}`; }
+  } catch (error) { workspaceProjectsStatus.textContent = error.status === 403 ? `Project metadata denied by your organization role${error.receiptId ? `; receipt ${error.receiptId}` : ''}.` : `Project metadata not saved: ${error.message}`; }
   finally { workspaceProjectSave.disabled = false; }
 };
 workspaceConsoleForm.onsubmit = async (event) => {
