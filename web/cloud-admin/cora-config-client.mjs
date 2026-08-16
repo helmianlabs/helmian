@@ -68,6 +68,8 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     decideApproval(input) { return requestJson(fetchImpl, '/api/admin/cora/approvals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     readConnectors() { return requestJson(fetchImpl, '/api/admin/cora/connectors'); },
     saveConnector(input) { return requestJson(fetchImpl, '/api/admin/cora/connectors', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
+    readProviderConnections() { return requestJson(fetchImpl, '/api/admin/provider-connections'); },
+    saveProviderConnection(input) { return requestJson(fetchImpl, '/api/admin/provider-connections', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     readOrganizationMemberships() { return requestJson(fetchImpl, '/api/admin/organization/memberships'); },
     prepareOrganizationRolePlan(input) { return requestJson(fetchImpl, '/api/admin/organization/membership-role-plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     readOrganizationReadiness() { return requestJson(fetchImpl, '/api/admin/organization/readiness'); },
@@ -145,6 +147,18 @@ export function approvalInboxPanelModel(body = {}) {
 export function connectorRegistrationPanelModel(body = {}) {
   const registrations = Array.isArray(body.registrations) ? body.registrations.slice(0, 10) : [];
   return Object.freeze({ empty: registrations.length === 0, registrations, statusLabel: registrations.length ? `${registrations.length} connector registration(s); provider delivery remains inactive until a separate live setup.` : 'No connector registrations yet. Slack and Discord are not connected by this metadata panel.' });
+}
+
+export function providerConnectionPanelModel(body = {}) {
+  const connections = Array.isArray(body.connections) ? body.connections.slice(0, 20) : [];
+  return Object.freeze({
+    empty: connections.length === 0,
+    connections,
+    statusLabel: connections.length ? `${connections.length} tenant provider reference(s); vault verification is still required.` : 'No tenant provider references recorded.',
+    vaultStatus: 'external_encrypted_vault_required',
+    tools: 'not_granted',
+    invocation: 'not_performed',
+  });
 }
 
 export function knowledgeQueryModel(body = {}) {
