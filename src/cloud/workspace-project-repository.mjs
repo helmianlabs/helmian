@@ -1,3 +1,4 @@
+import { appendAuditEvent } from './audit-event-repository.mjs';
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
 
 const PROJECT_KEYS = new Set(['projectKey', 'displayName', 'sourceKind', 'defaultBranch', 'lifecycle']);
@@ -46,7 +47,15 @@ export function createWorkspaceProjectRepository(pool) {
       return withTenantTransaction(pool, active, async (client) => {
         await requireActiveTenantMembership(client, active);
         const result = await client.query(`insert into helmion.workspace_projects (tenant_id, project_key, display_name, source_kind, default_branch, lifecycle, created_by_subject) values ($1,$2,$3,$4,$5,$6,$7) on conflict (tenant_id,project_key) do update set display_name=excluded.display_name, source_kind=excluded.source_kind, default_branch=excluded.default_branch, lifecycle=excluded.lifecycle, updated_at=clock_timestamp() returning ${SELECT}`, [active.tenantId, project.projectKey, project.displayName, project.sourceKind, project.defaultBranch, project.lifecycle, active.actorSubject]);
-        return { durable: true, project: row(result.rows[0]), source: 'tenant_workspace_project_registry', execution: 'not_performed' };
+        const receiptId = await appendAuditEvent(client, active, {
+          actionType: 'workspace.project.register',
+          canonicalTarget: { resource: 'workspace_project_registry', projectKey: project.projectKey },
+          policyVersion: 'workspace-project.v1',
+          decision: 'ALLOW',
+          privacySummary: 'Bounded tenant workspace project registration; execution and provider invocation were not performed',
+          result: { projectKey: project.projectKey, lifecycle: project.lifecycle, execution: 'not_performed', providerInvocation: 'not_performed' },
+        });
+        return { durable: true, receiptId, project: row(result.rows[0]), source: 'tenant_workspace_project_registry', execution: 'not_performed' };
       });
     },
   });

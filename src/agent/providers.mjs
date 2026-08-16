@@ -132,7 +132,9 @@ function recordTurnProvenance(reply, {
  */
 export async function chatWithTools({
   providerId,
-  apiKey,
+  apiKey = '',
+  credentialResolver = null,
+  credentialReference = null,
   model,
   messages,
   toolDefs,
@@ -142,6 +144,15 @@ export async function chatWithTools({
   images = [],
   provenance = null,
 }) {
+  let credentialType = 'api_key';
+  if (!apiKey && typeof credentialResolver === 'function') {
+    const resolved = await credentialResolver({ providerId, credentialReference });
+    if (typeof resolved === 'string') apiKey = resolved;
+    else if (resolved && typeof resolved.credential === 'string') {
+      apiKey = resolved.credential;
+      credentialType = String(resolved.tokenType || 'Bearer').toLowerCase();
+    }
+  }
   if (!apiKey) {
     throw new Error(`No API key configured for provider ${providerId}`);
   }
@@ -200,6 +211,7 @@ export async function chatWithTools({
       signal,
       images,
       providerId,
+      credentialType,
     });
     return recordTurnProvenance(reply, {
       providerId, model: resolvedModel, url: resolvedUrl, isLocal: false, provenance, startedAt,
@@ -215,6 +227,7 @@ export async function chatWithTools({
       toolDefs,
       signal,
       images,
+      credentialType,
     });
     return recordTurnProvenance(reply, {
       providerId, model: resolvedModel, url: ANTHROPIC_URL, isLocal: false, provenance, startedAt,
@@ -230,6 +243,7 @@ export async function chatWithTools({
       toolDefs,
       signal,
       images,
+      credentialType,
     });
     return recordTurnProvenance(reply, {
       providerId,
@@ -289,6 +303,7 @@ async function openAiCompatibleTurn({
   providerId,
   reasoningEffortNone = false,
   images = [],
+  credentialType = 'api_key',
 }) {
   const outboundMessages = images.length === 0 ? messages : messages.map((message, index) => {
     if (index !== messages.length - 1 || message.role !== 'user') return message;
@@ -471,7 +486,7 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images
   return { role: 'assistant', content, toolCalls, raw: data };
 }
 
-async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = [] }) {
+async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = [], credentialType = 'api_key' }) {
   // Flatten to Gemini contents; put system in systemInstruction
   let system = '';
   const contents = [];
@@ -549,9 +564,8 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = 
     }
   }
 
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
-    + `?key=${encodeURIComponent(apiKey)}`;
+  const baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const url = credentialType === 'bearer' ? baseUrl : `${baseUrl}?key=${encodeURIComponent(apiKey)}`;
 
   const payload = {
     system_instruction: system ? { parts: [{ text: system }] } : undefined,
@@ -563,7 +577,10 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = 
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(credentialType === 'bearer' ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
     body: redactOutboundBody(JSON.stringify(payload), apiKey),
     signal,
   });

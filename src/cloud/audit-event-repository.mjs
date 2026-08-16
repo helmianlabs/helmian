@@ -74,6 +74,21 @@ export function normalizeAuditQuery(input = {}) {
   });
 }
 
+export async function appendAuditEvent(client, context, input) {
+  const receipt = await client.query(
+    `insert into helmion.audit_events
+       (tenant_id, actor_subject, actor_role, session_id, request_id, action_type,
+        canonical_target, policy_version, decision, privacy_summary, result)
+     values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb)
+     returning id`,
+    [context.tenantId, context.actorSubject, context.actorRole, context.sessionId, context.requestId,
+      input.actionType, JSON.stringify(input.canonicalTarget), input.policyVersion, input.decision,
+      input.privacySummary, JSON.stringify(input.result)],
+  );
+  if (receipt.rowCount !== 1 || receipt.rows[0]?.id == null) throw new Error('audit event receipt was not durable');
+  return String(receipt.rows[0].id);
+}
+
 export function createAuditEventRepository(pool) {
   return Object.freeze({
     async list(actor, input = {}) {

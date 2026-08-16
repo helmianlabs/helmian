@@ -6,13 +6,18 @@ import { createGeminiOAuthPkce, resolveGeminiOAuthConfig } from '../src/cloud/pr
 
 function fakePool() {
   const calls = [];
+  let storedToken = null;
   const client = {
     async query(sql, values = []) {
       calls.push({ sql: String(sql), values });
       if (['begin', 'commit', 'rollback'].includes(String(sql))) return { rowCount: 0, rows: [] };
       if (String(sql).startsWith('select set_config')) return { rowCount: 1, rows: [] };
       if (String(sql).includes('from helmion.tenant_memberships')) return { rowCount: 1, rows: [{ role: 'owner' }] };
-      if (String(sql).includes('insert into helmion.provider_oauth_tokens')) return { rowCount: 1, rows: [{ id: 17 }] };
+       if (String(sql).includes('insert into helmion.provider_oauth_tokens')) {
+         storedToken = { ciphertext: values[3], iv: values[4], auth_tag: values[5], token_type: values[6] };
+         return { rowCount: 1, rows: [{ id: 17 }] };
+       }
+       if (String(sql).includes('from helmion.provider_oauth_tokens')) return storedToken ? { rowCount: 1, rows: [storedToken] } : { rowCount: 0, rows: [] };
       throw new Error(`unexpected SQL: ${sql}`);
     },
     release() {},
@@ -49,6 +54,17 @@ test('database vault stores only AES-GCM ciphertext and keeps token material out
 test('database vault rejects a credential reference belonging to another tenant', async () => {
   const adapter = createDatabaseEncryptedVaultAdapter({ pool: fakePool(), key: Buffer.alloc(32, 9).toString('base64url') });
   await assert.rejects(() => adapter.prepareReference({ tenantId: 'tenant-a', providerId: 'gemini', credentialReference: 'vault://tenant/tenant-b/gemini/oauth' }), /reference is invalid/);
+});
+
+test('database vault resolves a tenant credential only after membership and never returns it as metadata', async () => {
+  const pool = fakePool();
+  const vault = createDatabaseEncryptedVaultAdapter({ pool, key: Buffer.alloc(32, 7).toString('base64url') });
+  await vault.storeOAuthTokens({ tenantId: 'acme-operations', providerId: 'gemini', credentialReference: 'vault://tenant/acme-operations/gemini/oauth', actorSubject: 'owner-1', actorRole: 'owner', sessionId: 'session-1', requestId: 'request-1', accessToken: 'access-secret', refreshToken: null });
+  const result = await vault.resolveCredential({ tenantId: 'acme-operations', providerId: 'gemini', credentialReference: 'vault://tenant/acme-operations/gemini/oauth', actorSubject: 'owner-1', actorRole: 'owner', sessionId: 'session-1', requestId: 'request-1' });
+  assert.equal(result.accepted, true);
+  assert.equal(result.credential, 'access-secret');
+  assert.equal(result.secretMaterial, 'adapter_only');
+  assert.equal(Object.hasOwn(result, 'refreshToken'), false);
 });
 
 test('PKCE generator produces verifier/challenge material accepted by the existing contract', () => {
