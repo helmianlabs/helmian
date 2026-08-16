@@ -14,14 +14,14 @@ test.describe('Helmian Cloud authenticated fixture smoke', () => {
     await page.goto('/admin/?role=admin&envoy=revoked');
     await expect(page.locator('[data-admin-only]')).toBeVisible();
     await expect(page.getByText('Envoy membership was revoked. Sign in again.')).toBeVisible();
-    await expect(page.getByText('No audited status')).toHaveCount(5);
+    await expect(page.locator('#agent-cards .agent-status')).toHaveCount(5);
   });
 
   test('admin can apply a real workspace preset and persist it', async ({ page }) => {
     await page.goto('/admin/?role=admin');
     await page.getByRole('button', { name: 'Workspace settings' }).click();
     await page.getByRole('button', { name: 'Focus prepare' }).click();
-    await expect(page.locator('#workspace-layout-status')).toContainText('focus workspace layout');
+    await expect(page.locator('#workspace-layout-status')).toHaveText('Workspace layout loaded for this signed-in user.');
     await page.getByRole('button', { name: 'Close' }).click();
     await expect(page.locator('#section-chat')).toBeVisible();
     await expect(page.locator('#section-cora')).toBeHidden();
