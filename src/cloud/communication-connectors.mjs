@@ -89,6 +89,12 @@ export function readCommunicationConnectorStatus(env = process.env) {
       inboundVerification: Boolean(String(env.HELMION_SLACK_SIGNING_SECRET ?? '').trim()),
       outboundDelivery: Boolean(String(env.HELMION_SLACK_WEBHOOK_URL ?? '').trim()),
     }),
+    github: Object.freeze({
+      configured: false,
+      inboundVerification: false,
+      outboundDelivery: false,
+      detail: 'oauth_and_delivery_not_wired',
+    }),
     agentBridge: 'not-connected',
   });
 }

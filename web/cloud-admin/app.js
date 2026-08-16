@@ -131,6 +131,8 @@ const approvalInboxStatus = document.querySelector('#approval-inbox-status');
 const approvalInboxFilters = document.querySelector('#approval-inbox-filters');
 const approvalInboxItems = document.querySelector('#approval-inbox-items');
 const connectorStatus = document.querySelector('#connector-status');
+const connectorSurfaceStatus = document.querySelector('#connector-surface-status');
+const connectorSurfaceButtons = [...document.querySelectorAll('[data-connector-surface]')];
 const connectorItems = document.querySelector('#connector-items');
 const connectorForm = document.querySelector('#connector-form');
 const connectorProvider = document.querySelector('#connector-provider');
@@ -811,6 +813,25 @@ async function loadApprovalInbox() { approvalInboxStatus.textContent = 'Loading 
 approvalInboxFilters.onchange = () => loadApprovalInbox().catch(() => {});
 
 function renderConnectors(body) { const model = connectorRegistrationPanelModel(body); connectorItems.replaceChildren(); connectorStatus.textContent = model.statusLabel; if (model.empty) { connectorItems.textContent = model.statusLabel; return; } for (const registration of model.registrations) { const item = document.createElement('article'); item.className = 'config-item'; item.textContent = `${registration.provider} · ${registration.lifecycle} · endpoint readiness: ${registration.publicEndpointReady ? 'declared' : 'not declared'} · verifier: ${registration.lastVerifiedStatus} · inbound delivery not enabled by this panel`; connectorItems.append(item); } }
+function selectConnectorSurface(surface) {
+  connectorSurfaceButtons.forEach((button) => {
+    const selected = button.dataset.connectorSurface === surface;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+  if (surface === 'envoy') {
+    connectorSurfaceStatus.textContent = 'Envoy is the built-in Helmian conversation surface.';
+    document.querySelector('#section-chat')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  const label = surface[0].toUpperCase() + surface.slice(1);
+  connectorSurfaceStatus.textContent = surface === 'github'
+    ? 'GitHub is selected. Registration metadata is available; OAuth, repository reads, and delivery are not wired yet.'
+    : `${label} is selected. Configure organization-scoped metadata below; external delivery remains approval- and verifier-gated.`;
+  connectorProvider.value = surface;
+  connectorForm?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+connectorSurfaceButtons.forEach((button) => { button.onclick = () => selectConnectorSurface(button.dataset.connectorSurface); });
 async function loadConnectors() { connectorStatus.textContent = 'Loading connector registration metadata…'; try { const body = await coraClient.readConnectors(); renderConnectors(body); if (connectorForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) connectorForm.hidden = false; } catch (error) { connectorItems.replaceChildren(); connectorStatus.textContent = error.status === 403 ? 'Connector metadata unavailable: active Organization membership is required.' : `Connector metadata unavailable: ${error.message}`; } }
 connectorForm.onsubmit = async (event) => { event.preventDefault(); connectorStatus.textContent = 'Saving connector metadata…'; try { const channels = connectorChannels.value.split('\n').map((line) => line.split('|').map((part) => part.trim())).filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map(([externalChannelId, label]) => ({ externalChannelId, label, enabled: true })); await coraClient.saveConnector({ provider: connectorProvider.value, lifecycle: connectorLifecycle.value, enabled: connectorLifecycle.value === 'enabled', publicEndpointReady: connectorEndpointReady.checked, secretReferenceName: connectorSecretRef.value.trim() || null, allowedInboundChannels: channels }); connectorStatus.textContent = 'Connector metadata saved. No secret value, webhook, OAuth flow, provider call, or delivery was performed.'; await loadConnectors(); } catch (error) { connectorStatus.textContent = `Connector metadata not saved: ${error.message}`; } };
 
