@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
 import { createLiveHelmianCloudAdminHandler, shouldMountLiveAdmin } from '../src/cloud/live-admin.mjs';
 import { createIdentityGateway } from '../src/cloud/identity-gateway.mjs';
@@ -31,6 +32,18 @@ test('identity gateway requires the exact mounted HTTPS callback', () => {
       HELMION_ADMIN_REDIRECT_URI: 'https://helmian.example/auth/callback',
     } }),
     /ending exactly \/admin\/auth\/callback/,
+  );
+});
+
+test('production identity gateway requires a signing secret for cross-process sessions', () => {
+  assert.throws(
+    () => createIdentityGateway({ env: {
+      HELMION_CLOUD_ENVIRONMENT: 'production',
+      HELMION_ADMIN_ISSUER: 'https://issuer.example',
+      HELMION_ADMIN_CLIENT_ID: 'helmian-admin',
+      HELMION_ADMIN_REDIRECT_URI: 'https://helmian.example/admin/auth/callback',
+    } }),
+    /HELMION_ADMIN_SESSION_SECRET must be at least 32 characters/u,
   );
 });
 
@@ -72,4 +85,38 @@ test('identity discovery refuses redirects and oversized JSON with a timeout sig
     status: 200, headers: { 'content-length': String(65 * 1024) },
   }) });
   await assert.rejects(() => oversized.beginLogin(), /too large/u);
+});
+
+test('OIDC callback issues a signed session that a fresh gateway can verify', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const issuer = 'https://issuer.example';
+  const clientId = 'helmian-admin';
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'test-key' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ iss: issuer, aud: clientId, sub: 'user-troy', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
+  const signingInput = `${header}.${payload}`;
+  const idToken = `${signingInput}.${sign('RSA-SHA256', Buffer.from(signingInput), privateKey).toString('base64url')}`;
+  const publicJwk = { ...publicKey.export({ format: 'jwk' }), kid: 'test-key', alg: 'RS256', use: 'sig' };
+  const config = {
+    HELMION_CLOUD_ENVIRONMENT: 'production',
+    HELMION_ADMIN_ISSUER: issuer,
+    HELMION_ADMIN_CLIENT_ID: clientId,
+    HELMION_ADMIN_REDIRECT_URI: 'https://helmian.example/admin/auth/callback',
+    HELMION_ADMIN_SESSION_SECRET: 's'.repeat(32),
+  };
+  const fetchImpl = async (url) => {
+    if (url.endsWith('/.well-known/openid-configuration')) return new Response(JSON.stringify({ authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, jwks_uri: `${issuer}/jwks` }));
+    if (url.endsWith('/token')) return new Response(JSON.stringify({ id_token: idToken }));
+    if (url.endsWith('/jwks')) return new Response(JSON.stringify({ keys: [publicJwk] }));
+    throw new Error(`unexpected OIDC URL: ${url}`);
+  };
+  const first = createIdentityGateway({ env: config, fetchImpl });
+  const login = await first.beginLogin();
+  const result = await first.finishLogin('authorization-code', login.state);
+  assert.match(result.sessionId, /^hs1\.[^.]+\.[^.]+$/u);
+  assert.equal(first.getSession(result.sessionId).subject, 'user-troy');
+  const fresh = createIdentityGateway({ env: config, fetchImpl });
+  assert.equal(fresh.getSession(result.sessionId).subject, 'user-troy');
+  assert.equal(fresh.getSession(`${result.sessionId.slice(0, -1)}x`), null);
+  assert.equal(fresh.revokeSession(result.sessionId), true);
+  assert.equal(fresh.getSession(result.sessionId), null);
 });

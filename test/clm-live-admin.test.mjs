@@ -42,6 +42,7 @@ const env = {
   HELMION_ADMIN_ISSUER: 'https://identity.example.com',
   HELMION_ADMIN_CLIENT_ID: 'helmian-cloud-admin',
   HELMION_ADMIN_REDIRECT_URI: 'https://helmian.example.com/admin/auth/callback',
+  HELMION_ADMIN_SESSION_SECRET: 's'.repeat(32),
   ANTHROPIC_API_KEY: 'configured-outside-git',
 };
 
