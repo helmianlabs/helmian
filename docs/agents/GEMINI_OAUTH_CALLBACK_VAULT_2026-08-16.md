@@ -44,16 +44,27 @@ success.
 - Full repository suite: 1,289 passed, 0 failed, 2 skipped, after installing
   the already-declared `web/marketing/package.json` dependency into the isolated
   worktree without changing tracked files.
-- Pre-deploy live probes:
-  `GET https://helmian.cloud/api/admin/provider-oauth/gemini/start` returned
-  HTTP 404 `CLOUD_ADMIN_ROUTE_NOT_FOUND`, and the equivalent callback probe also
-  returned HTTP 404. `fly secrets list -a helmian-cloud` showed no
-  `HELMION_GEMINI_OAUTH_CLIENT_ID` and no `HELMION_OAUTH_VAULT_KEY`.
+- Pre-deploy live probes returned HTTP 404 for both new routes. After commit
+  `2abd2da70026943918e839e9af5339f0b30def7e` deployed as Fly v53,
+  `GET https://helmian.cloud/api/admin/provider-oauth/gemini/start` and the
+  equivalent callback probe both return HTTP 403
+  `PROVIDER_OAUTH_MEMBERSHIP_REQUIRED`, proving route registration and the
+  unauthenticated fail-closed boundary. `HELMION_OAUTH_VAULT_KEY` is now listed
+  as deployed; `HELMION_GEMINI_OAUTH_CLIENT_ID` remains absent.
+- Read-only production preflight from the deployed image reports target
+  endpoint `ep-proud-truth-a69e8vg4`, migrations 012–034 pending, and
+  `migrationsReady: false`. A narrow read-only query reports
+  `helmion.tenants` present but `helmion.provider_connections`,
+  `helmion.provider_oauth_transactions`, and `helmion.provider_oauth_tokens`
+  absent, with tracked migration count for 031/034 equal to zero. The generic
+  migration command is intentionally not run because it would apply 23
+  unrelated pending migrations outside this slice.
 
 ## Status stamp
 
-`[VERIFIED: code/tests]` The code and tests are verified in this isolated
-workspace. `[UNVERIFIED: live]` Deployment, migration 034 on the production
-database, real Google client registration, and an authenticated callback/canary
-remain live evidence gates. No “wired end-to-end” claim is made before those
-gates are directly observed.
+`[VERIFIED: code/tests/deployed route/vault secret]` The code, tests, Fly v53
+route registration, unauthenticated boundary, and vault-key secret presence
+are directly verified. `[UNVERIFIED: live]` Migration 034 on the production
+database, real Google client registration, authenticated owner/admin callback,
+and provider canary remain live evidence gates. No “wired end-to-end” claim is
+made before those gates are directly observed.
