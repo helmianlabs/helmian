@@ -20,6 +20,7 @@ import { LAYER, recordBlockEvent } from '../src/core/audit-log.mjs';
 import { distillResolvedBlocker } from '../src/core/distiller.mjs';
 import { createCodexAdapter } from '../src/adapters/codex.mjs';
 import { createNeonStore } from '../src/adapters/neon.mjs';
+import { createProviderOAuthMigrationPlan } from '../src/adapters/provider-oauth-migration-plan.mjs';
 import {
   HUMAN_CONFIRMATION_AUDIENCE,
   handoffActionHash,
@@ -1181,6 +1182,16 @@ async function inspectDatabase() {
   }
 }
 
+async function providerOAuthMigrationPlan() {
+  const store = await guardedNeonStore();
+  try {
+    const inspection = await store.inspectDatabase();
+    process.stdout.write(`${JSON.stringify(createProviderOAuthMigrationPlan(inspection), null, 2)}\n`);
+  } finally {
+    await store.close();
+  }
+}
+
 async function phaseTwoSwitchTest() {
   const store = await guardedNeonStore();
   try {
@@ -1405,6 +1416,7 @@ else if (command === 'plugin' || command === 'plugins') await plugin();
 else if (command === 'advisory') await advisory();
 else if (command === 'init') await init();
 else if (command === 'db-inspect') await inspectDatabase();
+else if (command === 'migration-plan') await providerOAuthMigrationPlan();
 else if (command === 'migrate') await migrate();
 else if (command === 'phase-two-switch-test') await phaseTwoSwitchTest();
 else if (command === 'owner-key') {
@@ -1557,6 +1569,7 @@ Governance / Maestro (existing kernel):
   helmion pilot-policy
   helmion owner-key …
   helmion db-inspect --expect-endpoint <ep-id>
+  helmion migration-plan --expect-endpoint <ep-id>
   helmion migrate --expect-endpoint <ep-id>
   helmion phase-two-switch-test --expect-endpoint <ep-id>
   helmion blockers [project]
