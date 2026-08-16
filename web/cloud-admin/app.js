@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, providerConnectionPanelModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -123,6 +123,12 @@ const connectorLifecycle = document.querySelector('#connector-lifecycle');
 const connectorSecretRef = document.querySelector('#connector-secret-ref');
 const connectorEndpointReady = document.querySelector('#connector-endpoint-ready');
 const connectorChannels = document.querySelector('#connector-channels');
+const providerConnectionsStatus = document.querySelector('#provider-connections-status');
+const providerConnectionsItems = document.querySelector('#provider-connections-items');
+const providerConnectionForm = document.querySelector('#provider-connection-form');
+const providerConnectionProvider = document.querySelector('#provider-connection-provider');
+const providerConnectionAuthMode = document.querySelector('#provider-connection-auth-mode');
+const providerConnectionReference = document.querySelector('#provider-connection-reference');
 const artifactStudioForm = document.querySelector('#artifact-studio-form');
 const artifactStudioType = document.querySelector('#artifact-studio-type');
 const artifactStudioStage = document.querySelector('#artifact-studio-stage');
@@ -735,6 +741,10 @@ function renderConnectors(body) { const model = connectorRegistrationPanelModel(
 async function loadConnectors() { connectorStatus.textContent = 'Loading connector registration metadata…'; try { const body = await coraClient.readConnectors(); renderConnectors(body); if (connectorForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) connectorForm.hidden = false; } catch (error) { connectorItems.replaceChildren(); connectorStatus.textContent = error.status === 403 ? 'Connector metadata unavailable: active Organization membership is required.' : `Connector metadata unavailable: ${error.message}`; } }
 connectorForm.onsubmit = async (event) => { event.preventDefault(); connectorStatus.textContent = 'Saving connector metadata…'; try { const channels = connectorChannels.value.split('\n').map((line) => line.split('|').map((part) => part.trim())).filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map(([externalChannelId, label]) => ({ externalChannelId, label, enabled: true })); await coraClient.saveConnector({ provider: connectorProvider.value, lifecycle: connectorLifecycle.value, enabled: connectorLifecycle.value === 'enabled', publicEndpointReady: connectorEndpointReady.checked, secretReferenceName: connectorSecretRef.value.trim() || null, allowedInboundChannels: channels }); connectorStatus.textContent = 'Connector metadata saved. No secret value, webhook, OAuth flow, provider call, or delivery was performed.'; await loadConnectors(); } catch (error) { connectorStatus.textContent = `Connector metadata not saved: ${error.message}`; } };
 
+function renderProviderConnections(body) { const model = providerConnectionPanelModel(body); providerConnectionsItems.replaceChildren(); providerConnectionsStatus.textContent = model.statusLabel; if (model.empty) { providerConnectionsItems.textContent = model.statusLabel; return; } for (const connection of model.connections) { const item = document.createElement('article'); item.className = 'config-item'; item.append(configItem('Provider', `${connection.providerId} · ${connection.authMode}`), configItem('Vault reference', connection.credentialReference), configItem('Lifecycle', connection.lifecycle), configItem('Readiness', 'External vault verification required'), configItem('Tools', 'Not granted'), configItem('Invocation', 'Not performed')); providerConnectionsItems.append(item); } }
+async function loadProviderConnections() { providerConnectionsStatus.textContent = 'Loading tenant provider references…'; try { const body = await coraClient.readProviderConnections(); renderProviderConnections(body); if (providerConnectionForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) providerConnectionForm.hidden = false; } catch (error) { providerConnectionsItems.replaceChildren(); providerConnectionsStatus.textContent = error.status === 403 ? 'Provider references unavailable: active Organization membership is required.' : `Provider references unavailable: ${error.message}`; } }
+providerConnectionForm.onsubmit = async (event) => { event.preventDefault(); providerConnectionsStatus.textContent = 'Saving tenant provider reference…'; try { await coraClient.saveProviderConnection({ providerId: providerConnectionProvider.value, authMode: providerConnectionAuthMode.value, credentialReference: providerConnectionReference.value.trim() }); providerConnectionsStatus.textContent = 'Provider reference saved. External vault verification is required; no tools or provider call was performed.'; providerConnectionReference.value = ''; await loadProviderConnections(); } catch (error) { providerConnectionsStatus.textContent = `Provider reference not saved: ${error.message}`; } };
+
 function renderArtifactStudio(body) {
   const model = artifactStudioPanelModel(body);
   artifactStudioReceipts.replaceChildren();
@@ -837,6 +847,7 @@ async function load() {
   await loadAgentTasks();
   await loadApprovalInbox();
   await loadConnectors();
+  await loadProviderConnections();
   await loadArtifactStudio();
   startEnvoyRealtime();
   if (!workspaceTimer) workspaceTimer = window.setInterval(() => refreshWorkspacePanels().catch(() => {}), 15000);
