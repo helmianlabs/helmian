@@ -30,7 +30,23 @@ class MigrationPool {
         if (normalized.startsWith('select pg_advisory_xact_lock')) {
           return { rowCount: 1, rows: [{}] };
         }
-        if (normalized.startsWith('create schema if not exists helmion')) {
+        if (String(sql).includes('helmion.billing_events')) {
+          pool.executedSql.push('030_helmion_billing_entitlements.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (String(sql).includes('helmion.provider_connections')) {
+          pool.executedSql.push('031_helmion_provider_connections.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (String(sql).includes('helmion.workspace_projects')) {
+          pool.executedSql.push('032_workspace_projects.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (String(sql).includes('helmion.console_command_intents')) {
+          pool.executedSql.push('033_console_command_intents.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (normalized.includes('create schema if not exists helmion')) {
           if (String(sql).includes('helmion.projects')) pool.executedSql.push('001_helmion.sql');
           return { rowCount: 0, rows: [] };
         }
@@ -191,6 +207,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['024_cora_usage_budget_allocations.sql', true, 'committed'],
       ['025_cora_approval_decisions.sql', true, 'committed'],
       ['026_cora_connector_registrations.sql', true, 'committed'],
+      ['030_helmion_billing_entitlements.sql', true, 'committed'],
+      ['031_helmion_provider_connections.sql', true, 'committed'],
+      ['032_workspace_projects.sql', true, 'committed'],
+      ['033_console_command_intents.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -222,13 +242,17 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '024_cora_usage_budget_allocations.sql',
       '025_cora_approval_decisions.sql',
       '026_cora_connector_registrations.sql',
+      '030_helmion_billing_entitlements.sql',
+      '031_helmion_provider_connections.sql',
+      '032_workspace_projects.sql',
+      '033_console_command_intents.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+    [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
   );
   assert.deepEqual(
     pool.executedSql,
@@ -259,9 +283,13 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '024_cora_usage_budget_allocations.sql',
       '025_cora_approval_decisions.sql',
       '026_cora_connector_registrations.sql',
+      '030_helmion_billing_entitlements.sql',
+      '031_helmion_provider_connections.sql',
+      '032_workspace_projects.sql',
+      '033_console_command_intents.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 52);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 60);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 

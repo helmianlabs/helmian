@@ -688,6 +688,34 @@ test('A THROWN TURN STILL YIELDS THE MICROPHONE — one assistant_end, and it sa
   }
 });
 
+test('a refused session writes a durable refusal row before yielding the turn', async () => {
+  const ws = tempWorkspace('refused-session');
+  const server = await startCoraClm({
+    workspace: ws.dir,
+    port: 0,
+    bridgeSecret: BRIDGE_SECRET,
+    requireSignedSessions: true,
+    activitySink: recordVoiceTurn,
+    runTurn: async () => ({ text: '' }),
+  });
+  const hume = await connectMockHume(server.url);
+
+  try {
+    hume.sendTurn([{ role: 'user', content: 'open the session anyway' }], 'not-helmion');
+    await waitFor(() => hume.ends().length === 1, { label: 'the refused session turn' });
+
+    const rows = readActivity(ws.dir);
+    assert.equal(rows.length, 1, 'the refusal is written to the durable activity ledger');
+    assert.equal(rows[0].status, 'refused');
+    assert.equal(rows[0].source, 'Helmian Cora (voice)');
+    assert.match(rows[0].detail, /Please start a new voice session/);
+  } finally {
+    hume.close();
+    await server.close();
+    ws.cleanup();
+  }
+});
+
 test('an unreadable frame yields the turn back instead of hanging the chat', async () => {
   const ws = tempWorkspace('garbage');
   let called = 0;

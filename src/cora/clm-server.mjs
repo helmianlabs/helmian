@@ -700,6 +700,7 @@ export async function startCoraClm({
           'I could not use that voice session. Please start a new voice session.',
           outboundSessionId,
         ));
+        writeActivity('refused', null, 'I could not use that voice session. Please start a new voice session.');
         return;
       }
       if (!parsed.ok) {
@@ -892,17 +893,17 @@ export async function startCoraClm({
       endTurn();
     }
 
-    function writeActivity(status, failure = null) {
+    function writeActivity(status, failure = null, spokenOverride = null) {
       if (!parsed.ok || !parsed.lastUser) return;
       const result = activitySink?.(workspace, {
         heard: parsed.lastUser.content,
-        spoken: failure ? `(failed) ${failure}` : spokenPieces.join(' '),
+        spoken: spokenOverride ?? (failure ? `(failed) ${failure}` : spokenPieces.join(' ')),
         status,
         tools: toolsUsed,
         model: answeredBy,
-        sessionId,
-        helmionMode: session.helmionMode,
-        bridgeContext: session.bridgeContext,
+        sessionId: session ? sessionId : null,
+        helmionMode: session?.helmionMode ?? false,
+        bridgeContext: session?.bridgeContext ?? null,
       });
       // A ledger failure is never silent — this codebase already shipped that
       // bug once with a dropped `skipped` flag.
