@@ -11,6 +11,7 @@ function fakeFetch() {
     if (url.includes('/knowledge/query')) return new Response(JSON.stringify({ status: 'no_approved_source_match', excerpts: [], answer: null, providerCall: 'not_performed' }), { status: 200 });
     if (url.endsWith('/usage')) return new Response(JSON.stringify({ budget: { policyState: 'active' }, totals: { eventCount: 1, estimatedCostMinor: 12, reconciledCostMinor: null }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' }), { status: 200 });
     if (url.endsWith('/workspace/previews')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
+    if (url.endsWith('/app-builds/from-prompt')) return new Response(JSON.stringify({ receiptId: 'prompt-receipt-1', title: 'Driver onboarding', department: 'hr', route: '/hr/onboarding', providerInvocation: 'performed', execution: 'not_performed' }), { status: 200 });
     if (url.endsWith('/app-builds')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/tasks')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/personal-preferences')) return new Response(JSON.stringify({ bounds: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in'], turnMode: ['concise'], voiceProfiles: ['emma'] }, preferences: { format: 'cora.personal-preferences.v1', valid: true, organizationId: 'customer-a', subject: 'user-1', preferences: { muted: false, volume: 80, verbosity: 'standard', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' } } }), { status: 200 });
@@ -34,6 +35,7 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.createWorkspacePreview({ mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
   await client.readAppBuilds();
   await client.createAppBuild({ intent: 'draft', title: 'Driver onboarding', department: 'hr', route: '/hr/onboarding', description: 'Draft only.', components: [{ type: 'heading', text: 'Driver onboarding' }], idempotencyKey: 'app-build-0001' });
+  await client.createAppBuildFromPrompt('Build HR driver self-onboarding.');
   await client.readAgentTasks();
   await client.readPersonalPreferences();
   await client.savePersonalPreferences({ muted: true, volume: 40, verbosity: 'concise', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' });
@@ -54,6 +56,8 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   assert.deepEqual(JSON.parse(previewCall.options.body), { mode: 'workspace', intent: 'prepare', department: 'operations', templateId: 'sop-1', title: 'Prepare SOP preview', idempotencyKey: 'idem-1' });
   const appBuildCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/app-builds') && options.method === 'POST');
   assert.deepEqual(JSON.parse(appBuildCall.options.body), { intent: 'draft', title: 'Driver onboarding', department: 'hr', route: '/hr/onboarding', description: 'Draft only.', components: [{ type: 'heading', text: 'Driver onboarding' }], idempotencyKey: 'app-build-0001' });
+  const promptBuildCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/app-builds/from-prompt') && options.method === 'POST');
+  assert.deepEqual(JSON.parse(promptBuildCall.options.body), { userRequest: 'Build HR driver self-onboarding.' });
   const taskCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/tasks') && options.method === 'POST');
   assert.deepEqual(JSON.parse(taskCall.options.body), { taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
   const preferencesCall = fetchImpl.calls.find(({ url }) => url.endsWith('/personal-preferences'));

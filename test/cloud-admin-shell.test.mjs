@@ -13,6 +13,11 @@ test('authenticated shell navigation names real product surfaces and remains rol
   }
   assert.match(page, /data-admin-only/iu);
   assert.match(script, /adminNav\.hidden\s*=\s*!isAdmin/u);
+  assert.match(page, /id="app-build-prompt-form"[^>]*hidden/iu);
+  assert.match(page, /plain-English prompt creates a draft only\. It never automatically approves, runs code, changes files, publishes a page, or deploys/iu);
+  assert.match(script, /appBuildPromptForm\.hidden\s*=\s*!isAdmin/u);
+  assert.match(script, /createAppBuildFromPrompt\(userRequest\)/u);
+  assert.match(script, /renderAppBuildPromptReceipt\(receipt\)/u);
   assert.match(page, /Search stored approved sources/iu);
   assert.match(page, /Organization scope/u);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);

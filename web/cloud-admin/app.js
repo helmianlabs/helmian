@@ -125,6 +125,10 @@ const appBuildDescription = document.querySelector('#app-build-description');
 const appBuildSubmit = document.querySelector('#app-build-submit');
 const appBuildStatus = document.querySelector('#app-build-status');
 const appBuildReceipts = document.querySelector('#app-build-receipts');
+const appBuildPromptForm = document.querySelector('#app-build-prompt-form');
+const appBuildPrompt = document.querySelector('#app-build-prompt');
+const appBuildPromptSubmit = document.querySelector('#app-build-prompt-submit');
+const appBuildPromptReceipt = document.querySelector('#app-build-prompt-receipt');
 const agentTaskForm = document.querySelector('#agent-task-form');
 const agentTaskType = document.querySelector('#agent-task-type');
 const agentTaskIntent = document.querySelector('#agent-task-intent');
@@ -846,6 +850,12 @@ function renderAppBuilds(body) {
   appBuildStatus.textContent = model.statusLabel;
   for (const receipt of model.receipts) { const card = document.createElement('article'); card.className = 'config-item'; card.append(configItem('Draft', `${receipt.title} · ${receipt.route}`), configItem('Department', receipt.department), configItem('Status', receipt.status), configItem('Receipt', receipt.receiptId), configItem('Run / publish / deploy', 'Not performed')); appBuildReceipts.append(card); }
 }
+function renderAppBuildPromptReceipt(receipt) {
+  appBuildPromptReceipt.replaceChildren();
+  const card = document.createElement('article'); card.className = 'config-item';
+  card.append(configItem('Draft', `${receipt.title || 'Untitled draft'} · ${receipt.route || 'route unavailable'}`), configItem('Department', receipt.department || 'unavailable'), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Provider planning', receipt.providerInvocation === 'performed' ? 'Performed on the server' : 'Not performed'), configItem('Approval / execution / files / publish / deploy', 'Not performed'));
+  appBuildPromptReceipt.append(card);
+}
 
 async function loadAppBuilds() {
   appBuildStatus.textContent = 'Loading app-build draft receipts…';
@@ -944,6 +954,7 @@ async function load() {
   adminNav.hidden = !isAdmin;
   workspaceRoleDefaultControls.hidden = !isAdmin;
   appBuildForm.hidden = !isAdmin;
+  appBuildPromptForm.hidden = !isAdmin;
   workspaceState.textContent = `AUTHENTICATED · ${String(sessionBody.actor.role ?? 'member').toUpperCase()}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
@@ -1116,6 +1127,22 @@ appBuildForm.onsubmit = async (event) => {
     appBuildForm.reset(); await loadAppBuilds();
   } catch (error) { appBuildStatus.textContent = error.status === 403 ? 'App-build draft not recorded: owner/admin membership is required.' : `App-build draft not recorded: ${error.message}`; }
   finally { appBuildSubmit.disabled = false; }
+};
+appBuildPromptForm.onsubmit = async (event) => {
+  event.preventDefault();
+  const userRequest = appBuildPrompt.value.trim();
+  if (!userRequest) { appBuildStatus.textContent = 'Enter a plain-English app-build request.'; return; }
+  appBuildPromptSubmit.disabled = true; appBuildStatus.textContent = 'Creating bounded draft from prompt…';
+  try {
+    const receipt = await coraClient.createAppBuildFromPrompt(userRequest);
+    renderAppBuildPromptReceipt(receipt);
+    appBuildPrompt.value = '';
+    appBuildStatus.textContent = 'Draft recorded. It was not approved, executed, written to files, published, or deployed.';
+    await loadAppBuilds();
+  } catch (error) {
+    appBuildPromptReceipt.replaceChildren();
+    appBuildStatus.textContent = error.status === 403 ? 'Prompt draft not recorded: owner/admin membership is required.' : error.status === 503 ? 'Prompt planner is unavailable; no draft was recorded.' : `Prompt draft not recorded: ${error.message}`;
+  } finally { appBuildPromptSubmit.disabled = false; }
 };
 agentTaskForm.onsubmit = async (event) => {
   event.preventDefault();

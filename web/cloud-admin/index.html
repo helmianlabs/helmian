@@ -242,8 +242,14 @@
               <textarea id="app-build-description" aria-label="App draft description" maxlength="1200" placeholder="Describe the bounded page workflow." required></textarea>
               <button id="app-build-submit" type="submit">Record app-build draft</button>
             </form>
+            <form id="app-build-prompt-form" class="config-controls" hidden>
+              <label for="app-build-prompt">Describe the page or workflow in plain English</label>
+              <textarea id="app-build-prompt" aria-label="Plain-English app-build request" maxlength="4000" placeholder="Build HR a driver self-onboarding page with an email field and a save-draft button." required></textarea>
+              <button id="app-build-prompt-submit" type="submit">Create bounded draft from prompt</button>
+            </form>
+            <div id="app-build-prompt-receipt" class="config-grid" aria-live="polite"></div>
             <div id="app-build-receipts" class="config-grid"></div>
-            <p class="preview">Owner/admin only. This records a validated declarative draft with fixed safe components. It cannot run code, publish a page, modify files, or deploy.</p>
+            <p class="preview">Owner/admin only. A plain-English prompt creates a draft only. It never automatically approves, runs code, changes files, publishes a page, or deploys.</p>
           </section>
         </section>
         <section id="section-tasks" class="card" aria-labelledby="agent-task-heading">

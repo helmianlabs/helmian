@@ -41,6 +41,7 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     createAppBuild({ intent, title, department, route, description, components, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/app-builds', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ intent, title, department, route, description, components, idempotencyKey }) });
     },
+    createAppBuildFromPrompt(userRequest) { return requestJson(fetchImpl, '/api/admin/cora/app-builds/from-prompt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userRequest }) }); },
     readAgentTasks() { return requestJson(fetchImpl, '/api/admin/cora/tasks'); },
     createAgentTask({ taskType, goal, contextRef, department, costCenter, intent, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/tasks', {
