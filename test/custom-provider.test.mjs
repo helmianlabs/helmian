@@ -207,7 +207,7 @@ test('the NDJSON bridge routes a turn through a custom provider sent in the payl
   // pins the value rather than the .env being "correct".
   const child = spawn(process.execPath, ['bin/helmion.mjs', 'agent-bridge'], {
     cwd: root,
-    stdio: ['pipe', 'pipe', 'ignore'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
       HELMION_CUSTOM_PROVIDERS: '',
@@ -224,9 +224,12 @@ test('the NDJSON bridge routes a turn through a custom provider sent in the payl
   }];
 
   const events = [];
+  let childStderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => { childStderr += chunk; });
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('bridge timed out')), 20000);
+      const timer = setTimeout(() => reject(new Error(`bridge timed out: ${childStderr}`)), 20000);
       const rl = createInterface({ input: child.stdout });
       rl.on('line', (line) => {
         let ev;
@@ -249,7 +252,7 @@ test('the NDJSON bridge routes a turn through a custom provider sent in the payl
           resolve();
         }
       });
-      child.on('error', reject);
+      child.on('error', (error) => reject(new Error(`bridge process failed: ${error.message}; ${childStderr}`)));
       child.stdin.write(`${JSON.stringify({
         cmd: 'configure',
         workspace: LEDGER,
