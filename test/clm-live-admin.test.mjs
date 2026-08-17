@@ -29,6 +29,8 @@ import {
   LIVE_ADMIN_SCRIPT_PATH,
   LIVE_ADMIN_HISTORY_PAGE_PATH,
   LIVE_ADMIN_HISTORY_SCRIPT_PATH,
+  LIVE_ADMIN_WORKSPACE_PAGE_PATH,
+  LIVE_ADMIN_WORKSPACE_SCRIPT_PATH,
   LIVE_ADMIN_LOGIN_PATH,
   LIVE_ADMIN_SIGNUP_PATH,
   LIVE_ADMIN_ENVOY_CLIENT_PATH,
@@ -164,6 +166,7 @@ async function fixture(options = {}) {
     coraConfigRepository: options.coraConfigRepository ?? undefined,
     providerUsageRepository: options.providerUsageRepository ?? undefined,
     workspaceLayoutRepository: options.workspaceLayoutRepository ?? undefined,
+    workspaceProjectRepository: options.workspaceProjectRepository ?? undefined,
   });
   const clm = await startCoraClm({
     host: '127.0.0.1',
@@ -210,6 +213,24 @@ test('Hosted History has isolated page and script routes without changing audit 
   assert.equal(script.status, 200); assert.match(script.headers.get('content-type') ?? '', /javascript/u); assert.equal((await script.text()).trim(), 'void 0;');
   const eventResponse = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_PATH}?organization_id=customer-b`, { headers: { cookie: 'helmion_admin_session=active-session' } });
   assert.equal(eventResponse.status, 400);
+});
+
+test('Hosted Workspace Project Shelf has isolated routes and uses the existing tenant-scoped registry', async (t) => {
+  const calls = [];
+  const workspaceProjectRepository = {
+    async list(actor) { calls.push(['list', actor]); return { projects: [{ projectKey: 'driver-onboarding', displayName: 'Driver onboarding', sourceKind: 'cloud', defaultBranch: 'main', lifecycle: 'active', execution: 'not_performed' }], canManage: actor.role === 'admin' }; },
+    async save(actor, input) { calls.push(['save', actor, input]); return { durable: true, receiptId: '51', project: { ...input, execution: 'not_performed' } }; },
+  };
+  const app = await fixture({ workspaceProjectRepository }); t.after(app.close);
+  const redirect = await fetch(`${app.url}${LIVE_ADMIN_WORKSPACE_PAGE_PATH}`, { redirect: 'manual' });
+  assert.equal(redirect.status, 308); assert.equal(redirect.headers.get('location'), `${LIVE_ADMIN_WORKSPACE_PAGE_PATH}/`);
+  const page = await fetch(`${app.url}${LIVE_ADMIN_WORKSPACE_PAGE_PATH}/`); assert.equal(page.status, 200); assert.match(await page.text(), /Workspace projects/u);
+  const script = await fetch(`${app.url}${LIVE_ADMIN_WORKSPACE_SCRIPT_PATH}`); assert.equal(script.status, 200); assert.match(script.headers.get('content-type') ?? '', /javascript/u);
+  const anonymous = await fetch(`${app.url}/api/admin/workspace/projects`); assert.equal(anonymous.status, 403);
+  const list = await fetch(`${app.url}/api/admin/workspace/projects`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(list.status, 200); assert.equal((await list.json()).projects[0].projectKey, 'driver-onboarding'); assert.equal(calls[0][1].tenantId, 'helmian-platform');
+  const saved = await fetch(`${app.url}/api/admin/workspace/projects`, { method: 'POST', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ projectKey: 'hr-onboarding', displayName: 'HR onboarding', sourceKind: 'cloud', defaultBranch: 'main', lifecycle: 'active' }) });
+  assert.equal(saved.status, 200); assert.equal(calls[1][1].tenantId, 'helmian-platform'); assert.equal(calls[1][2].projectKey, 'hr-onboarding');
+  const injected = await fetch(`${app.url}/api/admin/workspace/projects?tenant_id=other`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
 });
 
 test('Organization readiness reports verifiable source states and preserves member/admin detail boundaries', async (t) => {
