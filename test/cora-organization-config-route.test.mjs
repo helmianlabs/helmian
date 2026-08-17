@@ -23,6 +23,7 @@ import {
   LIVE_ADMIN_CORA_TASK_RESULTS_PATH,
   LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH,
   LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH,
+  LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH,
 } from '../src/cloud/live-admin.mjs';
 
 const env = {
@@ -53,7 +54,7 @@ function fakePool() {
 
 function identity() { return { getSession: (id) => id === 'member-session' ? { subject: 'member' } : id === 'admin-session' ? { subject: 'admin' } : null }; }
 
-async function fixture({ appBuildPromptPlanner = null, appBuildExecutionRequestRepository = null } = {}) {
+async function fixture({ appBuildPromptPlanner = null, appBuildExecutionRequestRepository = null, githubAppWorkspaceSourceBindingRepository = null } = {}) {
   const calls = [];
   const repository = {
     async readPublishedConfig(actor) { calls.push(['read', actor]); return { status: 'published', config: { organizationId: actor.tenantId, lifecycle: 'published' } }; },
@@ -97,11 +98,12 @@ async function fixture({ appBuildPromptPlanner = null, appBuildExecutionRequestR
     async decideApproval(actor, input) { calls.push(['app-build-approval-decide', actor, input]); if (!['owner', 'admin'].includes(actor.role)) throw Object.assign(new Error('admin required'), { status: 403 }); return { durable: true, receiptId: 'approval-receipt-1', decision: input.decision, execution: 'not_performed', publication: 'not_performed' }; },
   };
   const executionRequestRepository = appBuildExecutionRequestRepository ?? { async append(actor, input) { calls.push(['app-build-execution-append', actor, input]); return { durable: true, receiptId: 'execution-receipt-1', status: 'queued', execution: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', publication: 'not_performed', deployment: 'not_performed' }; } };
+  const sourceBindingRepository = githubAppWorkspaceSourceBindingRepository ?? { async list(actor) { calls.push(['github-source-binding-list', actor]); return { bindings: [], checkout: 'not_performed' }; }, async append(actor, input) { calls.push(['github-source-binding-append', actor, input]); return { durable: true, receiptId: 'github-binding-1', workspaceProjectKey: input.workspaceProjectKey, provider: 'github_app', checkout: 'not_performed', execution: 'not_performed', deployment: 'not_performed' }; } };
   const providerConnectionRepository = {
     async list(actor) { calls.push(['provider-list', actor]); return { connections: [], source: 'tenant_provider_connection_metadata', invocation: 'not_performed', tools: 'not_granted' }; },
     async save(actor, input) { calls.push(['provider-save', actor, input]); return { durable: true, connection: { providerId: input.providerId, credentialReference: input.credentialReference, lifecycle: 'pending' }, vaultStatus: 'external_encrypted_vault_required', invocation: 'not_performed', tools: 'not_granted' }; },
   };
-  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, appBuildRepository, appBuildPromptPlanner, appBuildRevisionRepository, appBuildExecutionRequestRepository: executionRequestRepository, agentTaskRepository, agentTaskResultRepository, approvedKnowledgeTaskWorker, providerConnectionRepository });
+  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, appBuildRepository, appBuildPromptPlanner, appBuildRevisionRepository, appBuildExecutionRequestRepository: executionRequestRepository, githubAppWorkspaceSourceBindingRepository: sourceBindingRepository, agentTaskRepository, agentTaskResultRepository, approvedKnowledgeTaskWorker, providerConnectionRepository });
   const clm = await startCoraClm({ host: '127.0.0.1', port: 0, runTurn: async () => ({ text: 'ok', model: 'test' }), notifyBackgroundAgents: false, httpRequestHandler: admin.handler });
   return { url: clm.healthUrl.replace('/healthz', ''), calls, close: async () => { await clm.close(); await admin.close(); } };
 }
@@ -256,6 +258,15 @@ test('app-build execution request route derives tenant and records only a queued
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH}`, { method: 'POST', headers: { ...headers, cookie: 'helmion_admin_session=member-session' }, body: JSON.stringify(body) })).status, 403);
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH}?tenant_id=org-b`, { method: 'POST', headers, body: JSON.stringify(body) })).status, 400);
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ ...body, tenantId: 'org-b' }) })).status, 400);
+});
+
+test('GitHub App source-binding routes derive tenant, require owner/admin, and reject credentials, URLs, and authority selectors', async (t) => {
+  const app = await fixture(); t.after(app.close); const body = { workspaceProjectKey: 'tms-cloud', githubRepositoryNodeId: 'R_kgDOExample', githubRepositoryId: 12345, githubOwner: 'Helmion', githubRepositoryName: 'cloud', githubInstallationId: 98765, defaultBranch: 'main', baseCommitSha: 'a'.repeat(40), verificationReceiptId: 'verify-0001', vaultCredentialReference: 'vault://tenant/org-a/github-app/installation-98765', idempotencyKey: 'github-binding-0001' }; const headers = { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' };
+  const created = await fetch(`${app.url}${LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH}`, { method: 'POST', headers, body: JSON.stringify(body) }); assert.equal(created.status, 200); assert.equal((await created.json()).checkout, 'not_performed'); const call = app.calls.find(([name]) => name === 'github-source-binding-append'); assert.equal(call[1].tenantId, 'org-a'); assert.deepEqual(call[2], body);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH}`, { headers: { cookie: 'helmion_admin_session=member-session' } })).status, 403);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH}?tenant_id=org-b`, { headers })).status, 400);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ ...body, accessToken: 'ghs_never_accept' }) })).status, 400);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ ...body, cloneUrl: 'https://github.com/helmion/cloud.git' }) })).status, 400);
 });
 
 test('provider connection route derives Organization, stores only vault references, and never invokes providers', async (t) => {

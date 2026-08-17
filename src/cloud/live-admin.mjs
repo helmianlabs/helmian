@@ -53,6 +53,7 @@ import { createEncryptedVaultAdapterFromEnv } from './database-encrypted-vault-a
 import { createGeminiOAuthPkce, geminiCredentialReference, resolveGeminiOAuthConfig } from './provider-oauth-config.mjs';
 import { readGeminiOAuthReadiness } from './provider-oauth-readiness.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
+import { createGitHubAppWorkspaceSourceBindingRepository } from './github-app-workspace-source-binding-repository.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -136,6 +137,7 @@ export const LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH = '/api/admin/provider-connect
 export const LIVE_ADMIN_GEMINI_OAUTH_START_PATH = '/api/admin/provider-oauth/gemini/start';
 export const LIVE_ADMIN_GEMINI_OAUTH_CALLBACK_PATH = '/api/admin/provider-oauth/gemini/callback';
 export const LIVE_ADMIN_WORKSPACE_PROJECTS_PATH = '/api/admin/workspace/projects';
+export const LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH = '/api/admin/workspace/github-app-source-bindings';
 export const LIVE_ADMIN_CONSOLE_COMMANDS_PATH = '/api/admin/workspace/console/commands';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
@@ -290,6 +292,7 @@ export async function createLiveHelmianCloudAdminHandler({
   providerConnectionRepository: suppliedProviderConnectionRepository = null,
   providerVaultAdapter: suppliedProviderVaultAdapter = null,
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
+  githubAppWorkspaceSourceBindingRepository: suppliedGitHubAppWorkspaceSourceBindingRepository = null,
   consoleCommandRepository: suppliedConsoleCommandRepository = null,
   envoyStore: suppliedEnvoyStore = null,
   envoyStreamIntervalMs = 1000,
@@ -338,6 +341,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const providerVaultAdapter = suppliedProviderVaultAdapter ?? createEncryptedVaultAdapterFromEnv({ pool, env });
   const providerConnections = suppliedProviderConnectionRepository ?? createProviderConnectionRepository(pool, { fetchImpl, vaultAdapter: providerVaultAdapter ?? undefined });
   const workspaceProjects = suppliedWorkspaceProjectRepository ?? createWorkspaceProjectRepository(pool);
+  const githubAppWorkspaceSourceBindings = suppliedGitHubAppWorkspaceSourceBindingRepository ?? createGitHubAppWorkspaceSourceBindingRepository(pool);
   const consoleCommands = suppliedConsoleCommandRepository ?? createConsoleCommandRepository(pool);
   const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
@@ -1116,6 +1120,29 @@ export async function createLiveHelmianCloudAdminHandler({
         send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.save(actor, body) }));
       } catch (error) {
         send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_PROJECTS_ADMIN_REQUIRED' : 'WORKSPACE_PROJECTS_INVALID' }));
+      }
+      return true;
+    }
+    if (requestUrl.pathname === LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH && request.method === 'GET') {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        if (!['owner', 'admin'].includes(String(actor.role).toLowerCase())) throw new TenantAuthorizationError('GitHub App workspace source binding requires owner or admin membership');
+        send(response, 200, JSON.stringify({ valid: true, ...await githubAppWorkspaceSourceBindings.list(actor) }));
+      } catch (error) {
+        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GITHUB_APP_SOURCE_BINDING_ADMIN_REQUIRED' : error?.status === 400 ? 'GITHUB_APP_SOURCE_BINDING_SELECTOR_INVALID' : 'GITHUB_APP_SOURCE_BINDING_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (requestUrl.pathname === LIVE_ADMIN_GITHUB_APP_WORKSPACE_SOURCE_BINDINGS_PATH && request.method === 'POST') {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        const body = await readJsonObject(request);
+        exactKeys(body, ['baseCommitSha', 'defaultBranch', 'githubInstallationId', 'githubOwner', 'githubRepositoryId', 'githubRepositoryName', 'githubRepositoryNodeId', 'idempotencyKey', 'vaultCredentialReference', 'verificationReceiptId', 'workspaceProjectKey']);
+        send(response, 200, JSON.stringify({ valid: true, ...await githubAppWorkspaceSourceBindings.append(actor, body) }));
+      } catch (error) {
+        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GITHUB_APP_SOURCE_BINDING_ADMIN_REQUIRED' : 'GITHUB_APP_SOURCE_BINDING_INVALID' }));
       }
       return true;
     }
