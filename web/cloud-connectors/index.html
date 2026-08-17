@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Helmian Cloud Connectors</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10151d; color: #edf3fb; } body { margin: 0; background: radial-gradient(circle at top right, #1b3440, #10151d 46rem); min-height: 100vh; } main { max-width: 70rem; margin: 0 auto; padding: 2rem 1rem 4rem; } .card { background: #17202b; border: 1px solid #344156; border-radius: .75rem; padding: 1.25rem; box-shadow: .5rem 2rem #0004; } h1,h2 { margin: 0; } p { color: #b8c5d9; line-height: 1.45; } .status { min-height: 1.4rem; color: #9ee8ed; } #connector-items { display: grid; gap: .75rem; margin-top: 1rem; } article { background: #0d1119; border: 1px solid #344156; border-radius: .55rem; padding: .85rem; } article p { margin: .25rem 0; font-size: .88rem; } form { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .65rem; align-items: end; margin-top: 1rem; } label { display: grid; gap: .3rem; color: #b8c5d9; font-size: .8rem; } input,select,textarea,button { font: inherit; } input,select,textarea { min-width: 0; box-sizing: border-box; border: 1px solid #47566e; border-radius: .4rem; padding: .58rem; color: #edf3fb; background: #0d1119; } textarea { min-height: 5rem; resize: vertical; } button { border: 1px solid #4e8791; background: #1f6670; color: white; border-radius: .4rem; padding: .58rem .8rem; cursor: pointer; } button:disabled { opacity: .65; cursor: wait; } .notice { border-left: 3px solid #f6cb7d; padding-left: .75rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card" aria-labelledby="connectors-heading">
+      <h1 id="connectors-heading">Hosted Connectors</h1>
+      <p>Organization-scoped connector registration and readiness. A registered connector is not a connected OAuth provider, repository integration, webhook delivery, or live agent.</p>
+      <p id="connector-status" class="status" role="status" aria-live="polite">Loading connector registration metadata…</p>
+      <section id="connector-items" aria-live="polite" aria-label="Connector registrations"></section>
+      <form id="connector-form" hidden>
+        <label>Provider <select id="connector-provider"><option value="slack">Slack</option><option value="discord">Discord</option><option value="github">GitHub</option></select></label>
+        <label>Lifecycle <select id="connector-lifecycle"><option value="draft">Draft</option><option value="testing">Testing</option><option value="approved">Approved</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label>
+        <label>Vault reference name only <input id="connector-secret-ref" maxlength="160" placeholder="Reference name only; never a secret value"></label>
+        <label><input id="connector-endpoint-ready" type="checkbox"> Public endpoint readiness declared</label>
+        <label>Allowed inbound channels <textarea id="connector-channels" maxlength="6000" placeholder="external channel ID | display label"></textarea></label>
+        <button id="connector-save" type="submit">Save registration metadata</button>
+      </form>
+      <p class="notice">This page never accepts OAuth codes, access tokens, API keys, repository URLs, or tenant selectors. Saving a registration records metadata only; it does not connect, authorize, deliver, invoke a provider, or execute work.</p>
+    </section>
+  </main>
+  <script type="module" src="/admin/connectors/assets/app.js"></script>
+</body>
+</html>

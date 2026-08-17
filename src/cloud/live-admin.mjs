@@ -65,6 +65,8 @@ const workspacePagePath = join(here, '..', '..', 'web', 'cloud-workspace', 'inde
 const workspaceScriptPath = join(here, '..', '..', 'web', 'cloud-workspace', 'app.js');
 const approvalsPagePath = join(here, '..', '..', 'web', 'cloud-approvals', 'index.html');
 const approvalsScriptPath = join(here, '..', '..', 'web', 'cloud-approvals', 'app.js');
+const connectorsPagePath = join(here, '..', '..', 'web', 'cloud-connectors', 'index.html');
+const connectorsScriptPath = join(here, '..', '..', 'web', 'cloud-connectors', 'app.js');
 const envoyClientPath = join(here, '..', '..', 'web', 'cloud-admin', 'envoy-client.mjs');
 const coraConfigClientPath = join(here, '..', '..', 'web', 'cloud-admin', 'cora-config-client.mjs');
 
@@ -76,6 +78,8 @@ export const LIVE_ADMIN_WORKSPACE_PAGE_PATH = '/admin/workspace';
 export const LIVE_ADMIN_WORKSPACE_SCRIPT_PATH = '/admin/workspace/app.js';
 export const LIVE_ADMIN_APPROVALS_PAGE_PATH = '/admin/approvals';
 export const LIVE_ADMIN_APPROVALS_SCRIPT_PATH = '/admin/approvals/app.js';
+export const LIVE_ADMIN_CONNECTORS_PAGE_PATH = '/admin/connectors';
+export const LIVE_ADMIN_CONNECTORS_SCRIPT_PATH = '/admin/connectors/assets/app.js';
 export const LIVE_ADMIN_ENVOY_CLIENT_PATH = '/admin/assets/envoy-client.mjs';
 export const LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH = '/admin/assets/cora-config-client.mjs';
 export const LIVE_ADMIN_LOGIN_PATH = '/admin/auth/login';
@@ -262,6 +266,8 @@ export async function createLiveHelmianCloudAdminHandler({
   workspaceScript: suppliedWorkspaceScript = null,
   approvalsPage: suppliedApprovalsPage = null,
   approvalsScript: suppliedApprovalsScript = null,
+  connectorsPage: suppliedConnectorsPage = null,
+  connectorsScript: suppliedConnectorsScript = null,
   envoyClientScript: suppliedEnvoyClientScript = null,
   coraConfigClientScript: suppliedCoraConfigClientScript = null,
   expectedMigrations: suppliedMigrations = null,
@@ -312,6 +318,8 @@ export async function createLiveHelmianCloudAdminHandler({
   const workspaceScript = suppliedWorkspaceScript ?? await readFile(workspaceScriptPath, 'utf8');
   const approvalsPage = suppliedApprovalsPage ?? await readFile(approvalsPagePath, 'utf8');
   const approvalsScript = suppliedApprovalsScript ?? await readFile(approvalsScriptPath, 'utf8');
+  const connectorsPage = suppliedConnectorsPage ?? await readFile(connectorsPagePath, 'utf8');
+  const connectorsScript = suppliedConnectorsScript ?? await readFile(connectorsScriptPath, 'utf8');
   const envoyClientScript = suppliedEnvoyClientScript ?? await readFile(envoyClientPath, 'utf8');
   const coraConfigClientScript = suppliedCoraConfigClientScript ?? await readFile(coraConfigClientPath, 'utf8');
   const expectedMigrations = suppliedMigrations ?? await listExpectedMigrationManifest();
@@ -625,6 +633,9 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_APPROVALS_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_APPROVALS_PAGE_PATH}/` }); return true; }
     if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_APPROVALS_PAGE_PATH}/`) { send(response, 200, approvalsPage, 'text/html; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_APPROVALS_SCRIPT_PATH) { send(response, 200, approvalsScript, 'text/javascript; charset=utf-8'); return true; }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CONNECTORS_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_CONNECTORS_PAGE_PATH}/` }); return true; }
+    if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_CONNECTORS_PAGE_PATH}/`) { send(response, 200, connectorsPage, 'text/html; charset=utf-8'); return true; }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CONNECTORS_SCRIPT_PATH) { send(response, 200, connectorsScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CLIENT_PATH) { send(response, 200, envoyClientScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH) { send(response, 200, coraConfigClientScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGIN_PATH) {

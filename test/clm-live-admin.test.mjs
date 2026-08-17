@@ -16,6 +16,8 @@ import {
   LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH,
   LIVE_ADMIN_CORA_APPROVALS_PATH,
   LIVE_ADMIN_CORA_CONNECTORS_PATH,
+  LIVE_ADMIN_CONNECTORS_PAGE_PATH,
+  LIVE_ADMIN_CONNECTORS_SCRIPT_PATH,
   LIVE_CONNECTOR_SLACK_INBOUND_PATH,
   LIVE_CONNECTOR_DISCORD_INBOUND_PATH,
   LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH,
@@ -518,6 +520,13 @@ test('live admin is mounted under /admin on the CLM port and never replaces /llm
   });
   assert.equal(logout.status, 302);
   assert.equal(logout.headers.get('location'), '/admin/');
+});
+
+test('hosted connectors has an explicit redirect, page, and same-origin script route', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const redirect = await fetch(`${app.url}${LIVE_ADMIN_CONNECTORS_PAGE_PATH}`, { redirect: 'manual' }); assert.equal(redirect.status, 308); assert.equal(redirect.headers.get('location'), '/admin/connectors/');
+  const page = await fetch(`${app.url}${LIVE_ADMIN_CONNECTORS_PAGE_PATH}/`); assert.equal(page.status, 200); assert.match(page.headers.get('content-type') ?? '', /text\/html/u); assert.match(await page.text(), /Hosted Connectors/u);
+  const script = await fetch(`${app.url}${LIVE_ADMIN_CONNECTORS_SCRIPT_PATH}`); assert.equal(script.status, 200); assert.match(script.headers.get('content-type') ?? '', /text\/javascript/u); assert.match(await script.text(), /\/api\/admin\/cora\/connectors/u);
 });
 
 test('session and readiness routes require live Neon owner/admin membership and remain tenant scoped', async (t) => {
