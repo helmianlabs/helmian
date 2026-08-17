@@ -31,6 +31,8 @@ import {
   LIVE_ADMIN_HISTORY_SCRIPT_PATH,
   LIVE_ADMIN_WORKSPACE_PAGE_PATH,
   LIVE_ADMIN_WORKSPACE_SCRIPT_PATH,
+  LIVE_ADMIN_APPROVALS_PAGE_PATH,
+  LIVE_ADMIN_APPROVALS_SCRIPT_PATH,
   LIVE_ADMIN_LOGIN_PATH,
   LIVE_ADMIN_SIGNUP_PATH,
   LIVE_ADMIN_ENVOY_CLIENT_PATH,
@@ -231,6 +233,18 @@ test('Hosted Workspace Project Shelf has isolated routes and uses the existing t
   const saved = await fetch(`${app.url}/api/admin/workspace/projects`, { method: 'POST', headers: { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' }, body: JSON.stringify({ projectKey: 'hr-onboarding', displayName: 'HR onboarding', sourceKind: 'cloud', defaultBranch: 'main', lifecycle: 'active' }) });
   assert.equal(saved.status, 200); assert.equal(calls[1][1].tenantId, 'helmian-platform'); assert.equal(calls[1][2].projectKey, 'hr-onboarding');
   const injected = await fetch(`${app.url}/api/admin/workspace/projects?tenant_id=other`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
+});
+
+test('Hosted Approvals has isolated page and script routes without changing approval authority', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const redirect = await fetch(`${app.url}${LIVE_ADMIN_APPROVALS_PAGE_PATH}`, { redirect: 'manual' });
+  assert.equal(redirect.status, 308); assert.equal(redirect.headers.get('location'), `${LIVE_ADMIN_APPROVALS_PAGE_PATH}/`);
+  const page = await fetch(`${app.url}${LIVE_ADMIN_APPROVALS_PAGE_PATH}/`);
+  assert.equal(page.status, 200); assert.match(await page.text(), /Organization approvals/u);
+  const script = await fetch(`${app.url}${LIVE_ADMIN_APPROVALS_SCRIPT_PATH}`);
+  assert.equal(script.status, 200); assert.match(script.headers.get('content-type') ?? '', /javascript/u); assert.match(await script.text(), /LIVE_ADMIN_CORA_APPROVALS_PATH|\/api\/admin\/cora\/approvals/u);
+  const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_APPROVALS_PATH}?tenant_id=other`, { headers: { cookie: 'helmion_admin_session=active-session' } });
+  assert.equal(injected.status, 400);
 });
 
 test('Organization readiness reports verifiable source states and preserves member/admin detail boundaries', async (t) => {
