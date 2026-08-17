@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cora Build Studio · Helmian Cloud</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10151d; color: #edf3fb; } body { margin: 0; background: radial-gradient(circle at top right, #263a55, #10151d 48rem); min-height: 100vh; } main { max-width: 76rem; margin: 0 auto; padding: 2rem 1rem 4rem; } .card { background: #17202b; border: 1px solid #344156; border-radius: .75rem; padding: 1.25rem; margin: 1rem 0; box-shadow: .5rem 2rem #0004; } h1,h2 { margin: 0; } p,li { color: #c2cede; line-height: 1.45; } .status { min-height: 1.4rem; color: #9ee8ed; } .notice { border-left: 3px solid #f6cb7d; padding-left: .75rem; } form { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .65rem; align-items: end; margin-top: 1rem; } label { display: grid; gap: .3rem; color: #c2cede; font-size: .88rem; } .wide { grid-column: 1 / -1; } input,select,textarea,button { font: inherit; } input,select,textarea { min-width: 0; box-sizing: border-box; border: 1px solid #47566e; border-radius: .4rem; padding: .58rem; color: #edf3fb; background: #0d1119; } textarea { min-height: 6rem; resize: vertical; } button { border: 1px solid #5f9bac; background: #1f6670; color: white; border-radius: .4rem; padding: .58rem .8rem; cursor: pointer; } button:disabled { opacity: .65; cursor: wait; } #drafts,#revisions,#bindings,#receipt { display: grid; gap: .7rem; margin-top: 1rem; } article { background: #0d1119; border: 1px solid #344156; border-radius: .55rem; padding: .85rem; } article p { margin: .25rem 0; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card" aria-labelledby="heading">
+      <h1 id="heading">Cora Build Studio</h1>
+      <p>Make a bounded page, dashboard, or workflow request through Cora’s governed receipts.</p>
+      <ol><li>Describe a request to create a draft.</li><li>Record a bounded revision.</li><li>Record an owner/admin approval decision.</li><li>Queue an approved revision against a registered workspace project.</li></ol>
+      <p class="notice">Queueing is not execution. A queued request does not execute until a verified GitHub source binding and a real worker runtime exist. This studio does not verify a source, make a checkout, change files, publish, or deploy.</p>
+      <p id="status" class="status" role="status" aria-live="polite">Checking session…</p>
+    </section>
+
+    <section class="card" aria-labelledby="prompt-heading">
+      <h2 id="prompt-heading">1. Describe the build</h2>
+      <form id="prompt-form" hidden><label class="wide">Plain-English request<textarea id="user-request" maxlength="4000" required placeholder="Build HR a self-onboarding dashboard with contact email and a save-draft workflow."></textarea></label><button id="prompt-submit" type="submit">Create bounded draft</button></form>
+      <div id="drafts" aria-live="polite"></div>
+    </section>
+
+    <section class="card" aria-labelledby="revision-heading">
+      <h2 id="revision-heading">2. Record a bounded revision</h2>
+      <form id="revision-form" hidden><label>Draft receipt<select id="revision-draft" required><option value="">Select a draft</option></select></label><label>Heading<input id="revision-title" maxlength="500" required placeholder="HR self-onboarding"></label><label class="wide">Description<textarea id="revision-description" maxlength="1200" required placeholder="Describe the bounded revision."></textarea></label><label>Reason<input id="revision-reason" maxlength="600" required placeholder="Why this revision is needed"></label><button id="revision-submit" type="submit">Record revision</button></form>
+      <div id="revisions" aria-live="polite"></div>
+    </section>
+
+    <section class="card" aria-labelledby="approval-heading">
+      <h2 id="approval-heading">3. Record approval or rejection</h2>
+      <form id="approval-form" hidden><label>Revision receipt<select id="approval-revision" required><option value="">Select a revision</option></select></label><label>Decision<select id="approval-decision"><option value="approve">Approve future work</option><option value="reject">Reject future work</option></select></label><label>Reason<input id="approval-reason" maxlength="600" required placeholder="Reason for this decision"></label><button id="approval-submit" type="submit">Record decision</button></form>
+      <p>Approval records a receipt only. It does not build files, publish, or deploy.</p>
+    </section>
+
+    <section class="card" aria-labelledby="queue-heading">
+      <h2 id="queue-heading">4. Queue an approved revision</h2>
+      <form id="queue-form" hidden><label>Revision receipt<select id="queue-revision" required><option value="">Select a revision</option></select></label><label>Approval receipt<input id="queue-approval" maxlength="256" required placeholder="Recorded approval receipt"></label><label>Registered workspace project<select id="queue-project" required><option value="">Select an active workspace project</option></select></label><button id="queue-submit" type="submit">Queue approved revision</button></form>
+      <div id="bindings" aria-live="polite"></div><div id="receipt" aria-live="polite"></div>
+    </section>
+  </main>
+  <script type="module" src="/admin/cora/build/assets/app.js"></script>
+</body>
+</html>
