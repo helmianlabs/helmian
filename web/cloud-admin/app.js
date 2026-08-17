@@ -144,6 +144,14 @@ const appBuildApprovalDecision = document.querySelector('#app-build-approval-dec
 const appBuildApprovalReason = document.querySelector('#app-build-approval-reason');
 const appBuildApprovalSubmit = document.querySelector('#app-build-approval-submit');
 const appBuildApprovalStatus = document.querySelector('#app-build-approval-status');
+const appBuildExecutionQueue = document.querySelector('#app-build-execution-queue');
+const appBuildExecutionForm = document.querySelector('#app-build-execution-form');
+const appBuildExecutionRevision = document.querySelector('#app-build-execution-revision');
+const appBuildExecutionApproval = document.querySelector('#app-build-execution-approval');
+const appBuildExecutionProject = document.querySelector('#app-build-execution-project');
+const appBuildExecutionSubmit = document.querySelector('#app-build-execution-submit');
+const appBuildExecutionStatus = document.querySelector('#app-build-execution-status');
+const appBuildExecutionReceipt = document.querySelector('#app-build-execution-receipt');
 const agentTaskForm = document.querySelector('#agent-task-form');
 const agentTaskType = document.querySelector('#agent-task-type');
 const agentTaskIntent = document.querySelector('#agent-task-intent');
@@ -518,7 +526,9 @@ function renderWorkspaceProjects(body) {
   const projects = Array.isArray(body.projects) ? body.projects : [];
   workspaceProjectsStatus.textContent = projects.length ? `${projects.length} tenant project${projects.length === 1 ? '' : 's'} registered. Execution remains not performed.` : 'No tenant projects are registered yet.';
   workspaceProjectForm.hidden = body.canManage !== true;
+  const selectedProject = appBuildExecutionProject.value; appBuildExecutionProject.replaceChildren(new Option('Select a registered workspace project', ''));
   for (const project of projects) {
+    if (project.lifecycle === 'active') appBuildExecutionProject.add(new Option(`${project.displayName} · ${project.projectKey}`, project.projectKey));
     const card = document.createElement('article');
     card.className = 'config-item';
     card.append(
@@ -530,6 +540,7 @@ function renderWorkspaceProjects(body) {
     );
     workspaceProjectCards.append(card);
   }
+  appBuildExecutionProject.value = [...appBuildExecutionProject.options].some((option) => option.value === selectedProject) ? selectedProject : '';
 }
 
 async function loadWorkspaceProjects() {
@@ -884,14 +895,17 @@ function renderAppBuildRevisions(body) {
   const receipts = Array.isArray(body.receipts) ? body.receipts : [];
   appBuildRevisionReceipts.replaceChildren();
   const selectedRevision = appBuildApprovalRevision.value; appBuildApprovalRevision.replaceChildren(new Option('Select a recorded revision', ''));
+  const selectedExecutionRevision = appBuildExecutionRevision.value; appBuildExecutionRevision.replaceChildren(new Option('Select a recorded revision', ''));
   if (!receipts.length) { appBuildRevisionReceipts.textContent = 'No revision receipts for this draft yet.'; appBuildRevisionStatus.textContent = 'No revisions recorded. A revision remains a draft-only receipt.'; return; }
   for (const receipt of receipts) {
     appBuildApprovalRevision.add(new Option(`Revision ${receipt.revision || 'unavailable'} · ${receipt.receiptId || 'receipt unavailable'}`, receipt.receiptId || ''));
+    appBuildExecutionRevision.add(new Option(`Revision ${receipt.revision || 'unavailable'} · ${receipt.receiptId || 'receipt unavailable'}`, receipt.receiptId || ''));
     const card = document.createElement('article'); card.className = 'config-item';
     card.append(configItem('Revision', `${receipt.revision || 'unavailable'} · ${receipt.receiptId || 'receipt unavailable'}`), configItem('Reason', receipt.reason || 'unavailable'), configItem('Description', receipt.description || 'unavailable'), configItem('Execution / publish / deploy', 'Not performed'));
     appBuildRevisionReceipts.append(card);
   }
   appBuildApprovalRevision.value = [...appBuildApprovalRevision.options].some((option) => option.value === selectedRevision) ? selectedRevision : '';
+  appBuildExecutionRevision.value = [...appBuildExecutionRevision.options].some((option) => option.value === selectedExecutionRevision) ? selectedExecutionRevision : '';
   appBuildRevisionStatus.textContent = `${receipts.length} revision receipt(s). No build, publish, or deploy occurred.`;
 }
 async function loadAppBuildRevisions() {
@@ -997,6 +1011,8 @@ async function load() {
   appBuildReview.hidden = !isAdmin;
   appBuildRevisionForm.hidden = !isAdmin;
   appBuildApprovalForm.hidden = !isAdmin;
+  appBuildExecutionQueue.hidden = !isAdmin;
+  appBuildExecutionForm.hidden = !isAdmin;
   workspaceState.textContent = `AUTHENTICATED · ${String(sessionBody.actor.role ?? 'member').toUpperCase()}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
@@ -1203,9 +1219,20 @@ appBuildApprovalForm.onsubmit = async (event) => {
   appBuildApprovalSubmit.disabled = true; appBuildApprovalStatus.textContent = 'Recording approval decision…';
   try {
     const result = await coraClient.decideAppBuildApproval({ revisionReceiptId: appBuildApprovalRevision.value, decision: appBuildApprovalDecision.value, reason: appBuildApprovalReason.value.trim(), idempotencyKey: crypto.randomUUID() });
-    appBuildApprovalReason.value = ''; appBuildApprovalStatus.textContent = `${result.decision === 'approve' ? 'Approval' : 'Rejection'} receipt recorded. No files were built, published, or deployed.`;
+    appBuildApprovalReason.value = ''; if (result.decision === 'approve') { appBuildExecutionRevision.value = appBuildApprovalRevision.value; appBuildExecutionApproval.value = result.receiptId || ''; } appBuildApprovalStatus.textContent = `${result.decision === 'approve' ? 'Approval' : 'Rejection'} receipt recorded. No files were built, published, or deployed.`;
   } catch (error) { appBuildApprovalStatus.textContent = error.status === 403 ? 'Approval decision not recorded: owner/admin membership is required.' : `Approval decision not recorded: ${error.message}`; }
   finally { appBuildApprovalSubmit.disabled = false; }
+};
+appBuildExecutionForm.onsubmit = async (event) => {
+  event.preventDefault();
+  if (!appBuildExecutionRevision.value || !appBuildExecutionApproval.value.trim() || !appBuildExecutionProject.value) { appBuildExecutionStatus.textContent = 'Select a revision and registered workspace project, then enter the recorded approval receipt.'; return; }
+  appBuildExecutionSubmit.disabled = true; appBuildExecutionStatus.textContent = 'Recording queued app-build request…';
+  try {
+    const result = await coraClient.createAppBuildExecutionRequest({ revisionReceiptId: appBuildExecutionRevision.value, approvalReceiptId: appBuildExecutionApproval.value.trim(), workspaceProjectKey: appBuildExecutionProject.value, idempotencyKey: crypto.randomUUID() });
+    appBuildExecutionReceipt.replaceChildren(); const card = document.createElement('article'); card.className = 'config-item'; card.append(configItem('Queue receipt', result.receiptId || 'unavailable'), configItem('Status', result.status || 'queued'), configItem('Revision / approval / project', `${appBuildExecutionRevision.value} · ${appBuildExecutionApproval.value.trim()} · ${appBuildExecutionProject.value}`), configItem('Worker / files / publish / deploy', 'Not performed')); appBuildExecutionReceipt.append(card);
+    appBuildExecutionApproval.value = ''; appBuildExecutionStatus.textContent = result.replayed ? 'Queued request already recorded. No worker, files, publish, or deploy occurred.' : 'Queued request recorded. No worker, files, publish, or deploy occurred.';
+  } catch (error) { appBuildExecutionStatus.textContent = error.status === 403 ? 'Queue request not recorded: owner/admin membership is required.' : `Queue request not recorded: ${error.message}`; }
+  finally { appBuildExecutionSubmit.disabled = false; }
 };
 agentTaskForm.onsubmit = async (event) => {
   event.preventDefault();

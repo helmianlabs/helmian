@@ -15,6 +15,7 @@ function fakeFetch() {
     if (url.includes('/app-build-revisions?')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/app-build-revisions')) return new Response(JSON.stringify({ receiptId: 'revision-receipt-1', execution: 'not_performed', publication: 'not_performed' }), { status: 200 });
     if (url.endsWith('/app-build-approvals')) return new Response(JSON.stringify({ receiptId: 'approval-receipt-1', decision: 'approve', execution: 'not_performed', publication: 'not_performed' }), { status: 200 });
+    if (url.endsWith('/app-build-execution-requests')) return new Response(JSON.stringify({ receiptId: 'execution-receipt-1', status: 'queued', execution: 'not_performed', filesystemMutation: 'not_performed', publication: 'not_performed', deployment: 'not_performed' }), { status: 200 });
     if (url.endsWith('/app-builds')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/tasks')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/personal-preferences')) return new Response(JSON.stringify({ bounds: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in'], turnMode: ['concise'], voiceProfiles: ['emma'] }, preferences: { format: 'cora.personal-preferences.v1', valid: true, organizationId: 'customer-a', subject: 'user-1', preferences: { muted: false, volume: 80, verbosity: 'standard', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' } } }), { status: 200 });
@@ -42,6 +43,7 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.readAppBuildRevisions('app-build-receipt-1');
   await client.createAppBuildRevision({ appBuildReceiptId: 'app-build-receipt-1', description: 'Revise onboarding.', components: [{ type: 'heading', text: 'Onboarding' }], reason: 'HR review', idempotencyKey: 'revision-0001' });
   await client.decideAppBuildApproval({ revisionReceiptId: 'revision-receipt-1', decision: 'approve', reason: 'Approved by HR', idempotencyKey: 'approval-0001' });
+  await client.createAppBuildExecutionRequest({ revisionReceiptId: 'revision-receipt-1', approvalReceiptId: 'approval-receipt-1', workspaceProjectKey: 'tms-cloud', idempotencyKey: 'execution-0001' });
   await client.readAgentTasks();
   await client.readPersonalPreferences();
   await client.savePersonalPreferences({ muted: true, volume: 40, verbosity: 'concise', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' });
@@ -69,6 +71,8 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   assert.deepEqual(JSON.parse(revisionCall.options.body), { appBuildReceiptId: 'app-build-receipt-1', description: 'Revise onboarding.', components: [{ type: 'heading', text: 'Onboarding' }], reason: 'HR review', idempotencyKey: 'revision-0001' });
   const approvalCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/app-build-approvals') && options.method === 'POST');
   assert.deepEqual(JSON.parse(approvalCall.options.body), { revisionReceiptId: 'revision-receipt-1', decision: 'approve', reason: 'Approved by HR', idempotencyKey: 'approval-0001' });
+  const executionRequestCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/app-build-execution-requests') && options.method === 'POST');
+  assert.deepEqual(JSON.parse(executionRequestCall.options.body), { revisionReceiptId: 'revision-receipt-1', approvalReceiptId: 'approval-receipt-1', workspaceProjectKey: 'tms-cloud', idempotencyKey: 'execution-0001' });
   const taskCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/tasks') && options.method === 'POST');
   assert.deepEqual(JSON.parse(taskCall.options.body), { taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
   const preferencesCall = fetchImpl.calls.find(({ url }) => url.endsWith('/personal-preferences'));
@@ -179,4 +183,6 @@ test('app-build review client preserves 403 and validation errors for the owner/
   await assert.rejects(() => denied.createAppBuildRevision({ appBuildReceiptId: 'draft-1', description: 'Revision', components: [{ type: 'heading', text: 'HR' }], reason: 'Review', idempotencyKey: 'revision-0001' }), (error) => error.status === 403 && /REVISION_MEMBERSHIP_REQUIRED/u.test(error.message));
   const invalid = createCoraConfigClient({ fetchImpl: async () => new Response(JSON.stringify({ code: 'CORA_APP_BUILD_APPROVAL_INVALID' }), { status: 400 }) });
   await assert.rejects(() => invalid.decideAppBuildApproval({ revisionReceiptId: 'revision-1', decision: 'approve', reason: 'Review', idempotencyKey: 'approval-0001' }), (error) => error.status === 400 && /APPROVAL_INVALID/u.test(error.message));
+  const queuedDenied = createCoraConfigClient({ fetchImpl: async () => new Response(JSON.stringify({ code: 'CORA_APP_BUILD_EXECUTION_MEMBERSHIP_REQUIRED' }), { status: 403 }) });
+  await assert.rejects(() => queuedDenied.createAppBuildExecutionRequest({ revisionReceiptId: 'revision-1', approvalReceiptId: 'approval-1', workspaceProjectKey: 'tms-cloud', idempotencyKey: 'execution-0001' }), (error) => error.status === 403 && /EXECUTION_MEMBERSHIP_REQUIRED/u.test(error.message));
 });

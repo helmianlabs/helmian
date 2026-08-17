@@ -45,6 +45,7 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     readAppBuildRevisions(appBuildReceiptId) { return requestJson(fetchImpl, `/api/admin/cora/app-build-revisions?app_build_receipt_id=${encodeURIComponent(appBuildReceiptId)}`); },
     createAppBuildRevision({ appBuildReceiptId, description, components, reason, idempotencyKey }) { return requestJson(fetchImpl, '/api/admin/cora/app-build-revisions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appBuildReceiptId, description, components, reason, idempotencyKey }) }); },
     decideAppBuildApproval({ revisionReceiptId, decision, reason, idempotencyKey }) { return requestJson(fetchImpl, '/api/admin/cora/app-build-approvals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ revisionReceiptId, decision, reason, idempotencyKey }) }); },
+    createAppBuildExecutionRequest({ revisionReceiptId, approvalReceiptId, workspaceProjectKey, idempotencyKey }) { return requestJson(fetchImpl, '/api/admin/cora/app-build-execution-requests', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ revisionReceiptId, approvalReceiptId, workspaceProjectKey, idempotencyKey }) }); },
     readAgentTasks() { return requestJson(fetchImpl, '/api/admin/cora/tasks'); },
     createAgentTask({ taskType, goal, contextRef, department, costCenter, intent, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/tasks', {

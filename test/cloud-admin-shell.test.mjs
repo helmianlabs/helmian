@@ -24,6 +24,11 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(script, /appBuildReview\.hidden\s*=\s*!isAdmin/u);
   assert.match(script, /createAppBuildRevision/u);
   assert.match(script, /decideAppBuildApproval/u);
+  assert.match(page, /id="app-build-execution-form"[^>]*hidden/iu);
+  assert.match(page, /Queueing records a request only\. It does not execute a worker, change files, publish, or deploy/iu);
+  assert.match(script, /appBuildExecutionQueue\.hidden\s*=\s*!isAdmin/u);
+  assert.match(script, /createAppBuildExecutionRequest/u);
+  assert.match(script, /Worker \/ files \/ publish \/ deploy', 'Not performed'/u);
   assert.match(page, /Search stored approved sources/iu);
   assert.match(page, /Organization scope/u);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);

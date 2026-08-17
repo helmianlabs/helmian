@@ -269,6 +269,20 @@
                 <button id="app-build-approval-submit" type="submit">Record approval decision</button>
               </form>
               <p id="app-build-approval-status" class="note" role="status" aria-live="polite">Approval only records a receipt. It does not build files, publish, or deploy.</p>
+              <section id="app-build-execution-queue" aria-labelledby="app-build-execution-queue-heading">
+                <h4 id="app-build-execution-queue-heading">Queue an approved revision for a registered workspace</h4>
+                <form id="app-build-execution-form" class="config-controls" hidden>
+                  <label for="app-build-execution-revision">Approved revision receipt</label>
+                  <select id="app-build-execution-revision" aria-label="Approved app-build revision receipt" required><option value="">Select a recorded revision</option></select>
+                  <label for="app-build-execution-approval">Approval receipt</label>
+                  <input id="app-build-execution-approval" aria-label="App-build approval receipt" maxlength="256" placeholder="Paste the recorded approval receipt" required>
+                  <label for="app-build-execution-project">Registered workspace project</label>
+                  <select id="app-build-execution-project" aria-label="Registered workspace project" required><option value="">Select a registered workspace project</option></select>
+                  <button id="app-build-execution-submit" type="submit">Queue approved revision</button>
+                </form>
+                <p id="app-build-execution-status" class="note" role="status" aria-live="polite">Queueing records a request only. It does not execute a worker, change files, publish, or deploy.</p>
+                <div id="app-build-execution-receipt" class="config-grid" aria-live="polite"></div>
+              </section>
             </section>
             <p class="preview">Owner/admin only. A plain-English prompt creates a draft only. It never automatically approves, runs code, changes files, publishes a page, or deploys.</p>
           </section>
