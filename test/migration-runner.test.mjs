@@ -39,6 +39,10 @@ class MigrationPool {
           pool.executedSql.push('031_helmion_provider_connections.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('helmion.cora_app_build_execution_requests')) {
+          pool.executedSql.push('038_cora_app_build_execution_requests.sql');
+          return { rowCount: 0, rows: [] };
+        }
         if (String(sql).includes('helmion.workspace_projects')) {
           pool.executedSql.push('032_workspace_projects.sql');
           return { rowCount: 0, rows: [] };
@@ -213,6 +217,14 @@ test('scoped migration accepts dependency-closed 035 then 037 and returns durabl
   assert.deepEqual(pool.executedSql, ['035_cora_app_build_requests.sql', '037_cora_app_build_revisions.sql']);
 });
 
+test('scoped migration accepts the dependency-closed app-build execution-request set', async () => {
+  const pool = new MigrationPool(await exactMigrationSeed('004'));
+  const store = await createNeonStore(null, { pool });
+  const result = await store.migrateExplicitlyAllowedSet(['032', '035', '037', '038']);
+  assert.deepEqual(result.requestedVersions, ['032', '035', '037', '038']);
+  assert.deepEqual(pool.executedSql, ['032_workspace_projects.sql', '035_cora_app_build_requests.sql', '037_cora_app_build_revisions.sql', '038_cora_app_build_execution_requests.sql']);
+});
+
 test('explicit migration CLI emits the verified target from a real scoped Neon store result', async () => {
   const pool = new MigrationPool(await exactMigrationSeed('004'));
   const store = await createNeonStore(
@@ -298,6 +310,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['035_cora_app_build_requests.sql', true, 'committed'],
       ['036_cora_approved_knowledge_task_results.sql', true, 'committed'],
       ['037_cora_app_build_revisions.sql', true, 'committed'],
+      ['038_cora_app_build_execution_requests.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -337,13 +350,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '035_cora_app_build_requests.sql',
       '036_cora_approved_knowledge_task_results.sql',
       '037_cora_app_build_revisions.sql',
+      '038_cora_app_build_execution_requests.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    Array(34).fill(false),
+    Array(35).fill(false),
   );
   assert.deepEqual(
     pool.executedSql,
@@ -382,9 +396,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '035_cora_app_build_requests.sql',
       '036_cora_approved_knowledge_task_results.sql',
       '037_cora_app_build_revisions.sql',
+      '038_cora_app_build_execution_requests.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 68);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 70);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 

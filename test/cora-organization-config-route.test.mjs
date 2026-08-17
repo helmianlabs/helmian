@@ -18,6 +18,7 @@ import {
   LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH,
   LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH,
   LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH,
+  LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH,
   LIVE_ADMIN_CORA_TASKS_PATH,
   LIVE_ADMIN_CORA_TASK_RESULTS_PATH,
   LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH,
@@ -52,7 +53,7 @@ function fakePool() {
 
 function identity() { return { getSession: (id) => id === 'member-session' ? { subject: 'member' } : id === 'admin-session' ? { subject: 'admin' } : null }; }
 
-async function fixture({ appBuildPromptPlanner = null } = {}) {
+async function fixture({ appBuildPromptPlanner = null, appBuildExecutionRequestRepository = null } = {}) {
   const calls = [];
   const repository = {
     async readPublishedConfig(actor) { calls.push(['read', actor]); return { status: 'published', config: { organizationId: actor.tenantId, lifecycle: 'published' } }; },
@@ -95,11 +96,12 @@ async function fixture({ appBuildPromptPlanner = null } = {}) {
     async listRevisions(actor, receipt) { calls.push(['app-build-revision-list', actor, receipt]); return { receipts: [] }; },
     async decideApproval(actor, input) { calls.push(['app-build-approval-decide', actor, input]); if (!['owner', 'admin'].includes(actor.role)) throw Object.assign(new Error('admin required'), { status: 403 }); return { durable: true, receiptId: 'approval-receipt-1', decision: input.decision, execution: 'not_performed', publication: 'not_performed' }; },
   };
+  const executionRequestRepository = appBuildExecutionRequestRepository ?? { async append(actor, input) { calls.push(['app-build-execution-append', actor, input]); return { durable: true, receiptId: 'execution-receipt-1', status: 'queued', execution: 'not_performed', providerInvocation: 'not_performed', filesystemMutation: 'not_performed', publication: 'not_performed', deployment: 'not_performed' }; } };
   const providerConnectionRepository = {
     async list(actor) { calls.push(['provider-list', actor]); return { connections: [], source: 'tenant_provider_connection_metadata', invocation: 'not_performed', tools: 'not_granted' }; },
     async save(actor, input) { calls.push(['provider-save', actor, input]); return { durable: true, connection: { providerId: input.providerId, credentialReference: input.credentialReference, lifecycle: 'pending' }, vaultStatus: 'external_encrypted_vault_required', invocation: 'not_performed', tools: 'not_granted' }; },
   };
-  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, appBuildRepository, appBuildPromptPlanner, appBuildRevisionRepository, agentTaskRepository, agentTaskResultRepository, approvedKnowledgeTaskWorker, providerConnectionRepository });
+  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, appBuildRepository, appBuildPromptPlanner, appBuildRevisionRepository, appBuildExecutionRequestRepository: executionRequestRepository, agentTaskRepository, agentTaskResultRepository, approvedKnowledgeTaskWorker, providerConnectionRepository });
   const clm = await startCoraClm({ host: '127.0.0.1', port: 0, runTurn: async () => ({ text: 'ok', model: 'test' }), notifyBackgroundAgents: false, httpRequestHandler: admin.handler });
   return { url: clm.healthUrl.replace('/healthz', ''), calls, close: async () => { await clm.close(); await admin.close(); } };
 }
@@ -243,6 +245,17 @@ test('app-build revision and approval routes keep tenant scope and future-publis
   assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH}?tenant_id=org-b&app_build_receipt_id=app-build-receipt-1`, { headers: memberHeaders })).status, 400);
   const denied = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH}`, { method: 'POST', headers: memberHeaders, body: JSON.stringify({ revisionReceiptId: 'revision-receipt-1', decision: 'approve', reason: 'review', idempotencyKey: 'approval-0001' }) }); assert.equal(denied.status, 403);
   const approved = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH}`, { method: 'POST', headers: { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' }, body: JSON.stringify({ revisionReceiptId: 'revision-receipt-1', decision: 'approve', reason: 'review', idempotencyKey: 'approval-0001' }) }); assert.equal(approved.status, 200); assert.equal((await approved.json()).publication, 'not_performed');
+});
+
+test('app-build execution request route derives tenant and records only a queued no-execution receipt', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const body = { revisionReceiptId: 'revision-receipt-1', approvalReceiptId: 'approval-receipt-1', workspaceProjectKey: 'tms-cloud', idempotencyKey: 'execution-0001' };
+  const headers = { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' };
+  const created = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH}`, { method: 'POST', headers, body: JSON.stringify(body) }); assert.equal(created.status, 200); const receipt = await created.json(); assert.equal(receipt.status, 'queued'); assert.equal(receipt.execution, 'not_performed'); assert.equal(receipt.filesystemMutation, 'not_performed'); assert.equal(receipt.deployment, 'not_performed');
+  const call = app.calls.find(([name]) => name === 'app-build-execution-append'); assert.equal(call[1].tenantId, 'org-a'); assert.deepEqual(call[2], body);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH}`, { method: 'POST', headers: { ...headers, cookie: 'helmion_admin_session=member-session' }, body: JSON.stringify(body) })).status, 403);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH}?tenant_id=org-b`, { method: 'POST', headers, body: JSON.stringify(body) })).status, 400);
+  assert.equal((await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ ...body, tenantId: 'org-b' }) })).status, 400);
 });
 
 test('provider connection route derives Organization, stores only vault references, and never invokes providers', async (t) => {

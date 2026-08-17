@@ -27,6 +27,7 @@ import { createOrganizationDatabaseRepository } from './organization-database-re
 import { createWorkspacePreviewRepository } from '../cora/workspace-preview-repository.mjs';
 import { createAppBuildRepository } from '../cora/app-build-repository.mjs';
 import { createAppBuildRevisionRepository } from '../cora/app-build-revision-repository.mjs';
+import { createAppBuildExecutionRequestRepository } from '../cora/app-build-execution-request-repository.mjs';
 import { createAgentTaskRepository } from '../cora/agent-task-repository.mjs';
 import { createAgentTaskResultRepository } from '../cora/agent-task-result-repository.mjs';
 import { createApprovedKnowledgeTaskWorker } from '../cora/approved-knowledge-task-worker.mjs';
@@ -103,6 +104,7 @@ export const LIVE_ADMIN_CORA_APP_BUILDS_PATH = '/api/admin/cora/app-builds';
 export const LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH = '/api/admin/cora/app-builds/from-prompt';
 export const LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH = '/api/admin/cora/app-build-revisions';
 export const LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH = '/api/admin/cora/app-build-approvals';
+export const LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH = '/api/admin/cora/app-build-execution-requests';
 export const LIVE_ADMIN_CORA_TASKS_PATH = '/api/admin/cora/tasks';
 export const LIVE_ADMIN_CORA_TASK_RESULTS_PATH = '/api/admin/cora/tasks/results';
 export const LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH = '/api/admin/cora/tasks/approved-knowledge/run';
@@ -261,6 +263,7 @@ export async function createLiveHelmianCloudAdminHandler({
   appBuildRepository: suppliedAppBuildRepository = null,
   appBuildPromptPlanner: suppliedAppBuildPromptPlanner = null,
   appBuildRevisionRepository: suppliedAppBuildRevisionRepository = null,
+  appBuildExecutionRequestRepository: suppliedAppBuildExecutionRequestRepository = null,
   agentTaskRepository: suppliedAgentTaskRepository = null,
   agentTaskResultRepository: suppliedAgentTaskResultRepository = null,
   approvedKnowledgeTaskWorker: suppliedApprovedKnowledgeTaskWorker = null,
@@ -310,6 +313,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const appBuilds = suppliedAppBuildRepository ?? createAppBuildRepository(pool);
   const appBuildPromptPlanner = suppliedAppBuildPromptPlanner;
   const appBuildRevisions = suppliedAppBuildRevisionRepository ?? createAppBuildRevisionRepository(pool);
+  const appBuildExecutionRequests = suppliedAppBuildExecutionRequestRepository ?? createAppBuildExecutionRequestRepository(pool);
   const agentTasks = suppliedAgentTaskRepository ?? createAgentTaskRepository(pool);
   const agentTaskResults = suppliedAgentTaskResultRepository ?? createAgentTaskResultRepository(pool);
   const artifacts = suppliedArtifactStudioRepository ?? createArtifactStudioRepository(pool);
@@ -929,6 +933,11 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH) {
       try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['decision', 'idempotencyKey', 'reason', 'revisionReceiptId']); send(response, 200, JSON.stringify({ valid: true, ...await appBuildRevisions.decideApproval(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_APPROVAL_ADMIN_REQUIRED' : 'CORA_APP_BUILD_APPROVAL_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILD_EXECUTION_REQUESTS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); if (!['owner', 'admin'].includes(String(actor.role).toLowerCase())) throw new TenantAuthorizationError('app-build execution request requires owner or admin membership'); const body = await readJsonObject(request); exactKeys(body, ['approvalReceiptId', 'idempotencyKey', 'revisionReceiptId', 'workspaceProjectKey']); send(response, 200, JSON.stringify({ valid: true, ...await appBuildExecutionRequests.append(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_EXECUTION_ADMIN_REQUIRED' : 'CORA_APP_BUILD_EXECUTION_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_TASK_RESULTS_PATH) {
