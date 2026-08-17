@@ -129,6 +129,21 @@ const appBuildPromptForm = document.querySelector('#app-build-prompt-form');
 const appBuildPrompt = document.querySelector('#app-build-prompt');
 const appBuildPromptSubmit = document.querySelector('#app-build-prompt-submit');
 const appBuildPromptReceipt = document.querySelector('#app-build-prompt-receipt');
+const appBuildReview = document.querySelector('#app-build-review');
+const appBuildRevisionForm = document.querySelector('#app-build-revision-form');
+const appBuildRevisionDraft = document.querySelector('#app-build-revision-draft');
+const appBuildRevisionTitle = document.querySelector('#app-build-revision-title');
+const appBuildRevisionDescription = document.querySelector('#app-build-revision-description');
+const appBuildRevisionReason = document.querySelector('#app-build-revision-reason');
+const appBuildRevisionSubmit = document.querySelector('#app-build-revision-submit');
+const appBuildRevisionStatus = document.querySelector('#app-build-revision-status');
+const appBuildRevisionReceipts = document.querySelector('#app-build-revision-receipts');
+const appBuildApprovalForm = document.querySelector('#app-build-approval-form');
+const appBuildApprovalRevision = document.querySelector('#app-build-approval-revision');
+const appBuildApprovalDecision = document.querySelector('#app-build-approval-decision');
+const appBuildApprovalReason = document.querySelector('#app-build-approval-reason');
+const appBuildApprovalSubmit = document.querySelector('#app-build-approval-submit');
+const appBuildApprovalStatus = document.querySelector('#app-build-approval-status');
 const agentTaskForm = document.querySelector('#agent-task-form');
 const agentTaskType = document.querySelector('#agent-task-type');
 const agentTaskIntent = document.querySelector('#agent-task-intent');
@@ -846,6 +861,9 @@ function selectConnectorSurface(surface) {
 
 function renderAppBuilds(body) {
   const model = appBuildPanelModel(body); appBuildReceipts.replaceChildren();
+  const selectedDraft = appBuildRevisionDraft.value; appBuildRevisionDraft.replaceChildren(new Option('Select a recorded draft', ''));
+  for (const receipt of model.receipts) appBuildRevisionDraft.add(new Option(`${receipt.title || 'Untitled draft'} · ${receipt.receiptId || 'receipt unavailable'}`, receipt.receiptId || ''));
+  appBuildRevisionDraft.value = [...appBuildRevisionDraft.options].some((option) => option.value === selectedDraft) ? selectedDraft : '';
   if (model.empty) { const empty = document.createElement('p'); empty.className = 'preview'; empty.textContent = 'No app-build drafts recorded for this Organization.'; appBuildReceipts.append(empty); appBuildStatus.textContent = 'No app-build drafts yet. Recording a draft never runs, publishes, or deploys.'; return; }
   appBuildStatus.textContent = model.statusLabel;
   for (const receipt of model.receipts) { const card = document.createElement('article'); card.className = 'config-item'; card.append(configItem('Draft', `${receipt.title} · ${receipt.route}`), configItem('Department', receipt.department), configItem('Status', receipt.status), configItem('Receipt', receipt.receiptId), configItem('Run / publish / deploy', 'Not performed')); appBuildReceipts.append(card); }
@@ -861,6 +879,27 @@ async function loadAppBuilds() {
   appBuildStatus.textContent = 'Loading app-build draft receipts…';
   try { renderAppBuilds(await coraClient.readAppBuilds()); }
   catch (error) { appBuildReceipts.replaceChildren(); appBuildStatus.textContent = error.status === 403 ? 'App-build drafts unavailable: owner/admin membership is required.' : `App-build drafts unavailable: ${error.message}`; }
+}
+function renderAppBuildRevisions(body) {
+  const receipts = Array.isArray(body.receipts) ? body.receipts : [];
+  appBuildRevisionReceipts.replaceChildren();
+  const selectedRevision = appBuildApprovalRevision.value; appBuildApprovalRevision.replaceChildren(new Option('Select a recorded revision', ''));
+  if (!receipts.length) { appBuildRevisionReceipts.textContent = 'No revision receipts for this draft yet.'; appBuildRevisionStatus.textContent = 'No revisions recorded. A revision remains a draft-only receipt.'; return; }
+  for (const receipt of receipts) {
+    appBuildApprovalRevision.add(new Option(`Revision ${receipt.revision || 'unavailable'} · ${receipt.receiptId || 'receipt unavailable'}`, receipt.receiptId || ''));
+    const card = document.createElement('article'); card.className = 'config-item';
+    card.append(configItem('Revision', `${receipt.revision || 'unavailable'} · ${receipt.receiptId || 'receipt unavailable'}`), configItem('Reason', receipt.reason || 'unavailable'), configItem('Description', receipt.description || 'unavailable'), configItem('Execution / publish / deploy', 'Not performed'));
+    appBuildRevisionReceipts.append(card);
+  }
+  appBuildApprovalRevision.value = [...appBuildApprovalRevision.options].some((option) => option.value === selectedRevision) ? selectedRevision : '';
+  appBuildRevisionStatus.textContent = `${receipts.length} revision receipt(s). No build, publish, or deploy occurred.`;
+}
+async function loadAppBuildRevisions() {
+  const receiptId = appBuildRevisionDraft.value;
+  if (!receiptId) { renderAppBuildRevisions({ receipts: [] }); return; }
+  appBuildRevisionStatus.textContent = 'Loading app-build revision receipts…';
+  try { renderAppBuildRevisions(await coraClient.readAppBuildRevisions(receiptId)); }
+  catch (error) { appBuildRevisionReceipts.replaceChildren(); appBuildRevisionStatus.textContent = error.status === 403 ? 'Revision receipts unavailable: owner/admin membership is required.' : `Revision receipts unavailable: ${error.message}`; }
 }
 connectorSurfaceButtons.forEach((button) => { button.onclick = () => selectConnectorSurface(button.dataset.connectorSurface); });
 async function loadConnectors() { connectorStatus.textContent = 'Loading connector registration metadata…'; try { const body = await coraClient.readConnectors(); renderConnectors(body); if (connectorForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) connectorForm.hidden = false; } catch (error) { connectorItems.replaceChildren(); connectorStatus.textContent = error.status === 403 ? 'Connector metadata unavailable: active Organization membership is required.' : `Connector metadata unavailable: ${error.message}`; } }
@@ -955,6 +994,9 @@ async function load() {
   workspaceRoleDefaultControls.hidden = !isAdmin;
   appBuildForm.hidden = !isAdmin;
   appBuildPromptForm.hidden = !isAdmin;
+  appBuildReview.hidden = !isAdmin;
+  appBuildRevisionForm.hidden = !isAdmin;
+  appBuildApprovalForm.hidden = !isAdmin;
   workspaceState.textContent = `AUTHENTICATED · ${String(sessionBody.actor.role ?? 'member').toUpperCase()}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
@@ -1143,6 +1185,27 @@ appBuildPromptForm.onsubmit = async (event) => {
     appBuildPromptReceipt.replaceChildren();
     appBuildStatus.textContent = error.status === 403 ? 'Prompt draft not recorded: owner/admin membership is required.' : error.status === 503 ? 'Prompt planner is unavailable; no draft was recorded.' : `Prompt draft not recorded: ${error.message}`;
   } finally { appBuildPromptSubmit.disabled = false; }
+};
+appBuildRevisionDraft.onchange = () => loadAppBuildRevisions().catch(() => {});
+appBuildRevisionForm.onsubmit = async (event) => {
+  event.preventDefault();
+  if (!appBuildRevisionDraft.value || !appBuildRevisionTitle.value.trim() || !appBuildRevisionDescription.value.trim() || !appBuildRevisionReason.value.trim()) { appBuildRevisionStatus.textContent = 'Select a draft and complete the bounded revision fields.'; return; }
+  appBuildRevisionSubmit.disabled = true; appBuildRevisionStatus.textContent = 'Recording bounded revision…';
+  try {
+    await coraClient.createAppBuildRevision({ appBuildReceiptId: appBuildRevisionDraft.value, description: appBuildRevisionDescription.value.trim(), components: [{ type: 'heading', text: appBuildRevisionTitle.value.trim() }, { type: 'field', label: 'Contact email', fieldType: 'email', required: true }, { type: 'button', label: 'Save draft', action: 'save_draft' }], reason: appBuildRevisionReason.value.trim(), idempotencyKey: crypto.randomUUID() });
+    appBuildRevisionTitle.value = ''; appBuildRevisionDescription.value = ''; appBuildRevisionReason.value = ''; await loadAppBuildRevisions();
+  } catch (error) { appBuildRevisionStatus.textContent = error.status === 403 ? 'Revision not recorded: owner/admin membership is required.' : `Revision not recorded: ${error.message}`; }
+  finally { appBuildRevisionSubmit.disabled = false; }
+};
+appBuildApprovalForm.onsubmit = async (event) => {
+  event.preventDefault();
+  if (!appBuildApprovalRevision.value || !appBuildApprovalReason.value.trim()) { appBuildApprovalStatus.textContent = 'Select a revision and enter a decision reason.'; return; }
+  appBuildApprovalSubmit.disabled = true; appBuildApprovalStatus.textContent = 'Recording approval decision…';
+  try {
+    const result = await coraClient.decideAppBuildApproval({ revisionReceiptId: appBuildApprovalRevision.value, decision: appBuildApprovalDecision.value, reason: appBuildApprovalReason.value.trim(), idempotencyKey: crypto.randomUUID() });
+    appBuildApprovalReason.value = ''; appBuildApprovalStatus.textContent = `${result.decision === 'approve' ? 'Approval' : 'Rejection'} receipt recorded. No files were built, published, or deployed.`;
+  } catch (error) { appBuildApprovalStatus.textContent = error.status === 403 ? 'Approval decision not recorded: owner/admin membership is required.' : `Approval decision not recorded: ${error.message}`; }
+  finally { appBuildApprovalSubmit.disabled = false; }
 };
 agentTaskForm.onsubmit = async (event) => {
   event.preventDefault();

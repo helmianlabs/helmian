@@ -249,6 +249,27 @@
             </form>
             <div id="app-build-prompt-receipt" class="config-grid" aria-live="polite"></div>
             <div id="app-build-receipts" class="config-grid"></div>
+            <section id="app-build-review" aria-labelledby="app-build-review-heading">
+              <h4 id="app-build-review-heading">Draft revision and approval receipts</h4>
+              <p id="app-build-revision-status" class="note" role="status" aria-live="polite">Select a draft to view revision receipts.</p>
+              <form id="app-build-revision-form" class="config-controls" hidden>
+                <label for="app-build-revision-draft">Draft receipt</label>
+                <select id="app-build-revision-draft" aria-label="App-build draft receipt" required><option value="">Select a recorded draft</option></select>
+                <input id="app-build-revision-title" aria-label="Revision heading" maxlength="500" placeholder="Revised onboarding heading" required>
+                <textarea id="app-build-revision-description" aria-label="Revision description" maxlength="1200" placeholder="Describe the bounded revision." required></textarea>
+                <input id="app-build-revision-reason" aria-label="Revision reason" maxlength="600" placeholder="Why this revision is needed" required>
+                <button id="app-build-revision-submit" type="submit">Record bounded revision</button>
+              </form>
+              <div id="app-build-revision-receipts" class="config-grid"></div>
+              <form id="app-build-approval-form" class="config-controls" hidden>
+                <label for="app-build-approval-revision">Revision receipt</label>
+                <select id="app-build-approval-revision" aria-label="App-build revision receipt" required><option value="">Select a recorded revision</option></select>
+                <select id="app-build-approval-decision" aria-label="App-build approval decision"><option value="approve">Approve future publish</option><option value="reject">Reject future publish</option></select>
+                <input id="app-build-approval-reason" aria-label="Approval decision reason" maxlength="600" placeholder="Reason for this decision" required>
+                <button id="app-build-approval-submit" type="submit">Record approval decision</button>
+              </form>
+              <p id="app-build-approval-status" class="note" role="status" aria-live="polite">Approval only records a receipt. It does not build files, publish, or deploy.</p>
+            </section>
             <p class="preview">Owner/admin only. A plain-English prompt creates a draft only. It never automatically approves, runs code, changes files, publishes a page, or deploys.</p>
           </section>
         </section>

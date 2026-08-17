@@ -18,6 +18,12 @@ test('authenticated shell navigation names real product surfaces and remains rol
   assert.match(script, /appBuildPromptForm\.hidden\s*=\s*!isAdmin/u);
   assert.match(script, /createAppBuildFromPrompt\(userRequest\)/u);
   assert.match(script, /renderAppBuildPromptReceipt\(receipt\)/u);
+  assert.match(page, /id="app-build-revision-form"[^>]*hidden/iu);
+  assert.match(page, /id="app-build-approval-form"[^>]*hidden/iu);
+  assert.match(page, /Approval only records a receipt\. It does not build files, publish, or deploy/iu);
+  assert.match(script, /appBuildReview\.hidden\s*=\s*!isAdmin/u);
+  assert.match(script, /createAppBuildRevision/u);
+  assert.match(script, /decideAppBuildApproval/u);
   assert.match(page, /Search stored approved sources/iu);
   assert.match(page, /Organization scope/u);
   assert.doesNotMatch(page, /READ-ONLY PREVIEW/u);

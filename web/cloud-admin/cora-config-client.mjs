@@ -42,6 +42,9 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
       return requestJson(fetchImpl, '/api/admin/cora/app-builds', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ intent, title, department, route, description, components, idempotencyKey }) });
     },
     createAppBuildFromPrompt(userRequest) { return requestJson(fetchImpl, '/api/admin/cora/app-builds/from-prompt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userRequest }) }); },
+    readAppBuildRevisions(appBuildReceiptId) { return requestJson(fetchImpl, `/api/admin/cora/app-build-revisions?app_build_receipt_id=${encodeURIComponent(appBuildReceiptId)}`); },
+    createAppBuildRevision({ appBuildReceiptId, description, components, reason, idempotencyKey }) { return requestJson(fetchImpl, '/api/admin/cora/app-build-revisions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appBuildReceiptId, description, components, reason, idempotencyKey }) }); },
+    decideAppBuildApproval({ revisionReceiptId, decision, reason, idempotencyKey }) { return requestJson(fetchImpl, '/api/admin/cora/app-build-approvals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ revisionReceiptId, decision, reason, idempotencyKey }) }); },
     readAgentTasks() { return requestJson(fetchImpl, '/api/admin/cora/tasks'); },
     createAgentTask({ taskType, goal, contextRef, department, costCenter, intent, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/tasks', {

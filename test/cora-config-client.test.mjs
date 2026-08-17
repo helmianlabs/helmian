@@ -12,6 +12,9 @@ function fakeFetch() {
     if (url.endsWith('/usage')) return new Response(JSON.stringify({ budget: { policyState: 'active' }, totals: { eventCount: 1, estimatedCostMinor: 12, reconciledCostMinor: null }, source: 'tenant_append_only_ledger', providerCalls: 'not_performed' }), { status: 200 });
     if (url.endsWith('/workspace/previews')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/app-builds/from-prompt')) return new Response(JSON.stringify({ receiptId: 'prompt-receipt-1', title: 'Driver onboarding', department: 'hr', route: '/hr/onboarding', providerInvocation: 'performed', execution: 'not_performed' }), { status: 200 });
+    if (url.includes('/app-build-revisions?')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
+    if (url.endsWith('/app-build-revisions')) return new Response(JSON.stringify({ receiptId: 'revision-receipt-1', execution: 'not_performed', publication: 'not_performed' }), { status: 200 });
+    if (url.endsWith('/app-build-approvals')) return new Response(JSON.stringify({ receiptId: 'approval-receipt-1', decision: 'approve', execution: 'not_performed', publication: 'not_performed' }), { status: 200 });
     if (url.endsWith('/app-builds')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/tasks')) return new Response(JSON.stringify({ receipts: [] }), { status: 200 });
     if (url.endsWith('/personal-preferences')) return new Response(JSON.stringify({ bounds: { verbosity: ['concise', 'standard', 'detailed'], interruptMode: ['barge_in'], turnMode: ['concise'], voiceProfiles: ['emma'] }, preferences: { format: 'cora.personal-preferences.v1', valid: true, organizationId: 'customer-a', subject: 'user-1', preferences: { muted: false, volume: 80, verbosity: 'standard', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' } } }), { status: 200 });
@@ -36,6 +39,9 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   await client.readAppBuilds();
   await client.createAppBuild({ intent: 'draft', title: 'Driver onboarding', department: 'hr', route: '/hr/onboarding', description: 'Draft only.', components: [{ type: 'heading', text: 'Driver onboarding' }], idempotencyKey: 'app-build-0001' });
   await client.createAppBuildFromPrompt('Build HR driver self-onboarding.');
+  await client.readAppBuildRevisions('app-build-receipt-1');
+  await client.createAppBuildRevision({ appBuildReceiptId: 'app-build-receipt-1', description: 'Revise onboarding.', components: [{ type: 'heading', text: 'Onboarding' }], reason: 'HR review', idempotencyKey: 'revision-0001' });
+  await client.decideAppBuildApproval({ revisionReceiptId: 'revision-receipt-1', decision: 'approve', reason: 'Approved by HR', idempotencyKey: 'approval-0001' });
   await client.readAgentTasks();
   await client.readPersonalPreferences();
   await client.savePersonalPreferences({ muted: true, volume: 40, verbosity: 'concise', interruptMode: 'barge_in', turnMode: 'concise', voiceProfile: 'emma' });
@@ -58,6 +64,11 @@ test('Cora config client uses same-origin auth and sends no tenant or Plant sele
   assert.deepEqual(JSON.parse(appBuildCall.options.body), { intent: 'draft', title: 'Driver onboarding', department: 'hr', route: '/hr/onboarding', description: 'Draft only.', components: [{ type: 'heading', text: 'Driver onboarding' }], idempotencyKey: 'app-build-0001' });
   const promptBuildCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/app-builds/from-prompt') && options.method === 'POST');
   assert.deepEqual(JSON.parse(promptBuildCall.options.body), { userRequest: 'Build HR driver self-onboarding.' });
+  const revisionRead = fetchImpl.calls.find(({ url }) => url.includes('/app-build-revisions?')); assert.match(revisionRead.url, /app_build_receipt_id=app-build-receipt-1/);
+  const revisionCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/app-build-revisions') && options.method === 'POST');
+  assert.deepEqual(JSON.parse(revisionCall.options.body), { appBuildReceiptId: 'app-build-receipt-1', description: 'Revise onboarding.', components: [{ type: 'heading', text: 'Onboarding' }], reason: 'HR review', idempotencyKey: 'revision-0001' });
+  const approvalCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/app-build-approvals') && options.method === 'POST');
+  assert.deepEqual(JSON.parse(approvalCall.options.body), { revisionReceiptId: 'revision-receipt-1', decision: 'approve', reason: 'Approved by HR', idempotencyKey: 'approval-0001' });
   const taskCall = fetchImpl.calls.find(({ url, options }) => url.endsWith('/tasks') && options.method === 'POST');
   assert.deepEqual(JSON.parse(taskCall.options.body), { taskType: 'workspace_preview', intent: 'prepare', goal: 'Prepare task', idempotencyKey: 'task-0001' });
   const preferencesCall = fetchImpl.calls.find(({ url }) => url.endsWith('/personal-preferences'));
@@ -161,4 +172,11 @@ test('usage panel model exposes truthful empty, soft, hard, and unavailable reco
 test('Cora config client preserves unauthorized status for UI error state', async () => {
   const client = createCoraConfigClient({ fetchImpl: async () => new Response(JSON.stringify({ code: 'CORA_MEMBERSHIP_REQUIRED' }), { status: 403 }) });
   await assert.rejects(() => client.readConfig(), (error) => error.status === 403 && /CORA_MEMBERSHIP_REQUIRED/.test(error.message));
+});
+
+test('app-build review client preserves 403 and validation errors for the owner/admin UI', async () => {
+  const denied = createCoraConfigClient({ fetchImpl: async () => new Response(JSON.stringify({ code: 'CORA_APP_BUILD_REVISION_MEMBERSHIP_REQUIRED' }), { status: 403 }) });
+  await assert.rejects(() => denied.createAppBuildRevision({ appBuildReceiptId: 'draft-1', description: 'Revision', components: [{ type: 'heading', text: 'HR' }], reason: 'Review', idempotencyKey: 'revision-0001' }), (error) => error.status === 403 && /REVISION_MEMBERSHIP_REQUIRED/u.test(error.message));
+  const invalid = createCoraConfigClient({ fetchImpl: async () => new Response(JSON.stringify({ code: 'CORA_APP_BUILD_APPROVAL_INVALID' }), { status: 400 }) });
+  await assert.rejects(() => invalid.decideAppBuildApproval({ revisionReceiptId: 'revision-1', decision: 'approve', reason: 'Review', idempotencyKey: 'approval-0001' }), (error) => error.status === 400 && /APPROVAL_INVALID/u.test(error.message));
 });
