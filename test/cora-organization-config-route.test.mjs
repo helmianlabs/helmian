@@ -15,6 +15,7 @@ import {
   LIVE_ADMIN_CORA_USAGE_PATH,
   LIVE_ADMIN_CORA_PREVIEW_PATH,
   LIVE_ADMIN_CORA_APP_BUILDS_PATH,
+  LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH,
   LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH,
   LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH,
   LIVE_ADMIN_CORA_TASKS_PATH,
@@ -51,7 +52,7 @@ function fakePool() {
 
 function identity() { return { getSession: (id) => id === 'member-session' ? { subject: 'member' } : id === 'admin-session' ? { subject: 'admin' } : null }; }
 
-async function fixture() {
+async function fixture({ appBuildPromptPlanner = null } = {}) {
   const calls = [];
   const repository = {
     async readPublishedConfig(actor) { calls.push(['read', actor]); return { status: 'published', config: { organizationId: actor.tenantId, lifecycle: 'published' } }; },
@@ -98,7 +99,7 @@ async function fixture() {
     async list(actor) { calls.push(['provider-list', actor]); return { connections: [], source: 'tenant_provider_connection_metadata', invocation: 'not_performed', tools: 'not_granted' }; },
     async save(actor, input) { calls.push(['provider-save', actor, input]); return { durable: true, connection: { providerId: input.providerId, credentialReference: input.credentialReference, lifecycle: 'pending' }, vaultStatus: 'external_encrypted_vault_required', invocation: 'not_performed', tools: 'not_granted' }; },
   };
-  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, appBuildRepository, appBuildRevisionRepository, agentTaskRepository, agentTaskResultRepository, approvedKnowledgeTaskWorker, providerConnectionRepository });
+  const admin = await createLiveHelmianCloudAdminHandler({ env, pool: fakePool(), identity: identity(), page: '<p>test</p>', script: 'void 0;', expectedMigrations: [], coraConfigRepository: repository, providerUsageRepository: usageRepository, workspacePreviewRepository: previewRepository, appBuildRepository, appBuildPromptPlanner, appBuildRevisionRepository, agentTaskRepository, agentTaskResultRepository, approvedKnowledgeTaskWorker, providerConnectionRepository });
   const clm = await startCoraClm({ host: '127.0.0.1', port: 0, runTurn: async () => ({ text: 'ok', model: 'test' }), notifyBackgroundAgents: false, httpRequestHandler: admin.handler });
   return { url: clm.healthUrl.replace('/healthz', ''), calls, close: async () => { await clm.close(); await admin.close(); } };
 }
@@ -207,6 +208,30 @@ test('authenticated app-build drafts derive Organization, reject selectors, and 
   const listed = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_PATH}`, { headers }); assert.equal(listed.status, 200);
   const injected = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_PATH}?plant_id=warehouse-1`, { headers }); assert.equal(injected.status, 400);
   assert.equal(app.calls.some(([name, actor]) => name === 'app-build-append' && actor.tenantId === 'org-a'), true);
+});
+
+test('owner/admin prompt route derives tenant, stores only planner-normalized draft, and never executes', async (t) => {
+  const plannerCalls = [];
+  const plan = Object.freeze({ intent: 'draft', title: 'Driver onboarding', department: 'hr', route: '/hr/onboarding', description: 'Draft driver onboarding page.', components: [{ type: 'heading', text: 'Onboarding' }], idempotencyKey: 'prompt-build-0001' });
+  const app = await fixture({ appBuildPromptPlanner: async (userRequest) => { plannerCalls.push(userRequest); return { normalized: plan, providerInvocation: 'performed', rawResponse: 'never return this' }; } }); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' };
+  const created = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH}`, { method: 'POST', headers, body: JSON.stringify({ userRequest: 'Build HR driver onboarding.' }) });
+  assert.equal(created.status, 200); const receipt = await created.json(); assert.equal(receipt.providerInvocation, 'performed'); assert.equal(receipt.execution, 'not_performed'); assert.equal(receipt.filesystemMutation, 'not_performed'); assert.equal(receipt.publication, 'not_performed'); assert.equal(receipt.deployment, 'not_performed'); assert.equal(receipt.approval, 'not_performed'); assert.equal(receipt.revision, 'not_performed');
+  assert.deepEqual(plannerCalls, ['Build HR driver onboarding.']);
+  const append = app.calls.find(([name]) => name === 'app-build-append'); assert.equal(append[1].tenantId, 'org-a'); assert.deepEqual(append[2], plan);
+  assert.equal(JSON.stringify(receipt).includes('never return this'), false);
+});
+
+test('prompt route fails closed for member, selector/unsafe input, and missing planner', async (t) => {
+  const calls = []; const app = await fixture({ appBuildPromptPlanner: async (prompt) => { calls.push(prompt); if (/tenantId|api_key/u.test(prompt)) throw new Error('unsafe prompt'); return { normalized: { intent: 'draft' }, providerInvocation: 'performed' }; } }); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=admin-session', 'content-type': 'application/json' };
+  const member = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH}`, { method: 'POST', headers: { ...headers, cookie: 'helmion_admin_session=member-session' }, body: JSON.stringify({ userRequest: 'Build HR.' }) }); assert.equal(member.status, 403);
+  const selector = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH}?tenant_id=org-b`, { method: 'POST', headers, body: JSON.stringify({ userRequest: 'Build HR.' }) }); assert.equal(selector.status, 400);
+  const bodySelector = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH}`, { method: 'POST', headers, body: JSON.stringify({ userRequest: 'Build HR.', tenantId: 'org-b' }) }); assert.equal(bodySelector.status, 400);
+  const unsafe = await fetch(`${app.url}${LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH}`, { method: 'POST', headers, body: JSON.stringify({ userRequest: 'tenantId=org-b api_key=x' }) }); assert.equal(unsafe.status, 400);
+  assert.deepEqual(calls, ['tenantId=org-b api_key=x']);
+  const unavailable = await fixture(); t.after(unavailable.close);
+  const missing = await fetch(`${unavailable.url}${LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH}`, { method: 'POST', headers, body: JSON.stringify({ userRequest: 'Build HR.' }) }); assert.equal(missing.status, 503);
 });
 
 test('app-build revision and approval routes keep tenant scope and future-publish boundary', async (t) => {

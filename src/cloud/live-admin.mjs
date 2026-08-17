@@ -100,6 +100,7 @@ export const LIVE_ADMIN_CORA_KNOWLEDGE_TRANSITION_PATH = '/api/admin/cora/knowle
 export const LIVE_ADMIN_CORA_USAGE_PATH = '/api/admin/cora/usage';
 export const LIVE_ADMIN_CORA_PREVIEW_PATH = '/api/admin/cora/workspace/previews';
 export const LIVE_ADMIN_CORA_APP_BUILDS_PATH = '/api/admin/cora/app-builds';
+export const LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH = '/api/admin/cora/app-builds/from-prompt';
 export const LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH = '/api/admin/cora/app-build-revisions';
 export const LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH = '/api/admin/cora/app-build-approvals';
 export const LIVE_ADMIN_CORA_TASKS_PATH = '/api/admin/cora/tasks';
@@ -258,6 +259,7 @@ export async function createLiveHelmianCloudAdminHandler({
   providerUsageRepository: suppliedProviderUsageRepository = null,
   workspacePreviewRepository: suppliedWorkspacePreviewRepository = null,
   appBuildRepository: suppliedAppBuildRepository = null,
+  appBuildPromptPlanner: suppliedAppBuildPromptPlanner = null,
   appBuildRevisionRepository: suppliedAppBuildRevisionRepository = null,
   agentTaskRepository: suppliedAgentTaskRepository = null,
   agentTaskResultRepository: suppliedAgentTaskResultRepository = null,
@@ -306,6 +308,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const providerUsage = suppliedProviderUsageRepository ?? createProviderUsageRepository(pool);
   const workspacePreviews = suppliedWorkspacePreviewRepository ?? createWorkspacePreviewRepository(pool);
   const appBuilds = suppliedAppBuildRepository ?? createAppBuildRepository(pool);
+  const appBuildPromptPlanner = suppliedAppBuildPromptPlanner;
   const appBuildRevisions = suppliedAppBuildRevisionRepository ?? createAppBuildRevisionRepository(pool);
   const agentTasks = suppliedAgentTaskRepository ?? createAgentTaskRepository(pool);
   const agentTaskResults = suppliedAgentTaskResultRepository ?? createAgentTaskResultRepository(pool);
@@ -894,6 +897,23 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILDS_PATH) {
       try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['components', 'department', 'description', 'idempotencyKey', 'intent', 'route', 'title']); send(response, 200, JSON.stringify({ valid: true, ...await appBuilds.append(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_MEMBERSHIP_REQUIRED' : 'CORA_APP_BUILD_REQUEST_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILDS_FROM_PROMPT_PATH) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        if (!['owner', 'admin'].includes(String(actor.role).toLowerCase())) throw new TenantAuthorizationError('app-build prompt planner requires owner or admin membership');
+        if (typeof appBuildPromptPlanner !== 'function') throw Object.assign(new Error('app-build prompt planner is not configured'), { status: 503 });
+        const body = await readJsonObject(request); exactKeys(body, ['userRequest']);
+        const planned = await appBuildPromptPlanner(body.userRequest);
+        if (!planned?.normalized || planned.providerInvocation !== 'performed') throw Object.assign(new Error('app-build prompt planner returned no verified plan'), { status: 503 });
+        const receipt = await appBuilds.append(actor, planned.normalized);
+        send(response, 200, JSON.stringify({ valid: true, ...receipt, providerInvocation: 'performed', execution: 'not_performed', filesystemMutation: 'not_performed', publication: 'not_performed', deployment: 'not_performed', approval: 'not_performed', revision: 'not_performed' }));
+      } catch (error) {
+        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 503 ? 503 : 400;
+        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'CORA_APP_BUILD_PROMPT_ADMIN_REQUIRED' : status === 503 ? 'CORA_APP_BUILD_PROMPT_PLANNER_UNAVAILABLE' : 'CORA_APP_BUILD_PROMPT_INVALID' }));
+      }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH) {
