@@ -37,6 +37,10 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
         body: JSON.stringify({ mode, intent, department, templateId, title, idempotencyKey }),
       });
     },
+    readAppBuilds() { return requestJson(fetchImpl, '/api/admin/cora/app-builds'); },
+    createAppBuild({ intent, title, department, route, description, components, idempotencyKey }) {
+      return requestJson(fetchImpl, '/api/admin/cora/app-builds', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ intent, title, department, route, description, components, idempotencyKey }) });
+    },
     readAgentTasks() { return requestJson(fetchImpl, '/api/admin/cora/tasks'); },
     createAgentTask({ taskType, goal, contextRef, department, costCenter, intent, idempotencyKey }) {
       return requestJson(fetchImpl, '/api/admin/cora/tasks', {
@@ -103,6 +107,11 @@ export function workspacePreviewPanelModel(body = {}) {
     providerInvocation: 'not_performed',
     filesystemMutation: 'not_performed',
   });
+}
+
+export function appBuildPanelModel(body = {}) {
+  const receipts = Array.isArray(body.receipts) ? body.receipts.slice(0, 100) : [];
+  return Object.freeze({ empty: receipts.length === 0, receipts, statusLabel: body.replayed ? 'App-build draft already received. Durable replay receipt confirmed. It cannot run, publish, or deploy.' : 'App-build drafts loaded. They cannot run, publish, or deploy.' });
 }
 
 export function agentTaskPanelModel(body = {}) {

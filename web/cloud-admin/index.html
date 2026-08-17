@@ -232,6 +232,19 @@
           </form>
           <div id="workspace-preview-receipts" class="config-grid"></div>
           <p class="preview">Preview intent prepared; no agent, provider, filesystem, build, or external execution occurred. This slice has no execution button.</p>
+          <section id="app-build-drafts" aria-labelledby="app-build-heading">
+            <h3 id="app-build-heading">Cora app-build drafts</h3>
+            <p id="app-build-status" class="note" role="status" aria-live="polite">Loading app-build draft receipts…</p>
+            <form id="app-build-form" class="config-controls" hidden>
+              <input id="app-build-title" aria-label="App draft title" maxlength="240" placeholder="HR self-onboarding" required>
+              <input id="app-build-department" aria-label="App draft department" maxlength="160" placeholder="Department, for example HR" required>
+              <input id="app-build-route" aria-label="App draft route" maxlength="200" placeholder="/hr/self-onboarding" pattern="/[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)*" required>
+              <textarea id="app-build-description" aria-label="App draft description" maxlength="1200" placeholder="Describe the bounded page workflow." required></textarea>
+              <button id="app-build-submit" type="submit">Record app-build draft</button>
+            </form>
+            <div id="app-build-receipts" class="config-grid"></div>
+            <p class="preview">Owner/admin only. This records a validated declarative draft with fixed safe components. It cannot run code, publish a page, modify files, or deploy.</p>
+          </section>
         </section>
         <section id="section-tasks" class="card" aria-labelledby="agent-task-heading">
           <h2 id="agent-task-heading">Agent task intents</h2>

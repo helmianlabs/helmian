@@ -1,5 +1,5 @@
 import { createEnvoyClient } from './envoy-client.mjs';
-import { agentTaskPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, providerConnectionPanelModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
+import { agentTaskPanelModel, appBuildPanelModel, approvalInboxPanelModel, artifactExecutionPanelModel, artifactScriptPanelModel, artifactSourcePanelModel, artifactStudioPanelModel, connectorRegistrationPanelModel, createCoraConfigClient, knowledgeQueryModel, personalPreferencesModel, providerConnectionPanelModel, usagePanelModel, workspaceLayoutModel, workspacePreviewPanelModel } from './cora-config-client.mjs';
 
 const signedOut = document.querySelector('#signed-out');
 const signedIn = document.querySelector('#signed-in');
@@ -117,6 +117,14 @@ const workspacePreviewTitle = document.querySelector('#workspace-preview-title')
 const workspacePreviewSubmit = document.querySelector('#workspace-preview-submit');
 const workspacePreviewStatus = document.querySelector('#workspace-preview-status');
 const workspacePreviewReceipts = document.querySelector('#workspace-preview-receipts');
+const appBuildForm = document.querySelector('#app-build-form');
+const appBuildTitle = document.querySelector('#app-build-title');
+const appBuildDepartment = document.querySelector('#app-build-department');
+const appBuildRoute = document.querySelector('#app-build-route');
+const appBuildDescription = document.querySelector('#app-build-description');
+const appBuildSubmit = document.querySelector('#app-build-submit');
+const appBuildStatus = document.querySelector('#app-build-status');
+const appBuildReceipts = document.querySelector('#app-build-receipts');
 const agentTaskForm = document.querySelector('#agent-task-form');
 const agentTaskType = document.querySelector('#agent-task-type');
 const agentTaskIntent = document.querySelector('#agent-task-intent');
@@ -831,6 +839,19 @@ function selectConnectorSurface(surface) {
   connectorProvider.value = surface;
   connectorForm?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
+
+function renderAppBuilds(body) {
+  const model = appBuildPanelModel(body); appBuildReceipts.replaceChildren();
+  if (model.empty) { const empty = document.createElement('p'); empty.className = 'preview'; empty.textContent = 'No app-build drafts recorded for this Organization.'; appBuildReceipts.append(empty); appBuildStatus.textContent = 'No app-build drafts yet. Recording a draft never runs, publishes, or deploys.'; return; }
+  appBuildStatus.textContent = model.statusLabel;
+  for (const receipt of model.receipts) { const card = document.createElement('article'); card.className = 'config-item'; card.append(configItem('Draft', `${receipt.title} · ${receipt.route}`), configItem('Department', receipt.department), configItem('Status', receipt.status), configItem('Receipt', receipt.receiptId), configItem('Run / publish / deploy', 'Not performed')); appBuildReceipts.append(card); }
+}
+
+async function loadAppBuilds() {
+  appBuildStatus.textContent = 'Loading app-build draft receipts…';
+  try { renderAppBuilds(await coraClient.readAppBuilds()); }
+  catch (error) { appBuildReceipts.replaceChildren(); appBuildStatus.textContent = error.status === 403 ? 'App-build drafts unavailable: owner/admin membership is required.' : `App-build drafts unavailable: ${error.message}`; }
+}
 connectorSurfaceButtons.forEach((button) => { button.onclick = () => selectConnectorSurface(button.dataset.connectorSurface); });
 async function loadConnectors() { connectorStatus.textContent = 'Loading connector registration metadata…'; try { const body = await coraClient.readConnectors(); renderConnectors(body); if (connectorForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) connectorForm.hidden = false; } catch (error) { connectorItems.replaceChildren(); connectorStatus.textContent = error.status === 403 ? 'Connector metadata unavailable: active Organization membership is required.' : `Connector metadata unavailable: ${error.message}`; } }
 connectorForm.onsubmit = async (event) => { event.preventDefault(); connectorStatus.textContent = 'Saving connector metadata…'; try { const channels = connectorChannels.value.split('\n').map((line) => line.split('|').map((part) => part.trim())).filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map(([externalChannelId, label]) => ({ externalChannelId, label, enabled: true })); await coraClient.saveConnector({ provider: connectorProvider.value, lifecycle: connectorLifecycle.value, enabled: connectorLifecycle.value === 'enabled', publicEndpointReady: connectorEndpointReady.checked, secretReferenceName: connectorSecretRef.value.trim() || null, allowedInboundChannels: channels }); connectorStatus.textContent = 'Connector metadata saved. No secret value, webhook, OAuth flow, provider call, or delivery was performed.'; await loadConnectors(); } catch (error) { connectorStatus.textContent = `Connector metadata not saved: ${error.message}`; } };
@@ -922,6 +943,7 @@ async function load() {
   const isAdmin = ['owner', 'admin'].includes(String(sessionBody.actor.role ?? '').toLowerCase());
   adminNav.hidden = !isAdmin;
   workspaceRoleDefaultControls.hidden = !isAdmin;
+  appBuildForm.hidden = !isAdmin;
   workspaceState.textContent = `AUTHENTICATED · ${String(sessionBody.actor.role ?? 'member').toUpperCase()}`;
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
@@ -940,6 +962,7 @@ async function load() {
   if (isAdmin) await loadWorkspaceRoleDefaults();
   await loadCoraSettings();
   await loadWorkspacePreviews();
+  await loadAppBuilds();
   await loadAgentTasks();
   await loadApprovalInbox();
   await loadConnectors();
@@ -1081,6 +1104,18 @@ workspacePreviewForm.onsubmit = async (event) => {
     await loadWorkspacePreviews({ replayed: result.replayed === true });
   } catch (error) { workspacePreviewStatus.textContent = `Preview intent not prepared: ${error.message}`; }
   finally { workspacePreviewSubmit.disabled = false; }
+};
+appBuildForm.onsubmit = async (event) => {
+  event.preventDefault();
+  if (!appBuildTitle.value.trim() || !appBuildDepartment.value.trim() || !appBuildRoute.value.trim() || !appBuildDescription.value.trim()) { appBuildStatus.textContent = 'Complete title, department, route, and description to record a bounded draft.'; return; }
+  appBuildSubmit.disabled = true; appBuildStatus.textContent = 'Recording app-build draft…';
+  try {
+    const title = appBuildTitle.value.trim();
+    const result = await coraClient.createAppBuild({ intent: 'draft', title, department: appBuildDepartment.value.trim(), route: appBuildRoute.value.trim(), description: appBuildDescription.value.trim(), components: [{ type: 'heading', text: title }, { type: 'field', label: 'Contact email', fieldType: 'email', required: true }, { type: 'button', label: 'Save draft', action: 'save_draft' }], idempotencyKey: crypto.randomUUID() });
+    appBuildStatus.textContent = result.replayed ? 'App-build draft already received. Durable replay receipt confirmed; nothing ran or published.' : 'App-build draft recorded. Nothing ran, published, changed files, or deployed.';
+    appBuildForm.reset(); await loadAppBuilds();
+  } catch (error) { appBuildStatus.textContent = error.status === 403 ? 'App-build draft not recorded: owner/admin membership is required.' : `App-build draft not recorded: ${error.message}`; }
+  finally { appBuildSubmit.disabled = false; }
 };
 agentTaskForm.onsubmit = async (event) => {
   event.preventDefault();

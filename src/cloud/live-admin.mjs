@@ -26,6 +26,7 @@ import { createProviderUsageRepository } from '../cora/provider-usage-repository
 import { createOrganizationDatabaseRepository } from './organization-database-repository.mjs';
 import { createWorkspacePreviewRepository } from '../cora/workspace-preview-repository.mjs';
 import { createAppBuildRepository } from '../cora/app-build-repository.mjs';
+import { createAppBuildRevisionRepository } from '../cora/app-build-revision-repository.mjs';
 import { createAgentTaskRepository } from '../cora/agent-task-repository.mjs';
 import { createAgentTaskResultRepository } from '../cora/agent-task-result-repository.mjs';
 import { createApprovedKnowledgeTaskWorker } from '../cora/approved-knowledge-task-worker.mjs';
@@ -56,11 +57,15 @@ import { createConsoleCommandRepository } from './console-command-repository.mjs
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
 const scriptPath = join(here, '..', '..', 'web', 'cloud-admin', 'app.js');
+const historyPagePath = join(here, '..', '..', 'web', 'cloud-history', 'index.html');
+const historyScriptPath = join(here, '..', '..', 'web', 'cloud-history', 'app.js');
 const envoyClientPath = join(here, '..', '..', 'web', 'cloud-admin', 'envoy-client.mjs');
 const coraConfigClientPath = join(here, '..', '..', 'web', 'cloud-admin', 'cora-config-client.mjs');
 
 export const LIVE_ADMIN_PAGE_PATH = '/admin';
 export const LIVE_ADMIN_SCRIPT_PATH = '/admin/assets/app.js';
+export const LIVE_ADMIN_HISTORY_PAGE_PATH = '/admin/history';
+export const LIVE_ADMIN_HISTORY_SCRIPT_PATH = '/admin/history/app.js';
 export const LIVE_ADMIN_ENVOY_CLIENT_PATH = '/admin/assets/envoy-client.mjs';
 export const LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH = '/admin/assets/cora-config-client.mjs';
 export const LIVE_ADMIN_LOGIN_PATH = '/admin/auth/login';
@@ -91,6 +96,8 @@ export const LIVE_ADMIN_CORA_KNOWLEDGE_TRANSITION_PATH = '/api/admin/cora/knowle
 export const LIVE_ADMIN_CORA_USAGE_PATH = '/api/admin/cora/usage';
 export const LIVE_ADMIN_CORA_PREVIEW_PATH = '/api/admin/cora/workspace/previews';
 export const LIVE_ADMIN_CORA_APP_BUILDS_PATH = '/api/admin/cora/app-builds';
+export const LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH = '/api/admin/cora/app-build-revisions';
+export const LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH = '/api/admin/cora/app-build-approvals';
 export const LIVE_ADMIN_CORA_TASKS_PATH = '/api/admin/cora/tasks';
 export const LIVE_ADMIN_CORA_TASK_RESULTS_PATH = '/api/admin/cora/tasks/results';
 export const LIVE_ADMIN_CORA_APPROVED_KNOWLEDGE_RUN_PATH = '/api/admin/cora/tasks/approved-knowledge/run';
@@ -236,6 +243,8 @@ export async function createLiveHelmianCloudAdminHandler({
   identity: suppliedIdentity = null,
   page: suppliedPage = null,
   script: suppliedScript = null,
+  historyPage: suppliedHistoryPage = null,
+  historyScript: suppliedHistoryScript = null,
   envoyClientScript: suppliedEnvoyClientScript = null,
   coraConfigClientScript: suppliedCoraConfigClientScript = null,
   expectedMigrations: suppliedMigrations = null,
@@ -243,6 +252,7 @@ export async function createLiveHelmianCloudAdminHandler({
   providerUsageRepository: suppliedProviderUsageRepository = null,
   workspacePreviewRepository: suppliedWorkspacePreviewRepository = null,
   appBuildRepository: suppliedAppBuildRepository = null,
+  appBuildRevisionRepository: suppliedAppBuildRevisionRepository = null,
   agentTaskRepository: suppliedAgentTaskRepository = null,
   agentTaskResultRepository: suppliedAgentTaskResultRepository = null,
   approvedKnowledgeTaskWorker: suppliedApprovedKnowledgeTaskWorker = null,
@@ -276,6 +286,8 @@ export async function createLiveHelmianCloudAdminHandler({
   const identity = suppliedIdentity ?? createIdentityGateway({ env, fetchImpl });
   const page = suppliedPage ?? await readFile(pagePath, 'utf8');
   const script = suppliedScript ?? await readFile(scriptPath, 'utf8');
+  const historyPage = suppliedHistoryPage ?? await readFile(historyPagePath, 'utf8');
+  const historyScript = suppliedHistoryScript ?? await readFile(historyScriptPath, 'utf8');
   const envoyClientScript = suppliedEnvoyClientScript ?? await readFile(envoyClientPath, 'utf8');
   const coraConfigClientScript = suppliedCoraConfigClientScript ?? await readFile(coraConfigClientPath, 'utf8');
   const expectedMigrations = suppliedMigrations ?? await listExpectedMigrationManifest();
@@ -286,6 +298,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const providerUsage = suppliedProviderUsageRepository ?? createProviderUsageRepository(pool);
   const workspacePreviews = suppliedWorkspacePreviewRepository ?? createWorkspacePreviewRepository(pool);
   const appBuilds = suppliedAppBuildRepository ?? createAppBuildRepository(pool);
+  const appBuildRevisions = suppliedAppBuildRevisionRepository ?? createAppBuildRevisionRepository(pool);
   const agentTasks = suppliedAgentTaskRepository ?? createAgentTaskRepository(pool);
   const agentTaskResults = suppliedAgentTaskResultRepository ?? createAgentTaskResultRepository(pool);
   const artifacts = suppliedArtifactStudioRepository ?? createArtifactStudioRepository(pool);
@@ -576,6 +589,9 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/` }); return true; }
     if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_PAGE_PATH}/`) { send(response, 200, page, 'text/html; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SCRIPT_PATH) { send(response, 200, script, 'text/javascript; charset=utf-8'); return true; }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_HISTORY_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_HISTORY_PAGE_PATH}/` }); return true; }
+    if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_HISTORY_PAGE_PATH}/`) { send(response, 200, historyPage, 'text/html; charset=utf-8'); return true; }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_HISTORY_SCRIPT_PATH) { send(response, 200, historyScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CLIENT_PATH) { send(response, 200, envoyClientScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH) { send(response, 200, coraConfigClientScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGIN_PATH) {
@@ -867,6 +883,21 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILDS_PATH) {
       try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['components', 'department', 'description', 'idempotencyKey', 'intent', 'route', 'title']); send(response, 200, JSON.stringify({ valid: true, ...await appBuilds.append(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_MEMBERSHIP_REQUIRED' : 'CORA_APP_BUILD_REQUEST_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const receipt = requestUrl.searchParams.get('app_build_receipt_id'); if (!receipt) throw Object.assign(new Error('app build receipt is required'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await appBuildRevisions.listRevisions(actor, receipt, requestUrl.searchParams.get('limit')) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_REVISION_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_APP_BUILD_REVISION_SELECTOR_INVALID' : 'CORA_APP_BUILD_REVISION_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILD_REVISIONS_PATH) {
+      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['appBuildReceiptId', 'components', 'description', 'idempotencyKey', 'reason']); send(response, 200, JSON.stringify({ valid: true, ...await appBuildRevisions.appendRevision(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_REVISION_MEMBERSHIP_REQUIRED' : 'CORA_APP_BUILD_REVISION_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_CORA_APP_BUILD_APPROVALS_PATH) {
+      try { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['decision', 'idempotencyKey', 'reason', 'revisionReceiptId']); send(response, 200, JSON.stringify({ valid: true, ...await appBuildRevisions.decideApproval(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_APP_BUILD_APPROVAL_ADMIN_REQUIRED' : 'CORA_APP_BUILD_APPROVAL_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_TASK_RESULTS_PATH) {

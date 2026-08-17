@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Helmian Cloud History</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10151d; color: #edf3fb; }
+    body { margin: 0; background: radial-gradient(circle at top right, #1b3440, #10151d 46rem); min-height: 100vh; }
+    main { max-width: 68rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+    .card { background: #17202b; border: 1px solid #344156; border-radius: .75rem; padding: 1.25rem; box-shadow: 0 .5rem 2rem #0004; }
+    .header { display: flex; gap: 1rem; justify-content: space-between; align-items: flex-start; }
+    h1 { margin: 0; font-size: 1.35rem; } p { color: #b8c5d9; line-height: 1.45; }
+    .badge { border: 1px solid #4e8791; color: #9ee8ed; border-radius: 999px; padding: .35rem .55rem; font-size: .72rem; font-weight: 700; white-space: nowrap; }
+    form { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .65rem; align-items: end; margin-top: 1rem; }
+    label { display: grid; gap: .3rem; color: #b8c5d9; font-size: .8rem; } input, select, button { font: inherit; } input, select { min-width: 0; box-sizing: border-box; border: 1px solid #47566e; border-radius: .4rem; padding: .58rem; color: #edf3fb; background: #0d1119; }
+    button { border: 1px solid #4e8791; background: #1f6670; color: white; border-radius: .4rem; padding: .58rem .8rem; cursor: pointer; } button.secondary { background: transparent; } button:disabled { opacity: .65; cursor: wait; }
+    #activity-items { margin-top: 1rem; display: grid; gap: .65rem; } article { background: #0d1119; border: 1px solid #344156; border-radius: .55rem; padding: .85rem; } article header { display: flex; justify-content: space-between; gap: .75rem; } article h3, article p { margin: 0; } article p { margin-top: .55rem; font-size: .9rem; } .kind { color: #9ee8ed; font-size: .72rem; font-weight: 700; text-transform: uppercase; } time, .source { color: #91a1b9; font-size: .76rem; } .status { color: #f6cb7d; font-weight: 700; font-size: .75rem; } #load-older { margin-top: 1rem; } .notice { min-height: 1.4rem; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card" aria-labelledby="history-heading">
+      <div class="header"><div><h1 id="history-heading">History</h1><p>Search recorded actions and results for this Organization. This is a read-only durable audit view, not a live agent stream.</p></div><span id="activity-count" class="badge">0 RECORDED</span></div>
+      <p id="activity-status" class="notice" role="status" aria-live="polite">Loading Organization history…</p>
+      <form id="activity-filters">
+        <label>Action <input id="activity-action" maxlength="120" placeholder="Exact action type"></label>
+        <label>Actor <input id="activity-actor" maxlength="120" placeholder="Signed-in actor subject"></label>
+        <label>Status <select id="activity-decision"><option value="">All decisions</option><option>ALLOW</option><option>AUTO_RUN</option><option>PAUSE_FOR_OWNER</option><option>BLOCK</option><option>DENY</option></select></label>
+        <label>From <input id="activity-from" type="date"></label>
+        <label>To <input id="activity-to" type="date"></label>
+        <button type="submit">Apply</button><button id="activity-clear" class="secondary" type="button">Clear</button>
+      </form>
+      <section id="activity-items" aria-live="polite" aria-label="Organization history"></section>
+      <button id="load-older" class="secondary" type="button" hidden>Load older records</button>
+    </section>
+  </main>
+  <script src="/admin/history/app.js"></script>
+</body>
+</html>

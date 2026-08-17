@@ -27,6 +27,8 @@ import {
   LIVE_ADMIN_CORA_CAPABILITIES_PATH,
   LIVE_ADMIN_PAGE_PATH,
   LIVE_ADMIN_SCRIPT_PATH,
+  LIVE_ADMIN_HISTORY_PAGE_PATH,
+  LIVE_ADMIN_HISTORY_SCRIPT_PATH,
   LIVE_ADMIN_LOGIN_PATH,
   LIVE_ADMIN_SIGNUP_PATH,
   LIVE_ADMIN_ENVOY_CLIENT_PATH,
@@ -140,6 +142,8 @@ async function fixture(options = {}) {
     identity: identity(),
     page: '<!doctype html><title>Admin</title>',
     script: 'void 0;',
+    historyPage: '<!doctype html><title>History</title>',
+    historyScript: 'void 0;',
     expectedMigrations: [
       { version: '001', name: '001_helmion.sql', checksum: 'a'.repeat(64) },
       { version: '002', name: '002_maestro.sql', checksum: 'b'.repeat(64) },
@@ -194,6 +198,18 @@ test('cloud admin serves every ES module imported by the browser entrypoint', as
     assert.match(response.headers.get('content-type') ?? '', /javascript/);
     assert.notEqual((await response.text()).trim(), '');
   }
+});
+
+test('Hosted History has isolated page and script routes without changing audit authority', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const redirect = await fetch(`${app.url}${LIVE_ADMIN_HISTORY_PAGE_PATH}`, { redirect: 'manual' });
+  assert.equal(redirect.status, 308); assert.equal(redirect.headers.get('location'), `${LIVE_ADMIN_HISTORY_PAGE_PATH}/`);
+  const page = await fetch(`${app.url}${LIVE_ADMIN_HISTORY_PAGE_PATH}/`);
+  assert.equal(page.status, 200); assert.match(await page.text(), /History/u);
+  const script = await fetch(`${app.url}${LIVE_ADMIN_HISTORY_SCRIPT_PATH}`);
+  assert.equal(script.status, 200); assert.match(script.headers.get('content-type') ?? '', /javascript/u); assert.equal((await script.text()).trim(), 'void 0;');
+  const eventResponse = await fetch(`${app.url}${LIVE_ADMIN_EVENTS_PATH}?organization_id=customer-b`, { headers: { cookie: 'helmion_admin_session=active-session' } });
+  assert.equal(eventResponse.status, 400);
 });
 
 test('Organization readiness reports verifiable source states and preserves member/admin detail boundaries', async (t) => {

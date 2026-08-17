@@ -40,6 +40,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const migrationsDirectory = join(here, '..', '..', 'sql');
 const MIGRATION_LOCK_NAME = 'helmion.schema_migrations';
 
+// This deliberately names only schema prerequisites. It is not a product
+// feature switch: callers must still request an exact, ordered migration set.
+// A prerequisite may be included in that set or already match the ledger.
+const EXPLICIT_MIGRATION_PREREQUISITES = Object.freeze({
+  '001': [], '002': ['001'], '003': ['001'], '004': ['001'],
+  '005': ['004'], '006': ['004'], '007': ['004'], '008': ['004'],
+  '009': ['004'], '010': ['004'], '011': ['004'], '012': ['004'],
+  '013': ['004'], '014': ['013'], '015': ['010'], '016': ['004'],
+  '017': ['004'], '018': ['004'], '019': ['004'], '020': ['004'],
+  '021': ['004'], '022': ['009'], '023': ['010'], '024': ['004'],
+  '025': ['004'], '026': ['004'], '030': [], '031': ['004'],
+  '032': ['004'], '033': ['004'], '034': ['004'], '035': ['004'],
+  '036': ['013', '014'], '037': ['035'],
+});
+
 function requiredText(value, field) {
   const normalized = String(value ?? '').trim();
   if (!normalized) throw new TypeError(`${field} is required`);
@@ -261,7 +276,7 @@ async function applyMigration(pool, migration) {
       if (row.name !== migration.name || row.checksum !== migration.checksum) {
         throw new Error(`Applied migration ${migration.version} does not match ${migration.name}`);
       }
-      return { applied: false, migration: migration.name };
+      return { applied: false, migration: migration.name, receipt: { version: migration.version, name: row.name, checksum: row.checksum } };
     }
     await client.query(migration.sql);
     await client.query(
@@ -269,8 +284,73 @@ async function applyMigration(pool, migration) {
        values ($1,$2,$3)`,
       [migration.version, migration.name, migration.checksum],
     );
-    return { applied: true, migration: migration.name };
+    const receipt = await client.query(
+      'select name, checksum from helmion.schema_migrations where version=$1',
+      [migration.version],
+    );
+    if (receipt.rowCount !== 1 || receipt.rows[0].name !== migration.name || receipt.rows[0].checksum !== migration.checksum) {
+      throw new Error(`Applied migration ${migration.version} did not produce a matching durable receipt`);
+    }
+    return { applied: true, migration: migration.name, receipt: { version: migration.version, name: receipt.rows[0].name, checksum: receipt.rows[0].checksum } };
   });
+}
+
+async function readMigrationLedger(pool, versions) {
+  const client = await pool.connect();
+  try {
+    const rows = new Map();
+    for (const version of versions) {
+      const result = await client.query(
+        'select name, checksum from helmion.schema_migrations where version=$1',
+        [version],
+      );
+      if (result.rowCount === 1) rows.set(version, result.rows[0]);
+    }
+    return rows;
+  } catch (error) {
+    throw new Error(`Scoped migration requires a readable Helmion migration ledger: ${error.message}`);
+  } finally {
+    client.release();
+  }
+}
+
+async function resolveExplicitMigrationSet(pool, requestedVersions) {
+  if (!Array.isArray(requestedVersions) || requestedVersions.length === 0) {
+    throw new TypeError('Scoped migration requires a non-empty explicit version allowlist');
+  }
+  const manifest = await loadMigrations();
+  const byVersion = new Map(manifest.map((migration, index) => [migration.version, { ...migration, index }]));
+  const versions = requestedVersions.map((version) => String(version ?? '').trim());
+  if (versions.some((version) => version.length === 0)) throw new TypeError('Scoped migration version is required');
+  if (new Set(versions).size !== versions.length) throw new TypeError('Scoped migration allowlist contains a duplicate version');
+  const selected = versions.map((version) => {
+    const migration = byVersion.get(version);
+    if (!migration) throw new TypeError(`Scoped migration version ${version} is not in the checked-in manifest`);
+    return migration;
+  });
+  if (selected.some((migration, index) => index > 0 && migration.index <= selected[index - 1].index)) {
+    throw new TypeError('Scoped migration allowlist must be in checked-in manifest order');
+  }
+  const unknownPolicy = selected.find((migration) => !(migration.version in EXPLICIT_MIGRATION_PREREQUISITES));
+  if (unknownPolicy) throw new TypeError(`Scoped migration ${unknownPolicy.version} has no declared prerequisite policy`);
+  const selectedVersions = new Set(versions);
+  const prerequisiteVersions = new Set(selected.flatMap((migration) => EXPLICIT_MIGRATION_PREREQUISITES[migration.version]));
+  const ledger = await readMigrationLedger(pool, [...new Set([...versions, ...prerequisiteVersions])]);
+  for (const migration of selected) {
+    const row = ledger.get(migration.version);
+    if (row && (row.name !== migration.name || row.checksum !== migration.checksum)) {
+      throw new Error(`Applied migration ${migration.version} does not match ${migration.name}`);
+    }
+    for (const prerequisite of EXPLICIT_MIGRATION_PREREQUISITES[migration.version]) {
+      if (selectedVersions.has(prerequisite)) continue;
+      const required = byVersion.get(prerequisite);
+      const rowForPrerequisite = ledger.get(prerequisite);
+      if (!rowForPrerequisite || rowForPrerequisite.name !== required.name || rowForPrerequisite.checksum !== required.checksum) {
+        throw new Error(`Scoped migration ${migration.version} is missing prerequisite ${prerequisite}`);
+      }
+    }
+  }
+  return selected;
 }
 
 export async function createNeonStore(
@@ -371,6 +451,27 @@ export async function createNeonStore(
         results.push(await applyMigration(pool, migration));
       }
       return results;
+    },
+
+    async migrateExplicitlyAllowedSet(versions) {
+      const selected = await resolveExplicitMigrationSet(pool, versions);
+      const results = [];
+      for (const migration of selected) results.push(await applyMigration(pool, migration));
+      const receipts = await readMigrationLedger(pool, selected.map((migration) => migration.version));
+      const readBack = selected.map((migration) => {
+        const receipt = receipts.get(migration.version);
+        if (!receipt || receipt.name !== migration.name || receipt.checksum !== migration.checksum) {
+          throw new Error(`Scoped migration ${migration.version} did not retain a matching durable receipt`);
+        }
+        return Object.freeze({ version: migration.version, name: receipt.name, checksum: receipt.checksum });
+      });
+      return Object.freeze({
+        mode: 'explicit_allowlist',
+        target,
+        requestedVersions: Object.freeze(selected.map((migration) => migration.version)),
+        results: Object.freeze(results),
+        receipts: Object.freeze(readBack),
+      });
     },
 
     async ensureProject(input) {

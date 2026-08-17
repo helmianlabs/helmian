@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalizeMigrationSql, createNeonStore } from '../src/adapters/neon.mjs';
+import { canonicalizeMigrationSql, createNeonStore, listExpectedMigrationManifest } from '../src/adapters/neon.mjs';
+import { runExplicitMigrationCommand } from '../src/adapters/explicit-migration-cli.mjs';
 
 test('migration SQL has one cross-platform checksum representation', () => {
   const linux = 'create table helmion.example (id integer);\n';
@@ -48,6 +49,10 @@ class MigrationPool {
         }
         if (String(sql).includes('helmion.provider_oauth_transactions')) {
           pool.executedSql.push('034_helmion_provider_oauth.sql');
+          return { rowCount: 0, rows: [] };
+        }
+        if (String(sql).includes('helmion.cora_app_build_revisions')) {
+          pool.executedSql.push('037_cora_app_build_revisions.sql');
           return { rowCount: 0, rows: [] };
         }
         if (String(sql).includes('helmion.cora_app_build_requests')) {
@@ -186,6 +191,72 @@ class MigrationPool {
   }
 }
 
+async function exactMigrationSeed(...versions) {
+  const manifest = await listExpectedMigrationManifest();
+  return versions.map((version) => {
+    const migration = manifest.find((entry) => entry.version === version);
+    if (!migration) throw new Error(`Test migration ${version} is absent`);
+    return migration;
+  });
+}
+
+test('scoped migration accepts dependency-closed 035 then 037 and returns durable read-back receipts', async () => {
+  const pool = new MigrationPool(await exactMigrationSeed('004'));
+  const store = await createNeonStore(null, { pool });
+  const result = await store.migrateExplicitlyAllowedSet(['035', '037']);
+  assert.deepEqual(result.requestedVersions, ['035', '037']);
+  assert.deepEqual(result.results.map((entry) => [entry.migration, entry.applied, entry.durability]), [
+    ['035_cora_app_build_requests.sql', true, 'committed'],
+    ['037_cora_app_build_revisions.sql', true, 'committed'],
+  ]);
+  assert.deepEqual(result.receipts.map((entry) => entry.version), ['035', '037']);
+  assert.deepEqual(pool.executedSql, ['035_cora_app_build_requests.sql', '037_cora_app_build_revisions.sql']);
+});
+
+test('explicit migration CLI emits the verified target from a real scoped Neon store result', async () => {
+  const pool = new MigrationPool(await exactMigrationSeed('004'));
+  const store = await createNeonStore(
+    'postgresql://app:password@ep-silent-rain-a1b2c3d4.us-east-2.aws.neon.tech/neondb?sslmode=require',
+    { pool, expectedEndpointId: 'ep-silent-rain-a1b2c3d4' },
+  );
+  const output = [];
+  await runExplicitMigrationCommand({
+    rawVersions: '035,037',
+    createStore: async () => store,
+    write: (value) => output.push(value),
+  });
+  const receipt = JSON.parse(output.join(''));
+  assert.deepEqual(receipt.target, {
+    host: 'ep-silent-rain-a1b2c3d4.us-east-2.aws.neon.tech',
+    endpointId: 'ep-silent-rain-a1b2c3d4',
+    databaseName: 'neondb',
+    sslRequired: true,
+  });
+  assert.deepEqual(receipt.requestedVersions, ['035', '037']);
+  assert.deepEqual(receipt.receipts.map((entry) => entry.version), ['035', '037']);
+  assert.deepEqual(pool.executedSql, ['035_cora_app_build_requests.sql', '037_cora_app_build_revisions.sql']);
+});
+
+test('scoped migration refuses 036 without its complete 013 then 014 prerequisite chain', async () => {
+  const pool = new MigrationPool(await exactMigrationSeed('004'));
+  const store = await createNeonStore(null, { pool });
+  await assert.rejects(store.migrateExplicitlyAllowedSet(['036']), /missing prerequisite 013/u);
+  await assert.rejects(store.migrateExplicitlyAllowedSet(['013', '036']), /missing prerequisite 014/u);
+  assert.deepEqual(pool.executedSql, []);
+});
+
+test('scoped migration rejects unknown, duplicate, unordered, and checksum-mismatched allowlists before SQL', async () => {
+  const seed = await exactMigrationSeed('004', '035');
+  seed[1] = { ...seed[1], checksum: 'wrong-checksum' };
+  const pool = new MigrationPool(seed);
+  const store = await createNeonStore(null, { pool });
+  await assert.rejects(store.migrateExplicitlyAllowedSet(['999']), /not in the checked-in manifest/u);
+  await assert.rejects(store.migrateExplicitlyAllowedSet(['035', '035']), /duplicate/u);
+  await assert.rejects(store.migrateExplicitlyAllowedSet(['037', '035']), /manifest order/u);
+  await assert.rejects(store.migrateExplicitlyAllowedSet(['035']), /does not match/u);
+  assert.deepEqual(pool.executedSql, []);
+});
+
 test('migration runner applies ordered migrations once and confirms durable commits', async () => {
   const pool = new MigrationPool();
   const store = await createNeonStore(null, { pool });
@@ -226,6 +297,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['034_helmion_provider_oauth.sql', true, 'committed'],
       ['035_cora_app_build_requests.sql', true, 'committed'],
       ['036_cora_approved_knowledge_task_results.sql', true, 'committed'],
+      ['037_cora_app_build_revisions.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -264,13 +336,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '034_helmion_provider_oauth.sql',
       '035_cora_app_build_requests.sql',
       '036_cora_approved_knowledge_task_results.sql',
+      '037_cora_app_build_revisions.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    Array(33).fill(false),
+    Array(34).fill(false),
   );
   assert.deepEqual(
     pool.executedSql,
@@ -308,9 +381,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '034_helmion_provider_oauth.sql',
       '035_cora_app_build_requests.sql',
       '036_cora_approved_knowledge_task_results.sql',
+      '037_cora_app_build_revisions.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 66);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 68);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 
