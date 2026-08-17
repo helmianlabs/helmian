@@ -21,6 +21,7 @@ import { distillResolvedBlocker } from '../src/core/distiller.mjs';
 import { createCodexAdapter } from '../src/adapters/codex.mjs';
 import { createNeonStore } from '../src/adapters/neon.mjs';
 import { runExplicitMigrationCommand } from '../src/adapters/explicit-migration-cli.mjs';
+import { createGuardedNeonSnapshot } from '../src/adapters/neon-snapshot-preflight.mjs';
 import { createProviderOAuthMigrationPlan } from '../src/adapters/provider-oauth-migration-plan.mjs';
 import {
   HUMAN_CONFIRMATION_AUDIENCE,
@@ -1182,6 +1183,13 @@ async function migrateExplicitSet() {
   });
 }
 
+async function neonSnapshotPreflight() {
+  const apiKey = String(process.env.NEON_API_KEY ?? '').trim();
+  if (!apiKey) throw new Error('NEON_API_KEY is required; no Neon API request was made');
+  const receipt = await createGuardedNeonSnapshot({ endpointId: requiredOption('--expect-endpoint'), snapshotName: requiredOption('--snapshot-name'), apiKey });
+  process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+}
+
 async function inspectDatabase() {
   const store = await guardedNeonStore();
   try {
@@ -1428,6 +1436,7 @@ else if (command === 'db-inspect') await inspectDatabase();
 else if (command === 'migration-plan') await providerOAuthMigrationPlan();
 else if (command === 'migrate') await migrate();
 else if (command === 'migrate-explicit-set') await migrateExplicitSet();
+else if (command === 'neon-snapshot-preflight') await neonSnapshotPreflight();
 else if (command === 'phase-two-switch-test') await phaseTwoSwitchTest();
 else if (command === 'owner-key') {
   const result = await ownerKeyCommand();
@@ -1582,6 +1591,7 @@ Governance / Maestro (existing kernel):
   helmion migration-plan --expect-endpoint <ep-id>
   helmion migrate --expect-endpoint <ep-id>
   helmion migrate-explicit-set --versions 035,037 --expect-endpoint <ep-id>
+  helmion neon-snapshot-preflight --expect-endpoint <ep-id> --snapshot-name <name>
   helmion phase-two-switch-test --expect-endpoint <ep-id>
   helmion blockers [project]
   helmion maestro-state <project>
