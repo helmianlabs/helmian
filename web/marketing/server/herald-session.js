@@ -1,11 +1,11 @@
 import {
   bearer, fail, hashPairingCode, hashSecret, randomChannel, randomPairingCode,
   randomToken, readJson, requiredSecret, safeEqualHash, sendJson, validId,
-} from './_herald-core.js';
+} from '../api/_herald-core.js';
 import {
   addMessage, cleanupExpired, createSession, listDevices, messagesAfter,
   revokeDevice, sessionForDesktop, stopSession,
-} from './_herald-store.js';
+} from '../api/_herald-store.js';
 
 const SESSION_SECONDS = 8 * 60 * 60;
 const PAIRING_SECONDS = 10 * 60;
@@ -58,7 +58,7 @@ export default async function handler(request, response) {
     }
     if (request.method === 'POST' && body.action === 'result') {
       await sessionForDesktop(channel, desktopToken);
-      const { validateDesktopResult } = await import('./_herald-core.js');
+      const { validateDesktopResult } = await import('../api/_herald-core.js');
       const result = validateDesktopResult(body.result);
       await addMessage(channel, 'desktop', result.requestId, result);
       sendJson(response, 202, { accepted: true }); return;

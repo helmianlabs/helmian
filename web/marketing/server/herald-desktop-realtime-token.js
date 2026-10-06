@@ -1,15 +1,15 @@
 import {
   bearer, fail, readJson, sendJson, validateNonce, validId,
-} from './_herald-core.js';
+} from '../api/_herald-core.js';
 import {
   authorizeDesktopRealtimeSession, authorizeRegisteredDesktop,
-} from './_herald-account-store.js';
+} from '../api/_herald-account-store.js';
 import {
   accountIdentityResolver, assertAccountIdentityConfigured,
-} from './_herald-identity.js';
+} from '../api/_herald-identity.js';
 import {
   createDesktopSessionTokenRequest, tokenTtlForDesktopSession,
-} from './_herald-realtime.js';
+} from '../api/_herald-realtime.js';
 
 export function createHeraldDesktopRealtimeTokenHandler({
   accountResolver = accountIdentityResolver,

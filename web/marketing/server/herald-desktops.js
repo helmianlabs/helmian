@@ -1,17 +1,17 @@
 import {
   fail, hashSecret, readJson, sendJson, validateNonce, validId,
-} from './_herald-core.js';
+} from '../api/_herald-core.js';
 import {
   CONTROL_GRANT_TTL_MS, controlCookie, newControlGrantIdentity,
   normalizeSessionReference,
-} from './_herald-account-core.js';
+} from '../api/_herald-account-core.js';
 import {
   consumeAccountNonce, createAccountControlGrant, listAccountDesktops, revokeAccountDesktop,
-} from './_herald-account-store.js';
+} from '../api/_herald-account-store.js';
 import {
   accountIdentityResolver, requireVerifiedAccount,
-} from './_herald-identity.js';
-import { isAblyConfigured } from './_herald-realtime.js';
+} from '../api/_herald-identity.js';
+import { isAblyConfigured } from '../api/_herald-realtime.js';
 
 export function createHeraldDesktopsHandler({
   accountResolver = accountIdentityResolver,
