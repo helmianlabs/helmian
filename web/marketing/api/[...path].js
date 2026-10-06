@@ -42,10 +42,19 @@ const routes = {
   'team-oauth/discord/redeem': discordHandoffHandlers.redeem,
 };
 
-export default function handler(request, response) {
+function routeKey(request) {
   const raw = request.query?.path;
-  const parts = Array.isArray(raw) ? raw : String(raw || '').split('/').filter(Boolean);
-  const route = routes[parts.join('/')];
+  const fromQuery = Array.isArray(raw) ? raw : String(raw || '').split('/').filter(Boolean);
+  if (fromQuery.length) return fromQuery.join('/');
+  const path = String(request.url || '').split('?')[0];
+  const marker = '/api/';
+  const index = path.indexOf(marker);
+  if (index === -1) return '';
+  return path.slice(index + marker.length).replace(/\/$/, '');
+}
+
+export default function handler(request, response) {
+  const route = routes[routeKey(request)];
   if (!route) {
     response.statusCode = 404;
     response.setHeader?.('content-type', 'application/json; charset=utf-8');
