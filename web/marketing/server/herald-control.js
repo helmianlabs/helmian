@@ -1,14 +1,14 @@
-import { fail, sendJson, validateNonce } from './_herald-core.js';
+import { fail, sendJson, validateNonce } from '../api/_herald-core.js';
 import {
   clearControlCookie, parseControlCookie,
-} from './_herald-account-core.js';
+} from '../api/_herald-account-core.js';
 import {
   authorizeAccountControlGrant, consumeAccountNonce, revokeAccountControlGrant,
-} from './_herald-account-store.js';
+} from '../api/_herald-account-store.js';
 import {
   accountIdentityResolver, requireVerifiedAccount,
-} from './_herald-identity.js';
-import { isAblyConfigured } from './_herald-realtime.js';
+} from '../api/_herald-identity.js';
+import { isAblyConfigured } from '../api/_herald-realtime.js';
 
 export function createHeraldControlHandler({
   accountResolver = accountIdentityResolver,

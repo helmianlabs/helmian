@@ -1,8 +1,8 @@
 import {
   clearDeviceCookie, deviceCookie, fail, hashPairingCode, hashSecret,
   randomToken, readJson, requiredSecret, sendJson,
-} from './_herald-core.js';
-import { pairDevice } from './_herald-store.js';
+} from '../api/_herald-core.js';
+import { pairDevice } from '../api/_herald-store.js';
 
 const DEVICE_SECONDS = 8 * 60 * 60;
 

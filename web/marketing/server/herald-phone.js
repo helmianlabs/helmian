@@ -1,12 +1,12 @@
 import {
   clearDeviceCookie, fail, parseDeviceCookie, readJson, sendJson,
   validateNonce, validatePhoneAction,
-} from './_herald-core.js';
+} from '../api/_herald-core.js';
 import {
   publicDeviceIdentity, publicTransportStatus,
-} from './_herald-identity.js';
-import { isAblyConfigured } from './_herald-realtime.js';
-import { addMessage, authorizeDevice, messagesAfter } from './_herald-store.js';
+} from '../api/_herald-identity.js';
+import { isAblyConfigured } from '../api/_herald-realtime.js';
+import { addMessage, authorizeDevice, messagesAfter } from '../api/_herald-store.js';
 
 const ACTION_SCOPE = Object.freeze({
   'session.read': 'session:read',
@@ -34,8 +34,6 @@ export default async function handler(request, response) {
       sendJson(response, 200, {
         messages,
         cursor: messages.at(-1)?.id ?? after,
-        // This route is retained only for legacy pairing. It never infers or
-        // claims Clerk ownership; account Remote Control uses /herald-desktops.
         identity: { account: LEGACY_PAIRING_IDENTITY, device: publicDeviceIdentity(device) },
         transport: publicTransportStatus(device, { realtimeConfigured: isAblyConfigured() }),
       }); return;

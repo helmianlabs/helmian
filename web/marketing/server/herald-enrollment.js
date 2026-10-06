@@ -1,18 +1,18 @@
 import {
   fail, hashSecret, randomToken, readJson, requiredSecret, sendJson, validateNonce,
-} from './_herald-core.js';
+} from '../api/_herald-core.js';
 import {
   DESKTOP_CREDENTIAL_TTL_MS, ENROLLMENT_TTL_MS,
   hashEnrollmentCode, normalizeConfirmationCode,
   validateEnrollmentRedemption, validateEnrollmentRequest,
-} from './_herald-account-core.js';
+} from '../api/_herald-account-core.js';
 import {
   cleanupAccountControl, confirmDesktopEnrollment, createDesktopEnrollment,
   consumeAccountNonce, redeemDesktopEnrollment,
-} from './_herald-account-store.js';
+} from '../api/_herald-account-store.js';
 import {
   accountIdentityResolver, assertAccountIdentityConfigured, requireVerifiedAccount,
-} from './_herald-identity.js';
+} from '../api/_herald-identity.js';
 
 export function createHeraldEnrollmentHandler({
   accountResolver = accountIdentityResolver,

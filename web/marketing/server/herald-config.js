@@ -1,6 +1,6 @@
-import { sendJson } from './_herald-core.js';
-import { accountIdentityResolver } from './_herald-identity.js';
-import { isAblyConfigured } from './_herald-realtime.js';
+import { sendJson } from '../api/_herald-core.js';
+import { accountIdentityResolver } from '../api/_herald-identity.js';
+import { isAblyConfigured } from '../api/_herald-realtime.js';
 
 export function createHeraldConfigHandler({
   accountConfigured = () => accountIdentityResolver.configured,

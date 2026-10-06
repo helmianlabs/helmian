@@ -1,15 +1,15 @@
 import {
   bearer, fail, randomChannel, readJson, sendJson, validateNonce, validId,
-} from './_herald-core.js';
+} from '../api/_herald-core.js';
 import {
   SESSION_PRESENCE_TTL_MS, normalizeDesktopPresence,
-} from './_herald-account-core.js';
+} from '../api/_herald-account-core.js';
 import {
   authorizeRegisteredDesktop, stopDesktopSession, upsertDesktopSession,
-} from './_herald-account-store.js';
+} from '../api/_herald-account-store.js';
 import {
   accountIdentityResolver, assertAccountIdentityConfigured,
-} from './_herald-identity.js';
+} from '../api/_herald-identity.js';
 
 export function createHeraldDesktopHandler({
   accountResolver = accountIdentityResolver,
@@ -55,10 +55,6 @@ export function createHeraldDesktopHandler({
         const presence = normalizeDesktopPresence(body.session);
         await store.authorize({ desktopId, token, nonce });
         const expiresAt = new Date(now() + SESSION_PRESENCE_TTL_MS);
-        // upsertDesktopSession only stores realtimeChannel on first insert for
-        // a (desktop, session) pair. Passing a fresh channel here is still
-        // correct for new session ids; reusing the same session keeps the
-        // existing Ably namespace so phone grants stay aligned.
         const session = await store.upsertSession({
           desktopId,
           presence,
@@ -69,8 +65,6 @@ export function createHeraldDesktopHandler({
           registered: true,
           desktopId,
           session: publicPresence(session),
-          // Desktop polls ~1–2s; advertise a short window so clients re-mint
-          // Ably tokens after a new control grant is created on the phone.
           nextHeartbeatBefore: new Date(now() + 5_000).toISOString(),
         });
         return;
