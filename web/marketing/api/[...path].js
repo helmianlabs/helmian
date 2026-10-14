@@ -28,6 +28,17 @@ const routes = {
   'billing/checkout': billingCheckout,
   'billing/download': billingDownload,
   'billing/webhook': billingWebhook,
+  // Single-segment aliases: vercel.json rewrites multi-segment /api/a/b/c paths
+  // here because this project's catch-all function only matches one segment.
+  'billing-checkout': billingCheckout,
+  'billing-download': billingDownload,
+  'billing-webhook': billingWebhook,
+  'team-oauth-slack-start': slackHandoffHandlers.start,
+  'team-oauth-slack-callback': slackHandoffHandlers.callback,
+  'team-oauth-slack-redeem': slackHandoffHandlers.redeem,
+  'team-oauth-discord-start': discordHandoffHandlers.start,
+  'team-oauth-discord-callback': discordHandoffHandlers.callback,
+  'team-oauth-discord-redeem': discordHandoffHandlers.redeem,
   'remote/v1/control': heraldControl,
   'remote/v1/control-token': heraldRealtimeToken,
   'remote/v1/desktop': heraldDesktop,

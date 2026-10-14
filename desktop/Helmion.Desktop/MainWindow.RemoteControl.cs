@@ -116,8 +116,8 @@ public partial class MainWindow
         }
         catch (Exception error)
         {
-            IntegrationConnectionStatusText.Text = "Enrollment unavailable";
-            RemoteControlDetailText.Text = error.Message;
+            IntegrationConnectionStatusText.Text = "Cloud pairing unavailable";
+            RemoteControlDetailText.Text = DescribeEnrollmentFailure(error);
         }
         finally { RemoteControlEnrollButton.IsEnabled = true; }
     }
@@ -248,7 +248,7 @@ public partial class MainWindow
     {
         StopRemoteEnrollmentQr();
         // The verification origin comes from the local service configuration
-        // (HELMION_REMOTE_CONTROL_ORIGIN, default helmian.vercel.app).
+        // (HELMION_REMOTE_CONTROL_ORIGIN, default https://helmian.cloud).
         var link = Uri.TryCreate(challenge.VerificationUri, UriKind.Absolute, out var verification)
             ? HeraldPairingLink.TryBuild(
                 challenge.VerificationUri, challenge.UserCode, HeraldPairingLink.EnrollKey, verification.Host)
@@ -318,5 +318,32 @@ public partial class MainWindow
         image.EndInit();
         image.Freeze();
         return image;
+    }
+
+    /// <summary>Plain-words explanation of why account (cloud) pairing could not start.</summary>
+    internal static string DescribeEnrollmentFailure(Exception error)
+    {
+        var text = error.ToString();
+        if (text.Contains("Revoke the current", StringComparison.Ordinal))
+            return "A previous cloud pairing attempt failed and is still blocking new ones. "
+                + "Restart Helmian to clear it, or press \u201cPair on same Wi\u2011Fi\u201d to pair without the cloud.";
+        if (text.Contains("402", StringComparison.Ordinal) || text.Contains("Payment", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("DEPLOYMENT", StringComparison.Ordinal) || text.Contains("503", StringComparison.Ordinal)
+            || error is System.Net.Http.HttpRequestException or TaskCanceledException or TimeoutException
+            || text.Contains("HttpRequestException", StringComparison.Ordinal))
+            return "Helmian\u2019s cloud service (helmian.cloud) isn\u2019t reachable right now, so account pairing can\u2019t start. "
+                + "Press \u201cPair on same Wi\u2011Fi\u201d to pair your phone directly with this PC.";
+        return $"Cloud pairing could not start: {error.Message} Press \u201cPair on same Wi\u2011Fi\u201d to pair without the cloud.";
+    }
+
+    private async void RemoteControlLanPairButton_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        // Reuse the existing Herald sharing path in local-network mode and bring
+        // its QR into view. No agent session or cloud account is required.
+        if (MoreConnectorsHeraldExpander is not null) MoreConnectorsHeraldExpander.IsExpanded = true;
+        await StartHeraldSharingAsync(localNetwork: true);
+        HeraldPanelCard?.BringIntoView();
+        RemoteControlDetailText.Text = "Same-Wi\u2011Fi pairing started. Scan the QR in the Herald panel below with your phone camera "
+            + "(phone and PC must be on the same Wi\u2011Fi; allow Node through Windows Firewall if asked).";
     }
 }
