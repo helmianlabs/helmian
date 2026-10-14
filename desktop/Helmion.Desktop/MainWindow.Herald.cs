@@ -41,31 +41,22 @@ public partial class MainWindow
         await StartHeraldSharingAsync();
     }
 
-    private async Task StartHeraldSharingAsync()
+    private async Task StartHeraldSharingAsync(bool localNetwork = false)
     {
-        if (!HeraldGateway.IsAvailable())
-        {
-            RefreshHeraldPrerequisiteUi();
-            MessageBox.Show(
-                this,
-                "Phone sharing needs a selected project and a named agent session.\n\n"
-                + "Open Console, select the project, and start a Claude, ChatGPT, Grok, or Gemini session. "
-                + "Then return to Integrations and press Start phone sharing again.",
-                "Start phone sharing — session required",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-            return;
-        }
-
+        // Pairing no longer needs an active agent session. The phone pairs first,
+        // and instructions/approvals are refused politely by the gateway until a
+        // project + session is selected (on the desktop or later from the phone).
         var root = AgentBridge.FindHelmionRoot();
         var node = AgentBridge.FindNodeExecutable();
-        var workspace = _registeredWorkspacePath;
+        var workspace = string.IsNullOrWhiteSpace(_registeredWorkspacePath) ? root : _registeredWorkspacePath;
         if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(node)
             || string.IsNullOrWhiteSpace(workspace))
         {
             SetHeraldSharingUi(
                 "COULD NOT START",
-                "Helmian could not find Node, its source root, or the selected project. Nothing was opened.",
+                string.IsNullOrWhiteSpace(node)
+                    ? "Phone pairing needs Node.js 20+ on this PC (nodejs.org). Install it, then try again. Nothing was opened."
+                    : "Helmian could not find its Herald files (bin\\helmion.mjs) next to the app. Nothing was opened.",
                 running: false);
             return;
         }
@@ -89,9 +80,19 @@ public partial class MainWindow
             };
             start.ArgumentList.Add(Path.Combine(root, "bin", "helmion.mjs"));
             start.ArgumentList.Add("herald");
-            start.ArgumentList.Add("--remote");
-            start.ArgumentList.Add("--origin");
-            start.ArgumentList.Add("https://helmian.vercel.app");
+            if (localNetwork)
+            {
+                // Same-Wi-Fi fallback: no cloud account or relay. Serves the phone
+                // page on this PC's LAN address; the one-time code is still
+                // single-use, 5-minute and per-device.
+                start.ArgumentList.Add("--lan");
+            }
+            else
+            {
+                start.ArgumentList.Add("--remote");
+                start.ArgumentList.Add("--origin");
+                start.ArgumentList.Add("https://helmian.vercel.app");
+            }
             start.ArgumentList.Add("--desktop-pipe");
             start.ArgumentList.Add("--desktop-pipe-name");
             start.ArgumentList.Add(pipeName);
@@ -203,8 +204,8 @@ public partial class MainWindow
         if (current is null)
         {
             SetHeraldSharingUi(
-                "SESSION REQUIRED",
-                "Phone sharing has not started. Open Console, select a project, and start a named Claude, ChatGPT, Grok, or Gemini session. Then return here and press Start phone sharing.",
+                "READY TO PAIR",
+                "Press Start phone sharing (cloud) or Pair on same Wi\u2011Fi to show a QR. No agent session is needed to pair; open a project and session whenever you want the phone to send instructions.",
                 running: false);
             if (OpenHeraldConsoleButton is not null)
             {
@@ -239,7 +240,12 @@ public partial class MainWindow
             _heraldPhoneUrl = line["Phone: ".Length..].Trim();
             TryShowHeraldPairingQr(_heraldPhoneUrl);
         }
-        if (line.Contains("Pairing code:", StringComparison.Ordinal))
+        if (line.Contains("Pairing link", StringComparison.Ordinal))
+        {
+            var at = line.IndexOf("http", StringComparison.Ordinal);
+            if (at >= 0) TryShowHeraldPairingQr(line[at..].Trim());
+        }
+        else if (line.Contains("Pairing code:", StringComparison.Ordinal))
         {
             HeraldSharingStateText.Text = "PAIRING AVAILABLE";
             ScheduleHeraldPairingExpiry(line);
@@ -253,13 +259,11 @@ public partial class MainWindow
 
     private void TryShowHeraldPairingQr(string candidate)
     {
-        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
-            || uri.Scheme != Uri.UriSchemeHttps
-            || !string.Equals(uri.Host, "helmian.vercel.app", StringComparison.OrdinalIgnoreCase)
-            || !uri.AbsolutePath.StartsWith("/herald", StringComparison.Ordinal))
-        {
-            return;
-        }
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return;
+        var cloud = uri.Scheme == Uri.UriSchemeHttps
+            && string.Equals(uri.Host, "helmian.vercel.app", StringComparison.OrdinalIgnoreCase)
+            && uri.AbsolutePath.StartsWith("/herald", StringComparison.Ordinal);
+        if (!cloud && !HeraldPairingLink.IsPrivateLanHttp(uri)) return;
 
         var png = PngByteQRCodeHelper.GetQRCode(candidate, QRCodeGenerator.ECCLevel.Q, 8);
         using var stream = new MemoryStream(png, writable: false);

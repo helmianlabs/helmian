@@ -13,6 +13,8 @@ internal static class HeraldPairingLinkChecks
         Assert(HeraldPairingLink.TryBuild("https://helmian.vercel.app/herald/", "1234", HeraldPairingLink.EnrollKey) is null, "short codes are refused");
         Assert(HeraldPairingLink.ParseCliPairingCode("Pairing code: 87654321 (expires 2026-10-14T21:00:00Z)") == "87654321", "CLI code line parses");
         Assert(HeraldPairingLink.ParseCliPairingCode("Phone: https://x") is null, "non-code lines are ignored");
+        Assert(HeraldPairingLink.IsPrivateLanHttp(new Uri("http://192.168.1.20:7420/#pair=12345678")), "LAN fallback accepts private Wi-Fi addresses");
+        Assert(!HeraldPairingLink.IsPrivateLanHttp(new Uri("http://8.8.8.8:7420/")), "LAN fallback refuses public addresses");
         Console.WriteLine("Herald pairing link checks passed.");
     }
 

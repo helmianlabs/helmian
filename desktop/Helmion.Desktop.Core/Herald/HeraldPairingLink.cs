@@ -38,4 +38,17 @@ public static class HeraldPairingLink
             .TakeWhile(char.IsAsciiDigit).ToArray());
         return digits.Length == 8 ? digits : null;
     }
+
+    /// <summary>
+    /// The same-Wi-Fi fallback serves http://&lt;private IPv4&gt;:port/. Only RFC1918
+    /// addresses are accepted so a QR can never point the phone at a public host.
+    /// </summary>
+    public static bool IsPrivateLanHttp(Uri uri)
+    {
+        if (uri.Scheme != Uri.UriSchemeHttp || !string.IsNullOrEmpty(uri.UserInfo)) return false;
+        if (!System.Net.IPAddress.TryParse(uri.Host, out var ip)
+            || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+        var b = ip.GetAddressBytes();
+        return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+    }
 }

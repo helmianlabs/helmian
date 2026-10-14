@@ -21,6 +21,8 @@ test('refuses unsafe links and malformed codes', () => {
   assert.throws(() => buildPairingLink('https://helmian.vercel.app/', '1234'));
   assert.throws(() => buildPairingLink('https://helmian.vercel.app/', '12345678', 'token'));
   assert.ok(buildPairingLink('http://127.0.0.1:7420/', '12345678'));
+  assert.ok(buildPairingLink('http://192.168.1.20:7420/', '12345678'));
+  assert.throws(() => buildPairingLink('http://8.8.8.8:7420/', '12345678'));
 });
 
 test('reads and scrubs the fragment exactly once', () => {
