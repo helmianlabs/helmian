@@ -155,7 +155,7 @@
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="9">
+                            CornerRadius="10">
                       <Grid>
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="*" />
@@ -204,7 +204,7 @@
                   <Border Background="{DynamicResource SurfaceBrush}"
                           BorderBrush="{DynamicResource StrokeBrush}"
                           BorderThickness="1"
-                          CornerRadius="11"
+                          CornerRadius="12"
                           Padding="5">
                     <ScrollViewer CanContentScroll="True">
                       <StackPanel IsItemsHost="True"
@@ -822,7 +822,7 @@
           <Border Background="{DynamicResource PanelSubtleBrush}"
                   BorderBrush="{DynamicResource StrokeBrush}"
                   BorderThickness="1"
-                  CornerRadius="9"
+                  CornerRadius="10"
                   Padding="11"
                   Margin="0,12,0,0">
             <StackPanel>
@@ -1099,7 +1099,7 @@
                     Background="{TemplateBinding Background}"
                     BorderBrush="#3A5568"
                     BorderThickness="1"
-                    CornerRadius="13"
+                    CornerRadius="12"
                     Padding="{TemplateBinding Padding}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
@@ -1138,7 +1138,7 @@
                     Background="{DynamicResource AccentBrush}"
                     BorderBrush="{DynamicResource AccentStrokeStrongBrush}"
                     BorderThickness="1"
-                    CornerRadius="13"
+                    CornerRadius="12"
                     Padding="{TemplateBinding Padding}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
@@ -2125,7 +2125,7 @@
                   Background="{DynamicResource PanelSubtleBrush}"
                   BorderBrush="{DynamicResource StrokeBrush}"
                   BorderThickness="1"
-                  CornerRadius="11">
+                  CornerRadius="12">
             <StackPanel>
               <Button x:Name="OverviewNav"
                       Tag="Overview"
@@ -2269,29 +2269,11 @@
     <GridSplitter x:Name="SidebarContentSplitter"
                   Grid.Row="1"
                   Grid.Column="1"
-                  Width="10"
-                  HorizontalAlignment="Stretch"
-                  VerticalAlignment="Stretch"
-                  Background="Transparent"
-                  Cursor="SizeWE"
-                  ShowsPreview="True"
+                  ShowsPreview="False"
                   ResizeDirection="Columns"
                   ResizeBehavior="PreviousAndNext"
-                  ToolTip="Drag to resize sidebar and main">
-      <GridSplitter.Template>
-        <ControlTemplate TargetType="GridSplitter">
-          <Border Background="#18000000" Cursor="SizeWE">
-            <Border x:Name="Knob" Width="4" Height="56"
-                    HorizontalAlignment="Center" VerticalAlignment="Center"
-                    CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.45" />
-          </Border>
-          <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Knob" Property="Opacity" Value="1" />
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </GridSplitter.Template>
+                  ToolTip="Drag to resize sidebar and main"
+                  Style="{StaticResource PaneSplitterColumnsStyle}">
     </GridSplitter>
 
     <Grid x:Name="ContentHost" Grid.Row="1" Grid.Column="2">
@@ -2473,7 +2455,7 @@
                         Background="{DynamicResource PanelInsetBrush}"
                         BorderBrush="{DynamicResource AccentStrokeBrush}"
                         BorderThickness="1"
-                        CornerRadius="15"
+                        CornerRadius="16"
                         Padding="20">
                   <StackPanel>
                     <TextBlock Text="TODAY'S POSTURE"
@@ -2577,7 +2559,7 @@
               </Grid.ColumnDefinitions>
               <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
                 <StackPanel>
-                  <Grid Margin="0,0,0,17">
+                  <Grid Margin="0,0,0,16">
                     <Grid.ColumnDefinitions>
                       <ColumnDefinition Width="*" />
                       <ColumnDefinition Width="Auto" />
@@ -2603,19 +2585,19 @@
                   <TextBlock Text="Policy is active even while live integrations are deferred."
                              Style="{StaticResource MutedStyle}"
                              Margin="0,7,0,17" />
-                  <Border Background="{DynamicResource AccentStrongBrush}" CornerRadius="11" Padding="13" Margin="0,0,0,10">
+                  <Border Background="{DynamicResource AccentStrongBrush}" CornerRadius="12" Padding="13" Margin="0,0,0,10">
                     <StackPanel>
                       <TextBlock Text="LOW RISK · LOCAL" Foreground="{DynamicResource AccentBrush}" FontWeight="Bold" FontSize="10" />
                       <TextBlock Text="Runs inside clear, bounded guardrails" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" Margin="0,5,0,0" />
                     </StackPanel>
                   </Border>
-                  <Border Background="{DynamicResource WarningPanelBrush}" CornerRadius="11" Padding="13" Margin="0,0,0,10">
+                  <Border Background="{DynamicResource WarningPanelBrush}" CornerRadius="12" Padding="13" Margin="0,0,0,10">
                     <StackPanel>
                       <TextBlock Text="HIGH RISK · EXTERNAL" Foreground="{DynamicResource AmberBrush}" FontWeight="Bold" FontSize="10" />
                       <TextBlock Text="Requires a future explicit owner decision" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" Margin="0,5,0,0" />
                     </StackPanel>
                   </Border>
-                  <Border Background="{DynamicResource PanelSubtleBrush}" CornerRadius="11" Padding="13">
+                  <Border Background="{DynamicResource PanelSubtleBrush}" CornerRadius="12" Padding="13">
                     <StackPanel>
                       <TextBlock Text="ADVISORS" Foreground="{DynamicResource MutedTextBrush}" FontWeight="Bold" FontSize="10" />
                       <TextBlock Text="Read-only evidence · never authority" Foreground="{DynamicResource SoftTextBrush}" FontSize="13" Margin="0,5,0,0" />
@@ -2770,7 +2752,7 @@
                                Text="{Binding Workspace.NextAction}"
                                TextWrapping="Wrap" />
                   </Grid>
-                  <Border Background="{DynamicResource PanelSubtleBrush}" CornerRadius="11" Padding="14" Margin="0,20,0,0">
+                  <Border Background="{DynamicResource PanelSubtleBrush}" CornerRadius="12" Padding="14" Margin="0,20,0,0">
                     <TextBlock Text="The authenticated local service inventories selected source files read-only. It does not start agents, query Neon, or mutate project state."
                                Foreground="{DynamicResource SoftTextBrush}"
                                FontSize="12"
@@ -3118,23 +3100,11 @@
                 </Grid>
 
                 <GridSplitter Grid.Column="1"
-                              Width="10"
-                              HorizontalAlignment="Stretch"
-                              VerticalAlignment="Stretch"
-                              Background="Transparent"
-                              Cursor="SizeWE"
-                              ShowsPreview="True"
+                              ShowsPreview="False"
                               ResizeDirection="Columns"
                               ResizeBehavior="PreviousAndNext"
-                              ToolTip="Drag to resize sources and chat">
-                  <GridSplitter.Template>
-                    <ControlTemplate TargetType="GridSplitter">
-                      <Border Background="{DynamicResource PanelSubtleBrush}" Cursor="SizeWE">
-                        <Border Width="3" Height="40" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.55" />
-                      </Border>
-                    </ControlTemplate>
-                  </GridSplitter.Template>
+                              ToolTip="Drag to resize sources and chat"
+                              Style="{StaticResource PaneSplitterColumnsStyle}">
                 </GridSplitter>
 
                 <Grid Grid.Column="2" Background="{DynamicResource PanelSubtleBrush}">
@@ -3221,23 +3191,11 @@
               </Grid>
 
               <GridSplitter Grid.Row="2"
-                            Height="10"
-                            HorizontalAlignment="Stretch"
-                            VerticalAlignment="Stretch"
-                            Background="Transparent"
-                            Cursor="SizeNS"
-                            ShowsPreview="True"
+                            ShowsPreview="False"
                             ResizeDirection="Rows"
                             ResizeBehavior="PreviousAndNext"
-                            ToolTip="Drag to resize chat and compose">
-                <GridSplitter.Template>
-                  <ControlTemplate TargetType="GridSplitter">
-                    <Border Background="{DynamicResource PanelSubtleBrush}" Cursor="SizeNS">
-                      <Border Width="48" Height="3" HorizontalAlignment="Center" VerticalAlignment="Center"
-                              CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.55" />
-                    </Border>
-                  </ControlTemplate>
-                </GridSplitter.Template>
+                            ToolTip="Drag to resize chat and compose"
+                            Style="{StaticResource PaneSplitterRowsStyle}">
               </GridSplitter>
 
               <Border Grid.Row="3"
@@ -3370,32 +3328,11 @@
           <GridSplitter x:Name="TeamMaestroSplitter"
                         Grid.Row="0"
                         Grid.Column="1"
-                        Width="10"
-                        HorizontalAlignment="Stretch"
-                        VerticalAlignment="Stretch"
-                        Background="#22000000"
-                        Cursor="SizeWE"
-                        ShowsPreview="True"
+                        ShowsPreview="False"
                         ResizeDirection="Columns"
                         ResizeBehavior="PreviousAndNext"
-                        ToolTip="Drag to resize Room and Maestro">
-            <GridSplitter.Template>
-              <ControlTemplate TargetType="GridSplitter">
-                <Border Background="#22000000" Cursor="SizeWE">
-                  <Border x:Name="Knob"
-                          Width="4" Height="56"
-                          HorizontalAlignment="Center" VerticalAlignment="Center"
-                          CornerRadius="2"
-                          Background="{DynamicResource AccentBrush}"
-                          Opacity="0.5" />
-                </Border>
-                <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="Knob" Property="Opacity" Value="1" />
-                  </Trigger>
-                </ControlTemplate.Triggers>
-              </ControlTemplate>
-            </GridSplitter.Template>
+                        ToolTip="Drag to resize Room and Maestro"
+                        Style="{StaticResource PaneSplitterColumnsStyle}">
           </GridSplitter>
 
           <!-- Maestro conversation stage -->
@@ -4468,29 +4405,11 @@
 
           <GridSplitter Grid.Row="0"
                         Grid.Column="3"
-                        Width="10"
-                        HorizontalAlignment="Stretch"
-                        VerticalAlignment="Stretch"
-                        Background="#22000000"
-                        Cursor="SizeWE"
-                        ShowsPreview="True"
+                        ShowsPreview="False"
                         ResizeDirection="Columns"
                         ResizeBehavior="PreviousAndNext"
-                        ToolTip="Drag to resize Maestro and Agents">
-            <GridSplitter.Template>
-              <ControlTemplate TargetType="GridSplitter">
-                <Border Background="#22000000" Cursor="SizeWE">
-                  <Border x:Name="Grip" Width="4" Height="56"
-                          HorizontalAlignment="Center" VerticalAlignment="Center"
-                          CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.5" />
-                </Border>
-                <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="Grip" Property="Opacity" Value="1" />
-                  </Trigger>
-                </ControlTemplate.Triggers>
-              </ControlTemplate>
-            </GridSplitter.Template>
+                        ToolTip="Drag to resize Maestro and Agents"
+                        Style="{StaticResource PaneSplitterColumnsStyle}">
           </GridSplitter>
 
           <!-- Agents strip = multi-session manager; sleek cards show live chat preview. -->
@@ -4610,7 +4529,7 @@
                                 </Grid.ColumnDefinitions>
                                 <!-- Avatar initial (chat-style) -->
                                 <Border Width="22" Height="22"
-                                        CornerRadius="11"
+                                        CornerRadius="12"
                                         Background="{DynamicResource AccentPanelBrush}"
                                         VerticalAlignment="Top"
                                         Margin="0,1,8,0">
@@ -4890,8 +4809,6 @@
                   </Grid.ColumnDefinitions>
                   <PasswordBox x:Name="IntegrationsOpenAiImagesKeyBox"
                                Style="{StaticResource SettingsPasswordBoxStyle}"
-                               Height="40"
-                               Padding="12,8"
                                AutomationProperties.Name="OpenAI API key for image generation" />
                   <Button x:Name="IntegrationsEnrollImagesButton"
                           Grid.Column="1"
@@ -4962,10 +4879,10 @@
                   </StackPanel>
                 </Grid>
                 <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                  <Button x:Name="RemoteControlEnrollButton" Content="Enroll desktop"
+                  <Button x:Name="RemoteControlEnrollButton" Content="Connect phone"
                           MinWidth="120" Padding="14,8" Click="RemoteControlEnrollButton_Click"
                           Style="{StaticResource PrimaryButtonStyle}" />
-                  <Button x:Name="RemoteControlRedeemButton" Content="Code confirmed"
+                  <Button x:Name="RemoteControlRedeemButton" Content="I confirmed it"
                           MinWidth="120" Padding="14,8" Margin="8,0,0,0" Click="RemoteControlRedeemButton_Click"
                           Visibility="Collapsed" Style="{StaticResource ConsoleNeutralButtonStyle}" />
                 </StackPanel>
@@ -4973,15 +4890,36 @@
                         Background="{DynamicResource PanelInsetBrush}"
                         BorderBrush="{DynamicResource StrokeBrush}"
                         BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,14,0,0">
-                  <StackPanel>
-                    <TextBlock Text="ONE-TIME CODE" FontSize="10" FontWeight="Bold"
-                               Foreground="{DynamicResource MutedTextBrush}" />
-                    <TextBlock x:Name="RemoteControlEnrollmentCodeText" Text="--------" FontSize="24"
-                               FontWeight="SemiBold" Margin="0,8,0,0"
-                               FontFamily="Cascadia Mono, Consolas" />
-                    <TextBlock x:Name="RemoteControlEnrollmentUriText" Text="" FontSize="11"
-                               Foreground="{DynamicResource SoftTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
-                  </StackPanel>
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                      <TextBlock Text="SCAN WITH YOUR PHONE" FontSize="10" FontWeight="Bold"
+                                 Foreground="{DynamicResource MutedTextBrush}" />
+                      <TextBlock Text="Open your phone camera and point it at the code. Sign in on the phone and this desktop connects by itself."
+                                 FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0"
+                                 Foreground="{DynamicResource SoftTextBrush}" />
+                      <TextBlock Text="OR ENTER THIS ONE-TIME CODE" FontSize="10" FontWeight="Bold" Margin="0,14,0,0"
+                                 Foreground="{DynamicResource MutedTextBrush}" />
+                      <TextBlock x:Name="RemoteControlEnrollmentCodeText" Text="--------" FontSize="24"
+                                 FontWeight="SemiBold" Margin="0,6,0,0"
+                                 FontFamily="Cascadia Mono, Consolas" />
+                      <TextBlock x:Name="RemoteControlEnrollmentUriText" Text="" FontSize="11"
+                                 Foreground="{DynamicResource SoftTextBrush}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                      <TextBlock x:Name="RemoteControlEnrollmentExpiryText" Text="" FontSize="11"
+                                 Foreground="{DynamicResource MutedTextBrush}" Margin="0,8,0,0" />
+                    </StackPanel>
+                    <Border Grid.Column="1" x:Name="RemoteControlEnrollmentQrPanel"
+                            Background="White" CornerRadius="10" Padding="10"
+                            VerticalAlignment="Center" Visibility="Collapsed"
+                            AutomationProperties.Name="Phone connection QR code">
+                      <Image x:Name="RemoteControlEnrollmentQrImage" Width="168" Height="168"
+                             RenderOptions.BitmapScalingMode="NearestNeighbor"
+                             AutomationProperties.Name="Scan to connect Helmian Herald to this desktop" />
+                    </Border>
+                  </Grid>
                 </Border>
               </StackPanel>
             </Border>
@@ -5042,24 +4980,12 @@
                 </Grid>
 
                 <GridSplitter Grid.Row="1"
-                              Height="10"
-                              HorizontalAlignment="Stretch"
-                              VerticalAlignment="Stretch"
-                              Background="Transparent"
-                              Cursor="SizeNS"
-                              ShowsPreview="True"
+                              ShowsPreview="False"
                               ResizeDirection="Rows"
                               ResizeBehavior="PreviousAndNext"
                               DragCompleted="HeraldLayoutSplitter_DragCompleted"
-                              ToolTip="Drag to resize status area vs activity log">
-                  <GridSplitter.Template>
-                    <ControlTemplate TargetType="GridSplitter">
-                      <Border Background="{DynamicResource PanelSubtleBrush}" Cursor="SizeNS">
-                        <Border Width="48" Height="3" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.55" />
-                      </Border>
-                    </ControlTemplate>
-                  </GridSplitter.Template>
+                              ToolTip="Drag to resize status area vs activity log"
+                              Style="{StaticResource PaneSplitterRowsStyle}">
                 </GridSplitter>
 
                 <!-- Main: controls | splitter | QR -->
@@ -5074,7 +5000,7 @@
                           Background="{DynamicResource PanelSubtleBrush}"
                           BorderBrush="{DynamicResource StrokeBrush}"
                           BorderThickness="1"
-                          CornerRadius="11"
+                          CornerRadius="12"
                           Padding="14">
                     <DockPanel LastChildFill="True">
                       <StackPanel DockPanel.Dock="Top">
@@ -5169,31 +5095,19 @@
                   </Border>
 
                   <GridSplitter Grid.Column="1"
-                                Width="10"
-                                HorizontalAlignment="Stretch"
-                                VerticalAlignment="Stretch"
-                                Background="Transparent"
-                                Cursor="SizeWE"
-                                ShowsPreview="True"
+                                ShowsPreview="False"
                                 ResizeDirection="Columns"
                                 ResizeBehavior="PreviousAndNext"
                                 DragCompleted="HeraldLayoutSplitter_DragCompleted"
-                                ToolTip="Drag to resize controls vs QR">
-                    <GridSplitter.Template>
-                      <ControlTemplate TargetType="GridSplitter">
-                        <Border Background="{DynamicResource PanelSubtleBrush}" Cursor="SizeWE">
-                          <Border Width="3" Height="40" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                  CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.55" />
-                        </Border>
-                      </ControlTemplate>
-                    </GridSplitter.Template>
+                                ToolTip="Drag to resize controls vs QR"
+                                Style="{StaticResource PaneSplitterColumnsStyle}">
                   </GridSplitter>
 
                   <Border Grid.Column="2"
                           Background="{DynamicResource PanelSubtleBrush}"
                           BorderBrush="{DynamicResource StrokeBrush}"
                           BorderThickness="1"
-                          CornerRadius="11"
+                          CornerRadius="12"
                           Padding="12">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                       <TextBlock Text="PAIRING QR"
@@ -5239,24 +5153,12 @@
                 </Grid>
 
                 <GridSplitter Grid.Row="3"
-                              Height="10"
-                              HorizontalAlignment="Stretch"
-                              VerticalAlignment="Stretch"
-                              Background="Transparent"
-                              Cursor="SizeNS"
-                              ShowsPreview="True"
+                              ShowsPreview="False"
                               ResizeDirection="Rows"
                               ResizeBehavior="PreviousAndNext"
                               DragCompleted="HeraldLayoutSplitter_DragCompleted"
-                              ToolTip="Drag to resize activity log height">
-                  <GridSplitter.Template>
-                    <ControlTemplate TargetType="GridSplitter">
-                      <Border Background="{DynamicResource PanelSubtleBrush}" Cursor="SizeNS">
-                        <Border Width="48" Height="3" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.55" />
-                      </Border>
-                    </ControlTemplate>
-                  </GridSplitter.Template>
+                              ToolTip="Drag to resize activity log height"
+                              Style="{StaticResource PaneSplitterRowsStyle}">
                 </GridSplitter>
 
                 <!-- Activity / detail log (resizable height via row + splitter) -->
@@ -5264,7 +5166,7 @@
                         Background="{DynamicResource PanelSubtleBrush}"
                         BorderBrush="{DynamicResource StrokeBrush}"
                         BorderThickness="1"
-                        CornerRadius="11"
+                        CornerRadius="12"
                         Padding="12">
                   <DockPanel LastChildFill="True">
                     <TextBlock DockPanel.Dock="Top"
@@ -5353,7 +5255,7 @@
                         Background="{DynamicResource PanelSubtleBrush}"
                         BorderBrush="{DynamicResource StrokeBrush}"
                         BorderThickness="1"
-                        CornerRadius="11"
+                        CornerRadius="12"
                         Padding="15"
                         Margin="0,14,0,0">
                   <StackPanel>
@@ -5407,7 +5309,7 @@
                 <Border Background="{DynamicResource PanelSubtleBrush}"
                         BorderBrush="{DynamicResource StrokeBrush}"
                         BorderThickness="1"
-                        CornerRadius="11"
+                        CornerRadius="12"
                         Padding="15"
                         Margin="0,14,0,0">
                   <StackPanel>
@@ -5439,7 +5341,7 @@
                         Background="{DynamicResource PanelSubtleBrush}"
                         BorderBrush="{DynamicResource StrokeBrush}"
                         BorderThickness="1"
-                        CornerRadius="11"
+                        CornerRadius="12"
                         Padding="15"
                         Margin="0,14,0,0">
                   <StackPanel>
@@ -5480,7 +5382,7 @@
                         Background="{DynamicResource PanelSubtleBrush}"
                         BorderBrush="{DynamicResource AmberBrush}"
                         BorderThickness="1"
-                        CornerRadius="11"
+                        CornerRadius="12"
                         Padding="15"
                         Margin="0,14,0,0">
                   <StackPanel>
@@ -5580,7 +5482,7 @@
                   </Grid.ColumnDefinitions>
                   <Border Grid.Column="0"
                           Background="{DynamicResource AccentPanelBrush}"
-                          CornerRadius="11"
+                          CornerRadius="12"
                           Padding="14"
                           Margin="0,0,7,0">
                     <StackPanel>
@@ -5595,7 +5497,7 @@
                   </Border>
                   <Border Grid.Column="1"
                           Background="{DynamicResource WarningPanelBrush}"
-                          CornerRadius="11"
+                          CornerRadius="12"
                           Padding="14"
                           Margin="7,0,0,0">
                     <StackPanel>
@@ -5720,7 +5622,7 @@
             <Border Background="{DynamicResource WarningSoftBrush}"
                     BorderBrush="{DynamicResource WarningStrokeBrush}"
                     BorderThickness="1"
-                    CornerRadius="13"
+                    CornerRadius="12"
                     Padding="17">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="◈" Foreground="{DynamicResource AmberBrush}" FontSize="17" Margin="0,0,12,0" />
@@ -6236,7 +6138,6 @@
                 <PasswordBox x:Name="GeminiApiKeyInput"
                              Style="{StaticResource SettingsPasswordBoxStyle}"
                              Margin="0,0,0,12"
-                             FontSize="13"
                              AutomationProperties.Name="Gemini API Key"
                              AutomationProperties.HelpText="Enter your Google Gemini API key" />
 
@@ -6489,17 +6390,17 @@
                   
                   <StackPanel Grid.Column="0">
                     <TextBlock Text="MODEL NAME" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
-                    <TextBox x:Name="CustomModelNameInput" Height="38" Padding="10,8" Background="{DynamicResource SurfaceRaisedBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" FontSize="13" />
+                    <TextBox x:Name="CustomModelNameInput" Style="{StaticResource SettingsInputBoxStyle}" />
                   </StackPanel>
                   
                   <StackPanel Grid.Column="2">
                     <TextBlock Text="OPENAI-COMPATIBLE API ENDPOINT URL" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
-                    <TextBox x:Name="CustomModelEndpointInput" Height="38" Padding="10,8" Background="{DynamicResource SurfaceRaisedBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" FontSize="13" />
+                    <TextBox x:Name="CustomModelEndpointInput" Style="{StaticResource SettingsInputBoxStyle}" />
                   </StackPanel>
 
                   <StackPanel Grid.Column="4">
                     <TextBlock Text="API KEY / AUTH TOKEN" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
-                    <TextBox x:Name="CustomModelApiKeyInput" Height="38" Padding="10,8" Background="{DynamicResource SurfaceRaisedBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" FontSize="13" />
+                    <TextBox x:Name="CustomModelApiKeyInput" Style="{StaticResource SettingsInputBoxStyle}" />
                   </StackPanel>
                 </Grid>
 
@@ -6717,30 +6618,12 @@
     <GridSplitter x:Name="ContentGuardSplitter"
                   Grid.Row="1"
                   Grid.Column="3"
-                  Width="10"
-                  HorizontalAlignment="Stretch"
-                  VerticalAlignment="Stretch"
-                  Background="Transparent"
-                  Cursor="SizeWE"
-                  ShowsPreview="True"
+                  ShowsPreview="False"
                   ResizeDirection="Columns"
                   ResizeBehavior="PreviousAndNext"
                   DragCompleted="ContentGuardSplitter_DragCompleted"
-                  ToolTip="Drag to resize · drag fully right to hide Guard">
-      <GridSplitter.Template>
-        <ControlTemplate TargetType="GridSplitter">
-          <Border Background="#18000000" Cursor="SizeWE">
-            <Border x:Name="Knob" Width="4" Height="56"
-                    HorizontalAlignment="Center" VerticalAlignment="Center"
-                    CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.55" />
-          </Border>
-          <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Knob" Property="Opacity" Value="1" />
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </GridSplitter.Template>
+                  ToolTip="Drag to resize · drag fully right to hide Guard"
+                  Style="{StaticResource PaneSplitterColumnsStyle}">
     </GridSplitter>
 
     <!--
@@ -7099,7 +6982,7 @@
                 <Border Background="{DynamicResource PanelInsetBrush}"
                         BorderBrush="{DynamicResource StrokeBrush}"
                         BorderThickness="1"
-                        CornerRadius="9"
+                        CornerRadius="10"
                         Padding="10">
                   <TextBox x:Name="CanvasNoteBox"
                            MinHeight="150"
@@ -7139,7 +7022,7 @@
                 <Border Background="{DynamicResource PanelInsetBrush}"
                         BorderBrush="{DynamicResource StrokeBrush}"
                         BorderThickness="1"
-                        CornerRadius="9"
+                        CornerRadius="10"
                         Padding="10">
                   <TextBox x:Name="CanvasDecisionBox"
                            MinHeight="64"
@@ -7310,23 +7193,11 @@
             </ScrollViewer>
           </Border>
           <GridSplitter Grid.Row="2"
-                        Height="10"
-                        HorizontalAlignment="Stretch"
-                        VerticalAlignment="Stretch"
-                        Background="Transparent"
-                        Cursor="SizeNS"
-                        ShowsPreview="True"
+                        ShowsPreview="False"
                         ResizeDirection="Rows"
                         ResizeBehavior="PreviousAndNext"
-                        ToolTip="Drag to resize artifact list and preview">
-            <GridSplitter.Template>
-              <ControlTemplate TargetType="GridSplitter">
-                <Border Background="{DynamicResource PanelSubtleBrush}" Cursor="SizeNS">
-                  <Border Width="48" Height="3" HorizontalAlignment="Center" VerticalAlignment="Center"
-                          CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.55" />
-                </Border>
-              </ControlTemplate>
-            </GridSplitter.Template>
+                        ToolTip="Drag to resize artifact list and preview"
+                        Style="{StaticResource PaneSplitterRowsStyle}">
           </GridSplitter>
           <Border Grid.Row="3" Style="{StaticResource CardStyle}" Padding="10">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -7523,23 +7394,11 @@
           </ScrollViewer>
 
           <GridSplitter Grid.Row="1"
-                        Height="10"
-                        HorizontalAlignment="Stretch"
-                        VerticalAlignment="Stretch"
-                        Background="Transparent"
-                        Cursor="SizeNS"
-                        ShowsPreview="True"
+                        ShowsPreview="False"
                         ResizeDirection="Rows"
                         ResizeBehavior="PreviousAndNext"
-                        ToolTip="Drag to resize compose and history">
-            <GridSplitter.Template>
-              <ControlTemplate TargetType="GridSplitter">
-                <Border Background="{DynamicResource PanelSubtleBrush}" Cursor="SizeNS">
-                  <Border Width="48" Height="3" HorizontalAlignment="Center" VerticalAlignment="Center"
-                          CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.55" />
-                </Border>
-              </ControlTemplate>
-            </GridSplitter.Template>
+                        ToolTip="Drag to resize compose and history"
+                        Style="{StaticResource PaneSplitterRowsStyle}">
           </GridSplitter>
 
           <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="10">

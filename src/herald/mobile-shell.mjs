@@ -308,7 +308,16 @@ byId('pair-code').addEventListener('keydown', (event) => {
   if (event.key === 'Enter') pair();
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-refresh();
+// QR pairing: Desktop/CLI links to <url>#pair=<code>. The fragment never
+// reaches the server; scrub it, then pair once with the scanned code.
+const scannedPair = /^#pair=(\d{8})$/.exec(location.hash);
+if (scannedPair) {
+  history.replaceState(null, '', location.pathname + location.search);
+  byId('pair-code').value = scannedPair[1];
+  pair();
+} else {
+  refresh();
+}
 setInterval(updateFreshness, 5_000);
 `;
 

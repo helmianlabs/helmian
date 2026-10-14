@@ -11,6 +11,7 @@ import {
   loadClerkBrowser,
 } from './account-runtime.js?v=14';
 import { createDeliveryTracker } from './runtime.js';
+import { ENROLL_FRAGMENT_KEY, takePairingCodeFromLocation } from './pairing-link.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -32,6 +33,9 @@ let remoteTransport = null;
 let selectedControl = null;
 let activeAccountId = null;
 const delivery = createDeliveryTracker();
+// QR pairing: Helmian Desktop shows a QR for /herald/#enroll=<code>. Take the
+// one-time code from the fragment (never sent to a server) and scrub it now.
+let qrEnrollmentCode = takePairingCodeFromLocation(location, history, ENROLL_FRAGMENT_KEY);
 
 function readStorage(key, fallback = '') {
   try { return localStorage.getItem(key) ?? fallback; }
@@ -265,19 +269,37 @@ composer.addEventListener('submit', (event) => {
   void sendRemoteInstruction(draft);
 });
 
+function confirmEnrollmentCode(code) {
+  return remoteApi.confirmEnrollment(code).then(async () => {
+    $('#enrollmentCode').value = '';
+    showToast('Desktop enrollment confirmed. Helmian Desktop will finish connecting in a moment.');
+    await refreshDesktopList();
+  }).catch((error) => showToast(error.message));
+}
+
 $('#enrollmentForm')?.addEventListener('submit', (event) => {
   event.preventDefault();
-  const code = $('#enrollmentCode').value.trim();
+  const code = $('#enrollmentCode').value.replace(/\D/g, '');
   if (!/^\d{8}$/.test(code)) {
     showToast('Enter the eight-digit code shown by Helmian Desktop.');
     return;
   }
-  void remoteApi.confirmEnrollment(code).then(async () => {
-    $('#enrollmentCode').value = '';
-    showToast('Desktop enrollment confirmed. Waiting for Desktop redemption and heartbeat.');
-    await refreshDesktopList();
-  }).catch((error) => showToast(error.message));
+  void confirmEnrollmentCode(code);
 });
+
+if (qrEnrollmentCode) {
+  $('#enrollmentCode').value = qrEnrollmentCode;
+  showToast('QR code scanned. Sign in to connect this phone to Helmian Desktop.');
+}
+
+// Called once the account is signed in. Uses the scanned code a single time.
+async function redeemScannedEnrollment() {
+  if (!qrEnrollmentCode) return;
+  const code = qrEnrollmentCode;
+  qrEnrollmentCode = null;
+  setRemoteStatus('Confirming the Desktop you scanned…', false);
+  await confirmEnrollmentCode(code);
+}
 
 messageInput.addEventListener('input', () => {
   writeStorage(draftKey, messageInput.value);
@@ -353,6 +375,7 @@ async function applyAccountState(config) {
     setRemoteStatus('Sign in to see only the Desktops owned by your Helmian account.', false);
     $('#desktopList').replaceChildren();
     $('#desktopEmpty').hidden = false;
+    if (qrEnrollmentCode && !accountDialog.open) accountDialog.showModal();
     if (accountDialog.open) clerk.mountSignIn($('#clerkMount'));
     return;
   }
@@ -365,6 +388,7 @@ async function applyAccountState(config) {
   $('#accountButton').textContent = 'Sign out';
   setRemoteStatus('Signed in. Checking your account-owned Desktop sessions…', false);
   await refreshDesktopList();
+  await redeemScannedEnrollment();
   if (config?.transport?.realtimeClientActive !== true) {
     setRemoteStatus('Your account is signed in, but scoped realtime transport is not configured.', false);
   }

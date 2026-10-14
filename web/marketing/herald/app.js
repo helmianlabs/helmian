@@ -8,6 +8,7 @@ import {
   describeAccountIdentity,
   normalizeAccountIdentity,
 } from './runtime.js';
+import { PAIR_FRAGMENT_KEY, takePairingCodeFromLocation } from './pairing-link.js';
 
 const $ = (id) => document.getElementById(id);
 const channel = new URLSearchParams(location.search).get('channel') ?? '';
@@ -401,4 +402,10 @@ if ('serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('/herald/sw.js', { scope: '/herald/' }).catch(() => {}));
 }
 void loadPublicConfiguration();
-void resumePairedSession();
+const scannedPairCode = takePairingCodeFromLocation(location, history, PAIR_FRAGMENT_KEY);
+if (scannedPairCode && channel) {
+  $('code').value = scannedPairCode;
+  $('pair').click();
+} else {
+  void resumePairedSession();
+}
