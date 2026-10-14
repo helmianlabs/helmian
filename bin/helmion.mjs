@@ -601,6 +601,10 @@ async function herald() {
     process.stdout.write('Desktop connection: outbound only. No public port is open on this PC.\n');
     process.stdout.write(`Phone: ${running.phoneUrl}\n`);
     process.stdout.write(`Pairing code: ${running.pairingCode} (expires ${running.pairingExpiresAt})\n`);
+    try {
+      const { buildPairingLink } = await import('../src/herald/pairing-link.mjs');
+      process.stdout.write(`Pairing link: ${buildPairingLink(running.phoneUrl, running.pairingCode)}\n`);
+    } catch { /* the typed code above still works */ }
     process.stdout.write('Ctrl+C stops sharing and makes the phone session unavailable.\n');
     const stop = async () => { await running.stop(); process.exit(0); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
@@ -648,6 +652,12 @@ async function herald() {
   process.stdout.write(
     `\nPairing code: ${running.pairingCode} (expires ${running.pairingExpiresAt})\n`,
   );
+  if (running.urls[0]) {
+    try {
+      const { buildPairingLink } = await import('../src/herald/pairing-link.mjs');
+      process.stdout.write(`Pairing link (scan or open on the phone): ${buildPairingLink(running.urls[0], running.pairingCode)}\n`);
+    } catch { /* plain-http LAN address: type the code instead */ }
+  }
   process.stdout.write(
     lan
       ? '\nServing the LOCAL NETWORK for Phase 1 testing only. Pair per device; this is not a WAN or production endpoint.\n'

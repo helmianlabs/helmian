@@ -22,6 +22,7 @@ public partial class MainWindow
     private Process? _heraldProcess;
     private bool _heraldClosedWired;
     private DispatcherTimer? _heraldPairingExpiryTimer;
+    private string? _heraldPhoneUrl;
 
     internal HeraldDesktopGateway HeraldGateway =>
         _heraldGateway ??= new HeraldDesktopGateway(
@@ -235,12 +236,18 @@ public partial class MainWindow
         HeraldSharingDetailText.Text = combined.Length <= 2_400 ? combined : combined[^2_400..];
         if (line.StartsWith("Phone: ", StringComparison.Ordinal))
         {
-            TryShowHeraldPairingQr(line["Phone: ".Length..].Trim());
+            _heraldPhoneUrl = line["Phone: ".Length..].Trim();
+            TryShowHeraldPairingQr(_heraldPhoneUrl);
         }
         if (line.Contains("Pairing code:", StringComparison.Ordinal))
         {
             HeraldSharingStateText.Text = "PAIRING AVAILABLE";
             ScheduleHeraldPairingExpiry(line);
+            // Upgrade the QR so scanning also carries the one-time code (in the
+            // URL fragment) and the phone does not have to type it.
+            var link = HeraldPairingLink.TryBuild(
+                _heraldPhoneUrl, HeraldPairingLink.ParseCliPairingCode(line), HeraldPairingLink.PairKey);
+            if (link is not null) TryShowHeraldPairingQr(link);
         }
     }
 
@@ -263,7 +270,8 @@ public partial class MainWindow
         image.EndInit();
         image.Freeze();
         HeraldPairingQrImage.Source = image;
-        HeraldPairingQrPanel.ToolTip = candidate;
+        // Never surface the one-time code in a tooltip; show the base link only.
+        HeraldPairingQrPanel.ToolTip = uri.GetLeftPart(UriPartial.Query);
         HeraldPairingQrPanel.Visibility = Visibility.Visible;
         if (HeraldQrPlaceholderText is not null)
             HeraldQrPlaceholderText.Visibility = Visibility.Collapsed;

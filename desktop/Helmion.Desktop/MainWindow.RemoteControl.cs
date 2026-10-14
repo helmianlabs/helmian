@@ -1,5 +1,7 @@
 using System.IO;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using QRCoder;
 using Helmion.Desktop.Core;
 using Helmion.LocalService.Protocol;
 
@@ -16,6 +18,10 @@ public partial class MainWindow
     private Task? _remoteControlGatewayTask;
     private DispatcherTimer? _remoteControlSessionTimer;
     private bool _remoteControlSyncBusy;
+    private DispatcherTimer? _remoteEnrollmentTimer;
+    private DateTimeOffset _remoteEnrollmentExpiresAt;
+    private DateTimeOffset _remoteEnrollmentNextPoll;
+    private bool _remoteEnrollmentPollBusy;
     /// <summary>
     /// Installation id used to mint RemoteControlProjectIdentity hashes.
     /// Must stay aligned with heartbeat project ids the phone receives.
@@ -105,6 +111,7 @@ public partial class MainWindow
             RemoteControlEnrollmentUriText.Text = result.Challenge.VerificationUri;
             RemoteControlEnrollmentPanel.Visibility = System.Windows.Visibility.Visible;
             RemoteControlRedeemButton.Visibility = System.Windows.Visibility.Visible;
+            ShowRemoteEnrollmentQr(result.Challenge);
             ApplyRemoteControlStatus(result.Status);
         }
         catch (Exception error)
@@ -147,6 +154,7 @@ public partial class MainWindow
         RemoteControlDetailText.Text = state.Detail;
         if (state.Enrollment.AccountOwned)
         {
+            StopRemoteEnrollmentQr();
             RemoteControlEnrollmentPanel.Visibility = System.Windows.Visibility.Collapsed;
             RemoteControlRedeemButton.Visibility = System.Windows.Visibility.Collapsed;
             RemoteControlEnrollButton.Visibility = System.Windows.Visibility.Collapsed;
@@ -228,5 +236,87 @@ public partial class MainWindow
         }
 
         return CurrentRemoteControlSessionMetadata(installationId);
+    }
+
+    /// <summary>
+    /// QR pairing: encode the verification page plus the one-time code in the URL
+    /// fragment (/herald/#enroll=12345678). The phone scrubs the fragment, asks the
+    /// user to sign in, and confirms the code once. The desktop then polls redeem
+    /// until the account confirmation lands or the challenge expires.
+    /// </summary>
+    private void ShowRemoteEnrollmentQr(RemoteEnrollmentChallenge challenge)
+    {
+        StopRemoteEnrollmentQr();
+        // The verification origin comes from the local service configuration
+        // (HELMION_REMOTE_CONTROL_ORIGIN, default helmian.vercel.app).
+        var link = Uri.TryCreate(challenge.VerificationUri, UriKind.Absolute, out var verification)
+            ? HeraldPairingLink.TryBuild(
+                challenge.VerificationUri, challenge.UserCode, HeraldPairingLink.EnrollKey, verification.Host)
+            : null;
+        if (link is not null)
+        {
+            RemoteControlEnrollmentQrImage.Source = RenderPairingQr(link);
+            RemoteControlEnrollmentQrPanel.Visibility = System.Windows.Visibility.Visible;
+        }
+        _remoteEnrollmentExpiresAt = challenge.ExpiresAtUtc;
+        _remoteEnrollmentNextPoll = DateTimeOffset.UtcNow.AddSeconds(5);
+        _remoteEnrollmentTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _remoteEnrollmentTimer.Tick += async (_, _) => await RemoteEnrollmentTickAsync();
+        _remoteEnrollmentTimer.Start();
+        UpdateRemoteEnrollmentExpiryText();
+    }
+
+    private void StopRemoteEnrollmentQr()
+    {
+        _remoteEnrollmentTimer?.Stop();
+        _remoteEnrollmentTimer = null;
+        if (RemoteControlEnrollmentQrImage is not null) RemoteControlEnrollmentQrImage.Source = null;
+        if (RemoteControlEnrollmentQrPanel is not null)
+            RemoteControlEnrollmentQrPanel.Visibility = System.Windows.Visibility.Collapsed;
+        if (RemoteControlEnrollmentExpiryText is not null) RemoteControlEnrollmentExpiryText.Text = string.Empty;
+    }
+
+    private void UpdateRemoteEnrollmentExpiryText()
+    {
+        var left = _remoteEnrollmentExpiresAt - DateTimeOffset.UtcNow;
+        RemoteControlEnrollmentExpiryText.Text = left > TimeSpan.Zero
+            ? $"Expires in {(int)left.TotalMinutes}:{left.Seconds:00} · waiting for your phone…"
+            : "This code expired. Press Connect phone for a new one.";
+    }
+
+    private async Task RemoteEnrollmentTickAsync()
+    {
+        UpdateRemoteEnrollmentExpiryText();
+        if (DateTimeOffset.UtcNow >= _remoteEnrollmentExpiresAt)
+        {
+            _remoteEnrollmentTimer?.Stop();
+            RemoteControlEnrollmentQrPanel.Visibility = System.Windows.Visibility.Collapsed;
+            RemoteControlEnrollmentCodeText.Text = "--------";
+            return;
+        }
+        if (_remoteEnrollmentPollBusy || DateTimeOffset.UtcNow < _remoteEnrollmentNextPoll) return;
+        _remoteEnrollmentPollBusy = true;
+        _remoteEnrollmentNextPoll = DateTimeOffset.UtcNow.AddSeconds(5);
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var state = await LocalServiceHost.Connector.RedeemRemoteControlEnrollmentAsync(timeout.Token);
+            if (state.Enrollment.AccountOwned) ApplyRemoteControlStatus(state);
+        }
+        catch { /* not confirmed yet or briefly offline; keep waiting until expiry */ }
+        finally { _remoteEnrollmentPollBusy = false; }
+    }
+
+    internal static BitmapImage RenderPairingQr(string payload)
+    {
+        var png = PngByteQRCodeHelper.GetQRCode(payload, QRCodeGenerator.ECCLevel.Q, 8);
+        using var stream = new MemoryStream(png, writable: false);
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.StreamSource = stream;
+        image.EndInit();
+        image.Freeze();
+        return image;
     }
 }

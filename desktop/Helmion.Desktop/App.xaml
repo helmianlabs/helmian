@@ -242,5 +242,71 @@
         </Setter.Value>
       </Setter>
     </Style>
+
+    <!-- Shared pane splitters (UI polish): one look for every drag rail.
+         Transparent 10px hit area, a hairline that lights up on hover/drag,
+         and a centered grip. Uses theme brushes so light themes stay clean. -->
+    <Style x:Key="PaneSplitterColumnsStyle" TargetType="GridSplitter">
+      <Setter Property="Width" Value="10" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="VerticalAlignment" Value="Stretch" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Cursor" Value="SizeWE" />
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="GridSplitter">
+            <Grid Background="Transparent">
+              <Rectangle x:Name="Line" Width="1" HorizontalAlignment="Center" Fill="{DynamicResource StrokeBrush}" />
+              <Border x:Name="Knob" Width="4" Height="44" HorizontalAlignment="Center" VerticalAlignment="Center"
+                      CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.4" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Knob" Property="Opacity" Value="0.95" />
+                <Setter TargetName="Line" Property="Fill" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="Line" Property="Opacity" Value="0.5" />
+              </Trigger>
+              <Trigger Property="IsDragging" Value="True">
+                <Setter TargetName="Knob" Property="Opacity" Value="1" />
+                <Setter TargetName="Line" Property="Fill" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="Line" Property="Opacity" Value="0.8" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="PaneSplitterRowsStyle" TargetType="GridSplitter">
+      <Setter Property="Height" Value="10" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="VerticalAlignment" Value="Stretch" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Cursor" Value="SizeNS" />
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="GridSplitter">
+            <Grid Background="Transparent">
+              <Rectangle x:Name="Line" Height="1" VerticalAlignment="Center" Fill="{DynamicResource StrokeBrush}" />
+              <Border x:Name="Knob" Width="44" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center"
+                      CornerRadius="2" Background="{DynamicResource AccentBrush}" Opacity="0.4" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Knob" Property="Opacity" Value="0.95" />
+                <Setter TargetName="Line" Property="Fill" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="Line" Property="Opacity" Value="0.5" />
+              </Trigger>
+              <Trigger Property="IsDragging" Value="True">
+                <Setter TargetName="Knob" Property="Opacity" Value="1" />
+                <Setter TargetName="Line" Property="Fill" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="Line" Property="Opacity" Value="0.8" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Application.Resources>
 </Application>
