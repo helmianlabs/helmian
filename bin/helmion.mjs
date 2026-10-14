@@ -585,7 +585,7 @@ async function herald() {
     const { createHeraldDesktopPipeBridge } = await import('../src/herald/desktop-pipe.mjs');
     const { startRemoteHeraldSession } = await import('../src/herald/remote-session.mjs');
     const { loadHeraldOwnerSecret } = await import('../src/herald/remote-owner-store.mjs');
-    const origin = option('--origin', process.env.HELMION_HERALD_ORIGIN ?? 'https://helmian.vercel.app');
+    const origin = option('--origin', process.env.HELMION_HERALD_ORIGIN ?? 'https://helmian.cloud');
     const secret = await loadHeraldOwnerSecret();
     let running;
     try {
@@ -652,10 +652,13 @@ async function herald() {
   process.stdout.write(
     `\nPairing code: ${running.pairingCode} (expires ${running.pairingExpiresAt})\n`,
   );
-  if (running.urls[0]) {
+  // Prefer a home-Wi-Fi address over virtual adapters (WSL/Hyper-V 172.x).
+  const pairUrl = running.urls.find((u) => u.includes('//192.168.'))
+    ?? running.urls.find((u) => u.includes('//10.')) ?? running.urls[0];
+  if (pairUrl) {
     try {
       const { buildPairingLink } = await import('../src/herald/pairing-link.mjs');
-      process.stdout.write(`Pairing link (scan or open on the phone): ${buildPairingLink(running.urls[0], running.pairingCode)}\n`);
+      process.stdout.write(`Pairing link (scan or open on the phone): ${buildPairingLink(pairUrl, running.pairingCode)}\n`);
     } catch { /* plain-http LAN address: type the code instead */ }
   }
   process.stdout.write(

@@ -4882,6 +4882,10 @@
                   <Button x:Name="RemoteControlEnrollButton" Content="Connect phone"
                           MinWidth="120" Padding="14,8" Click="RemoteControlEnrollButton_Click"
                           Style="{StaticResource PrimaryButtonStyle}" />
+                  <Button x:Name="RemoteControlLanPairButton" Content="Pair on same Wi‑Fi"
+                          MinWidth="120" Padding="14,8" Margin="8,0,0,0" Click="RemoteControlLanPairButton_Click"
+                          ToolTip="No cloud account needed: shows a QR your phone can scan while on the same Wi‑Fi as this PC."
+                          Style="{StaticResource ConsoleNeutralButtonStyle}" />
                   <Button x:Name="RemoteControlRedeemButton" Content="I confirmed it"
                           MinWidth="120" Padding="14,8" Margin="8,0,0,0" Click="RemoteControlRedeemButton_Click"
                           Visibility="Collapsed" Style="{StaticResource ConsoleNeutralButtonStyle}" />
@@ -4924,7 +4928,8 @@
               </StackPanel>
             </Border>
 
-            <Expander Header="More · connectors · Herald"
+            <Expander x:Name="MoreConnectorsHeraldExpander"
+                      Header="More · connectors · Herald"
                       IsExpanded="False"
                       Margin="0,4,0,0"
                       Foreground="{DynamicResource MutedTextBrush}"

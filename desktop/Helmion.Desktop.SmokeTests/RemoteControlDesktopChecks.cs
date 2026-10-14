@@ -313,6 +313,20 @@ internal static class RemoteControlDesktopChecks
             Check(failedStateCannotReenroll,
                 "a failed protected/enrollment state cannot be silently overwritten by another request");
 
+            var retryApi = new FakeEnrollmentApi(now) { FailNextRequest = true };
+            var retryClient = new RemoteDesktopEnrollmentClient(
+                retryApi,
+                new ProtectedRemoteDesktopCredentialStore(
+                    Path.Combine(Path.GetTempPath(), $"helmian-retry-{Guid.NewGuid():N}"), allowTestDirectory: true, () => now),
+                () => now);
+            var firstRequestFailed = false;
+            try { retryClient.RequestEnrollmentAsync("install-00000009", "Retry desktop").GetAwaiter().GetResult(); }
+            catch (HttpRequestException) { firstRequestFailed = true; }
+            var retried = retryClient.RequestEnrollmentAsync("install-00000009", "Retry desktop").GetAwaiter().GetResult();
+            Check(firstRequestFailed
+                  && retried.State.Stage == RemoteEnrollmentStage.AwaitingAccountConfirmation,
+                "a failed enrollment *request* (cloud unreachable) can be retried without restarting the Local Service");
+
             var tamperStore = new ProtectedRemoteDesktopCredentialStore(
                 tamperedRoot, allowTestDirectory: true, () => now);
             var tamperSecret = Enumerable.Repeat((byte)0x5A, 48).ToArray();
@@ -797,6 +811,7 @@ internal static class RemoteControlDesktopChecks
         }
 
         public byte[] ExpectedNonce { get; }
+        public bool FailNextRequest { get; set; }
         public RemoteEnrollmentRequest? LastEnrollmentRequest { get; private set; }
         public RemoteEnrollmentRedemptionRequest? LastRedemptionRequest { get; private set; }
         public byte[]? LastRedemptionNonceCopy { get; private set; }
@@ -810,6 +825,11 @@ internal static class RemoteControlDesktopChecks
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (FailNextRequest)
+            {
+                FailNextRequest = false;
+                throw new HttpRequestException("cloud unreachable (simulated 402)");
+            }
             LastEnrollmentRequest = request;
             return Task.FromResult(new RemoteEnrollmentRequestResponse(
                 "enrollment-00000001",

@@ -14,6 +14,66 @@
     {
       "source": "/api/admin/:path*",
       "destination": "https://helmian-cloud.fly.dev/api/admin/:path*"
+    },
+    {
+      "source": "/api/remote/v1/control",
+      "destination": "/api/herald-control"
+    },
+    {
+      "source": "/api/remote/v1/control-token",
+      "destination": "/api/herald-realtime-token"
+    },
+    {
+      "source": "/api/remote/v1/desktop",
+      "destination": "/api/herald-desktop"
+    },
+    {
+      "source": "/api/remote/v1/desktop-token",
+      "destination": "/api/herald-desktop-realtime-token"
+    },
+    {
+      "source": "/api/remote/v1/desktops",
+      "destination": "/api/herald-desktops"
+    },
+    {
+      "source": "/api/remote/v1/enrollment",
+      "destination": "/api/herald-enrollment"
+    },
+    {
+      "source": "/api/billing/checkout",
+      "destination": "/api/billing-checkout"
+    },
+    {
+      "source": "/api/billing/download",
+      "destination": "/api/billing-download"
+    },
+    {
+      "source": "/api/billing/webhook",
+      "destination": "/api/billing-webhook"
+    },
+    {
+      "source": "/api/team-oauth/slack/start",
+      "destination": "/api/team-oauth-slack-start"
+    },
+    {
+      "source": "/api/team-oauth/slack/callback",
+      "destination": "/api/team-oauth-slack-callback"
+    },
+    {
+      "source": "/api/team-oauth/slack/redeem",
+      "destination": "/api/team-oauth-slack-redeem"
+    },
+    {
+      "source": "/api/team-oauth/discord/start",
+      "destination": "/api/team-oauth-discord-start"
+    },
+    {
+      "source": "/api/team-oauth/discord/callback",
+      "destination": "/api/team-oauth-discord-callback"
+    },
+    {
+      "source": "/api/team-oauth/discord/redeem",
+      "destination": "/api/team-oauth-discord-redeem"
     }
   ],
   "headers": [

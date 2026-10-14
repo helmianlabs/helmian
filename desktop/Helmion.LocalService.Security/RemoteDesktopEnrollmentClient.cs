@@ -30,6 +30,9 @@ public sealed class RemoteDesktopEnrollmentClient : IRemoteDesktopEnrollmentClie
         Current = RemoteDesktopEnrollmentDescriptor.Unenrolled(_clock());
     }
 
+    private bool _storeVerified;
+    private bool _lastFailureWasRequest;
+
     public RemoteDesktopEnrollmentDescriptor Current { get; private set; }
 
     public async Task<RemoteDesktopEnrollmentDescriptor> InitializeAsync(
@@ -55,15 +58,23 @@ public sealed class RemoteDesktopEnrollmentClient : IRemoteDesktopEnrollmentClie
         try
         {
             await InitializeCoreAsync(cancellationToken).ConfigureAwait(false);
+            // A Failed stage left by an earlier *request* (cloud unreachable, 402/503,
+            // bad response) holds no credential: the protected store was verified and
+            // nothing was redeemed, so a fresh request is safe. Only an owned desktop,
+            // an in-flight revoke, or an unverifiable store still block a new request.
+            // (Before this, one failed attempt locked enrollment until the Local
+            // Service restarted and every retry showed the "Revoke…" message.)
             if (Current.AccountOwned
                 || Current.Stage is RemoteEnrollmentStage.Revoking
-                    or RemoteEnrollmentStage.Failed)
+                || (Current.Stage is RemoteEnrollmentStage.Failed
+                    && !(_storeVerified && _lastFailureWasRequest)))
             {
                 throw new InvalidOperationException(
                     "Revoke the current account-owned desktop enrollment before requesting another.");
             }
 
             ClearPending();
+            _lastFailureWasRequest = false;
             var normalizedInstallation = RemoteControlContractValidation.RequireIdentifier(
                 installationId, nameof(installationId));
             var normalizedName = RemoteControlContractValidation.NormalizeDisplayName(
@@ -123,6 +134,7 @@ public sealed class RemoteDesktopEnrollmentClient : IRemoteDesktopEnrollmentClie
                 Current = Failed(
                     normalizedInstallation,
                     "Enrollment request failed. This desktop remains unowned.");
+                _lastFailureWasRequest = true;
                 throw;
             }
         }
@@ -383,6 +395,7 @@ public sealed class RemoteDesktopEnrollmentClient : IRemoteDesktopEnrollmentClie
         {
             Current = await _store.ReadDescriptorAsync(cancellationToken).ConfigureAwait(false);
             _initialized = true;
+            _storeVerified = true;
             return Current;
         }
         catch
