@@ -57,6 +57,7 @@ if (args.Contains("--remote-control-desktop-only", StringComparer.OrdinalIgnoreC
 if (args.Contains("--herald-desktop-only", StringComparer.OrdinalIgnoreCase))
 {
     HeraldDesktopGatewayChecks.Run();
+    HeraldPairingLinkChecks.Run();
     return;
 }
 
@@ -1079,6 +1080,7 @@ ProjectConnectorChecks.Run();
 await TeamConnectorChecks.RunAsync();
 ProjectActivityReviewChecks.Run();
 HeraldDesktopGatewayChecks.Run();
+HeraldPairingLinkChecks.Run();
 RemoteControlDesktopChecks.Run();
 
 ProjectOpenScaffoldChecks.Run();
