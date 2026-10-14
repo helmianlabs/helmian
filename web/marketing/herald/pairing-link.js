@@ -2,9 +2,9 @@
 // Helmian Herald QR pairing links (format v1).
 //
 //   Account Remote Control enrollment (the Desktop "Phone" card):
-//     https://helmian.vercel.app/herald/#enroll=12345678
+//     https://helmian.cloud/herald/#enroll=12345678
 //   Relay channel pairing ("Start phone sharing"):
-//     https://helmian.vercel.app/herald/?channel=herald_…#pair=12345678
+//     https://helmian.cloud/herald/?channel=herald_…#pair=12345678
 //
 // The one-time code rides in the URL *fragment*. Browsers never send the
 // fragment to a server, so it stays out of relay access logs, proxies and

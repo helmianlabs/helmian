@@ -24,6 +24,12 @@ public partial class MainWindow
     private DispatcherTimer? _heraldPairingExpiryTimer;
     private string? _heraldPhoneUrl;
 
+    /// <summary>Cloud relay origin: HELMION_REMOTE_CONTROL_ORIGIN, else https://helmian.cloud.</summary>
+    private static Uri HeraldRemoteOrigin =>
+        Uri.TryCreate(Environment.GetEnvironmentVariable("HELMION_REMOTE_CONTROL_ORIGIN"), UriKind.Absolute, out var o)
+            && o.Scheme == Uri.UriSchemeHttps
+            ? o : new Uri("https://helmian.cloud");
+
     internal HeraldDesktopGateway HeraldGateway =>
         _heraldGateway ??= new HeraldDesktopGateway(
             CurrentHeraldSnapshot,
@@ -91,7 +97,7 @@ public partial class MainWindow
             {
                 start.ArgumentList.Add("--remote");
                 start.ArgumentList.Add("--origin");
-                start.ArgumentList.Add("https://helmian.vercel.app");
+                start.ArgumentList.Add(HeraldRemoteOrigin.ToString().TrimEnd('/'));
             }
             start.ArgumentList.Add("--desktop-pipe");
             start.ArgumentList.Add("--desktop-pipe-name");
@@ -261,7 +267,7 @@ public partial class MainWindow
     {
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return;
         var cloud = uri.Scheme == Uri.UriSchemeHttps
-            && string.Equals(uri.Host, "helmian.vercel.app", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(uri.Host, HeraldRemoteOrigin.Host, StringComparison.OrdinalIgnoreCase)
             && uri.AbsolutePath.StartsWith("/herald", StringComparison.Ordinal);
         if (!cloud && !HeraldPairingLink.IsPrivateLanHttp(uri)) return;
 

@@ -3,8 +3,8 @@ namespace Helmion.Desktop.Core;
 /// <summary>
 /// Builds the URL that the Desktop renders as a phone pairing QR code.
 /// Format v1 (mirrors src/herald/pairing-link.mjs):
-///   enrollment: https://helmian.vercel.app/herald/#enroll=12345678
-///   relay pair: https://helmian.vercel.app/herald/?channel=herald_…#pair=12345678
+///   enrollment: https://helmian.cloud/herald/#enroll=12345678
+///   relay pair: https://helmian.cloud/herald/?channel=herald_…#pair=12345678
 /// The one-time code lives only in the fragment, which browsers never send to a
 /// server. The web endpoints still enforce single use, expiry and attempt limits.
 /// </summary>
@@ -12,7 +12,7 @@ public static class HeraldPairingLink
 {
     public const string EnrollKey = "enroll";
     public const string PairKey = "pair";
-    public const string TrustedHost = "helmian.vercel.app";
+    public const string TrustedHost = "helmian.cloud";
 
     public static string? TryBuild(string? baseUrl, string? code, string key, string trustedHost = TrustedHost)
     {

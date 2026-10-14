@@ -248,7 +248,7 @@ public partial class MainWindow
     {
         StopRemoteEnrollmentQr();
         // The verification origin comes from the local service configuration
-        // (HELMION_REMOTE_CONTROL_ORIGIN, default helmian.vercel.app).
+        // (HELMION_REMOTE_CONTROL_ORIGIN, default https://helmian.cloud).
         var link = Uri.TryCreate(challenge.VerificationUri, UriKind.Absolute, out var verification)
             ? HeraldPairingLink.TryBuild(
                 challenge.VerificationUri, challenge.UserCode, HeraldPairingLink.EnrollKey, verification.Host)
@@ -331,7 +331,7 @@ public partial class MainWindow
             || text.Contains("DEPLOYMENT", StringComparison.Ordinal) || text.Contains("503", StringComparison.Ordinal)
             || error is System.Net.Http.HttpRequestException or TaskCanceledException or TimeoutException
             || text.Contains("HttpRequestException", StringComparison.Ordinal))
-            return "Helmian\u2019s cloud service (helmian.vercel.app) isn\u2019t reachable right now, so account pairing can\u2019t start. "
+            return "Helmian\u2019s cloud service (helmian.cloud) isn\u2019t reachable right now, so account pairing can\u2019t start. "
                 + "Press \u201cPair on same Wi\u2011Fi\u201d to pair your phone directly with this PC.";
         return $"Cloud pairing could not start: {error.Message} Press \u201cPair on same Wi\u2011Fi\u201d to pair without the cloud.";
     }

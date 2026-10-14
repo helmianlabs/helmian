@@ -585,7 +585,7 @@ async function herald() {
     const { createHeraldDesktopPipeBridge } = await import('../src/herald/desktop-pipe.mjs');
     const { startRemoteHeraldSession } = await import('../src/herald/remote-session.mjs');
     const { loadHeraldOwnerSecret } = await import('../src/herald/remote-owner-store.mjs');
-    const origin = option('--origin', process.env.HELMION_HERALD_ORIGIN ?? 'https://helmian.vercel.app');
+    const origin = option('--origin', process.env.HELMION_HERALD_ORIGIN ?? 'https://helmian.cloud');
     const secret = await loadHeraldOwnerSecret();
     let running;
     try {

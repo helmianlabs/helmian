@@ -89,9 +89,9 @@ var artifactGeneration = new ArtifactStudioLocalGenerationService(
 await using var teamRuntime = new TeamConnectorRuntime();
 var teamHandler = new TeamConnectorPipeHandler(teamRuntime);
 var remoteOrigin = Environment.GetEnvironmentVariable("HELMION_REMOTE_CONTROL_ORIGIN")
-    ?? "https://helmian.vercel.app";
+    ?? "https://helmian.cloud";
 var remoteVerificationUri = new Uri(
-    new Uri(remoteOrigin.TrimEnd('/') + "/"), "herald/").AbsoluteUri;
+    new Uri(remoteOrigin.TrimEnd('/') + "/"), "herald").AbsoluteUri;
 using var remoteHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
 var remoteApi = new RemoteControlHttpApi(remoteHttp, remoteOrigin, remoteVerificationUri);
 var remoteStore = new ProtectedRemoteDesktopCredentialStore();
