@@ -1,0 +1,22 @@
+# Alternative to Docker: systemd unit. Assumes repo at /opt/helmian, Node 20+, local Postgres,
+# and /etc/helmian/cloud.env holding the same variables as env.example plus
+# HELMION_DATABASE_URL=postgres://helmian_app:...@127.0.0.1/helmion?sslmode=disable
+# HELMION_EXPECTED_ENDPOINT_ID=self-hosted:127.0.0.1/helmion
+[Unit]
+Description=Helmian Cloud admin + Cora control plane
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=helmian
+WorkingDirectory=/opt/helmian
+EnvironmentFile=/etc/helmian/cloud.env
+Environment=PORT=8080
+ExecStart=/bin/sh -c 'exec /usr/bin/node bin/helmion-cora.mjs --host 127.0.0.1 --port "$PORT" --token "$HELMION_CORA_TOKEN" --provider "$HELMION_CORA_PROVIDER" --tier "$HELMION_CORA_TIER" --permission "$HELMION_CORA_PERMISSION" --quiet'
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
