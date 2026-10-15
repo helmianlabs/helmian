@@ -74,6 +74,13 @@ expect(heraldShell.includes('!remoteTransport || !selectedControl'), 'PWA send m
 expect(heraldShell.includes("'Accepted by the secure relay; waiting for Desktop acknowledgement.'"), 'PWA must distinguish relay acceptance from Desktop completion');
 expect(legacyHeraldApp.includes("createHeraldTransport"), 'secure Herald transport integration source must remain intact');
 expect(legacyHeraldApp.includes("approval.decide"), 'secure Herald approval integration source must remain intact');
+const heraldPairHtml = await readFile(resolve(root, 'herald/pair.html'), 'utf8');
+for (const id of [...legacyHeraldApp.matchAll(/\$\('([A-Za-z]+)'\)/g)].map((m) => m[1])) {
+  expect(heraldPairHtml.includes(`id="${id}"`), `Herald relay pairing page is missing #${id} used by app.js`);
+}
+expect(heraldPairHtml.includes('/herald/app.js'), 'Herald relay pairing page must load app.js');
+expect(!/<script(?![^>]*\bsrc=)/i.test(heraldPairHtml), 'inline pairing-page script found; keep the CSP strict');
+expect(heraldHtml.indexOf('/herald/pair-route.js') >= 0 && heraldHtml.indexOf('/herald/pair-route.js') < heraldHtml.indexOf('/herald/shell.js'), 'Herald index must route ?channel= links to /herald/pair before the shell loads');
 expect(heraldWorker.includes("url.pathname.startsWith('/api/')"), 'PWA service worker must bypass every API request');
 try {
   const manifest = JSON.parse(heraldManifestText);
