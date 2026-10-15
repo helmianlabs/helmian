@@ -6198,7 +6198,7 @@
                                FontSize="10"
                                FontWeight="Bold"
                                Margin="0,0,0,6" />
-                    <TextBlock Text="Signing in uses your SuperGrok plan instead of paying per API call. Helmion never sees your password — xAI shows you a code, you approve it in your browser. The API key below stays as a fallback."
+                    <TextBlock Text="Signs in the official Grok app (Grok Build) in the background, so Grok uses your plan instead of paying per API call. Helmian never sees your password: xAI shows a code, you approve it in your browser. Your plan must include Grok Build. The API key below stays as a fallback."
                                Style="{StaticResource MutedStyle}"
                                TextWrapping="Wrap"
                                Margin="0,0,0,10" />
@@ -6255,6 +6255,14 @@
                                    Text=""
                                    Style="{StaticResource MutedStyle}"
                                    TextWrapping="Wrap" />
+                        <Button x:Name="SuperGrokOpenBrowserButton"
+                                Content="Open browser"
+                                Click="SuperGrokOpenBrowser_Click"
+                                IsEnabled="False"
+                                HorizontalAlignment="Left"
+                                Margin="0,10,0,0"
+                                Padding="14,8"
+                                AutomationProperties.Name="Open the Grok sign-in page in your browser" />
                       </StackPanel>
                     </Border>
 
