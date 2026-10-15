@@ -11,11 +11,13 @@ import heraldSession from '../server/herald-session.js';
 import billingCheckout from '../server/billing/checkout.js';
 import billingDownload from '../server/billing/download.js';
 import billingWebhook from '../server/billing/webhook.js';
+import latestRelease from '../server/latest-release.js';
 import { slackHandoffHandlers } from './_team-oauth-slack.js';
 import { discordHandoffHandlers } from './_team-oauth-discord.js';
 
 const routes = {
   'herald-config': heraldConfig,
+  'latest-release': latestRelease,
   'herald-control': heraldControl,
   'herald-desktop': heraldDesktop,
   'herald-desktops': heraldDesktops,
