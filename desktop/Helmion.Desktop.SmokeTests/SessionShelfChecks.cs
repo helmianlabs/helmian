@@ -464,7 +464,28 @@ internal static class SessionShelfChecks
             && ProviderOwnedTurnRouting.Decide("custom", AgentPermission.ReadOnly).Kind
                 == ProviderOwnedTurnRouting.Kind.AgentBridge,
             "tool-capable and custom turns do not bypass Helmion's governed bridge");
-        checks += 2;
+        Assert(
+            ProviderOwnedTurnRouting.Decide(MaestroKey.Grok, AgentPermission.ReadOnly, grokSubscriptionSignedIn: true).Kind
+                == ProviderOwnedTurnRouting.Kind.GrokSubscription
+            && ProviderOwnedTurnRouting.Decide(MaestroKey.Grok, AgentPermission.ReadOnly, grokSubscriptionSignedIn: false).Kind
+                == ProviderOwnedTurnRouting.Kind.GrokCli,
+            "a SuperGrok sign-in carries read-only Grok turns; the CLI is only the fallback");
+        Assert(
+            ProviderOwnedTurnRouting.Decide(MaestroKey.Grok, AgentPermission.Ask, grokSubscriptionSignedIn: true).Kind
+                == ProviderOwnedTurnRouting.Kind.AgentBridge
+            && ProviderOwnedTurnRouting.Decide(MaestroKey.Claude, AgentPermission.ReadOnly, grokSubscriptionSignedIn: true).Kind
+                == ProviderOwnedTurnRouting.Kind.ClaudeCli,
+            "the SuperGrok route never widens tool-capable turns or other providers");
+        Assert(
+            ProviderCliChatSession.FriendlyGrokCliError("Grok CLI exited with code 1: Error: not signed in. Run grok login")
+                == ProviderCliChatSession.GrokSignInNeededMessage
+            && ProviderCliChatSession.FriendlyGrokCliError("Grok CLI exited with code 2: boom")
+                == "Grok CLI exited with code 2: boom",
+            "the raw CLI sign-in error becomes a plain Sign in with SuperGrok instruction");
+        Assert(
+            GrokChatSession.ReadOnlyTurnSystemPrompt.Contains("no tools", StringComparison.Ordinal),
+            "the subscription read-only turn tells Grok it has no tools");
+        checks += 6;
 
         // Output ownership. gpt is the selected session; claude is running a turn in
         // the background.
