@@ -32,9 +32,19 @@ internal sealed record TeamProviderConfiguration(
     // Slack and Discord use a hosted HTTPS callback + one-time handoff.
     // GitHub pilot uses a personal access token on Local Service (no browser OAuth).
     public bool UsesHostedHandoff => ProviderId is TeamConnectorContract.SlackProviderId
-        or TeamConnectorContract.DiscordProviderId;
+        or TeamConnectorContract.DiscordProviderId
+        || UsesCloudOAuth;
 
-    public bool UsesPersonalAccessToken => ProviderId == TeamConnectorContract.GitHubProviderId;
+    // GitHub "Connect GitHub" through helmian.cloud: the cloud holds the GitHub OAuth
+    // app secret and exchanges the code; Local Service redeems the access token once.
+    // A personal access token (HELMION_GITHUB_TOKEN) still takes precedence when set.
+    public bool UsesCloudOAuth => ProviderId == TeamConnectorContract.GitHubProviderId
+        && string.IsNullOrWhiteSpace(BotToken)
+        && IsValidHostedBase(HandoffBaseUri)
+        && !string.IsNullOrWhiteSpace(HandoffToken)
+        && HandoffToken.Length >= 32;
+
+    public bool UsesPersonalAccessToken => ProviderId == TeamConnectorContract.GitHubProviderId && !UsesCloudOAuth;
 
     public bool AuthorizationConfigured => ConfigurationIssues(includeReadCredential: false).Count == 0;
 
@@ -56,7 +66,8 @@ internal sealed record TeamProviderConfiguration(
     {
         TeamConnectorContract.GitHubProviderId =>
         [
-            "Create a classic GitHub personal access token with read:user, repo (or public_repo), and read:org as needed.",
+            "Easiest: press Connect GitHub. Helmian opens github.com through helmian.cloud, you approve, and the desktop receives your token once (needs HELMION_GITHUB_HANDOFF_TOKEN from your Helmian install).",
+            "Alternative: create a classic GitHub personal access token with read:user, repo (or public_repo), and read:org as needed.",
             "Set HELMION_GITHUB_TOKEN only for the Local Service process environment (never in XAML or project files).",
             "Press Connect GitHub. Helmian validates the token against the GitHub API and stores it with Windows CurrentUser DPAPI.",
             "GitHub is read-only in this Team build: repos, issues, and recent comments. No PR write or push."
@@ -91,9 +102,9 @@ internal sealed record TeamProviderConfiguration(
         var missing = new List<string>();
         if (ProviderId == TeamConnectorContract.GitHubProviderId)
         {
-            if (string.IsNullOrWhiteSpace(BotToken) || BotToken.Length < 20)
+            if (!UsesCloudOAuth && (string.IsNullOrWhiteSpace(BotToken) || BotToken.Length < 20))
             {
-                missing.Add("Set HELMION_GITHUB_TOKEN to a GitHub personal access token (read:user + repo/public_repo).");
+                missing.Add("Set HELMION_GITHUB_HANDOFF_TOKEN to connect through helmian.cloud, or HELMION_GITHUB_TOKEN to a GitHub personal access token (read:user + repo/public_repo).");
             }
             if (SendEnabled)
             {
@@ -176,6 +187,11 @@ internal sealed record TeamProviderConfiguration(
         && string.IsNullOrEmpty(uri.Fragment)
         && string.IsNullOrEmpty(uri.UserInfo);
 
+    public const string DefaultGitHubCloudHandoffBase = "https://helmian.cloud/api/team-oauth/github/";
+
+    private static string? NullIfBlank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     public static TeamProviderConfiguration FromEnvironment(string providerId)
     {
         TeamConnectorContract.RequireProvider(providerId);
@@ -187,9 +203,16 @@ internal sealed record TeamProviderConfiguration(
                 ClientSecret: string.Empty,
                 RedirectUri: null,
                 Scopes: ["read:user", "repo"],
-                BotToken: Environment.GetEnvironmentVariable("HELMION_GITHUB_TOKEN")?.Trim()
-                    ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN")?.Trim(),
-                SendEnabled: false);
+                BotToken: NullIfBlank(Environment.GetEnvironmentVariable("HELMION_GITHUB_TOKEN"))
+                    ?? NullIfBlank(Environment.GetEnvironmentVariable("GITHUB_TOKEN")),
+                SendEnabled: false,
+                HandoffBaseUri: Uri.TryCreate(
+                    NullIfBlank(Environment.GetEnvironmentVariable("HELMION_GITHUB_HANDOFF_BASE_URI"))
+                        ?? DefaultGitHubCloudHandoffBase,
+                    UriKind.Absolute,
+                    out var githubBase) ? githubBase : null,
+                HandoffToken: NullIfBlank(Environment.GetEnvironmentVariable("HELMION_GITHUB_HANDOFF_TOKEN"))
+                    ?? NullIfBlank(Environment.GetEnvironmentVariable("HELMION_TEAM_OAUTH_HANDOFF_TOKEN")));
         }
 
         var isSlack = providerId == TeamConnectorContract.SlackProviderId;
@@ -771,8 +794,16 @@ internal sealed class GitHubTeamProviderAdapter(
     HttpClient httpClient) : TeamProviderAdapterBase(configuration, httpClient)
 {
     public override Uri BuildAuthorizationUri(string state) =>
-        throw new InvalidOperationException(
-            "GitHub uses a Local Service personal access token. Press Connect with HELMION_GITHUB_TOKEN set; no browser OAuth is used.");
+        Configuration.UsesCloudOAuth
+            ? new Uri(Configuration.HandoffBaseUri!, $"authorize?state={Uri.EscapeDataString(state)}")
+            : throw new InvalidOperationException(
+                "GitHub uses a Local Service personal access token. Press Connect with HELMION_GITHUB_TOKEN set; no browser OAuth is used.");
+
+    /// <summary>Validates an access token received from the helmian.cloud GitHub handoff.</summary>
+    public Task<TeamTokenBundle> ConnectWithCloudAccessTokenAsync(
+        string accessToken,
+        CancellationToken cancellationToken) =>
+        ValidateGitHubTokenAsync(accessToken, cancellationToken);
 
     public override Task<TeamTokenBundle> ExchangeCodeAsync(
         string code,
@@ -784,6 +815,17 @@ internal sealed class GitHubTeamProviderAdapter(
     {
         var pat = Configuration.BotToken
             ?? throw new InvalidOperationException("HELMION_GITHUB_TOKEN is not set.");
+        return await ValidateGitHubTokenAsync(pat, cancellationToken);
+    }
+
+    private async Task<TeamTokenBundle> ValidateGitHubTokenAsync(
+        string pat,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(pat) || pat.Length > 4096)
+        {
+            throw new InvalidDataException("GitHub returned no usable token.");
+        }
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/user");
         ApplyGitHubHeaders(request, pat);
         using var json = await SendJsonAsync(request, cancellationToken);

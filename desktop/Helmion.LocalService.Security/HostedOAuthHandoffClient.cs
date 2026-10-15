@@ -80,6 +80,48 @@ internal sealed class HostedOAuthHandoffClient(HttpClient httpClient)
         }
     }
 
+    /// <summary>
+    /// GitHub through helmian.cloud: the cloud exchanged the code, so redeem returns
+    /// the access token itself (once; the cloud erases its encrypted copy).
+    /// </summary>
+    public async Task<string> ReceiveAccessTokenAsync(
+        Uri baseUri,
+        string handoffToken,
+        string requestId,
+        string redemptionSecret,
+        CancellationToken cancellationToken)
+    {
+        RequireBaseUri(baseUri);
+        var endpoint = new Uri(baseUri, "redeem");
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var request = AuthorizedRequest(HttpMethod.Post, endpoint, handoffToken);
+            request.Content = JsonContent.Create(new { requestId, redemptionSecret });
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            if (response.StatusCode == HttpStatusCode.Accepted)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                continue;
+            }
+            if (response.StatusCode == HttpStatusCode.Conflict)
+            {
+                throw new InvalidOperationException("GitHub authorization was declined or could not be completed.");
+            }
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                throw new InvalidOperationException(
+                    $"helmian.cloud GitHub handoff failed (HTTP {(int)response.StatusCode}). No token was stored.");
+            }
+            var receipt = await response.Content.ReadFromJsonAsync<AccessTokenReceipt>(JsonOptions, cancellationToken);
+            if (receipt is null || string.IsNullOrWhiteSpace(receipt.AccessToken) || receipt.AccessToken.Length > 4096)
+            {
+                throw new InvalidDataException("helmian.cloud returned no valid GitHub token.");
+            }
+            return receipt.AccessToken;
+        }
+    }
+
     internal static string HashProof(string value) =>
         Base64Url(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
@@ -113,4 +155,6 @@ internal sealed class HostedOAuthHandoffClient(HttpClient httpClient)
         Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private sealed record HandoffReceipt(string Code);
+
+    private sealed record AccessTokenReceipt(string AccessToken);
 }

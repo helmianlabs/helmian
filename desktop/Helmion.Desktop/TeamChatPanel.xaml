@@ -1,0 +1,77 @@
+<UserControl x:Class="Helmion.Desktop.TeamChatPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             IsVisibleChanged="TeamChatPanel_IsVisibleChanged">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <!-- Header: channel + link status -->
+    <Grid Margin="0,0,0,12">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="TEAM CHAT" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
+        <TextBlock x:Name="ChatTitle" Text="Team" FontSize="18" FontWeight="SemiBold" Margin="0,2,0,0" />
+        <TextBlock x:Name="ChatStatus" Text="Not linked" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" Margin="0,2,0,0" />
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+        <ComboBox x:Name="ChannelBox" MinWidth="140" DisplayMemberPath="Title" SelectionChanged="ChannelBox_SelectionChanged" Visibility="Collapsed" Margin="0,0,8,0" />
+        <Button x:Name="UnlinkButton" Content="Unlink" Click="UnlinkButton_Click" Visibility="Collapsed" Padding="10,5"
+                Style="{DynamicResource ConsoleNeutralButtonStyle}" ToolTip="Stop using team chat on this computer" />
+      </StackPanel>
+    </Grid>
+
+    <!-- Link step (shown until linked) -->
+    <Border x:Name="LinkCard" Grid.Row="1" Style="{DynamicResource CardStyle}" VerticalAlignment="Top">
+      <StackPanel>
+        <TextBlock Text="Link this desktop to your Helmian team" FontSize="16" FontWeight="SemiBold" />
+        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,6,0,12"
+                   Text="On your phone or browser open helmian.cloud/app, go to Settings and press “Link desktop app”. Type the 8-character code here." />
+        <StackPanel Orientation="Horizontal">
+          <TextBox x:Name="LinkCodeBox" Width="160" FontFamily="Consolas" FontSize="16" MaxLength="9"
+                   CharacterCasing="Upper" KeyDown="LinkCodeBox_KeyDown" AutomationProperties.Name="Link code" />
+          <Button x:Name="LinkButton" Content="Link" Click="LinkButton_Click" Margin="8,0,0,0" Padding="14,6"
+                  Style="{DynamicResource ConsoleNeutralButtonStyle}" />
+        </StackPanel>
+        <TextBlock x:Name="LinkError" Foreground="{DynamicResource AmberBrush}" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed" />
+      </StackPanel>
+    </Border>
+
+    <!-- Messages -->
+    <Border x:Name="MessagesCard" Grid.Row="1" Visibility="Collapsed"
+            Background="{DynamicResource PanelInsetBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" CornerRadius="8">
+      <ScrollViewer x:Name="MessagesScroll" VerticalScrollBarVisibility="Auto" Padding="12">
+        <ItemsControl x:Name="MessagesList">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <StackPanel Margin="0,0,0,10">
+                <TextBlock FontSize="11" Foreground="{DynamicResource MutedTextBrush}">
+                  <Run Text="{Binding Who, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{Binding When, Mode=OneWay}" />
+                </TextBlock>
+                <TextBlock Text="{Binding Body, Mode=OneWay}" TextWrapping="Wrap" Margin="0,2,0,0" />
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Composer -->
+    <Grid x:Name="Composer" Grid.Row="2" Margin="0,10,0,0" Visibility="Collapsed">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBox x:Name="MessageBox" MinHeight="36" MaxHeight="140" AcceptsReturn="True" TextWrapping="Wrap"
+               VerticalScrollBarVisibility="Auto" KeyDown="MessageBox_KeyDown" AutomationProperties.Name="Message your team" />
+      <Button x:Name="SendButton" Grid.Column="1" Content="Send" Click="SendButton_Click" Margin="8,0,0,0" Padding="16,6"
+              Style="{DynamicResource ConsoleNeutralButtonStyle}" />
+    </Grid>
+  </Grid>
+</UserControl>

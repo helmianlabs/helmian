@@ -21,6 +21,8 @@ import {
 import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-action.mjs';
 import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
+import { createAppSessionStore } from './app-sessions.mjs';
+import { createOrgInviteStore, INVITE_TOKEN } from './org-invites.mjs';
 import { createCoraOrganizationConfigRepository } from '../cora/organization-config-repository.mjs';
 import { createProviderUsageRepository } from '../cora/provider-usage-repository.mjs';
 import { createOrganizationDatabaseRepository } from './organization-database-repository.mjs';
@@ -79,6 +81,17 @@ export const LIVE_ADMIN_ACTION_POLICY_PATH = '/api/admin/action-policy';
 export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/preview';
 export const LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH = '/api/admin/action-policy/confirm';
 export const LIVE_ADMIN_ENVOY_CHANNELS_PATH = '/api/admin/envoy/channels';
+export const LIVE_APP_SESSIONS_PATH = '/api/admin/app/sessions';
+export const LIVE_ADMIN_JOIN_PATH = '/admin/auth/join';
+export const LIVE_JOIN_PREVIEW_PATH = '/api/admin/join/preview';
+export const LIVE_INVITES_PATH = '/api/admin/organization/invites';
+export const LIVE_INVITES_REVOKE_PATH = '/api/admin/organization/invites/revoke';
+export const LIVE_DESKTOP_LINK_START_PATH = '/api/admin/desktop/link/start';
+export const LIVE_DESKTOP_LINK_EXCHANGE_PATH = '/api/admin/desktop/link/exchange';
+export const LIVE_DESKTOP_LINK_REVOKE_PATH = '/api/admin/desktop/link/revoke';
+export const LIVE_APP_SESSIONS_ARCHIVE_PATH = '/api/admin/app/sessions/archive';
+export const LIVE_APP_SESSION_STEPS_PATH = '/api/admin/app/sessions/steps';
+export const LIVE_APP_SESSION_STEPS_UPDATE_PATH = '/api/admin/app/sessions/steps/update';
 export const LIVE_ADMIN_ENVOY_MESSAGES_PATH = '/api/admin/envoy/messages';
 export const LIVE_ADMIN_ENVOY_STREAM_PATH = '/api/admin/envoy/stream';
 export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
@@ -262,6 +275,8 @@ export async function createLiveHelmianCloudAdminHandler({
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
   consoleCommandRepository: suppliedConsoleCommandRepository = null,
   envoyStore: suppliedEnvoyStore = null,
+  appSessionStore: suppliedAppSessionStore = null,
+  orgInviteStore: suppliedOrgInviteStore = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
   logger = () => {},
@@ -279,6 +294,8 @@ export async function createLiveHelmianCloudAdminHandler({
   const ownsPool = !suppliedPool;
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
   const envoy = suppliedEnvoyStore ?? createEnvoyStore(pool);
+  const appSessions = suppliedAppSessionStore ?? createAppSessionStore(pool);
+  const invites = suppliedOrgInviteStore ?? createOrgInviteStore(pool);
   const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
   const providerUsage = suppliedProviderUsageRepository ?? createProviderUsageRepository(pool);
   const workspacePreviews = suppliedWorkspacePreviewRepository ?? createWorkspacePreviewRepository(pool);
@@ -338,8 +355,15 @@ export async function createLiveHelmianCloudAdminHandler({
     } finally { client.release(); }
   }
 
+  // Desktop app links (Bearer hdt_...) are accepted only on Envoy chat routes.
+  const bearerToken = (request) => { const h = String(request.headers?.authorization ?? ''); return h.startsWith('Bearer ') ? h.slice(7).trim() : ''; };
+  const isEnvoyPath = (request) => new URL(request.url, 'http://local').pathname.startsWith('/api/admin/envoy/');
   async function deriveTenantActor(request) {
-    const claimed = sessionIdentity(request);
+    let claimed = sessionIdentity(request);
+    if (!claimed?.subject && isEnvoyPath(request) && bearerToken(request)) {
+      const desktop = await invites.desktopIdentity(bearerToken(request)).catch(() => null);
+      if (desktop) claimed = { subject: desktop.subject };
+    }
     if (!claimed?.subject) throw Object.assign(new Error('Identity required'), { status: 403 });
     const client = await pool.connect();
     try {
@@ -586,6 +610,13 @@ export async function createLiveHelmianCloudAdminHandler({
       catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
       return true;
     }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_JOIN_PATH) {
+      const token = requestUrl.searchParams.get('token') ?? '';
+      if (!INVITE_TOKEN.test(token)) { send(response, 302, '', 'text/plain; charset=utf-8', { location: '/join?error=invalid' }); return true; }
+      const next = requestUrl.searchParams.get('mode') === 'signin' ? LIVE_ADMIN_LOGIN_PATH : LIVE_ADMIN_SIGNUP_PATH;
+      send(response, 302, '', 'text/plain; charset=utf-8', { location: next, 'set-cookie': [`helmion_admin_join=${token}; Max-Age=3600; ${cookieOptions('/admin')}`, `helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}`] });
+      return true;
+    }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SIGNUP_PATH) {
       try {
         // Clerk's hosted Account Portal owns registration. Returning to the
@@ -610,7 +641,14 @@ export async function createLiveHelmianCloudAdminHandler({
         if (state !== cookieState) throw Object.assign(new Error('OIDC callback state mismatch'), { stage: 'state_mismatch' });
         const result = await identity.finishLogin(code, state);
         const returnToApp = cookieValue(request, 'helmion_admin_return') === 'app';
-        send(response, 302, '', 'text/plain; charset=utf-8', { location: returnToApp ? `${LIVE_APP_PAGE_PATH}/` : `${LIVE_ADMIN_PAGE_PATH}/`, 'set-cookie': [
+        const joinToken = cookieValue(request, 'helmion_admin_join');
+        let location = returnToApp ? `${LIVE_APP_PAGE_PATH}/` : `${LIVE_ADMIN_PAGE_PATH}/`;
+        if (joinToken) {
+          try { const joined = await invites.redeem(identity.getSession(result.sessionId)?.subject, joinToken); location = `${LIVE_APP_PAGE_PATH}/?joined=${joined.joined ? '1' : '0'}`; }
+          catch (error) { location = `/join?error=${encodeURIComponent(String(error?.code ?? 'join_failed').toLowerCase())}`; }
+        }
+        send(response, 302, '', 'text/plain; charset=utf-8', { location, 'set-cookie': [
+          `helmion_admin_join=; Max-Age=0; ${cookieOptions('/admin')}`,
           `helmion_admin_return=; Max-Age=0; ${cookieOptions('/admin')}`,
           `helmion_admin_session=${result.sessionId}; ${cookieOptions('/admin')}`,
           `helmion_admin_session=${result.sessionId}; ${cookieOptions('/api/admin')}`,
@@ -627,7 +665,7 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SESSION_PATH) {
       try {
         try { await claimFirstOwner({ pool, env, session: sessionIdentity(request), logger: noteAttempt }); } catch { /* claim is best-effort; membership check below decides */ }
-        const actor = await activeActor(request);
+        const actor = requestUrl.searchParams.get('scope') === 'member' ? await activeTenantActor(request) : await activeActor(request);
         send(response, 200, JSON.stringify({ authenticated: true, actor: { subject: actor.subject, tenantId: actor.tenantId, role: actor.role } }));
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
@@ -783,6 +821,38 @@ export async function createLiveHelmianCloudAdminHandler({
         send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
       }
       return true;
+    }
+    if ([LIVE_JOIN_PREVIEW_PATH, LIVE_INVITES_PATH, LIVE_INVITES_REVOKE_PATH, LIVE_DESKTOP_LINK_START_PATH, LIVE_DESKTOP_LINK_EXCHANGE_PATH, LIVE_DESKTOP_LINK_REVOKE_PATH].includes(requestUrl.pathname)) {
+      const path = requestUrl.pathname; const method = request.method;
+      try {
+        if (method === 'GET' && path === LIVE_JOIN_PREVIEW_PATH) { send(response, 200, JSON.stringify({ valid: true, ...await invites.preview(requestUrl.searchParams.get('token')) })); return true; }
+        if (method === 'GET' && path === LIVE_INVITES_PATH) { const actor = await activeActor(request); send(response, 200, JSON.stringify({ valid: true, ...await invites.list(actor) })); return true; }
+        if (method === 'POST' && path === LIVE_INVITES_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); for (const k of Object.keys(body)) if (!['expiresInDays', 'maxUses'].includes(k)) throw Object.assign(new Error('unexpected field'), { status: 400 }); send(response, 200, JSON.stringify({ valid: true, ...await invites.create(actor, body, requestOrigin(request, env)) })); return true; }
+        if (method === 'POST' && path === LIVE_INVITES_REVOKE_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['id']); send(response, 200, JSON.stringify({ valid: true, ...await invites.revoke(actor, body.id) })); return true; }
+        if (method === 'POST' && path === LIVE_DESKTOP_LINK_START_PATH) { const actor = await activeTenantActor(request); const body = await readJsonObject(request).catch(() => ({})); send(response, 200, JSON.stringify({ valid: true, ...await invites.startDesktopLink(actor, body?.label ?? null) })); return true; }
+        if (method === 'POST' && path === LIVE_DESKTOP_LINK_EXCHANGE_PATH) { const body = await readJsonObject(request); exactKeys(body, ['code']); send(response, 200, JSON.stringify({ valid: true, ...await invites.exchangeDesktopCode(body.code) })); return true; }
+        if (method === 'POST' && path === LIVE_DESKTOP_LINK_REVOKE_PATH) { send(response, 200, JSON.stringify({ valid: true, ...await invites.revokeDesktopToken(bearerToken(request)) })); return true; }
+        send(response, 405, JSON.stringify({ valid: false, code: 'METHOD_NOT_ALLOWED' })); return true;
+      } catch (error) {
+        const status = error instanceof TenantAuthorizationError ? 403 : [400, 403, 409, 410].includes(error?.status) ? error.status : 503;
+        send(response, status, JSON.stringify({ valid: false, code: error?.code ?? (status === 403 ? 'FORBIDDEN' : status === 503 ? 'UNAVAILABLE' : 'INVALID') }));
+        return true;
+      }
+    }
+    if (requestUrl.pathname === LIVE_APP_SESSIONS_PATH || requestUrl.pathname === LIVE_APP_SESSIONS_ARCHIVE_PATH || requestUrl.pathname === LIVE_APP_SESSION_STEPS_PATH || requestUrl.pathname === LIVE_APP_SESSION_STEPS_UPDATE_PATH) {
+      const fail = (error) => {
+        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 || error?.status === 404 ? error.status : 503;
+        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'APP_SESSIONS_FORBIDDEN' : status === 404 ? 'APP_SESSION_NOT_FOUND' : status === 400 ? 'APP_SESSION_INVALID' : 'APP_SESSIONS_UNAVAILABLE' }));
+      };
+      try {
+        if (request.method === 'GET' && requestUrl.pathname === LIVE_APP_SESSIONS_PATH) { const actor = await activeActor(request); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.list(actor) })); return true; }
+        if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSIONS_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['idempotencyKey', 'name', 'provider']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.create(actor, body) })); return true; }
+        if (request.method === 'GET' && requestUrl.pathname === LIVE_APP_SESSION_STEPS_PATH) { const actor = await activeActor(request); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.steps(actor, requestUrl.searchParams.get('sessionId')) })); return true; }
+        if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSION_STEPS_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['sessionId', 'steps']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.setPlan(actor, body) })); return true; }
+        if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSION_STEPS_UPDATE_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['position', 'sessionId', 'status']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.updateStep(actor, body) })); return true; }
+        if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSIONS_ARCHIVE_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['id']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.archive(actor, body.id) })); return true; }
+        send(response, 405, JSON.stringify({ valid: false, code: 'METHOD_NOT_ALLOWED' })); return true;
+      } catch (error) { fail(error); return true; }
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CHANNELS_PATH) {
       try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await envoy.listChannels(actor) })); }

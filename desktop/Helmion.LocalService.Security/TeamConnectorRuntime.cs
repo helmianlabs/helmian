@@ -146,6 +146,7 @@ public sealed class TeamConnectorRuntime : IAsyncDisposable
         }
 
         if (providerId == TeamConnectorContract.GitHubProviderId
+            && !adapter.Configuration.UsesCloudOAuth
             && adapter is GitHubTeamProviderAdapter githubAdapter)
         {
             try
@@ -363,6 +364,19 @@ public sealed class TeamConnectorRuntime : IAsyncDisposable
         TeamConnectionState final;
         try
         {
+            TeamTokenBundle token;
+            if (adapter.Configuration.UsesCloudOAuth && adapter is GitHubTeamProviderAdapter cloudGitHub)
+            {
+                var accessToken = await _handoffClient.ReceiveAccessTokenAsync(
+                    adapter.Configuration.HandoffBaseUri!,
+                    adapter.Configuration.HandoffToken!,
+                    pending.HandoffRequestId!,
+                    pending.RedemptionSecret!,
+                    pending.Lifetime.Token);
+                token = await cloudGitHub.ConnectWithCloudAccessTokenAsync(accessToken, pending.Lifetime.Token);
+            }
+            else
+            {
             var code = adapter.Configuration.UsesHostedHandoff
                 ? await _handoffClient.ReceiveCodeAsync(
                     adapter.Configuration.HandoffBaseUri!,
@@ -383,7 +397,8 @@ public sealed class TeamConnectorRuntime : IAsyncDisposable
                 throw new InvalidOperationException(
                     "Hosted callback succeeded, but the Local Service is missing the provider CLIENT_SECRET for pilot token exchange. Nothing was stored.");
             }
-            var token = await adapter.ExchangeCodeAsync(code, pending.Lifetime.Token);
+            token = await adapter.ExchangeCodeAsync(code, pending.Lifetime.Token);
+            }
             var tokenBytes = JsonSerializer.SerializeToUtf8Bytes(token);
             try
             {
@@ -394,7 +409,7 @@ public sealed class TeamConnectorRuntime : IAsyncDisposable
                     {
                         TeamConnectorContract.SlackProviderId => "slack-oauth-v2",
                         TeamConnectorContract.DiscordProviderId => "discord-oauth2-bot",
-                        TeamConnectorContract.GitHubProviderId => "github-pat-v1",
+                        TeamConnectorContract.GitHubProviderId => adapter.Configuration.UsesCloudOAuth ? "github-oauth-cloud-v1" : "github-pat-v1",
                         _ => $"{adapter.ProviderId}-oauth"
                     },
                     DisplayName: token.AccountLabel,

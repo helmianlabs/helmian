@@ -77,9 +77,12 @@ export function createEnvoyStore(pool) {
           `insert into helmion.envoy_channels(tenant_id, slug, title, kind, created_by_subject)
            values ($1,$2,$3,$4,$5)
            on conflict (tenant_id, slug) do update set slug=excluded.slug
-           returning id, slug, title, kind, created_by_subject, created_at`,
+           returning id, slug, title, kind, created_by_subject, created_at, (xmax = 0) as inserted`,
           [context.tenantId, channel.slug, channel.title, channel.kind, context.actorSubject],
         );
+        if (result.rows[0]?.inserted) {
+          await appendAuditEvent(client, context, { actionType: 'envoy.channel.created', canonicalTarget: { channelId: String(result.rows[0].id), slug: channel.slug, kind: channel.kind }, policyVersion: 'envoy-chat.v1', decision: 'ALLOW', privacySummary: `Created the ${channel.title} channel`, result: { created: true } });
+        }
         return { channel: Object.freeze({ id: String(result.rows[0].id), slug: String(result.rows[0].slug), title: String(result.rows[0].title), kind: String(result.rows[0].kind), createdBySubject: String(result.rows[0].created_by_subject), createdAt: result.rows[0].created_at }) };
       });
     },
@@ -140,3 +143,4 @@ export function createEnvoyStore(pool) {
   });
 }
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
+import { appendAuditEvent } from './audit-event-repository.mjs';
