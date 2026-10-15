@@ -8,8 +8,8 @@
 (function routeRelayPairing() {
   try {
     var channel = new URLSearchParams(location.search).get('channel');
-    if (channel && /^herald_[A-Za-z0-9_-]{20,80}$/.test(channel) && !/\/herald\/pair(?:\.html)?$/.test(location.pathname)) {
-      location.replace('/herald/pair' + location.search + location.hash);
+    if (channel && /^herald_[A-Za-z0-9_-]{20,80}$/.test(channel) && !/\/(?:herald|app)\/pair(?:\.html)?$/.test(location.pathname)) {
+      location.replace('/app/pair' + location.search + location.hash);
     }
   } catch (_) { /* stay on the account shell */ }
 })();
