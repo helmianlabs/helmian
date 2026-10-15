@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0B1120">
+  <title>Helmian</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/app/app.css">
+  <script type="module" src="/app/app.js"></script>
+</head>
+<body>
+<div id="shell" class="shell" data-view="console">
+  <!-- LEFT SIDEBAR -->
+  <aside id="sidebar" class="sidebar" aria-label="Helmian navigation">
+    <div class="logo"><div class="logo-mark">H</div><div><strong>HELMIAN</strong><span>Personal Pilot</span></div>
+      <button id="sidebar-close" class="icon-btn only-mobile" type="button" aria-label="Close sidebar">×</button></div>
+
+    <section class="side-group">
+      <div class="side-head"><span>PROJECTS</span><button id="new-project" class="link-btn" type="button">+ New</button></div>
+      <form id="new-project-form" class="inline-form" hidden>
+        <input id="new-project-name" placeholder="Project name" aria-label="Project name" required maxlength="80">
+        <div class="row-btns"><button type="button" id="new-project-cancel" class="btn ghost sm">Cancel</button><button type="submit" class="btn primary sm">Create</button></div>
+      </form>
+      <input id="project-filter" class="search" type="search" placeholder="Search projects" aria-label="Search projects">
+      <ul id="project-shelf" class="shelf"></ul>
+      <p id="project-shelf-empty" class="faint sm pad">No projects yet.</p>
+    </section>
+
+    <details class="side-group accordion" id="appearance">
+      <summary class="side-head"><span>APPEARANCE</span><span class="chev">▾</span></summary>
+      <label class="field">Theme<select id="theme-quick"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
+    </details>
+
+    <section class="side-group">
+      <div class="side-head"><span>SESSIONS</span></div>
+      <ul id="sessions" class="sessions"></ul>
+      <nav id="nav" class="submenu" aria-label="Session menu">
+        <button class="nav-item" type="button" data-view="overview">Overview</button>
+        <button class="nav-item" type="button" data-view="settings">Settings</button>
+        <button class="nav-item" type="button" data-view="workspace">Workspace</button>
+        <button class="nav-item active" type="button" data-view="console">Console</button>
+        <button class="nav-item" type="button" data-view="activity">Live activity</button>
+        <button class="nav-item" type="button" data-view="evidence">Evidence</button>
+        <button class="nav-item" type="button" data-view="approvals">Approvals<span id="approvals-badge" class="badge" hidden></span></button>
+        <button class="nav-item" type="button" data-view="integrations">Integrations</button>
+        <button class="nav-item" type="button" data-view="release">Release roadmap</button>
+      </nav>
+    </section>
+
+    <footer class="side-foot">
+      <div class="svc"><span id="svc-dot" class="dot"></span><span id="svc-text">Cloud service · Connecting…</span></div>
+      <div id="account" class="faint sm"></div>
+      <div class="foot-links"><a id="admin-link" href="/admin/" hidden>Owner console</a><a id="signout" href="/admin/auth/logout" hidden>Sign out</a></div>
+    </footer>
+  </aside>
+
+  <!-- CENTER -->
+  <main id="main" class="center">
+    <header class="topbar">
+      <button id="sidebar-toggle" class="icon-btn only-mobile" type="button" aria-label="Open sidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
+      <div id="view-title" class="view-title">Console</div>
+      <button id="mcp-toggle" class="btn ghost sm" type="button" aria-expanded="false">MCP Security</button>
+      <button id="fullscreen" class="btn ghost sm hide-mobile" type="button">Full screen</button>
+      <button id="guard-toggle" class="icon-btn only-mobile" type="button" aria-label="Open Guard Feed" aria-controls="guard" aria-expanded="false">⛨<span id="guard-count" class="dot-count" hidden></span></button>
+    </header>
+
+    <section id="signed-out" class="view hero" hidden>
+      <div class="hero-card">
+        <div class="eyebrow accent">HELMIAN</div>
+        <h1>Your workspace, with guardrails.</h1>
+        <p class="muted">Sign in to pick up your console, projects and approvals from anywhere.</p>
+        <a class="btn primary" href="/admin/auth/login?return=/app">Sign in →</a>
+        <p id="membership-note" class="muted sm" hidden></p>
+      </div>
+    </section>
+
+    <!-- Console (default) -->
+    <section id="view-console" class="view console" data-view-panel="console" hidden>
+      <div id="mcp-panel" class="mcp" hidden>
+        <div class="eyebrow">MCP SECURITY</div>
+        <div class="steps"><span class="step"><b>1</b> Discover</span><span class="step"><b>2</b> Audit</span>
+          <input id="mcp-find" class="search grow" placeholder="Find in last audit" aria-label="Find in last audit"><button id="mcp-find-btn" class="btn ghost sm" type="button">Find</button></div>
+        <p id="mcp-result" class="muted sm">No audit yet. Run one from the desktop app to see results here.</p>
+      </div>
+      <div class="console-head"><span class="eyebrow" id="session-label">CONSOLE</span><select id="channel" aria-label="Channel" hidden></select></div>
+      <div id="log" class="log" aria-live="polite" role="log"></div>
+      <form id="composer" class="composer">
+        <textarea id="prompt" rows="1" placeholder="Prompt..." aria-label="Prompt"></textarea>
+        <div class="composer-row">
+          <div class="tools">
+            <button type="button" class="chip tool" data-tool="tools">+ Tools</button>
+            <button type="button" class="chip tool" data-tool="voice">Voice chat</button>
+            <button type="button" class="chip tool" data-tool="dictate">Dictate</button>
+          </div>
+          <button id="send" class="btn primary" type="submit">Send</button>
+        </div>
+      </form>
+      <div class="new-session">
+        <span class="eyebrow">NEW SESSION</span>
+        <div class="chips" id="session-chips">
+          <button type="button" class="chip" data-provider="Claude">Claude</button>
+          <button type="button" class="chip" data-provider="ChatGPT">ChatGPT</button>
+          <button type="button" class="chip" data-provider="Grok">Grok</button>
+          <button type="button" class="chip" data-provider="Gemini">Gemini</button>
+        </div>
+        <form id="session-form" class="session-form" hidden>
+          <input id="session-name" placeholder="Session name" aria-label="Session name" maxlength="60" required>
+          <button class="btn primary sm" type="submit">Start session</button>
+          <button id="session-cancel" class="btn ghost sm" type="button">Cancel</button>
+        </form>
+      </div>
+      <div id="toast" class="toast" role="status" hidden></div>
+    </section>
+
+    <section id="view-overview" class="view" data-view-panel="overview" hidden>
+      <h2>Overview</h2><div id="metrics" class="cards4"></div>
+      <div class="panel"><div class="eyebrow">TODAY'S POSTURE</div><div id="posture" class="kv"></div></div>
+    </section>
+
+    <section id="view-workspace" class="view" data-view-panel="workspace" hidden>
+      <h2>Workspace</h2><div id="workspace-cards" class="cards"></div>
+    </section>
+
+    <section id="view-settings" class="view" data-view-panel="settings" hidden>
+      <h2>Settings</h2>
+      <div class="panel kv">
+        <label class="row"><span>Theme</span><select id="theme"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
+        <label class="row"><span>Text size</span><input id="text-size" type="range" min="85" max="130" step="5" value="100" aria-label="Text size"></label>
+      </div>
+      <div class="panel"><div class="eyebrow">API KEYS</div><div id="api-keys" class="kv"></div></div>
+      <div class="panel"><div class="eyebrow">CUSTOM LLM ENDPOINTS</div><p class="muted sm">No custom endpoints yet.</p></div>
+      <div class="panel"><div class="eyebrow">PILOT PROFILE</div><div id="pilot" class="kv"></div></div>
+      <div class="panel"><div class="eyebrow">BUILD IDENTITY</div><div id="build" class="kv"></div></div>
+    </section>
+
+    <section id="view-activity" class="view" data-view-panel="activity" hidden>
+      <h2>Live activity</h2><div id="timeline" class="timeline"></div>
+    </section>
+
+    <section id="view-evidence" class="view" data-view-panel="evidence" hidden>
+      <h2>Evidence</h2>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Result</th></tr></thead><tbody id="evidence"></tbody></table></div>
+    </section>
+
+    <section id="view-approvals" class="view" data-view-panel="approvals" hidden>
+      <h2>Approvals</h2><div id="approvals" class="cards"></div>
+    </section>
+
+    <section id="view-integrations" class="view" data-view-panel="integrations" hidden>
+      <h2>Integrations</h2><div id="integrations" class="grid"></div>
+    </section>
+
+    <section id="view-release" class="view" data-view-panel="release" hidden>
+      <h2>Release roadmap</h2>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Version</th><th>Channel</th><th>Status</th><th>Date</th></tr></thead><tbody id="releases"></tbody></table></div>
+    </section>
+  </main>
+
+  <!-- RIGHT: GUARD FEED -->
+  <aside id="guard" class="guard" aria-label="Guard Feed">
+    <div class="guard-head">
+      <span class="title">GUARD FEED</span>
+      <select id="feed-filter" aria-label="Filter feed"><option value="all">All</option><option value="critical">Critical</option><option value="warning">Warnings</option><option value="info">Info</option></select>
+      <button id="feed-clear" class="icon-btn sm" type="button" aria-label="Clear acknowledged" title="Clear acknowledged">⌫</button>
+      <button id="guard-close" class="icon-btn sm only-mobile" type="button" aria-label="Close Guard Feed">×</button>
+    </div>
+    <div class="agent"><span class="dot live"></span><span id="active-agent">No active agent</span></div>
+    <div id="feed" class="feed"></div>
+    <button id="run-suite" class="btn ghost full" type="button">Run tool suite</button>
+    <details class="panel feed-settings"><summary class="eyebrow">GUARD FEED SETTINGS</summary>
+      <label class="toggle"><input type="checkbox" id="opt-info" checked> Show info events</label>
+      <label class="toggle"><input type="checkbox" id="opt-approvals" checked> Show approval requests</label>
+      <label class="toggle"><input type="checkbox" id="opt-auto" checked> Auto-refresh</label>
+    </details>
+  </aside>
+  <div id="scrim" class="scrim" hidden></div>
+</div>
+</body>
+</html>
