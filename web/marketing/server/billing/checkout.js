@@ -1,14 +1,14 @@
 import { createCheckoutSession, resolveProductKey } from './stripe-contract.js';
 
 // Downloads are free. Unless HELMIAN_PAID_CHECKOUT=true, the checkout route sends people to
-// free account creation (Herald sign-up) instead of Stripe payment. The Stripe customer is
+// free account creation (Herald sign-up) instead of Stripe payment: /get-started prompts sign-up, then delivers the download. The Stripe customer is
 // created after sign-up by createFreeStripeCustomer, so no card or payment is ever requested.
 export function paidCheckoutEnabled(env = process.env) { return env.HELMIAN_PAID_CHECKOUT === 'true'; }
 
 export function freeSignupUrl(product, env = process.env) {
   let key = 'helmian_individual';
   try { key = resolveProductKey(product, env); } catch { /* product ids are optional for free signup */ if (['helmian_individual', 'helmian_guard', 'helmian_bundle'].includes(product)) key = product; }
-  return `/herald?signup=1&product=${encodeURIComponent(key)}&next=download`;
+  return `/get-started?product=${encodeURIComponent(key)}`;
 }
 
 export async function createFreeStripeCustomer({ email, clerkUserId, product, env = process.env, fetchImpl = fetch }) {

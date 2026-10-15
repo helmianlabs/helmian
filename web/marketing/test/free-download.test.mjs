@@ -16,8 +16,8 @@ test('checkout route redirects to free sign-up instead of payment', async () => 
   const r = res();
   await handler({ method: 'GET', url: '/api/billing/checkout?product=helmian_guard' }, r);
   assert.equal(r.statusCode, 303);
-  assert.equal(r.headers.location, '/herald?signup=1&product=helmian_guard&next=download');
-  assert.equal(freeSignupUrl('bogus'), '/herald?signup=1&product=helmian_individual&next=download');
+  assert.equal(r.headers.location, '/get-started?product=helmian_guard');
+  assert.equal(freeSignupUrl('bogus'), '/get-started?product=helmian_individual');
 });
 
 test('free Stripe customer creation posts to customers, never charges', async () => {
