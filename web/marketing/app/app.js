@@ -339,3 +339,6 @@ async function boot() {
   setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); loadSteps(); if (shell.dataset.view === 'console') loadLog(); if (shell.dataset.view === 'home') loadHome(); }, 6000);
 }
 boot();
+
+// Installable PWA (scope /app/). Herald keeps its own /herald/ worker until the merge lands.
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {}));

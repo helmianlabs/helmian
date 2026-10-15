@@ -128,5 +128,17 @@
       "maxDuration": 60,
       "includeFiles": "helmian-admin/**"
     }
-  }
+  },
+  "redirects": [
+    {
+      "source": "/app/pair",
+      "destination": "/herald/pair",
+      "permanent": false
+    },
+    {
+      "source": "/app/remote",
+      "destination": "/herald/",
+      "permanent": false
+    }
+  ]
 }
