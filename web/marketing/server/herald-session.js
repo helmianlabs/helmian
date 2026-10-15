@@ -36,7 +36,7 @@ export default async function handler(request, response) {
         channel, desktopToken, pairingCode,
         pairingExpiresAt: new Date(now + PAIRING_SECONDS * 1000).toISOString(),
         expiresAt: new Date(now + SESSION_SECONDS * 1000).toISOString(),
-        phoneUrl: `https://${request.headers.host}/herald/pair?channel=${encodeURIComponent(channel)}`,
+        phoneUrl: `https://${request.headers.host}/app/pair?channel=${encodeURIComponent(channel)}`,
       });
       return;
     }

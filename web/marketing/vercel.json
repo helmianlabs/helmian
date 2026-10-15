@@ -131,8 +131,13 @@
   },
   "redirects": [
     {
-      "source": "/app/pair",
-      "destination": "/herald/pair",
+      "source": "/herald/pair",
+      "destination": "/app/pair",
+      "permanent": false
+    },
+    {
+      "source": "/herald/pair.html",
+      "destination": "/app/pair",
       "permanent": false
     },
     {
