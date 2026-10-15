@@ -128,3 +128,7 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
   .tl { grid-template-columns:22px 1fr; } .tl .when { display:none; }
 }
 .shell.signed-out { grid-template-columns:1fr !important; } .shell.signed-out .sidebar, .shell.signed-out .guard, .shell.signed-out #sidebar-toggle, .shell.signed-out #guard-toggle, .shell.signed-out #mcp-toggle, .shell.signed-out #fullscreen { display:none !important; }
+.sessions .x { border:0; background:none; color:var(--faint); cursor:pointer; padding:0 2px; margin-left:4px; font-size:14px; } .sessions .x:hover { color:var(--red); }
+.row-btns.left { justify-content:flex-start; margin:6px 0; }
+.invite-new { display:flex; gap:6px; margin:8px 0; } .invite-new input { flex:1; min-width:0; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:7px 10px; font-family:var(--mono); font-size:12px; }
+.code { font:700 28px/1 var(--mono); letter-spacing:.12em; color:var(--accent); margin-top:10px; }

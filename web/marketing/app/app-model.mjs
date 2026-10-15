@@ -39,7 +39,7 @@ export function logLines(body = {}, subject = null) {
   return (Array.isArray(body.messages) ? body.messages : []).map((m) => ({
     id: m.id, ts: m.createdAt ? clockTime(m.createdAt) : '', text: String(m.body ?? ''),
     mine: Boolean(subject && (m.authorSubject === subject || m.authorId === subject)),
-    who: m.authorKind === 'human' ? (m.authorName || 'you') : (m.authorName || m.authorKind || 'agent'),
+    who: m.authorKind === 'human' ? (m.authorName || (subject && (m.authorSubject === subject || m.authorId === subject) ? 'you' : 'member')) : (m.authorName || m.authorKind || 'agent'),
   }));
 }
 
@@ -53,7 +53,8 @@ export function feedModel({ events = [], approvals = [] } = {}, { filter = 'all'
     const s = String(e.status ?? '').toUpperCase();
     const severity = ['DENY', 'BLOCK', 'BLOCKED', 'REJECT', 'ERROR', 'FAIL'].some((x) => s.includes(x)) ? 'warning' : 'info';
     if (severity === 'info' && !showInfo) continue;
-    cards.push({ id: `evt:${e.id}`, severity, title: humanAction(e.actionType || 'event'), body: e.summary || '', at: e.createdAt || null, actor: e.actor });
+    const plain = plainEvent(e);
+    cards.push({ id: `evt:${e.id}`, severity, title: plain.title, body: plain.body, at: e.createdAt || null, actor: e.actor });
   }
   return cards.filter((c) => !cleared.has(c.id)).map((c) => (acknowledged.has(c.id) ? { ...c, severity: 'warning', ack: true } : c))
     .filter((c) => filter === 'all' || c.severity === filter);
@@ -74,4 +75,33 @@ export function postureModel(body = {}) { const s = body.settings ?? {}; return 
 export function addSession(list = [], { name, provider, id = null, now = Date.now() } = {}) {
   const n = String(name ?? '').trim().slice(0, 60); if (!n || !PROVIDERS.includes(provider)) return list;
   return [{ id: id ?? `s${now}`, name: n, provider, createdAt: new Date(now).toISOString() }, ...list].slice(0, 20);
+}
+
+// Plain-language wording for Guard Feed / activity / evidence. Server summaries can carry
+// internal policy jargon, so known actions get fixed copy and unknown ones are cleaned.
+const PLAIN = Object.freeze({
+  'admin.bootstrap_owner': ['Owner added', 'You were set up as the owner of this organization.'],
+  'cora.session.started': ['Session started', 'An AI session was started.'],
+  'app.session.created': ['Session started', null],
+  'app.session.archived': ['Session closed', 'A session was closed.'],
+  'envoy.channel.created': ['Team channel created', 'Your team chat channel is ready.'],
+  'workspace.project.register': ['Project added', 'A project was added to the workspace.'],
+  'admin.action_policy.preview': ['Action checked', 'An action was checked against your guardrails.'],
+  'admin.action_policy.confirm': ['Action confirmed', 'An action was confirmed by an owner.'],
+  'organization.membership_role_plan': ['Role change requested', 'A team member role change is waiting for review.'],
+});
+const JARGON = /\b(actual-evidence-only|evidence-only|not_performed|no-execution|receipt[s]?|durable|provider usage is|canonical|policy version)\b/i;
+export function plainEvent(e = {}) {
+  const known = PLAIN[e.actionType];
+  const title = known ? known[0] : humanAction(e.actionType || 'event');
+  let body = known ? known[1] : null;
+  if (body == null) {
+    const first = String(e.summary ?? '').split(/[;\n]/)[0].trim();
+    body = first && !JARGON.test(first) ? first : '';
+  }
+  return { title, body };
+}
+
+export function sessionsFromServer(body = {}) {
+  return (Array.isArray(body.sessions) ? body.sessions : []).map((s) => ({ id: String(s.id), name: String(s.name), provider: String(s.provider), createdAt: s.createdAt ?? null }));
 }

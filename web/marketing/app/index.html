@@ -128,6 +128,17 @@
         <label class="row"><span>Theme</span><select id="theme"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
         <label class="row"><span>Text size</span><input id="text-size" type="range" min="85" max="130" step="5" value="100" aria-label="Text size"></label>
       </div>
+      <div class="panel" id="invite-panel" hidden><div class="eyebrow">INVITE PEOPLE</div>
+        <p class="muted sm">Share a link. Anyone who opens it can create an account and join as a member.</p>
+        <div class="row-btns left"><button id="invite-create" class="btn primary sm" type="button">Create invite link</button></div>
+        <div id="invite-new" class="invite-new" hidden><input id="invite-url" readonly aria-label="Invite link"><button id="invite-copy" class="btn sm" type="button">Copy</button></div>
+        <div id="invite-list" class="kv"></div>
+      </div>
+      <div class="panel"><div class="eyebrow">DESKTOP APP</div>
+        <p class="muted sm">Use team chat in the Helmian desktop app: press “Link desktop app”, then type the code in the desktop app's Team chat panel.</p>
+        <div class="row-btns left"><button id="desktop-link" class="btn sm" type="button">Link desktop app</button></div>
+        <div id="desktop-code" class="code" hidden></div>
+      </div>
       <div class="panel"><div class="eyebrow">API KEYS</div><div id="api-keys" class="kv"></div></div>
       <div class="panel"><div class="eyebrow">CUSTOM LLM ENDPOINTS</div><p class="muted sm">No custom endpoints yet.</p></div>
       <div class="panel"><div class="eyebrow">PILOT PROFILE</div><div id="pilot" class="kv"></div></div>

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, metricsModel, postureModel, isAdminRole, addSession } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, metricsModel, postureModel, isAdminRole, addSession } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -29,7 +29,7 @@ test('no technical disclaimers and no framework', () => {
 
 test('only existing admin APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/cora/approvals', '/api/admin/cora/connectors', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/projects']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/cora/approvals', '/api/admin/cora/connectors', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/projects']);
 });
 
 test('models', () => {
@@ -62,4 +62,18 @@ test('Guard Feed: approvals critical, denials warn, acknowledge turns amber, fil
   const acked = feedModel(data, { acknowledged: new Set(['apr:r1']) })[0];
   assert.deepEqual([acked.severity, acked.ack], ['warning', true]);
   assert.equal(feedModel(data, { cleared: new Set(['evt:1', 'evt:2']) }).length, 1);
+});
+
+test('Guard Feed wording is plain language (no internal jargon)', () => {
+  const leak = { id: '4', actionType: 'cora.session.started', status: 'ALLOW', summary: 'Cora signed session started; provider usage is actual-evidence-only' };
+  const [card] = feedModel({ events: [leak] });
+  assert.deepEqual([card.title, card.body], ['Session started', 'An AI session was started.']);
+  assert.doesNotMatch(JSON.stringify(feedModel({ events: [leak, { id: '5', actionType: 'x.thing', summary: 'Ran; usage is actual-evidence-only' }, { id: '6', actionType: 'y.z', summary: 'provider usage is actual-evidence-only' }] })), /evidence-only|provider usage/);
+  assert.equal(plainEvent({ actionType: 'admin.bootstrap_owner' }).title, 'Owner added');
+  assert.equal(plainEvent({ actionType: 'envoy.channel.created' }).title, 'Team channel created');
+});
+
+test('server sessions map to the sidebar list', () => {
+  assert.deepEqual(sessionsFromServer({ sessions: [{ id: 'a', name: 'Fix', provider: 'Grok', createdAt: 't' }] }), [{ id: 'a', name: 'Fix', provider: 'Grok', createdAt: 't' }]);
+  assert.deepEqual(sessionsFromServer({}), []);
 });
