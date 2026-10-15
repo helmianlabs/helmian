@@ -1062,7 +1062,14 @@ workspaceRoleDefaultSave.onclick = async () => { workspaceRoleDefaultStatus.text
 function activateWorkspaceNav(target, { smooth = true, writeHash = true } = {}) {
   const item = document.querySelector(`#workspace-nav [data-target="${CSS.escape(target)}"]`);
   const section = document.getElementById(target);
-  if (!item || !section || item.hidden || section.hidden) return false;
+  if (!item || !section || item.hidden) return false;
+  if (section.hidden || section.closest('[hidden]')) {
+    // Section lives in the signed-in area, which stays hidden until sign-in + Organization membership.
+    const hint = document.querySelector('#workspace-nav-hint');
+    if (hint) hint.textContent = `${item.textContent.trim()} opens after you sign in with an account that belongs to an Organization.`;
+    document.querySelector('#signed-out')?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
+    return false;
+  }
   section.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
   for (const peer of document.querySelectorAll('#workspace-nav [data-target]')) { peer.classList.toggle('active', peer === item); if (peer === item) peer.setAttribute('aria-current', 'page'); else peer.removeAttribute('aria-current'); }
   if (writeHash && window.location.hash !== `#${target}`) window.history.replaceState(null, '', `#${target}`);

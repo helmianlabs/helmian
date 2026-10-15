@@ -429,7 +429,8 @@ export async function createLiveHelmianCloudAdminHandler({
       await requireActiveTenantMembership(client, context);
       return {};
     });
-    return actor;
+    // Repositories (e.g. Cora config history) require session/request ids like activeTenantActor provides.
+    return { ...actor, sessionId: context.sessionId, requestId: context.requestId };
   }
 
   async function controlSurface(actor) {
@@ -518,14 +519,15 @@ export async function createLiveHelmianCloudAdminHandler({
          limit 25`,
         [context.tenantId],
       );
-      return result.rows.map((row) => ({
+      // withTenantTransaction spreads the result into an object, so wrap the array.
+      return { events: result.rows.map((row) => ({
         id: String(row.id),
         actionType: String(row.action_type).slice(0, 120),
         decision: String(row.decision).slice(0, 40),
         summary: String(row.privacy_summary).slice(0, 240),
         createdAt: row.created_at,
-      }));
-    });
+      })) };
+    }).then((result) => result.events);
   }
 
   async function workspaceSnapshot(actor) {
