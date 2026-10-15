@@ -21,6 +21,7 @@ import {
 import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-action.mjs';
 import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
+import { createAppSessionStore } from './app-sessions.mjs';
 import { createCoraOrganizationConfigRepository } from '../cora/organization-config-repository.mjs';
 import { createProviderUsageRepository } from '../cora/provider-usage-repository.mjs';
 import { createOrganizationDatabaseRepository } from './organization-database-repository.mjs';
@@ -79,6 +80,8 @@ export const LIVE_ADMIN_ACTION_POLICY_PATH = '/api/admin/action-policy';
 export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/preview';
 export const LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH = '/api/admin/action-policy/confirm';
 export const LIVE_ADMIN_ENVOY_CHANNELS_PATH = '/api/admin/envoy/channels';
+export const LIVE_APP_SESSIONS_PATH = '/api/admin/app/sessions';
+export const LIVE_APP_SESSIONS_ARCHIVE_PATH = '/api/admin/app/sessions/archive';
 export const LIVE_ADMIN_ENVOY_MESSAGES_PATH = '/api/admin/envoy/messages';
 export const LIVE_ADMIN_ENVOY_STREAM_PATH = '/api/admin/envoy/stream';
 export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
@@ -262,6 +265,7 @@ export async function createLiveHelmianCloudAdminHandler({
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
   consoleCommandRepository: suppliedConsoleCommandRepository = null,
   envoyStore: suppliedEnvoyStore = null,
+  appSessionStore: suppliedAppSessionStore = null,
   envoyStreamIntervalMs = 1000,
   envoyStreamMaxMs = MAX_ENVOY_STREAM_MS,
   logger = () => {},
@@ -279,6 +283,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const ownsPool = !suppliedPool;
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
   const envoy = suppliedEnvoyStore ?? createEnvoyStore(pool);
+  const appSessions = suppliedAppSessionStore ?? createAppSessionStore(pool);
   const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
   const providerUsage = suppliedProviderUsageRepository ?? createProviderUsageRepository(pool);
   const workspacePreviews = suppliedWorkspacePreviewRepository ?? createWorkspacePreviewRepository(pool);
@@ -783,6 +788,18 @@ export async function createLiveHelmianCloudAdminHandler({
         send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
       }
       return true;
+    }
+    if (requestUrl.pathname === LIVE_APP_SESSIONS_PATH || requestUrl.pathname === LIVE_APP_SESSIONS_ARCHIVE_PATH) {
+      const fail = (error) => {
+        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503;
+        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'APP_SESSIONS_FORBIDDEN' : status === 400 ? 'APP_SESSION_INVALID' : 'APP_SESSIONS_UNAVAILABLE' }));
+      };
+      try {
+        if (request.method === 'GET' && requestUrl.pathname === LIVE_APP_SESSIONS_PATH) { const actor = await activeActor(request); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.list(actor) })); return true; }
+        if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSIONS_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['idempotencyKey', 'name', 'provider']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.create(actor, body) })); return true; }
+        if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSIONS_ARCHIVE_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['id']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.archive(actor, body.id) })); return true; }
+        send(response, 405, JSON.stringify({ valid: false, code: 'METHOD_NOT_ALLOWED' })); return true;
+      } catch (error) { fail(error); return true; }
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CHANNELS_PATH) {
       try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await envoy.listChannels(actor) })); }

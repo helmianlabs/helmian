@@ -1,9 +1,9 @@
-import { VIEW_TITLES, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, metricsModel, postureModel, addSession } from './app-model.mjs';
+import { VIEW_TITLES, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
 const store = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(`helmian.app.${k}`)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(`helmian.app.${k}`, JSON.stringify(v)); } catch {} } };
-const state = { actor: null, projects: [], channelId: null, sessions: store.get('sessions', []), activeSession: store.get('activeSession', null), events: [], approvals: [], ack: new Set(store.get('ack', [])), cleared: new Set(store.get('cleared', [])), pendingProvider: null };
+const state = { serverSessions: false, actor: null, projects: [], channelId: null, sessions: store.get('sessions', []), activeSession: store.get('activeSession', null), events: [], approvals: [], ack: new Set(store.get('ack', [])), cleared: new Set(store.get('cleared', [])), pendingProvider: null };
 const narrow = () => window.matchMedia('(max-width: 900px)').matches;
 
 async function api(path, init = {}) {
@@ -80,7 +80,7 @@ $('#new-project-form').onsubmit = async (e) => {
 function renderSessions() {
   const ul = $('#sessions');
   if (!state.sessions.length) { ul.replaceChildren(el('li', 'faint sm', 'No sessions yet')); ul.firstChild.style.cursor = 'default'; }
-  else ul.replaceChildren(...state.sessions.map((s) => { const li = el('li', s.id === state.activeSession ? 'active' : null); li.append(el('span', 'dot'), el('span', null, s.name), el('span', 'prov', s.provider)); li.onclick = () => { state.activeSession = s.id; store.set('activeSession', s.id); renderSessions(); location.hash = 'console'; }; return li; }));
+  else ul.replaceChildren(...state.sessions.map((s) => { const li = el('li', s.id === state.activeSession ? 'active' : null); li.append(el('span', 'dot'), el('span', null, s.name), el('span', 'prov', s.provider)); if (state.serverSessions) { const x = el('button', 'x', '×'); x.type = 'button'; x.title = 'Close session'; x.onclick = async (ev) => { ev.stopPropagation(); try { await post('/api/admin/app/sessions/archive', { id: s.id }); } catch {} loadSessions(); }; li.append(x); } li.onclick = () => { state.activeSession = s.id; store.set('activeSession', s.id); renderSessions(); location.hash = 'console'; }; return li; }));
   const active = state.sessions.find((s) => s.id === state.activeSession);
   $('#session-label').textContent = active ? `CONSOLE · ${active.name.toUpperCase()} · ${active.provider.toUpperCase()}` : 'CONSOLE';
   $('#active-agent').textContent = active ? `${active.provider} · ${active.name}` : 'No active agent';
@@ -91,19 +91,34 @@ for (const chip of document.querySelectorAll('#session-chips .chip')) chip.oncli
   $('#session-form').hidden = false; $('#session-name').value = `${chip.dataset.provider} session`; $('#session-name').select();
 };
 $('#session-cancel').onclick = () => { $('#session-form').hidden = true; document.querySelectorAll('#session-chips .chip').forEach((c) => c.classList.remove('active')); };
-$('#session-form').onsubmit = (e) => {
+$('#session-form').onsubmit = async (e) => {
   e.preventDefault();
-  state.sessions = addSession(state.sessions, { name: $('#session-name').value, provider: state.pendingProvider });
-  state.activeSession = state.sessions[0]?.id ?? null; store.set('sessions', state.sessions); store.set('activeSession', state.activeSession);
+  const name = $('#session-name').value.trim(); const provider = state.pendingProvider;
+  if (!name || !PROVIDERS.includes(provider)) return;
+  if (state.serverSessions) {
+    try { const r = await post('/api/admin/app/sessions', { name, provider, idempotencyKey: crypto.randomUUID() }); await loadSessions(); state.activeSession = r.session.id; }
+    catch { toast('Session not saved — try again'); return; }
+  } else {
+    state.sessions = addSession(state.sessions, { name, provider }); state.activeSession = state.sessions[0]?.id ?? null; store.set('sessions', state.sessions);
+  }
+  store.set('activeSession', state.activeSession);
   $('#session-cancel').onclick(); renderSessions(); toast('Session started');
 };
+async function loadSessions() {
+  try { state.sessions = sessionsFromServer(await api('/api/admin/app/sessions')); state.serverSessions = true; }
+  catch { state.serverSessions = false; state.sessions = store.get('sessions', []); }
+  if (!state.sessions.some((s) => s.id === state.activeSession)) state.activeSession = state.sessions[0]?.id ?? null;
+  renderSessions();
+}
 for (const t of document.querySelectorAll('.tool')) t.onclick = () => toast(t.dataset.tool === 'tools' ? 'Tools and connectors open from Integrations' : `${t.textContent} is available in the desktop app`);
 $('#run-suite').onclick = () => toast('Tool suite runs from the desktop app');
 
 // ---- console (Envoy) ----
 async function loadConsole() {
   if (!state.channelId) {
-    try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); sel.replaceChildren(...chans.map((c) => { const o = el('option', null, c.name || c.displayName || c.channelKey || 'Channel'); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null; } catch {}
+    try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); sel.replaceChildren(...chans.map((c) => { const o = el('option', null, c.name || c.displayName || c.channelKey || 'Channel'); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
+      if (!state.channelId && isAdminRole(state.actor?.role)) { const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' }); state.channelId = made.channel?.id ?? null; if (state.channelId) toast('Team channel created'); }
+    } catch {}
   }
   await loadLog();
 }
@@ -195,13 +210,13 @@ async function loadActivity() {
   await loadFeedData();
   const box = $('#timeline');
   if (!state.events.length) { box.replaceChildren(empty('No activity yet.', 'Actions from your team and agents will stream here.')); return; }
-  box.replaceChildren(...state.events.slice(0, 50).map((e) => { const r = el('div', 'tl'); const w = el('div', 'what'); w.append(el('div', null, humanAction(e.actionType)), el('div', 'meta', [e.summary, e.actorRole].filter(Boolean).join(' · '))); r.append(el('div', 'when', formatTime(e.createdAt)), el('div', 'rail'), w); return r; }));
+  box.replaceChildren(...state.events.slice(0, 50).map((e) => { const r = el('div', 'tl'); const w = el('div', 'what'); const pe = plainEvent(e); w.append(el('div', null, pe.title), el('div', 'meta', [pe.body, e.actorRole].filter(Boolean).join(' · '))); r.append(el('div', 'when', formatTime(e.createdAt)), el('div', 'rail'), w); return r; }));
 }
 async function loadEvidence() {
   await loadFeedData();
   const tb = $('#evidence');
   if (!state.events.length) { const tr = el('tr'); const td = el('td', 'muted', 'No evidence recorded yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); return; }
-  tb.replaceChildren(...state.events.slice(0, 100).map((e) => { const tr = el('tr'); const st = el('span', `status ${String(e.status).toUpperCase() === 'ALLOW' ? 'ok' : 'warn'}`, String(e.status ?? '').toLowerCase()); const td = el('td'); td.append(st); tr.append(el('td', 'muted', formatTime(e.createdAt)), el('td', null, humanAction(e.actionType)), el('td', 'muted', e.actorRole || ''), td); return tr; }));
+  tb.replaceChildren(...state.events.slice(0, 100).map((e) => { const tr = el('tr'); const st = el('span', `status ${String(e.status).toUpperCase() === 'ALLOW' ? 'ok' : 'warn'}`, String(e.status ?? '').toLowerCase()); const td = el('td'); td.append(st); tr.append(el('td', 'muted', formatTime(e.createdAt)), el('td', null, plainEvent(e).title), el('td', 'muted', e.actorRole || ''), td); return tr; }));
 }
 async function loadIntegrations() {
   const [c, p] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections')]);
@@ -240,7 +255,7 @@ async function boot() {
   $('#svc-dot').classList.add('live'); $('#svc-text').textContent = 'Cloud service · Connected - live';
   $('#account').textContent = `${model.actor.tenantId} · ${model.actor.role}`;
   $('#admin-link').hidden = !isAdminRole(model.actor.role); $('#signout').hidden = false;
-  renderSessions();
+  renderSessions(); loadSessions();
   show(viewFromHash(location.hash));
   loadProjects(); loadFeedData();
   setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); if (shell.dataset.view === 'console') loadLog(); }, 6000);

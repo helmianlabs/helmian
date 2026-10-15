@@ -42,6 +42,10 @@ class MigrationPool {
           pool.executedSql.push('032_workspace_projects.sql');
           return { rowCount: 0, rows: [] };
         }
+        if (String(sql).includes('helmion.app_sessions')) {
+          pool.executedSql.push('042_app_sessions.sql');
+          return { rowCount: 0, rows: [] };
+        }
         if (String(sql).includes('helmion.console_command_runs')) {
           pool.executedSql.push('041_console_command_runs.sql');
           return { rowCount: 0, rows: [] };
@@ -221,6 +225,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['033_console_command_intents.sql', true, 'committed'],
       ['034_helmion_provider_oauth.sql', true, 'committed'],
       ['041_console_command_runs.sql', true, 'committed'],
+      ['042_app_sessions.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -258,13 +263,14 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '033_console_command_intents.sql',
       '034_helmion_provider_oauth.sql',
       '041_console_command_runs.sql',
+      '042_app_sessions.sql',
     ],
   );
 
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    Array(32).fill(false),
+    Array(33).fill(false),
   );
   assert.deepEqual(
     pool.executedSql,
@@ -301,9 +307,10 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '033_console_command_intents.sql',
       '034_helmion_provider_oauth.sql',
       '041_console_command_runs.sql',
+      '042_app_sessions.sql',
     ],
   );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 64);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 66);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 
