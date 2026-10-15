@@ -142,8 +142,20 @@ public static partial class GrokCliLogin
     private static IEnumerable<string> Candidates()
     {
         yield return "grok";
-        yield return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grok", "bin", "grok.exe");
+        yield return InstallerExecutablePath();
+    }
+
+    private static string InstallerExecutablePath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grok", "bin", "grok.exe");
+
+    /// <summary>
+    /// The grok executable for chat turns: the official installer's grok.exe when present
+    /// (works even if this app started before PATH was updated), else "grok" from PATH.
+    /// </summary>
+    public static string ResolveExecutable()
+    {
+        var installed = InstallerExecutablePath();
+        return File.Exists(installed) ? installed : "grok";
     }
 
     private static async Task<RunResult> RunHiddenAsync(

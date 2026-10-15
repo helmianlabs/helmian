@@ -161,13 +161,16 @@ public static class ProviderCliChatSession
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "grok",
+            // Same lookup as sign-in: the official installer's grok.exe, else PATH.
+            FileName = GrokCliLogin.ResolveExecutable(),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
         ClearApiKeyEnvironment(psi, "XAI_API_KEY", "GROK_API_KEY");
+        // docs.x.ai/build/cli/headless-scripting: pass --no-auto-update for headless runs.
+        psi.ArgumentList.Add("--no-auto-update");
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add(prompt);
         psi.ArgumentList.Add("--permission-mode");
@@ -271,9 +274,14 @@ public static class ProviderCliChatSession
 
             if (process.ExitCode != 0)
             {
+                // With --output-format json a CLI may report the failure on stdout and leave
+                // stderr empty. Show whichever stream carries the reason.
+                var reason = string.Join(" ", new[] { stderr, stdout }
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Select(s => s.Trim()));
                 throw new ProviderCliChatException(
                     $"{toolName} exited with code {process.ExitCode}"
-                    + (string.IsNullOrWhiteSpace(stderr) ? "." : $": {Truncate(stderr)}"));
+                    + (string.IsNullOrWhiteSpace(reason) ? "." : $": {Truncate(reason)}"));
             }
 
             if (string.IsNullOrWhiteSpace(stdout))
@@ -378,9 +386,14 @@ public static class ProviderCliChatSession
 
             if (process.ExitCode != 0)
             {
+                // With --output-format json a CLI may report the failure on stdout and leave
+                // stderr empty. Show whichever stream carries the reason.
+                var reason = string.Join(" ", new[] { stderr, stdout }
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Select(s => s.Trim()));
                 throw new ProviderCliChatException(
                     $"{toolName} exited with code {process.ExitCode}"
-                    + (string.IsNullOrWhiteSpace(stderr) ? "." : $": {Truncate(stderr)}"));
+                    + (string.IsNullOrWhiteSpace(reason) ? "." : $": {Truncate(reason)}"));
             }
 
             if (string.IsNullOrWhiteSpace(stdout))
