@@ -636,6 +636,7 @@ public partial class MainWindow : Window
             ["Activity"] = ActivityPage,
             ["Evidence"] = EvidencePage,
             ["Approvals"] = ApprovalsPage,
+            ["TeamChat"] = TeamChatPage,
             ["Integrations"] = IntegrationsPage,
             ["Release"] = ReleasePage,
             ["Settings"] = SettingsPage
@@ -648,6 +649,7 @@ public partial class MainWindow : Window
             ["Activity"] = ActivityNav,
             ["Evidence"] = EvidenceNav,
             ["Approvals"] = ApprovalsNav,
+            ["TeamChat"] = TeamChatNav,
             ["Integrations"] = IntegrationsNav,
             ["Release"] = ReleaseNav,
             ["Settings"] = SettingsNav
@@ -721,7 +723,7 @@ public partial class MainWindow : Window
         {
             PageTitle.Text = pageName is "Activity" or "Evidence" or "Approvals"
                 ? "Review & History"
-                : pageName;
+                : pageName == "TeamChat" ? "Team chat" : pageName;
             PageContext.Text = pageName switch
             {
                 "Overview" => "Actions and recent results",
@@ -729,6 +731,7 @@ public partial class MainWindow : Window
                 "Activity" => "Search recorded actions and results",
                 "Evidence" => "Evidence and handoffs",
                 "Approvals" => "Items that need attention",
+                "TeamChat" => "Talk with your team on helmian.cloud",
                 "Integrations" => "Connections and remote access",
                 "Release" => "Internal release reference",
                 "Settings" => "Appearance and advanced details",

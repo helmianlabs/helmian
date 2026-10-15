@@ -29,7 +29,7 @@ test('no technical disclaimers and no framework', () => {
 
 test('only existing admin APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/cora/approvals', '/api/admin/cora/connectors', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/projects']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/cora/approvals', '/api/admin/cora/connectors', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/projects']);
 });
 
 test('models', () => {

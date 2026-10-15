@@ -14,6 +14,7 @@ import billingWebhook from '../server/billing/webhook.js';
 import latestRelease from '../server/latest-release.js';
 import { slackHandoffHandlers } from './_team-oauth-slack.js';
 import { discordHandoffHandlers } from './_team-oauth-discord.js';
+import { githubHandoffHandlers } from './_team-oauth-github.js';
 
 const routes = {
   'herald-config': heraldConfig,
@@ -41,6 +42,10 @@ const routes = {
   'team-oauth-discord-start': discordHandoffHandlers.start,
   'team-oauth-discord-callback': discordHandoffHandlers.callback,
   'team-oauth-discord-redeem': discordHandoffHandlers.redeem,
+  'team-oauth-github-start': githubHandoffHandlers.start,
+  'team-oauth-github-authorize': githubHandoffHandlers.authorize,
+  'team-oauth-github-callback': githubHandoffHandlers.callback,
+  'team-oauth-github-redeem': githubHandoffHandlers.redeem,
   'remote/v1/control': heraldControl,
   'remote/v1/control-token': heraldRealtimeToken,
   'remote/v1/desktop': heraldDesktop,
@@ -53,6 +58,10 @@ const routes = {
   'team-oauth/discord/start': discordHandoffHandlers.start,
   'team-oauth/discord/callback': discordHandoffHandlers.callback,
   'team-oauth/discord/redeem': discordHandoffHandlers.redeem,
+  'team-oauth/github/start': githubHandoffHandlers.start,
+  'team-oauth/github/authorize': githubHandoffHandlers.authorize,
+  'team-oauth/github/callback': githubHandoffHandlers.callback,
+  'team-oauth/github/redeem': githubHandoffHandlers.redeem,
 };
 
 function routeKey(request) {

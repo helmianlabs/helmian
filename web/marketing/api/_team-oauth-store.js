@@ -22,7 +22,7 @@ function database() {
 
 function providerId(value) {
   const provider = String(value ?? '');
-  if (!['slack', 'discord'].includes(provider)) {
+  if (!['slack', 'discord', 'github'].includes(provider)) {
     throw httpError(400, 'invalid_provider', 'The authorization provider is invalid.');
   }
   return provider;
