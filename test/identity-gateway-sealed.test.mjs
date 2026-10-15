@@ -50,3 +50,9 @@ test('callback failures carry a stage and OAuth error code, never token material
   const g3 = createIdentityGateway({ env, fetchImpl });
   assert.equal((await g3.finishLogin('code', 'garbage').catch((e) => e)).stage, 'login_state');
 });
+
+test('scopes are configurable but must include openid', async () => {
+  const g = createIdentityGateway({ env: { ...env, HELMION_ADMIN_SCOPES: 'openid email' }, fetchImpl });
+  assert.equal(new URL((await g.beginLogin()).url).searchParams.get('scope'), 'openid email');
+  assert.throws(() => createIdentityGateway({ env: { ...env, HELMION_ADMIN_SCOPES: 'email' }, fetchImpl }), /openid/);
+});
