@@ -401,7 +401,7 @@ addEventListener('online', () => transport.setNetworkAvailable(true));
 // Phones freeze timers in the background; resync the moment the app is visible again.
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && channel) void transport.pollOnce().catch(() => {}); });
 if ('serviceWorker' in navigator) {
-  addEventListener('load', () => navigator.serviceWorker.register('/herald/sw.js', { scope: '/herald/' }).catch(() => {}));
+  addEventListener('load', () => (location.pathname.startsWith('/app/') ? navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }) : navigator.serviceWorker.register('/herald/sw.js', { scope: '/herald/' })).catch(() => {}));
 }
 void loadPublicConfiguration();
 const scannedPairCode = takePairingCodeFromLocation(location, history, PAIR_FRAGMENT_KEY);
