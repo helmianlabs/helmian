@@ -2,7 +2,7 @@
 
 Executes queued `/admin` console commands (table `helmion.console_command_intents`)
 and writes one append-only result per command to `helmion.console_command_runs`
-(migration `sql/035_console_command_runs.sql`).
+(migration `sql/041_console_command_runs.sql`).
 
 | Command | Cloud result |
 |---|---|
