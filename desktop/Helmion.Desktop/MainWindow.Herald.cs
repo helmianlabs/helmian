@@ -23,6 +23,29 @@ public partial class MainWindow
     private bool _heraldClosedWired;
     private DispatcherTimer? _heraldPairingExpiryTimer;
     private string? _heraldPhoneUrl;
+    private readonly Queue<string> _heraldErrorTail = new();
+
+    /// <summary>%LOCALAPPDATA%\Helmion\logs\herald-companion.log (companion output, no secrets).</summary>
+    internal static string HeraldCompanionLogPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Helmion", "logs", "herald-companion.log");
+
+    private static void AppendHeraldLog(string line)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(HeraldCompanionLogPath)!);
+            File.AppendAllText(HeraldCompanionLogPath, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz} {line}{Environment.NewLine}");
+        }
+        catch { /* logging must never break sharing */ }
+    }
+
+    /// <summary>Plain status text when the companion exits; keeps the real error visible.</summary>
+    internal static string HeraldExitMessage(int? exitCode, IReadOnlyCollection<string> errorTail)
+    {
+        var why = errorTail.Count > 0 ? string.Join("\n", errorTail) : "It printed no error.";
+        var code = exitCode is int c ? $" (exit code {c})" : string.Empty;
+        return $"Phone sharing stopped: the companion ended{code}.\n{why}\nDetails: {HeraldCompanionLogPath}";
+    }
 
     /// <summary>Cloud relay origin: HELMION_REMOTE_CONTROL_ORIGIN, else https://helmian.cloud.</summary>
     private static Uri HeraldRemoteOrigin =>
@@ -116,10 +139,13 @@ public partial class MainWindow
             }
 
             var process = new Process { StartInfo = start, EnableRaisingEvents = true };
+            _heraldErrorTail.Clear();
+            AppendHeraldLog($"start: \"{node}\" {string.Join(' ', start.ArgumentList)} (cwd {workspace})");
             process.OutputDataReceived += (_, args) =>
             {
                 if (!string.IsNullOrWhiteSpace(args.Data))
                 {
+                    AppendHeraldLog($"out: {(args.Data.Contains("Pairing code:", StringComparison.Ordinal) ? "Pairing code: [hidden]" : args.Data)}");
                     Dispatcher.BeginInvoke(() => AppendHeraldStatusLine(args.Data));
                 }
             };
@@ -127,6 +153,12 @@ public partial class MainWindow
             {
                 if (!string.IsNullOrWhiteSpace(args.Data))
                 {
+                    AppendHeraldLog($"err: {args.Data}");
+                    lock (_heraldErrorTail)
+                    {
+                        _heraldErrorTail.Enqueue(args.Data.Length > 400 ? args.Data[..400] : args.Data);
+                        while (_heraldErrorTail.Count > 4) _heraldErrorTail.Dequeue();
+                    }
                     Dispatcher.BeginInvoke(() => AppendHeraldStatusLine($"Could not continue: {args.Data}"));
                 }
             };
@@ -134,7 +166,13 @@ public partial class MainWindow
             {
                 if (ReferenceEquals(_heraldProcess, process))
                 {
-                    await StopHeraldSharingAsync("Phone sharing is off. The local companion process ended.");
+                    int? exitCode = null;
+                    try { process.WaitForExit(); exitCode = process.ExitCode; } catch { }
+                    await Task.Delay(150); // let the last stderr lines arrive
+                    string[] tail;
+                    lock (_heraldErrorTail) tail = _heraldErrorTail.ToArray();
+                    AppendHeraldLog($"exit: {exitCode?.ToString() ?? "unknown"}");
+                    await StopHeraldSharingAsync(HeraldExitMessage(exitCode, tail));
                 }
             });
             if (!process.Start()) throw new InvalidOperationException("The Herald companion process did not start.");
@@ -154,7 +192,8 @@ public partial class MainWindow
         }
         catch (Exception error)
         {
-            await StopHeraldSharingAsync($"Phone sharing did not start: {error.Message}");
+            AppendHeraldLog($"start failed: {error.Message}");
+            await StopHeraldSharingAsync($"Phone sharing did not start: {error.Message}\nDetails: {HeraldCompanionLogPath}");
         }
     }
 
