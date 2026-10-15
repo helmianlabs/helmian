@@ -53,6 +53,7 @@
           <button class="nav-item" type="button" data-view="activity">Live activity</button>
           <button class="nav-item" type="button" data-view="evidence">Evidence</button>
           <button class="nav-item" type="button" data-view="integrations">Integrations</button>
+          <button class="nav-item" type="button" data-view="agents">Agents</button>
           <button class="nav-item" type="button" data-view="release">Release roadmap</button>
         </nav>
       </details>
@@ -217,6 +218,25 @@
 
     <section id="view-integrations" class="view" data-view-panel="integrations" hidden>
       <h2>Integrations</h2><div id="integrations" class="grid"></div>
+    </section>
+
+    
+    <section id="view-agents" class="view" data-view-panel="agents" hidden>
+      <h2>Agents</h2>
+      <p class="muted sm">AI providers linked to this workspace. Turns still run on the desktop app.</p>
+      <div class="row-btns left" style="margin-bottom:12px">
+        <button id="agents-refresh" class="btn primary sm" type="button">Refresh</button>
+        <a class="btn sm" href="#integrations">Integrations</a>
+      </div>
+      <div id="agents-cards" class="grid"></div>
+      <div class="panel" style="margin-top:12px">
+        <div class="side-head" style="padding:0 0 8px"><span>OPEN SESSIONS</span></div>
+        <div id="agents-sessions"></div>
+      </div>
+      <details class="panel show-details" id="agents-details">
+        <summary class="eyebrow">SHOW DETAILS</summary>
+        <div id="agents-detail-list" class="kv"></div>
+      </details>
     </section>
 
     <section id="view-release" class="view" data-view-panel="release" hidden>

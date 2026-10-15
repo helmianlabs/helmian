@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, PRIMARY_VIEWS, ADVANCED_VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, PRIMARY_VIEWS, ADVANCED_VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -100,4 +100,19 @@ test('phone primary nav + Advanced + Show details (Troy polish)', () => {
   assert.doesNotMatch(primary, /data-view="devices"/);
   const advanced = html.match(/id="advanced-nav"[\s\S]*?<\/details>/)[0];
   for (const v of ADVANCED_VIEWS) assert.match(advanced, new RegExp(`data-view="${v}"`));
+});
+
+test('agentsModel maps providers and sessions', () => {
+  const m = agentsModel(
+    { connections: [{ provider: 'anthropic', lifecycle: 'verified', authMode: 'api_key' }] },
+    { sessions: [{ id: 's1', name: 'Fix', provider: 'Claude', createdAt: 't' }] },
+  );
+  assert.equal(m.agents.find((a) => a.name === 'Claude').connected, true);
+  assert.equal(m.agents.find((a) => a.name === 'Grok').connected, false);
+  assert.equal(m.active[0].name, 'Fix');
+  assert.equal(m.empty, false);
+  assert.ok(VIEWS.includes('agents'));
+  assert.equal(VIEW_TITLES.agents, 'Agents');
+  assert.match(html, /data-view-panel="agents"/);
+  assert.match(html, /id="agents-refresh"/);
 });
