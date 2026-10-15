@@ -1,0 +1,43 @@
+# Helmian always-on box (Hetzner). Website, /app, API, DB and Clerk stay on Vercel + Neon + Clerk.
+# This box only runs what Vercel can't: Kokoro voice, Mark's relay, background worker.
+# Secrets live in /opt/helmian/deploy/hetzner/.env (chmod 600), never in git.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  kokoro:
+    # Kokoro TTS, CPU build, OpenAI-compatible /v1/audio/speech on :8880
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    restart: unless-stopped
+    expose: ["8880"]
+    deploy:
+      resources:
+        limits: { memory: 2500m }
+
+  relay:
+    # Mark's relay (long-lived WebSockets). The repo has no standalone relay server yet
+    # (src/relay/* is the client/poller side), so this is opt-in: set RELAY_IMAGE in .env
+    # and start with `docker compose --profile relay up -d`.
+    image: ${RELAY_IMAGE:-busybox}
+    profiles: ["relay"]
+    restart: unless-stopped
+    env_file: .env
+    expose: ["8080"]
+
+  worker:
+    # Cloud console worker (bin/helmion-cloud-worker.mjs) against the same Neon DB.
+    build: { context: ../.., dockerfile: deploy/helmian-cloud/Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    command: ["node", "bin/helmion-cloud-worker.mjs"]
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}
