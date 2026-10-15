@@ -522,11 +522,12 @@ async function loadWorkspaceProjects() {
 function renderWorkspaceConsole(body) {
   workspaceConsoleReceipts.replaceChildren();
   const commands = Array.isArray(body.commands) ? body.commands : [];
-  workspaceConsoleStatus.textContent = commands.length ? `${commands.length} console request${commands.length === 1 ? '' : 's'} recorded. Execution remains not performed.` : 'No console command intents recorded for this Organization.';
+  workspaceConsoleStatus.textContent = commands.length ? `${commands.length} console request${commands.length === 1 ? '' : 's'} · ${commands.filter((c) => c.execution === 'queued').length} waiting for the cloud worker.` : 'No console command intents recorded for this Organization.';
   for (const command of commands) {
     const card = document.createElement('article');
     card.className = 'config-item';
-    card.append(configItem('Command', `${command.commandName} · ${command.status}`), configItem('Reason', command.reason), configItem('Receipt', command.receiptId), configItem('Execution', command.execution || 'not_performed'));
+    card.append(configItem('Command', `${command.commandName} · ${command.status}`), configItem('Reason', command.reason), configItem('Receipt', command.receiptId), configItem('Execution', command.execution || 'queued'));
+    if (command.run) card.append(configItem('Result', JSON.stringify(Object.fromEntries(Object.entries(command.run.result || {}).filter(([k]) => k !== 'format')))));
     workspaceConsoleReceipts.append(card);
   }
 }

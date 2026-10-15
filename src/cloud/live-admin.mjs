@@ -49,6 +49,7 @@ import { createGeminiOAuthPkce, geminiCredentialReference, resolveGeminiOAuthCon
 import { readGeminiOAuthReadiness } from './provider-oauth-readiness.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
+import { createConsoleCommandWorker } from './console-command-worker.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -1179,6 +1180,7 @@ export async function createLiveHelmianCloudAdminHandler({
     resolveOrganizationDatabase: (actor) => organizationDatabase.resolve(actor),
     resolvePublishedCoraSessionConfig: (signedContext) => resolvePublishedCoraSessionConfig({ repository: coraConfig, signedContext }),
     claimAgentTask: (workerActor, input) => agentTasks.claimPrepared(workerActor, input),
+    startConsoleWorker: (options = {}) => createConsoleCommandWorker({ pool, ...options }).start(options),
     close: () => ownsPool ? pool.end() : Promise.resolve(),
   });
 }

@@ -27,10 +27,10 @@ const PARITY = Object.freeze([
     id: 'console',
     desktop: 'Maestro conversation, permission selector, commands, MCP security, clear output and full-screen controls',
     desktopEvidence: 'desktop/Helmion.Desktop/MainWindow.xaml:3441-3847',
-    cloud: 'Organization Envoy conversation plus tenant-scoped console command intent receipts',
+    cloud: 'Organization Envoy conversation plus tenant-scoped console commands; the cloud console worker executes workspace_context, list_agents and open_project against Neon and shows results',
     cloudEvidence: 'web/cloud-admin/index.html:122-133; web/cloud-admin/app.js:520-543; web/cloud-admin/app.js:946-961; src/cloud/live-admin.mjs:908-927',
     status: 'partial',
-    missing: 'Hosted console records bounded intents but does not execute desktop commands, MCP audits, filesystem tools, or provider turns.',
+    missing: 'Project tasks and previews are marked needs_desktop: no filesystem tools, MCP audits or provider turns run in the cloud yet.',
   },
   {
     id: 'artifact-studio',

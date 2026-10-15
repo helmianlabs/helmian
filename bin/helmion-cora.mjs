@@ -153,6 +153,10 @@ let liveAdmin;
 try {
   if (shouldMountLiveAdmin(process.env)) {
     liveAdmin = await createLiveHelmianCloudAdminHandler({ logger });
+    // Opt-in: run the console worker in the same (free) Fly machine.
+    if (process.env.HELMION_CONSOLE_WORKER === '1') {
+      liveAdmin.startConsoleWorker({ intervalMs: Number(process.env.HELMION_WORKER_INTERVAL_MS) || 5000, log: (m) => logger({ level: 'info', event: 'console_worker', message: m }) });
+    }
   }
   server = await startCoraClm({
     workspace: flags.workspace,
