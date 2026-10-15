@@ -45,6 +45,7 @@
     .guard-actions button:disabled { opacity: .65; cursor: not-allowed; }
     .preview { color: #f2c879; font-size: .85rem; }
     @media (max-width: 1380px) { .shell { grid-template-columns: 180px minmax(0, 1fr) 230px 260px; } }
+    details.advanced > summary { cursor: pointer; font-weight: 600; padding: .25rem 0; }
     @media (max-width: 960px) { .shell { grid-template-columns: 1fr; } .rail, .agents, .guard { border: 0; } .rail { display: block; } .brand { margin: 0 0 .75rem; } .nav-item { display: inline-block; width: auto; margin: 0 .25rem .25rem 0; } }
     button { padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #7db4ff; color: #09111d; font-weight: 700; cursor: pointer; margin-right: .5rem; }
     button.secondary { background: #2b3547; color: #e8edf5; }
@@ -78,6 +79,14 @@
     .tool { display: block; padding: .5rem 0; }
     #policy-status { min-height: 1.5rem; }
     [hidden] { display: none; }
+  
+/* Compact overview tiles on phones */
+@media (max-width: 960px) {
+  #section-overview #overview-cards { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  #section-overview #overview-cards > article { margin: 0; padding: 0; border: 0; }
+  #section-overview #overview-cards .config-item .config-item { margin: 0; padding: 8px 10px; }
+}
+
   </style>
 </head>
 <body>
@@ -88,26 +97,14 @@
       <nav id="workspace-nav" aria-label="Workspace sections">
         <button class="nav-item" type="button" data-target="section-overview">Overview</button>
         <button class="nav-item active" type="button" data-target="section-chat" aria-current="page">Chat</button>
-        <button class="nav-item" type="button" data-target="section-cora">Cora</button>
-        <button class="nav-item" type="button" data-target="section-prepare">Prepare</button>
-        <button class="nav-item" type="button" data-target="section-artifact">Artifact Studio</button>
+        <button class="nav-item" type="button" data-target="section-projects">Projects</button>
         <button class="nav-item" type="button" data-target="section-approvals">Approvals</button>
-        <button class="nav-item" type="button" data-target="section-connectors">Connect</button>
-        <button class="nav-item" type="button" data-target="section-tasks">Agents</button>
-        <button class="nav-item" type="button" data-target="section-governance">Governance</button>
-        <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
-        <button class="nav-item" type="button" data-target="section-readiness">Readiness</button>
-        <button class="nav-item" type="button" data-target="section-desktop-parity">Desktop parity</button>
-        <button class="nav-item" type="button" data-target="section-capabilities">Cora capabilities</button>
-        <button class="nav-item" type="button" data-target="section-people">People & permissions</button>
-        <button class="nav-item" type="button" data-target="section-settings">Settings</button>
-        <button class="nav-item" type="button" data-target="section-release">Release</button>
-        <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
+        <button class="nav-item" type="button" data-target="section-advanced">Advanced</button>
       </nav>
-      <p id="workspace-nav-hint" class="preview">Organization workspace. Sign in to load your authenticated scope; external execution and browser automation are unavailable.</p>
+      <p id="workspace-nav-hint" class="preview"></p>
     </aside>
     <main id="workspace-main" class="workspace">
-      <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Organization scope: loading…</div></div><div><button id="workspace-settings-open" class="secondary" type="button" hidden>Workspace settings</button><span id="workspace-state" class="preview" role="status">SIGN-IN REQUIRED</span></div></div>
+      <div class="topbar"><div><h1>Helmian</h1><div id="scope" class="scope">Organization scope: loading…</div></div><div><button id="workspace-settings-open" class="secondary" type="button" hidden>Workspace settings</button><span id="workspace-state" class="preview" role="status">SIGN-IN REQUIRED</span></div></div>
       <section id="section-overview" class="card" aria-labelledby="overview-heading">
         <h2 id="overview-heading">Overview</h2>
         <p id="overview-status" class="note" role="status">Sign in to load your Organization overview.</p>
@@ -115,11 +112,13 @@
       </section>
       <section id="section-chat" class="card conversation" aria-labelledby="conversation-heading">
         <h2 id="conversation-heading">Conversation</h2>
-        <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>Sign in to read and send normal Organization Envoy messages. Cora and outbound delivery are not invoked in this slice.</p></div>
+        <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>Sign in to see your team conversation.</p></div>
         <form id="composer" class="composer"><select id="envoy-channel" aria-label="Envoy channel" disabled><option value="">No channels available</option></select><input id="composer-input" aria-label="Message Maestro" placeholder="Send a normal workspace message…" maxlength="4000" disabled><button id="composer-send" type="submit" disabled>Send</button></form>
         <p id="composer-status" class="composer-status" role="status" aria-live="polite"></p>
-        <section id="workspace-projects" class="card" aria-labelledby="workspace-projects-heading">
-          <h3 id="workspace-projects-heading">Cloud workspace projects</h3>
+      </section>
+      <section id="section-projects" class="card" aria-labelledby="workspace-projects-heading">
+        <div id="workspace-projects">
+          <h3 id="workspace-projects-heading">Projects</h3>
           <p id="workspace-projects-status" class="note" role="status" aria-live="polite">Loading tenant project registry…</p>
           <div id="workspace-project-cards" class="config-grid"></div>
           <form id="workspace-project-form" class="config-controls" hidden>
@@ -129,20 +128,7 @@
             <input id="workspace-project-branch" aria-label="Default branch" maxlength="160" value="main" placeholder="Default branch" required>
             <button id="workspace-project-save" type="submit">Register project</button>
           </form>
-          <p class="preview">Project registration is tenant metadata only. It does not grant filesystem, source, worker, or provider execution access.</p>
-        </section>
-        <section id="workspace-console" class="card" aria-labelledby="workspace-console-heading">
-          <h3 id="workspace-console-heading">Console command intents</h3>
-          <p id="workspace-console-status" class="note" role="status" aria-live="polite">Loading console command receipts…</p>
-          <form id="workspace-console-form" class="config-controls">
-            <select id="workspace-console-command" aria-label="Console command"><option value="workspace_context">Workspace context</option><option value="list_agents">List agents</option><option value="open_project">Open project</option><option value="run_project_task">Run project task</option><option value="start_project_preview">Start project preview</option><option value="stop_project_preview">Stop project preview</option></select>
-            <input id="workspace-console-arguments" aria-label="Console arguments JSON" maxlength="4000" placeholder='Arguments JSON, for example {"project":"aimforge"}'>
-            <input id="workspace-console-reason" aria-label="Console command reason" maxlength="500" placeholder="Reason for this bounded request" required>
-            <button id="workspace-console-submit" type="submit">Record command intent</button>
-          </form>
-          <div id="workspace-console-receipts" class="config-grid"></div>
-          <p class="preview">This mirrors the desktop console request boundary. It records a tenant receipt only; no command, filesystem action, worker, provider, build, or desktop action runs.</p>
-        </section>
+        </div>
       </section>
       <dialog id="workspace-settings" aria-labelledby="workspace-settings-heading" aria-describedby="workspace-layout-status">
         <form method="dialog"><h2 id="workspace-settings-heading">Workspace settings</h2><p id="workspace-layout-status" class="note" role="status" aria-live="polite">Loading your layout…</p>
@@ -168,6 +154,44 @@
         <p id="actor"></p>
         <button id="refresh" type="button">Refresh control surface</button>
         <button id="logout" class="secondary" type="button">Sign out</button>
+        <section id="section-approvals" class="card" aria-labelledby="approval-inbox-heading">
+          <h2 id="approval-inbox-heading">Organization approvals inbox</h2>
+          <p id="approval-inbox-status" class="note" role="status" aria-live="polite">Loading Organization approvals…</p>
+          <label>Filter <select id="approval-inbox-filters"><option value="">All prepared and approval states</option><option value="approval_required">Approval required</option><option value="prepared">Prepared task intents</option><option value="approved_not_executed">Approved, not executed</option><option value="rejected_not_executed">Rejected, not executed</option></select></label>
+          <div id="approval-inbox-items" class="config-grid"></div>
+        </section>
+        <details id="section-advanced" class="card advanced">
+          <summary>Advanced</summary>
+          <nav id="advanced-index" class="advanced-index" aria-label="Advanced sections">
+            <button class="nav-item" type="button" data-target="workspace-console">Console</button>
+            <button class="nav-item" type="button" data-target="section-cora">Cora</button>
+            <button class="nav-item" type="button" data-target="section-prepare">Prepare</button>
+            <button class="nav-item" type="button" data-target="section-artifact">Artifact Studio</button>
+            <button class="nav-item" type="button" data-target="section-connectors">Connect</button>
+            <button class="nav-item" type="button" data-target="section-tasks">Agents</button>
+            <button class="nav-item" type="button" data-target="section-governance">Governance</button>
+            <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
+            <button class="nav-item" type="button" data-target="section-readiness">Readiness</button>
+            <button class="nav-item" type="button" data-target="section-desktop-parity">Desktop parity</button>
+            <button class="nav-item" type="button" data-target="section-capabilities">Cora capabilities</button>
+            <button class="nav-item" type="button" data-target="section-people">People & permissions</button>
+            <button class="nav-item" type="button" data-target="section-settings">Settings</button>
+            <button class="nav-item" type="button" data-target="section-release">Release</button>
+            <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
+          </nav>
+          <p class="preview">Organization workspace tools mirrored from the desktop app; external execution and browser automation are unavailable from the web. Project registration is tenant metadata only. It does not grant filesystem, source, worker, or provider execution access.</p>
+        <section id="workspace-console" class="card" aria-labelledby="workspace-console-heading">
+          <h3 id="workspace-console-heading">Console command intents</h3>
+          <p id="workspace-console-status" class="note" role="status" aria-live="polite">Loading console command receipts…</p>
+          <form id="workspace-console-form" class="config-controls">
+            <select id="workspace-console-command" aria-label="Console command"><option value="workspace_context">Workspace context</option><option value="list_agents">List agents</option><option value="open_project">Open project</option><option value="run_project_task">Run project task</option><option value="start_project_preview">Start project preview</option><option value="stop_project_preview">Stop project preview</option></select>
+            <input id="workspace-console-arguments" aria-label="Console arguments JSON" maxlength="4000" placeholder='Arguments JSON, for example {"project":"aimforge"}'>
+            <input id="workspace-console-reason" aria-label="Console command reason" maxlength="500" placeholder="Reason for this bounded request" required>
+            <button id="workspace-console-submit" type="submit">Record command intent</button>
+          </form>
+          <div id="workspace-console-receipts" class="config-grid"></div>
+          <p class="preview">This mirrors the desktop console request boundary. It records a tenant receipt only; no command, filesystem action, worker, provider, build, or desktop action runs.</p>
+        </section>
         <section id="section-cora" class="card" aria-labelledby="cora-config-heading">
           <h2 id="cora-config-heading">Cora settings and approved knowledge</h2>
           <p id="cora-config-status" class="note" role="status">Loading Organization Cora settings…</p>
@@ -255,13 +279,6 @@
           </form>
           <div id="agent-task-receipts" class="config-grid"></div>
           <p class="preview">Draft and prepare are durable intents only. No agent, model, provider, filesystem, build, or external task execution occurred.</p>
-        </section>
-        <section id="section-approvals" class="card" aria-labelledby="approval-inbox-heading">
-          <h2 id="approval-inbox-heading">Organization approvals inbox</h2>
-          <p id="approval-inbox-status" class="note" role="status" aria-live="polite">Loading Organization approvals…</p>
-          <label>Filter <select id="approval-inbox-filters"><option value="">All prepared and approval states</option><option value="approval_required">Approval required</option><option value="prepared">Prepared task intents</option><option value="approved_not_executed">Approved, not executed</option><option value="rejected_not_executed">Rejected, not executed</option></select></label>
-          <div id="approval-inbox-items" class="config-grid"></div>
-          <p class="preview">Approvals are Organization-scoped decisions over existing receipts. Approving or rejecting records a reason and receipt only; no worker, provider, filesystem, media, billing, or external action runs.</p>
         </section>
         <section id="section-connectors" class="card" aria-labelledby="connector-heading">
           <h2 id="connector-heading">Connector administration</h2>
@@ -392,8 +409,6 @@
           </div>
           <p id="policy-status" role="status"></p>
         </section>
-      </section>
-      <pre id="result">Loading…</pre>
       <section id="section-settings" class="card" aria-labelledby="settings-heading">
         <h2 id="settings-heading">Settings</h2>
         <p id="settings-status" class="note" role="status">Sign in to load account and service settings.</p>
@@ -405,6 +420,9 @@
         <h2 id="release-heading">Release</h2>
         <p id="release-status" class="note" role="status">Checking the latest Helmian desktop release…</p>
         <div id="release-cards" class="config-list"></div>
+      </section>
+          <pre id="result">Loading…</pre>
+        </details>
       </section>
     </main>
     <aside class="agents" aria-labelledby="agents-heading">

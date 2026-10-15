@@ -1060,8 +1060,8 @@ workspacePresetFocus.onclick = () => applyWorkspacePreset('focus');
 workspacePresetFull.onclick = () => applyWorkspacePreset('full');
 workspaceRoleDefaultSave.onclick = async () => { workspaceRoleDefaultStatus.textContent = 'Saving role default…'; workspaceRoleDefaultSave.disabled = true; try { await coraClient.saveWorkspaceRoleDefault({ role: workspaceRoleDefaultRole.value, ...layoutInput() }); workspaceRoleDefaultStatus.textContent = `Saved the ${workspaceRoleDefaultRole.value} role default. Personal overrides remain separate.`; } catch (error) { workspaceRoleDefaultStatus.textContent = `Role default not saved: ${error.message}`; } finally { workspaceRoleDefaultSave.disabled = false; } };
 function activateWorkspaceNav(target, { smooth = true, writeHash = true } = {}) {
-  const item = document.querySelector(`#workspace-nav [data-target="${CSS.escape(target)}"]`);
   const section = document.getElementById(target);
+  const item = document.querySelector(`#workspace-nav [data-target="${CSS.escape(target)}"]`) ?? (section?.closest('#section-advanced') ? document.querySelector('#workspace-nav [data-target="section-advanced"]') : null);
   if (!item || !section || item.hidden) return false;
   if (section.hidden || section.closest('[hidden]')) {
     // Section lives in the signed-in area, which stays hidden until sign-in + Organization membership.
@@ -1070,12 +1070,15 @@ function activateWorkspaceNav(target, { smooth = true, writeHash = true } = {}) 
     document.querySelector('#signed-out')?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
     return false;
   }
+  const advanced = section.closest('details');
+  if (advanced) advanced.open = true;
+  if (section.tagName === 'DETAILS') section.open = true;
   section.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
   for (const peer of document.querySelectorAll('#workspace-nav [data-target]')) { peer.classList.toggle('active', peer === item); if (peer === item) peer.setAttribute('aria-current', 'page'); else peer.removeAttribute('aria-current'); }
   if (writeHash && window.location.hash !== `#${target}`) window.history.replaceState(null, '', `#${target}`);
   return true;
 }
-for (const item of document.querySelectorAll('#workspace-nav [data-target]')) item.onclick = () => activateWorkspaceNav(item.dataset.target);
+for (const item of document.querySelectorAll('#workspace-nav [data-target], #advanced-index [data-target]')) item.onclick = () => activateWorkspaceNav(item.dataset.target);
 window.addEventListener('hashchange', () => activateWorkspaceNav(window.location.hash.slice(1), { smooth: false, writeHash: false }));
 document.querySelector('#refresh-workspace').onclick = () => refreshWorkspacePanels().catch(() => {});
 document.querySelector('#refresh').onclick = () => load().catch(() => { out.textContent = 'Control surface unavailable.'; });
@@ -1216,3 +1219,10 @@ document.querySelector('#confirm').onclick = async () => {
   policyStatus.textContent = `Global policy version ${body.policy.version} saved. It applies to all newly signed AimForge customer sessions; active sessions are unchanged.`;
 };
 load().catch(() => { signedOut.hidden = false; signedIn.hidden = true; });
+
+// Phone layout: keep the default view to Overview, Chat, Projects and Approvals;
+// the activity and guard side panels move into Advanced.
+if (window.matchMedia('(max-width: 960px)').matches) {
+  const advanced = document.querySelector('#section-advanced');
+  for (const aside of document.querySelectorAll('aside.agents, aside.guard')) advanced?.append(aside);
+}
