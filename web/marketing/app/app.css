@@ -200,3 +200,5 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .create-hist button.hist-row:hover { border-color:var(--accent); }
 .create-hist button.hist-row strong { font-size:13px; }
 .create-hist button.hist-row small { color:var(--muted); font-size:12px; }
+
+.devices-clerk-note { color: var(--amber); max-width: 28rem; margin: 8px auto 0; }
