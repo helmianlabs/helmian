@@ -20,7 +20,9 @@ function normalize(input) {
 }
 
 function row(item, replayed = false) {
-  return { commandName: item.command_name, arguments: item.arguments, reason: item.reason, status: item.status, receiptId: item.receipt_id, idempotencyKey: item.idempotency_key, execution: 'not_performed', createdAt: item.created_at, replayed };
+  const run = item.run_outcome ? { outcome: item.run_outcome, result: item.run_result ?? {}, workerId: item.run_worker_id, completedAt: item.run_created_at } : null;
+  const execution = run ? (run.outcome === 'completed' ? 'performed' : run.outcome) : 'queued';
+  return { commandName: item.command_name, arguments: item.arguments, reason: item.reason, status: item.status, receiptId: item.receipt_id, idempotencyKey: item.idempotency_key, execution, run, createdAt: item.created_at, replayed };
 }
 
 const SELECT = 'command_name, arguments, reason, status, receipt_id, idempotency_key, created_at';
@@ -45,8 +47,14 @@ export function createConsoleCommandRepository(pool) {
       const bounded = Math.min(Math.max(Number(limit) || 50, 1), 100);
       return withTenantTransaction(pool, active, async (client) => {
         await requireActiveTenantMembership(client, active);
-        const result = await client.query(`select ${SELECT} from helmion.console_command_intents where tenant_id=$1 order by created_at desc, id desc limit $2`, [active.tenantId, bounded]);
-        return { commands: result.rows.map((item) => row(item)), source: 'tenant_console_command_intents', execution: 'not_performed' };
+        let result;
+        try {
+          result = await client.query(`select i.command_name, i.arguments, i.reason, i.status, i.receipt_id, i.idempotency_key, i.created_at, r.outcome as run_outcome, r.result as run_result, r.worker_id as run_worker_id, r.created_at as run_created_at from helmion.console_command_intents i left join helmion.console_command_runs r on r.tenant_id=i.tenant_id and r.intent_id=i.id where i.tenant_id=$1 order by i.created_at desc, i.id desc limit $2`, [active.tenantId, bounded]);
+        } catch (error) {
+          if (error.code !== '42P01') throw error;
+          result = await client.query(`select ${SELECT} from helmion.console_command_intents where tenant_id=$1 order by created_at desc, id desc limit $2`, [active.tenantId, bounded]);
+        }
+        return { commands: result.rows.map((item) => row(item)), source: 'tenant_console_command_intents', execution: 'cloud_worker' };
       });
     },
   });
