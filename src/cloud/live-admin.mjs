@@ -90,6 +90,8 @@ export const LIVE_DESKTOP_LINK_START_PATH = '/api/admin/desktop/link/start';
 export const LIVE_DESKTOP_LINK_EXCHANGE_PATH = '/api/admin/desktop/link/exchange';
 export const LIVE_DESKTOP_LINK_REVOKE_PATH = '/api/admin/desktop/link/revoke';
 export const LIVE_APP_SESSIONS_ARCHIVE_PATH = '/api/admin/app/sessions/archive';
+export const LIVE_APP_SESSION_STEPS_PATH = '/api/admin/app/sessions/steps';
+export const LIVE_APP_SESSION_STEPS_UPDATE_PATH = '/api/admin/app/sessions/steps/update';
 export const LIVE_ADMIN_ENVOY_MESSAGES_PATH = '/api/admin/envoy/messages';
 export const LIVE_ADMIN_ENVOY_STREAM_PATH = '/api/admin/envoy/stream';
 export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
@@ -837,14 +839,17 @@ export async function createLiveHelmianCloudAdminHandler({
         return true;
       }
     }
-    if (requestUrl.pathname === LIVE_APP_SESSIONS_PATH || requestUrl.pathname === LIVE_APP_SESSIONS_ARCHIVE_PATH) {
+    if (requestUrl.pathname === LIVE_APP_SESSIONS_PATH || requestUrl.pathname === LIVE_APP_SESSIONS_ARCHIVE_PATH || requestUrl.pathname === LIVE_APP_SESSION_STEPS_PATH || requestUrl.pathname === LIVE_APP_SESSION_STEPS_UPDATE_PATH) {
       const fail = (error) => {
-        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503;
-        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'APP_SESSIONS_FORBIDDEN' : status === 400 ? 'APP_SESSION_INVALID' : 'APP_SESSIONS_UNAVAILABLE' }));
+        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 || error?.status === 404 ? error.status : 503;
+        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'APP_SESSIONS_FORBIDDEN' : status === 404 ? 'APP_SESSION_NOT_FOUND' : status === 400 ? 'APP_SESSION_INVALID' : 'APP_SESSIONS_UNAVAILABLE' }));
       };
       try {
         if (request.method === 'GET' && requestUrl.pathname === LIVE_APP_SESSIONS_PATH) { const actor = await activeActor(request); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.list(actor) })); return true; }
         if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSIONS_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['idempotencyKey', 'name', 'provider']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.create(actor, body) })); return true; }
+        if (request.method === 'GET' && requestUrl.pathname === LIVE_APP_SESSION_STEPS_PATH) { const actor = await activeActor(request); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.steps(actor, requestUrl.searchParams.get('sessionId')) })); return true; }
+        if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSION_STEPS_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['sessionId', 'steps']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.setPlan(actor, body) })); return true; }
+        if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSION_STEPS_UPDATE_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['position', 'sessionId', 'status']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.updateStep(actor, body) })); return true; }
         if (request.method === 'POST' && requestUrl.pathname === LIVE_APP_SESSIONS_ARCHIVE_PATH) { const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['id']); send(response, 200, JSON.stringify({ valid: true, ...await appSessions.archive(actor, body.id) })); return true; }
         send(response, 405, JSON.stringify({ valid: false, code: 'METHOD_NOT_ALLOWED' })); return true;
       } catch (error) { fail(error); return true; }
