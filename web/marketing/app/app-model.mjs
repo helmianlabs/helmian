@@ -1,8 +1,8 @@
 // Pure helpers for the Helmian Cloud app (no DOM) so they can be unit tested.
-export const VIEWS = Object.freeze(['home', 'console', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'integrations', 'release']);
-export const VIEW_TITLES = Object.freeze({ home: 'Home', console: 'Chat', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', release: 'Release roadmap' });
+export const VIEWS = Object.freeze(['home', 'console', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'integrations', 'agents', 'release']);
+export const VIEW_TITLES = Object.freeze({ home: 'Home', console: 'Chat', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', agents: 'Agents', release: 'Release roadmap' });
 export const PRIMARY_VIEWS = Object.freeze(['home', 'console', 'workspace', 'approvals']);
-export const ADVANCED_VIEWS = Object.freeze(['devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'release']);
+export const ADVANCED_VIEWS = Object.freeze(['devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'agents', 'release']);
 export const PROVIDERS = Object.freeze(['Claude', 'ChatGPT', 'Grok', 'Gemini']);
 export const PROVIDER_REGISTRY = Object.freeze([
   { key: 'slack', name: 'Slack', kind: 'Team chat' }, { key: 'discord', name: 'Discord', kind: 'Team chat' }, { key: 'github', name: 'GitHub', kind: 'Code' },
@@ -149,6 +149,31 @@ export function progressModel(body = {}) {
 }
 export function planFromText(text = '') {
   return String(text).split(/\r?\n/).map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|\[[ x]?\])\s*/i, '').trim()).filter(Boolean).map((l) => l.slice(0, 120)).slice(0, 20);
+}
+
+
+// Desktop Agents dock parity: four providers + open sessions (no cloud execution).
+const AGENT_ALIASES = Object.freeze({ anthropic: 'Claude', claude: 'Claude', openai: 'ChatGPT', chatgpt: 'ChatGPT', xai: 'Grok', grok: 'Grok', google: 'Gemini', gemini: 'Gemini' });
+export function agentsModel(providers = {}, sessionsBody = {}) {
+  const conns = Array.isArray(providers.connections) ? providers.connections : [];
+  const byName = new Map();
+  for (const c of conns) {
+    const name = AGENT_ALIASES[String(c.provider || c.providerId || '').toLowerCase()] || (c.displayName || c.provider || 'Provider');
+    byName.set(name, c);
+  }
+  const agents = PROVIDERS.map((name) => {
+    const c = byName.get(name);
+    return {
+      name,
+      connected: Boolean(c),
+      lifecycle: c ? String(c.lifecycle || c.status || 'saved') : 'not connected',
+      authMode: c ? String(c.authMode || c.authorization || '') : '',
+      adapter: c ? String(c.adapter || c.kind || '') : '',
+      updatedAt: c?.updatedAt || c?.updated_at || null,
+    };
+  });
+  const active = sessionsFromServer(sessionsBody);
+  return { agents, active, empty: agents.every((a) => !a.connected) && active.length === 0 };
 }
 
 // ---- Home dashboard (phone default) ----

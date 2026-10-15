@@ -159,7 +159,7 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .sidebar { padding:12px 10px; gap:12px; }
 @media (max-width: 600px) {
   html,body { font-size:calc(13px * var(--scale)); }
-  h1 { font-size:19px; } .eyebrow { display:none; }
+  h1 { font-size:19px; } .eyebrow:not(summary) { display:none; }
   .sidebar { padding:10px 8px; gap:10px; }
   .logo span, .faint.sm.pad { display:none; }
   .search, .inline-form input, .field select, .session-form input, select { padding:6px 8px; }

@@ -1,4 +1,4 @@
-import { VIEW_TITLES, ADVANCED_VIEWS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
+import { VIEW_TITLES, ADVANCED_VIEWS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -413,7 +413,37 @@ async function loadRelease() {
     tb.replaceChildren(...rel.map((r) => { const tr = el('tr'); tr.append(el('td', null, r.version || r.tag || ''), el('td', 'muted', r.channel || ''), el('td', null, r.status || ''), el('td', 'muted', formatTime(r.publishedAt || r.createdAt))); return tr; }));
   } catch { const tr = el('tr'); const td = el('td', 'muted', 'No releases published yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); }
 }
-const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, release: loadRelease };
+
+async function loadAgents() {
+  const [p, s] = await Promise.allSettled([api('/api/admin/provider-connections'), api('/api/admin/app/sessions')]);
+  const model = agentsModel(p.value ?? {}, s.value ?? {});
+  const cards = $('#agents-cards');
+  cards.replaceChildren(...model.agents.map((a) => {
+    const card = el('article', 'card');
+    card.append(el('div', 'title', a.name), el('div', 'meta'));
+    card.lastChild.append(el('span', `status ${a.connected ? 'ok' : ''}`, a.connected ? 'Connected' : 'Not connected'));
+    if (a.connected && a.lifecycle) card.append(el('div', 'meta', a.lifecycle));
+    return card;
+  }));
+  const sess = $('#agents-sessions');
+  if (!model.active.length) sess.replaceChildren(el('p', 'muted sm', 'No open sessions. Start one from Chat.'));
+  else sess.replaceChildren(...model.active.map((r) => {
+    const d = el('div', 'run');
+    d.append(el('div', 'n'));
+    d.firstChild.append(el('strong', null, r.name), el('span', 'muted sm', r.provider));
+    d.onclick = () => { location.hash = 'console'; };
+    d.style.cursor = 'pointer';
+    return d;
+  }));
+  const det = $('#agents-detail-list');
+  det.replaceChildren(...model.agents.filter((a) => a.connected).flatMap((a) => [
+    row(a.name, [a.authMode, a.adapter, a.lifecycle].filter(Boolean).join(' · ') || 'saved'),
+  ]));
+  if (!det.childElementCount) det.replaceChildren(el('p', 'muted sm', 'No provider details yet. Connect providers from Integrations or the desktop app.'));
+}
+$('#agents-refresh').onclick = () => loadAgents().then(() => toast('Agents refreshed')).catch(() => toast('Could not refresh'));
+
+const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: loadAgents, release: loadRelease };
 
 // ---- boot ----
 async function boot() {
