@@ -86,6 +86,7 @@
     <aside class="rail" aria-label="Helmian navigation">
       <div class="brand">HELMian</div>
       <nav id="workspace-nav" aria-label="Workspace sections">
+        <button class="nav-item" type="button" data-target="section-overview">Overview</button>
         <button class="nav-item active" type="button" data-target="section-chat" aria-current="page">Chat</button>
         <button class="nav-item" type="button" data-target="section-cora">Cora</button>
         <button class="nav-item" type="button" data-target="section-prepare">Prepare</button>
@@ -99,12 +100,19 @@
         <button class="nav-item" type="button" data-target="section-desktop-parity">Desktop parity</button>
         <button class="nav-item" type="button" data-target="section-capabilities">Cora capabilities</button>
         <button class="nav-item" type="button" data-target="section-people">People & permissions</button>
+        <button class="nav-item" type="button" data-target="section-settings">Settings</button>
+        <button class="nav-item" type="button" data-target="section-release">Release</button>
         <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>Admin</button>
       </nav>
       <p id="workspace-nav-hint" class="preview">Organization workspace. Sign in to load your authenticated scope; external execution and browser automation are unavailable.</p>
     </aside>
     <main id="workspace-main" class="workspace">
       <div class="topbar"><div><h1>Maestro workspace</h1><div id="scope" class="scope">Organization scope: loading…</div></div><div><button id="workspace-settings-open" class="secondary" type="button" hidden>Workspace settings</button><span id="workspace-state" class="preview" role="status">SIGN-IN REQUIRED</span></div></div>
+      <section id="section-overview" class="card" aria-labelledby="overview-heading">
+        <h2 id="overview-heading">Overview</h2>
+        <p id="overview-status" class="note" role="status">Sign in to load your Organization overview.</p>
+        <div id="overview-cards" class="config-list"></div>
+      </section>
       <section id="section-chat" class="card conversation" aria-labelledby="conversation-heading">
         <h2 id="conversation-heading">Conversation</h2>
         <div id="conversation-body" class="conversation-body"><strong>Cora</strong><p>Sign in to read and send normal Organization Envoy messages. Cora and outbound delivery are not invoked in this slice.</p></div>
@@ -386,6 +394,18 @@
         </section>
       </section>
       <pre id="result">Loading…</pre>
+      <section id="section-settings" class="card" aria-labelledby="settings-heading">
+        <h2 id="settings-heading">Settings</h2>
+        <p id="settings-status" class="note" role="status">Sign in to load account and service settings.</p>
+        <div id="settings-cards" class="config-list"></div>
+        <p class="preview">Personal layout and Cora preferences live under Workspace settings and Cora. Secrets are never shown here.</p>
+        <p><a href="/admin/auth/logout">Sign out</a></p>
+      </section>
+      <section id="section-release" class="card" aria-labelledby="release-heading">
+        <h2 id="release-heading">Release</h2>
+        <p id="release-status" class="note" role="status">Checking the latest Helmian desktop release…</p>
+        <div id="release-cards" class="config-list"></div>
+      </section>
     </main>
     <aside class="agents" aria-labelledby="agents-heading">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem"><h2 id="agents-heading">Activity</h2><button id="refresh-workspace" class="secondary" type="button">Refresh</button></div>

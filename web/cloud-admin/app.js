@@ -912,6 +912,39 @@ async function loadPolicy() {
   renderPolicy(await response.json());
 }
 
+function fillCards(container, pairs) {
+  container.replaceChildren();
+  for (const [label, value] of pairs) { const card = document.createElement('article'); card.className = 'config-item'; card.append(configItem(label, String(value))); container.append(card); }
+}
+
+async function loadOverview() {
+  const status = document.querySelector('#overview-status');
+  try {
+    const response = await fetch('/api/admin/overview', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.code || 'Overview unavailable');
+    const c = body.counts || {};
+    status.textContent = `Organization ${body.actor.tenantId} · you are ${body.actor.role}`;
+    fillCards(document.querySelector('#overview-cards'), [['Active projects', c.activeProjects], ['Members', c.members], ['Agent tasks', c.agentTasks], ['Verified AI providers', c.verifiedProviders], ['Console commands waiting', body.console?.queued ?? 0], ['Console commands run', body.console?.ran ?? 0]]);
+    const s = body.settings || {};
+    document.querySelector('#settings-status').textContent = `Signed in as ${body.actor.subject}`;
+    fillCards(document.querySelector('#settings-cards'), [['Organization', body.actor.tenantId], ['Role', body.actor.role], ['Sign-in (Clerk OIDC)', s.signIn ? 'configured' : 'missing'], ['Database (Neon)', s.database ? 'connected' : 'missing'], ['Cora provider', s.coraProvider || 'none'], ['Cloud console worker', s.consoleWorker ? 'on' : 'off'], ['Environment', s.environment || 'unknown']]);
+  } catch (error) { status.textContent = `Overview unavailable: ${error.message}`; }
+}
+
+async function loadRelease() {
+  const status = document.querySelector('#release-status');
+  try {
+    const response = await fetch('/api/admin/release', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.code || 'unavailable');
+    const releases = body.releases || [];
+    if (!releases.length) { status.textContent = 'No desktop release published yet. Add the desktop-release workflow and push a v0.1.0 tag to build the Windows installer.'; return; }
+    status.textContent = `Latest desktop release: ${releases[0].tag}`;
+    fillCards(document.querySelector('#release-cards'), releases.map((r) => [r.tag, `${r.name || r.tag} · ${new Date(r.publishedAt).toLocaleDateString()} · ${r.assets.map((a) => `${a.name} (${a.downloads} downloads)`).join(', ') || 'no files'}`]));
+  } catch (error) { status.textContent = `Release status unavailable: ${error.message}`; }
+}
+
 async function load() {
   const session = await fetch('/api/admin/session', { credentials: 'same-origin' });
   if (!session.ok) {
@@ -932,6 +965,8 @@ async function load() {
   adminNav.hidden = !isAdmin;
   workspaceRoleDefaultControls.hidden = !isAdmin;
   workspaceState.textContent = `AUTHENTICATED · ${String(sessionBody.actor.role ?? 'member').toUpperCase()}`;
+  await loadOverview();
+  loadRelease().catch(() => {});
   const surface = await fetch('/api/admin/control-surface', { credentials: 'same-origin' });
   out.textContent = JSON.stringify(await surface.json(), null, 2);
   await refreshWorkspacePanels();
