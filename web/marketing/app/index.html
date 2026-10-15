@@ -157,25 +157,27 @@
     <section id="view-devices" class="view" data-view-panel="devices" hidden>
       <h2>Devices</h2>
       <p id="devices-status" class="muted sm" role="status"></p>
-      <details class="panel show-details"><summary class="eyebrow">SHOW DETAILS</summary>
-        <p class="muted sm">Desktops enrolled to your Helmian account. Listing uses the Remote Control API after Clerk unify.</p>
-      </details>
       <div id="devices-list" class="device-list" aria-live="polite"></div>
       <div id="devices-empty" class="empty devices-empty">
-        <p class="t">No connected Desktop</p>
-        <p class="sm">Enroll a desktop from the Helmian EXE, then connect your phone.</p>
+        <p class="t">No Desktop connected yet</p>
+        <p class="sm">Start with Connect phone, or type the eight-digit code from the Helmian desktop app.</p>
+        <p id="devices-clerk-note" class="sm devices-clerk-note">The live Desktop list fills in after the owner finishes the Clerk unify checklist.</p>
         <div class="row-btns left" style="justify-content:center;margin-top:12px">
           <a class="btn primary sm" href="/app/pair">Connect phone</a>
           <a class="btn sm" href="/herald/">Open Remote Control</a>
         </div>
         <form id="devices-enroll" class="devices-enroll">
-          <label class="muted sm" for="devices-enroll-code">Or enter the eight-digit enrollment code from the EXE</label>
+          <label class="muted sm" for="devices-enroll-code">Eight-digit enrollment code from the desktop app</label>
           <div class="row-btns left">
             <input id="devices-enroll-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{8}" placeholder="12345678" aria-label="Desktop enrollment code">
             <button class="btn primary sm" type="submit">Enroll</button>
           </div>
         </form>
       </div>
+      <details class="panel show-details" id="devices-details">
+        <summary class="eyebrow">SHOW DETAILS</summary>
+        <p class="muted sm">Until Clerk unify points Herald at the same keys as /app (see docs/CLERK_UNIFY.md in the repo), this list can stay empty or show a sign-in gap. Connect phone and enroll still work. After unify, reopen Devices to see live Desktops.</p>
+      </details>
     </section>
 
     <section id="view-settings" class="view" data-view-panel="settings" hidden>

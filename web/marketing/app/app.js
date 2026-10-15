@@ -311,11 +311,11 @@ async function loadDevices() {
     const body = await remoteApi('/api/remote/v1/desktops');
     const model = desktopsModel(body);
     renderDevices(model, model.empty
-      ? 'No live Desktop session is connected to this account.'
-      : 'Choose a Desktop, or open Remote Control to drive it.');
+      ? 'No live Desktop on this account yet — Connect phone or enroll below.'
+      : 'Tap a Desktop to open Remote Control.');
   } catch (error) {
     renderDevices({ empty: true, rows: [] }, error.status === 401 || error.status === 403
-      ? 'Remote Control sign-in is separate until Clerk is unified. Use Connect phone / enroll below, or open Remote Control.'
+      ? 'Desktop list needs Clerk unify (owner checklist). You can still Connect phone or enroll below.'
       : (error.status === 503
         ? 'Remote Control is not configured yet.'
         : (error.message || 'Could not load Desktops.')));
@@ -336,7 +336,7 @@ $('#devices-enroll').onsubmit = async (e) => {
     await loadDevices();
   } catch (error) {
     toast(error.status === 401 || error.status === 403
-      ? 'Enroll from Remote Control (/herald) until Clerk is unified'
+      ? 'Enrollment needs Clerk unify — try Connect phone, or open Remote Control'
       : (error.message || 'Enrollment failed'));
   }
 };
