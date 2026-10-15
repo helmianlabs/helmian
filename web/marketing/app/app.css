@@ -202,3 +202,15 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .create-hist button.hist-row small { color:var(--muted); font-size:12px; }
 
 .devices-clerk-note { color: var(--amber); max-width: 28rem; margin: 8px auto 0; }
+
+/* Guard Feed on phones: pinned header, bigger tap targets */
+@media (max-width: 900px) {
+  .guard { padding-top:0; }
+  .guard-head { position:sticky; top:0; z-index:2; background:var(--panel); padding:calc(12px + env(safe-area-inset-top)) 0 10px; border-bottom:1px solid var(--border); }
+  .guard-head select { min-height:40px; padding:6px 10px; font-size:14px; }
+  .guard-head .icon-btn.sm { width:40px; height:40px; }
+  .alert { padding:12px 14px; }
+  .alert .actions .btn, .feed-settings .btn { min-height:40px; padding:8px 14px; font-size:14px; }
+  .feed-settings summary { padding:10px 0; }
+  .toggle { min-height:40px; font-size:14px; }
+}
