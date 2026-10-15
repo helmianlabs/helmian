@@ -1,0 +1,27 @@
+{
+  "_comment": "Shared Cora agent config for ElevenLabs Agents. Synced by scripts/sync-elevenlabs-agent.mjs. agent_id is not secret.",
+  "agent_id": "agent_5601m4yk8c3de5ct14h7c8jcnf93",
+  "name": "Cora",
+  "surface": "dairyforge-driver",
+  "prompt_file": "prompts/dairyforge-driver.md",
+  "tools_file": "tools.json",
+  "first_message": "Hi, it's Cora. What do you need?",
+  "language": "en",
+  "llm": {
+    "model": "claude-sonnet-4-6",
+    "temperature": 0.1,
+    "_next": "switch to custom-llm -> Helmian Cloud /cora/llm/v1/chat/completions"
+  },
+  "voice": {
+    "name": "Matilda",
+    "voice_id": "XrExE9yKIg1WjnnlVkGX",
+    "model_id": "eleven_flash_v2"
+  },
+  "dynamic_variables": {
+    "driver_name": "",
+    "truck": "",
+    "plant": "",
+    "surface": "dairyforge-driver"
+  },
+  "client_tool_response_timeout_secs": 20
+}
