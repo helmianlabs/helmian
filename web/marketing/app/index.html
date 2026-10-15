@@ -38,19 +38,24 @@
     <section class="side-group">
       <div class="side-head"><span>SESSIONS</span></div>
       <ul id="sessions" class="sessions"></ul>
-      <nav id="nav" class="submenu" aria-label="Session menu">
+      <nav id="nav" class="submenu" aria-label="Primary">
         <button class="nav-item" type="button" data-view="home">Home</button>
-        <button class="nav-item" type="button" data-view="overview">Overview</button>
-        <button class="nav-item" type="button" data-view="settings">Settings</button>
-        <button class="nav-item" type="button" data-view="workspace">Workspace</button>
-        <button class="nav-item" type="button" data-view="devices">Devices</button>
-        <button class="nav-item active" type="button" data-view="console">Console</button>
-        <button class="nav-item" type="button" data-view="activity">Live activity</button>
-        <button class="nav-item" type="button" data-view="evidence">Evidence</button>
+        <button class="nav-item active" type="button" data-view="console">Chat</button>
+        <button class="nav-item" type="button" data-view="workspace">Projects</button>
         <button class="nav-item" type="button" data-view="approvals">Approvals<span id="approvals-badge" class="badge" hidden></span></button>
-        <button class="nav-item" type="button" data-view="integrations">Integrations</button>
-        <button class="nav-item" type="button" data-view="release">Release roadmap</button>
       </nav>
+      <details class="side-group accordion advanced-nav" id="advanced-nav">
+        <summary class="side-head"><span>ADVANCED</span><span class="chev">▾</span></summary>
+        <nav class="submenu advanced-menu" aria-label="Advanced">
+          <button class="nav-item" type="button" data-view="devices">Devices</button>
+          <button class="nav-item" type="button" data-view="overview">Overview</button>
+          <button class="nav-item" type="button" data-view="settings">Settings</button>
+          <button class="nav-item" type="button" data-view="activity">Live activity</button>
+          <button class="nav-item" type="button" data-view="evidence">Evidence</button>
+          <button class="nav-item" type="button" data-view="integrations">Integrations</button>
+          <button class="nav-item" type="button" data-view="release">Release roadmap</button>
+        </nav>
+      </details>
     </section>
 
     <footer class="side-foot">
@@ -65,7 +70,6 @@
     <header class="topbar">
       <button id="sidebar-toggle" class="icon-btn only-mobile" type="button" aria-label="Open sidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
       <div id="view-title" class="view-title">Console</div>
-      <button id="mcp-toggle" class="btn ghost sm" type="button" aria-expanded="false">MCP Security</button>
       <button id="fullscreen" class="btn ghost sm hide-mobile" type="button">Full screen</button>
       <button id="guard-toggle" class="icon-btn only-mobile" type="button" aria-label="Open Guard Feed" aria-controls="guard" aria-expanded="false">⛨<span id="guard-count" class="dot-count" hidden></span></button>
     </header>
@@ -84,13 +88,7 @@
 
     <!-- Console (default) -->
     <section id="view-console" class="view console" data-view-panel="console" hidden>
-      <div id="mcp-panel" class="mcp" hidden>
-        <div class="eyebrow">MCP SECURITY</div>
-        <div class="steps"><span class="step"><b>1</b> Discover</span><span class="step"><b>2</b> Audit</span>
-          <input id="mcp-find" class="search grow" placeholder="Find in last audit" aria-label="Find in last audit"><button id="mcp-find-btn" class="btn ghost sm" type="button">Find</button></div>
-        <p id="mcp-result" class="muted sm">No audit yet. Run one from the desktop app to see results here.</p>
-      </div>
-      <div class="console-head"><span class="eyebrow" id="session-label">CONSOLE</span><select id="channel" aria-label="Channel" hidden></select></div>
+      <div class="console-head"><span class="eyebrow" id="session-label">CHAT</span><select id="channel" aria-label="Channel" hidden></select></div>
       <div id="task-progress" class="task-progress" hidden>
         <div class="tp-head"><span class="eyebrow">TASK PROGRESS</span><span id="tp-summary" class="muted sm"></span><button id="tp-edit" class="link-btn" type="button">Edit plan</button></div>
         <div class="bar"><span id="tp-bar"></span></div>
@@ -112,20 +110,29 @@
           <button id="send" class="btn primary" type="submit">Send</button>
         </div>
       </form>
-      <div class="new-session">
-        <span class="eyebrow">NEW SESSION</span>
-        <div class="chips" id="session-chips">
-          <button type="button" class="chip" data-provider="Claude">Claude</button>
-          <button type="button" class="chip" data-provider="ChatGPT">ChatGPT</button>
-          <button type="button" class="chip" data-provider="Grok">Grok</button>
-          <button type="button" class="chip" data-provider="Gemini">Gemini</button>
+      <details class="panel show-details" id="console-details">
+        <summary class="eyebrow">SHOW DETAILS</summary>
+        <div id="mcp-panel" class="mcp">
+          <div class="eyebrow">MCP SECURITY</div>
+          <div class="steps"><span class="step"><b>1</b> Discover</span><span class="step"><b>2</b> Audit</span>
+            <input id="mcp-find" class="search grow" placeholder="Find in last audit" aria-label="Find in last audit"><button id="mcp-find-btn" class="btn ghost sm" type="button">Find</button></div>
+          <p id="mcp-result" class="muted sm">No audit yet. Run one from the desktop app to see results here.</p>
         </div>
-        <form id="session-form" class="session-form" hidden>
-          <input id="session-name" placeholder="Session name" aria-label="Session name" maxlength="60" required>
-          <button class="btn primary sm" type="submit">Start session</button>
-          <button id="session-cancel" class="btn ghost sm" type="button">Cancel</button>
-        </form>
-      </div>
+        <div class="new-session">
+          <span class="eyebrow">NEW SESSION</span>
+          <div class="chips" id="session-chips">
+            <button type="button" class="chip" data-provider="Claude">Claude</button>
+            <button type="button" class="chip" data-provider="ChatGPT">ChatGPT</button>
+            <button type="button" class="chip" data-provider="Grok">Grok</button>
+            <button type="button" class="chip" data-provider="Gemini">Gemini</button>
+          </div>
+          <form id="session-form" class="session-form" hidden>
+            <input id="session-name" placeholder="Session name" aria-label="Session name" maxlength="60" required>
+            <button class="btn primary sm" type="submit">Start session</button>
+            <button id="session-cancel" class="btn ghost sm" type="button">Cancel</button>
+          </form>
+        </div>
+      </details>
       <div id="toast" class="toast" role="status" hidden></div>
     </section>
 
@@ -142,13 +149,15 @@
     </section>
 
     <section id="view-workspace" class="view" data-view-panel="workspace" hidden>
-      <h2>Workspace</h2><div id="workspace-cards" class="cards"></div>
+      <h2>Projects</h2><div id="workspace-cards" class="cards"></div>
     </section>
 
     <section id="view-devices" class="view" data-view-panel="devices" hidden>
       <h2>Devices</h2>
-      <p class="muted sm">Desktops enrolled to your Helmian account. Sign-in stays on witty-sawfly-97 (/app). Listing uses GET /api/remote/v1/desktops.</p>
       <p id="devices-status" class="muted sm" role="status"></p>
+      <details class="panel show-details"><summary class="eyebrow">SHOW DETAILS</summary>
+        <p class="muted sm">Desktops enrolled to your Helmian account. Listing uses the Remote Control API after Clerk unify.</p>
+      </details>
       <div id="devices-list" class="device-list" aria-live="polite"></div>
       <div id="devices-empty" class="empty devices-empty">
         <p class="t">No connected Desktop</p>
@@ -171,7 +180,6 @@
       <h2>Settings</h2>
       <div class="panel kv">
         <label class="row"><span>Theme</span><select id="theme"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
-        <label class="row"><span>Text size</span><input id="text-size" type="range" min="85" max="130" step="5" value="100" aria-label="Text size"></label>
       </div>
       <div class="panel" id="invite-panel" hidden><div class="eyebrow">INVITE PEOPLE</div>
         <p class="muted sm">Share a link. Anyone who opens it can create an account and join as a member.</p>
@@ -180,14 +188,18 @@
         <div id="invite-list" class="kv"></div>
       </div>
       <div class="panel"><div class="eyebrow">DESKTOP APP</div>
-        <p class="muted sm">Use team chat in the Helmian desktop app: press “Link desktop app”, then type the code in the desktop app's Team chat panel.</p>
-        <div class="row-btns left"><button id="desktop-link" class="btn sm" type="button">Link desktop app</button></div>
+        <p class="muted sm">Link the desktop app for Team chat: press the button, then type the code in the EXE Team chat panel.</p>
+        <div class="row-btns left"><button id="desktop-link" class="btn primary sm" type="button">Link desktop app</button></div>
         <div id="desktop-code" class="code" hidden></div>
       </div>
-      <div class="panel"><div class="eyebrow">API KEYS</div><div id="api-keys" class="kv"></div></div>
-      <div class="panel"><div class="eyebrow">CUSTOM LLM ENDPOINTS</div><p class="muted sm">No custom endpoints yet.</p></div>
-      <div class="panel"><div class="eyebrow">PILOT PROFILE</div><div id="pilot" class="kv"></div></div>
-      <div class="panel"><div class="eyebrow">BUILD IDENTITY</div><div id="build" class="kv"></div></div>
+      <details class="panel show-details" id="settings-details">
+        <summary class="eyebrow">SHOW DETAILS</summary>
+        <label class="row"><span>Text size</span><input id="text-size" type="range" min="85" max="130" step="5" value="100" aria-label="Text size"></label>
+        <div class="eyebrow" style="margin-top:12px">API KEYS</div><div id="api-keys" class="kv"></div>
+        <div class="eyebrow" style="margin-top:12px">CUSTOM LLM ENDPOINTS</div><p class="muted sm">No custom endpoints yet.</p>
+        <div class="eyebrow" style="margin-top:12px">PILOT PROFILE</div><div id="pilot" class="kv"></div>
+        <div class="eyebrow" style="margin-top:12px">BUILD IDENTITY</div><div id="build" class="kv"></div>
+      </details>
     </section>
 
     <section id="view-activity" class="view" data-view-panel="activity" hidden>
@@ -224,8 +236,8 @@
     <div class="agent"><span class="dot live"></span><span id="active-agent">No active agent</span></div>
     <div id="feed-progress" class="feed-progress" hidden></div>
     <div id="feed" class="feed"></div>
-    <button id="run-suite" class="btn ghost full" type="button">Run tool suite</button>
-    <details class="panel feed-settings"><summary class="eyebrow">GUARD FEED SETTINGS</summary>
+    <details class="panel feed-settings show-details"><summary class="eyebrow">SHOW DETAILS</summary>
+      <button id="run-suite" class="btn ghost full" type="button">Run tool suite</button>
       <label class="toggle"><input type="checkbox" id="opt-info" checked> Show info events</label>
       <label class="toggle"><input type="checkbox" id="opt-approvals" checked> Show approval requests</label>
       <label class="toggle"><input type="checkbox" id="opt-auto" checked> Auto-refresh</label>

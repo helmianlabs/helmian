@@ -127,7 +127,7 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
   .view { padding:14px; } .console { padding:10px; }
   .tl { grid-template-columns:22px 1fr; } .tl .when { display:none; }
 }
-.shell.signed-out { grid-template-columns:1fr !important; } .shell.signed-out .sidebar, .shell.signed-out .guard, .shell.signed-out #sidebar-toggle, .shell.signed-out #guard-toggle, .shell.signed-out #mcp-toggle, .shell.signed-out #fullscreen { display:none !important; }
+.shell.signed-out { grid-template-columns:1fr !important; } .shell.signed-out .sidebar, .shell.signed-out .guard, .shell.signed-out #sidebar-toggle, .shell.signed-out #guard-toggle, .shell.signed-out #fullscreen { display:none !important; }
 .sessions .x { border:0; background:none; color:var(--faint); cursor:pointer; padding:0 2px; margin-left:4px; font-size:14px; } .sessions .x:hover { color:var(--red); }
 .row-btns.left { justify-content:flex-start; margin:6px 0; }
 .invite-new { display:flex; gap:6px; margin:8px 0; } .invite-new input { flex:1; min-width:0; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:7px 10px; font-family:var(--mono); font-size:12px; }
@@ -173,3 +173,18 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .device-list button.device-row small { color:var(--muted); font-size:12px; }
 .devices-empty .devices-enroll { margin-top:18px; text-align:left; max-width:320px; margin-left:auto; margin-right:auto; display:flex; flex-direction:column; gap:8px; }
 .devices-empty .devices-enroll input { flex:1; min-width:0; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:7px 10px; font-family:var(--mono); letter-spacing:.08em; }
+
+/* Troy polish: primary nav + Advanced + Show details */
+.advanced-nav { margin-top:4px; }
+.advanced-nav > summary.side-head { cursor:pointer; }
+.advanced-menu { margin-top:0; }
+.show-details { margin-top:8px; }
+.show-details > summary { cursor:pointer; list-style:none; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; padding:4px 0; }
+.show-details > summary::-webkit-details-marker { display:none; }
+.show-details[open] > summary { margin-bottom:8px; color:var(--text); }
+#mcp-panel.mcp { margin-top:0; border:0; background:transparent; padding:0 0 12px; }
+@media (max-width: 900px) {
+  .submenu#nav { margin-left:0; border-left:0; padding-left:0; flex-direction:row; flex-wrap:wrap; gap:4px; }
+  .submenu#nav .nav-item { border:1px solid var(--border); background:var(--panel-2); }
+  .submenu#nav .nav-item.active { box-shadow:none; border-color:var(--accent); color:var(--accent); }
+}

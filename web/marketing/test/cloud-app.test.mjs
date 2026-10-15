@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, PRIMARY_VIEWS, ADVANCED_VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -9,7 +9,7 @@ const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
 
 test('three columns: sidebar, center console, Guard Feed', () => {
   for (const id of ['sidebar', 'main', 'guard', 'project-filter', 'new-project-form', 'appearance', 'sessions', 'log', 'prompt', 'mcp-panel', 'session-chips', 'session-form', 'feed', 'feed-filter', 'feed-clear', 'run-suite', 'active-agent']) assert.match(html, new RegExp(`id="${id}"`), id);
-  for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'SESSIONS', 'GUARD FEED', 'MCP Security', 'Full screen', 'Prompt...', '+ Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'GUARD FEED SETTINGS', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap', 'Devices', 'Connect phone', 'No connected Desktop']) assert.ok(html.includes(label), label);
+  for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'SESSIONS', 'GUARD FEED', 'MCP SECURITY', 'Full screen', 'Prompt...', '+ Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'SHOW DETAILS', 'ADVANCED', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap', 'Devices', 'Connect phone', 'No connected Desktop', 'Chat', 'Projects', 'Approvals']) assert.ok(html.includes(label), label);
   for (const p of ['Claude', 'ChatGPT', 'Grok', 'Gemini']) assert.match(html, new RegExp(`data-provider="${p}"`));
   for (const view of VIEWS) assert.match(html, new RegExp(`data-view-panel="${view}"`), view);
   assert.match(html, /href="\/admin\/auth\/login\?return=\/app"/);
@@ -84,4 +84,20 @@ test('desktopsModel empty and rows', () => {
   const m = desktopsModel({ desktops: [{ desktopId: 'd1', displayName: 'Troy PC', sessions: [{ sessionId: 's1', name: 'Main', state: 'live', project: { name: 'Helmian' } }] }] });
   assert.equal(m.empty, false);
   assert.deepEqual(m.rows.map((r) => [r.displayName, r.projectName, r.name, r.state]), [['Troy PC', 'Helmian', 'Main', 'live']]);
+});
+
+test('phone primary nav + Advanced + Show details (Troy polish)', () => {
+  assert.deepEqual([...PRIMARY_VIEWS], ['home', 'console', 'workspace', 'approvals']);
+  assert.ok(ADVANCED_VIEWS.includes('devices'));
+  assert.equal(VIEW_TITLES.console, 'Chat');
+  assert.equal(VIEW_TITLES.workspace, 'Projects');
+  assert.match(html, /id="advanced-nav"/);
+  assert.match(html, /class="[^"]*show-details/);
+  assert.doesNotMatch(html, /id="mcp-toggle"/);
+  // Primary nav lists Chat/Projects/Approvals; Advanced holds Devices etc.
+  const primary = html.match(/aria-label="Primary"[\s\S]*?<\/nav>/)[0];
+  for (const v of ['home', 'console', 'workspace', 'approvals']) assert.match(primary, new RegExp(`data-view="${v}"`));
+  assert.doesNotMatch(primary, /data-view="devices"/);
+  const advanced = html.match(/id="advanced-nav"[\s\S]*?<\/details>/)[0];
+  for (const v of ADVANCED_VIEWS) assert.match(advanced, new RegExp(`data-view="${v}"`));
 });
