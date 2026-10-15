@@ -166,6 +166,8 @@ function cookieValue(request, name) {
   return cookies.find((part) => part.startsWith(prefix))?.slice(prefix.length) ?? '';
 }
 
+export const APP_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
 function cookieOptions(path) {
   return `Path=${path}; HttpOnly; Secure; SameSite=Lax`;
 }
@@ -604,7 +606,7 @@ export async function createLiveHelmianCloudAdminHandler({
         const login = await identity.beginLogin();
         const cookies = [`helmion_admin_login_state=${login.state}; ${cookieOptions('/admin')}`];
         // Only the fixed user app path is accepted as a post-login destination (no open redirect).
-        if (requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH) cookies.push(`helmion_admin_return=app; ${cookieOptions('/admin')}`);
+        if (requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH) cookies.push(`helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}`);
         send(response, 302, '', 'text/plain; charset=utf-8', { location: login.url, 'set-cookie': cookies.length === 1 ? cookies[0] : cookies });
       }
       catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
@@ -625,7 +627,9 @@ export async function createLiveHelmianCloudAdminHandler({
         // an admin session.
         const signup = new URL('/sign-up', identity.issuer);
         signup.searchParams.set('redirect_url', new URL(LIVE_ADMIN_LOGIN_PATH, requestOrigin(request, env)).toString());
-        send(response, 302, '', 'text/plain; charset=utf-8', { location: signup.toString() });
+        // Only the fixed user app path is accepted as a post-signup destination.
+        const extra = requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH ? { 'set-cookie': `helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}` } : {};
+        send(response, 302, '', 'text/plain; charset=utf-8', { location: signup.toString(), ...extra });
       } catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
       return true;
     }
@@ -639,9 +643,13 @@ export async function createLiveHelmianCloudAdminHandler({
         const cookieState = cookieValue(request, 'helmion_admin_login_state');
         if (!cookieState) throw Object.assign(new Error('OIDC login cookie missing'), { stage: 'state_cookie_missing' });
         if (state !== cookieState) throw Object.assign(new Error('OIDC callback state mismatch'), { stage: 'state_mismatch' });
-        const result = await identity.finishLogin(code, state);
         const returnToApp = cookieValue(request, 'helmion_admin_return') === 'app';
         const joinToken = cookieValue(request, 'helmion_admin_join');
+        // /app and invite sign-ins are remembered for 30 days (persistent cookie);
+        // owner-console sign-ins keep the 8h browser-session cookie.
+        const remember = returnToApp || Boolean(joinToken);
+        const result = await identity.finishLogin(code, state, { remember });
+        const sessionCookie = (path) => `helmion_admin_session=${result.sessionId}; ${remember ? `Max-Age=${APP_SESSION_MAX_AGE_SECONDS}; ` : ''}${cookieOptions(path)}`;
         let location = returnToApp ? `${LIVE_APP_PAGE_PATH}/` : `${LIVE_ADMIN_PAGE_PATH}/`;
         if (joinToken) {
           try { const joined = await invites.redeem(identity.getSession(result.sessionId)?.subject, joinToken); location = `${LIVE_APP_PAGE_PATH}/?joined=${joined.joined ? '1' : '0'}`; }
@@ -650,8 +658,8 @@ export async function createLiveHelmianCloudAdminHandler({
         send(response, 302, '', 'text/plain; charset=utf-8', { location, 'set-cookie': [
           `helmion_admin_join=; Max-Age=0; ${cookieOptions('/admin')}`,
           `helmion_admin_return=; Max-Age=0; ${cookieOptions('/admin')}`,
-          `helmion_admin_session=${result.sessionId}; ${cookieOptions('/admin')}`,
-          `helmion_admin_session=${result.sessionId}; ${cookieOptions('/api/admin')}`,
+          sessionCookie('/admin'),
+          sessionCookie('/api/admin'),
           `helmion_admin_login_state=; Max-Age=0; ${cookieOptions('/admin')}`,
         ] });
       } catch (error) {
@@ -726,7 +734,8 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGOUT_PATH) {
       identity.revokeSession?.(cookieValue(request, 'helmion_admin_session'));
-      send(response, 302, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/`, 'set-cookie': [
+      const after = requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH ? `${LIVE_APP_PAGE_PATH}/` : `${LIVE_ADMIN_PAGE_PATH}/`;
+      send(response, 302, '', 'text/plain; charset=utf-8', { location: after, 'set-cookie': [
         `helmion_admin_session=; Max-Age=0; ${cookieOptions('/admin')}`,
         `helmion_admin_session=; Max-Age=0; ${cookieOptions('/api/admin')}`,
       ] });
