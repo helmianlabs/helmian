@@ -14,9 +14,9 @@ import {
   tokenTtlForDesktopSession,
   tokenTtlForDevice,
 } from '../api/_herald-realtime.js';
-import { createHeraldRealtimeTokenHandler } from '../api/herald-realtime-token.js';
-import { createHeraldDesktopRealtimeTokenHandler } from '../api/herald-desktop-realtime-token.js';
-import { createHeraldConfigHandler } from '../api/herald-config.js';
+import { createHeraldRealtimeTokenHandler } from '../server/herald-realtime-token.js';
+import { createHeraldDesktopRealtimeTokenHandler } from '../server/herald-desktop-realtime-token.js';
+import { createHeraldConfigHandler } from '../server/herald-config.js';
 
 const CHANNEL = `herald_${'a'.repeat(24)}`;
 const DEVICE_ID = `phone_${'b'.repeat(16)}`;

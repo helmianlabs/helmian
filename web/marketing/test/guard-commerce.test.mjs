@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import checkoutHandler from '../api/billing/checkout.js';
-import { createDownloadHandler, } from '../api/billing/download.js';
-import { createCheckoutSession, createEntitlementWebhookHandler, verifyStripeSignature } from '../api/billing/stripe-contract.js';
-import { createArtifactResolver, createEntitlementStore, createRuntimeEntitlementStore } from '../api/billing/entitlement-store.js';
+import checkoutHandler from '../server/billing/checkout.js';
+import { createDownloadHandler, } from '../server/billing/download.js';
+import { createCheckoutSession, createEntitlementWebhookHandler, verifyStripeSignature } from '../server/billing/stripe-contract.js';
+import { createArtifactResolver, createEntitlementStore, createRuntimeEntitlementStore } from '../server/billing/entitlement-store.js';
 import { createHmac } from 'node:crypto';
 
 const page = await readFile(new URL('../guard.html', import.meta.url), 'utf8');
@@ -23,7 +23,21 @@ test('Guard page exposes reviewed package slots and honest checkout handoff', ()
   assert.match(config, /helmian_guard/u);
 });
 
+test('free checkout redirects to sign-up by default', async () => {
+  const previous = process.env.HELMIAN_PAID_CHECKOUT;
+  delete process.env.HELMIAN_PAID_CHECKOUT;
+  try {
+    const get = response();
+    await checkoutHandler({ method: 'GET', url: '/api/billing/checkout?product=helmian_guard' }, get);
+    assert.equal(get.statusCode, 303);
+    assert.match(get.headers.location, /^\/get-started\?product=helmian_guard$/);
+  } finally { if (previous === undefined) delete process.env.HELMIAN_PAID_CHECKOUT; else process.env.HELMIAN_PAID_CHECKOUT = previous; }
+});
+
 test('checkout remains inert without Stripe configuration', async () => {
+  const previous = process.env.HELMIAN_PAID_CHECKOUT;
+  process.env.HELMIAN_PAID_CHECKOUT = 'true';
+  try {
   const get = response();
   checkoutHandler({ method: 'GET' }, get);
   await new Promise((resolve) => setImmediate(resolve));
@@ -34,6 +48,7 @@ test('checkout remains inert without Stripe configuration', async () => {
   assert.equal(post.statusCode, 503);
   assert.equal(JSON.parse(post.body).code, 'PRODUCT_NOT_CONFIGURED');
   assert.equal(post.headers['cache-control'], 'no-store');
+  } finally { if (previous === undefined) delete process.env.HELMIAN_PAID_CHECKOUT; else process.env.HELMIAN_PAID_CHECKOUT = previous; }
 });
 
 test('Stripe product default price maps to one-time checkout without exposing secret', async () => {
