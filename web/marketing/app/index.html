@@ -54,6 +54,7 @@
           <button class="nav-item" type="button" data-view="evidence">Evidence</button>
           <button class="nav-item" type="button" data-view="integrations">Integrations</button>
           <button class="nav-item" type="button" data-view="agents">Agents</button>
+          <button class="nav-item" type="button" data-view="create">Create</button>
           <button class="nav-item" type="button" data-view="release">Release roadmap</button>
         </nav>
       </details>
@@ -236,6 +237,41 @@
       <details class="panel show-details" id="agents-details">
         <summary class="eyebrow">SHOW DETAILS</summary>
         <div id="agents-detail-list" class="kv"></div>
+      </details>
+    </section>
+
+    
+    <section id="view-create" class="view" data-view-panel="create" hidden>
+      <h2>Create</h2>
+      <p class="muted sm">Prepare an Artifact Studio request. Generation still runs in the desktop app.</p>
+      <form id="create-form" class="panel create-compose">
+        <label class="field-stack"><span class="side-head" style="padding:0 0 6px"><span>PROMPT</span></span>
+          <textarea id="create-prompt" rows="4" maxlength="1200" placeholder="Describe what you want to create…" aria-label="Describe the artifact" required></textarea>
+        </label>
+        <label class="field-stack"><span class="side-head" style="padding:8px 0 6px"><span>TYPE</span></span>
+          <select id="create-type" aria-label="Artifact type">
+            <option value="training">Training</option>
+            <option value="orientation">Orientation</option>
+          </select>
+        </label>
+        <div class="row-btns left" style="margin-top:12px">
+          <button id="create-review" class="btn primary" type="submit">Review</button>
+        </div>
+        <p id="create-status" class="muted sm" role="status" aria-live="polite"></p>
+      </form>
+      <div class="panel">
+        <div class="h-row"><span class="side-head" style="padding:0"><span>REQUEST HISTORY</span></span>
+          <button id="create-refresh" class="link-btn" type="button">Refresh</button></div>
+        <div id="create-history"></div>
+      </div>
+      <details class="panel show-details" id="create-details">
+        <summary class="eyebrow">SHOW DETAILS</summary>
+        <label class="field-stack"><span class="muted sm">Department</span>
+          <input id="create-department" maxlength="160" value="general" aria-label="Department"></label>
+        <label class="field-stack" style="margin-top:8px"><span class="muted sm">Source citations (one per line)</span>
+          <textarea id="create-sources" rows="3" maxlength="4000" placeholder="Optional approved source citations" aria-label="Source citations"></textarea></label>
+        <p class="muted sm" style="margin-top:10px">Cloud records a draft intent only. Image, PDF, slides and other desktop Create types generate on the EXE after you approve there.</p>
+        <div id="create-detail-list" class="kv" style="margin-top:8px"></div>
       </details>
     </section>
 

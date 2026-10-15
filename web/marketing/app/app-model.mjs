@@ -1,8 +1,8 @@
 // Pure helpers for the Helmian Cloud app (no DOM) so they can be unit tested.
-export const VIEWS = Object.freeze(['home', 'console', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'integrations', 'agents', 'release']);
-export const VIEW_TITLES = Object.freeze({ home: 'Home', console: 'Chat', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', agents: 'Agents', release: 'Release roadmap' });
+export const VIEWS = Object.freeze(['home', 'console', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'integrations', 'agents', 'create', 'release']);
+export const VIEW_TITLES = Object.freeze({ home: 'Home', console: 'Chat', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', agents: 'Agents', create: 'Create', release: 'Release roadmap' });
 export const PRIMARY_VIEWS = Object.freeze(['home', 'console', 'workspace', 'approvals']);
-export const ADVANCED_VIEWS = Object.freeze(['devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'agents', 'release']);
+export const ADVANCED_VIEWS = Object.freeze(['devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'agents', 'create', 'release']);
 export const PROVIDERS = Object.freeze(['Claude', 'ChatGPT', 'Grok', 'Gemini']);
 export const PROVIDER_REGISTRY = Object.freeze([
   { key: 'slack', name: 'Slack', kind: 'Team chat' }, { key: 'discord', name: 'Discord', kind: 'Team chat' }, { key: 'github', name: 'GitHub', kind: 'Code' },
@@ -178,6 +178,44 @@ export function agentsModel(providers = {}, sessionsBody = {}) {
 
 // ---- Home dashboard (phone default) ----
 function money(minor, currency = 'USD') { try { return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(minor || 0) / 100); } catch { return `$${(Number(minor || 0) / 100).toFixed(2)}`; } }
+
+// Create / Artifact Studio (cloud records intents only; media runs on the desktop EXE).
+export const CREATE_TYPES = Object.freeze([
+  { id: 'training', label: 'Training' },
+  { id: 'orientation', label: 'Orientation' },
+]);
+export function createModel(body = {}) {
+  const receipts = (Array.isArray(body.receipts) ? body.receipts : []).slice(0, 50).map((r) => ({
+    id: String(r.receiptId || r.id || ''),
+    title: String(r.title || 'Untitled'),
+    type: String(r.artifactType || r.type || ''),
+    status: String(r.status || r.stage || 'draft'),
+    objective: String(r.objective || ''),
+    department: String(r.department || ''),
+    sources: Array.isArray(r.sourceRefs) ? r.sourceRefs.length : 0,
+    replayed: r.replayed === true,
+    createdAt: r.createdAt || r.created_at || null,
+  }));
+  return { receipts, empty: receipts.length === 0 };
+}
+export function createIntentPayload({ title, objective, type, department = 'general', sourcesText = '', stage = 'draft' } = {}) {
+  const sourceRefs = String(sourcesText).split('\n').map((line) => line.trim()).filter(Boolean).map((citation) => ({ citation, title: citation.slice(0, 240) }));
+  const t = String(title || '').trim();
+  const o = String(objective || '').trim();
+  const artifactType = CREATE_TYPES.some((x) => x.id === type) ? type : 'training';
+  return {
+    artifactType,
+    stage: stage === 'approval_requested' ? 'approval_requested' : 'draft',
+    title: t,
+    department: String(department || 'general').trim() || 'general',
+    objective: o || t,
+    sourceRefs,
+    idempotencyKey: `create-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`,
+    approvalReason: null,
+  };
+}
+
+
 export function usageModel(body = {}) {
   const spent = Number(body?.totals?.reconciledCostMinor ?? body?.totals?.estimatedCostMinor ?? 0);
   const b = body?.budget ?? null; const currency = b?.currency || 'USD';

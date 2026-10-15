@@ -188,3 +188,15 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   .submenu#nav .nav-item { border:1px solid var(--border); background:var(--panel-2); }
   .submenu#nav .nav-item.active { box-shadow:none; border-color:var(--accent); color:var(--accent); }
 }
+
+/* Create / Artifact Studio */
+.create-compose textarea, .create-compose select, #create-details input, #create-details textarea {
+  width:100%; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:8px 10px; outline:none;
+}
+.create-compose textarea:focus, .create-compose select:focus { border-color:var(--accent); }
+.field-stack { display:flex; flex-direction:column; gap:4px; }
+.create-hist { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+.create-hist button.hist-row { all:unset; cursor:pointer; display:flex; flex-direction:column; gap:2px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--panel-2); }
+.create-hist button.hist-row:hover { border-color:var(--accent); }
+.create-hist button.hist-row strong { font-size:13px; }
+.create-hist button.hist-row small { color:var(--muted); font-size:12px; }
