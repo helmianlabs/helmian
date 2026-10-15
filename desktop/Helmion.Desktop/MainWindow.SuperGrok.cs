@@ -77,27 +77,25 @@ public partial class MainWindow
     /// </summary>
     private void ShowProviderProfiles()
     {
-        var signedIn = _superGrok?.IsSignedIn == true;
+        // Status comes from the official Grok CLI's own sign-in: that is what read-only Grok
+        // turns (grok -p) actually use.
+        var signedIn = GrokCliLogin.HasCliSession();
         _providerProfiles = _providerProfiles
             .Select(profile =>
             {
                 if (profile.Id != "grok") return profile;
-                if (!signedIn)
-                {
-                    return profile with
+                return signedIn
+                    ? profile with
+                    {
+                        SetupState = "Signed in (SuperGrok)",
+                        Availability = "Signed in through the official Grok app (Grok Build)",
+                        ActionLabel = "Sign out"
+                    }
+                    : profile with
                     {
                         SetupState = "Not configured",
-                        ActionLabel = _superGrok is null ? null : "Sign in with SuperGrok"
+                        ActionLabel = "Sign in with SuperGrok"
                     };
-                }
-                var who = string.IsNullOrWhiteSpace(_superGrok!.SignedInEmail)
-                    ? "" : $" as {_superGrok.SignedInEmail}";
-                return profile with
-                {
-                    SetupState = "Signed in (SuperGrok)",
-                    Availability = $"Using SuperGrok subscription{who}",
-                    ActionLabel = "Sign out"
-                };
             })
             .ToArray();
         ProviderRegistryList.ItemsSource = null;
@@ -107,19 +105,26 @@ public partial class MainWindow
     private void ProviderCardAction_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag as string != "grok") return;
-        if (_superGrok?.IsSignedIn == true)
+        // The code panel and status line live in Settings; show them, then act.
+        NavigateTo("Settings");
+        SuperGrokLoginButton?.BringIntoView();
+        if (GrokCliLogin.HasCliSession())
         {
             SuperGrokSignOut_Click(sender, e);
             return;
         }
-        // The device code and status line live in Settings; show them, then start sign-in.
-        NavigateTo("Settings");
-        SuperGrokLoginButton?.BringIntoView();
         SuperGrokLogin_Click(sender, e);
     }
 
     private void RefreshSuperGrokStatusLine()
     {
+        if (GrokCliLogin.HasCliSession())
+        {
+            SetSuperGrokStatus(
+                "Signed in through the official Grok app (Grok Build). Read-only Grok turns use it.",
+                isError: false);
+            return;
+        }
         if (_superGrok is null)
         {
             SetSuperGrokStatus("SuperGrok sign-in is unavailable in this session.", isError: true);
@@ -155,64 +160,99 @@ public partial class MainWindow
             isError: _superGrok.LastAuthMessage is not null);
     }
 
+    private string? _grokLoginUrl;
+
+    /// <summary>
+    /// Sign the official Grok CLI in by running <c>grok login --device-auth</c> hidden. The URL
+    /// and user code it prints are shown here with an Open browser button; when the CLI exits
+    /// the status is re-read from its auth file (read-only).
+    /// </summary>
     private async void SuperGrokLogin_Click(object sender, RoutedEventArgs e)
     {
-        if (_superGrok is null)
-        {
-            SetSuperGrokStatus("SuperGrok sign-in is unavailable in this session.", isError: true);
-            return;
-        }
-
         _superGrokLoginCts?.Cancel();
         _superGrokLoginCts?.Dispose();
         _superGrokLoginCts = new CancellationTokenSource();
         var cancellationToken = _superGrokLoginCts.Token;
 
         SuperGrokLoginButton.IsEnabled = false;
-        SetSuperGrokStatus("Asking xAI for a sign-in code…", isError: false);
+        _grokLoginUrl = null;
+        SuperGrokUserCodeText.Text = "";
+        SuperGrokVerificationUriText.Text = "";
+        SuperGrokOpenBrowserButton.IsEnabled = false;
+        SetSuperGrokStatus("Starting the Grok sign-in…", isError: false);
+
+        void OnLine(string line)
+        {
+            var url = GrokCliLogin.ParseVerificationUrl(line);
+            var code = GrokCliLogin.ParseUserCode(line);
+            if (url is null && code is null) return;
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (url is not null && _grokLoginUrl is null)
+                {
+                    _grokLoginUrl = url;
+                    SuperGrokVerificationUriText.Text =
+                        $"Press Open browser (or go to {url}), sign in with your Grok account, and enter the code above.";
+                    SuperGrokOpenBrowserButton.IsEnabled = true;
+                }
+                if (code is not null && string.IsNullOrEmpty(SuperGrokUserCodeText.Text))
+                {
+                    SuperGrokUserCodeText.Text = code;
+                }
+                SuperGrokCodePanel.Visibility = Visibility.Visible;
+                SetSuperGrokStatus("Waiting for you to approve the sign-in in your browser…", isError: false);
+            });
+        }
 
         try
         {
-            using var client = new SuperGrokOAuthClient();
-            var device = await client.RequestDeviceCodeAsync(cancellationToken);
-
-            SuperGrokUserCodeText.Text = device.UserCode;
-            SuperGrokVerificationUriText.Text =
-                $"Go to {device.VerificationUri} and enter the code above. "
-                + "Your browser should have opened there already.";
-            SuperGrokCodePanel.Visibility = Visibility.Visible;
-            SetSuperGrokStatus(
-                "Waiting for you to approve the sign-in in your browser…",
-                isError: false);
-
-            OpenInBrowser(device.VerificationUriComplete);
-
-            var progress = new Progress<string>(text => SetSuperGrokStatus(text, isError: false));
-            var tokens = await client.PollForTokenAsync(device, progress, cancellationToken);
-
-            _superGrok.Adopt(tokens);
-            ApplySuperGrokToConsole();
+            var result = await GrokCliLogin.RunLoginAsync(OnLine, cancellationToken);
             SuperGrokCodePanel.Visibility = Visibility.Collapsed;
             SuperGrokUserCodeText.Text = "";
+            if (!result.Started)
+            {
+                SetSuperGrokStatus(GrokCliLogin.NotInstalledMessage, isError: true);
+                return;
+            }
+
             RefreshSuperGrokStatus();
-            AppendConsoleLine("[Grok → signed in with SuperGrok subscription]");
+            if (GrokCliLogin.HasCliSession())
+            {
+                AppendConsoleLine("[Grok → signed in through the official Grok app]");
+            }
+            else
+            {
+                var friendly = GrokCliLogin.FriendlyError(result.Output.Trim());
+                SetSuperGrokStatus(
+                    friendly == GrokCliLogin.PlanMissingMessage
+                        ? friendly
+                        : "Sign-in didn't finish. Press Login with SuperGrok to try again."
+                            + (string.IsNullOrWhiteSpace(friendly) ? "" : $" ({LastLine(friendly)})"),
+                    isError: true);
+            }
         }
         catch (OperationCanceledException)
         {
             SuperGrokCodePanel.Visibility = Visibility.Collapsed;
             SuperGrokUserCodeText.Text = "";
-            SetSuperGrokStatus("Sign-in cancelled. Nothing was changed.", isError: false);
-        }
-        catch (SuperGrokAuthException ex)
-        {
-            SuperGrokCodePanel.Visibility = Visibility.Collapsed;
-            SuperGrokUserCodeText.Text = "";
-            SetSuperGrokStatus(ex.Message, isError: true);
+            SetSuperGrokStatus("Sign-in cancelled or timed out. Nothing was changed.", isError: false);
         }
         finally
         {
             SuperGrokLoginButton.IsEnabled = true;
         }
+    }
+
+    private static string LastLine(string text)
+    {
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var last = lines.Length == 0 ? text : lines[^1];
+        return last.Length <= 160 ? last : last[..160];
+    }
+
+    private void SuperGrokOpenBrowser_Click(object sender, RoutedEventArgs e)
+    {
+        if (_grokLoginUrl is not null) OpenInBrowser(_grokLoginUrl);
     }
 
     /// <summary>
@@ -257,17 +297,36 @@ public partial class MainWindow
         AppendConsoleLine("[Grok → adopted the existing Grok CLI sign-in · that CLI was not modified]");
     }
 
-    private void SuperGrokSignOut_Click(object sender, RoutedEventArgs e)
+    private async void SuperGrokSignOut_Click(object sender, RoutedEventArgs e)
     {
         _superGrokLoginCts?.Cancel();
         SuperGrokCodePanel.Visibility = Visibility.Collapsed;
         SuperGrokUserCodeText.Text = "";
 
+        // Older builds kept a separate desktop copy of the sign-in; clear it too.
         _superGrok?.SignOut();
         ApplySuperGrokToConsole();
+
+        if (GrokCliLogin.HasCliSession())
+        {
+            try
+            {
+                var result = await GrokCliLogin.RunLogoutAsync(CancellationToken.None);
+                if (!result.Started)
+                {
+                    SetSuperGrokStatus(GrokCliLogin.NotInstalledMessage, isError: true);
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                SetSuperGrokStatus("Sign-out timed out. Try again.", isError: true);
+                return;
+            }
+        }
+
         RefreshSuperGrokStatus();
-        AppendConsoleLine(
-            "[Grok → signed out of SuperGrok · falling back to the API key if one is set]");
+        AppendConsoleLine("[Grok → signed out · falling back to the API key if one is set]");
     }
 
     private void ApplySuperGrokToConsole()
