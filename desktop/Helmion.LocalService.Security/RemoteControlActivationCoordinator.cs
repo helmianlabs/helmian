@@ -126,7 +126,7 @@ public sealed class RemoteControlActivationCoordinator : IRemoteControlLocalComm
             {
                 await StopRealtimeAsync().ConfigureAwait(false);
                 _failures = Math.Min(_failures + 1, 16);
-                var seconds = Math.Min(30, 1 << Math.Min(_failures - 1, 5));
+                var seconds = Math.Min(15, 1 << Math.Min(_failures - 1, 4));
                 _schedulerState = "backoff";
                 _realtimeState = "offline";
                 var diagnostic = error.Message
