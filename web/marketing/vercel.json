@@ -5,15 +5,15 @@
   "rewrites": [
     {
       "source": "/admin",
-      "destination": "https://helmian-cloud.fly.dev/admin/"
+      "destination": "/api/helmian-admin?__p=/admin"
     },
     {
       "source": "/admin/:path*",
-      "destination": "https://helmian-cloud.fly.dev/admin/:path*"
+      "destination": "/api/helmian-admin?__p=/admin/:path*"
     },
     {
       "source": "/api/admin/:path*",
-      "destination": "https://helmian-cloud.fly.dev/api/admin/:path*"
+      "destination": "/api/helmian-admin?__p=/api/admin/:path*"
     },
     {
       "source": "/api/remote/v1/control",
@@ -106,5 +106,11 @@
         }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/helmian-admin.js": {
+      "maxDuration": 60,
+      "includeFiles": "helmian-admin/**"
+    }
+  }
 }
