@@ -74,6 +74,22 @@
     {
       "source": "/api/team-oauth/discord/redeem",
       "destination": "/api/team-oauth-discord-redeem"
+    },
+    {
+      "source": "/api/team-oauth/github/start",
+      "destination": "/api/team-oauth-github-start"
+    },
+    {
+      "source": "/api/team-oauth/github/authorize",
+      "destination": "/api/team-oauth-github-authorize"
+    },
+    {
+      "source": "/api/team-oauth/github/callback",
+      "destination": "/api/team-oauth-github-callback"
+    },
+    {
+      "source": "/api/team-oauth/github/redeem",
+      "destination": "/api/team-oauth-github-redeem"
     }
   ],
   "headers": [

@@ -224,7 +224,26 @@ async function loadIntegrations() {
   $('#integrations').replaceChildren(...list.map((i) => { const card = el('article', 'card'); card.append(el('div', 'title', i.name), el('div', 'meta', i.kind), el('div', 'meta')); card.lastChild.append(el('span', `status ${i.connected ? 'ok' : ''}`, i.connected ? 'Connected' : 'Not connected')); return card; }));
   return p.value;
 }
+async function loadInvites() {
+  if (!isAdminRole(state.actor?.role)) return;
+  $('#invite-panel').hidden = false;
+  try {
+    const body = await api('/api/admin/organization/invites');
+    const list = (body.invites ?? []).filter((i) => i.active);
+    $('#invite-list').replaceChildren(...(list.length ? list.map((i) => { const r = row(`Link · used ${i.useCount}/${i.maxUses}`, `expires ${formatTime(i.expiresAt)}`); const off = el('button', 'btn ghost sm', 'Turn off'); off.onclick = async () => { await post('/api/admin/organization/invites/revoke', { id: i.id }).catch(() => {}); loadInvites(); }; r.append(off); return r; }) : [el('p', 'muted sm', 'No active invite links.')]));
+  } catch { $('#invite-list').replaceChildren(el('p', 'muted sm', 'Invite links will be available shortly.')); }
+}
+$('#invite-create').onclick = async () => {
+  try { const r = await post('/api/admin/organization/invites', { expiresInDays: 7, maxUses: 25 }); $('#invite-new').hidden = false; $('#invite-url').value = r.invite.url; $('#invite-url').select(); loadInvites(); }
+  catch { toast('Could not create an invite link — try again'); }
+};
+$('#invite-copy').onclick = async () => { try { await navigator.clipboard.writeText($('#invite-url').value); toast('Invite link copied'); } catch { $('#invite-url').select(); } };
+$('#desktop-link').onclick = async () => {
+  try { const r = await post('/api/admin/desktop/link/start', { label: 'Helmian desktop' }); const c = $('#desktop-code'); c.hidden = false; c.textContent = r.code; toast('Code is valid for 10 minutes'); }
+  catch { toast('Could not create a code — try again'); }
+};
 async function loadSettings() {
+  loadInvites();
   const prov = await api('/api/admin/provider-connections').catch(() => ({}));
   const conns = Array.isArray(prov.connections) ? prov.connections : [];
   $('#api-keys').replaceChildren(...(conns.length ? conns.map((c) => row(c.displayName || c.provider || 'Provider', maskSecret(c.secretHint || c.keyHint), 'mask')) : [el('p', 'muted sm', 'No API keys saved yet.')]));
@@ -244,7 +263,7 @@ const loaders = { console: loadConsole, overview: loadOverview, workspace: loadP
 // ---- boot ----
 async function boot() {
   let model;
-  try { const res = await fetch('/api/admin/session', { credentials: 'same-origin' }); model = sessionModel(res.status, await res.json().catch(() => ({}))); }
+  try { const res = await fetch('/api/admin/session?scope=member', { credentials: 'same-origin' }); model = sessionModel(res.status, await res.json().catch(() => ({}))); }
   catch { model = sessionModel(0); }
   if (!model.member) {
     shell.classList.add('signed-out'); $('#signed-out').hidden = false; $('#view-title').textContent = 'Helmian';
@@ -256,6 +275,7 @@ async function boot() {
   $('#account').textContent = `${model.actor.tenantId} · ${model.actor.role}`;
   $('#admin-link').hidden = !isAdminRole(model.actor.role); $('#signout').hidden = false;
   renderSessions(); loadSessions();
+  if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${model.actor.tenantId}!`); history.replaceState(null, '', location.pathname + location.hash); }
   show(viewFromHash(location.hash));
   loadProjects(); loadFeedData();
   setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); if (shell.dataset.view === 'console') loadLog(); }, 6000);
