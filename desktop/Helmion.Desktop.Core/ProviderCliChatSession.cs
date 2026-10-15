@@ -150,41 +150,164 @@ public static class ProviderCliChatSession
         yield return result;
     }
 
+    /// <summary>Hard limit for one headless Grok turn.</summary>
+    public static readonly TimeSpan GrokTurnTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>
-    /// Runs the official Grok CLI in one-turn plan mode. This avoids treating a
-    /// SuperGrok desktop session as an xAI API key, which is what causes the
-    /// Chat Completions entitlement rejection for subscription-only accounts.
+    /// Runs the official Grok CLI (Grok Build) for one headless, read-only turn, using the
+    /// CLI's own sign-in. No API key is passed (inherited key variables are removed) and
+    /// ~/.grok/auth.json is never touched here.
+    ///
+    /// <para>
+    /// Flags are all documented on docs.x.ai: <c>--no-auto-update</c>, <c>-p</c> and
+    /// <c>--output-format json</c> (build/cli/headless-scripting); <c>--no-memory</c>,
+    /// <c>--no-subagents</c>, <c>--disable-web-search</c> (build/cli/reference); and
+    /// <c>--permission-mode dontAsk</c> ("Silently deny anything without an explicit allow
+    /// rule", build/enterprise). With no allow rules, every tool that needs permission is
+    /// denied, so the turn stays read-only. The previous <c>--permission-mode plan</c> is not
+    /// on docs.x.ai and was dropped.
+    /// </para>
+    ///
+    /// <para>
+    /// Runs from the user profile folder (where a manual <c>grok -p</c> was confirmed to work)
+    /// instead of the EXE folder, where the CLI hung, likely on a folder prompt. Stdin is
+    /// closed, and the process tree is killed after <see cref="GrokTurnTimeout"/>.
+    /// </para>
     /// </summary>
     public static async IAsyncEnumerable<ProviderCliChatResult> SendToGrokAsync(
         string prompt,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var workDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var psi = new ProcessStartInfo
         {
             // Same lookup as sign-in: the official installer's grok.exe, else PATH.
             FileName = GrokCliLogin.ResolveExecutable(),
+            WorkingDirectory = workDir,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
         ClearApiKeyEnvironment(psi, "XAI_API_KEY", "GROK_API_KEY");
-        // docs.x.ai/build/cli/headless-scripting: pass --no-auto-update for headless runs.
         psi.ArgumentList.Add("--no-auto-update");
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add(prompt);
-        psi.ArgumentList.Add("--permission-mode");
-        psi.ArgumentList.Add("plan");
         psi.ArgumentList.Add("--output-format");
         psi.ArgumentList.Add("json");
+        psi.ArgumentList.Add("--permission-mode");
+        psi.ArgumentList.Add("dontAsk");
         psi.ArgumentList.Add("--no-memory");
         psi.ArgumentList.Add("--no-subagents");
         psi.ArgumentList.Add("--disable-web-search");
 
-        var result = await RunResultAsync(psi, "Grok CLI", cancellationToken);
+        var result = await RunGrokHeadlessAsync(psi, GrokTurnTimeout, cancellationToken);
         yield return result.IsError
             ? result with { Text = GrokCliLogin.FriendlyError(result.Text) }
             : result;
+    }
+
+    private static async Task<ProviderCliChatResult> RunGrokHeadlessAsync(
+        ProcessStartInfo psi, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        Process? process;
+        try
+        {
+            process = Process.Start(psi);
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            return new ProviderCliChatResult(
+                $"Could not find the \"Grok CLI\" command on PATH ({ex.Message}).", IsError: true);
+        }
+        if (process is null)
+        {
+            return new ProviderCliChatResult("Could not start Grok CLI.", IsError: true);
+        }
+
+        using (process)
+        {
+            var stdout = new StringBuilder();
+            var stderr = new StringBuilder();
+            process.OutputDataReceived += (_, e) => { if (e.Data is not null) lock (stdout) stdout.AppendLine(e.Data); };
+            process.ErrorDataReceived += (_, e) => { if (e.Data is not null) lock (stderr) stderr.AppendLine(e.Data); };
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            // Nothing is ever typed into it; a closed stdin makes any prompt fail fast.
+            try { process.StandardInput.Close(); } catch { /* already exited */ }
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(timeout);
+            var timedOut = false;
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                timedOut = !cancellationToken.IsCancellationRequested;
+                try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+                if (!timedOut) throw;
+            }
+            try { process.WaitForExit(2000); } catch { /* flush best effort */ }
+
+            string outText, errText;
+            lock (stdout) outText = stdout.ToString().Trim();
+            lock (stderr) errText = stderr.ToString().Trim();
+            var captured = string.Join(" ", new[] { errText, outText }.Where(s => s.Length > 0));
+
+            if (timedOut)
+            {
+                return new ProviderCliChatResult(
+                    $"Grok didn't answer in {(int)timeout.TotalSeconds}s."
+                    + (captured.Length == 0 ? "" : $" Output: {Truncate(captured)}"),
+                    IsError: true);
+            }
+
+            if (process.ExitCode != 0)
+            {
+                return new ProviderCliChatResult(
+                    $"Grok CLI exited with code {process.ExitCode}"
+                    + (captured.Length == 0 ? "." : $": {Truncate(captured)}"),
+                    IsError: true);
+            }
+
+            if (outText.Length == 0)
+            {
+                return new ProviderCliChatResult(
+                    "Grok CLI finished without an answer."
+                    + (errText.Length == 0 ? "" : $" {Truncate(errText)}"),
+                    IsError: true);
+            }
+
+            return new ProviderCliChatResult(ExtractJsonAnswer(outText), IsError: false);
+        }
+    }
+
+    /// <summary>The answer field of a one-object JSON result, or the raw text if it isn't JSON.</summary>
+    private static string ExtractJsonAnswer(string stdout)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(stdout);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var candidate in new[] { "result", "response", "text", "output", "answer" })
+                {
+                    if (doc.RootElement.TryGetProperty(candidate, out var field)
+                        && field.ValueKind == JsonValueKind.String)
+                    {
+                        return field.GetString() ?? stdout;
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Not a single JSON object; show the text as-is.
+        }
+        return stdout;
     }
 
     private static async Task<ProviderCliChatResult> RunResultAsync(
