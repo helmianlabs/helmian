@@ -3,6 +3,10 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, 
 // Stateless mode for serverless hosts (Vercel): login state and sessions are
 // AES-256-GCM sealed with HELMION_ADMIN_SESSION_SECRET instead of held in memory,
 // so any function instance can finish a login or read a session.
+// Owner console sign-ins stay short; /app sign-ins are remembered.
+export const ADMIN_SESSION_MS = 8 * 60 * 60_000;
+export const REMEMBERED_SESSION_MS = 30 * 24 * 60 * 60_000;
+
 function sealer(secret) {
   if (!secret) return null;
   if (String(secret).length < 32) throw new Error('HELMION_ADMIN_SESSION_SECRET must be at least 32 characters');
@@ -169,7 +173,8 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     return { url: url.toString(), state: loginState };
   }
 
-  async function finishLogin(code, state) {
+  async function finishLogin(code, state, { remember = false } = {}) {
+    const lifetime = remember ? REMEMBERED_SESSION_MS : ADMIN_SESSION_MS;
     const attempt = sealed ? sealed.open('login', state) : pending.get(state);
     if (!sealed) pending.delete(state);
     if (!attempt || attempt.expiresAt < Date.now()) throw Object.assign(new Error('OIDC login state invalid or expired'), { stage: 'login_state' });
@@ -182,10 +187,11 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     if (typeof tokenBody?.id_token !== 'string') throw Object.assign(new Error('OIDC token response has no id_token'), { stage: 'id_token_missing' });
     const claims = await stage('id_token_invalid', () => verifyJwt(tokenBody.id_token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl }));
     const tokenExpiry = Number(claims.exp) * 1_000;
-    const session = { subject: claims.sub, email: typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : null, emailVerified: claims.email_verified === true, expiresAt: Math.min(Date.now() + 8 * 60 * 60_000, tokenExpiry) };
+    const session = { subject: claims.sub, email: typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : null, emailVerified: claims.email_verified === true, expiresAt: remember ? Date.now() + lifetime : Math.min(Date.now() + lifetime, tokenExpiry), ...(remember ? { remembered: true } : {}) };
     if (sealed) {
-      // Sessions outlive the short ID token; cap at 8h from login.
-      session.expiresAt = Date.now() + 8 * 60 * 60_000;
+      // Sessions outlive the short ID token: 8h for owner-console logins,
+      // 30 days for /app (consumer) logins so testers stay signed in.
+      session.expiresAt = Date.now() + lifetime;
       return { sessionId: sealed.seal('session', session), identity: { subject: claims.sub } };
     }
     const sessionId = randomUUID();

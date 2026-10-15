@@ -22,7 +22,7 @@ test('login with return=/app remembers the app and the callback lands on /app/',
   assert.equal(cb.status, 302);
   assert.equal(cb.headers.get('location'), '/app/');
   const cookies = cb.headers.getSetCookie().join('\n');
-  assert.match(cookies, /helmion_admin_session=sess; Path=\/api\/admin/);
+  assert.match(cookies, /helmion_admin_session=sess; Max-Age=2592000; Path=\/api\/admin/);
   assert.match(cookies, /helmion_admin_return=; Max-Age=0/);
 });
 
