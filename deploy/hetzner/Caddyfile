@@ -1,0 +1,10 @@
+{$VOICE_HOST:voice.helmian.cloud} {
+	encode gzip
+	@noauth not header Authorization "Bearer {$VOICE_TOKEN}"
+	respond @noauth 401
+	reverse_proxy kokoro:8880
+}
+
+{$RELAY_HOST:relay.helmian.cloud} {
+	reverse_proxy relay:8080
+}
