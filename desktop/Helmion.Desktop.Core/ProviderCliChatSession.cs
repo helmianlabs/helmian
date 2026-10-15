@@ -179,7 +179,9 @@ public static class ProviderCliChatSession
         psi.ArgumentList.Add("--disable-web-search");
 
         var result = await RunResultAsync(psi, "Grok CLI", cancellationToken);
-        yield return result;
+        yield return result.IsError
+            ? result with { Text = GrokCliLogin.FriendlyError(result.Text) }
+            : result;
     }
 
     private static async Task<ProviderCliChatResult> RunResultAsync(
