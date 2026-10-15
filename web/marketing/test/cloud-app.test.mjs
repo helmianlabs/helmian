@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, PRIMARY_VIEWS, ADVANCED_VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, PRIMARY_VIEWS, ADVANCED_VIEWS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -29,7 +29,7 @@ test('no technical disclaimers and no framework', () => {
 
 test('only known admin + remote APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/cora/approvals', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/projects', '/api/herald-config', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/projects', '/api/herald-config', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
 });
 
 test('models', () => {
@@ -100,4 +100,39 @@ test('phone primary nav + Advanced + Show details (Troy polish)', () => {
   assert.doesNotMatch(primary, /data-view="devices"/);
   const advanced = html.match(/id="advanced-nav"[\s\S]*?<\/details>/)[0];
   for (const v of ADVANCED_VIEWS) assert.match(advanced, new RegExp(`data-view="${v}"`));
+});
+
+test('agentsModel maps providers and sessions', () => {
+  const m = agentsModel(
+    { connections: [{ provider: 'anthropic', lifecycle: 'verified', authMode: 'api_key' }] },
+    { sessions: [{ id: 's1', name: 'Fix', provider: 'Claude', createdAt: 't' }] },
+  );
+  assert.equal(m.agents.find((a) => a.name === 'Claude').connected, true);
+  assert.equal(m.agents.find((a) => a.name === 'Grok').connected, false);
+  assert.equal(m.active[0].name, 'Fix');
+  assert.equal(m.empty, false);
+  assert.ok(VIEWS.includes('agents'));
+  assert.equal(VIEW_TITLES.agents, 'Agents');
+  assert.match(html, /data-view-panel="agents"/);
+  assert.match(html, /id="agents-refresh"/);
+});
+
+test('createModel maps receipts and builds review payload', () => {
+  assert.ok(VIEWS.includes('create'));
+  assert.equal(VIEW_TITLES.create, 'Create');
+  assert.ok(ADVANCED_VIEWS.includes('create'));
+  assert.deepEqual(CREATE_TYPES.map((x) => x.id), ['training', 'orientation']);
+  const m = createModel({ receipts: [{ receiptId: 'r1', title: 'Onboard guide', artifactType: 'orientation', status: 'draft', objective: 'Help new hires', department: 'ops', sourceRefs: [{ citation: 'SOP-1', title: 'SOP-1' }] }] });
+  assert.equal(m.empty, false);
+  assert.deepEqual([m.receipts[0].title, m.receipts[0].type, m.receipts[0].sources], ['Onboard guide', 'orientation', 1]);
+  const p = createIntentPayload({ title: 'Safety brief', objective: 'Teach lockout', type: 'training', sourcesText: 'OSHA-1\n' });
+  assert.equal(p.artifactType, 'training');
+  assert.equal(p.stage, 'draft');
+  assert.equal(p.department, 'general');
+  assert.equal(p.sourceRefs.length, 1);
+  assert.equal(p.approvalReason, null);
+  assert.match(p.idempotencyKey, /^create-/);
+  assert.match(html, /data-view-panel="create"/);
+  assert.match(html, /id="create-review"/);
+  assert.match(html, />Review</);
 });

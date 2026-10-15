@@ -1,4 +1,4 @@
-import { VIEW_TITLES, ADVANCED_VIEWS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
+import { VIEW_TITLES, ADVANCED_VIEWS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -413,7 +413,106 @@ async function loadRelease() {
     tb.replaceChildren(...rel.map((r) => { const tr = el('tr'); tr.append(el('td', null, r.version || r.tag || ''), el('td', 'muted', r.channel || ''), el('td', null, r.status || ''), el('td', 'muted', formatTime(r.publishedAt || r.createdAt))); return tr; }));
   } catch { const tr = el('tr'); const td = el('td', 'muted', 'No releases published yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); }
 }
-const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, release: loadRelease };
+
+async function loadAgents() {
+  const [p, s] = await Promise.allSettled([api('/api/admin/provider-connections'), api('/api/admin/app/sessions')]);
+  const model = agentsModel(p.value ?? {}, s.value ?? {});
+  const cards = $('#agents-cards');
+  cards.replaceChildren(...model.agents.map((a) => {
+    const card = el('article', 'card');
+    card.append(el('div', 'title', a.name), el('div', 'meta'));
+    card.lastChild.append(el('span', `status ${a.connected ? 'ok' : ''}`, a.connected ? 'Connected' : 'Not connected'));
+    if (a.connected && a.lifecycle) card.append(el('div', 'meta', a.lifecycle));
+    return card;
+  }));
+  const sess = $('#agents-sessions');
+  if (!model.active.length) sess.replaceChildren(el('p', 'muted sm', 'No open sessions. Start one from Chat.'));
+  else sess.replaceChildren(...model.active.map((r) => {
+    const d = el('div', 'run');
+    d.append(el('div', 'n'));
+    d.firstChild.append(el('strong', null, r.name), el('span', 'muted sm', r.provider));
+    d.onclick = () => { location.hash = 'console'; };
+    d.style.cursor = 'pointer';
+    return d;
+  }));
+  const det = $('#agents-detail-list');
+  det.replaceChildren(...model.agents.filter((a) => a.connected).flatMap((a) => [
+    row(a.name, [a.authMode, a.adapter, a.lifecycle].filter(Boolean).join(' · ') || 'saved'),
+  ]));
+  if (!det.childElementCount) det.replaceChildren(el('p', 'muted sm', 'No provider details yet. Connect providers from Integrations or the desktop app.'));
+}
+$('#agents-refresh').onclick = () => loadAgents().then(() => toast('Agents refreshed')).catch(() => toast('Could not refresh'));
+
+
+async function loadCreate() {
+  const status = $('#create-status');
+  const box = $('#create-history');
+  try {
+    const body = await api('/api/admin/cora/artifacts');
+    const model = createModel(body);
+    if (model.empty) box.replaceChildren(empty('No requests yet.', 'Describe what you want above, then press Review.'));
+    else {
+      const wrap = el('div', 'create-hist');
+      wrap.replaceChildren(...model.receipts.map((r) => {
+        const b = el('button', 'hist-row');
+        b.type = 'button';
+        b.append(el('strong', null, r.title), el('small', null, `${r.type} · ${r.status}${r.sources ? ` · ${r.sources} source${r.sources === 1 ? '' : 's'}` : ''}`));
+        b.onclick = () => {
+          $('#create-detail-list').replaceChildren(
+            row('Title', r.title),
+            row('Type', r.type),
+            row('Status', r.status),
+            row('Department', r.department || '—'),
+            row('Receipt', r.id || '—'),
+            row('Objective', r.objective || '—'),
+          );
+          $('#create-details').open = true;
+          status.textContent = 'Showing details for this request. Generation still happens on the desktop app.';
+        };
+        return b;
+      }));
+      box.replaceChildren(wrap);
+    }
+    if (!status.textContent) status.textContent = model.empty ? '' : `${model.receipts.length} request${model.receipts.length === 1 ? '' : 's'} on file.`;
+  } catch (error) {
+    box.replaceChildren(empty('Could not load Create history', error.status === 403 ? 'Organization membership is required.' : 'Try again in a moment.'));
+  }
+}
+$('#create-refresh').onclick = () => { $('#create-status').textContent = 'Refreshing…'; loadCreate().then(() => toast('History refreshed')).catch(() => toast('Could not refresh')); };
+$('#create-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const prompt = $('#create-prompt').value.trim();
+  if (!prompt) { toast('Describe what you want to create'); return; }
+  const title = prompt.split(/\n/)[0].slice(0, 240);
+  const payload = createIntentPayload({
+    title,
+    objective: prompt,
+    type: $('#create-type').value,
+    department: $('#create-department').value,
+    sourcesText: $('#create-sources').value,
+    stage: 'draft',
+  });
+  $('#create-review').disabled = true;
+  $('#create-status').textContent = 'Recording review…';
+  try {
+    const result = await post('/api/admin/cora/artifacts', payload);
+    $('#create-prompt').value = '';
+    $('#create-status').textContent = result.replayed
+      ? 'That request was already on file.'
+      : 'Review recorded. Open the desktop Create panel to approve and generate.';
+    toast('Review recorded');
+    await loadCreate();
+  } catch (error) {
+    $('#create-status').textContent = error.status === 403
+      ? 'You need organization access to record a Create request.'
+      : (error.message || 'Could not record review');
+    toast('Review not recorded');
+  } finally {
+    $('#create-review').disabled = false;
+  }
+};
+
+const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: loadAgents, create: loadCreate, release: loadRelease };
 
 // ---- boot ----
 async function boot() {
