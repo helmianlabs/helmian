@@ -88,7 +88,11 @@ async function fetchJson(url, init, fetchImpl, label) {
     redirect: 'error',
     signal: AbortSignal.timeout(OIDC_FETCH_TIMEOUT_MS),
   });
-  if (!response.ok) throw new Error(`${label} failed`);
+  if (!response.ok) {
+    let oauthError = null;
+    try { const body = await boundedJson(response, label); oauthError = typeof body?.error === 'string' ? body.error.slice(0, 64) : null; } catch { /* body is optional */ }
+    throw Object.assign(new Error(`${label} failed`), { httpStatus: response.status, oauthError });
+  }
   return boundedJson(response, label);
 }
 
@@ -124,6 +128,10 @@ async function verifyJwt(token, { issuer, audience, jwksUri, fetchImpl }) {
     throw new Error('OIDC token expired or missing subject');
   }
   return claims;
+}
+
+async function stage(name, run) {
+  try { return await run(); } catch (error) { if (!error.stage) error.stage = name; throw error; }
 }
 
 export function createIdentityGateway({ env = process.env, fetchImpl = fetch } = {}) {
@@ -164,14 +172,15 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
   async function finishLogin(code, state) {
     const attempt = sealed ? sealed.open('login', state) : pending.get(state);
     if (!sealed) pending.delete(state);
-    if (!attempt || attempt.expiresAt < Date.now()) throw new Error('OIDC login state invalid or expired');
+    if (!attempt || attempt.expiresAt < Date.now()) throw Object.assign(new Error('OIDC login state invalid or expired'), { stage: 'login_state' });
     const endpoints = await metadata();
-    const tokenBody = await fetchJson(endpoints.tokenEndpoint, {
+    const tokenBody = await stage('token_exchange', () => fetchJson(endpoints.tokenEndpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
       body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: clientId, code_verifier: attempt.verifier }),
-    }, fetchImpl, 'OIDC token exchange');
-    const claims = await verifyJwt(tokenBody.id_token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl });
+    }, fetchImpl, 'OIDC token exchange'));
+    if (typeof tokenBody?.id_token !== 'string') throw Object.assign(new Error('OIDC token response has no id_token'), { stage: 'id_token_missing' });
+    const claims = await stage('id_token_invalid', () => verifyJwt(tokenBody.id_token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl }));
     const tokenExpiry = Number(claims.exp) * 1_000;
     const session = { subject: claims.sub, email: typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : null, emailVerified: claims.email_verified === true, expiresAt: Math.min(Date.now() + 8 * 60 * 60_000, tokenExpiry) };
     if (sealed) {
