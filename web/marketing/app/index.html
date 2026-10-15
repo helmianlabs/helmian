@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#08100F">
+  <title>Helmian</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/app/app.css">
+  <script type="module" src="/app/app.js"></script>
+</head>
+<body>
+  <div id="shell" class="shell" data-view="console">
+    <header class="topbar">
+      <button id="sidebar-toggle" class="icon-btn" type="button" aria-label="Open sidebar" aria-controls="sidebar" aria-expanded="false"><span class="panel-glyph"></span></button>
+      <div class="brand"><strong>HELMIAN</strong><span id="brand-sub">Cloud</span></div>
+      <div id="view-title" class="view-title">Team workspace</div>
+      <button id="status-pill" class="status-pill" type="button" title="Status details"><span class="dot"></span><span id="status-text">Connecting…</span></button>
+      <button id="guard-toggle" class="icon-btn guard-btn" type="button" aria-label="Show Guard panel" aria-controls="guard" aria-expanded="false">⛨</button>
+    </header>
+
+    <aside id="sidebar" class="sidebar" aria-label="Helmian navigation">
+      <section class="side-group">
+        <div class="side-head"><span>PROJECTS</span></div>
+        <input id="project-filter" class="filter" type="search" placeholder="Filter projects by name" aria-label="Filter projects by name">
+        <ul id="project-shelf" class="shelf"></ul>
+        <p id="project-shelf-empty" class="faint">No projects yet.</p>
+      </section>
+      <section class="side-group">
+        <div class="side-head"><span>NAVIGATION</span></div>
+        <nav id="nav" class="nav">
+          <button class="nav-item active" type="button" data-view="console"><span class="glyph">▣</span>Team workspace</button>
+          <button class="nav-item" type="button" data-view="overview"><span class="glyph">⌁</span>Overview</button>
+          <button class="nav-item" type="button" data-view="projects"><span class="glyph">◇</span>Workspace</button>
+          <button class="nav-item" type="button" data-view="approvals"><span class="glyph">✓</span>Approvals<span id="approvals-badge" class="badge" hidden></span></button>
+          <button class="nav-item" type="button" data-view="activity"><span class="glyph">◫</span>Review &amp; History</button>
+          <button class="nav-item" type="button" data-view="connect"><span class="glyph">⌘</span>Connect</button>
+          <button class="nav-item" type="button" data-view="agents"><span class="glyph">◎</span>Agents</button>
+          <button class="nav-item" type="button" data-view="settings"><span class="glyph">⚙</span>Settings</button>
+        </nav>
+      </section>
+      <div class="side-foot">
+        <div id="account" class="account faint">Not signed in</div>
+        <a id="admin-link" class="faint small" href="/admin/" hidden>Owner console</a>
+        <a id="signout" class="faint small" href="/admin/auth/logout" hidden>Sign out</a>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim" hidden></div>
+
+    <main id="main" class="main">
+      <section id="signed-out" class="view hero" hidden>
+        <div class="hero-card">
+          <div class="eyebrow">HELMIAN</div>
+          <h1>Your workspace, with guardrails.</h1>
+          <p class="soft">Sign in to pick up your team conversation, projects and approvals from anywhere.</p>
+          <a class="btn primary" href="/admin/auth/login?return=/app">Sign in  →</a>
+          <p id="membership-note" class="faint" hidden></p>
+        </div>
+      </section>
+
+      <section id="view-console" class="view chat" data-view-panel="console" hidden>
+        <div class="chat-head">
+          <div><div class="eyebrow">MAESTRO</div><h2>Conversation</h2></div>
+          <select id="channel" aria-label="Channel"></select>
+        </div>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <form id="composer" class="composer">
+          <textarea id="composer-input" rows="1" placeholder="Type your message" aria-label="Message"></textarea>
+          <div class="composer-row">
+            <div class="pills" role="radiogroup" aria-label="Access mode">
+              <button type="button" class="pill active" data-mode="plan" title="Plan — chat only, no tools">Plan</button>
+              <button type="button" class="pill" data-mode="read" title="Read workspace tools only">Read</button>
+              <button type="button" class="pill" data-mode="accept" title="Ask before each action">Accept</button>
+            </div>
+            <button id="send" class="btn primary" type="submit">Send</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="view-overview" class="view" data-view-panel="overview" hidden>
+        <h2>Overview</h2>
+        <p class="soft">Actions and recent results</p>
+        <div id="metrics" class="metrics"></div>
+        <div class="card">
+          <div class="eyebrow">TODAY'S POSTURE</div>
+          <div id="posture" class="rows"></div>
+        </div>
+      </section>
+
+      <section id="view-projects" class="view" data-view-panel="projects" hidden>
+        <h2>Workspace</h2>
+        <div id="projects" class="list"></div>
+      </section>
+
+      <section id="view-approvals" class="view" data-view-panel="approvals" hidden>
+        <h2>Approvals</h2>
+        <div id="approvals" class="list"></div>
+      </section>
+
+      <section id="view-activity" class="view" data-view-panel="activity" hidden>
+        <h2>Review &amp; History</h2>
+        <div id="activity" class="list"></div>
+      </section>
+
+      <section id="view-connect" class="view" data-view-panel="connect" hidden>
+        <h2>Connect</h2>
+        <div class="empty"><div class="empty-glyph">⌘</div><p>No connections yet.</p><p class="faint">Slack, Discord and GitHub connections will show up here.</p></div>
+      </section>
+
+      <section id="view-agents" class="view" data-view-panel="agents" hidden>
+        <h2>Agents</h2>
+        <div class="empty"><div class="empty-glyph">◎</div><p>No agents running.</p><p class="faint">When your team starts an agent it will appear here.</p></div>
+      </section>
+
+      <section id="view-settings" class="view" data-view-panel="settings" hidden>
+        <h2>Settings</h2>
+        <div class="card rows">
+          <div class="row"><span>Account</span><span id="settings-account" class="soft">—</span></div>
+          <div class="row"><span>Organization</span><span id="settings-org" class="soft">—</span></div>
+          <div class="row"><span>Role</span><span id="settings-role" class="soft">—</span></div>
+        </div>
+        <p><a id="settings-admin" class="btn" href="/admin/" hidden>Open owner console</a> <a class="btn" href="/admin/auth/logout">Sign out</a></p>
+      </section>
+    </main>
+
+    <aside id="guard" class="guard" aria-label="Guard">
+      <div class="guard-head"><span class="eyebrow">GUARD</span><button id="guard-close" class="icon-btn small" type="button" aria-label="Close Guard panel">×</button></div>
+      <div class="card"><div class="eyebrow">OPEN DECISIONS</div><div id="guard-decisions" class="big">0</div></div>
+      <div class="card"><div class="eyebrow">GUARDRAIL SUMMARY</div>
+        <div class="risk low"><b>LOW RISK · LOCAL</b><span>Runs inside clear, bounded guardrails</span></div>
+        <div class="risk high"><b>HIGH RISK · EXTERNAL</b><span>Requires an explicit owner decision</span></div>
+      </div>
+    </aside>
+
+    <nav id="tabbar" class="tabbar" aria-label="Main">
+      <button class="tab active" type="button" data-view="console"><span>▣</span>Chat</button>
+      <button class="tab" type="button" data-view="projects"><span>◇</span>Projects</button>
+      <button class="tab" type="button" data-view="approvals"><span>✓</span>Approvals</button>
+      <button class="tab" type="button" data-view="overview"><span>⌁</span>Overview</button>
+    </nav>
+  </div>
+</body>
+</html>
