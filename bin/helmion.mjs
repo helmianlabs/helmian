@@ -586,7 +586,17 @@ async function herald() {
     const { startRemoteHeraldSession } = await import('../src/herald/remote-session.mjs');
     const { loadHeraldOwnerSecret } = await import('../src/herald/remote-owner-store.mjs');
     const origin = option('--origin', process.env.HELMION_HERALD_ORIGIN ?? 'https://helmian.cloud');
-    const secret = await loadHeraldOwnerSecret();
+    const { defaultHeraldOwnerSecretPath } = await import('../src/herald/remote-owner-store.mjs');
+    let secret;
+    try { secret = await loadHeraldOwnerSecret(); }
+    catch (error) {
+      if (error?.code === 'ENOENT') {
+        process.stderr.write(`Phone sharing is not set up on this PC yet (no owner enrollment at ${defaultHeraldOwnerSecretPath()}). In PowerShell, from the Helmion folder, run: node bin\\helmion.mjs herald-owner-enroll\n`);
+      } else {
+        process.stderr.write(`Phone sharing could not read this PC's owner enrollment: ${error?.message ?? error}. Re-run: node bin\\helmion.mjs herald-owner-enroll\n`);
+      }
+      process.exit(3);
+    }
     let running;
     try {
       running = await startRemoteHeraldSession({
@@ -596,6 +606,9 @@ async function herald() {
           if (status.state === 'offline') process.stderr.write(`Herald relay offline: ${status.message}\n`);
         },
       });
+    } catch (error) {
+      process.stderr.write(`Phone sharing could not reach ${origin}: ${error?.message ?? error}\n`);
+      process.exit(4);
     } finally { secret.fill(0); }
     process.stdout.write('\nHELMION HERALD — cellular paired companion.\n');
     process.stdout.write('Desktop connection: outbound only. No public port is open on this PC.\n');
@@ -1419,6 +1432,17 @@ if (command === 'agent' || command === 'chat' || command === 'code') {
 } else if (command === 'guard') await guard();
 else if (command === 'review') await review();
 else if (command === 'herald') await herald();
+else if (command === 'herald-owner-enroll') {
+  // Stores the Herald owner secret (same value as HELMION_HERALD_OWNER_SECRET in
+  // the helmian.cloud deployment) for this Windows user, protected with DPAPI.
+  const { saveHeraldOwnerSecret } = await import('../src/herald/remote-owner-store.mjs');
+  const secret = await readHiddenAscii('Paste the Herald owner secret (input hidden), then Enter: ', 'Herald owner secret');
+  try {
+    if (secret.length < 32) throw new Error('That secret is too short (needs 32+ characters).');
+    const path = await saveHeraldOwnerSecret(secret);
+    process.stdout.write(`Saved for this Windows user: ${path}\nNow press Start phone sharing in Helmian.\n`);
+  } finally { secret.fill(0); }
+}
 else if (command === 'relay') await relay();
 else if (command === 'audit') await auditLedger();
 else if (command === 'provenance') await provenanceLedger();
