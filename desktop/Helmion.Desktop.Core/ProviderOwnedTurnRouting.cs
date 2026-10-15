@@ -18,11 +18,23 @@ public static class ProviderOwnedTurnRouting
         ClaudeCli,
         GeminiCli,
         GrokCli,
+        /// <summary>
+        /// Read-only Grok turn sent straight to api.x.ai with the SuperGrok sign-in stored in
+        /// Helmion's DPAPI store (GrokChatSession.SendReadOnlyTurnAsync). No tools, no history.
+        /// </summary>
+        GrokSubscription,
     }
 
     public sealed record Decision(Kind Kind, string? Reason = null);
 
-    public static Decision Decide(string? provider, string? permissionMode)
+    /// <param name="grokSubscriptionSignedIn">
+    /// True when the desktop holds a SuperGrok sign-in. A read-only Grok turn then uses it
+    /// directly instead of the Grok CLI, whose own sign-in is separate.
+    /// </param>
+    public static Decision Decide(
+        string? provider,
+        string? permissionMode,
+        bool grokSubscriptionSignedIn = false)
     {
         if (AgentPermission.Normalize(permissionMode) != AgentPermission.ReadOnly)
         {
@@ -34,7 +46,8 @@ public static class ProviderOwnedTurnRouting
             MaestroKey.OpenAi => new Decision(Kind.CodexCli),
             MaestroKey.Claude => new Decision(Kind.ClaudeCli),
             MaestroKey.Gemini => new Decision(Kind.GeminiCli),
-            MaestroKey.Grok => new Decision(Kind.GrokCli),
+            MaestroKey.Grok => new Decision(
+                grokSubscriptionSignedIn ? Kind.GrokSubscription : Kind.GrokCli),
             _ => new Decision(Kind.AgentBridge),
         };
     }
