@@ -1,0 +1,676 @@
+{
+  "_comment": "Master Cora tool list. Ported 1:1 (names + params) from gauge-sandbox Hume EVI tools. All registered as ElevenLabs client tools for now so voiceIntent.ts executors are unchanged. routing!=device marks tools that must move to server/Helmian-approved execution (requires_approval=true => Helmian policy gate) once the Custom LLM endpoint is live.",
+  "tools": [
+    {
+      "name": "log_wash",
+      "description": "Log a trailer wash event. Use when the driver says they finished washing a trailer or wants to record a wash-tag.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plant_id": {
+            "type": "string",
+            "enum": [
+              "chobani-twin-falls",
+              "glanbia-twin-falls",
+              "idaho-milk-products-jerome",
+              "magic-valley-cheese-buhl"
+            ],
+            "description": "Plant where the wash occurred. Must be one of the known slugs. Map the driver's spoken name to the closest slug (e.g. 'Chobani' or 'Chobani Twin Falls' \u2192 'chobani-twin-falls'). If you can't confidently pick one, ask a short follow-up."
+          },
+          "trailer_id": {
+            "type": "string",
+            "description": "Trailer number as 3-5 digits, no spaces or dashes. The driver will read it digit-by-digit (e.g. 'four one two' \u2192 '412'). Do NOT insert extra digits; if unsure, repeat back and ask the driver to confirm."
+          },
+          "route": {
+            "type": "string",
+            "description": "Route or run number, if known."
+          }
+        },
+        "required": [
+          "plant_id",
+          "trailer_id"
+        ]
+      }
+    },
+    {
+      "name": "log_fatigue_event",
+      "description": "Record a fatigue event the driver self-reports (yawning, eyes heavy, needs a break). Use when the driver explicitly flags their own state.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "moderate",
+              "high"
+            ],
+            "description": "Self-reported severity."
+          }
+        },
+        "required": [
+          "severity"
+        ]
+      }
+    },
+    {
+      "name": "dispatch_command",
+      "description": "Send a message from the driver to dispatch or another audience.",
+      "routing": "helmian_approval",
+      "requires_approval": true,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Message body to send."
+          },
+          "audience": {
+            "type": "string",
+            "description": "Recipient \u2014 typically 'dispatch', a plant name, or another driver."
+          }
+        },
+        "required": [
+          "message",
+          "audience"
+        ]
+      }
+    },
+    {
+      "name": "set_bay",
+      "description": "Driver names which bay they're pulling into. E.g. 'bay one' \u2192 bay_number=1, 'bay two' \u2192 bay_number=2. Use during the delivery bay_select stage when the driver speaks a bay number.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "bay_number": {
+            "type": "integer",
+            "description": "Bay number as 1-4 integer. Convert spoken digits \u2014 'bay one' \u2192 1, 'bay two' \u2192 2, 'three' \u2192 3, 'four' \u2192 4."
+          }
+        },
+        "required": [
+          "bay_number"
+        ]
+      }
+    },
+    {
+      "name": "navigate",
+      "description": "Navigate the app to a named screen (e.g., 'wash log', 'manifest', 'pre-shift', 'shift complete').",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "screen": {
+            "type": "string",
+            "description": "Screen name to navigate to."
+          }
+        },
+        "required": [
+          "screen"
+        ]
+      }
+    },
+    {
+      "name": "confirm_hose_and_valve",
+      "description": "Driver confirms hose is connected and valve is open before pump start. Use when the driver says things like 'hose is hooked up, valve is open', 'all set on the hose', 'connected and open'. If the driver says either is NOT ready (e.g. 'valve still closed', 'hose not on yet'), set that field to false so the UI stays on the hose_confirm step.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "hose_connected": {
+            "type": "boolean",
+            "description": "True if hose is physically connected to the bay."
+          },
+          "valve_open": {
+            "type": "boolean",
+            "description": "True if the bay/trailer valve is open."
+          }
+        },
+        "required": [
+          "hose_connected",
+          "valve_open"
+        ]
+      }
+    },
+    {
+      "name": "set_delivery_type",
+      "description": "Driver branches to deliver to plant, drop the trailer, or refuse the load. Call this at the end of producer pickup when the driver speaks one of: deliver, drop trailer, or refuse. The driver may also provide a reason for refuse. Map naturally: 'take it to the plant' / 'deliver load' / 'head to the plant' \u2192 'deliver'; 'drop the trailer' / 'leave it at the yard' \u2192 'drop_trailer'; 'refuse' / 'reject' / 'bad load' / 'sour milk' \u2192 'refuse'. If type='refuse' and the driver did NOT give a reason, ask one short follow-up before calling.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "deliver",
+              "drop_trailer",
+              "refuse"
+            ],
+            "description": "Which delivery branch the driver chose."
+          },
+          "refuse_reason": {
+            "type": "string",
+            "description": "Free-text reason if type=refuse (e.g. contamination, wrong product, sour milk). Optional but strongly encouraged for refuse."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      }
+    },
+    {
+      "name": "log_milk_smell",
+      "description": "Driver describes the smell of the milk at the temperature check (e.g. 'normal', 'sour', 'off'). Use when the driver explicitly says something like 'log a smell', 'the milk smells sour', or 'note the smell as off'. Only valid while the driver is on the temperature sub-screen of the pickup flow \u2014 Kora's response will say so if called from elsewhere.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "description": "Free-text smell observation. Keep it concise \u2014 'normal', 'sour', 'off', 'slight grain note', etc. Max 1024 chars."
+          }
+        },
+        "required": [
+          "note"
+        ]
+      }
+    },
+    {
+      "name": "begin_pre_trip",
+      "description": "Start the pre-trip inspection. Use when the driver says 'begin pre trip', 'start pre trip', 'start my inspection', 'let's do the pre trip', or similar. Capture truck_number and trailer_number from the same utterance if provided \u2014 e.g. 'begin pre trip truck two four seven trailer four twelve'. After this tool succeeds, log each spoken item via log_inspection_item \u2014 do NOT acknowledge items as okay without that tool call.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "truck_number": {
+            "type": "string",
+            "description": "Truck number as digits only (e.g. '247'). Convert spoken digits \u2014 'two four seven' \u2192 '247'. Optional \u2014 if not provided the driver will enter it on screen."
+          },
+          "trailer_number": {
+            "type": "string",
+            "description": "Trailer number as 3-5 digits (e.g. '412'). Convert spoken digits. Optional \u2014 if not provided the driver will enter it on screen."
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "pump_event",
+      "description": "Record a pump start or stop at the current run stage. Fire when the driver says 'start pump', 'stop pump', 'pump on/off', 'start pumping', 'start the dairy pump', 'start the plant pump', 'start CIP', 'stop CIP', or similar. Pick scope = dairy when picking milk up at a farm; plant when unloading at a plant; cip when running the clean-in-place rinse. If the driver doesn't name the scope, infer from the most recent stage transition (after 'start pump' at the farm = dairy; after delivery arrival = plant; after the dairy unload on a CIP run = cip).",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "dairy",
+              "plant",
+              "cip"
+            ],
+            "description": "Where the pump is running. dairy = farm pickup, plant = plant unload, cip = clean-in-place."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "stop"
+            ],
+            "description": "Whether the driver is starting or stopping the pump."
+          }
+        },
+        "required": [
+          "scope",
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "log_inspection_item",
+      "description": "Generic logger for one pre-trip inspection item the driver verbally checked. Use ONLY after begin_pre_trip has succeeded. Each spoken item is ONE tool call \u2014 do NOT batch. Map the driver's wording to one of the 22 known itemKeys: 11 FMCSA federal floor (service_brakes, parking_brake, steering, lights_reflectors, tires, horn, wipers, mirrors, coupling, wheels_rims, emergency_equipment) plus 11 carrier/PMO (trailer_seals, ladders, milk_hoses, engine_oil, clutch_brake_fluid_reservoir, power_steering_fluid, quarter_fenders_trailer, electrical_and_air_lines_truck_to_trailer). Three items have DEDICATED tools \u2014 use those instead of this generic: hub_oils \u2192 log_pretrip_hub_oils, fluid_leaks_general \u2192 log_pretrip_fluid_leaks_general, tag_axles \u2192 log_pretrip_tag_axles. Examples: driver says 'brakes good' \u2192 log_inspection_item(item='service_brakes', status='ok'). Driver says 'left blinker out' \u2192 log_inspection_item(item='lights_reflectors', status='issue', defect_note='left blinker out'). Driver says 'I don't know what to check' \u2192 log_inspection_item(item='<current>', status='needs_help'); then teach from your knowledge for that item and re-ask. Do NOT call for items the driver didn't mention. Never confirm without calling.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "type": "string",
+            "description": "The inspection itemKey from the 22 known list above. Map driver wording to the closest key (e.g. 'left blinker' \u2192 'lights_reflectors'). Free-form string \u2014 route layer normalizes."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "issue",
+              "needs_help"
+            ],
+            "description": "'ok' = driver confirmed good. 'issue' = driver flagged any problem; route handler defaults to DEFECT_MAJOR severity, supervisor reclassifies on the dispatch board. 'needs_help' = driver explicitly asked for guidance or said they don't know what to check \u2014 Kora teaches from her knowledge before re-asking."
+          },
+          "defect_note": {
+            "type": "string",
+            "description": "Required when status='issue'. Verbatim driver description (e.g. 'low pressure', 'cracked lens', 'blown'). Severity classification happens at the route layer \u2014 do NOT pre-judge."
+          }
+        },
+        "required": [
+          "item",
+          "status"
+        ]
+      }
+    },
+    {
+      "name": "log_pretrip_hub_oils",
+      "description": "Dedicated logger for the wheel-hub lubrication check. Use ONLY after begin_pre_trip has succeeded. Branches on hub design: conventional oil-bath (sight-glass caps with fluid line), Webb (Webb-brand oil-bath, different cap geometry), or Stemco (grease-packed, no sight glass). If the driver doesn't say which type, ask: 'conventional oil-bath, Webb cap, or Stemco grease hubs?' before logging. status='issue' for low oil, milky/contaminated oil, visible leak, slung grease, or hot hub. status='ok' only when fluid is above the line (oil-bath/Webb) or hubs are clean and dry (Stemco). 'needs_help' if the driver doesn't know how to check.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "issue",
+              "needs_help"
+            ],
+            "description": "'ok' = fluid above line or hubs clean and dry. 'issue' = low/milky/leaking oil, slung grease, hot hub, any seepage. 'needs_help' = driver asks for guidance."
+          },
+          "hub_type": {
+            "type": "string",
+            "enum": [
+              "conventional",
+              "webb",
+              "stemco"
+            ],
+            "description": "Hub design the driver inspected. Ask before logging if unclear. Value cached on the vehicle row for future pre-trips."
+          },
+          "defect_note": {
+            "type": "string",
+            "description": "Required when status='issue'. Driver's verbatim: 'left steer below the line', 'grease slung on right drive inner', 'milky in right trailer rear cap'. Include axle + side when named."
+          }
+        },
+        "required": [
+          "status"
+        ]
+      }
+    },
+    {
+      "name": "log_pretrip_fluid_leaks_general",
+      "description": "Dedicated logger for the under-truck fluid-leak sweep. Catch-all visual check beneath the tractor for puddles, drips, wet spots the system-specific fluid checks missed. LAST visual check before drive-off. Use ONLY after begin_pre_trip has succeeded. If the driver reports a leak, ALWAYS ask follow-ups: (1) what color? (2) where exactly under the truck? (3) actively dripping or dried? Populate all three fields from the answers. Color \u2192 likely source: red = ATF or power steering, green = coolant, black = engine oil, amber with fuel smell = diesel, clear = water or AC condensation. Milky tan = head-gasket warning (use 'other'). Driver doesn't know color \u2192 'other'.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "issue",
+              "needs_help"
+            ],
+            "description": "'ok' = ground under rig is dry. 'issue' = driver spotted any fluid. 'needs_help' = driver asks what to look for."
+          },
+          "location_on_truck": {
+            "type": "string",
+            "description": "Where the fluid is. Free-form: 'under the engine, driver side', 'between steer and drive axles', 'under the transmission', 'driver-side saddle tank'. Required when status='issue'."
+          },
+          "fluid_color": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "amber",
+              "black",
+              "red",
+              "green",
+              "other"
+            ],
+            "description": "Color the driver describes. clear = water/condensation, amber = diesel or old engine oil, black = engine/gear oil, red = ATF or power steering, green = coolant, other = milky tan (head-gasket) or driver can't tell. Required when status='issue'."
+          },
+          "defect_note": {
+            "type": "string",
+            "description": "Free-text description \u2014 size (drop, spot, puddle), active drip vs dried, smell. Required when status='issue'."
+          }
+        },
+        "required": [
+          "status"
+        ]
+      }
+    },
+    {
+      "name": "log_pretrip_tag_axles",
+      "description": "Dedicated logger for the tag/lift/drop axle LIFT MECHANISM check (air-actuated function that raises/lowers the extra-weight axle). SCOPE: lift function ONLY \u2014 tires and brakes on the tag are logged under 'tires' and 'service_brakes' via log_inspection_item. Use ONLY after begin_pre_trip has succeeded. status='not_applicable' if the truck has no tag axle (single-trailer day-cab tractors often don't \u2014 cache the answer for next time). status='issue' = won't raise, won't lower, leaks air, drops on its own, won't hold. status='needs_help' = driver doesn't know how to test.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "issue",
+              "needs_help",
+              "not_applicable"
+            ],
+            "description": "'ok' = lift cycles up and down and holds position. 'issue' = won't raise, won't lower, air leak, drops on its own, won't hold. 'needs_help' = driver asks for guidance. 'not_applicable' = this truck has no tag/lift/drop axle."
+          },
+          "defect_note": {
+            "type": "string",
+            "description": "Required when status='issue'. Driver's verbatim: 'won't raise \u2014 switch does nothing', 'drops on its own', 'hissing air out of the front tag bag'. Include which tag if multiple."
+          }
+        },
+        "required": [
+          "status"
+        ]
+      }
+    },
+    {
+      "name": "log_seal_check",
+      "description": "Log the seal verification at a plant pickup. A standard pickup has TWO trailer seals (CIP seal + dome seal) plus a REAR DUST COVER on the back of the trailer. The driver will read off each seal ID digit by digit (e.g. 'seal one is four eight two seven nine') and confirm the rear dust cover is in place. ALWAYS read back BOTH seal IDs digit-by-digit and ask the driver to confirm before calling this tool \u2014 seal IDs are evidentiary, a missed or transposed digit breaks chain of custody. If a seal ID has fewer than 4 digits or is unclear, ask the driver to repeat. Use ONLY when the driver says they have checked the seals (e.g. 'seals look good', 'verify seals', 'log the seal check'). Do NOT call without explicit driver confirmation of both IDs and the dust cover.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "seal_1_id": {
+            "type": "string",
+            "description": "First seal ID (CIP seal) as digits only, typically 4-8 digits. Convert spoken digits \u2014 'four eight two seven nine' \u2192 '48279'. Read this back to the driver before calling this tool."
+          },
+          "seal_2_id": {
+            "type": "string",
+            "description": "Second seal ID (dome seal) as digits only, typically 4-8 digits. Convert spoken digits. Read this back to the driver before calling this tool."
+          },
+          "rear_dust_cover_ok": {
+            "type": "boolean",
+            "description": "True if the driver confirmed the rear dust cover is in place and intact. False if missing, damaged, or not verified. Ask the driver explicitly \u2014 do not assume true."
+          }
+        },
+        "required": [
+          "seal_1_id",
+          "seal_2_id",
+          "rear_dust_cover_ok"
+        ]
+      }
+    },
+    {
+      "name": "log_receiver_signature",
+      "description": "Capture the receiver's full name and initials by voice at the plant after CIP/pump complete, just before the signature pad is handed over. Use ONLY when the driver is at the receiver-signature step of the delivery flow. The signature pad itself is a separate UI capture \u2014 this tool only records the spoken name and initials so they're pre-filled when the receiver signs. Ask for both: 'who's signing for this load?' then 'and their initials?'. Both fields required.",
+      "routing": "server_record",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "receiver_name": {
+            "type": "string",
+            "description": "Receiver's full name as spoken by the driver. Verbatim \u2014 do not abbreviate (e.g. 'John Smith', not 'J. Smith'). Title case is fine."
+          },
+          "initials": {
+            "type": "string",
+            "description": "Receiver's initials, typically 2-3 letters. Accept formats like 'J.S.', 'J S', or 'JS'. Do not put the full name here."
+          }
+        },
+        "required": [
+          "receiver_name",
+          "initials"
+        ]
+      }
+    },
+    {
+      "name": "complete_pre_trip",
+      "description": "Seal and submit the pre-trip inspection. Use ONLY when the driver explicitly says they are done ('pre-trip complete', 'all done', 'finished', 'ready to roll'). Do NOT call on your own initiative or to wrap up a quiet moment in conversation.",
+      "routing": "server_record",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "log_scale_weight_tare",
+      "description": "Log a tare (empty) scale weight. Use when the driver reads off the scale: scope='dairy' at producer pickup (S05), scope='plant' at plant scale-out (S27). Driver says e.g. 'scale weight is thirty-four thousand five hundred pounds, ticket A12345' or 'tare at the plant is 34500, ticket B7'. Convert spoken digits to an integer pounds value. ticket_number is the printed scale ticket id, verbatim.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "dairy",
+              "plant"
+            ],
+            "description": "Where the tare was weighed. 'dairy' = producer pickup scale (S05). 'plant' = plant scale-out (S27)."
+          },
+          "weight_lbs": {
+            "type": "integer",
+            "description": "Tare weight in pounds, integer. Convert spoken digits \u2014 'thirty-four thousand five hundred' \u2192 34500. Normal milk-tanker tare range is 28,000-38,000 lbs; outside 5k-100k the handler will ask the driver to re-read."
+          },
+          "ticket_number": {
+            "type": "string",
+            "description": "Scale ticket number, verbatim (alphanumeric, e.g. 'A12345')."
+          },
+          "photo_url": {
+            "type": "string",
+            "description": "Optional. URL of a captured photo of the printed ticket."
+          }
+        },
+        "required": [
+          "scope",
+          "weight_lbs",
+          "ticket_number"
+        ]
+      }
+    },
+    {
+      "name": "log_scale_weight_gross",
+      "description": "Record the heavyweight (loaded) reading from a scale ticket. Use at S14 (producer/dairy scale after loading at the farm) or S19 (plant scale-in, loaded tanker arriving). Capture scope, weight in pounds, and the scale ticket number. Read the digits back to the driver before confirming.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "dairy",
+              "plant"
+            ],
+            "description": "Where the gross weight was taken. dairy = producer scale at the farm after loading. plant = plant scale-in, loaded tanker."
+          },
+          "weight_lbs": {
+            "type": "integer",
+            "description": "Gross weight in pounds. Loaded tankers typically 70000-90000 lbs. Read digits back to the driver before confirming."
+          },
+          "ticket_number": {
+            "type": "string",
+            "description": "Scale ticket number from the printout. Capture verbatim digits and letters as the driver reads them."
+          },
+          "photo_url": {
+            "type": "string",
+            "description": "Optional photo URL of the scale ticket. Usually omitted - photo capture happens on the screen."
+          }
+        },
+        "required": [
+          "scope",
+          "weight_lbs",
+          "ticket_number"
+        ]
+      }
+    },
+    {
+      "name": "confirm_cip_hookup",
+      "description": "Driver confirms CIP hose+valve hookup before starting the wash pump. Use AFTER the plant unload pump stops on a CIP-required run, when the driver says 'hooked up', 'hose is on', 'cip is connected', 'ready for wash', or similar affirmative confirmation. If the driver says 'not yet', 'still hooking up', or any negative, call with ready=false so the screen stays put. Do NOT use this to start the CIP pump \u2014 that's pump_event(scope='cip', action='start') after this tool confirms hookup.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ready": {
+            "type": "boolean",
+            "description": "True when the driver confirms the CIP line is physically hooked up and ready to start the wash pump. False when the driver explicitly says they are not yet hooked up."
+          }
+        },
+        "required": [
+          "ready"
+        ]
+      }
+    },
+    {
+      "name": "read_load_info",
+      "description": "Reads the active run's destination plant name and whether a CIP wash is required, so the driver can confirm before accepting. Use when the driver asks 'where am I going', 'what's the next stop', 'does this load need a wash', or similar. Pure read \u2014 no side effects. The tool's return string is what you speak.",
+      "routing": "server_read",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "accept_delivery",
+      "description": "Driver accepts the delivery, locking the destination plant and starting the plant-side workflow. Use when the driver explicitly says 'accept delivery', 'accept the load', 'I'm ready to start delivery', 'yes' after read_load_info confirmed the plant. Triggers a backend status transition to at_plant. Do NOT call without an explicit driver confirmation.",
+      "routing": "helmian_approval",
+      "requires_approval": true,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "begin_post_trip",
+      "description": "Start the post-trip inspection at end of shift. Use when the driver says 'begin post trip', 'start post trip', 'do my post trip', 'end of shift inspection', or similar. Capture truck_number and trailer_number from the same utterance if provided. After this tool succeeds, log each spoken item via log_post_trip_item \u2014 do NOT acknowledge items as okay without that tool call.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "truck_number": {
+            "type": "string",
+            "description": "Truck number as digits only (e.g. '247'). Convert spoken digits. Optional \u2014 if not provided we fall back to the truck number captured at pre-trip."
+          },
+          "trailer_number": {
+            "type": "string",
+            "description": "Trailer number as 3-5 digits. Convert spoken digits. Optional."
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "log_post_trip_item",
+      "description": "Logger for one post-trip item the driver verbally checked at end of shift. Use ONLY after begin_post_trip has succeeded. ONE call per item \u2014 do not batch. Map driver wording to itemKeys: brakes, lights, tires, leaks, mirrors, seals (trailer seals), hoses (milk hoses). 'ok' = good at shift end. 'issue' = flagged problem (route layer defaults to DEFECT_MAJOR). 'needs_help' = driver asks for guidance. Never confirm without calling.",
+      "routing": "device",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "type": "string",
+            "description": "Post-trip itemKey. Map driver wording to closest (e.g. 'left blinker' \u2192 'lights', 'trailer seals' \u2192 'seals')."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "issue",
+              "needs_help"
+            ],
+            "description": "'ok' = good at end of shift. 'issue' = problem to log. 'needs_help' = driver asks for guidance."
+          },
+          "defect_note": {
+            "type": "string",
+            "description": "Required when status='issue'. Verbatim driver description."
+          }
+        },
+        "required": [
+          "item",
+          "status"
+        ]
+      }
+    },
+    {
+      "name": "complete_post_trip",
+      "description": "Seal and submit the post-trip inspection. Use ONLY when the driver explicitly says they are done ('post-trip complete', 'all done', 'shift's over', 'logging off'). Do NOT call on your own initiative.",
+      "routing": "server_record",
+      "requires_approval": false,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "sign_out_for_day",
+      "description": "Driver ends their work day and signs out of the app. Confirms shift is complete. Use ONLY when the driver explicitly says they are signing out, ending their day, going home, or wants to be logged off. Do NOT call to wrap up conversation. After this tool runs the driver will be returned to the sign-in screen and must re-authenticate.",
+      "routing": "helmian_approval",
+      "requires_approval": true,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "confirm_reroute",
+      "description": "Confirm or refuse a proposed plant reroute when the driver's destination plant has gone down. Use ONLY in response to Kora's reroute prompt (or an active reroute proposal on screen). 'accept' = true if the driver says yes / go / sure / OK / I'll take it. 'accept' = false if the driver says no / hold me / refuse / I'll wait. If the driver gives a reason ('too far', 'over hours', 'no wash compat'), capture it verbatim in 'reason'.",
+      "routing": "helmian_approval",
+      "requires_approval": true,
+      "source": "troy83352/gauge-sandbox lib/humeClient.ts DAIRYFORGE_TOOLS",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "accept": {
+            "type": "boolean",
+            "description": "true = driver accepts the proposed reroute. false = driver refuses; load stays held until dispatch resolves."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Optional free-text reason the driver gave (e.g. 'too far', 'over hours'). Up to ~200 chars."
+          }
+        },
+        "required": [
+          "accept"
+        ]
+      }
+    }
+  ]
+}
