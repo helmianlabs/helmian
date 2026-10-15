@@ -252,12 +252,29 @@ function remoteNonce() {
   const id = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
   return `${id}-${Date.now()}`;
 }
+// After Clerk unify, Herald accepts the same witty-sawfly-97 session. Load Clerk via
+// /api/herald-config and send its session token as Bearer. Falls back silently.
+let heraldClerk = null;
+async function heraldToken() {
+  try {
+    if (!heraldClerk) {
+      const cfg = await (await fetch('/api/herald-config', { credentials: 'same-origin' })).json();
+      const pk = cfg?.accountIdentity?.configured ? cfg.accountIdentity.publishableKey : null;
+      if (!pk) return null;
+      const { loadClerkBrowser } = await import('/herald/account-runtime.js');
+      heraldClerk = await loadClerkBrowser(pk);
+    }
+    return (await heraldClerk?.session?.getToken?.()) ?? null;
+  } catch { return null; }
+}
 async function remoteApi(path, init = {}) {
+  const token = await heraldToken();
   const res = await fetch(path, {
     credentials: 'same-origin',
     ...init,
     headers: {
       'x-helmian-nonce': remoteNonce(),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(init.body ? { 'content-type': 'application/json' } : {}),
       ...init.headers,
     },
