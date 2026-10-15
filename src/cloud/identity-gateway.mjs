@@ -141,6 +141,9 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
   const sessions = new Map();
   const pending = new Map();
   const sealed = sealer(env.HELMION_ADMIN_SESSION_SECRET);
+  // Must match the scopes enabled on the Clerk OAuth app, or Clerk returns invalid_scope.
+  const scopes = String(env.HELMION_ADMIN_SCOPES ?? '').trim().split(/\s+/).filter((x) => /^[a-z_:.]{1,40}$/.test(x)).join(' ') || 'openid profile email';
+  if (!scopes.split(' ').includes('openid')) throw new Error('HELMION_ADMIN_SCOPES must include openid');
   let metadataPromise = null;
   const metadata = () => metadataPromise ?? (metadataPromise = discover(issuer, fetchImpl));
   const prune = () => {
@@ -162,7 +165,7 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
-    url.searchParams.set('scope', 'openid profile email');
+    url.searchParams.set('scope', scopes);
     url.searchParams.set('state', loginState);
     url.searchParams.set('code_challenge', challenge);
     url.searchParams.set('code_challenge_method', 'S256');
