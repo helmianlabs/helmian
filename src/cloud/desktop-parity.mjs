@@ -9,10 +9,10 @@ const PARITY = Object.freeze([
     id: 'navigation',
     desktop: 'Pilot pages: Overview, Settings, Workspace, Create, Console, Review & History, Evidence, Approvals, Connect, Agents, Guard, Release roadmap',
     desktopEvidence: 'desktop/Helmion.Desktop/MainWindow.xaml:2098-2198',
-    cloud: 'Workspace nav: Chat, Cora, Prepare, Artifact Studio, Approvals, Connect, Agents, Governance, Audit, Readiness, Capabilities, People',
+    cloud: 'Workspace nav: Overview, Chat, Cora, Prepare, Artifact Studio, Approvals, Connect, Agents, Governance, Audit, Readiness, Capabilities, People, Settings, Release',
     cloudEvidence: 'web/cloud-admin/index.html:90-99',
     status: 'partial',
-    missing: 'Cloud has no hosted Overview, Settings, Workspace-folder, Console, Evidence, or Release pages with desktop behavior.',
+    missing: 'Overview, Settings and Release are hosted (read-only, Neon + GitHub Releases); Workspace-folder and Evidence pages are still desktop-only.',
   },
   {
     id: 'workspace',
