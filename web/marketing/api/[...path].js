@@ -16,7 +16,7 @@ import { slackHandoffHandlers } from './_team-oauth-slack.js';
 import { discordHandoffHandlers } from './_team-oauth-discord.js';
 import { githubHandoffHandlers } from './_team-oauth-github.js';
 
-const routes = {
+export const routes = {
   'herald-config': heraldConfig,
   'latest-release': latestRelease,
   'herald-control': heraldControl,

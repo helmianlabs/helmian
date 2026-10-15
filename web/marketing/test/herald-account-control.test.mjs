@@ -12,10 +12,11 @@ import {
 import {
   createAccountIdentityResolver, requireVerifiedAccount,
 } from '../api/_herald-identity.js';
-import { createHeraldEnrollmentHandler } from '../api/herald-enrollment.js';
-import { createHeraldDesktopHandler } from '../api/herald-desktop.js';
-import { createHeraldDesktopsHandler } from '../api/herald-desktops.js';
-import { createHeraldControlHandler } from '../api/herald-control.js';
+import { isAblyConfigured } from '../api/_herald-realtime.js';
+import { createHeraldEnrollmentHandler } from '../server/herald-enrollment.js';
+import { createHeraldDesktopHandler } from '../server/herald-desktop.js';
+import { createHeraldDesktopsHandler } from '../server/herald-desktops.js';
+import { createHeraldControlHandler } from '../server/herald-control.js';
 
 const ACCOUNT = Object.freeze({
   state: 'verified', provider: 'clerk', subject: 'user_troy123', displayName: null,
@@ -241,7 +242,7 @@ test('account list is empty until real presence exists and selection creates no 
     action: 'select', desktopId: DESKTOP_ID, sessionId: 'session-1',
   }, { 'x-helmian-nonce': HTTP_NONCE }), selected);
   assert.equal(selected.statusCode, 201);
-  assert.equal(selected.body.transport, 'unavailable');
+  assert.equal(selected.body.transport, isAblyConfigured() ? 'ably-scoped-realtime' : 'unavailable');
   assert.doesNotMatch(JSON.stringify(selected.body), new RegExp(CONTROL_TOKEN));
   assert.match(selected.headers['set-cookie'], /^helmian_herald_control=/);
   assert.equal(calls[1].value.account.subject, 'user_troy123');
@@ -282,7 +283,7 @@ test('selected session is authorized by both Clerk account and HttpOnly control 
   const response = responseFixture();
   await handler(jsonRequest(null, { cookie: cookie.split(';')[0] }, 'GET'), response);
   assert.equal(response.statusCode, 200);
-  assert.equal(response.body.session.transport, 'unavailable');
+  assert.equal(response.body.session.transport, isAblyConfigured() ? 'ably-scoped-realtime' : 'unavailable');
   assert.equal(authorization.account.subject, 'user_troy123');
   assert.equal(authorization.token, CONTROL_TOKEN);
 });
@@ -317,15 +318,17 @@ test('account-control migration binds every Desktop/session/grant to durable own
 });
 
 test('versioned Remote Control routes are aliases of one canonical implementation', async () => {
-  const aliases = await Promise.all([
-    import('../api/remote/v1/enrollment.js'),
-    import('../api/remote/v1/desktop.js'),
-    import('../api/remote/v1/desktops.js'),
-    import('../api/remote/v1/control.js'),
-    import('../api/remote/v1/control-token.js'),
-    import('../api/remote/v1/desktop-token.js'),
-  ]);
-  assert.ok(aliases.every((value) => typeof value.default === 'function'));
+  const { routes } = await import('../api/[...path].js');
+  const canonical = {
+    enrollment: '../server/herald-enrollment.js', desktop: '../server/herald-desktop.js',
+    desktops: '../server/herald-desktops.js', control: '../server/herald-control.js',
+    'control-token': '../server/herald-realtime-token.js', 'desktop-token': '../server/herald-desktop-realtime-token.js',
+  };
+  for (const [name, path] of Object.entries(canonical)) {
+    const mod = await import(path);
+    assert.equal(typeof routes[`remote/v1/${name}`], 'function');
+    assert.equal(routes[`remote/v1/${name}`], mod.default, `remote/v1/${name} must alias ${path}`);
+  }
   const contract = await readFile(new URL('../../../docs/herald/REMOTE_CONTROL_V1.md', import.meta.url), 'utf8');
   for (const route of [
     '/api/remote/v1/enrollment', '/api/remote/v1/desktop',
