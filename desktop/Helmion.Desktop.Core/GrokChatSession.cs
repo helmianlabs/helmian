@@ -32,6 +32,19 @@ public sealed class GrokChatSession : IDisposable
     public const string SubscriptionClientHeader = "X-XAI-Token-Auth";
     public const string SubscriptionClientHeaderValue = "xai-grok-cli";
 
+    /// <summary>
+    /// SuperGrok sign-ins are not accepted by the developer API (api.x.ai answers 402/403 for a
+    /// subscription bearer). The official Grok CLI sends them to its chat proxy instead
+    /// (listed as the "inference proxy" host on docs.x.ai/build/enterprise). UNDOCUMENTED as a
+    /// public API: the path and headers follow public third-party reports, not xAI docs.
+    /// </summary>
+    public const string SubscriptionChatCompletionsEndpoint = "https://cli-chat-proxy.grok.com/v1/chat/completions";
+    public const string SubscriptionClientIdentifierHeader = "x-grok-client-identifier";
+    public const string SubscriptionClientIdentifierValue = "grok-shell";
+    public const string SubscriptionClientVersionHeader = "x-grok-client-version";
+    /// <summary>The proxy answers 426 without a client version; bump if it starts rejecting this one.</summary>
+    public const string SubscriptionClientVersionValue = "1.0.46";
+
     private readonly HttpClient _http;
     private readonly List<ChatMessage> _history = [];
     private string _apiKey;
@@ -69,10 +82,41 @@ public sealed class GrokChatSession : IDisposable
                 : new GrokCredential(GrokAuthMode.ApiKey, _apiKey, "Using API key"))
             : _superGrok.ResolveAsync(_apiKey, cancellationToken);
 
-    public async IAsyncEnumerable<string> SendAsync(
+    /// <summary>
+    /// System prompt for a provider-owned read-only turn. No tool protocol is offered, and
+    /// the reply is only displayed, never parsed for tool calls.
+    /// </summary>
+    public const string ReadOnlyTurnSystemPrompt =
+        "You are Grok, answering a read-only request relayed from the Helmian desktop app or "
+        + "the user's paired phone. This turn has no tools: you cannot run commands, read or "
+        + "write files, or change anything on the user's computer. Answer in plain text. If the "
+        + "request needs changes, explain the plan and say that the session must be switched "
+        + "to a mode that allows edits.";
+
+    /// <summary>True when the most recent send ended in an auth, connection, or API error.</summary>
+    public bool LastTurnFailed { get; private set; }
+
+    public IAsyncEnumerable<string> SendAsync(
         string userText,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        SendCoreAsync(userText, readOnlyTurn: false, cancellationToken);
+
+    /// <summary>
+    /// One read-only turn: the read-only system prompt plus this prompt only. It neither
+    /// reads nor writes the chat history, and the request carries no tools. Credentials
+    /// (including SuperGrok token refresh) resolve exactly as for <see cref="SendAsync"/>.
+    /// </summary>
+    public IAsyncEnumerable<string> SendReadOnlyTurnAsync(
+        string prompt,
+        CancellationToken cancellationToken = default) =>
+        SendCoreAsync(prompt, readOnlyTurn: true, cancellationToken);
+
+    private async IAsyncEnumerable<string> SendCoreAsync(
+        string userText,
+        bool readOnlyTurn,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        LastTurnFailed = false;
         GrokCredential credential;
         string? authError = null;
         try
@@ -87,6 +131,7 @@ public sealed class GrokChatSession : IDisposable
 
         if (authError != null)
         {
+            LastTurnFailed = true;
             yield return authError;
             yield break;
         }
@@ -95,21 +140,33 @@ public sealed class GrokChatSession : IDisposable
 
         if (!credential.CanSend)
         {
+            LastTurnFailed = true;
             yield return $"[{credential.StatusLabel}]";
             yield break;
         }
 
-        _history.Add(new ChatMessage("user", userText));
-
-        var messages = new List<ChatMessage>
+        List<ChatMessage> messages;
+        if (readOnlyTurn)
         {
-            new("system", PilotToolPrompt.ForProvider("Grok (xAI)"))
-        };
-        messages.AddRange(_history);
+            messages =
+            [
+                new("system", ReadOnlyTurnSystemPrompt),
+                new("user", userText)
+            ];
+        }
+        else
+        {
+            _history.Add(new ChatMessage("user", userText));
+            messages = [new("system", PilotToolPrompt.ForProvider("Grok (xAI)"))];
+            messages.AddRange(_history);
+        }
 
         var requestBody = new ChatRequest(DefaultModelId, messages, true);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, ChatCompletionsEndpoint)
+        var endpoint = credential.Mode == GrokAuthMode.SuperGrok
+            ? SubscriptionChatCompletionsEndpoint
+            : ChatCompletionsEndpoint;
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = JsonContent.Create(requestBody, options: JsonOptions)
         };
@@ -119,6 +176,12 @@ public sealed class GrokChatSession : IDisposable
             request.Headers.TryAddWithoutValidation(
                 SubscriptionClientHeader,
                 SubscriptionClientHeaderValue);
+            request.Headers.TryAddWithoutValidation(
+                SubscriptionClientIdentifierHeader,
+                SubscriptionClientIdentifierValue);
+            request.Headers.TryAddWithoutValidation(
+                SubscriptionClientVersionHeader,
+                SubscriptionClientVersionValue);
         }
 
         HttpResponseMessage response;
@@ -138,6 +201,7 @@ public sealed class GrokChatSession : IDisposable
 
         if (connectionError != null)
         {
+            LastTurnFailed = true;
             yield return connectionError;
             yield break;
         }
@@ -157,6 +221,7 @@ public sealed class GrokChatSession : IDisposable
                     + "Settings, or paste an xAI API key."
                 : "";
 
+            LastTurnFailed = true;
             yield return $"[xAI Grok API error {(int)response.StatusCode} · {credential.StatusLabel}: {detail}{hint}]";
             yield break;
         }
@@ -205,7 +270,7 @@ public sealed class GrokChatSession : IDisposable
             }
         }
 
-        if (assistantText.Length > 0)
+        if (assistantText.Length > 0 && !readOnlyTurn)
         {
             _history.Add(new ChatMessage("assistant", assistantText.ToString()));
         }

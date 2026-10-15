@@ -179,8 +179,24 @@ public static class ProviderCliChatSession
         psi.ArgumentList.Add("--disable-web-search");
 
         var result = await RunResultAsync(psi, "Grok CLI", cancellationToken);
-        yield return result;
+        yield return result.IsError
+            ? result with { Text = FriendlyGrokCliError(result.Text) }
+            : result;
     }
+
+    public const string GrokSignInNeededMessage =
+        "Grok isn't signed in. Click \"Sign in with SuperGrok\" on the Grok card in "
+        + "Integrations (or \"Login with SuperGrok\" in Settings), then try again.";
+
+    /// <summary>
+    /// The Grok CLI's "not signed in. Run grok login" is meaningless to someone who signs in
+    /// through Helmian; point them at Helmian's own sign-in instead. Other errors pass through.
+    /// </summary>
+    public static string FriendlyGrokCliError(string message) =>
+        message.Contains("not signed in", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("grok login", StringComparison.OrdinalIgnoreCase)
+            ? GrokSignInNeededMessage
+            : message;
 
     private static async Task<ProviderCliChatResult> RunResultAsync(
         ProcessStartInfo psi,

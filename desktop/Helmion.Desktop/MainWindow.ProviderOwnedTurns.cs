@@ -21,7 +21,8 @@ public partial class MainWindow
         AgentSession? session,
         CancellationToken cancellationToken)
     {
-        var decision = ProviderOwnedTurnRouting.Decide(provider, permission);
+        var decision = ProviderOwnedTurnRouting.Decide(
+            provider, permission, grokSubscriptionSignedIn: _superGrok?.IsSignedIn == true);
         if (decision.Kind == ProviderOwnedTurnRouting.Kind.AgentBridge) return false;
 
         if (hasImages)
@@ -51,6 +52,9 @@ public partial class MainWindow
             case ProviderOwnedTurnRouting.Kind.GeminiCli:
                 await foreach (var item in ProviderCliChatSession.SendToGeminiAsync(prompt, cancellationToken))
                     result = item;
+                break;
+            case ProviderOwnedTurnRouting.Kind.GrokSubscription:
+                result = await RunGrokSubscriptionReadOnlyTurnAsync(prompt, cancellationToken);
                 break;
             case ProviderOwnedTurnRouting.Kind.GrokCli:
                 await foreach (var item in ProviderCliChatSession.SendToGrokAsync(prompt, cancellationToken))
@@ -86,6 +90,25 @@ public partial class MainWindow
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Read-only Grok turn on the SuperGrok sign-in held in Helmion's DPAPI store. A fresh
+    /// one-shot session: no history, no tools, and the reply is only displayed. Disposing it
+    /// releases its HttpClient only; the shared credential provider stays alive.
+    /// </summary>
+    private async Task<ProviderCliChatResult> RunGrokSubscriptionReadOnlyTurnAsync(
+        string prompt,
+        CancellationToken cancellationToken)
+    {
+        using var grok = new GrokChatSession("", _superGrok);
+        var text = new StringBuilder();
+        await foreach (var chunk in grok.SendReadOnlyTurnAsync(prompt, cancellationToken))
+        {
+            text.Append(chunk);
+        }
+        RefreshSuperGrokStatus();
+        return new ProviderCliChatResult(text.ToString(), IsError: grok.LastTurnFailed);
     }
 
     private void ReportProviderOwnedTurn(
