@@ -55,6 +55,9 @@
           <button class="nav-item" type="button" data-view="integrations">Integrations</button>
           <button class="nav-item" type="button" data-view="agents">Agents</button>
           <button class="nav-item" type="button" data-view="create">Create</button>
+          <button class="nav-item" type="button" data-view="browser">Browser</button>
+          <button class="nav-item" type="button" data-view="canvas">Canvas</button>
+          <button class="nav-item" type="button" data-view="preview">Preview</button>
           <button class="nav-item" type="button" data-view="release">Release roadmap</button>
         </nav>
       </details>
@@ -277,6 +280,21 @@
       </details>
     </section>
 
+    <section id="view-browser" class="view" data-view-panel="browser" hidden>
+      <h2>Browser</h2>
+      <div class="empty desktop-only"><p class="t">Desktop only</p><p class="sm">Browser runs in the Helmian desktop app, where you can browse pages with Guard watching.</p>
+        <div class="row-btns left" style="justify-content:center;margin-top:12px"><a class="btn primary sm" href="/get-started/">Get the desktop app</a></div></div>
+    </section>
+    <section id="view-canvas" class="view" data-view-panel="canvas" hidden>
+      <h2>Canvas</h2>
+      <div class="empty desktop-only"><p class="t">Desktop only</p><p class="sm">Canvas runs in the Helmian desktop app, where you can sketch and arrange project visuals.</p>
+        <div class="row-btns left" style="justify-content:center;margin-top:12px"><a class="btn primary sm" href="/get-started/">Get the desktop app</a></div></div>
+    </section>
+    <section id="view-preview" class="view" data-view-panel="preview" hidden>
+      <h2>Preview</h2>
+      <div class="empty desktop-only"><p class="t">Desktop only</p><p class="sm">Preview runs in the Helmian desktop app, where you can preview your project as it runs.</p>
+        <div class="row-btns left" style="justify-content:center;margin-top:12px"><a class="btn primary sm" href="/get-started/">Get the desktop app</a></div></div>
+    </section>
     <section id="view-release" class="view" data-view-panel="release" hidden>
       <h2>Release roadmap</h2>
       <div class="table-wrap"><table class="table"><thead><tr><th>Version</th><th>Channel</th><th>Status</th><th>Date</th></tr></thead><tbody id="releases"></tbody></table></div>

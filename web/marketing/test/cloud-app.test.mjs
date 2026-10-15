@@ -146,3 +146,9 @@ test('devices empty-state points at Clerk unify and Connect phone', () => {
   assert.match(js, /Desktop list needs Clerk unify/);
   assert.doesNotMatch(js, /Remote Control sign-in is separate until Clerk is unified/);
 });
+
+test('desktop-only stubs and Guard Feed phone polish', () => {
+  for (const v of ['browser', 'canvas', 'preview']) { assert.match(html, new RegExp(`data-view-panel="${v}"`)); assert.ok(ADVANCED_VIEWS.includes(v)); }
+  assert.equal((html.match(/Desktop only/g) || []).length, 3);
+  assert.match(css, /\.guard-head \{ position:sticky/);
+});
