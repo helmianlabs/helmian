@@ -398,6 +398,8 @@ syncVoiceUi();
 $('pair').disabled = !channel;
 addEventListener('offline', () => transport.setNetworkAvailable(false));
 addEventListener('online', () => transport.setNetworkAvailable(true));
+// Phones freeze timers in the background; resync the moment the app is visible again.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && channel) void transport.pollOnce().catch(() => {}); });
 if ('serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('/herald/sw.js', { scope: '/herald/' }).catch(() => {}));
 }

@@ -27,7 +27,8 @@ import { MAX_BODY_CHARS } from './protocol.mjs';
 export const COLD_INTERVAL_MS = 30_000;
 export const HOT_INTERVAL_MS = 3_000;
 export const HOT_WINDOW_MS = 120_000;
-export const ERROR_BACKOFF_CAP_MS = 120_000;
+export const ERROR_FIRST_RETRY_MS = 2_000;
+export const ERROR_BACKOFF_CAP_MS = 30_000;
 export const MAX_OUTBOX = 200;
 
 export function createRelayPoller({
@@ -149,7 +150,8 @@ export function createRelayPoller({
     // The cursor is NOT advanced on a failure, which is what makes a retry
     // free: worst case the same rows come back and are shown once, because the
     // cursor only moves after they were handed over.
-    errorDelay = errorDelay === 0 ? COLD_INTERVAL_MS : Math.min(errorDelay * 2, ERROR_BACKOFF_CAP_MS);
+    // Reconnect fast: a blip should heal in seconds, not after a 30s cold wait.
+    errorDelay = errorDelay === 0 ? ERROR_FIRST_RETRY_MS : Math.min(errorDelay * 2, ERROR_BACKOFF_CAP_MS);
     onStatus({ state, cursor, presence, polls, error: reason, retryInMs: errorDelay });
     schedule(errorDelay);
   }
