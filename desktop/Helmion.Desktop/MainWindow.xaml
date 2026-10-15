@@ -2174,6 +2174,12 @@
                       Visibility="Collapsed"
                       Style="{StaticResource PilotNavButtonStyle}"
                       Click="Navigation_Click" />
+              <Button x:Name="TeamChatNav"
+                      Tag="TeamChat"
+                      Content="💬   Team chat"
+                      Style="{StaticResource PilotNavButtonStyle}"
+                      ToolTip="Team chat on helmian.cloud (Envoy)"
+                      Click="Navigation_Click" />
               <Button x:Name="IntegrationsNav"
                       Tag="Integrations"
                       Content="⌘   Connect"
@@ -4700,6 +4706,11 @@
             <local:ProjectApprovalsPanel x:Name="ProjectApprovalsPanel" />
           </StackPanel>
         </ScrollViewer>
+
+        <!-- Team chat (Envoy on helmian.cloud) -->
+        <Grid x:Name="TeamChatPage" Visibility="Collapsed" Margin="30,26,30,24">
+          <local:TeamChatPanel x:Name="TeamChatPanel" />
+        </Grid>
 
         <!-- Integrations — modern simple form (connect + key enroll only) -->
         <ScrollViewer x:Name="IntegrationsPage"
