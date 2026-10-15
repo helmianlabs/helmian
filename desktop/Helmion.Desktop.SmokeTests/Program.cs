@@ -1102,6 +1102,7 @@ ModelProvenanceLabelChecks.Run();
 TopBarChecks.Run();
 
 SuperGrokOAuthChecks.Run();
+GrokCliLoginChecks.Run();
 
 TestSuiteRunnerChecks.Run();
 McpSecurityRunnerChecks.Run();
