@@ -14,7 +14,11 @@ public sealed record ProviderProfileSummary(
     string ActivationPlan,
     string? LocalCapabilityId,
     bool AcceptsSecrets,
-    bool IsActivated);
+    bool IsActivated)
+{
+    /// <summary>Optional card button label (for example "Sign in with SuperGrok"); null hides the button.</summary>
+    public string? ActionLabel { get; init; }
+}
 
 public static class ProviderProfileCatalog
 {

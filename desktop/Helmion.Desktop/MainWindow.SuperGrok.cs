@@ -64,8 +64,61 @@ public partial class MainWindow
         _superGrok = null;
     }
 
-    /// <summary>Repaint the status line from the stored session, without any network call.</summary>
+    /// <summary>Repaint the status line and the Integrations Grok card, without any network call.</summary>
     private void RefreshSuperGrokStatus()
+    {
+        RefreshSuperGrokStatusLine();
+        if (ProviderRegistryList is not null) ShowProviderProfiles();
+    }
+
+    /// <summary>
+    /// Bind the provider registry, overlaying the live SuperGrok state onto the Grok card
+    /// (its catalog row is static) and giving that card a Sign in / Sign out button.
+    /// </summary>
+    private void ShowProviderProfiles()
+    {
+        var signedIn = _superGrok?.IsSignedIn == true;
+        _providerProfiles = _providerProfiles
+            .Select(profile =>
+            {
+                if (profile.Id != "grok") return profile;
+                if (!signedIn)
+                {
+                    return profile with
+                    {
+                        SetupState = "Not configured",
+                        ActionLabel = _superGrok is null ? null : "Sign in with SuperGrok"
+                    };
+                }
+                var who = string.IsNullOrWhiteSpace(_superGrok!.SignedInEmail)
+                    ? "" : $" as {_superGrok.SignedInEmail}";
+                return profile with
+                {
+                    SetupState = "Signed in (SuperGrok)",
+                    Availability = $"Using SuperGrok subscription{who}",
+                    ActionLabel = "Sign out"
+                };
+            })
+            .ToArray();
+        ProviderRegistryList.ItemsSource = null;
+        ProviderRegistryList.ItemsSource = _providerProfiles;
+    }
+
+    private void ProviderCardAction_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag as string != "grok") return;
+        if (_superGrok?.IsSignedIn == true)
+        {
+            SuperGrokSignOut_Click(sender, e);
+            return;
+        }
+        // The device code and status line live in Settings; show them, then start sign-in.
+        NavigateTo("Settings");
+        SuperGrokLoginButton?.BringIntoView();
+        SuperGrokLogin_Click(sender, e);
+    }
+
+    private void RefreshSuperGrokStatusLine()
     {
         if (_superGrok is null)
         {
