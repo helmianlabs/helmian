@@ -1,0 +1,25 @@
+#cloud-config
+# Paste into Hetzner "Cloud config" when creating the server. SSH key is added separately in the console.
+package_update: true
+package_upgrade: true
+packages: [docker.io, docker-compose-v2, git, ufw, unattended-upgrades, fail2ban]
+ssh_pwauth: false
+disable_root: false
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-helmian.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+runcmd:
+  - ufw default deny incoming
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - systemctl enable --now docker
+  - systemctl restart ssh
+  - dpkg-reconfigure -f noninteractive unattended-upgrades
+  - git clone https://github.com/helmianlabs/helmian.git /opt/helmian
+  - cp /opt/helmian/deploy/hetzner/.env.example /opt/helmian/deploy/hetzner/.env
+  - chmod 600 /opt/helmian/deploy/hetzner/.env
