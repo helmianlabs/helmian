@@ -153,3 +153,9 @@ export function homeModel({ sessions = [], approvals = [], usage = null, overvie
     pending: pending.slice(0, 5).map((a) => ({ title: a.summary || humanAction(a.requestKind || 'approval request'), canDecide: !!a.canDecide, item: a })), pendingCount: pending.length,
     stats: [['Projects', c.activeProjects ?? 0], ['Members', c.members ?? 0], ['Sessions', sessions.length]] };
 }
+
+// sms: link that opens the phone's Messages app with the invite prefilled.
+export function smsInviteHref(url) {
+  const body = `Join me on Helmian. Tap to create your account: ${String(url ?? '')}`;
+  return `sms:?&body=${encodeURIComponent(body)}`;
+}
