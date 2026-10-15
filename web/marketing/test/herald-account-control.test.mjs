@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+
+// Hermetic: a real ABLY_API_KEY in the shell must not flip transport to live.
+delete process.env.ABLY_API_KEY;
 import {
   CLERK_CONFIGURATION_STATES, createClerkAccountVerifier, readClerkConfiguration,
 } from '../api/_herald-clerk.js';
@@ -12,10 +15,10 @@ import {
 import {
   createAccountIdentityResolver, requireVerifiedAccount,
 } from '../api/_herald-identity.js';
-import { createHeraldEnrollmentHandler } from '../api/herald-enrollment.js';
-import { createHeraldDesktopHandler } from '../api/herald-desktop.js';
-import { createHeraldDesktopsHandler } from '../api/herald-desktops.js';
-import { createHeraldControlHandler } from '../api/herald-control.js';
+import { createHeraldEnrollmentHandler } from '../server/herald-enrollment.js';
+import { createHeraldDesktopHandler } from '../server/herald-desktop.js';
+import { createHeraldDesktopsHandler } from '../server/herald-desktops.js';
+import { createHeraldControlHandler } from '../server/herald-control.js';
 
 const ACCOUNT = Object.freeze({
   state: 'verified', provider: 'clerk', subject: 'user_troy123', displayName: null,
@@ -317,15 +320,21 @@ test('account-control migration binds every Desktop/session/grant to durable own
 });
 
 test('versioned Remote Control routes are aliases of one canonical implementation', async () => {
-  const aliases = await Promise.all([
-    import('../api/remote/v1/enrollment.js'),
-    import('../api/remote/v1/desktop.js'),
-    import('../api/remote/v1/desktops.js'),
-    import('../api/remote/v1/control.js'),
-    import('../api/remote/v1/control-token.js'),
-    import('../api/remote/v1/desktop-token.js'),
-  ]);
-  assert.ok(aliases.every((value) => typeof value.default === 'function'));
+  // Remote v1 routes are served by the single catch-all function (api/[...path].js).
+  const { routes } = await import('../api/[...path].js');
+  const canonical = {
+    'remote/v1/enrollment': '../server/herald-enrollment.js',
+    'remote/v1/desktop': '../server/herald-desktop.js',
+    'remote/v1/desktops': '../server/herald-desktops.js',
+    'remote/v1/control': '../server/herald-control.js',
+    'remote/v1/control-token': '../server/herald-realtime-token.js',
+    'remote/v1/desktop-token': '../server/herald-desktop-realtime-token.js',
+  };
+  for (const [route, modulePath] of Object.entries(canonical)) {
+    const implementation = (await import(modulePath)).default;
+    assert.equal(typeof routes[route], 'function', route);
+    assert.equal(routes[route], implementation, route);
+  }
   const contract = await readFile(new URL('../../../docs/herald/REMOTE_CONTROL_V1.md', import.meta.url), 'utf8');
   for (const route of [
     '/api/remote/v1/enrollment', '/api/remote/v1/desktop',
