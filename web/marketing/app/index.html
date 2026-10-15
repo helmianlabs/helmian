@@ -36,6 +36,7 @@
       <div class="side-head"><span>SESSIONS</span></div>
       <ul id="sessions" class="sessions"></ul>
       <nav id="nav" class="submenu" aria-label="Session menu">
+        <button class="nav-item" type="button" data-view="home">Home</button>
         <button class="nav-item" type="button" data-view="overview">Overview</button>
         <button class="nav-item" type="button" data-view="settings">Settings</button>
         <button class="nav-item" type="button" data-view="workspace">Workspace</button>
@@ -84,6 +85,15 @@
         <p id="mcp-result" class="muted sm">No audit yet. Run one from the desktop app to see results here.</p>
       </div>
       <div class="console-head"><span class="eyebrow" id="session-label">CONSOLE</span><select id="channel" aria-label="Channel" hidden></select></div>
+      <div id="task-progress" class="task-progress" hidden>
+        <div class="tp-head"><span class="eyebrow">TASK PROGRESS</span><span id="tp-summary" class="muted sm"></span><button id="tp-edit" class="link-btn" type="button">Edit plan</button></div>
+        <div class="bar"><span id="tp-bar"></span></div>
+        <ol id="tp-list" class="checklist"></ol>
+        <form id="tp-form" class="tp-form" hidden>
+          <textarea id="tp-text" rows="4" placeholder="One step per line" aria-label="Task steps, one per line"></textarea>
+          <div class="row-btns"><button id="tp-cancel" class="btn ghost sm" type="button">Cancel</button><button class="btn primary sm" type="submit">Save plan</button></div>
+        </form>
+      </div>
       <div id="log" class="log" aria-live="polite" role="log"></div>
       <form id="composer" class="composer">
         <textarea id="prompt" rows="1" placeholder="Prompt..." aria-label="Prompt"></textarea>
@@ -111,6 +121,13 @@
         </form>
       </div>
       <div id="toast" class="toast" role="status" hidden></div>
+    </section>
+
+    <section id="view-home" class="view home" data-view-panel="home" hidden>
+      <div class="panel"><div class="eyebrow">USAGE &amp; LIMITS</div><div id="home-usage"></div></div>
+      <div class="panel"><div class="h-row"><span class="eyebrow">WHAT'S RUNNING</span><a href="#console" class="link-btn">Console →</a></div><div id="home-running"></div></div>
+      <div class="panel"><div class="h-row"><span class="eyebrow">WAITING FOR YOU</span><a href="#approvals" class="link-btn">All approvals →</a></div><div id="home-approvals"></div></div>
+      <div id="home-stats" class="cards3"></div>
     </section>
 
     <section id="view-overview" class="view" data-view-panel="overview" hidden>
@@ -177,6 +194,7 @@
       <button id="guard-close" class="icon-btn sm only-mobile" type="button" aria-label="Close Guard Feed">×</button>
     </div>
     <div class="agent"><span class="dot live"></span><span id="active-agent">No active agent</span></div>
+    <div id="feed-progress" class="feed-progress" hidden></div>
     <div id="feed" class="feed"></div>
     <button id="run-suite" class="btn ghost full" type="button">Run tool suite</button>
     <details class="panel feed-settings"><summary class="eyebrow">GUARD FEED SETTINGS</summary>

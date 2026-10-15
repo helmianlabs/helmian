@@ -1,9 +1,9 @@
-import { VIEW_TITLES, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS } from './app-model.mjs';
+import { VIEW_TITLES, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
 const store = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(`helmian.app.${k}`)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(`helmian.app.${k}`, JSON.stringify(v)); } catch {} } };
-const state = { serverSessions: false, actor: null, projects: [], channelId: null, sessions: store.get('sessions', []), activeSession: store.get('activeSession', null), events: [], approvals: [], ack: new Set(store.get('ack', [])), cleared: new Set(store.get('cleared', [])), pendingProvider: null };
+const state = { serverSessions: false, actor: null, projects: [], channelId: null, sessions: store.get('sessions', []), activeSession: store.get('activeSession', null), events: [], approvals: [], ack: new Set(store.get('ack', [])), cleared: new Set(store.get('cleared', [])), pendingProvider: null, steps: null, usage: null, overview: null };
 const narrow = () => window.matchMedia('(max-width: 900px)').matches;
 
 async function api(path, init = {}) {
@@ -49,7 +49,7 @@ function show(view) {
   loaders[view]?.().catch(() => {});
 }
 for (const b of document.querySelectorAll('.nav-item')) b.onclick = () => { if (location.hash !== `#${b.dataset.view}`) location.hash = b.dataset.view; else show(b.dataset.view); };
-window.addEventListener('hashchange', () => show(viewFromHash(location.hash)));
+window.addEventListener('hashchange', () => show(viewFromHash(location.hash, { phone: narrow() })));
 
 // ---- projects (sidebar + workspace) ----
 async function loadProjects() {
@@ -80,7 +80,7 @@ $('#new-project-form').onsubmit = async (e) => {
 function renderSessions() {
   const ul = $('#sessions');
   if (!state.sessions.length) { ul.replaceChildren(el('li', 'faint sm', 'No sessions yet')); ul.firstChild.style.cursor = 'default'; }
-  else ul.replaceChildren(...state.sessions.map((s) => { const li = el('li', s.id === state.activeSession ? 'active' : null); li.append(el('span', 'dot'), el('span', null, s.name), el('span', 'prov', s.provider)); if (state.serverSessions) { const x = el('button', 'x', '×'); x.type = 'button'; x.title = 'Close session'; x.onclick = async (ev) => { ev.stopPropagation(); try { await post('/api/admin/app/sessions/archive', { id: s.id }); } catch {} loadSessions(); }; li.append(x); } li.onclick = () => { state.activeSession = s.id; store.set('activeSession', s.id); renderSessions(); location.hash = 'console'; }; return li; }));
+  else ul.replaceChildren(...state.sessions.map((s) => { const li = el('li', s.id === state.activeSession ? 'active' : null); li.append(el('span', 'dot'), el('span', null, s.name), el('span', 'prov', s.provider)); if (state.serverSessions) { const x = el('button', 'x', '×'); x.type = 'button'; x.title = 'Close session'; x.onclick = async (ev) => { ev.stopPropagation(); try { await post('/api/admin/app/sessions/archive', { id: s.id }); } catch {} loadSessions(); }; li.append(x); } li.onclick = () => { state.activeSession = s.id; store.set('activeSession', s.id); state.steps = null; renderSessions(); loadSteps(); location.hash = 'console'; }; return li; }));
   const active = state.sessions.find((s) => s.id === state.activeSession);
   $('#session-label').textContent = active ? `CONSOLE · ${active.name.toUpperCase()} · ${active.provider.toUpperCase()}` : 'CONSOLE';
   $('#active-agent').textContent = active ? `${active.provider} · ${active.name}` : 'No active agent';
@@ -96,7 +96,7 @@ $('#session-form').onsubmit = async (e) => {
   const name = $('#session-name').value.trim(); const provider = state.pendingProvider;
   if (!name || !PROVIDERS.includes(provider)) return;
   if (state.serverSessions) {
-    try { const r = await post('/api/admin/app/sessions', { name, provider, idempotencyKey: crypto.randomUUID() }); await loadSessions(); state.activeSession = r.session.id; }
+    try { const r = await post('/api/admin/app/sessions', { name, provider, idempotencyKey: crypto.randomUUID() }); await loadSessions(); state.activeSession = r.session.id; state.steps = null; loadSteps(); }
     catch { toast('Session not saved — try again'); return; }
   } else {
     state.sessions = addSession(state.sessions, { name, provider }); state.activeSession = state.sessions[0]?.id ?? null; store.set('sessions', state.sessions);
@@ -112,6 +112,64 @@ async function loadSessions() {
 }
 for (const t of document.querySelectorAll('.tool')) t.onclick = () => toast(t.dataset.tool === 'tools' ? 'Tools and connectors open from Integrations' : `${t.textContent} is available in the desktop app`);
 $('#run-suite').onclick = () => toast('Tool suite runs from the desktop app');
+
+// ---- live task progress (console + Guard Feed) ----
+async function loadSteps() {
+  const sid = state.activeSession;
+  if (!state.serverSessions || !sid) { state.steps = null; renderSteps(); return; }
+  try { const body = await api(`/api/admin/app/sessions/steps?sessionId=${encodeURIComponent(sid)}`); if (sid === state.activeSession) state.steps = progressModel(body); }
+  catch { state.steps = null; }
+  renderSteps();
+}
+async function setStep(item) {
+  try { await post('/api/admin/app/sessions/steps/update', { sessionId: state.activeSession, position: item.position, status: item.next }); }
+  catch { toast('Step not updated — try again'); }
+  await loadSteps(); loadFeedData();
+}
+function stepList(m, compact) {
+  const ol = el('ol', compact ? 'checklist compact' : 'checklist');
+  ol.append(...m.items.map((it) => { const li = el('li', it.status); const b = el('button', null, it.icon); b.type = 'button'; b.title = `${it.word} — tap to mark ${it.next}`; b.setAttribute('aria-label', `${it.label}: ${it.word}. Mark ${it.next}.`); if (compact) b.disabled = true; else b.onclick = () => setStep(it); li.append(b, el('span', 'l', it.label), el('span', 'w', it.word)); return li; }));
+  return ol;
+}
+function renderSteps() {
+  const box = $('#task-progress'); const feed = $('#feed-progress'); const m = state.steps;
+  const can = state.serverSessions && !!state.activeSession && isAdminRole(state.actor?.role);
+  box.hidden = !can;
+  if (!can) { feed.hidden = true; return; }
+  if (!m || !m.total) {
+    $('#tp-summary').textContent = 'No plan yet — add the steps this session should take.'; $('#tp-bar').style.width = '0%'; $('#tp-list').replaceChildren(); $('#tp-edit').textContent = 'Add plan'; feed.hidden = true; return;
+  }
+  $('#tp-edit').textContent = 'Edit plan'; $('#tp-summary').textContent = m.summary; $('#tp-bar').style.width = `${m.pct}%`;
+  $('#tp-list').replaceWith(Object.assign(stepList(m, false), { id: 'tp-list' }));
+  feed.hidden = false; const h = el('div', 'h-row'); h.append(el('span', 'eyebrow', 'TASK PROGRESS'), el('span', 'sm muted', `${m.done}/${m.total}`));
+  const bar = el('div', 'bar'); const fill = el('span'); fill.style.width = `${m.pct}%`; bar.append(fill);
+  feed.replaceChildren(h, bar, stepList(m, true));
+}
+$('#tp-edit').onclick = () => { const f = $('#tp-form'); f.hidden = !f.hidden; if (!f.hidden) { $('#tp-text').value = (state.steps?.items ?? []).map((i) => i.label).join('\n'); $('#tp-text').focus(); } };
+$('#tp-cancel').onclick = () => { $('#tp-form').hidden = true; };
+$('#tp-form').onsubmit = async (e) => {
+  e.preventDefault(); const steps = planFromText($('#tp-text').value);
+  if (!steps.length) { toast('Add at least one step'); return; }
+  if (state.steps?.total && !confirm('Replace the current plan? Progress on it will be reset.')) return;
+  try { await post('/api/admin/app/sessions/steps', { sessionId: state.activeSession, steps }); $('#tp-form').hidden = true; toast('Plan saved'); }
+  catch { toast('Plan not saved — try again'); }
+  await loadSteps(); loadFeedData();
+};
+
+// ---- home dashboard ----
+async function loadHome() {
+  const [u, o] = await Promise.allSettled([api('/api/admin/cora/usage'), api('/api/admin/overview'), loadSessions(), loadFeedData()]);
+  if (u.status === 'fulfilled') state.usage = u.value; if (o.status === 'fulfilled') state.overview = o.value;
+  const m = homeModel({ sessions: state.sessions, approvals: state.approvals, usage: state.usage, overview: state.overview });
+  const usage = $('#home-usage');
+  if (!m.usage) usage.replaceChildren(el('p', 'muted sm', 'Usage is not available right now.'));
+  else { const bar = el('div', `bar ${m.usage.level}`); const f = el('span'); f.style.width = `${m.usage.pct ?? 0}%`; bar.append(f); usage.replaceChildren(el('div', 'big-line', m.usage.spent), el('div', 'muted sm', m.usage.text), ...(m.usage.pct == null ? [] : [bar]), el('div', 'faint sm', `${m.usage.calls} AI calls so far${m.usage.level === 'over' ? ' · limit reached' : m.usage.level === 'near' ? ' · close to the limit' : ''}`)); }
+  const run = $('#home-running');
+  run.replaceChildren(...(m.running.length ? m.running.map((r) => { const d = el('div', 'run'); const n = el('div', 'n'); n.append(el('strong', null, r.name), el('span', 'muted sm', `${r.done}/${r.total}`)); const bar = el('div', 'bar'); const f = el('span'); f.style.width = `${r.pct}%`; bar.append(f); d.append(n, bar, el('div', 'muted sm', r.current ? `Now: ${r.current}` : r.failed ? `${r.failed} step failed` : `${r.provider} · waiting`)); d.onclick = () => { state.activeSession = r.id; store.set('activeSession', r.id); state.steps = null; renderSessions(); loadSteps(); location.hash = 'console'; }; d.style.cursor = 'pointer'; return d; }) : [el('p', 'muted sm', m.idleSessions ? `Nothing running. ${m.idleSessions} open session${m.idleSessions === 1 ? '' : 's'}.` : 'Nothing running. Start a session from the Console.')]));
+  const ap = $('#home-approvals');
+  ap.replaceChildren(...(m.pending.length ? m.pending.map((p) => { const d = el('div', 'pend'); d.append(el('span', 't', p.title)); if (p.canDecide) { const ok = el('button', 'btn primary sm', 'Approve'); ok.onclick = async () => { await decide(p.item, 'approve'); loadHome(); }; const no = el('button', 'btn ghost sm', 'Review'); no.onclick = () => { location.hash = 'approvals'; }; d.append(ok, no); } return d; }) : [el('p', 'muted sm', "You're all caught up.")]));
+  $('#home-stats').replaceChildren(...m.stats.map(([k, v]) => { const c = el('div', 'card'); c.append(el('div', 'big', String(v)), el('div', 'eyebrow', k.toUpperCase())); return c; }));
+}
 
 // ---- console (Envoy) ----
 async function loadConsole() {
@@ -258,7 +316,7 @@ async function loadRelease() {
     tb.replaceChildren(...rel.map((r) => { const tr = el('tr'); tr.append(el('td', null, r.version || r.tag || ''), el('td', 'muted', r.channel || ''), el('td', null, r.status || ''), el('td', 'muted', formatTime(r.publishedAt || r.createdAt))); return tr; }));
   } catch { const tr = el('tr'); const td = el('td', 'muted', 'No releases published yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); }
 }
-const loaders = { console: loadConsole, overview: loadOverview, workspace: loadProjects, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, release: loadRelease };
+const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, release: loadRelease };
 
 // ---- boot ----
 async function boot() {
@@ -276,8 +334,8 @@ async function boot() {
   $('#admin-link').hidden = !isAdminRole(model.actor.role); $('#signout').hidden = false;
   renderSessions(); loadSessions();
   if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${model.actor.tenantId}!`); history.replaceState(null, '', location.pathname + location.hash); }
-  show(viewFromHash(location.hash));
-  loadProjects(); loadFeedData();
-  setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); if (shell.dataset.view === 'console') loadLog(); }, 6000);
+  show(viewFromHash(location.hash, { phone: narrow() }));
+  loadProjects(); loadSteps(); loadFeedData();
+  setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); loadSteps(); if (shell.dataset.view === 'console') loadLog(); if (shell.dataset.view === 'home') loadHome(); }, 6000);
 }
 boot();
