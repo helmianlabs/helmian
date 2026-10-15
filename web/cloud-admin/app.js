@@ -914,6 +914,14 @@ async function loadPolicy() {
 
 async function load() {
   const session = await fetch('/api/admin/session', { credentials: 'same-origin' });
+  if (!session.ok) {
+    const denied = await session.json().catch(() => ({}));
+    if (denied.signedIn) {
+      let note = document.querySelector('#membership-note');
+      if (!note) { note = document.createElement('p'); note.id = 'membership-note'; signedOut.prepend(note); }
+      note.textContent = `You are signed in, but this account is not a member of an Organization yet. Ask the owner to add you, or (owner, first time) run the bootstrap with your sign-in ID: ${denied.subject}`;
+    }
+  }
   if (!session.ok) { signedOut.hidden = false; signedIn.hidden = true; workspaceSettingsOpen.hidden = true; workspaceRoleDefaultControls.hidden = true; return; }
   const sessionBody = await session.json();
   signedOut.hidden = true; signedIn.hidden = false;

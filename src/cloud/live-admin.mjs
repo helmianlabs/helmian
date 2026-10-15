@@ -50,6 +50,7 @@ import { readGeminiOAuthReadiness } from './provider-oauth-readiness.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
 import { createConsoleCommandWorker } from './console-command-worker.mjs';
+import { claimFirstOwner } from './owner-claim.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -601,11 +602,13 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SESSION_PATH) {
       try {
+        try { await claimFirstOwner({ pool, env, session: sessionIdentity(request), logger: noteAttempt }); } catch { /* claim is best-effort; membership check below decides */ }
         const actor = await activeActor(request);
         send(response, 200, JSON.stringify({ authenticated: true, actor: { subject: actor.subject, tenantId: actor.tenantId, role: actor.role } }));
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
-        send(response, denied ? 403 : 503, JSON.stringify({ authenticated: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+        const signedIn = sessionIdentity(request);
+        send(response, denied ? 403 : 503, JSON.stringify({ authenticated: false, signedIn: Boolean(signedIn?.subject), ...(signedIn?.subject ? { subject: signedIn.subject } : {}), code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
       }
       return true;
     }
