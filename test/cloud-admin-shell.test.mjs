@@ -94,5 +94,5 @@ test('workspace navigation restores a visible tenant layout section from the URL
   assert.match(script, /window\.history\.replaceState\(null, '', `#\$\{target\}`\)/u);
   assert.match(script, /window\.addEventListener\('hashchange'/u);
   assert.match(script, /activateWorkspaceNav\(window\.location\.hash\.slice\(1\) \|\| 'section-chat'/u);
-  assert.match(script, /item\.hidden \|\| section\.hidden/u);
+  assert.match(script, /section\.hidden \|\| section\.closest\('\[hidden\]'\)/u);
 });

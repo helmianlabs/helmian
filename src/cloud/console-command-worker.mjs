@@ -14,12 +14,11 @@ async function safeRows(client, sql, params) {
 
 export const CONSOLE_EXECUTORS = Object.freeze({
   async workspace_context(client, intent) {
-    const [projects, members, tasks, providers] = await Promise.all([
-      safeRows(client, "select count(*)::int as n from helmion.workspace_projects where tenant_id=$1 and lifecycle='active'", [intent.tenant_id]),
-      safeRows(client, 'select count(*)::int as n from helmion.tenant_memberships where tenant_id=$1', [intent.tenant_id]),
-      safeRows(client, 'select count(*)::int as n from helmion.cora_agent_task_intents where tenant_id=$1', [intent.tenant_id]),
-      safeRows(client, "select count(*)::int as n from helmion.provider_connections where tenant_id=$1 and lifecycle='verified'", [intent.tenant_id]),
-    ]);
+    // Sequential: one pg client must not run concurrent queries.
+    const projects = await safeRows(client, "select count(*)::int as n from helmion.workspace_projects where tenant_id=$1 and lifecycle='active'", [intent.tenant_id]);
+    const members = await safeRows(client, 'select count(*)::int as n from helmion.tenant_memberships where tenant_id=$1', [intent.tenant_id]);
+    const tasks = await safeRows(client, 'select count(*)::int as n from helmion.cora_agent_task_intents where tenant_id=$1', [intent.tenant_id]);
+    const providers = await safeRows(client, "select count(*)::int as n from helmion.provider_connections where tenant_id=$1 and lifecycle='verified'", [intent.tenant_id]);
     const n = (rows) => (Array.isArray(rows) ? rows[0]?.n ?? 0 : rows);
     return { outcome: 'completed', result: { activeProjects: n(projects), members: n(members), agentTasks: n(tasks), verifiedProviders: n(providers) } };
   },
