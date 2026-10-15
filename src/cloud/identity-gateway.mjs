@@ -1,4 +1,33 @@
-import { createHash, randomBytes, randomUUID, webcrypto } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, webcrypto } from 'node:crypto';
+
+// Stateless mode for serverless hosts (Vercel): login state and sessions are
+// AES-256-GCM sealed with HELMION_ADMIN_SESSION_SECRET instead of held in memory,
+// so any function instance can finish a login or read a session.
+function sealer(secret) {
+  if (!secret) return null;
+  if (String(secret).length < 32) throw new Error('HELMION_ADMIN_SESSION_SECRET must be at least 32 characters');
+  const key = createHash('sha256').update(`helmian-admin-session:${secret}`).digest();
+  return {
+    seal(kind, value) {
+      const iv = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', key, iv);
+      cipher.setAAD(Buffer.from(kind));
+      const body = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+      return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64url');
+    },
+    open(kind, token) {
+      try {
+        const raw = Buffer.from(String(token ?? ''), 'base64url');
+        if (raw.length < 29 || raw.length > 4096) return null;
+        const decipher = createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12));
+        decipher.setAAD(Buffer.from(kind));
+        decipher.setAuthTag(raw.subarray(12, 28));
+        const value = JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8'));
+        return value && Number(value.expiresAt) > Date.now() ? value : null;
+      } catch { return null; }
+    },
+  };
+}
 
 const OIDC_FETCH_TIMEOUT_MS = 10_000;
 const OIDC_MAX_JSON_BYTES = 64 * 1024;
@@ -103,6 +132,7 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
   const redirectUri = requiredHttpsUrl(env.HELMION_ADMIN_REDIRECT_URI, 'HELMION_ADMIN_REDIRECT_URI', { callback: true });
   const sessions = new Map();
   const pending = new Map();
+  const sealed = sealer(env.HELMION_ADMIN_SESSION_SECRET);
   let metadataPromise = null;
   const metadata = () => metadataPromise ?? (metadataPromise = discover(issuer, fetchImpl));
   const prune = () => {
@@ -117,22 +147,23 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     const state = randomBytes(24).toString('base64url');
     const verifier = randomBytes(48).toString('base64url');
     const challenge = createHash('sha256').update(verifier).digest('base64url');
-    pending.set(state, { verifier, expiresAt: Date.now() + 10 * 60_000 });
+    const loginState = sealed ? sealed.seal('login', { verifier, expiresAt: Date.now() + 10 * 60_000 }) : state;
+    if (!sealed) pending.set(state, { verifier, expiresAt: Date.now() + 10 * 60_000 });
     const endpoints = await metadata();
     const url = new URL(endpoints.authorizationEndpoint);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('scope', 'openid profile email');
-    url.searchParams.set('state', state);
+    url.searchParams.set('state', loginState);
     url.searchParams.set('code_challenge', challenge);
     url.searchParams.set('code_challenge_method', 'S256');
-    return { url: url.toString(), state };
+    return { url: url.toString(), state: loginState };
   }
 
   async function finishLogin(code, state) {
-    const attempt = pending.get(state);
-    pending.delete(state);
+    const attempt = sealed ? sealed.open('login', state) : pending.get(state);
+    if (!sealed) pending.delete(state);
     if (!attempt || attempt.expiresAt < Date.now()) throw new Error('OIDC login state invalid or expired');
     const endpoints = await metadata();
     const tokenBody = await fetchJson(endpoints.tokenEndpoint, {
@@ -141,15 +172,22 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
       body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: clientId, code_verifier: attempt.verifier }),
     }, fetchImpl, 'OIDC token exchange');
     const claims = await verifyJwt(tokenBody.id_token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl });
+    const tokenExpiry = Number(claims.exp) * 1_000;
+    const session = { subject: claims.sub, email: typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : null, emailVerified: claims.email_verified === true, expiresAt: Math.min(Date.now() + 8 * 60 * 60_000, tokenExpiry) };
+    if (sealed) {
+      // Sessions outlive the short ID token; cap at 8h from login.
+      session.expiresAt = Date.now() + 8 * 60 * 60_000;
+      return { sessionId: sealed.seal('session', session), identity: { subject: claims.sub } };
+    }
     const sessionId = randomUUID();
     prune();
     if (sessions.size >= MAX_IDENTITY_STATE_ENTRIES) throw new Error('OIDC session capacity reached');
-    const tokenExpiry = Number(claims.exp) * 1_000;
-    sessions.set(sessionId, { subject: claims.sub, email: typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : null, emailVerified: claims.email_verified === true, expiresAt: Math.min(Date.now() + 8 * 60 * 60_000, tokenExpiry) });
+    sessions.set(sessionId, session);
     return { sessionId, identity: { subject: claims.sub } };
   }
 
   function getSession(sessionId) {
+    if (sealed) return sealed.open('session', sessionId);
     const session = sessions.get(sessionId);
     if (!session || session.expiresAt < Date.now()) { if (session) sessions.delete(sessionId); return null; }
     return session;

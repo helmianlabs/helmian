@@ -43,7 +43,7 @@ class MigrationPool {
           return { rowCount: 0, rows: [] };
         }
         if (String(sql).includes('helmion.console_command_runs')) {
-          pool.executedSql.push('035_console_command_runs.sql');
+          pool.executedSql.push('041_console_command_runs.sql');
           return { rowCount: 0, rows: [] };
         }
         if (String(sql).includes('helmion.console_command_intents')) {
@@ -220,7 +220,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       ['032_workspace_projects.sql', true, 'committed'],
       ['033_console_command_intents.sql', true, 'committed'],
       ['034_helmion_provider_oauth.sql', true, 'committed'],
-      ['035_console_command_runs.sql', true, 'committed'],
+      ['041_console_command_runs.sql', true, 'committed'],
     ],
   );
   assert.deepEqual(
@@ -257,7 +257,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '032_workspace_projects.sql',
       '033_console_command_intents.sql',
       '034_helmion_provider_oauth.sql',
-      '035_console_command_runs.sql',
+      '041_console_command_runs.sql',
     ],
   );
 
@@ -300,7 +300,7 @@ test('migration runner applies ordered migrations once and confirms durable comm
       '032_workspace_projects.sql',
       '033_console_command_intents.sql',
       '034_helmion_provider_oauth.sql',
-      '035_console_command_runs.sql',
+      '041_console_command_runs.sql',
     ],
   );
   assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 64);
