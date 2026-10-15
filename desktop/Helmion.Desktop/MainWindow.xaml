@@ -863,6 +863,23 @@
                          Margin="0,7,0,0" />
             </StackPanel>
           </Border>
+          <Button Content="{Binding ActionLabel}"
+                  Tag="{Binding Id}"
+                  Click="ProviderCardAction_Click"
+                  HorizontalAlignment="Left"
+                  Padding="14,7"
+                  Margin="0,12,0,0"
+                  AutomationProperties.Name="{Binding ActionLabel}">
+            <Button.Style>
+              <Style TargetType="Button" BasedOn="{StaticResource ConsoleNeutralButtonStyle}">
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding ActionLabel}" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </Button.Style>
+          </Button>
         </StackPanel>
       </Border>
     </DataTemplate>

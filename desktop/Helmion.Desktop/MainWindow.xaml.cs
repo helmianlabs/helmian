@@ -654,7 +654,7 @@ public partial class MainWindow : Window
             ["Release"] = ReleaseNav,
             ["Settings"] = SettingsNav
         };
-        ProviderRegistryList.ItemsSource = _providerProfiles;
+        ShowProviderProfiles();
         RepopulateMaestroCoordinators();
 
         _themeSelectorReady = true;
@@ -1877,8 +1877,7 @@ public partial class MainWindow : Window
         _providerProfiles = ProviderProfileCatalog.CreateUnconfigured(
             _desktopSettings.CustomProviders,
             _verifiedCustomProviders);
-        ProviderRegistryList.ItemsSource = null;
-        ProviderRegistryList.ItemsSource = _providerProfiles;
+        ShowProviderProfiles();
     }
 
     private void AddCustomModel_Click(object sender, RoutedEventArgs e)
@@ -2261,8 +2260,7 @@ public partial class MainWindow : Window
                         : profile with { Availability = "Detection unavailable" };
                 })
                 .ToArray();
-            ProviderRegistryList.ItemsSource = null;
-            ProviderRegistryList.ItemsSource = _providerProfiles;
+            ShowProviderProfiles();
 
             var availableCount = capabilities.Count(capability => capability.Available);
             ProviderAvailabilitySummary.Text =
