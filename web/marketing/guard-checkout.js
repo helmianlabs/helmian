@@ -7,7 +7,7 @@ if (checkoutStatus && checkoutState === 'cancelled') checkoutStatus.textContent 
 if (checkoutButtons.length && checkoutStatus) {
   checkoutButtons.forEach((checkoutButton) => checkoutButton.addEventListener('click', async () => {
     checkoutButtons.forEach((button) => { button.disabled = true; });
-    checkoutStatus.textContent = 'Checking checkout availability…';
+    checkoutStatus.textContent = 'Opening free account sign-up…';
     try {
       const response = await fetch('/api/billing/checkout', {
         method: 'POST',
@@ -18,7 +18,7 @@ if (checkoutButtons.length && checkoutStatus) {
       if (!response.ok || !body.checkoutUrl) throw new Error(body.code || 'checkout_unavailable');
       window.location.assign(body.checkoutUrl);
     } catch (error) {
-      checkoutStatus.textContent = 'Checkout is not configured yet. No payment was started.';
+      checkoutStatus.textContent = 'Sign-up is not available right now. Please try again shortly.';
       checkoutButtons.forEach((button) => { button.disabled = false; });
       console.info('[Helmian] checkout handoff unavailable:', error.message);
     }
