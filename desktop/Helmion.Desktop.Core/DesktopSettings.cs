@@ -186,8 +186,8 @@ public sealed record DesktopSettings(
 /// <summary>Clamps for Herald panel layout preferences (sliders + splitters).</summary>
 public static class HeraldLayoutRange
 {
-    public const double DefaultQrSize = 220;
-    public const double MinQrSize = 120;
+    public const double DefaultQrSize = 300;
+    public const double MinQrSize = 240;
     public const double MaxQrSize = 400;
 
     public const double DefaultLogHeight = 160;

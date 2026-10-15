@@ -4950,95 +4950,106 @@
             <local:ProjectConnectorsPanel x:Name="ProjectConnectorsPanel"
                                           Margin="0,0,0,14" />
 
-            <!-- Herald: resizable panes + sliders (saved per Windows user) -->
+            <!-- Herald phone sharing: simple by default; layout controls and log live under Show details. -->
             <Border x:Name="HeraldPanelCard"
                     Style="{StaticResource CardStyle}"
-                    Margin="0,0,0,18"
-                    MinHeight="280">
-              <Grid x:Name="HeraldLayoutRoot" MinHeight="260">
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="10" />
-                  <RowDefinition x:Name="HeraldMainRowDef" Height="*" MinHeight="160" />
-                  <RowDefinition Height="10" />
-                  <RowDefinition x:Name="HeraldLogRowDef" Height="160" MinHeight="80" MaxHeight="420" />
-                  <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <!-- Header + start/stop -->
-                <Grid Grid.Row="0">
+                    Margin="0,0,0,18">
+              <StackPanel>
+                <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
-                  <StackPanel Margin="0,0,16,0">
-                    <TextBlock Text="Helmian Herald · phone companion" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Text="Pair a phone to the selected project and named session. Drag the splitters to resize panes; use the sliders to set QR size and text. Layout saves for this Windows user."
+                  <StackPanel Margin="0,0,16,0" VerticalAlignment="Center">
+                    <TextBlock Text="Phone sharing" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Text="Use Helmian from your phone."
                                Style="{StaticResource MutedStyle}"
                                TextWrapping="Wrap"
-                               Margin="0,6,0,0" />
+                               Margin="0,4,0,0" />
                   </StackPanel>
-                  <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Reset layout"
-                            Padding="10,6"
-                            Margin="0,0,8,0"
-                            Click="HeraldResetLayoutButton_Click"
-                            ToolTip="Restore Herald QR size, log height, column share, and font to defaults"
-                            Style="{StaticResource ConsoleNeutralButtonStyle}" />
-                    <Button x:Name="ToggleHeraldSharingButton"
-                            Content="Start phone sharing"
-                            Padding="14,8"
-                            Click="ToggleHeraldSharingButton_Click"
-                            ToolTip="Explicitly start outbound cellular phone sharing and display a short-lived pairing code."
-                            AutomationProperties.Name="Start Helmian Herald phone sharing"
-                            Style="{StaticResource ConsoleNeutralButtonStyle}" />
-                  </StackPanel>
+                  <Button x:Name="ToggleHeraldSharingButton"
+                          Grid.Column="1"
+                          VerticalAlignment="Center"
+                          Content="Start phone sharing"
+                          Padding="16,9"
+                          Click="ToggleHeraldSharingButton_Click"
+                          ToolTip="Start phone sharing and show a short-lived QR code."
+                          AutomationProperties.Name="Start Helmian Herald phone sharing"
+                          Style="{StaticResource ConsoleNeutralButtonStyle}" />
                 </Grid>
 
-                <GridSplitter Grid.Row="1"
-                              ShowsPreview="False"
-                              ResizeDirection="Rows"
-                              ResizeBehavior="PreviousAndNext"
-                              DragCompleted="HeraldLayoutSplitter_DragCompleted"
-                              ToolTip="Drag to resize status area vs activity log"
-                              Style="{StaticResource PaneSplitterRowsStyle}">
-                </GridSplitter>
+                <TextBlock x:Name="HeraldSharingStateText"
+                           Text="Ready to start"
+                           Foreground="{DynamicResource SoftTextBrush}"
+                           FontSize="13"
+                           TextWrapping="Wrap"
+                           Margin="0,12,0,0" />
 
-                <!-- Main: controls | splitter | QR -->
-                <Grid Grid.Row="2" x:Name="HeraldMainSplitGrid" MinHeight="160">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition x:Name="HeraldControlsColDef" Width="1.4*" MinWidth="180" />
-                    <ColumnDefinition Width="10" />
-                    <ColumnDefinition x:Name="HeraldQrColDef" Width="*" MinWidth="140" />
-                  </Grid.ColumnDefinitions>
+                <Border Background="{DynamicResource PanelSubtleBrush}"
+                        BorderBrush="{DynamicResource StrokeBrush}"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="16"
+                        Margin="0,12,0,0">
+                  <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Border x:Name="HeraldPairingQrPanel"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Center"
+                            Background="White"
+                            BorderBrush="{DynamicResource AccentStrokeBrush}"
+                            BorderThickness="1"
+                            CornerRadius="14"
+                            Padding="14"
+                            AutomationProperties.Name="Helmian Herald phone pairing QR code">
+                      <StackPanel>
+                        <Image x:Name="HeraldPairingQrImage"
+                               Width="300"
+                               Height="300"
+                               Stretch="Uniform"
+                               SnapsToDevicePixels="True"
+                               AutomationProperties.Name="Scan to open Helmian Herald on this phone" />
+                        <TextBlock Text="Scan with your phone camera"
+                                   Foreground="#07111D"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Margin="0,10,0,0" />
+                      </StackPanel>
+                    </Border>
+                    <TextBlock x:Name="HeraldQrPlaceholderText"
+                               Text="Press Start phone sharing to show a QR code."
+                               Foreground="{DynamicResource FaintTextBrush}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               HorizontalAlignment="Center"
+                               Margin="0,24"
+                               MaxWidth="260" />
+                  </StackPanel>
+                </Border>
 
-                  <Border Grid.Column="0"
-                          Background="{DynamicResource PanelSubtleBrush}"
-                          BorderBrush="{DynamicResource StrokeBrush}"
-                          BorderThickness="1"
-                          CornerRadius="12"
-                          Padding="14">
-                    <DockPanel LastChildFill="True">
-                      <StackPanel DockPanel.Dock="Top">
-                        <TextBlock x:Name="HeraldSharingStateText"
-                                   Text="NOT SHARING"
-                                   Foreground="{DynamicResource AccentBrush}"
-                                   FontSize="11"
-                                   FontWeight="Bold" />
-                        <Button x:Name="OpenHeraldConsoleButton"
-                                Content="Open Console to start a session"
-                                HorizontalAlignment="Left"
-                                Padding="12,7"
-                                Margin="0,10,0,0"
-                                Click="OpenHeraldConsoleButton_Click"
-                                ToolTip="Go to Console, select a project, and start a named provider session before phone sharing."
-                                AutomationProperties.Name="Open Console to start a session for phone sharing"
-                                Style="{StaticResource ConsoleNeutralButtonStyle}" />
-                        <TextBlock Text="CUSTOMIZE"
-                                   Foreground="{DynamicResource MutedTextBrush}"
-                                   FontSize="10"
-                                   FontWeight="Bold"
-                                   Margin="0,16,0,6" />
+                <Expander x:Name="HeraldDetailsExpander"
+                          Header="Show details"
+                          IsExpanded="False"
+                          Margin="0,12,0,0"
+                          Foreground="{DynamicResource MutedTextBrush}">
+                  <Grid x:Name="HeraldLayoutRoot" Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="10" />
+                      <RowDefinition x:Name="HeraldLogRowDef" Height="160" MinHeight="80" MaxHeight="420" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Background="{DynamicResource PanelSubtleBrush}"
+                            BorderBrush="{DynamicResource StrokeBrush}"
+                            BorderThickness="1"
+                            CornerRadius="12"
+                            Padding="14">
+                      <StackPanel>
                         <Grid Margin="0,0,0,8">
                           <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -5052,9 +5063,9 @@
                                      Margin="0,0,10,0" />
                           <Slider x:Name="HeraldQrSizeSlider"
                                   Grid.Column="1"
-                                  Minimum="120"
+                                  Minimum="240"
                                   Maximum="400"
-                                  Value="220"
+                                  Value="300"
                                   TickFrequency="20"
                                   IsSnapToTickEnabled="False"
                                   VerticalAlignment="Center"
@@ -5062,14 +5073,14 @@
                                   ToolTip="Pairing QR code size" />
                           <TextBlock x:Name="HeraldQrSizeValueLabel"
                                      Grid.Column="2"
-                                     Text="220"
+                                     Text="300"
                                      Foreground="{DynamicResource MutedTextBrush}"
                                      FontSize="11"
                                      MinWidth="36"
                                      Margin="8,0,0,0"
                                      VerticalAlignment="Center" />
                         </Grid>
-                        <Grid Margin="0,0,0,4">
+                        <Grid Margin="0,0,0,8">
                           <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
@@ -5089,7 +5100,7 @@
                                   IsSnapToTickEnabled="True"
                                   VerticalAlignment="Center"
                                   ValueChanged="HeraldDetailFontSlider_ValueChanged"
-                                  ToolTip="Status and activity log font size" />
+                                  ToolTip="Activity log font size" />
                           <TextBlock x:Name="HeraldDetailFontValueLabel"
                                      Grid.Column="2"
                                      Text="11"
@@ -5099,116 +5110,71 @@
                                      Margin="8,0,0,0"
                                      VerticalAlignment="Center" />
                         </Grid>
-                      </StackPanel>
-                      <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,10">
+                          <Button Content="Reset layout"
+                                  Padding="10,6"
+                                  Margin="0,0,8,0"
+                                  Click="HeraldResetLayoutButton_Click"
+                                  ToolTip="Restore Herald QR size, log height, and font to defaults"
+                                  Style="{StaticResource ConsoleNeutralButtonStyle}" />
+                          <Button x:Name="OpenHeraldConsoleButton"
+                                  Content="Open Console to start a session"
+                                  Padding="10,6"
+                                  Click="OpenHeraldConsoleButton_Click"
+                                  ToolTip="Go to Console, select a project, and start a named provider session so the phone can send instructions."
+                                  AutomationProperties.Name="Open Console to start a session for phone sharing"
+                                  Style="{StaticResource ConsoleNeutralButtonStyle}" />
+                        </StackPanel>
                         <TextBlock Text="Boundary · the phone uses Helmian's first-party internet relay over Wi-Fi or cellular while this desktop connects outward; no public port opens on the PC. Pairing is per device, short-lived and revocable. Phone text cannot use shell/slash controls, staged attachments, files, tools, installers, or provider credentials. When Desktop stops or becomes stale, remote requests are denied."
                                    Foreground="{DynamicResource AmberBrush}"
                                    FontSize="10"
                                    FontWeight="SemiBold"
                                    TextWrapping="Wrap" />
-                      </ScrollViewer>
-                    </DockPanel>
-                  </Border>
+                      </StackPanel>
+                    </Border>
 
-                  <GridSplitter Grid.Column="1"
-                                ShowsPreview="False"
-                                ResizeDirection="Columns"
-                                ResizeBehavior="PreviousAndNext"
-                                DragCompleted="HeraldLayoutSplitter_DragCompleted"
-                                ToolTip="Drag to resize controls vs QR"
-                                Style="{StaticResource PaneSplitterColumnsStyle}">
-                  </GridSplitter>
+                    <GridSplitter Grid.Row="1"
+                                  ShowsPreview="False"
+                                  ResizeDirection="Rows"
+                                  ResizeBehavior="PreviousAndNext"
+                                  DragCompleted="HeraldLayoutSplitter_DragCompleted"
+                                  ToolTip="Drag to resize activity log height"
+                                  Style="{StaticResource PaneSplitterRowsStyle}">
+                    </GridSplitter>
 
-                  <Border Grid.Column="2"
-                          Background="{DynamicResource PanelSubtleBrush}"
-                          BorderBrush="{DynamicResource StrokeBrush}"
-                          BorderThickness="1"
-                          CornerRadius="12"
-                          Padding="12">
-                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                      <TextBlock Text="PAIRING QR"
-                                 Foreground="{DynamicResource MutedTextBrush}"
-                                 FontSize="10"
-                                 FontWeight="Bold"
-                                 HorizontalAlignment="Center"
-                                 Margin="0,0,0,8" />
-                      <Border x:Name="HeraldPairingQrPanel"
-                              Visibility="Collapsed"
-                              HorizontalAlignment="Center"
-                              Background="White"
-                              BorderBrush="{DynamicResource AccentStrokeBrush}"
-                              BorderThickness="1"
-                              CornerRadius="14"
-                              Padding="12"
-                              AutomationProperties.Name="Helmian Herald phone pairing QR code">
-                        <StackPanel>
-                          <Image x:Name="HeraldPairingQrImage"
-                                 Width="220"
-                                 Height="220"
-                                 Stretch="Uniform"
-                                 SnapsToDevicePixels="True"
-                                 AutomationProperties.Name="Scan to open Helmian Herald on this phone" />
-                          <TextBlock Text="SCAN WITH YOUR PHONE CAMERA"
-                                     Foreground="#07111D"
-                                     HorizontalAlignment="Center"
-                                     FontSize="10"
-                                     FontWeight="Bold"
-                                     Margin="0,8,0,0" />
-                        </StackPanel>
-                      </Border>
-                      <TextBlock x:Name="HeraldQrPlaceholderText"
-                                 Text="QR appears here after you start phone sharing."
-                                 Foreground="{DynamicResource FaintTextBrush}"
-                                 FontSize="12"
-                                 TextWrapping="Wrap"
-                                 TextAlignment="Center"
-                                 HorizontalAlignment="Center"
-                                 MaxWidth="220" />
-                    </StackPanel>
-                  </Border>
-                </Grid>
+                    <Border Grid.Row="2"
+                            Background="{DynamicResource PanelSubtleBrush}"
+                            BorderBrush="{DynamicResource StrokeBrush}"
+                            BorderThickness="1"
+                            CornerRadius="12"
+                            Padding="12">
+                      <DockPanel LastChildFill="True">
+                        <TextBlock DockPanel.Dock="Top"
+                                   Text="STATUS · ACTIVITY"
+                                   Foreground="{DynamicResource MutedTextBrush}"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,6" />
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                          <TextBlock x:Name="HeraldSharingDetailText"
+                                     Text="Nothing is listening. Start sharing explicitly to show a QR code."
+                                     Foreground="{DynamicResource SoftTextBrush}"
+                                     FontSize="11"
+                                     TextWrapping="Wrap" />
+                        </ScrollViewer>
+                      </DockPanel>
+                    </Border>
 
-                <GridSplitter Grid.Row="3"
-                              ShowsPreview="False"
-                              ResizeDirection="Rows"
-                              ResizeBehavior="PreviousAndNext"
-                              DragCompleted="HeraldLayoutSplitter_DragCompleted"
-                              ToolTip="Drag to resize activity log height"
-                              Style="{StaticResource PaneSplitterRowsStyle}">
-                </GridSplitter>
-
-                <!-- Activity / detail log (resizable height via row + splitter) -->
-                <Border Grid.Row="4"
-                        Background="{DynamicResource PanelSubtleBrush}"
-                        BorderBrush="{DynamicResource StrokeBrush}"
-                        BorderThickness="1"
-                        CornerRadius="12"
-                        Padding="12">
-                  <DockPanel LastChildFill="True">
-                    <TextBlock DockPanel.Dock="Top"
-                               Text="STATUS · ACTIVITY"
-                               Foreground="{DynamicResource MutedTextBrush}"
+                    <TextBlock Grid.Row="3"
+                               x:Name="HeraldLayoutSavedLabel"
+                               Text=""
+                               Foreground="{DynamicResource FaintTextBrush}"
                                FontSize="10"
-                               FontWeight="Bold"
-                               Margin="0,0,0,6" />
-                    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled">
-                      <TextBlock x:Name="HeraldSharingDetailText"
-                                 Text="Nothing is listening. Select a project and named session, then start sharing explicitly."
-                                 Foreground="{DynamicResource SoftTextBrush}"
-                                 FontSize="11"
-                                 TextWrapping="Wrap" />
-                    </ScrollViewer>
-                  </DockPanel>
-                </Border>
-
-                <TextBlock Grid.Row="5"
-                           x:Name="HeraldLayoutSavedLabel"
-                           Text=""
-                           Foreground="{DynamicResource FaintTextBrush}"
-                           FontSize="10"
-                           Margin="0,8,0,0" />
-              </Grid>
+                               Margin="0,8,0,0" />
+                  </Grid>
+                </Expander>
+              </StackPanel>
             </Border>
 
             <Border Style="{StaticResource CardStyle}" Margin="0,22,0,18">

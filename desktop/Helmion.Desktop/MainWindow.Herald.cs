@@ -230,7 +230,7 @@ public partial class MainWindow
 
     private void SetHeraldSharingUi(string state, string detail, bool running)
     {
-        if (HeraldSharingStateText is not null) HeraldSharingStateText.Text = state;
+        SetHeraldFriendlyStatus(state);
         if (HeraldSharingDetailText is not null) HeraldSharingDetailText.Text = detail;
         if (ToggleHeraldSharingButton is not null)
         {
@@ -240,6 +240,24 @@ public partial class MainWindow
                 : "Explicitly start cellular phone sharing and display a short-lived pairing code.";
         }
         if (!running) ClearHeraldPairingQr();
+    }
+
+    /// <summary>
+    /// One plain-language status line for the simple panel. Internal state codes
+    /// stay in the activity log under Show details.
+    /// </summary>
+    private void SetHeraldFriendlyStatus(string state)
+    {
+        if (HeraldSharingStateText is null) return;
+        HeraldSharingStateText.Text = state switch
+        {
+            "READY TO PAIR" or "READY TO SHARE" or "NOT SHARING" => "Ready to start",
+            "STARTING" => "Connecting...",
+            "PAIRING AVAILABLE" => "Ready to scan",
+            "PAIRING EXPIRED" => "Code expired. Stop and start phone sharing for a new one.",
+            "COULD NOT START" => "Couldn't connect. Open Show details for the reason.",
+            _ => state.Length > 0 ? char.ToUpperInvariant(state[0]) + state[1..].ToLowerInvariant() : state
+        };
     }
 
     internal void RefreshHeraldPrerequisiteUi()
@@ -292,7 +310,7 @@ public partial class MainWindow
         }
         else if (line.Contains("Pairing code:", StringComparison.Ordinal))
         {
-            HeraldSharingStateText.Text = "PAIRING AVAILABLE";
+            SetHeraldFriendlyStatus("PAIRING AVAILABLE");
             ScheduleHeraldPairingExpiry(line);
             // Upgrade the QR so scanning also carries the one-time code (in the
             // URL fragment) and the phone does not have to type it.
@@ -356,7 +374,7 @@ public partial class MainWindow
         ClearHeraldPairingQr();
         if (_heraldProcess is { HasExited: false })
         {
-            HeraldSharingStateText.Text = "PAIRING EXPIRED";
+            SetHeraldFriendlyStatus("PAIRING EXPIRED");
             HeraldSharingDetailText.Text += "\nThe pairing code expired. Stop and restart phone sharing for a new code.";
         }
     }
@@ -389,7 +407,6 @@ public partial class MainWindow
         {
             var qr = _desktopSettings.ResolvedHeraldQrSize;
             var logH = _desktopSettings.ResolvedHeraldLogHeight;
-            var share = _desktopSettings.ResolvedHeraldControlsShare;
             var font = _desktopSettings.ResolvedHeraldDetailFontSize;
 
             if (HeraldQrSizeSlider is not null) HeraldQrSizeSlider.Value = qr;
@@ -402,16 +419,6 @@ public partial class MainWindow
 
             if (HeraldLogRowDef is not null)
                 HeraldLogRowDef.Height = new GridLength(logH);
-
-            // Controls : QR star ratio from share (left share of total stars = share).
-            if (HeraldControlsColDef is not null && HeraldQrColDef is not null)
-            {
-                var left = share;
-                var right = 1.0 - share;
-                if (right < 0.05) right = 0.05;
-                HeraldControlsColDef.Width = new GridLength(left, GridUnitType.Star);
-                HeraldQrColDef.Width = new GridLength(right, GridUnitType.Star);
-            }
 
             if (saveLabel && HeraldLayoutSavedLabel is not null)
                 HeraldLayoutSavedLabel.Text = "Herald layout restored from saved preferences.";
@@ -437,8 +444,6 @@ public partial class MainWindow
         size = HeraldLayoutRange.ClampDetailFontSize(size);
         if (HeraldSharingDetailText is not null)
             HeraldSharingDetailText.FontSize = size;
-        if (HeraldSharingStateText is not null)
-            HeraldSharingStateText.FontSize = Math.Max(10, size - 1);
     }
 
     private void PersistHeraldLayoutSettings()
@@ -455,16 +460,8 @@ public partial class MainWindow
             ? HeraldLayoutRange.ClampLogHeight(HeraldLogRowDef.Height.Value)
             : _desktopSettings.ResolvedHeraldLogHeight;
 
+        // The simplified panel has no controls/QR column split; keep the stored share unchanged.
         var share = _desktopSettings.ResolvedHeraldControlsShare;
-        if (HeraldControlsColDef is not null && HeraldQrColDef is not null
-            && HeraldControlsColDef.Width.IsStar && HeraldQrColDef.Width.IsStar)
-        {
-            var left = HeraldControlsColDef.Width.Value;
-            var right = HeraldQrColDef.Width.Value;
-            var total = left + right;
-            if (total > 0.001)
-                share = HeraldLayoutRange.ClampControlsShare(left / total);
-        }
 
         _desktopSettings = _desktopSettings with
         {
