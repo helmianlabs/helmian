@@ -63,6 +63,7 @@ export const LIVE_ADMIN_SCRIPT_PATH = '/admin/assets/app.js';
 export const LIVE_ADMIN_ENVOY_CLIENT_PATH = '/admin/assets/envoy-client.mjs';
 export const LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH = '/admin/assets/cora-config-client.mjs';
 export const LIVE_ADMIN_LOGIN_PATH = '/admin/auth/login';
+export const LIVE_APP_PAGE_PATH = '/app';
 export const LIVE_ADMIN_SIGNUP_PATH = '/admin/auth/signup';
 export const LIVE_ADMIN_CALLBACK_PATH = '/admin/auth/callback';
 export const LIVE_ADMIN_LOGOUT_PATH = '/admin/auth/logout';
@@ -575,7 +576,13 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CLIENT_PATH) { send(response, 200, envoyClientScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH) { send(response, 200, coraConfigClientScript, 'text/javascript; charset=utf-8'); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGIN_PATH) {
-      try { const login = await identity.beginLogin(); send(response, 302, '', 'text/plain; charset=utf-8', { location: login.url, 'set-cookie': `helmion_admin_login_state=${login.state}; ${cookieOptions('/admin')}` }); }
+      try {
+        const login = await identity.beginLogin();
+        const cookies = [`helmion_admin_login_state=${login.state}; ${cookieOptions('/admin')}`];
+        // Only the fixed user app path is accepted as a post-login destination (no open redirect).
+        if (requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH) cookies.push(`helmion_admin_return=app; ${cookieOptions('/admin')}`);
+        send(response, 302, '', 'text/plain; charset=utf-8', { location: login.url, 'set-cookie': cookies.length === 1 ? cookies[0] : cookies });
+      }
       catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
       return true;
     }
@@ -602,7 +609,9 @@ export async function createLiveHelmianCloudAdminHandler({
         if (!cookieState) throw Object.assign(new Error('OIDC login cookie missing'), { stage: 'state_cookie_missing' });
         if (state !== cookieState) throw Object.assign(new Error('OIDC callback state mismatch'), { stage: 'state_mismatch' });
         const result = await identity.finishLogin(code, state);
-        send(response, 302, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/`, 'set-cookie': [
+        const returnToApp = cookieValue(request, 'helmion_admin_return') === 'app';
+        send(response, 302, '', 'text/plain; charset=utf-8', { location: returnToApp ? `${LIVE_APP_PAGE_PATH}/` : `${LIVE_ADMIN_PAGE_PATH}/`, 'set-cookie': [
+          `helmion_admin_return=; Max-Age=0; ${cookieOptions('/admin')}`,
           `helmion_admin_session=${result.sessionId}; ${cookieOptions('/admin')}`,
           `helmion_admin_session=${result.sessionId}; ${cookieOptions('/api/admin')}`,
           `helmion_admin_login_state=; Max-Age=0; ${cookieOptions('/admin')}`,
