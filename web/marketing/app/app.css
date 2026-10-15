@@ -152,3 +152,15 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .home .big-line{font-size:20px;font-weight:700;margin:4px 0}
 .run{padding:8px 0;border-top:1px solid var(--line)}.run:first-child{border-top:0}.run .n{display:flex;justify-content:space-between;gap:8px}
 .pend{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}.pend:first-child{border-top:0}.pend .t{flex:1}
+
+/* Compact pass: tighter spacing everywhere, decluttered small screens. */
+:root { --side-w:248px; --guard-w:320px; --radius:7px; }
+h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
+.sidebar { padding:12px 10px; gap:12px; }
+@media (max-width: 600px) {
+  html,body { font-size:calc(13px * var(--scale)); }
+  h1 { font-size:19px; } .eyebrow { display:none; }
+  .sidebar { padding:10px 8px; gap:10px; }
+  .logo span, .faint.sm.pad { display:none; }
+  .search, .inline-form input, .field select, .session-form input, select { padding:6px 8px; }
+}
