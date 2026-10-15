@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref } from './app-model.mjs';
+import { VIEW_TITLES, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -244,6 +244,85 @@ function renderFeed() {
 $('#feed-filter').onchange = renderFeed; $('#opt-info').onchange = renderFeed; $('#opt-approvals').onchange = renderFeed;
 $('#feed-clear').onclick = () => { for (const id of state.ack) state.cleared.add(id); for (const e of state.events) state.cleared.add(`evt:${e.id}`); store.set('cleared', [...state.cleared]); renderFeed(); };
 
+
+// ---- Devices (GET /api/remote/v1/desktops; Herald Remote Control patterns) ----
+// /app stays on witty-sawfly-97 (admin OIDC). Remote list needs Herald Clerk Bearer
+// until Clerk is unified (docs/APP_PWA_UNIFY_PLAN.md). Empty/401 → Connect phone / enroll.
+function remoteNonce() {
+  const id = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
+  return `${id}-${Date.now()}`;
+}
+async function remoteApi(path, init = {}) {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    ...init,
+    headers: {
+      'x-helmian-nonce': remoteNonce(),
+      ...(init.body ? { 'content-type': 'application/json' } : {}),
+      ...init.headers,
+    },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(body.message || body.error || `HTTP ${res.status}`), { status: res.status, code: body.error, body });
+  return body;
+}
+function renderDevices(model, statusText) {
+  const list = $('#devices-list');
+  const empty = $('#devices-empty');
+  const status = $('#devices-status');
+  status.textContent = statusText || '';
+  if (!model || model.empty) {
+    list.replaceChildren();
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  list.replaceChildren(...model.rows.map((row) => {
+    const b = el('button', 'device-row');
+    b.type = 'button';
+    b.dataset.desktopId = row.desktopId;
+    b.dataset.sessionId = row.sessionId;
+    b.append(el('strong', null, row.displayName), el('small', null, `${row.projectName} · ${row.name} · ${row.state || 'unknown'}`));
+    b.onclick = () => { location.href = '/herald/'; toast('Open Remote Control to drive this Desktop'); };
+    return b;
+  }));
+}
+async function loadDevices() {
+  const empty = $('#devices-empty');
+  try {
+    const body = await remoteApi('/api/remote/v1/desktops');
+    const model = desktopsModel(body);
+    renderDevices(model, model.empty
+      ? 'No live Desktop session is connected to this account.'
+      : 'Choose a Desktop, or open Remote Control to drive it.');
+  } catch (error) {
+    renderDevices({ empty: true, rows: [] }, error.status === 401 || error.status === 403
+      ? 'Remote Control sign-in is separate until Clerk is unified. Use Connect phone / enroll below, or open Remote Control.'
+      : (error.status === 503
+        ? 'Remote Control is not configured yet.'
+        : (error.message || 'Could not load Desktops.')));
+    empty.hidden = false;
+  }
+}
+$('#devices-enroll').onsubmit = async (e) => {
+  e.preventDefault();
+  const code = $('#devices-enroll-code').value.trim();
+  if (!/^[0-9]{8}$/.test(code)) { toast('Enter the eight-digit code from the EXE'); return; }
+  try {
+    await remoteApi('/api/remote/v1/enrollment', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'confirm', confirmationCode: code }),
+    });
+    toast('Desktop enrolled');
+    $('#devices-enroll-code').value = '';
+    await loadDevices();
+  } catch (error) {
+    toast(error.status === 401 || error.status === 403
+      ? 'Enroll from Remote Control (/herald) until Clerk is unified'
+      : (error.message || 'Enrollment failed'));
+  }
+};
+
 // ---- other tabs ----
 async function loadOverview() {
   try { const body = await api('/api/admin/overview'); $('#metrics').replaceChildren(...metricsModel(body).map(([k, v]) => { const c = el('div', 'card'); c.append(el('div', 'eyebrow', k.toUpperCase()), el('div', 'big', String(v))); return c; })); $('#posture').replaceChildren(...postureModel(body).map(([k, v]) => row(k, v))); }
@@ -316,7 +395,7 @@ async function loadRelease() {
     tb.replaceChildren(...rel.map((r) => { const tr = el('tr'); tr.append(el('td', null, r.version || r.tag || ''), el('td', 'muted', r.channel || ''), el('td', null, r.status || ''), el('td', 'muted', formatTime(r.publishedAt || r.createdAt))); return tr; }));
   } catch { const tr = el('tr'); const td = el('td', 'muted', 'No releases published yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); }
 }
-const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, release: loadRelease };
+const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, release: loadRelease };
 
 // ---- boot ----
 async function boot() {

@@ -1,6 +1,6 @@
 // Pure helpers for the Helmian Cloud app (no DOM) so they can be unit tested.
-export const VIEWS = Object.freeze(['home', 'console', 'overview', 'settings', 'workspace', 'activity', 'evidence', 'approvals', 'integrations', 'release']);
-export const VIEW_TITLES = Object.freeze({ home: 'Home', console: 'Console', overview: 'Overview', settings: 'Settings', workspace: 'Workspace', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', release: 'Release roadmap' });
+export const VIEWS = Object.freeze(['home', 'console', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'integrations', 'release']);
+export const VIEW_TITLES = Object.freeze({ home: 'Home', console: 'Console', overview: 'Overview', settings: 'Settings', workspace: 'Workspace', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', release: 'Release roadmap' });
 export const PROVIDERS = Object.freeze(['Claude', 'ChatGPT', 'Grok', 'Gemini']);
 export const PROVIDER_REGISTRY = Object.freeze([
   { key: 'slack', name: 'Slack', kind: 'Team chat' }, { key: 'discord', name: 'Discord', kind: 'Team chat' }, { key: 'github', name: 'GitHub', kind: 'Code' },
@@ -26,6 +26,24 @@ export function projectsModel(body = {}) {
 }
 export function filterProjects(projects, query = '') { const q = String(query).trim().toLowerCase(); return q ? projects.filter((p) => p.name.toLowerCase().includes(q) || p.key.toLowerCase().includes(q)) : projects; }
 export function projectKeyFromName(name = '') { return String(name).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'project'; }
+
+// Account-owned Desktops from GET /api/remote/v1/desktops (Herald Remote Control shape).
+export function desktopsModel(body = {}) {
+  const desktops = (Array.isArray(body.desktops) ? body.desktops : []).map((d) => ({
+    desktopId: String(d.desktopId ?? ''),
+    displayName: String(d.displayName || d.desktopId || 'Desktop'),
+    sessions: (Array.isArray(d.sessions) ? d.sessions : []).map((s) => ({
+      sessionId: String(s.sessionId ?? ''),
+      name: String(s.name ?? 'Session'),
+      state: String(s.state ?? ''),
+      projectName: String(s.project?.name ?? s.projectName ?? 'Project'),
+    })),
+  }));
+  const rows = desktops.flatMap((d) => d.sessions.map((s) => ({
+    desktopId: d.desktopId, displayName: d.displayName, ...s,
+  })));
+  return { desktops, rows, empty: rows.length === 0 };
+}
 
 export function approvalsModel(body = {}, role = null) {
   const items = (Array.isArray(body.items) ? body.items : []).slice(0, 100).map((i) => ({ ...i, canDecide: Boolean(i.approvalRequired && !i.decision && isAdminRole(role)) }));

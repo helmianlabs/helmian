@@ -5,6 +5,7 @@ import { progressModel, planFromText, usageModel, homeModel, viewFromHash, VIEWS
 
 test('phones open on Home, wide screens on Console; explicit hashes win', () => {
   assert.ok(VIEWS.includes('home'));
+  assert.ok(VIEWS.includes('devices'));
   assert.equal(viewFromHash('', { phone: true }), 'home');
   assert.equal(viewFromHash(''), 'console');
   assert.equal(viewFromHash('#console', { phone: true }), 'console');
