@@ -145,7 +145,7 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     prune();
     if (sessions.size >= MAX_IDENTITY_STATE_ENTRIES) throw new Error('OIDC session capacity reached');
     const tokenExpiry = Number(claims.exp) * 1_000;
-    sessions.set(sessionId, { subject: claims.sub, expiresAt: Math.min(Date.now() + 8 * 60 * 60_000, tokenExpiry) });
+    sessions.set(sessionId, { subject: claims.sub, email: typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : null, emailVerified: claims.email_verified === true, expiresAt: Math.min(Date.now() + 8 * 60 * 60_000, tokenExpiry) });
     return { sessionId, identity: { subject: claims.sub } };
   }
 

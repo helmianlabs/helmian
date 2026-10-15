@@ -49,7 +49,8 @@ import { createGeminiOAuthPkce, geminiCredentialReference, resolveGeminiOAuthCon
 import { readGeminiOAuthReadiness } from './provider-oauth-readiness.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
-import { createConsoleCommandWorker } from './console-command-worker.mjs';
+import { createConsoleCommandWorker, CONSOLE_EXECUTORS } from './console-command-worker.mjs';
+import { claimFirstOwner } from './owner-claim.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -65,6 +66,9 @@ export const LIVE_ADMIN_LOGIN_PATH = '/admin/auth/login';
 export const LIVE_ADMIN_SIGNUP_PATH = '/admin/auth/signup';
 export const LIVE_ADMIN_CALLBACK_PATH = '/admin/auth/callback';
 export const LIVE_ADMIN_LOGOUT_PATH = '/admin/auth/logout';
+export const LIVE_ADMIN_OVERVIEW_PATH = '/api/admin/overview';
+export const LIVE_ADMIN_RELEASE_PATH = '/api/admin/release';
+let releaseCache = { at: 0, body: null };
 export const LIVE_ADMIN_SESSION_PATH = '/api/admin/session';
 export const LIVE_ADMIN_CONTROL_PATH = '/api/admin/control-surface';
 export const LIVE_ADMIN_EVENTS_PATH = '/api/admin/events';
@@ -601,11 +605,13 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SESSION_PATH) {
       try {
+        try { await claimFirstOwner({ pool, env, session: sessionIdentity(request), logger: noteAttempt }); } catch { /* claim is best-effort; membership check below decides */ }
         const actor = await activeActor(request);
         send(response, 200, JSON.stringify({ authenticated: true, actor: { subject: actor.subject, tenantId: actor.tenantId, role: actor.role } }));
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
-        send(response, denied ? 403 : 503, JSON.stringify({ authenticated: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+        const signedIn = sessionIdentity(request);
+        send(response, denied ? 403 : 503, JSON.stringify({ authenticated: false, signedIn: Boolean(signedIn?.subject), ...(signedIn?.subject ? { subject: signedIn.subject } : {}), code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
       }
       return true;
     }
@@ -988,6 +994,49 @@ export async function createLiveHelmianCloudAdminHandler({
         send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.save(actor, body) }));
       } catch (error) {
         send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_PROJECTS_ADMIN_REQUIRED' : 'WORKSPACE_PROJECTS_INVALID' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_RELEASE_PATH) {
+      try {
+        await activeTenantActor(request);
+        if (!releaseCache.body || Date.now() - releaseCache.at > 10 * 60_000) {
+          const upstream = await fetch('https://api.github.com/repos/helmianlabs/helmian/releases?per_page=3', { headers: { accept: 'application/vnd.github+json', 'user-agent': 'helmian-cloud' }, signal: AbortSignal.timeout(5000) });
+          const list = upstream.ok ? await upstream.json() : [];
+          releaseCache = { at: Date.now(), body: (Array.isArray(list) ? list : []).map((r) => ({ tag: r.tag_name, name: r.name, publishedAt: r.published_at, url: r.html_url, assets: (r.assets || []).map((a) => ({ name: a.name, downloads: a.download_count, url: a.browser_download_url })) })) };
+        }
+        send(response, 200, JSON.stringify({ valid: true, releases: releaseCache.body }));
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'RELEASE_MEMBERSHIP_REQUIRED' : 'RELEASE_UNAVAILABLE' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_OVERVIEW_PATH) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        const context = { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: actor.sessionId, requestId: actor.requestId };
+        const overview = await withTenantTransaction(pool, context, async (client) => {
+          const counts = (await CONSOLE_EXECUTORS.workspace_context(client, { tenant_id: actor.tenantId })).result;
+          let console = { queued: 0, ran: 0 };
+          try {
+            const q = await client.query('select count(*) filter (where r.id is null)::int as queued, count(r.id)::int as ran from helmion.console_command_intents i left join helmion.console_command_runs r on r.tenant_id=i.tenant_id and r.intent_id=i.id where i.tenant_id=$1', [actor.tenantId]);
+            console = q.rows[0] ?? console;
+          } catch { /* runs table not migrated yet */ }
+          return { counts, console };
+        });
+        const settings = {
+          signIn: Boolean(env.HELMION_ADMIN_ISSUER && env.HELMION_ADMIN_CLIENT_ID),
+          database: Boolean(env.HELMION_DATABASE_URL),
+          coraProvider: env.HELMION_CORA_PROVIDER || null,
+          consoleWorker: env.HELMION_CONSOLE_WORKER === '1',
+          environment: env.HELMION_CLOUD_ENVIRONMENT || null,
+        };
+        send(response, 200, JSON.stringify({ valid: true, actor: { subject: actor.subject, tenantId: actor.tenantId, role: actor.role }, ...overview, settings }));
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? 'OVERVIEW_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'OVERVIEW_SELECTOR_INVALID' : 'OVERVIEW_UNAVAILABLE' }));
       }
       return true;
     }
