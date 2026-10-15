@@ -1,0 +1,51 @@
+# Helmian Cloud admin on a single small VPS (e.g. Hetzner CX22: 2 vCPU / 4 GB).
+# Postgres + the Helmian control plane (/admin, /api/admin, Cora CLM socket) + Caddy for HTTPS.
+# No Fly, no Neon. See README.md in this folder.
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: helmion
+      POSTGRES_USER: helmian_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [ "pgdata:/var/lib/postgresql/data" ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U helmian_app -d helmion"]
+      interval: 10s
+      retries: 10
+
+  app:
+    build: { context: ../.., dockerfile: deploy/helmian-cloud/Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "8080"
+      HELMION_DATABASE_URL: postgres://helmian_app:${POSTGRES_PASSWORD}@db:5432/helmion?sslmode=disable
+      HELMION_EXPECTED_ENDPOINT_ID: self-hosted:db/helmion
+    depends_on: { db: { condition: service_healthy } }
+    expose: [ "8080" ]
+
+  migrate:
+    build: { context: ../.., dockerfile: deploy/helmian-cloud/Dockerfile }
+    profiles: [ "tools" ]
+    env_file: .env
+    environment:
+      HELMION_DATABASE_URL: postgres://helmian_app:${POSTGRES_PASSWORD}@db:5432/helmion?sslmode=disable
+    depends_on: { db: { condition: service_healthy } }
+    entrypoint: [ "node", "bin/helmion.mjs", "migrate", "--expect-endpoint", "self-hosted:db/helmion" ]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: [ "80:80", "443:443" ]
+    environment:
+      HELMIAN_ADMIN_HOST: ${HELMIAN_ADMIN_HOST:?set HELMIAN_ADMIN_HOST in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [ app ]
+
+volumes:
+  pgdata: {}
+  caddy_data: {}
