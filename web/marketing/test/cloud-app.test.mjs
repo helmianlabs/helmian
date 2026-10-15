@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, metricsModel, postureModel, isAdminRole, addSession } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -9,7 +9,7 @@ const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
 
 test('three columns: sidebar, center console, Guard Feed', () => {
   for (const id of ['sidebar', 'main', 'guard', 'project-filter', 'new-project-form', 'appearance', 'sessions', 'log', 'prompt', 'mcp-panel', 'session-chips', 'session-form', 'feed', 'feed-filter', 'feed-clear', 'run-suite', 'active-agent']) assert.match(html, new RegExp(`id="${id}"`), id);
-  for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'SESSIONS', 'GUARD FEED', 'MCP Security', 'Full screen', 'Prompt...', '+ Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'GUARD FEED SETTINGS', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap']) assert.ok(html.includes(label), label);
+  for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'SESSIONS', 'GUARD FEED', 'MCP Security', 'Full screen', 'Prompt...', '+ Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'GUARD FEED SETTINGS', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap', 'Devices', 'Connect phone', 'No connected Desktop']) assert.ok(html.includes(label), label);
   for (const p of ['Claude', 'ChatGPT', 'Grok', 'Gemini']) assert.match(html, new RegExp(`data-provider="${p}"`));
   for (const view of VIEWS) assert.match(html, new RegExp(`data-view-panel="${view}"`), view);
   assert.match(html, /href="\/admin\/auth\/login\?return=\/app"/);
@@ -27,9 +27,9 @@ test('no technical disclaimers and no framework', () => {
   assert.doesNotMatch(html + js, /react|vue|angular|cdn\./i);
 });
 
-test('only existing admin APIs are used', () => {
+test('only known admin + remote APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/cora/approvals', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/projects']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/cora/approvals', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/projects', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
 });
 
 test('models', () => {
@@ -76,4 +76,12 @@ test('Guard Feed wording is plain language (no internal jargon)', () => {
 test('server sessions map to the sidebar list', () => {
   assert.deepEqual(sessionsFromServer({ sessions: [{ id: 'a', name: 'Fix', provider: 'Grok', createdAt: 't' }] }), [{ id: 'a', name: 'Fix', provider: 'Grok', createdAt: 't', progress: null }]);
   assert.deepEqual(sessionsFromServer({}), []);
+});
+
+test('desktopsModel empty and rows', () => {
+  assert.equal(desktopsModel({}).empty, true);
+  assert.equal(desktopsModel({ desktops: [] }).empty, true);
+  const m = desktopsModel({ desktops: [{ desktopId: 'd1', displayName: 'Troy PC', sessions: [{ sessionId: 's1', name: 'Main', state: 'live', project: { name: 'Helmian' } }] }] });
+  assert.equal(m.empty, false);
+  assert.deepEqual(m.rows.map((r) => [r.displayName, r.projectName, r.name, r.state]), [['Troy PC', 'Helmian', 'Main', 'live']]);
 });

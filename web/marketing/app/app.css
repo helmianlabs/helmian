@@ -164,3 +164,12 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   .logo span, .faint.sm.pad { display:none; }
   .search, .inline-form input, .field select, .session-form input, select { padding:6px 8px; }
 }
+
+/* Devices (Herald Remote Control list patterns) */
+.device-list { display:flex; flex-direction:column; gap:8px; margin:8px 0 16px; }
+.device-list button.device-row { all:unset; cursor:pointer; display:flex; flex-direction:column; gap:2px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--panel); }
+.device-list button.device-row:hover { border-color:var(--accent); }
+.device-list button.device-row strong { font-size:14px; }
+.device-list button.device-row small { color:var(--muted); font-size:12px; }
+.devices-empty .devices-enroll { margin-top:18px; text-align:left; max-width:320px; margin-left:auto; margin-right:auto; display:flex; flex-direction:column; gap:8px; }
+.devices-empty .devices-enroll input { flex:1; min-width:0; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:7px 10px; font-family:var(--mono); letter-spacing:.08em; }

@@ -43,6 +43,7 @@
         <button class="nav-item" type="button" data-view="overview">Overview</button>
         <button class="nav-item" type="button" data-view="settings">Settings</button>
         <button class="nav-item" type="button" data-view="workspace">Workspace</button>
+        <button class="nav-item" type="button" data-view="devices">Devices</button>
         <button class="nav-item active" type="button" data-view="console">Console</button>
         <button class="nav-item" type="button" data-view="activity">Live activity</button>
         <button class="nav-item" type="button" data-view="evidence">Evidence</button>
@@ -142,6 +143,28 @@
 
     <section id="view-workspace" class="view" data-view-panel="workspace" hidden>
       <h2>Workspace</h2><div id="workspace-cards" class="cards"></div>
+    </section>
+
+    <section id="view-devices" class="view" data-view-panel="devices" hidden>
+      <h2>Devices</h2>
+      <p class="muted sm">Desktops enrolled to your Helmian account. Sign-in stays on witty-sawfly-97 (/app). Listing uses GET /api/remote/v1/desktops.</p>
+      <p id="devices-status" class="muted sm" role="status"></p>
+      <div id="devices-list" class="device-list" aria-live="polite"></div>
+      <div id="devices-empty" class="empty devices-empty">
+        <p class="t">No connected Desktop</p>
+        <p class="sm">Enroll a desktop from the Helmian EXE, then connect your phone.</p>
+        <div class="row-btns left" style="justify-content:center;margin-top:12px">
+          <a class="btn primary sm" href="/app/pair">Connect phone</a>
+          <a class="btn sm" href="/herald/">Open Remote Control</a>
+        </div>
+        <form id="devices-enroll" class="devices-enroll">
+          <label class="muted sm" for="devices-enroll-code">Or enter the eight-digit enrollment code from the EXE</label>
+          <div class="row-btns left">
+            <input id="devices-enroll-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{8}" placeholder="12345678" aria-label="Desktop enrollment code">
+            <button class="btn primary sm" type="submit">Enroll</button>
+          </div>
+        </form>
+      </div>
     </section>
 
     <section id="view-settings" class="view" data-view-panel="settings" hidden>
