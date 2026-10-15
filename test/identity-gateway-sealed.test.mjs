@@ -39,3 +39,14 @@ test('sealed mode: login and session survive a different gateway instance', asyn
 test('sealed mode refuses short secrets', () => {
   assert.throws(() => createIdentityGateway({ env: { ...env, HELMION_ADMIN_SESSION_SECRET: 'short' }, fetchImpl }), /32 characters/);
 });
+
+test('callback failures carry a stage and OAuth error code, never token material', async () => {
+  const failing = (body, status) => async (url) => String(url).endsWith('/t') ? new Response(JSON.stringify(body), { status }) : fetchImpl(url);
+  const g1 = createIdentityGateway({ env, fetchImpl: failing({ error: 'invalid_grant', error_description: 'x' }, 400) });
+  const e1 = await g1.finishLogin('code', (await g1.beginLogin()).state).catch((e) => e);
+  assert.equal(e1.stage, 'token_exchange'); assert.equal(e1.oauthError, 'invalid_grant'); assert.equal(e1.httpStatus, 400);
+  const g2 = createIdentityGateway({ env, fetchImpl: failing({ access_token: 'a' }, 200) });
+  assert.equal((await g2.finishLogin('code', (await g2.beginLogin()).state).catch((e) => e)).stage, 'id_token_missing');
+  const g3 = createIdentityGateway({ env, fetchImpl });
+  assert.equal((await g3.finishLogin('code', 'garbage').catch((e) => e)).stage, 'login_state');
+});

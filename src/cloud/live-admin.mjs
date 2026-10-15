@@ -593,14 +593,24 @@ export async function createLiveHelmianCloudAdminHandler({
       try {
         const code = requestUrl.searchParams.get('code') ?? '';
         const state = requestUrl.searchParams.get('state') ?? '';
-        if (!code || state !== cookieValue(request, 'helmion_admin_login_state')) throw new Error('OIDC callback state invalid');
+        const providerError = requestUrl.searchParams.get('error');
+        if (providerError) throw Object.assign(new Error('OIDC provider returned an error'), { stage: 'provider_error', oauthError: providerError.slice(0, 64) });
+        if (!code) throw Object.assign(new Error('OIDC callback missing code'), { stage: 'missing_code' });
+        const cookieState = cookieValue(request, 'helmion_admin_login_state');
+        if (!cookieState) throw Object.assign(new Error('OIDC login cookie missing'), { stage: 'state_cookie_missing' });
+        if (state !== cookieState) throw Object.assign(new Error('OIDC callback state mismatch'), { stage: 'state_mismatch' });
         const result = await identity.finishLogin(code, state);
         send(response, 302, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/`, 'set-cookie': [
           `helmion_admin_session=${result.sessionId}; ${cookieOptions('/admin')}`,
           `helmion_admin_session=${result.sessionId}; ${cookieOptions('/api/admin')}`,
           `helmion_admin_login_state=; Max-Age=0; ${cookieOptions('/admin')}`,
         ] });
-      } catch { send(response, 401, JSON.stringify({ error: 'identity_callback_rejected', code: 'ADMIN_IDENTITY_REJECTED' })); }
+      } catch (error) {
+        // Stage + OAuth error code only: never tokens, codes, or cookie values.
+        const detail = { stage: error?.stage ?? 'unknown', ...(error?.oauthError ? { oauthError: error.oauthError } : {}), ...(error?.httpStatus ? { httpStatus: error.httpStatus } : {}) };
+        noteAttempt('admin.oidc_callback', 'denied', { ...detail, message: String(error?.message ?? '').slice(0, 120) });
+        send(response, 401, JSON.stringify({ error: 'identity_callback_rejected', code: 'ADMIN_IDENTITY_REJECTED', ...detail, retry: '/admin/auth/login' }));
+      }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SESSION_PATH) {
