@@ -46,7 +46,30 @@ export function describeDatabaseTarget(connectionString) {
   });
 }
 
+// Self-hosted Postgres (single VPS, docker compose) pins the target as
+// "self-hosted:<host>/<database>" instead of a Neon endpoint ID. The URL must
+// match host and database exactly, so a mistyped URL still opens no connection.
+export const SELF_HOSTED_PREFIX = 'self-hosted:';
+
+export function assertExpectedSelfHostedTarget(connectionString, expected) {
+  const target = describeDatabaseTarget(connectionString);
+  const pin = requiredText(expected, 'expected self-hosted target').slice(SELF_HOSTED_PREFIX.length);
+  const [host, ...rest] = pin.split('/');
+  const databaseName = rest.join('/');
+  if (!host || !databaseName) throw new TypeError('self-hosted target must look like self-hosted:<host>/<database>');
+  if (target.host !== host.toLowerCase() || target.databaseName !== databaseName) {
+    throw new Error(
+      `Database target mismatch: configured ${target.host}/${target.databaseName}, `
+      + `expected ${host.toLowerCase()}/${databaseName}; no connection was opened`,
+    );
+  }
+  return Object.freeze({ ...target, selfHosted: true });
+}
+
 export function assertExpectedNeonEndpoint(connectionString, expectedEndpointId) {
+  if (String(expectedEndpointId ?? '').trim().toLowerCase().startsWith(SELF_HOSTED_PREFIX)) {
+    return assertExpectedSelfHostedTarget(connectionString, String(expectedEndpointId).trim());
+  }
   const target = describeDatabaseTarget(connectionString);
   const expected = normalizeNeonEndpointId(expectedEndpointId);
   if (!target.endpointId) {
