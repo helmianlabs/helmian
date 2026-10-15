@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1018">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <link rel="manifest" href="/herald/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
+  <link rel="stylesheet" href="/herald/styles.css">
+  <link rel="stylesheet" href="/herald/pair.css?v=1">
+  <script src="/herald/app.js?v=1" type="module"></script>
+  <title>Helmian · Phone sharing</title>
+</head>
+<body>
+  <div class="pair-page">
+    <header>
+      <h1>Helmian phone sharing</h1>
+      <span class="pill offline" id="presence">NOT PAIRED</span>
+    </header>
+
+    <section id="pairCard">
+      <h2>Pair this phone</h2>
+      <p class="muted">Scanning the QR in Helmian Desktop fills the code in for you. Codes are single-use and expire after 10 minutes.</p>
+      <label>Pairing code <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="9" placeholder="8 digits"></label>
+      <label>Phone name <input id="deviceName" maxlength="60" placeholder="My phone"></label>
+      <div class="row"><button id="pair" type="button">Pair</button></div>
+      <p class="muted" id="pairMessage" role="status"></p>
+    </section>
+
+    <main id="workspace" hidden>
+      <section>
+        <h2>Desktop session</h2>
+        <p id="project">No desktop connected</p>
+        <p class="muted" id="session"></p>
+        <p>Guard: <strong id="guard">Unknown</strong></p>
+        <p class="muted" id="guardDetail"></p>
+        <div class="row"><small id="freshness">Not synced</small><button id="refresh" type="button" class="deny">Refresh</button></div>
+      </section>
+
+      <section>
+        <h2>Activity</h2>
+        <div id="outputs"></div>
+      </section>
+
+      <section id="approvalsCard">
+        <h2>Approvals</h2>
+        <div id="approvals"></div>
+      </section>
+
+      <section>
+        <h2>Instruction</h2>
+        <textarea id="instruction"></textarea>
+        <div class="row">
+          <button id="review" type="button">Review and send</button>
+          <button id="voice" type="button" class="deny" aria-pressed="false">Start voice input</button>
+          <button id="readReplies" type="button" class="deny" aria-pressed="false">Read visible replies: Off</button>
+        </div>
+        <small id="voiceState"></small>
+      </section>
+
+      <section id="deliveryCard" hidden>
+        <h2>Deliveries</h2>
+        <div id="deliveries"></div>
+      </section>
+
+      <section>
+        <h2>Identity and transport</h2>
+        <p>Account: <span id="accountIdentity">Not configured</span></p>
+        <small id="accountDetail"></small>
+        <p>Device: <span id="deviceIdentity">Not paired</span></p>
+        <small id="deviceDetail"></small>
+        <p>Transport: <span id="transportMode">Secure polling</span></p>
+        <small id="transportDetail"></small>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="reviewDialog">
+    <form method="dialog">
+      <h2>Send this instruction?</h2>
+      <p class="muted" id="reviewContext"></p>
+      <p id="reviewText"></p>
+      <div class="row">
+        <button value="cancel" class="deny">Cancel</button>
+        <button id="confirmSend" value="send">Send</button>
+      </div>
+    </form>
+  </dialog>
+  <div class="pair-toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
