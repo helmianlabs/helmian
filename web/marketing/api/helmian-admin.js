@@ -3,8 +3,9 @@
 // Needs env: HELMION_DATABASE_URL (Neon pooled URL), HELMION_EXPECTED_ENDPOINT_ID,
 // HELMION_ADMIN_ISSUER, HELMION_ADMIN_CLIENT_ID, HELMION_ADMIN_REDIRECT_URI,
 // HELMION_ADMIN_SESSION_SECRET (sealed cookies; no in-memory sessions on serverless).
-import { createLiveHelmianCloudAdminHandler, LIVE_ADMIN_CONSOLE_COMMANDS_PATH } from '../helmian-admin/src/cloud/live-admin.mjs';
+import { createLiveHelmianCloudAdminHandler, LIVE_ADMIN_CONSOLE_COMMANDS_PATH, LIVE_ADMIN_CORA_TASKS_PATH } from '../helmian-admin/src/cloud/live-admin.mjs';
 import { createConsoleCommandWorker } from '../helmian-admin/src/cloud/console-command-worker.mjs';
+import { createAgentTaskWorker } from '../helmian-admin/src/cora/agent-task-worker.mjs';
 import pg from 'pg';
 
 const REQUIRED = ['HELMION_DATABASE_URL', 'HELMION_EXPECTED_ENDPOINT_ID', 'HELMION_ADMIN_ISSUER', 'HELMION_ADMIN_CLIENT_ID', 'HELMION_ADMIN_REDIRECT_URI', 'HELMION_ADMIN_SESSION_SECRET'];
@@ -18,7 +19,8 @@ function boot() {
       const pool = new pg.Pool({ connectionString: process.env.HELMION_DATABASE_URL, max: 3, idleTimeoutMillis: 10_000 });
       const admin = await createLiveHelmianCloudAdminHandler({ env: { HELMION_CLOUD_ENVIRONMENT: 'production', ...process.env }, pool, logger: (e) => console.log(JSON.stringify(e)) });
       const worker = createConsoleCommandWorker({ pool, workerId: 'worker:vercel-console' });
-      return { admin, worker };
+      const agentTaskWorker = createAgentTaskWorker({ pool, workerId: 'worker:vercel-agent-tasks' });
+      return { admin, worker, agentTaskWorker };
     })().catch((error) => { state = null; throw error; });
   }
   return state;
@@ -44,6 +46,8 @@ export default async function handler(req, res) {
   if (booted.missing) { res.statusCode = 503; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ valid: false, code: 'ADMIN_NOT_CONFIGURED', missing: booted.missing })); return; }
   // No always-on worker on Vercel Hobby: drain queued console commands when the console is read.
   if (req.method === 'GET' && path.split('?')[0] === LIVE_ADMIN_CONSOLE_COMMANDS_PATH) await booted.worker.runOnce().catch((e) => console.log('console worker', e.message));
+  // Same for prepared agent task intents: triage them (needs_desktop / refused) when the task list is read.
+  if (req.method === 'GET' && path.split('?')[0] === LIVE_ADMIN_CORA_TASKS_PATH) await booted.agentTaskWorker.runOnce().catch((e) => console.log('agent task worker', e.message));
   const handled = await booted.admin.handler(req, res);
   if (!handled && !res.writableEnded) { res.statusCode = 404; res.setHeader('content-type', 'application/json'); res.end('{"valid":false,"code":"ADMIN_ROUTE_NOT_FOUND"}'); }
 }
