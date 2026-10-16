@@ -46,6 +46,7 @@ const conversationBody = document.querySelector('#conversation-body');
 const composer = document.querySelector('#composer');
 const composerInput = document.querySelector('#composer-input');
 const composerSend = document.querySelector('#composer-send');
+const composerNewChannel = document.querySelector('#composer-new-channel');
 const envoyChannel = document.querySelector('#envoy-channel');
 const composerStatus = document.querySelector('#composer-status');
 const workspaceProjectsStatus = document.querySelector('#workspace-projects-status');
@@ -447,7 +448,7 @@ async function loadEnvoyChannels() {
   composerSend.disabled = !(body.channels?.length);
   if (!body.channels?.length) {
     renderMessages({ messages: [] });
-    composerStatus.textContent = 'No Envoy channels are available for this Organization.';
+    composerStatus.textContent = 'No Envoy channels yet — create the first one with + Channel.';
     return;
   }
   composerStatus.textContent = 'Organization Envoy ready. Cora and outbound delivery are not invoked.';
@@ -792,9 +793,12 @@ function renderAgentTasks(body) {
   const model = agentTaskPanelModel(body); agentTaskReceipts.replaceChildren();
   if (model.empty) { const empty = document.createElement('p'); empty.className = 'preview'; empty.textContent = 'No agent task intents recorded for this Organization.'; agentTaskReceipts.append(empty); agentTaskStatus.textContent = 'No task intents yet. Drafting and preparing do not invoke a worker.'; return; }
   agentTaskStatus.textContent = model.statusLabel;
+  const runLabel = (outcome) => ({ needs_desktop: 'Waiting for desktop runner', completed: 'Completed', failed: 'Failed', refused: 'Refused' }[outcome] ?? outcome);
   for (const receipt of model.receipts) {
     const card = document.createElement('article'); card.className = 'config-item';
-    card.append(configItem('Task', `${receipt.taskType} · ${receipt.status}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Execution', 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
+    const run = receipt.run;
+    card.append(configItem('Task', `${receipt.taskType} · ${receipt.status}`), configItem('Goal', receipt.goal), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Execution', run ? runLabel(run.outcome) : 'Not performed'), configItem('Agent / provider', 'Not invoked'), configItem('Filesystem', 'Not performed'));
+    if (run?.result && Object.keys(run.result).some((k) => k !== 'format')) card.append(configItem('Worker note', run.result.reason || run.result.error || JSON.stringify(run.result)));
     agentTaskReceipts.append(card);
   }
 }
@@ -1161,6 +1165,46 @@ artifactStudioForm.onsubmit = async (event) => {
 artifactScriptForm.onsubmit = async (event) => { event.preventDefault(); if (!artifactScriptReceipt.value.trim() || !artifactScriptText.value.trim()) { artifactScriptStatus.textContent = 'Enter an artifact receipt and bounded manual script text.'; return; } artifactScriptStatus.textContent = 'Recording manual script revision…'; try { const sourceLinkReceiptIds = artifactScriptSources.value.split('\n').map((value) => value.trim()).filter(Boolean); const result = await coraClient.createArtifactScript({ artifactReceiptId: artifactScriptReceipt.value.trim(), scriptKind: 'narration', text: artifactScriptText.value.trim(), sourceLinkReceiptIds, stage: artifactScriptStage.value, approvalReason: null, idempotencyKey: crypto.randomUUID() }); artifactScriptText.value = ''; artifactScriptStatus.textContent = result.replayed ? 'Script revision replay receipt confirmed.' : 'Manual script revision prepared. No generation occurred.'; await loadArtifactScripts(artifactScriptReceipt.value.trim()); } catch (error) { artifactScriptStatus.textContent = `Script revision not recorded: ${error.message}`; } };
 artifactExecutionForm.onsubmit = async (event) => { event.preventDefault(); if (!artifactExecutionReceipt.value.trim() || !artifactExecutionScript.value.trim() || !artifactExecutionSources.value.trim()) { artifactExecutionStatus.textContent = 'Enter linked artifact, source-checked script, and approved source link receipts.'; return; } artifactExecutionStatus.textContent = 'Running execution policy preflight…'; try { const result = await coraClient.createArtifactExecutionRequest({ artifactReceiptId: artifactExecutionReceipt.value.trim(), scriptReceiptId: artifactExecutionScript.value.trim(), sourceLinkReceiptIds: artifactExecutionSources.value.split('\n').map((value) => value.trim()).filter(Boolean), catalogEntryId: artifactExecutionCatalog.value.trim(), provider: artifactExecutionProvider.value.trim(), model: artifactExecutionModel.value.trim(), modality: artifactExecutionModality.value, estimatedCostMinor: artifactExecutionCost.value.trim() || null, externalExecution: true, idempotencyKey: crypto.randomUUID() }); artifactExecutionStatus.textContent = result.replayed ? 'Execution request replay receipt confirmed.' : result.status === 'approval_required' ? 'Approval required. Nothing was executed.' : result.status === 'blocked' ? 'Execution blocked by policy or budget. Nothing was executed.' : 'Request queued for a future worker. Nothing was executed.'; await loadArtifactExecutionRequests(artifactExecutionReceipt.value.trim()); } catch (error) { artifactExecutionStatus.textContent = `Execution request not recorded: ${error.message}`; } };
 envoyChannel.onchange = async () => { envoyStream?.close(); envoyStream = null; await loadEnvoyMessages(); startEnvoyRealtime(); };
+composerNewChannel.onclick = () => {
+  if (document.querySelector('#new-channel-form')) return;
+  const form = document.createElement('form');
+  form.id = 'new-channel-form';
+  form.className = 'composer';
+  const input = document.createElement('input');
+  input.placeholder = 'New channel name…';
+  input.maxLength = 120;
+  input.setAttribute('aria-label', 'New channel name');
+  const create = document.createElement('button');
+  create.type = 'submit';
+  create.textContent = 'Create';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = 'Cancel';
+  form.append(input, create, cancel);
+  composer.before(form);
+  input.focus();
+  cancel.onclick = () => form.remove();
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const title = input.value.trim();
+    if (!title) { composerStatus.textContent = 'Enter a channel name.'; input.focus(); return; }
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'channel';
+    create.disabled = true;
+    composerStatus.textContent = 'Creating channel…';
+    try {
+      const result = await envoy.createChannel({ kind: 'team', slug, title });
+      form.remove();
+      await loadEnvoyChannels();
+      if (result.channel?.id) envoyChannel.value = result.channel.id;
+      await loadEnvoyMessages();
+      startEnvoyRealtime();
+      composerStatus.textContent = `Channel “${result.channel?.title ?? title}” created.`;
+    } catch (error) {
+      create.disabled = false;
+      composerStatus.textContent = `Channel not created: ${error.message}`;
+    }
+  };
+};
 composer.onsubmit = async (event) => {
   event.preventDefault();
   const body = composerInput.value.trim();
