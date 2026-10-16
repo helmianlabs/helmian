@@ -5,7 +5,15 @@ import { buildAgentTaskClaimReceipt, requireAuthorizedWorker } from './agent-tas
 
 function context(actor) { if (!actor?.tenantId || !actor.subject || !actor.role || !actor.sessionId || !actor.requestId) throw new Error('verified Organization membership is required'); return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.membershipRole ?? actor.role, sessionId: actor.sessionId, requestId: actor.requestId }; }
 const SELECT = 'id, task_type, goal, context_ref, department, cost_center, intent, status, receipt_id, idempotency_key, created_at';
-function rowToReceipt(row, replayed = false) { return buildAgentTaskReceipt({ task: { taskType: row.task_type, goal: row.goal, contextRef: row.context_ref, department: row.department, costCenter: row.cost_center, intent: row.intent, idempotencyKey: row.idempotency_key }, status: row.status, receiptId: row.receipt_id, replayed }); }
+function rowToReceipt(row, replayed = false) {
+  const receipt = buildAgentTaskReceipt({ task: { taskType: row.task_type, goal: row.goal, contextRef: row.context_ref, department: row.department, costCenter: row.cost_center, intent: row.intent, idempotencyKey: row.idempotency_key }, status: row.status, receiptId: row.receipt_id, replayed });
+  if (!row.run_outcome) return receipt;
+  return Object.freeze({
+    ...receipt,
+    execution: row.run_outcome,
+    run: Object.freeze({ outcome: row.run_outcome, result: row.run_result ?? {}, workerId: row.run_worker_id, createdAt: row.run_created_at }),
+  });
+}
 
 export function createAgentTaskRepository(pool) {
   return Object.freeze({
@@ -23,7 +31,26 @@ export function createAgentTaskRepository(pool) {
     },
     async list(actor, limit = 50) {
       const active = context(actor); const bounded = Math.min(Math.max(Number(limit) || 50, 1), 100);
-      return withTenantTransaction(pool, active, async (client) => { await requireActiveTenantMembership(client, active); const result = await client.query(`select ${SELECT} from helmion.cora_agent_task_intents where tenant_id=$1 order by created_at desc, id desc limit $2`, [active.tenantId, bounded]); return { receipts: result.rows.map((row) => rowToReceipt(row)) }; });
+      return withTenantTransaction(pool, active, async (client) => {
+        await requireActiveTenantMembership(client, active);
+        let rows;
+        try {
+          const result = await client.query(
+            `select i.id, i.task_type, i.goal, i.context_ref, i.department, i.cost_center, i.intent, i.status, i.receipt_id, i.idempotency_key, i.created_at,
+                    r.outcome as run_outcome, r.result as run_result, r.worker_id as run_worker_id, r.created_at as run_created_at
+             from helmion.cora_agent_task_intents i
+             left join helmion.cora_agent_task_runs r on r.tenant_id = i.tenant_id and r.task_id = i.id
+             where i.tenant_id=$1 order by i.created_at desc, i.id desc limit $2`,
+            [active.tenantId, bounded]);
+          rows = result.rows;
+        } catch (error) {
+          // Migration 045 not applied yet: fall back to the runs-less list.
+          if (error?.code !== '42P01') throw error;
+          const result = await client.query(`select ${SELECT} from helmion.cora_agent_task_intents where tenant_id=$1 order by created_at desc, id desc limit $2`, [active.tenantId, bounded]);
+          rows = result.rows;
+        }
+        return { receipts: rows.map((row) => rowToReceipt(row)) };
+      });
     },
     async claimPrepared(workerActor, { taskId, idempotencyKey } = {}) {
       const worker = requireAuthorizedWorker(workerActor); const active = context(worker); const id = Number(taskId); const idem = String(idempotencyKey ?? '').trim();

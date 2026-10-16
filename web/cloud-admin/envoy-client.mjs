@@ -30,6 +30,13 @@ export function createEnvoyClient({ fetchImpl = fetch } = {}) {
         body: JSON.stringify({ channelId, body, idempotencyKey }),
       });
     },
+    async createChannel({ kind = 'team', slug, title }) {
+      return requestJson(fetchImpl, '/api/admin/envoy/channels', {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ kind, slug, title }),
+      });
+    },
     openMessageStream(channelId, { afterId = null, EventSourceImpl = globalThis.EventSource, onOpen = () => {}, onMessage = () => {}, onStatus = () => {}, onError = () => {}, retryBaseMs = 500, retryMaxMs = 8000, maxRetries = 5, setTimeoutImpl = globalThis.setTimeout, clearTimeoutImpl = globalThis.clearTimeout } = {}) {
       const id = String(channelId ?? '').trim();
       if (!id) return null;

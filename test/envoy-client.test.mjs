@@ -38,6 +38,21 @@ test('client preserves unauthorized status for the shell to stop polling', async
   await assert.rejects(() => client.listChannels(), (error) => error.status === 403 && /ENVOY_MEMBERSHIP_REQUIRED/.test(error.message));
 });
 
+test('client creates a channel with exact keys and same-origin auth', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ channel: { id: 'c-9', slug: 'ops', title: 'Ops', kind: 'team' } }), { status: 200 });
+  };
+  const result = await createEnvoyClient({ fetchImpl }).createChannel({ kind: 'team', slug: 'ops', title: 'Ops' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/admin/envoy/channels');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.credentials, 'same-origin');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { kind: 'team', slug: 'ops', title: 'Ops' });
+  assert.equal(result.channel.id, 'c-9');
+});
+
 test('Envoy client opens same-origin SSE without tenant selectors and handles message/error events', () => {
   const calls = []; const listeners = {};
   class FakeEventSource {
