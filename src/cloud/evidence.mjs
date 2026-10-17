@@ -91,6 +91,16 @@ function runRow(kind, row, receipt) {
   const summary = boundedText(
     result.reason ?? result.error ?? result.summary ?? result.note ?? row.outcome ?? '',
   );
+  // Artifact execution runs carry the desktop-reported completion metadata.
+  // Exposed for the /app Preview receipt gallery (BROWSE-001): what was
+  // generated, when, which desktop reported it, and the verified script hash.
+  // Metadata only; content bytes never touch the cloud.
+  const artifact = kind === 'artifact_execution' ? {
+    descriptor: result.artifactDescriptor && typeof result.artifactDescriptor === 'object' && !Array.isArray(result.artifactDescriptor) ? result.artifactDescriptor : null,
+    scriptContentHash: typeof result.scriptContentHash === 'string' ? result.scriptContentHash : null,
+    reportedBy: typeof result.reportedBy === 'string' ? result.reportedBy : null,
+    completedAt: typeof result.completedAt === 'string' ? result.completedAt : null,
+  } : {};
   return Object.freeze({
     kind,
     id: Number(row.id),
@@ -98,6 +108,7 @@ function runRow(kind, row, receipt) {
     outcome: String(row.outcome ?? ''),
     summary,
     createdAt: new Date(row.created_at).toISOString(),
+    ...artifact,
   });
 }
 
