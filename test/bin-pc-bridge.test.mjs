@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runBridge } from '../bin/pc-bridge.mjs';
@@ -344,4 +344,75 @@ test('bridge pairs from HELMION_BRIDGE_PAIRING_CODE when no promptCode is inject
   const saved = JSON.parse(await readFile(join(tmp, 'token.json'), 'utf8'));
   assert.equal(saved.token, 'tok-1');
   await handle.stop();
+});
+
+test('bridge injects the vault provider key into the agent child env', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-vault-'));
+  const cloud = makeFakeCloud();
+  const spawns = [];
+  const spawnImpl = (cmd, args, opts) => {
+    const f = makeFakeChild();
+    spawns.push({ cmd, args, env: opts?.env });
+    return f.child;
+  };
+  // Pre-pair: token file exists so no pairing prompt runs.
+  await writeFile(join(tmp, 'token.json'), JSON.stringify({ token: 'test-device-token-0123456789abcdef' }));
+  // Vault holds the gemini key; env var is deliberately different.
+  const vaultPath = join(tmp, 'vault.json');
+  const { openVault } = await import('../src/runner/vault.mjs');
+  const vault = await openVault({ vaultPath, deviceToken: 'test-device-token-0123456789abcdef' });
+  await vault.set('gemini', 'api_key', 'vault-key-xyz');
+  process.env.GEMINI_API_KEY = 'env-key-should-lose';
+
+  const handle = await runBridge({
+    fetchImpl: cloud.fetchImpl,
+    spawnImpl,
+    execPath: 'node',
+    helmionBin: 'fake-helmion.mjs',
+    bridgeDir: tmp,
+    tokenPath: join(tmp, 'token.json'),
+    cursorPath: join(tmp, 'cursor.json'),
+    vaultPath,
+    provider: 'gemini',
+    pollMs: 50,
+    log: () => {},
+    logError: () => {},
+    noAbly: true,
+  });
+  t.after(() => { handle.stop(); delete process.env.GEMINI_API_KEY; });
+  assert.equal(handle.ok, true);
+  assert.equal(spawns.length, 1);
+  assert.equal(spawns[0].env.GEMINI_API_KEY, 'vault-key-xyz', 'vault wins over env');
+});
+
+test('bridge falls back to env when the vault is empty', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-vault-'));
+  const cloud = makeFakeCloud();
+  const spawns = [];
+  const spawnImpl = (cmd, args, opts) => {
+    const f = makeFakeChild();
+    spawns.push({ env: opts?.env });
+    return f.child;
+  };
+  await writeFile(join(tmp, 'token.json'), JSON.stringify({ token: 'test-device-token-0123456789abcdef' }));
+  process.env.GEMINI_API_KEY = 'env-key-wins';
+
+  const handle = await runBridge({
+    fetchImpl: cloud.fetchImpl,
+    spawnImpl,
+    execPath: 'node',
+    helmionBin: 'fake-helmion.mjs',
+    bridgeDir: tmp,
+    tokenPath: join(tmp, 'token.json'),
+    cursorPath: join(tmp, 'cursor.json'),
+    vaultPath: join(tmp, 'vault.json'), // no vault file yet
+    provider: 'gemini',
+    pollMs: 50,
+    log: () => {},
+    logError: () => {},
+    noAbly: true,
+  });
+  t.after(() => { handle.stop(); delete process.env.GEMINI_API_KEY; });
+  assert.equal(handle.ok, true);
+  assert.equal(spawns[0].env.GEMINI_API_KEY, 'env-key-wins', 'env survives when vault is empty');
 });
