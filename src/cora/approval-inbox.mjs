@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
+import { appendAuditEvent } from '../cloud/audit-event-repository.mjs';
 
 const DECISIONS = new Set(['approve', 'reject']);
 const KINDS = new Set(['artifact_execution_request']);
@@ -32,7 +33,8 @@ function decisionReceipt(row, replayed = false) {
 
 function inboxItem(row) {
   const effectiveStatus = row.decision === 'approve' ? 'approved_not_executed' : row.decision === 'reject' ? 'rejected_not_executed' : row.status;
-  return Object.freeze({ requestKind: row.request_kind, requestReceiptId: row.request_receipt_id, status: effectiveStatus, approvalRequired: row.request_kind === 'artifact_execution_request' && row.status === 'approval_required' && !row.decision, decision: row.decision ?? null, decisionReceiptId: row.decision_receipt_id ?? null, decisionReason: row.decision_reason ?? null, createdAt: row.created_at ?? null, actorSubject: row.actor_subject ?? null, summary: row.summary ?? null, execution: 'not_performed', providerInvocation: 'not_performed' });
+  const run = row.run_outcome ? Object.freeze({ outcome: row.run_outcome, result: row.run_result, workerId: row.run_worker_id, createdAt: row.run_created_at }) : null;
+  return Object.freeze({ requestKind: row.request_kind, requestReceiptId: row.request_receipt_id, status: effectiveStatus, approvalRequired: row.request_kind === 'artifact_execution_request' && row.status === 'approval_required' && !row.decision, decision: row.decision ?? null, decisionReceiptId: row.decision_receipt_id ?? null, decisionReason: row.decision_reason ?? null, createdAt: row.created_at ?? null, actorSubject: row.actor_subject ?? null, summary: row.summary ?? null, execution: run ? run.outcome : 'not_performed', providerInvocation: 'not_performed', run });
 }
 
 export function createApprovalInboxRepository(pool) {
@@ -41,8 +43,17 @@ export function createApprovalInboxRepository(pool) {
       const active = context(actor); const bounded = Math.min(Math.max(Number(limit) || 100, 1), 100);
       return withTenantTransaction(pool, active, async (client) => {
         await requireActiveTenantMembership(client, active);
-        const result = await client.query(`select 'artifact_execution_request' as request_kind, r.receipt_id as request_receipt_id, r.status, r.actor_subject, r.created_at, d.decision, d.receipt_id as decision_receipt_id, d.reason as decision_reason, concat(r.provider, '/', r.model, ' · ', r.modality) as summary from helmion.cora_artifact_execution_requests r left join helmion.cora_approval_decisions d on d.tenant_id=r.tenant_id and d.request_kind='artifact_execution_request' and d.request_receipt_id=r.receipt_id where r.tenant_id=$1 union all select 'agent_task_intent' as request_kind, t.receipt_id as request_receipt_id, t.status, t.actor_subject, t.created_at, null as decision, null as decision_receipt_id, null as decision_reason, t.task_type || ' · ' || t.goal as summary from helmion.cora_agent_task_intents t where t.tenant_id=$1 order by created_at desc limit $2`, [active.tenantId, bounded]);
-        const items = result.rows.map(inboxItem).filter((item) => (!requestKind || item.requestKind === requestKind) && (!status || item.status === status || item.decision === status));
+        let rows;
+        try {
+          const result = await client.query(`select 'artifact_execution_request' as request_kind, r.receipt_id as request_receipt_id, r.status, r.actor_subject, r.created_at, d.decision, d.receipt_id as decision_receipt_id, d.reason as decision_reason, concat(r.provider, '/', r.model, ' · ', r.modality) as summary, e.outcome as run_outcome, e.result as run_result, e.worker_id as run_worker_id, e.created_at as run_created_at from helmion.cora_artifact_execution_requests r left join helmion.cora_approval_decisions d on d.tenant_id=r.tenant_id and d.request_kind='artifact_execution_request' and d.request_receipt_id=r.receipt_id left join helmion.cora_artifact_execution_runs e on e.tenant_id=r.tenant_id and e.execution_request_id=r.id where r.tenant_id=$1 union all select 'agent_task_intent' as request_kind, t.receipt_id as request_receipt_id, t.status, t.actor_subject, t.created_at, null as decision, null as decision_receipt_id, null as decision_reason, t.task_type || ' · ' || t.goal as summary, null as run_outcome, null as run_result, null as run_worker_id, null as run_created_at from helmion.cora_agent_task_intents t where t.tenant_id=$1 order by created_at desc limit $2`, [active.tenantId, bounded]);
+          rows = result.rows;
+        } catch (error) {
+          // Migration 046 not applied yet: fall back to the runs-less list.
+          if (error?.code !== '42P01') throw error;
+          const result = await client.query(`select 'artifact_execution_request' as request_kind, r.receipt_id as request_receipt_id, r.status, r.actor_subject, r.created_at, d.decision, d.receipt_id as decision_receipt_id, d.reason as decision_reason, concat(r.provider, '/', r.model, ' · ', r.modality) as summary from helmion.cora_artifact_execution_requests r left join helmion.cora_approval_decisions d on d.tenant_id=r.tenant_id and d.request_kind='artifact_execution_request' and d.request_receipt_id=r.receipt_id where r.tenant_id=$1 union all select 'agent_task_intent' as request_kind, t.receipt_id as request_receipt_id, t.status, t.actor_subject, t.created_at, null as decision, null as decision_receipt_id, null as decision_reason, t.task_type || ' · ' || t.goal as summary from helmion.cora_agent_task_intents t where t.tenant_id=$1 order by created_at desc limit $2`, [active.tenantId, bounded]);
+          rows = result.rows;
+        }
+        const items = rows.map(inboxItem).filter((item) => (!requestKind || item.requestKind === requestKind) && (!status || item.status === status || item.decision === status));
         return { items, source: 'organization_approval_receipts', providerCalls: 'not_performed' };
       });
     },
@@ -55,7 +66,12 @@ export function createApprovalInboxRepository(pool) {
         if (request.rowCount !== 1 || request.rows[0].status !== 'approval_required') throw new Error('approval request is unavailable or already decided');
         const receiptId = randomUUID();
         const inserted = await client.query('insert into helmion.cora_approval_decisions (tenant_id, request_kind, request_receipt_id, decision, reason, actor_subject, actor_role, idempotency_key, receipt_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict (tenant_id, idempotency_key) do nothing returning tenant_id, request_kind, request_receipt_id, decision, reason, actor_subject, actor_role, idempotency_key, receipt_id, created_at', [active.tenantId, decision.requestKind, decision.requestReceiptId, decision.decision, decision.reason, active.actorSubject, active.actorRole, decision.idempotencyKey, receiptId]);
-        if (inserted.rowCount === 1) return { durable: true, ...decisionReceipt(inserted.rows[0]), source: 'organization_approval_receipts' };
+        if (inserted.rowCount === 1) {
+          // Every approval lands in the audit ledger in the same transaction,
+          // before any worker can act on the decision.
+          await appendAuditEvent(client, active, { actionType: 'cora.approval.decided', canonicalTarget: { requestKind: decision.requestKind, requestReceiptId: decision.requestReceiptId, decisionReceiptId: inserted.rows[0].receipt_id }, policyVersion: 'approval-inbox.v1', decision: decision.decision === 'approve' ? 'ALLOW' : 'DENY', privacySummary: `${decision.decision === 'approve' ? 'Approved' : 'Rejected'} the ${decision.requestKind} request`, result: { decision: decision.decision, receiptId: inserted.rows[0].receipt_id } });
+          return { durable: true, ...decisionReceipt(inserted.rows[0]), source: 'organization_approval_receipts' };
+        }
         const replay = await client.query('select tenant_id, request_kind, request_receipt_id, decision, reason, actor_subject, actor_role, idempotency_key, receipt_id, created_at from helmion.cora_approval_decisions where tenant_id=$1 and idempotency_key=$2', [active.tenantId, decision.idempotencyKey]);
         if (replay.rowCount !== 1 || replay.rows[0].request_kind !== decision.requestKind || replay.rows[0].request_receipt_id !== decision.requestReceiptId || replay.rows[0].decision !== decision.decision) throw new Error('approval decision idempotency key is already bound');
         return { durable: true, ...decisionReceipt(replay.rows[0], true), source: 'organization_approval_receipts' };
