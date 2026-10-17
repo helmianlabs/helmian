@@ -16,7 +16,7 @@ const post = (path, data) => api(path, { method: 'POST', headers: { 'content-typ
 function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
 function empty(title, sub) { const d = el('div', 'empty'); d.append(el('p', 't', title)); if (sub) d.append(el('p', 'sm', sub)); return d; }
 function row(k, v, cls) { const r = el('div', 'row'); r.append(el('span', null, k), el('span', cls, v)); return r; }
-let toastTimer; function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600); }
+let toastTimer; function toast(msg, kind) { const t = $('#toast'); t.textContent = (kind === 'ok' ? '✅ ' : '') + msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600); }
 
 // ---- appearance ----
 function applyTheme(theme) { document.documentElement.dataset.theme = theme; $('#theme').value = theme; $('#theme-quick').value = theme; store.set('theme', theme); }
@@ -105,7 +105,7 @@ async function loadProjects() {
   if (canvasPane && !canvasPane.hidden) loadCanvas().catch(() => {});
 }
 async function setActiveProject(projectKey) {
-  try { await post('/api/admin/workspace/active-project', { projectKey }); state.activeProjectKey = projectKey; toast('Active project set'); }
+  try { await post('/api/admin/workspace/active-project', { projectKey }); state.activeProjectKey = projectKey; toast('Active project set', 'ok'); }
   catch { toast('Could not set the active project'); }
   renderShelf(); renderWorkspace();
   const canvasPane = document.querySelector('[data-panel-pane="canvas"]');
@@ -126,7 +126,7 @@ $('#new-project').onclick = () => { $('#new-project-form').hidden = false; $('#n
 $('#new-project-cancel').onclick = () => { $('#new-project-form').hidden = true; };
 $('#new-project-form').onsubmit = async (e) => {
   e.preventDefault(); const name = $('#new-project-name').value.trim(); if (!name) return;
-  try { await post('/api/admin/workspace/projects', { projectKey: projectKeyFromName(name), displayName: name, sourceKind: $('#new-project-source').value || 'cloud', defaultBranch: 'main', lifecycle: 'active' }); $('#new-project-form').reset(); $('#new-project-form').hidden = true; toast('Project created'); await loadProjects(); }
+  try { await post('/api/admin/workspace/projects', { projectKey: projectKeyFromName(name), displayName: name, sourceKind: $('#new-project-source').value || 'cloud', defaultBranch: 'main', lifecycle: 'active' }); $('#new-project-form').reset(); $('#new-project-form').hidden = true; toast('Project created', 'ok'); await loadProjects(); }
   catch { toast('Could not create that project — try a different name'); }
 };
 
@@ -156,7 +156,7 @@ $('#session-form').onsubmit = async (e) => {
     state.sessions = addSession(state.sessions, { name, provider }); state.activeSession = state.sessions[0]?.id ?? null; store.set('sessions', state.sessions);
   }
   store.set('activeSession', state.activeSession);
-  $('#session-cancel').onclick(); renderSessions(); toast('Session started');
+  $('#session-cancel').onclick(); renderSessions(); toast('Session started', 'ok');
 };
 async function loadSessions() {
   try { state.sessions = sessionsFromServer(await api('/api/admin/app/sessions')); state.serverSessions = true; }
@@ -191,7 +191,7 @@ function renderSteps() {
   box.hidden = !can;
   if (!can) { feed.hidden = true; return; }
   if (!m || !m.total) {
-    $('#tp-summary').textContent = 'No plan yet — add the steps this session should take.'; $('#tp-bar').style.width = '0%'; $('#tp-list').replaceChildren(); $('#tp-edit').textContent = 'Add plan'; feed.hidden = true; return;
+    $('#tp-summary').textContent = '📝 No plan yet — add the steps this session should take.'; $('#tp-bar').style.width = '0%'; $('#tp-list').replaceChildren(); $('#tp-edit').textContent = 'Add plan'; feed.hidden = true; return;
   }
   $('#tp-edit').textContent = 'Edit plan'; $('#tp-summary').textContent = m.summary; $('#tp-bar').style.width = `${m.pct}%`;
   $('#tp-list').replaceWith(Object.assign(stepList(m, false), { id: 'tp-list' }));
@@ -205,7 +205,7 @@ $('#tp-form').onsubmit = async (e) => {
   e.preventDefault(); const steps = planFromText($('#tp-text').value);
   if (!steps.length) { toast('Add at least one step'); return; }
   if (state.steps?.total && !confirm('Replace the current plan? Progress on it will be reset.')) return;
-  try { await post('/api/admin/app/sessions/steps', { sessionId: state.activeSession, steps }); $('#tp-form').hidden = true; toast('Plan saved'); }
+  try { await post('/api/admin/app/sessions/steps', { sessionId: state.activeSession, steps }); $('#tp-form').hidden = true; toast('Plan saved', 'ok'); }
   catch { toast('Plan not saved — try again'); }
   await loadSteps(); loadFeedData();
 };
@@ -229,7 +229,7 @@ async function loadHome() {
 async function loadConsole() {
   if (!state.channelId) {
     try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); sel.replaceChildren(...chans.map((c) => { const o = el('option', null, c.title || c.slug || 'Channel'); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
-      if (!state.channelId && isAdminRole(state.actor?.role)) { const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' }); state.channelId = made.channel?.id ?? null; if (state.channelId) toast('Team channel created'); }
+      if (!state.channelId && isAdminRole(state.actor?.role)) { const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' }); state.channelId = made.channel?.id ?? null; if (state.channelId) toast('Team channel created', 'ok'); }
     } catch {}
   }
   await loadLog();
@@ -280,7 +280,7 @@ $('#new-channel').onclick = () => {
         if ([...sel.options].some((o) => o.value === result.channel.id)) sel.value = result.channel.id;
         await loadLog();
       }
-      toast(result.inserted === false ? `Channel "${result.channel?.title ?? title}" already exists — opened it.` : `Channel "${result.channel?.title ?? title}" created.`);
+      toast(result.inserted === false ? `Channel "${result.channel?.title ?? title}" already exists — opened it.` : `Channel "${result.channel?.title ?? title}" created.`, result.inserted === false ? undefined : 'ok');
     } catch { create.disabled = false; toast('Channel not created.'); }
   };
 };
@@ -459,7 +459,7 @@ $('#devices-enroll').onsubmit = async (e) => {
       method: 'POST',
       body: JSON.stringify({ action: 'confirm', confirmationCode: code }),
     });
-    toast('Desktop enrolled');
+    toast('Desktop enrolled', 'ok');
     $('#devices-enroll-code').value = '';
     await loadDevices();
   } catch (error) {
@@ -534,7 +534,7 @@ $('#invite-create').onclick = async () => {
   try { const r = await post('/api/admin/organization/invites', { expiresInDays: 7, maxUses: 25 }); $('#invite-new').hidden = false; $('#invite-url').value = r.invite.url; $('#invite-sms').href = smsInviteHref(r.invite.url); $('#invite-url').select(); loadInvites(); }
   catch { toast('Could not create an invite link — try again'); }
 };
-$('#invite-copy').onclick = async () => { try { await navigator.clipboard.writeText($('#invite-url').value); toast('Invite link copied'); } catch { $('#invite-url').select(); } };
+$('#invite-copy').onclick = async () => { try { await navigator.clipboard.writeText($('#invite-url').value); toast('Invite link copied', 'ok'); } catch { $('#invite-url').select(); } };
 $('#desktop-link').onclick = async () => {
   try { const r = await post('/api/admin/desktop/link/start', { label: 'Helmian desktop' }); const c = $('#desktop-code'); c.hidden = false; c.textContent = r.code; toast('Code is valid for 10 minutes'); }
   catch { toast('Could not create a code — try again'); }
@@ -583,7 +583,7 @@ async function loadAgents() {
   ]));
   if (!det.childElementCount) det.replaceChildren(el('p', 'muted sm', 'No provider details yet. Connect providers from Integrations or the desktop app.'));
 }
-$('#agents-refresh').onclick = () => loadAgents().then(() => toast('Agents refreshed')).catch(() => toast('Could not refresh'));
+$('#agents-refresh').onclick = () => loadAgents().then(() => toast('Agents refreshed', 'ok')).catch(() => toast('Could not refresh'));
 
 
 async function loadCreate() {
@@ -592,7 +592,7 @@ async function loadCreate() {
   try {
     const body = await api('/api/admin/cora/artifacts');
     const model = createModel(body);
-    if (model.empty) box.replaceChildren(empty('No requests yet.', 'Describe what you want above, then press Review.'));
+    if (model.empty) box.replaceChildren(empty('✨ No requests yet — describe what you want to create.'));
     else {
       const wrap = el('div', 'create-hist');
       wrap.replaceChildren(...model.receipts.map((r) => {
@@ -620,7 +620,7 @@ async function loadCreate() {
     box.replaceChildren(empty('Could not load Create history', error.status === 403 ? 'Organization membership is required.' : 'Try again in a moment.'));
   }
 }
-$('#create-refresh').onclick = () => { $('#create-status').textContent = 'Refreshing…'; loadCreate().then(() => toast('History refreshed')).catch(() => toast('Could not refresh')); };
+$('#create-refresh').onclick = () => { $('#create-status').textContent = 'Refreshing…'; loadCreate().then(() => toast('History refreshed', 'ok')).catch(() => toast('Could not refresh')); };
 $('#create-form').onsubmit = async (e) => {
   e.preventDefault();
   const prompt = $('#create-prompt').value.trim();
@@ -642,7 +642,7 @@ $('#create-form').onsubmit = async (e) => {
     $('#create-status').textContent = result.replayed
       ? 'That request was already on file.'
       : 'Review recorded. Open the desktop Create panel to approve and generate.';
-    toast('Review recorded');
+    toast('Review recorded', 'ok');
     await loadCreate();
   } catch (error) {
     $('#create-status').textContent = error.status === 403
@@ -719,7 +719,7 @@ async function loadCanvas() {
   const body = $('#canvas-body');
   if (!projectKey) {
     body.hidden = true;
-    status.textContent = 'Select a project first — the canvas is saved per project.';
+    status.textContent = '🎨 Pick a project first — the canvas is saved per project.';
     return;
   }
   body.hidden = false;
@@ -739,7 +739,7 @@ async function loadCanvas() {
 $('#canvas-save').onclick = async () => {
   const projectKey = state.activeProjectKey;
   const status = $('#canvas-status');
-  if (!projectKey) { status.textContent = 'Select a project first.'; return; }
+  if (!projectKey) { status.textContent = '🎨 Pick a project first — the canvas is saved per project.'; return; }
   status.textContent = 'Saving…';
   try {
     await api('/api/admin/workspace/canvas', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey, noteText: $('#canvas-note').value, decisionText: $('#canvas-decision').value }) });
@@ -766,7 +766,7 @@ async function loadPreview() {
     const body = await api('/api/admin/runs/ledger?limit=50');
     const runs = (Array.isArray(body.runs) ? body.runs : []).filter((r) => r.kind === 'artifact_execution' && r.outcome === 'completed');
     if (!runs.length) {
-      box.replaceChildren(empty('No completed artifacts yet.', 'When the desktop reports a finished artifact, its receipt shows up here.'));
+      box.replaceChildren(empty('👁 Nothing generated yet — finished runs will appear here.'));
       return;
     }
     box.replaceChildren(...runs.map((r) => {
@@ -802,11 +802,11 @@ async function boot() {
     return;
   }
   state.actor = model.actor;
-  $('#svc-dot').classList.add('live'); $('#svc-text').textContent = 'Cloud service · Connected - live';
+  $('#svc-dot').classList.add('live'); $('#svc-text').textContent = '🟢 Cloud service · Connected - live';
   $('#account').textContent = `${model.actor.tenantId} · ${model.actor.role}`;
   $('#admin-link').hidden = !isAdminRole(model.actor.role); $('#signout').hidden = false;
   renderSessions(); loadSessions();
-  if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${model.actor.tenantId}!`); history.replaceState(null, '', location.pathname + location.hash); }
+  if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${model.actor.tenantId}!`, 'ok'); history.replaceState(null, '', location.pathname + location.hash); }
   const initialView = viewFromHash(location.hash, { phone: narrow() });
   show(initialView);
   if (hashIsGuard()) openGuardPanel();
