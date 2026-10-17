@@ -114,6 +114,7 @@ test('database preflight reports a fresh Helmion schema without writing', async 
       ['050_workspace_write_leases.sql', 'pending'],
       ['051_artifact_execution_completed.sql', 'pending'],
       ['052_connector_outbound_outbox.sql', 'pending'],
+      ['053_workspace_project_canvases.sql', 'pending'],
     ],
   );
   assert.equal(inspection.migrationsReady, false);
