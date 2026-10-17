@@ -277,6 +277,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   let recognition = null;
   let listening = false;
   let voiceMode = false;
+  let voiceKind = 'dictate'; // 'dictate' (text only) or 'voice' (two-way)
   let handlers = {};
   const ERROR_MESSAGES = {
     'not-allowed': 'Microphone permission was not granted. Nothing was recorded.',
@@ -296,9 +297,6 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     recognition.stop();
     return true;
   }
-  function cancelSpeech() {
-    if (canSpeak) { try { synthesis.cancel(); } catch {} }
-  }
   function startTurn() {
     cancelSpeech();
     recognition = new Recognition();
@@ -313,7 +311,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       if (!text) return;
       const cmd = sendCommand(text);
       if (cmd === undefined) handlers.onTranscript?.(text);
-      else if (cmd !== null) handlers.onSubmit?.(cmd);
+      else handlers.onSubmit?.(cmd ?? ''); // null = bare "send it": submit the composer as-is
     };
     recognition.onerror = (event) => {
       if (event?.error === 'aborted') return;
@@ -324,8 +322,8 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   }
   function setVoiceMode(on, next = {}) {
     if (!supported) { next.onError?.('Voice mode is not supported by this browser. You can still type or paste a message.'); return false; }
-    if (on && !voiceMode) { voiceMode = true; handlers = next; startTurn(); return true; }
-    if (!on && voiceMode) { voiceMode = false; handlers = {}; stopTurn(); cancelSpeech(); next.onState?.('idle'); return true; }
+    if (on && !voiceMode) { voiceMode = true; voiceKind = next.mode === 'voice' ? 'voice' : 'dictate'; handlers = next; startTurn(); return true; }
+    if (!on && voiceMode) { voiceMode = false; voiceKind = 'dictate'; handlers = {}; stopTurn(); cancelSpeech(); next.onState?.('idle'); return true; }
     return false;
   }
   // Pause the mic while the tab is hidden: speech meant for another tab must
@@ -339,15 +337,31 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       } catch {}
     });
   }
+  // TTS engine seam: the controller only calls tts.speak / tts.cancel.
+  // v1 is the browser's speechSynthesis; the Kokoro engine replaces these
+  // two functions when it lands (browser WebGPU build or runner endpoint).
+  const tts = {
+    speak(text) {
+      if (!canSpeak) return false;
+      const clean = stripSpeechMarkup(text);
+      if (!clean) return false;
+      try { synthesis.cancel(); } catch {}
+      synthesis.speak(new Utterance(clean));
+      return true;
+    },
+    cancel() {
+      if (!canSpeak) return;
+      try { synthesis.cancel(); } catch {}
+    },
+  };
   function speak(text) {
-    if (!voiceMode || !canSpeak) return false;
-    const clean = stripSpeechMarkup(text);
-    if (!clean) return false;
-    cancelSpeech();
-    synthesis.speak(new Utterance(clean));
-    return true;
+    if (!voiceMode || voiceKind !== 'voice') return false; // dictate mode never speaks
+    return tts.speak(text);
   }
-  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get listening() { return listening; }, setVoiceMode, speak, cancelSpeech };
+  function cancelSpeech() {
+    tts.cancel();
+  }
+  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, setVoiceMode, speak, cancelSpeech };
 }
 function stripSpeechMarkup(text) {
   return String(text ?? '')
@@ -361,12 +375,18 @@ function stripSpeechMarkup(text) {
     .trim();
 }
 const dictateChip = document.querySelector('.tool[data-tool="dictate"]');
+const voiceChatChip = document.querySelector('.tool[data-tool="voice"]');
 const voice = createVoiceController();
 const seenMessageIds = new Set();
-const voicePrivacy = () => es(
-  '🎙️ Voice mode: dictate into the composer, say "send it" to submit, and replies are spoken aloud. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Dictate again to turn it off.',
-  'Voice mode: dictate into the composer, say "send it" to submit, and replies are spoken aloud. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Dictate again to turn it off.'
-);
+const voicePrivacy = (mode) => mode === 'voice'
+  ? es(
+    '🎙️ Voice chat: talk, say "send it" to submit, and replies are spoken aloud. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.',
+    'Voice chat: talk, say "send it" to submit, and replies are spoken aloud. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.'
+  )
+  : es(
+    '🎙️ Dictate: talk, text lands in the composer, say "send it" to submit. Replies are not spoken aloud — you read them. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Dictate again to turn it off.',
+    'Dictate: talk, text lands in the composer, say "send it" to submit. Replies are not spoken aloud — you read them. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Dictate again to turn it off.'
+  );
 function insertDictation(text) {
   const box = $('#prompt');
   const start = box.selectionStart ?? box.value.length;
@@ -380,32 +400,44 @@ function insertDictation(text) {
   box.oninput();
   box.focus();
 }
-function updateVoiceChip() {
-  if (!dictateChip) return;
-  dictateChip.classList.toggle('recording', voice.voiceMode);
-  dictateChip.setAttribute('aria-pressed', voice.voiceMode ? 'true' : 'false');
-}
-if (dictateChip) {
-  dictateChip.title = voicePrivacy();
-  if (!voice.supported) {
-    dictateChip.disabled = true;
-    dictateChip.title = es('🎙️ Voice mode is not supported by this browser — you can still type.', 'Voice mode is not supported by this browser — you can still type.');
-  } else {
-    dictateChip.onclick = () => {
-      if (voice.voiceMode) { voice.setVoiceMode(false, { onState: updateVoiceChip }); updateVoiceChip(); return; }
-      if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy()); store.set('voicePrivacySeen', true); }
-      voice.setVoiceMode(true, {
-        onTranscript: insertDictation,
-        onSubmit: (text) => { insertDictation(text); $('#composer').requestSubmit(); },
-        onState: updateVoiceChip,
-        onError: (msg) => { toast(msg); updateVoiceChip(); },
-      });
-      updateVoiceChip();
-    };
+function updateVoiceChips() {
+  for (const [chip, mode] of [[dictateChip, 'dictate'], [voiceChatChip, 'voice']]) {
+    if (!chip) continue;
+    const active = voice.voiceMode && voice.mode === mode;
+    chip.classList.toggle('recording', active);
+    chip.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
 }
+function toggleVoiceChip(mode) {
+  if (voice.voiceMode && voice.mode === mode) {
+    voice.setVoiceMode(false, { onState: updateVoiceChips });
+  } else {
+    if (voice.voiceMode) voice.setVoiceMode(false, {});
+    if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy(mode)); store.set('voicePrivacySeen', true); }
+    voice.setVoiceMode(true, {
+      mode,
+      onTranscript: insertDictation,
+      onSubmit: (text) => { if (text) insertDictation(text); if ($('#prompt').value.trim()) $('#composer').requestSubmit(); },
+      onState: updateVoiceChips,
+      onError: (msg) => { toast(msg); updateVoiceChips(); },
+    });
+  }
+  updateVoiceChips();
+}
+function wireVoiceChip(chip, mode) {
+  if (!chip) return;
+  chip.title = voicePrivacy(mode);
+  if (!voice.supported) {
+    chip.disabled = true;
+    chip.title = es('🎙️ Voice is not supported by this browser — you can still type.', 'Voice is not supported by this browser — you can still type.');
+  } else {
+    chip.onclick = () => toggleVoiceChip(mode);
+  }
+}
+wireVoiceChip(dictateChip, 'dictate');
+wireVoiceChip(voiceChatChip, 'voice');
 for (const t of document.querySelectorAll('.tool')) {
-  if (t.dataset.tool === 'dictate') continue;
+  if (t.dataset.tool === 'dictate' || t.dataset.tool === 'voice') continue;
   t.onclick = () => toast(t.dataset.tool === 'tools' ? 'Tools and connectors open from Integrations' : `${t.textContent} is available in the desktop app`);
 }
 $('#run-suite').onclick = () => toast('Tool suite runs from the desktop app');

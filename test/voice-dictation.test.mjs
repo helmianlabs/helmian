@@ -146,14 +146,14 @@ test('"send it" mid-sentence does not trigger submit', () => {
   assert.deepEqual(submits, []);
 });
 
-test('"send it" alone does nothing', () => {
+test('"send it" alone submits the composer as-is', () => {
   const f = makeFakes();
   const { transcripts, submits } = voiceOn(f);
   f.instances[0].onstart();
   f.instances[0].onresult(resultEvent(['send it']));
-  f.instances[0].onresult(resultEvent(['  send it  ']));
+  f.instances[0].onresult(resultEvent(['  send it.  ']));
   assert.deepEqual(transcripts, []);
-  assert.deepEqual(submits, []);
+  assert.deepEqual(submits, ['', '']); // empty text: wiring submits composer content
 });
 
 test('onresult is ignored when voice mode is off', () => {
@@ -193,7 +193,7 @@ test('setVoiceMode(false) stops recognition, cancels speech, reports idle', () =
 
 test('speak() reads aloud when voice mode is on, stripping markdown', () => {
   const f = makeFakes();
-  const { v } = voiceOn(f);
+  const { v } = voiceOn(f, { mode: 'voice' });
   f.instances[0].onstart();
   assert.equal(v.speak('Hello **world**, see [docs](https://x.com).'), true);
   assert.equal(f.spoken.length, 1);
@@ -221,4 +221,27 @@ test('stripSpeechMarkup handles code blocks, headings, and quotes', () => {
   assert.equal(stripSpeechMarkup('# Title\n`code` here'), 'Title code here');
   assert.equal(stripSpeechMarkup('> quoted\nnormal'), 'quoted normal');
   assert.equal(stripSpeechMarkup(''), '');
+});
+
+test('dictate mode never speaks', () => {
+  const f = makeFakes();
+  const { v } = voiceOn(f, { mode: 'dictate' });
+  assert.equal(v.mode, 'dictate');
+  assert.equal(v.speak('hello'), false);
+  assert.equal(f.spoken.length, 0);
+});
+
+test('voice mode speaks replies', () => {
+  const f = makeFakes();
+  const { v } = voiceOn(f, { mode: 'voice' });
+  assert.equal(v.mode, 'voice');
+  assert.equal(v.speak('hello there'), true);
+  assert.equal(f.spoken.length, 1);
+  assert.equal(f.spoken[0].text, 'hello there');
+});
+
+test('mode defaults to dictate', () => {
+  const f = makeFakes();
+  const { v } = voiceOn(f);
+  assert.equal(v.mode, 'dictate');
 });

@@ -1,14 +1,24 @@
-// Voice mode controller: a toggle that enables a full voice loop.
+// Voice mode controller: a toggle that enables a voice loop, in one of two
+// modes:
 //
-// - Toggle ON: dictation turns run in a loop; final transcripts are handed
-//   to onTranscript for insertion into the visible composer.
+// - "dictate": speech-to-text only. Final transcripts go to onTranscript for
+//   insertion into the visible composer; "send it" submits. Replies are
+//   never spoken aloud — the user reads them.
+// - "voice": full two-way voice chat. Dictation and "send it" as above, plus
+//   speak(text) reads agent replies aloud.
+//
 // - "send it": a final transcript whose trimmed text ends with "send it"
-//   (case-insensitive) strips those two words and fires onSubmit with the
-//   remainder. "send it" alone (nothing left) does nothing. Only acts while
-//   the toggle is actively listening — never from plain typing.
-// - Agent replies: speak(text) reads aloud via speechSynthesis when voice
-//   mode is on. Toggle OFF (or a new dictation turn) cancels speech.
+//   (case-insensitive, trailing punctuation ignored) strips those two words
+//   and fires onSubmit with the remainder. "send it" alone (nothing left)
+//   does nothing. Only acts while the toggle is actively listening — never
+//   from plain typing, never from a hidden tab.
 // - Toggle OFF stops everything: recognition stops, speech cancels.
+// - The mic pauses while the tab is hidden and resumes when visible.
+//
+// TTS ENGINE SEAM: v1 speaks via the browser's built-in speechSynthesis
+// (zero backend, works everywhere). The Kokoro engine plugs in here later —
+// either the browser WebGPU build or a runner-side endpoint — by replacing
+// speakWithEngine; the controller only ever calls tts.speak(text).
 //
 // Recognition and speech are dependency-injected for tests. Defaults use
 // the browser's SpeechRecognition (Chrome/Edge; Firefox has neither, so
@@ -24,6 +34,7 @@ export function createVoiceController({
   let recognition = null;
   let listening = false; // a recognition turn is currently active
   let voiceMode = false; // the toggle
+  let voiceKind = 'dictate'; // 'dictate' (text only) or 'voice' (two-way)
   let handlers = {};
 
   const ERROR_MESSAGES = {
@@ -49,10 +60,6 @@ export function createVoiceController({
     return true;
   }
 
-  function cancelSpeech() {
-    if (canSpeak) { try { synthesis.cancel(); } catch { /* ignore */ } }
-  }
-
   function startTurn() {
     cancelSpeech(); // a new dictation turn silences any reply in progress
     recognition = new Recognition();
@@ -74,8 +81,7 @@ export function createVoiceController({
       if (!text) return;
       const cmd = sendCommand(text);
       if (cmd === undefined) handlers.onTranscript?.(text);
-      else if (cmd !== null) handlers.onSubmit?.(cmd);
-      // cmd === null: "send it" alone — nothing to submit, stay silent.
+      else handlers.onSubmit?.(cmd ?? ''); // null = bare "send it": submit the composer as-is
     };
     recognition.onerror = (event) => {
       if (event?.error === 'aborted') return; // user tapped to stop; silent
@@ -98,12 +104,14 @@ export function createVoiceController({
     }
     if (on && !voiceMode) {
       voiceMode = true;
+      voiceKind = next.mode === 'voice' ? 'voice' : 'dictate';
       handlers = next;
       startTurn();
       return true;
     }
     if (!on && voiceMode) {
       voiceMode = false;
+      voiceKind = 'dictate';
       handlers = {};
       stopTurn();
       cancelSpeech();
@@ -125,19 +133,38 @@ export function createVoiceController({
     });
   }
 
+  // TTS engine seam: the controller only calls tts.speak / tts.cancel.
+  // v1 is the browser's speechSynthesis; the Kokoro engine replaces these
+  // two functions when it lands (browser WebGPU build or runner endpoint).
+  const tts = {
+    speak(text) {
+      if (!canSpeak) return false;
+      const clean = stripSpeechMarkup(text);
+      if (!clean) return false;
+      try { synthesis.cancel(); } catch {}
+      synthesis.speak(new Utterance(clean));
+      return true;
+    },
+    cancel() {
+      if (!canSpeak) return;
+      try { synthesis.cancel(); } catch {}
+    },
+  };
+
   function speak(text) {
-    if (!voiceMode || !canSpeak) return false;
-    const clean = stripSpeechMarkup(text);
-    if (!clean) return false;
-    cancelSpeech();
-    synthesis.speak(new Utterance(clean));
-    return true;
+    if (!voiceMode || voiceKind !== 'voice') return false; // dictate mode never speaks
+    return tts.speak(text);
+  }
+
+  function cancelSpeech() {
+    tts.cancel();
   }
 
   return {
     get supported() { return supported; },
     get canSpeak() { return canSpeak; },
     get voiceMode() { return voiceMode; },
+    get mode() { return voiceKind; },
     get listening() { return listening; },
     setVoiceMode,
     speak,
