@@ -266,7 +266,136 @@ async function loadSessions() {
   if (!state.sessions.some((s) => s.id === state.activeSession)) state.activeSession = state.sessions[0]?.id ?? null;
   renderSessions();
 }
-for (const t of document.querySelectorAll('.tool')) t.onclick = () => toast(t.dataset.tool === 'tools' ? 'Tools and connectors open from Integrations' : `${t.textContent} is available in the desktop app`);
+// Inline copy of web/shared/voice-dictation.mjs (web/shared/ is not
+// URL-served; same pattern as the inlined guard-motion copy). Voice mode:
+// a toggle enabling a full voice loop. Dictation inserts into #prompt; a
+// final transcript ending with "send it" submits the composer; agent
+// replies are spoken aloud. Toggle off stops everything.
+function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition, synthesis = globalThis.speechSynthesis, Utterance = globalThis.SpeechSynthesisUtterance } = {}) {
+  const supported = typeof Recognition === 'function';
+  const canSpeak = typeof synthesis?.speak === 'function' && typeof Utterance === 'function';
+  let recognition = null;
+  let listening = false;
+  let voiceMode = false;
+  let handlers = {};
+  const ERROR_MESSAGES = {
+    'not-allowed': 'Microphone permission was not granted. Nothing was recorded.',
+    'no-speech': 'No speech detected — try again.',
+    'audio-capture': 'No microphone found.',
+    'network': "The browser's speech service is unavailable.",
+    'service-not-allowed': "The browser's speech service is unavailable.",
+  };
+  function sendCommand(text) {
+    const trimmed = String(text ?? '').trim();
+    if (!/send it$/i.test(trimmed)) return undefined;
+    const rest = trimmed.slice(0, -'send it'.length).trim();
+    return rest || null;
+  }
+  function stopTurn() {
+    if (!recognition || !listening) return false;
+    recognition.stop();
+    return true;
+  }
+  function cancelSpeech() {
+    if (canSpeak) { try { synthesis.cancel(); } catch {} }
+  }
+  function startTurn() {
+    cancelSpeech();
+    recognition = new Recognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+    recognition.onstart = () => { listening = true; handlers.onState?.('listening'); };
+    recognition.onresult = (event) => {
+      if (!voiceMode) return;
+      const text = Array.from(event.results ?? []).filter((result) => result.isFinal).map((result) => result?.[0]?.transcript ?? '').join(' ').trim();
+      if (!text) return;
+      const cmd = sendCommand(text);
+      if (cmd === undefined) handlers.onTranscript?.(text);
+      else if (cmd !== null) handlers.onSubmit?.(cmd);
+    };
+    recognition.onerror = (event) => {
+      if (event?.error === 'aborted') return;
+      handlers.onError?.(ERROR_MESSAGES[event?.error] ?? 'Dictation stopped before a usable transcript was produced.');
+    };
+    recognition.onend = () => { listening = false; recognition = null; if (voiceMode) startTurn(); else handlers.onState?.('idle'); };
+    recognition.start();
+  }
+  function setVoiceMode(on, next = {}) {
+    if (!supported) { next.onError?.('Voice mode is not supported by this browser. You can still type or paste a message.'); return false; }
+    if (on && !voiceMode) { voiceMode = true; handlers = next; startTurn(); return true; }
+    if (!on && voiceMode) { voiceMode = false; handlers = {}; stopTurn(); cancelSpeech(); next.onState?.('idle'); return true; }
+    return false;
+  }
+  function speak(text) {
+    if (!voiceMode || !canSpeak) return false;
+    const clean = stripSpeechMarkup(text);
+    if (!clean) return false;
+    cancelSpeech();
+    synthesis.speak(new Utterance(clean));
+    return true;
+  }
+  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get listening() { return listening; }, setVoiceMode, speak, cancelSpeech };
+}
+function stripSpeechMarkup(text) {
+  return String(text ?? '')
+    .replace(/```[\s\S]*?```/g, ' code block ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^>\s?/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+const dictateChip = document.querySelector('.tool[data-tool="dictate"]');
+const voice = createVoiceController();
+const seenMessageIds = new Set();
+const voicePrivacy = () => es(
+  '🎙️ Voice mode: dictate into the composer, say "send it" to submit, and replies are spoken aloud. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Dictate again to turn it off.',
+  'Voice mode: dictate into the composer, say "send it" to submit, and replies are spoken aloud. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Dictate again to turn it off.'
+);
+function insertDictation(text) {
+  const box = $('#prompt');
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? box.value.length;
+  const before = box.value.slice(0, start);
+  const after = box.value.slice(end);
+  const sep = before && !/[\s\n]$/.test(before) ? ' ' : '';
+  box.value = before + sep + text + after;
+  const pos = before.length + sep.length + text.length;
+  box.setSelectionRange(pos, pos);
+  box.oninput();
+  box.focus();
+}
+function updateVoiceChip() {
+  if (!dictateChip) return;
+  dictateChip.classList.toggle('recording', voice.voiceMode);
+  dictateChip.setAttribute('aria-pressed', voice.voiceMode ? 'true' : 'false');
+}
+if (dictateChip) {
+  dictateChip.title = voicePrivacy();
+  if (!voice.supported) {
+    dictateChip.disabled = true;
+    dictateChip.title = es('🎙️ Voice mode is not supported by this browser — you can still type.', 'Voice mode is not supported by this browser — you can still type.');
+  } else {
+    dictateChip.onclick = () => {
+      if (voice.voiceMode) { voice.setVoiceMode(false, { onState: updateVoiceChip }); updateVoiceChip(); return; }
+      if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy()); store.set('voicePrivacySeen', true); }
+      voice.setVoiceMode(true, {
+        onTranscript: insertDictation,
+        onSubmit: (text) => { insertDictation(text); $('#composer').requestSubmit(); },
+        onState: updateVoiceChip,
+        onError: (msg) => { toast(msg); updateVoiceChip(); },
+      });
+      updateVoiceChip();
+    };
+  }
+}
+for (const t of document.querySelectorAll('.tool')) {
+  if (t.dataset.tool === 'dictate') continue;
+  t.onclick = () => toast(t.dataset.tool === 'tools' ? 'Tools and connectors open from Integrations' : `${t.textContent} is available in the desktop app`);
+}
 $('#run-suite').onclick = () => toast('Tool suite runs from the desktop app');
 
 // ---- live task progress (console + Guard Feed) ----
@@ -345,6 +474,11 @@ async function loadLog() {
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     if (!lines.length) { log.replaceChildren(sys('channel connected · say hello below')); return; }
     log.replaceChildren(...lines.map((l) => { const d = el('div', 'line'); d.append(el('span', 'ts', l.ts ? `[${l.ts}] ` : ''), el('span', l.mine ? 'me' : 'who', `${l.who}> `), document.createTextNode(l.text)); return d; }));
+    for (const l of lines) {
+      if (!l.id || seenMessageIds.has(l.id)) continue;
+      seenMessageIds.add(l.id);
+      if (!l.mine && voice.voiceMode) voice.speak(l.text);
+    }
     if (atBottom) log.scrollTop = log.scrollHeight;
   } catch { log.replaceChildren(sys('console is reconnecting…')); }
 }
