@@ -101,6 +101,8 @@ const envContent =
   `# Helmian bridge env for tenant '${slug}' (root-only, 0600)\n` +
   `HELMION_BRIDGE_PROVIDER=${provider}\n` +
   `HELMION_BRIDGE_TENANT_SLUG=${slug}\n` +
+  `# Tool mode: read-only (chat only) | ask (tools with human approval) | full.\n` +
+  `# HELMION_BRIDGE_TOOLS=ask\n` +
   `# One-time: uncomment and set to pair headless, then remove after first start.\n` +
   `# HELMION_BRIDGE_PAIRING_CODE=\n`;
 await writeFile(envPath, envContent, { mode: 0o600 });
