@@ -1,6 +1,8 @@
 // PC bridge smoke test: fake cloud (fetch) + fake agent child process.
-// Covers pairing, cursor init, human-message -> turn -> reply POST with the
-// pc-bridge idempotency key, and agent-message skip. Headless, no network.
+// Covers pairing, seen-set init, human-message -> turn -> reply POST with the
+// bridge idempotency key, agent-message skip, and resume from a saved seen set.
+// The cloud's after_id cursor only accepts digits while message ids are UUIDs,
+// so the bridge polls without after_id and tracks seen ids locally.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -56,11 +58,9 @@ function makeFakeCloud() {
       return json({ valid: true, channels: [{ id: 'ch-1', slug: 'team', title: 'Team' }] });
     }
     if (u.pathname === '/api/admin/envoy/messages' && method === 'GET') {
-      const afterId = u.searchParams.get('after_id');
       assert.ok(u.searchParams.get('channel_id'), 'channel_id required');
-      if (u.headers && typeof u.headers === 'object') { /* headers pass through fetch init, asserted below */ }
-      const fresh = afterId ? messages.filter((m) => Number(m.id) > Number(afterId)) : messages;
-      return json({ valid: true, messages: fresh, nextCursor: fresh.at(-1)?.id ?? afterId ?? null });
+      assert.equal(u.searchParams.get('after_id'), null, 'bridge tracks seen ids locally, no after_id');
+      return json({ valid: true, messages, nextCursor: messages.at(-1)?.id ?? null });
     }
     if (u.pathname === '/api/admin/envoy/messages' && method === 'POST') {
       const body = JSON.parse(opts.body);
@@ -72,7 +72,7 @@ function makeFakeCloud() {
   return { fetchImpl, calls, messages };
 }
 
-test('bridge pairs on first run, inits cursor at latest, answers humans, skips agents', async (t) => {
+test('bridge pairs on first run, marks history seen, answers humans, skips agents', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-test-'));
   const cloud = makeFakeCloud();
   const spawns = [];
@@ -103,9 +103,9 @@ test('bridge pairs on first run, inits cursor at latest, answers humans, skips a
   assert.equal(saved.token, 'tok-1');
   assert.equal(saved.tenantId, 'org-a');
 
-  // Cursor initialized at the latest existing message (id 4): no ancient replies.
+  // Existing history (id 4) is marked seen on init: no ancient replies.
   const cursorSaved = JSON.parse(await readFile(join(tmp, 'cursor.json'), 'utf8'));
-  assert.equal(cursorSaved.cursor, '4');
+  assert.deepEqual(cursorSaved.seen, ['4']);
 
   // Agent child got configure with read-only permission.
   const configure = spawns[0].written.find((w) => w.includes('"cmd":"configure"'));
@@ -132,13 +132,13 @@ test('bridge pairs on first run, inits cursor at latest, answers humans, skips a
   assert.equal(turns.length, 1);
   assert.match(turns[0], /hello agent/);
 
-  // Cursor advanced past both messages (including the skipped agent one).
-  assert.equal(handle.cursor, '6');
+  // Seen set advanced past all three messages (including the skipped agent one).
+  assert.equal(handle.seenCount, 3);
 
   await handle.stop();
 });
 
-test('bridge resumes from a saved cursor and reuses a saved token', async (t) => {
+test('bridge resumes from a saved seen set and reuses a saved token', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-test-'));
   const cloud = makeFakeCloud();
   const spawns = [];
@@ -149,7 +149,7 @@ test('bridge resumes from a saved cursor and reuses a saved token', async (t) =>
   };
   const { writeFile } = await import('node:fs/promises');
   await writeFile(join(tmp, 'token.json'), JSON.stringify({ token: 'tok-1', tenantId: 'org-a' }));
-  await writeFile(join(tmp, 'cursor.json'), JSON.stringify({ cursor: '4' }));
+  await writeFile(join(tmp, 'cursor.json'), JSON.stringify({ seen: ['4'] }));
 
   let prompted = false;
   const handle = await runBridge({
