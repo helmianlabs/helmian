@@ -15,7 +15,7 @@
 create table if not exists helmion.workspace_write_leases (
   id bigserial primary key,
   tenant_id text not null references helmion.tenants(tenant_id) on delete cascade,
-  project_key text references helmion.workspace_projects(project_key) on delete cascade,
+  project_key text,
   holder text not null check (char_length(holder) between 1 and 256),
   lease_token text not null unique check (lease_token ~ '^[0-9a-f-]{36}$'),
   status text not null default 'ACTIVE' check (status in ('ACTIVE', 'RELEASED', 'EXPIRED')),
@@ -27,7 +27,8 @@ create table if not exists helmion.workspace_write_leases (
   constraint workspace_closed_lease_has_time check (
     (status = 'ACTIVE' and closed_at is null)
     or (status <> 'ACTIVE' and closed_at is not null)
-  )
+  ),
+  foreign key (tenant_id, project_key) references helmion.workspace_projects(tenant_id, project_key) on delete cascade
 );
 
 create unique index if not exists workspace_one_active_lease_per_project_idx
