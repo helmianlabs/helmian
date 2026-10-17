@@ -33,7 +33,7 @@ function defaultDeps() {
     bridgeDir: BRIDGE_DIR,
     tokenPath: join(BRIDGE_DIR, 'pc-bridge-token.json'),
     cursorPath: join(BRIDGE_DIR, 'pc-bridge-cursor.json'),
-    channelSlug: process.env.HELMION_BRIDGE_CHANNEL_SLUG || 'team',
+    channelSlugs: process.env.HELMION_BRIDGE_CHANNEL_SLUGS || '*', // '*' = all channels, or comma-separated slugs
     provider: process.env.HELMION_BRIDGE_PROVIDER || 'claude',
     workspace: process.env.HELMION_BRIDGE_WORKSPACE || 'E:\\Helmion',
     helmionBin: resolve(dirname(fileURLToPath(import.meta.url)), 'helmion.mjs'),
@@ -229,18 +229,26 @@ export async function runBridge(overrides = {}) {
   log(`configured provider=${deps.provider} workspace=${deps.workspace} permission=read-only`);
 
   const channels = await api(deps, '/api/admin/envoy/channels', { token: creds.token });
-  const channel = (channels?.channels ?? []).find((c) => c.slug === deps.channelSlug);
-  if (!channel?.id) {
-    logError(`channel "${deps.channelSlug}" not found. Set HELMION_BRIDGE_CHANNEL_SLUG to an existing channel slug.`);
+  const allChannels = (channels?.channels ?? []).filter((c) => c?.id);
+  const slugFilter = String(deps.channelSlugs || '*').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const watched = slugFilter.includes('*') || slugFilter.length === 0
+    ? allChannels
+    : allChannels.filter((c) => slugFilter.includes(String(c.slug || '').toLowerCase()));
+  if (watched.length === 0) {
+    logError(`no channels matched "${deps.channelSlugs}". Set HELMION_BRIDGE_CHANNEL_SLUGS to '*' or a comma-separated slug list.`);
     return { ok: false, reason: 'channel not found' };
   }
-  log(`watching #${channel.slug} (${channel.id})`);
+  log(`watching ${watched.map((c) => `#${c.slug}`).join(', ')}`);
 
   let seen = await loadSeen(deps);
   if (seen === null) {
-    // First run: mark everything currently in the channel as seen, so we never reply to ancient history.
-    const initial = await api(deps, `/api/admin/envoy/messages?channel_id=${encodeURIComponent(channel.id)}`, { token: creds.token });
-    seen = new Set((initial?.messages ?? []).map((m) => m.id).filter((id) => typeof id === 'string'));
+    // First run: mark everything currently in the watched channels as seen,
+    // so we never reply to ancient history.
+    seen = new Set();
+    for (const ch of watched) {
+      const initial = await api(deps, `/api/admin/envoy/messages?channel_id=${encodeURIComponent(ch.id)}`, { token: creds.token });
+      for (const m of initial?.messages ?? []) if (typeof m?.id === 'string') seen.add(m.id);
+    }
     await saveSeen(deps, seen);
     log('initialized: will only answer new messages from here on.');
   } else {
@@ -264,9 +272,9 @@ export async function runBridge(overrides = {}) {
       await api(deps, '/api/admin/envoy/messages', {
         method: 'POST',
         token: creds.token,
-        body: { body: reply, channelId: channel.id, idempotencyKey: `pc-bridge:${message.id}` },
+        body: { body: reply, channelId: message.channelId, idempotencyKey: `pc-bridge:${message.id}` },
       });
-      log(`replied to message ${message.id} (${reply.length} chars)`);
+      log(`replied to message ${message.id} in #${(watched.find((c) => c.id === message.channelId) || {}).slug || message.channelId} (${reply.length} chars)`);
     } catch (err) {
       logError(`failed on message ${message.id}:`, err?.message ?? err);
     } finally {
@@ -291,19 +299,22 @@ export async function runBridge(overrides = {}) {
   const poll = async () => {
     if (shuttingDown) return;
     try {
-      const res = await api(deps,
-        `/api/admin/envoy/messages?channel_id=${encodeURIComponent(channel.id)}`,
-        { token: creds.token },
-      );
-      for (const message of res?.messages ?? []) await ingestMessage(message);
+      for (const ch of watched) {
+        const res = await api(deps,
+          `/api/admin/envoy/messages?channel_id=${encodeURIComponent(ch.id)}`,
+          { token: creds.token },
+        );
+        for (const message of res?.messages ?? []) await ingestMessage(message);
+      }
     } catch (err) {
       logError('poll failed, retrying next interval:', err?.message ?? err);
     }
   };
 
-  // Bridge v2 transport: Ably push. Returns the realtime handle, or null to
-  // fall back to HTTPS polling. The bridge subscribes only; replies still go
-  // over HTTPS POST as before.
+  // Bridge v2 transport: Ably push. Subscribes to every watched channel on
+  // one Realtime client (the token capability covers envoy:<tenant>:*).
+  // Returns the realtime handle, or null to fall back to HTTPS polling.
+  // The bridge subscribes only; replies still go over HTTPS POST as before.
   const startAbly = async () => {
     if (deps.noAbly) { log('Ably disabled (HELMION_BRIDGE_NO_ABLY=1)'); return null; }
     let Realtime;
@@ -317,15 +328,22 @@ export async function runBridge(overrides = {}) {
         return null;
       }
     }
-    let token;
+    const channelNames = [];
+    let firstToken = null;
     try {
-      token = await api(deps, '/api/admin/envoy/ably-token', { method: 'POST', token: creds.token, body: { channelId: channel.id } });
-      if (!token?.tokenRequest?.keyName || !token?.channel) throw new Error('bad token response');
+      for (const ch of watched) {
+        const t = await api(deps, '/api/admin/envoy/ably-token', { method: 'POST', token: creds.token, body: { channelId: ch.id } });
+        if (!t?.tokenRequest?.keyName || !t?.channel) throw new Error('bad token response');
+        if (!firstToken) firstToken = t;
+        channelNames.push(t.channel);
+      }
     } catch (err) {
       logError('Ably token failed, falling back to polling:', err?.message ?? err);
       return null;
     }
+    const token = firstToken;
     return new Promise((resolve) => {
+      void (async () => {
       let settled = false;
       const done = (value) => { if (!settled) { settled = true; resolve(value); } };
       let realtime;
@@ -333,7 +351,7 @@ export async function runBridge(overrides = {}) {
         realtime = new Realtime({
           authCallback: async (_tokenParams, callback) => {
             try {
-              const t = await api(deps, '/api/admin/envoy/ably-token', { method: 'POST', token: creds.token, body: { channelId: channel.id } });
+              const t = await api(deps, '/api/admin/envoy/ably-token', { method: 'POST', token: creds.token, body: { channelId: watched[0].id } });
               callback(null, t.tokenRequest);
             } catch (err) { callback(err); }
           },
@@ -353,19 +371,21 @@ export async function runBridge(overrides = {}) {
         try { realtime.close(); } catch {}
         done(null);
       });
-      const ablyChannel = realtime.channels.get(token.channel);
-      ablyChannel.subscribe('message', (msg) => { void ingestMessage(msg?.data); })
-        .then(() => {
-          clearTimeout(giveUp);
-          log(`transport: Ably push on ${token.channel}`);
-          done({ realtime, channelName: token.channel });
-        })
-        .catch((err) => {
-          clearTimeout(giveUp);
-          logError('Ably subscribe failed, falling back to polling:', err?.message ?? err);
-          try { realtime.close(); } catch {}
-          done(null);
-        });
+      try {
+        await Promise.all(channelNames.map((name) =>
+          realtime.channels.get(name).subscribe('message', (msg) => { void ingestMessage(msg?.data); })
+        ));
+      } catch (err) {
+        clearTimeout(giveUp);
+        logError('Ably subscribe failed, falling back to polling:', err?.message ?? err);
+        try { realtime.close(); } catch {}
+        done(null);
+        return;
+      }
+      clearTimeout(giveUp);
+      log(`transport: Ably push on ${channelNames.join(', ')}`);
+      done({ realtime, channelNames });
+      })();
     });
   };
 

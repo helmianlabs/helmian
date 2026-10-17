@@ -416,3 +416,86 @@ test('bridge falls back to env when the vault is empty', async (t) => {
   assert.equal(handle.ok, true);
   assert.equal(spawns[0].env.GEMINI_API_KEY, 'env-key-wins', 'env survives when vault is empty');
 });
+
+test('bridge watches all channels by default and replies in the message channel', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-multi-'));
+  const posts = [];
+  const byChannel = {
+    'ch-team': [{ id: 'm1', channelId: 'ch-team', authorSubject: 'user-1', authorKind: 'human', body: 'hello team', createdAt: 't' }],
+    'ch-dm': [{ id: 'm2', channelId: 'ch-dm', authorSubject: 'user-1', authorKind: 'human', body: 'hello dm', createdAt: 't' }],
+  };
+  const json = (obj, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => obj });
+  const fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    if (u.pathname === '/api/admin/envoy/channels') {
+      return json({ valid: true, channels: [
+        { id: 'ch-team', slug: 'team', title: 'Team', kind: 'team' },
+        { id: 'ch-dm', slug: 'dm-troy', title: 'DM Troy', kind: 'direct' },
+      ] });
+    }
+    if (u.pathname === '/api/admin/envoy/messages' && (opts.method ?? 'GET') === 'GET') {
+      const msgs = byChannel[u.searchParams.get('channel_id')] ?? [];
+      // First poll returns the backlog (marked seen on init); drain after.
+      byChannel[u.searchParams.get('channel_id')] = [];
+      return json({ valid: true, messages: msgs });
+    }
+    if (u.pathname === '/api/admin/envoy/messages' && opts.method === 'POST') {
+      const body = JSON.parse(opts.body);
+      posts.push(body);
+      return json({ valid: true, receipt: { message: body, replayed: false } });
+    }
+    return json({ valid: false }, false);
+  };
+  const spawns = [];
+  const spawnImpl = () => { const f = makeFakeChild(); spawns.push(f); return f.child; };
+  await writeFile(join(tmp, 'token.json'), JSON.stringify({ token: 'tok-multi' }));
+
+  const handle = await runBridge({
+    fetchImpl, spawnImpl, execPath: 'node', helmionBin: 'fake.mjs',
+    bridgeDir: tmp, tokenPath: join(tmp, 'token.json'), cursorPath: join(tmp, 'cursor.json'),
+    vaultPath: join(tmp, 'vault.json'), pollMs: 30,
+    log: () => {}, logError: () => {}, noAbly: true,
+  });
+  t.after(() => handle.stop());
+  assert.equal(handle.ok, true);
+  // Both backlogs were marked seen on init; now inject a fresh message in the DM channel.
+  byChannel['ch-dm'] = [{ id: 'm3', channelId: 'ch-dm', authorSubject: 'user-1', authorKind: 'human', body: 'ping dm', createdAt: 't2' }];
+  await new Promise((r) => setTimeout(r, 120));
+  const dmPosts = posts.filter((p) => p.channelId === 'ch-dm');
+  assert.ok(dmPosts.length >= 1, 'replied in the DM channel');
+  assert.ok(dmPosts[0].idempotencyKey.includes('m3'));
+  assert.equal(posts.filter((p) => p.channelId === 'ch-team').length, 0, 'no reply in team');
+});
+
+test('bridge honors HELMION_BRIDGE_CHANNEL_SLUGS filter', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-filter-'));
+  const seenChannels = [];
+  const json = (obj, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => obj });
+  const fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    if (u.pathname === '/api/admin/envoy/channels') {
+      return json({ valid: true, channels: [
+        { id: 'ch-team', slug: 'team', title: 'Team', kind: 'team' },
+        { id: 'ch-dm', slug: 'dm-troy', title: 'DM Troy', kind: 'direct' },
+      ] });
+    }
+    if (u.pathname === '/api/admin/envoy/messages') {
+      seenChannels.push(u.searchParams.get('channel_id'));
+      return json({ valid: true, messages: [] });
+    }
+    return json({ valid: false }, false);
+  };
+  const spawnImpl = () => makeFakeChild().child;
+  await writeFile(join(tmp, 'token.json'), JSON.stringify({ token: 'tok-filter' }));
+  const handle = await runBridge({
+    fetchImpl, spawnImpl, execPath: 'node', helmionBin: 'fake.mjs',
+    bridgeDir: tmp, tokenPath: join(tmp, 'token.json'), cursorPath: join(tmp, 'cursor.json'),
+    vaultPath: join(tmp, 'vault.json'), channelSlugs: 'dm-troy', pollMs: 30,
+    log: () => {}, logError: () => {}, noAbly: true,
+  });
+  t.after(() => handle.stop());
+  assert.equal(handle.ok, true);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.ok(seenChannels.length > 0);
+  assert.ok(seenChannels.every((id) => id === 'ch-dm'), 'only the filtered channel is polled');
+});
