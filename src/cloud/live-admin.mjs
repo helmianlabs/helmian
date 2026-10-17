@@ -23,6 +23,7 @@ import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { createEvidenceStore, handleEvidenceRoute, EVIDENCE_HANDOFFS_PATH, EVIDENCE_CHECKPOINTS_PATH, EVIDENCE_RUNS_LEDGER_PATH, EVIDENCE_LEASES_POSTURE_PATH } from './evidence.mjs';
+import { handleEnvoyAblyRoute } from './envoy-ably.mjs';
 import { createCanvasStore, handleCanvasRoute } from './workspace-canvas.mjs';
 import { handleBrowserRoute } from './browser-launcher.mjs';
 import { handleAgentIconRoute } from './workspace-agent-icons.mjs';
@@ -358,7 +359,7 @@ export async function createLiveHelmianCloudAdminHandler({
         ...(detail ? { detail } : {}),
       });
     } catch {
-      // Logging is evidence, not authority.
+      // Logs are evidence, not authority.
     }
   };
 
@@ -379,7 +380,7 @@ export async function createLiveHelmianCloudAdminHandler({
     } finally { client.release(); }
   }
 
-  // Device tokens: Envoy routes only.
+  // Device tokens: Envoy only.
   const bearerToken = (request) => { const h = String(request.headers?.authorization ?? ''); return h.startsWith('Bearer ') ? h.slice(7).trim() : ''; };
   const isEnvoyPath = (request) => new URL(request.url, 'http://local').pathname.startsWith('/api/admin/envoy/');
   async function deriveTenantActor(request) {
@@ -480,7 +481,7 @@ export async function createLiveHelmianCloudAdminHandler({
       await requireActiveTenantMembership(client, context);
       return {};
     });
-    // Repos need activeTenantActor's session/request ids.
+    // Actor ids.
     return { ...actor, sessionId: context.sessionId, requestId: context.requestId };
   }
 
@@ -570,7 +571,7 @@ export async function createLiveHelmianCloudAdminHandler({
          limit 25`,
         [context.tenantId],
       );
-      // Wrap: withTenantTransaction spreads arrays into objects.
+      // rows.map avoids spread (breaks arrays).
       return { events: result.rows.map((row) => ({
         id: String(row.id),
         actionType: String(row.action_type).slice(0, 120),
@@ -645,10 +646,10 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SIGNUP_PATH) {
       try {
-        // Clerk owns registration; use OIDC login.
+        // Clerk registration via OIDC.
         const signup = new URL('/sign-up', identity.issuer);
         signup.searchParams.set('redirect_url', new URL(LIVE_ADMIN_LOGIN_PATH, requestOrigin(request, env)).toString());
-        // Fixed post-signup destination: user app path.
+        // Fixed post-signup target.
         const extra = requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH ? { 'set-cookie': `helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}` } : {};
         send(response, 302, '', 'text/plain; charset=utf-8', { location: signup.toString(), ...extra });
       } catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
@@ -666,8 +667,7 @@ export async function createLiveHelmianCloudAdminHandler({
         if (state !== cookieState) throw Object.assign(new Error('OIDC callback state mismatch'), { stage: 'state_mismatch' });
         const returnToApp = cookieValue(request, 'helmion_admin_return') === 'app';
         const joinToken = cookieValue(request, 'helmion_admin_join');
-        // /app + invite sign-ins persist 30 days;
-        // owner-console sign-ins: 8h cookie.
+        // /app+invite: 30d; owner console: 8h.
         const remember = returnToApp || Boolean(joinToken);
         const result = await identity.finishLogin(code, state, { remember });
         const sessionCookie = (path) => `helmion_admin_session=${result.sessionId}; ${remember ? `Max-Age=${APP_SESSION_MAX_AGE_SECONDS}; ` : ''}${cookieOptions(path)}`;
@@ -921,7 +921,7 @@ export async function createLiveHelmianCloudAdminHandler({
         const desktop = await invites.desktopIdentity(bearerToken(request)).catch(() => null);
         if (!desktop?.subject || !desktop?.tenantId) throw Object.assign(new Error('Device token required'), { status: 403 });
         const body = await readJsonObject(request);
-        // Single finding or a batch: { findings: [...] }.
+        // 1 finding or { findings: [...] }.
         const inputs = Array.isArray(body.findings)
           ? body.findings
           : (exactKeys(body, ['fingerprint', 'source', 'severity', 'title', 'detail', 'pageRef']), [body]);
@@ -959,14 +959,15 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.code === '42P01' ? 503 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GUARD_MEMBERSHIP_REQUIRED' : error?.code === '42P01' ? 'GUARD_MIGRATION_PENDING' : 'GUARD_ACK_INVALID' })); }
       return true;
     }
-    // PARITY-007 evidence reads (owner/admin-only).
+    if (await handleEnvoyAblyRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson: readJsonObject })) return true;
+    // Evidence reads, owner/admin-only.
     if (await handleEvidenceRoute({ request, response, requestUrl, evidence, activeTenantActor, send, TenantAuthorizationError })) return true;
-    // BROWSE-001: canvas + browser routes.
+    // Canvas, browser.
     if (await handleCanvasRoute({ request, response, requestUrl, pool, canvas, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
     if (await handleBrowserRoute({ request, response, requestUrl, pool, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
-    // Agent icon routes.
+    // Icons.
     if (await handleAgentIconRoute({ request, response, requestUrl, pool, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
-    // CONN-001 outbox test delivery.
+    // Outbox test
     if (await handleConnectorOutboundRoute({ request, response, requestUrl, pool, activeActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_PATH) {
       try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.readPublishedConfig(actor) })); }
