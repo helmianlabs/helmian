@@ -66,12 +66,25 @@ export function formatTime(value, opts = { month: 'short', day: 'numeric', hour:
 export function clockTime(value) { return formatTime(value, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); }
 
 // Console log lines from Envoy messages.
+//
+// Bridge identity: the PC bridge posts with authorKind='agent' and an
+// authorSubject ending in ':bridge' (server-derived in src/cloud/envoy-chat.mjs).
+// Give it a name instead of the generic "agent" fallback. Rename in one line here.
+export const BRIDGE_DISPLAY_NAME = 'Maestro';
+const BRIDGE_SUBJECT_SUFFIX = ':bridge';
+
 export function logLines(body = {}, subject = null) {
-  return (Array.isArray(body.messages) ? body.messages : []).map((m) => ({
-    id: m.id, ts: m.createdAt ? clockTime(m.createdAt) : '', text: String(m.body ?? ''),
-    mine: Boolean(subject && (m.authorSubject === subject || m.authorId === subject)),
-    who: m.authorKind === 'human' ? (m.authorName || (subject && (m.authorSubject === subject || m.authorId === subject) ? 'you' : 'member')) : (m.authorName || m.authorKind || 'agent'),
-  }));
+  return (Array.isArray(body.messages) ? body.messages : []).map((m) => {
+    const isBridge = m.authorKind === 'agent' && String(m.authorSubject ?? '').endsWith(BRIDGE_SUBJECT_SUFFIX);
+    const who = m.authorKind === 'human'
+      ? (m.authorName || (subject && (m.authorSubject === subject || m.authorId === subject) ? 'you' : 'member'))
+      : (isBridge ? BRIDGE_DISPLAY_NAME : (m.authorName || m.authorKind || 'agent'));
+    return {
+      id: m.id, ts: m.createdAt ? clockTime(m.createdAt) : '', text: String(m.body ?? ''),
+      mine: Boolean(subject && (m.authorSubject === subject || m.authorId === subject)),
+      who, bridge: isBridge,
+    };
+  });
 }
 
 export function humanAction(type = '') { return String(type).replace(/^[a-z]+\./, '').replaceAll(/[._]/g, ' ').replace(/^\w/, (c) => c.toUpperCase()); }
