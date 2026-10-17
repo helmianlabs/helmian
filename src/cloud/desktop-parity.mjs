@@ -104,6 +104,15 @@ const PARITY = Object.freeze([
     status: 'partial',
     missing: 'Cloud readiness does not build, sign, or publish a Windows installer.',
   },
+  {
+    id: 'evidence',
+    desktop: 'Evidence page: handoff timeline, evidence contract card, local file inventory',
+    desktopEvidence: 'desktop/Helmion.Desktop/MainWindow.xaml:4690-4707',
+    cloud: '/admin Evidence section (handoff timeline, checkpoints, unified run-receipt ledger, lease posture) and /app evidence view extended with handoffs and checkpoints; the Evidence contract is ported as static copy',
+    cloudEvidence: 'web/cloud-admin/index.html:section-evidence; web/cloud-admin/app.js:loadEvidenceSection; src/cloud/evidence.mjs; src/cloud/live-admin.mjs:LIVE_ADMIN_MAESTRO_HANDOFFS_PATH',
+    status: 'partial',
+    missing: 'Handoffs, checkpoints, and Maestro leases are owner/admin-only reads: the migration-002 tables are keyed by project_slug with no tenant_id, so no tenant scoping exists yet (no slug == project_key convention adopted). The local filesystem evidence inventory (.helmion/evidence files, test-file counts, runbooks) stays desktop-only.',
+  },
 ]);
 
 export function buildDesktopParityManifest() {
