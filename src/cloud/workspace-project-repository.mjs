@@ -34,6 +34,29 @@ function normalizeProject(input) {
   return { projectKey, displayName, sourceKind, defaultBranch, lifecycle };
 }
 
+// GitHub repo verification: unauthenticated HEAD-of-truth check that the
+// owner/name names a real public repository. Never blocks on GitHub being
+// unreachable: 404 rejects the bind ("repository not found"), but 403/429
+// (rate limit) or any network error degrades to verified:false and the bind
+// is accepted. Exported for tests.
+export async function verifyGitHubRepo({ owner, name, fetchImpl = fetch } = {}) {
+  const repoOwner = String(owner ?? '').trim();
+  const repoName = String(name ?? '').trim();
+  if (!repoOwner || !repoName) return { verified: false, note: 'owner or name is missing' };
+  try {
+    const response = await fetchImpl(`https://api.github.com/repos/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'helmian-cloud' },
+      signal: AbortSignal.timeout(10000),
+      redirect: 'error',
+    });
+    if (response.status === 404) return { verified: false, note: 'repository not found', notFound: true };
+    if (!response.ok) return { verified: false, note: `github returned ${response.status}; bind accepted without verification` };
+    return { verified: true, note: 'repository exists' };
+  } catch (error) {
+    return { verified: false, note: `github unreachable (${String(error?.name === 'TimeoutError' ? 'timeout' : error?.message ?? 'network error').slice(0, 120)}); bind accepted without verification` };
+  }
+}
+
 function row(item, repoBinding) {
   // sourceInventory is metadata state only: 'mirror' for desktop mirrors,
   // 'bound' when a repo binding exists, 'unbound' otherwise. It never fetches
@@ -56,7 +79,7 @@ function normalizeRepoBinding(input) {
 
 const SELECT = 'project_key, display_name, source_kind, default_branch, lifecycle, created_by_subject, created_at, updated_at';
 
-export function createWorkspaceProjectRepository(pool) {
+export function createWorkspaceProjectRepository(pool, { verifyRepo = verifyGitHubRepo } = {}) {
   return Object.freeze({
     async list(actor) {
       const active = context(actor);
@@ -139,6 +162,11 @@ export function createWorkspaceProjectRepository(pool) {
       if (!['owner', 'admin'].includes(String(actor?.role ?? '').toLowerCase())) throw Object.assign(new Error('workspace repo bindings require owner or admin membership'), { status: 403 });
       const active = context(actor);
       const binding = normalizeRepoBinding(input);
+      // Verify the repo exists on GitHub before recording the bind. A 404
+      // rejects the bind; rate limits or network errors degrade to
+      // verified:false and the bind is accepted (never block on GitHub).
+      const verification = await verifyRepo({ owner: binding.repoOwner, name: binding.repoName });
+      if (verification.notFound) throw Object.assign(new Error('GitHub repository was not found'), { status: 400 });
       return withTenantTransaction(pool, active, async (client) => {
         await requireActiveTenantMembership(client, active);
         const project = await client.query(`select 1 from helmion.workspace_projects where tenant_id=$1 and project_key=$2`, [active.tenantId, binding.projectKey]);
@@ -160,9 +188,9 @@ export function createWorkspaceProjectRepository(pool) {
           policyVersion: 'workspace-project.v1',
           decision: 'ALLOW',
           privacySummary: 'Owner bound a GitHub repository to a workspace project (metadata only; no repo contents were fetched)',
-          result: { projectKey: binding.projectKey, repoOwner: binding.repoOwner, repoName: binding.repoName },
+          result: { projectKey: binding.projectKey, repoOwner: binding.repoOwner, repoName: binding.repoName, verified: verification.verified, verificationNote: verification.note },
         });
-        return { durable: true, receiptId, projectKey: binding.projectKey, repoOwner: binding.repoOwner, repoName: binding.repoName };
+        return { durable: true, receiptId, projectKey: binding.projectKey, repoOwner: binding.repoOwner, repoName: binding.repoName, verified: verification.verified, verificationNote: verification.note };
       });
     },
     async listRepoBindings(actor) {

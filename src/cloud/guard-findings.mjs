@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { withTenantTransaction, requireActiveTenantMembership, applyTenantContext } from '../core/tenant-context.mjs';
 import { appendAuditEvent } from './audit-event-repository.mjs';
+import { enqueueConnectorMessage } from '../cora/connector-outbound-worker.mjs';
 
 const SOURCES = new Set(['browser-extension', 'governance-kernel', 'cloud']);
 const SEVERITIES = new Set(['info', 'warning', 'critical']);
@@ -131,6 +132,13 @@ export function createGuardStore(pool) {
           ackCleared = cleared.rowCount > 0;
         }
         await client.query('commit');
+        // Best-effort outbox notification for critical findings (including
+        // re-sightings, which clear the ack). Never fails the ingest.
+        if (finding.severity === 'critical') {
+          for (const provider of ['discord', 'slack']) {
+            await enqueueConnectorMessage({ pool, tenantId: context.tenantId, provider, channelLabel: 'guard', text: `Critical Guard finding: ${finding.title} (source ${finding.source}).` }).catch(() => {});
+          }
+        }
         return { durability: 'committed', finding: rowFinding(row, null), inserted, ackCleared };
       } catch (error) {
         try { await client.query('rollback'); } catch { /* preserve the original error */ }
