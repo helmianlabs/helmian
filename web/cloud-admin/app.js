@@ -599,7 +599,7 @@ function renderMessageList() {
   if (!envoyMessages.length) {
     const empty = document.createElement('p');
     empty.className = 'preview';
-    empty.textContent = 'No messages in this Organization channel yet.';
+    empty.textContent = '💬 No messages yet — say hello to start the thread.';
     conversationBody.append(empty);
     return;
   }
@@ -1022,7 +1022,7 @@ function renderWorkspacePreviews(body) {
   workspacePreviewReceipts.replaceChildren();
   if (model.empty) {
     const empty = document.createElement('p'); empty.className = 'preview';
-    empty.textContent = 'No workspace preview intents recorded for this Organization.';
+    empty.textContent = '🖥️ No preview intents recorded yet.';
     workspacePreviewReceipts.append(empty);
     workspacePreviewStatus.textContent = 'No preview receipts yet. Drafting and preparing are available without an approval step.';
     return;
@@ -1053,7 +1053,7 @@ async function loadWorkspacePreviews({ replayed = false } = {}) {
 
 function renderAgentTasks(body) {
   const model = agentTaskPanelModel(body); agentTaskReceipts.replaceChildren();
-  if (model.empty) { const empty = document.createElement('p'); empty.className = 'preview'; empty.textContent = 'No agent task intents recorded for this Organization.'; agentTaskReceipts.append(empty); agentTaskStatus.textContent = 'No task intents yet. Drafting and preparing do not invoke a worker.'; return; }
+  if (model.empty) { const empty = document.createElement('p'); empty.className = 'preview'; empty.textContent = '🤖 No task intents yet — draft one to get started.'; agentTaskReceipts.append(empty); agentTaskStatus.textContent = '🤖 No task intents yet — draft one to get started.'; return; }
   agentTaskStatus.textContent = model.statusLabel;
   const runLabel = (outcome) => ({ needs_desktop: 'Waiting for desktop runner', completed: 'Completed', failed: 'Failed', refused: 'Refused' }[outcome] ?? outcome);
   for (const receipt of model.receipts) {
@@ -1073,7 +1073,7 @@ async function loadAgentTasks({ replayed = false } = {}) {
 
 function renderApprovalInbox(body) {
   const model = approvalInboxPanelModel(body); approvalInboxItems.replaceChildren(); approvalInboxStatus.textContent = model.statusLabel;
-  if (model.empty) { approvalInboxItems.textContent = 'No pending approval requests or prepared task intents.'; return; }
+  if (model.empty) { approvalInboxItems.textContent = '✅ All clear — no pending approval requests.'; return; }
   const runLabel = (outcome) => ({ needs_desktop: 'Queued for desktop runner', failed: 'Failed', refused: 'Refused' }[outcome] ?? outcome);
   for (const item of model.items) { const card = document.createElement('article'); card.className = 'config-item'; card.append(configItem('Request', `${item.requestKind} · ${item.status}`), configItem('Summary', item.summary || 'Summary unavailable'), configItem('Receipt', item.requestReceiptId), configItem('Decision', item.decision ? `${item.decision} · ${item.decisionReceiptId}` : 'No decision recorded'), configItem('Execution', item.run ? runLabel(item.run.outcome) : 'Not performed')); if (item.approvalRequired && !item.decision && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) { for (const decision of ['approve', 'reject']) { const button = document.createElement('button'); button.type = 'button'; button.className = decision === 'reject' ? 'danger' : 'secondary'; button.textContent = decision === 'approve' ? 'Approve request' : 'Reject request'; button.onclick = async () => { button.disabled = true; approvalInboxStatus.textContent = `Recording ${decision} decision…`; try { await coraClient.decideApproval({ decision, requestKind: item.requestKind, requestReceiptId: item.requestReceiptId, reason: `${decision === 'approve' ? 'Approved' : 'Rejected'} in Organization approvals inbox`, idempotencyKey: crypto.randomUUID() }); approvalInboxStatus.textContent = decision === 'approve' ? 'Approved. The execution request is queued for the desktop runner.' : 'Rejected. Decision recorded.'; await loadApprovalInbox(); } catch (error) { approvalInboxStatus.textContent = `Decision not recorded: ${error.message}`; button.disabled = false; } }; card.append(button); } } approvalInboxItems.append(card); }
 }
@@ -1152,7 +1152,7 @@ providerConnectionForm.onsubmit = async (event) => { event.preventDefault(); pro
 function renderArtifactStudio(body) {
   const model = artifactStudioPanelModel(body);
   artifactStudioReceipts.replaceChildren();
-  artifactStudioStatus.textContent = model.empty ? 'No Artifact Studio receipts yet. Drafting and source metadata are available without approval.' : model.statusLabel;
+  artifactStudioStatus.textContent = model.empty ? '✨ No receipts yet — draft an idea in Artifact Studio to begin.' : model.statusLabel;
   for (const receipt of model.receipts) {
     const card = document.createElement('article'); card.className = 'config-item';
     card.append(configItem('Artifact', `${receipt.artifactType} · ${receipt.status}`), configItem('Title', receipt.title), configItem('Sources', `${receipt.sourceRefs?.length ?? 0} reference(s)`), configItem('Receipt', receipt.receiptId || 'unavailable'), configItem('Execution', 'Not performed'), configItem('Media / provider', 'Not generated / not invoked'));
