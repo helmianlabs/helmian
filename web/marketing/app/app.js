@@ -1157,7 +1157,156 @@ async function loadAgents() {
   ]));
   if (!det.childElementCount) det.replaceChildren(el('p', 'muted sm', 'No provider details yet. Connect providers from Integrations or the desktop app.'));
 }
-$('#agents-refresh').onclick = () => loadAgents().then(() => toast('Agents refreshed', 'ok')).catch(() => toast('Could not refresh'));
+$('#agents-refresh').onclick = () => Promise.all([loadAgents(), loadAgentSessions()]).then(() => toast('Agents refreshed', 'ok')).catch(() => toast('Could not refresh'));
+
+// ---- Agent sessions (migration 058): named agent rows ----
+const SESSION_STATUS_COLORS = { idle: 'grey', active: 'green', warning: 'yellow', error: 'red' };
+const SESSION_PROVIDERS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
+const SESSION_TIERS = ['auto', 'fast', 'standard', 'deep'];
+
+async function loadAgentSessions() {
+  const sess = $('#agents-sessions');
+  try {
+    const res = await api('/api/admin/envoy/agents/sessions');
+    const sessions = res.sessions ?? [];
+    renderAgentSessions(sess, sessions);
+  } catch (e) {
+    sess.replaceChildren(el('p', 'muted sm', 'Could not load sessions.'));
+  }
+}
+
+function renderAgentSessions(container, sessions) {
+  // Header with count and New button
+  const head = el('div', 'row-btns left');
+  head.style.marginBottom = '12px';
+  const count = el('span', 'muted sm', `${sessions.length} session${sessions.length === 1 ? '' : 's'}`);
+  const newBtn = el('button', 'btn primary sm', '+ New session');
+  newBtn.type = 'button';
+  newBtn.onclick = showNewSessionDialog;
+  head.append(count, newBtn);
+
+  if (!sessions.length) {
+    container.replaceChildren(head, el('p', 'muted sm', 'No agent sessions yet. Create one to get started.'));
+    return;
+  }
+
+  const grid = el('div', 'grid');
+  for (const s of sessions) {
+    const card = el('article', 'card session-card');
+    const color = SESSION_STATUS_COLORS[s.status] ?? 'grey';
+
+    // Header: icon + name + close button
+    const header = el('div', 'session-head');
+    const icon = agentIconFor(s.name);
+    const title = el('div', 'title', icon ? `${icon} ${s.name}` : s.name);
+    const closeBtn = el('button', 'btn sm icon-btn', '✕');
+    closeBtn.type = 'button';
+    closeBtn.title = 'Close session';
+    closeBtn.onclick = (e) => { e.stopPropagation(); closeAgentSession(s.id, s.name); };
+    header.append(title, closeBtn);
+
+    // Meta: provider + status + tier
+    const meta = el('div', 'meta');
+    const dot = el('span', `status-dot ${color}`);
+    dot.style.display = 'inline-block';
+    dot.style.width = '8px';
+    dot.style.height = '8px';
+    dot.style.borderRadius = '50%';
+    dot.style.marginRight = '6px';
+    dot.style.background = color === 'green' ? '#22c55e' : color === 'yellow' ? '#eab308' : color === 'red' ? '#ef4444' : '#9ca3af';
+    meta.append(dot, el('span', null, `${s.provider} · ${s.status}`));
+    if (s.routingTier && s.routingTier !== 'auto') meta.append(el('span', 'muted sm', ` · ${s.routingTier}`));
+
+    card.append(header, meta);
+
+    // Last message preview
+    if (s.lastMessage) {
+      const preview = el('div', 'muted sm session-preview');
+      preview.textContent = s.lastMessage.length > 120 ? s.lastMessage.slice(0, 117) + '...' : s.lastMessage;
+      preview.style.marginTop = '8px';
+      card.append(preview);
+    }
+
+    grid.append(card);
+  }
+  container.replaceChildren(head, grid);
+}
+
+function showNewSessionDialog() {
+  // Simple dialog using native prompt-style overlay
+  const overlay = el('div', 'dialog-overlay');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  const dialog = el('div', 'card');
+  dialog.style.cssText = 'min-width:320px;max-width:90vw;padding:20px;';
+  dialog.append(el('h3', null, 'New agent session'));
+
+  const nameLabel = el('label', 'muted sm', 'Name');
+  const nameInput = el('input', 'input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'e.g. Claude helper';
+  nameInput.style.cssText = 'width:100%;margin:4px 0 12px;';
+
+  const providerLabel = el('label', 'muted sm', 'Provider');
+  const providerSelect = el('select', 'input');
+  providerSelect.style.cssText = 'width:100%;margin:4px 0 12px;';
+  for (const p of SESSION_PROVIDERS) {
+    const opt = el('option', null, p);
+    opt.value = p;
+    providerSelect.append(opt);
+  }
+
+  const tierLabel = el('label', 'muted sm', 'Routing');
+  const tierSelect = el('select', 'input');
+  tierSelect.style.cssText = 'width:100%;margin:4px 0 16px;';
+  for (const t of SESSION_TIERS) {
+    const opt = el('option', null, t.charAt(0).toUpperCase() + t.slice(1));
+    opt.value = t;
+    tierSelect.append(opt);
+  }
+
+  const btnRow = el('div', 'row-btns');
+  const cancelBtn = el('button', 'btn sm', 'Cancel');
+  cancelBtn.type = 'button';
+  cancelBtn.onclick = () => overlay.remove();
+  const createBtn = el('button', 'btn primary sm', 'Start session');
+  createBtn.type = 'button';
+  createBtn.onclick = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { toast('Give the session a name', 'error'); return; }
+    try {
+      await api('/api/admin/envoy/agents/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ name, provider: providerSelect.value, routingTier: tierSelect.value }),
+      });
+      overlay.remove();
+      toast('Session created', 'ok');
+      loadAgentSessions();
+    } catch (e) {
+      toast('Could not create session', 'error');
+    }
+  };
+  btnRow.append(cancelBtn, createBtn);
+
+  dialog.append(nameLabel, nameInput, providerLabel, providerSelect, tierLabel, tierSelect, btnRow);
+  overlay.append(dialog);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+  nameInput.focus();
+}
+
+async function closeAgentSession(id, name) {
+  if (!confirm(`Close session "${name}"?`)) return;
+  try {
+    await api('/api/admin/envoy/agents/sessions', {
+      method: 'DELETE',
+      body: JSON.stringify({ id }),
+    });
+    toast('Session closed', 'ok');
+    loadAgentSessions();
+  } catch (e) {
+    toast('Could not close session', 'error');
+  }
+}
 
 
 async function loadCreate() {
@@ -1399,7 +1548,7 @@ async function loadPreview() {
 }
 $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 
-const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: loadAgents, release: loadRelease };
+const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- boot ----
