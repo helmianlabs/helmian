@@ -60,8 +60,12 @@ async function api(deps, path, { method = 'GET', body = null, token = null } = {
     headers,
     body: body === null ? undefined : JSON.stringify(body),
   });
-  const parsed = await res.json().catch(() => ({}));
+  const text = await res.text();
+  let parsed = {};
+  try { parsed = JSON.parse(text); } catch {}
   if (!res.ok || parsed?.valid === false) {
+    // Log full response for debugging
+    deps.log(`API DEBUG: status=${res.status}, body=${text.slice(0, 500)}`);
     throw new Error(`cloud ${method} ${path} failed: ${parsed?.code ?? parsed?.message ?? res.status}`);
   }
   return parsed;
@@ -332,6 +336,7 @@ export async function runBridge(overrides = {}) {
       const truncated = reply.length > 4000 ? reply.slice(0, 3997) + "..." : reply;
       log(`message ${message.id}: sending reply, ${truncated.length} chars, preview: ${truncated.slice(0, 100)}`);
       const payload = { body: truncated, channelId: message.channelId, idempotencyKey: `pc-bridge:${message.id}` };
+      log(`message ${message.id}: payload channelId=${message.channelId}, idempotencyKey=${payload.idempotencyKey}`);
       // Retry on failure: the cloud may have transient issues. IdempotencyKey makes retry safe.
       let posted = false;
       for (let attempt = 1; attempt <= 3 && !posted; attempt++) {
