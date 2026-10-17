@@ -245,9 +245,10 @@ $('#composer').onsubmit = async (e) => {
 
 // ---- guard feed ----
 async function loadFeedData() {
-  const [ev, ap] = await Promise.allSettled([api('/api/admin/events'), api('/api/admin/cora/approvals')]);
+  const [ev, ap, gf] = await Promise.allSettled([api('/api/admin/events'), api('/api/admin/cora/approvals'), api('/api/admin/guard/findings')]);
   if (ev.status === 'fulfilled') state.events = Array.isArray(ev.value.events) ? ev.value.events : [];
   if (ap.status === 'fulfilled') state.approvals = approvalsModel(ap.value, state.actor?.role).items;
+  state.findings = gf.status === 'fulfilled' && Array.isArray(gf.value.findings) ? gf.value.findings : [];
   const pending = state.approvals.filter((a) => !a.decision).length;
   $('#approvals-badge').hidden = pending === 0; $('#approvals-badge').textContent = String(pending);
   renderFeed();
@@ -257,13 +258,34 @@ async function decide(item, decision) {
   catch { toast('Decision not saved — try again'); }
   await loadFeedData(); if (shell.dataset.view === 'approvals') renderApprovals();
 }
+function findingCards() {
+  // Guard findings carry server-side ack state; criticals are never hidden by ack.
+  return (state.findings ?? []).map((f) => ({
+    id: `finding:${f.fingerprint}`,
+    severity: f.severity,
+    title: f.title,
+    body: [f.source, f.sightingCount > 1 ? `Seen ${f.sightingCount} times` : null, f.acked ? `Acknowledged by ${f.ackedBy}` : null].filter(Boolean).join(' · '),
+    at: f.lastSeenAt || null,
+    ack: !!f.acked,
+    finding: f,
+  }));
+}
+async function ackFinding(fingerprint) {
+  try { await post('/api/admin/guard/acks', { fingerprint }); toast('Acknowledged'); }
+  catch { toast('Acknowledgement not saved — try again'); }
+  await loadFeedData(); renderFeed();
+}
 function renderFeed() {
-  const cards = feedModel({ events: state.events, approvals: state.approvals }, { filter: $('#feed-filter').value, showInfo: $('#opt-info').checked, showApprovals: $('#opt-approvals').checked, acknowledged: state.ack, cleared: state.cleared });
-  const critical = cards.filter((c) => c.severity === 'critical').length;
+  const filter = $('#feed-filter').value;
+  const cards = feedModel({ events: state.events, approvals: state.approvals }, { filter: 'all', showInfo: $('#opt-info').checked, showApprovals: $('#opt-approvals').checked, acknowledged: state.ack, cleared: state.cleared });
+  const merged = [...findingCards(), ...cards]
+    .filter((c) => filter === 'all' || c.severity === filter)
+    .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+  const critical = merged.filter((c) => c.severity === 'critical').length;
   $('#guard-count').hidden = critical === 0; $('#guard-count').textContent = String(critical);
   const feed = $('#feed');
-  if (!cards.length) { feed.replaceChildren(empty('All clear', 'Alerts from your agents show up here.')); return; }
-  feed.replaceChildren(...cards.slice(0, 60).map((c) => {
+  if (!merged.length) { feed.replaceChildren(empty('All clear', 'Alerts from your agents show up here.')); return; }
+  feed.replaceChildren(...merged.slice(0, 60).map((c) => {
     const a = el('article', `alert ${c.severity}${c.ack ? ' ack' : ''}`);
     const h = el('div', 'h'); h.append(el('span', null, c.title), el('span', 't', c.at ? formatTime(c.at) : '')); a.append(h);
     if (c.body) a.append(el('div', 'b', c.body));
@@ -274,13 +296,25 @@ function renderFeed() {
       no.onclick = () => { if (a.querySelector('.confirm')) return; const cf = el('div', 'confirm'); cf.append(el('div', null, 'Reject this request?')); const r = el('div', 'actions'); const y = el('button', 'btn danger sm', 'Yes, reject'); const n = el('button', 'btn ghost sm', 'Cancel'); y.onclick = () => decide(c.approval, 'reject'); n.onclick = () => cf.remove(); r.append(y, n); cf.append(r); a.append(cf); };
       actions.append(ok, no);
     }
-    if (!c.ack && c.severity !== 'info') { const ack = el('button', 'btn ghost sm', 'Acknowledge'); ack.onclick = () => { state.ack.add(c.id); store.set('ack', [...state.ack]); renderFeed(); }; actions.append(ack); }
+    if (!c.ack && c.severity !== 'info') {
+      const ack = el('button', 'btn ghost sm', 'Acknowledge');
+      ack.onclick = c.finding
+        ? () => ackFinding(c.finding.fingerprint)
+        : () => { state.ack.add(c.id); store.set('ack', [...state.ack]); renderFeed(); };
+      actions.append(ack);
+    }
     if (actions.childElementCount) a.append(actions);
     return a;
   }));
 }
 $('#feed-filter').onchange = renderFeed; $('#opt-info').onchange = renderFeed; $('#opt-approvals').onchange = renderFeed;
 $('#feed-clear').onclick = () => { for (const id of state.ack) state.cleared.add(id); for (const e of state.events) state.cleared.add(`evt:${e.id}`); store.set('cleared', [...state.cleared]); renderFeed(); };
+$('#feed-ack-all').onclick = async () => {
+  const pending = (state.findings ?? []).filter((f) => !f.acked);
+  for (const f of pending) { try { await post('/api/admin/guard/acks', { fingerprint: f.fingerprint }); } catch { /* keep going */ } }
+  if (pending.length) toast(pending.length === 1 ? 'Finding acknowledged' : `${pending.length} findings acknowledged`);
+  await loadFeedData(); renderFeed();
+};
 
 
 // ---- Devices (GET /api/remote/v1/desktops; Herald Remote Control patterns) ----
