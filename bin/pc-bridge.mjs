@@ -92,18 +92,23 @@ async function pairWithCode(deps) {
   return saved;
 }
 
-async function loadCursor(deps) {
+// Seen-message tracking. The cloud's after_id cursor only accepts digits,
+// but message ids are UUIDs, so the bridge tracks what it has answered
+// locally instead: a persisted set of message ids.
+async function loadSeen(deps) {
   try {
     const data = JSON.parse(await readFile(deps.cursorPath, 'utf8'));
-    if (typeof data?.cursor === 'string') return data.cursor;
+    if (Array.isArray(data?.seen)) return new Set(data.seen.filter((id) => typeof id === 'string'));
+    // Back-compat: the first v1 build stored a single cursor id.
+    if (typeof data?.cursor === 'string') return new Set([data.cursor]);
   } catch { /* first run */ }
   return null;
 }
 
-async function saveCursor(deps, cursor) {
+async function saveSeen(deps, seen) {
   try {
     await mkdir(deps.bridgeDir, { recursive: true });
-    await writeFile(deps.cursorPath, JSON.stringify({ cursor }));
+    await writeFile(deps.cursorPath, JSON.stringify({ seen: [...seen].slice(-200) }));
   } catch (err) {
     deps.logError('could not persist cursor:', err?.message ?? err);
   }
@@ -193,15 +198,15 @@ export async function runBridge(overrides = {}) {
   }
   log(`watching #${channel.slug} (${channel.id})`);
 
-  let cursor = await loadCursor(deps);
-  if (cursor === null) {
-    // First run: start at the newest message so we never reply to ancient history.
+  let seen = await loadSeen(deps);
+  if (seen === null) {
+    // First run: mark everything currently in the channel as seen, so we never reply to ancient history.
     const initial = await api(deps, `/api/admin/envoy/messages?channel_id=${encodeURIComponent(channel.id)}`, { token: creds.token });
-    cursor = initial?.nextCursor ?? '0';
-    await saveCursor(deps, cursor);
-    log('cursor initialized at latest message; will only answer new messages from here on.');
+    seen = new Set((initial?.messages ?? []).map((m) => m.id).filter((id) => typeof id === 'string'));
+    await saveSeen(deps, seen);
+    log('initialized: will only answer new messages from here on.');
   } else {
-    log('resuming from cursor', cursor);
+    log(`resuming, ${seen.size} messages already seen`);
   }
 
   // Turns stay strictly serialized: one at a time, the rest queue.
@@ -237,17 +242,20 @@ export async function runBridge(overrides = {}) {
     if (shuttingDown) return;
     try {
       const res = await api(deps,
-        `/api/admin/envoy/messages?channel_id=${encodeURIComponent(channel.id)}&after_id=${encodeURIComponent(cursor)}`,
+        `/api/admin/envoy/messages?channel_id=${encodeURIComponent(channel.id)}`,
         { token: creds.token },
       );
+      let advanced = false;
       for (const message of res?.messages ?? []) {
-        cursor = message.id;
-        await saveCursor(deps, cursor);
+        if (typeof message.id !== 'string' || seen.has(message.id)) continue;
+        seen.add(message.id);
+        advanced = true;
         if (message.authorKind !== 'human') continue; // skip own replies + system lines
         if (!String(message.body ?? '').trim()) continue;
         if (turnInFlight) turnQueue.push(message);
         else void processOne(message);
       }
+      if (advanced) await saveSeen(deps, seen);
     } catch (err) {
       logError('poll failed, retrying next interval:', err?.message ?? err);
     }
@@ -261,7 +269,7 @@ export async function runBridge(overrides = {}) {
     shuttingDown = true;
     log('shutting down…');
     clearInterval(timer);
-    await saveCursor(deps, cursor);
+    await saveSeen(deps, seen);
     try { child.stdin.end(); } catch {}
     await new Promise((resolve) => {
       const timeout = setTimeout(() => { try { child.kill(); } catch {} resolve(); }, 5000);
@@ -279,7 +287,7 @@ export async function runBridge(overrides = {}) {
 
   log(`polling every ${deps.pollMs / 1000}s. Press Ctrl+C to stop.`);
   await poll();
-  return { ok: true, stop, get cursor() { return cursor; } };
+  return { ok: true, stop, get seenCount() { return seen.size; } };
 }
 
 async function main() {
