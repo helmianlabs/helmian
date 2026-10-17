@@ -283,7 +283,7 @@ export async function runBridge(overrides = {}) {
     }
     let token;
     try {
-      token = await api(deps, '/api/admin/desktop/ably-token', { method: 'POST', token: creds.token, body: { channelId: channel.id } });
+      token = await api(deps, '/api/admin/envoy/ably-token', { method: 'POST', token: creds.token, body: { channelId: channel.id } });
       if (!token?.tokenRequest?.keyName || !token?.channel) throw new Error('bad token response');
     } catch (err) {
       logError('Ably token failed, falling back to polling:', err?.message ?? err);
@@ -297,7 +297,7 @@ export async function runBridge(overrides = {}) {
         realtime = new Realtime({
           authCallback: async (_tokenParams, callback) => {
             try {
-              const t = await api(deps, '/api/admin/desktop/ably-token', { method: 'POST', token: creds.token, body: { channelId: channel.id } });
+              const t = await api(deps, '/api/admin/envoy/ably-token', { method: 'POST', token: creds.token, body: { channelId: channel.id } });
               callback(null, t.tokenRequest);
             } catch (err) { callback(err); }
           },
