@@ -25,6 +25,7 @@ import { createGuardStore } from './guard-findings.mjs';
 import { createEvidenceStore, handleEvidenceRoute, EVIDENCE_HANDOFFS_PATH, EVIDENCE_CHECKPOINTS_PATH, EVIDENCE_RUNS_LEDGER_PATH, EVIDENCE_LEASES_POSTURE_PATH } from './evidence.mjs';
 import { createCanvasStore, handleCanvasRoute } from './workspace-canvas.mjs';
 import { handleBrowserRoute } from './browser-launcher.mjs';
+import { handleAgentIconRoute } from './workspace-agent-icons.mjs';
 import { handleConnectorOutboundRoute } from './connector-outbound.mjs';
 import { handleReleaseRoadmapRoute, RELEASE_ROADMAP_PATH } from './release-manifest.mjs';
 import { createAppSessionStore } from './app-sessions.mjs';
@@ -136,6 +137,7 @@ export const LIVE_ADMIN_ORGANIZATION_DATABASE_PATH = '/api/admin/control-plane/o
 export const LIVE_ADMIN_WORKSPACE_LAYOUT_PATH = '/api/admin/workspace/layout-preferences';
 export const LIVE_ADMIN_WORKSPACE_LAYOUT_RESET_PATH = '/api/admin/workspace/layout-preferences/reset';
 export const LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH = '/api/admin/workspace/role-defaults';
+const WORKSPACE_LAYOUT_KEYS = ['defaultEnvoyChannelId', 'density', 'panelOrder', 'visibleShelves'];
 export const LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH = '/api/admin/organization/memberships';
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/membership-role-plan';
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
@@ -356,8 +358,7 @@ export async function createLiveHelmianCloudAdminHandler({
         ...(detail ? { detail } : {}),
       });
     } catch {
-      // Logging is evidence, not authority. A logger failure must not turn an
-      // already-committed policy write into a false failure response.
+      // Logging is evidence, not authority.
     }
   };
 
@@ -477,7 +478,7 @@ export async function createLiveHelmianCloudAdminHandler({
       await requireActiveTenantMembership(client, context);
       return {};
     });
-    // Repositories (e.g. Cora config history) need the session/request ids activeTenantActor provides.
+    // Repos need activeTenantActor's session/request ids.
     return { ...actor, sessionId: context.sessionId, requestId: context.requestId };
   }
 
@@ -567,7 +568,7 @@ export async function createLiveHelmianCloudAdminHandler({
          limit 25`,
         [context.tenantId],
       );
-      // withTenantTransaction spreads the result into an object, so wrap the array.
+      // withTenantTransaction spreads arrays into objects; wrap it.
       return { events: result.rows.map((row) => ({
         id: String(row.id),
         actionType: String(row.action_type).slice(0, 120),
@@ -626,7 +627,7 @@ export async function createLiveHelmianCloudAdminHandler({
       try {
         const login = await identity.beginLogin();
         const cookies = [`helmion_admin_login_state=${login.state}; ${cookieOptions('/admin')}`];
-        // Only the fixed user app path is accepted as a post-login destination (no open redirect).
+        // Post-login destination is fixed (no open redirect).
         if (requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH) cookies.push(`helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}`);
         send(response, 302, '', 'text/plain; charset=utf-8', { location: login.url, 'set-cookie': cookies.length === 1 ? cookies[0] : cookies });
       }
@@ -642,11 +643,10 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SIGNUP_PATH) {
       try {
-        // Clerk's Account Portal owns registration; return via the OIDC login route
-        // to preserve the server-side session boundary.
+        // Clerk owns registration; return via OIDC login.
         const signup = new URL('/sign-up', identity.issuer);
         signup.searchParams.set('redirect_url', new URL(LIVE_ADMIN_LOGIN_PATH, requestOrigin(request, env)).toString());
-        // Fixed post-signup destination: the user app path only.
+        // Fixed post-signup destination: user app path.
         const extra = requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH ? { 'set-cookie': `helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}` } : {};
         send(response, 302, '', 'text/plain; charset=utf-8', { location: signup.toString(), ...extra });
       } catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
@@ -664,8 +664,8 @@ export async function createLiveHelmianCloudAdminHandler({
         if (state !== cookieState) throw Object.assign(new Error('OIDC callback state mismatch'), { stage: 'state_mismatch' });
         const returnToApp = cookieValue(request, 'helmion_admin_return') === 'app';
         const joinToken = cookieValue(request, 'helmion_admin_join');
-        // /app and invite sign-ins are remembered for 30 days (persistent cookie);
-        // owner-console sign-ins keep the 8h browser-session cookie.
+        // /app + invite sign-ins persist 30 days;
+        // owner-console sign-ins: 8h cookie.
         const remember = returnToApp || Boolean(joinToken);
         const result = await identity.finishLogin(code, state, { remember });
         const sessionCookie = (path) => `helmion_admin_session=${result.sessionId}; ${remember ? `Max-Age=${APP_SESSION_MAX_AGE_SECONDS}; ` : ''}${cookieOptions(path)}`;
@@ -682,7 +682,7 @@ export async function createLiveHelmianCloudAdminHandler({
           `helmion_admin_login_state=; Max-Age=0; ${cookieOptions('/admin')}`,
         ] });
       } catch (error) {
-        // Stage + OAuth error code only: never tokens, codes, or cookie values.
+        // OAuth stage/code only; never secrets.
         const detail = { stage: error?.stage ?? 'unknown', ...(error?.oauthError ? { oauthError: error.oauthError } : {}), ...(error?.httpStatus ? { httpStatus: error.httpStatus } : {}) };
         noteAttempt('admin.oidc_callback', 'denied', { ...detail, message: String(error?.message ?? '').slice(0, 120) });
         send(response, 401, JSON.stringify({ error: 'identity_callback_rejected', code: 'ADMIN_IDENTITY_REJECTED', ...detail, retry: '/admin/auth/login' }));
@@ -957,12 +957,14 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.code === '42P01' ? 503 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GUARD_MEMBERSHIP_REQUIRED' : error?.code === '42P01' ? 'GUARD_MIGRATION_PENDING' : 'GUARD_ACK_INVALID' })); }
       return true;
     }
-    // PARITY-007 evidence reads (pre-tenant tables, owner/admin-only; see evidence.mjs).
+    // PARITY-007 evidence reads (owner/admin-only).
     if (await handleEvidenceRoute({ request, response, requestUrl, evidence, activeTenantActor, send, TenantAuthorizationError })) return true;
-    // BROWSE-001 canvas + browser launcher (see workspace-canvas.mjs, browser-launcher.mjs).
+    // BROWSE-001: canvas + browser routes.
     if (await handleCanvasRoute({ request, response, requestUrl, pool, canvas, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
     if (await handleBrowserRoute({ request, response, requestUrl, pool, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
-    // CONN-001 outbox test delivery (see connector-outbound.mjs).
+    // Agent icon routes.
+    if (await handleAgentIconRoute({ request, response, requestUrl, pool, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
+    // CONN-001 outbox test delivery.
     if (await handleConnectorOutboundRoute({ request, response, requestUrl, pool, activeActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_PATH) {
       try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.readPublishedConfig(actor) })); }
@@ -1284,7 +1286,7 @@ export async function createLiveHelmianCloudAdminHandler({
       return true;
     }
     if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {
-      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['defaultEnvoyChannelId', 'density', 'panelOrder', 'visibleShelves']); send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.save(actor, body) })); }
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, Object.hasOwn(body, 'emojiMode') ? [...WORKSPACE_LAYOUT_KEYS, 'emojiMode'] : WORKSPACE_LAYOUT_KEYS); send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.save(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_LAYOUT_MEMBERSHIP_REQUIRED' : 'WORKSPACE_LAYOUT_INVALID' })); }
       return true;
     }
@@ -1299,7 +1301,7 @@ export async function createLiveHelmianCloudAdminHandler({
       return true;
     }
     if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH) {
-      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['defaultEnvoyChannelId', 'density', 'panelOrder', 'role', 'visibleShelves']); const { role, ...layoutInput } = body; const scoped = { ...actor, ...actorContext(actor) }; send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.saveRoleDefault(scoped, role, layoutInput) })); }
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, Object.hasOwn(body, 'emojiMode') ? [...WORKSPACE_LAYOUT_KEYS, 'role', 'emojiMode'] : [...WORKSPACE_LAYOUT_KEYS, 'role']); const { role, ...layoutInput } = body; const scoped = { ...actor, ...actorContext(actor) }; send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.saveRoleDefault(scoped, role, layoutInput) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_ROLE_DEFAULTS_ADMIN_REQUIRED' : 'WORKSPACE_ROLE_DEFAULTS_INVALID' })); }
       return true;
     }
