@@ -325,14 +325,16 @@ export async function runBridge(overrides = {}) {
           void postApprovalRequest(deps, creds.token, message.channelId, req);
         },
       });
-      if (!reply) {
+      if (!reply || !reply.trim()) {
         log(`message ${message.id}: agent produced no text, skipping reply`);
         return;
       }
+      const truncated = reply.length > 4000 ? reply.slice(0, 3997) + "..." : reply;
+      log(`message ${message.id}: sending reply, ${truncated.length} chars, preview: ${truncated.slice(0, 100)}`);
       await api(deps, '/api/admin/envoy/messages', {
         method: 'POST',
         token: creds.token,
-        body: { body: reply.length > 4000 ? reply.slice(0, 3997) + "..." : reply, channelId: message.channelId, idempotencyKey: `pc-bridge:${message.id}` },
+        body: { body: truncated, channelId: message.channelId, idempotencyKey: `pc-bridge:${message.id}` },
       });
       log(`replied to message ${message.id} in #${(watched.find((c) => c.id === message.channelId) || {}).slug || message.channelId} (${reply.length} chars)`);
     } catch (err) {
