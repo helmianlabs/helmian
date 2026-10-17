@@ -332,7 +332,7 @@ export async function runBridge(overrides = {}) {
       await api(deps, '/api/admin/envoy/messages', {
         method: 'POST',
         token: creds.token,
-        body: { body: reply, channelId: message.channelId, idempotencyKey: `pc-bridge:${message.id}` },
+        body: { body: reply.length > 4000 ? reply.slice(0, 3997) + "..." : reply, channelId: message.channelId, idempotencyKey: `pc-bridge:${message.id}` },
       });
       log(`replied to message ${message.id} in #${(watched.find((c) => c.id === message.channelId) || {}).slug || message.channelId} (${reply.length} chars)`);
     } catch (err) {
