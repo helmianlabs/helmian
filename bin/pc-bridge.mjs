@@ -11,6 +11,8 @@
 // Pairing (first run only): the bridge asks for the pairing code shown by
 // the /app "link desktop" button, exchanges it for a device token, and
 // stores the token in %APPDATA%/Helmian/pc-bridge-token.json (this PC only).
+// Headless (runner): set HELMION_BRIDGE_PAIRING_CODE instead of answering
+// the prompt; it is consumed once on exchange.
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createInterface as createPromptInterface } from 'node:readline/promises';
@@ -41,7 +43,7 @@ function defaultDeps() {
     noAbly: process.env.HELMION_BRIDGE_NO_ABLY === '1',
     log: (...args) => console.log('[pc-bridge]', ...args),
     logError: (...args) => console.error('[pc-bridge]', ...args),
-    promptCode: null, // tests inject an async () => code; default prompts stdin
+    promptCode: null, // tests inject an async () => code; default: HELMION_BRIDGE_PAIRING_CODE env, else prompt stdin
   };
 }
 
@@ -74,6 +76,10 @@ async function pairWithCode(deps) {
   let code;
   if (deps.promptCode) {
     code = String(await deps.promptCode() ?? '').trim().toUpperCase();
+  } else if (process.env.HELMION_BRIDGE_PAIRING_CODE) {
+    // Headless provisioning (runner): one-shot code via env, consumed on
+    // exchange; the persisted device token takes over afterwards.
+    code = String(process.env.HELMION_BRIDGE_PAIRING_CODE).trim().toUpperCase();
   } else {
     const rl = createPromptInterface({ input: process.stdin, output: process.stdout });
     code = (await rl.question('Pairing code (tap the link button in /app Settings): ')).trim().toUpperCase();
