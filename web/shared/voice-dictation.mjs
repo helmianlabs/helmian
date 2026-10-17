@@ -141,8 +141,15 @@ export function createVoiceController({
       if (!canSpeak) return false;
       const clean = stripSpeechMarkup(text);
       if (!clean) return false;
+      let wasSpeaking = false;
+      try { wasSpeaking = !!synthesis.speaking; } catch {}
       try { synthesis.cancel(); } catch {}
-      synthesis.speak(new Utterance(clean));
+      // Chrome quirk: cancel() takes effect asynchronously, so a speak()
+      // issued in the same tick can be swallowed. Only delay when we actually
+      // interrupted playing audio; the common case stays synchronous.
+      const run = () => { try { synthesis.speak(new Utterance(clean)); } catch {} };
+      if (wasSpeaking) setTimeout(run, 150);
+      else run();
       return true;
     },
     cancel() {
