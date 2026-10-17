@@ -21,6 +21,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openVault, readDeviceToken, defaultVaultPath, PROVIDER_KEY_ENV } from '../src/runner/vault.mjs';
+import { parseApprovalReply } from '../src/mcp/local-exec-server.mjs';
 
 const CLOUD = 'https://helmian.cloud';
 const POLL_MS = 5000;
@@ -35,7 +36,8 @@ function defaultDeps() {
     cursorPath: join(BRIDGE_DIR, 'pc-bridge-cursor.json'),
     channelSlugs: process.env.HELMION_BRIDGE_CHANNEL_SLUGS || '*', // '*' = all channels, or comma-separated slugs
     provider: process.env.HELMION_BRIDGE_PROVIDER || 'claude',
-    workspace: process.env.HELMION_BRIDGE_WORKSPACE || 'E:\\Helmion',
+    workspace: process.env.HELMION_BRIDGE_WORKSPACE || join(homedir(), 'workspace'),
+    toolsMode: process.env.HELMION_BRIDGE_TOOLS || 'read-only', // read-only | ask | full
     helmionBin: resolve(dirname(fileURLToPath(import.meta.url)), 'helmion.mjs'),
     fetchImpl: fetch,
     spawnImpl: spawn,
@@ -189,7 +191,9 @@ async function loadVaultKey(deps) {
 
 // NDJSON helpers for the agent child. Resolves with the concatenated
 // assistant text once the turn's `done` event arrives.
-function runTurn(child, text) {
+// onPermissionRequest(event) is called for broker `permission_request` events
+// so the host can surface approvals (envoy channel) while the turn is blocked.
+function runTurn(child, text, { onPermissionRequest = null } = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let buffer = '';
@@ -203,6 +207,9 @@ function runTurn(child, text) {
         let event;
         try { event = JSON.parse(line); } catch { continue; }
         if (event?.event === 'assistant' && typeof event.text === 'string') chunks.push(event.text);
+        else if (event?.event === 'permission_request' && onPermissionRequest) {
+          try { onPermissionRequest(event); } catch { /* never break the turn */ }
+        }
         else if (event?.event === 'done') {
           child.stdout.off('data', onData);
           resolve(chunks.join('').trim());
@@ -235,6 +242,25 @@ function waitForHello(child) {
   });
 }
 
+// Post a tool approval request to the envoy team channel so the human can
+// reply "approve <id>" / "deny <id>" from /app or phone. Best-effort.
+async function postApprovalRequest(deps, token, channelId, req) {
+  try {
+    const summary = req.summary ?? req.tool ?? 'tool call';
+    await api(deps, '/api/admin/envoy/messages', {
+      method: 'POST', token,
+      body: {
+        channelId,
+        body: `Approval needed (${req.id}): ${summary}\nReply "approve ${req.id}" or "deny ${req.id}".`,
+        idempotencyKey: `bridge-approval:${req.id}`,
+      },
+    });
+    deps.log(`approval requested: ${req.id} (${summary})`);
+  } catch (err) {
+    deps.logError('approval post failed:', err?.message ?? err);
+  }
+}
+
 export async function runBridge(overrides = {}) {
   const deps = { ...defaultDeps(), ...overrides };
   const { log, logError } = deps;
@@ -254,8 +280,8 @@ export async function runBridge(overrides = {}) {
 
   const tenantSlug = process.env.HELMION_BRIDGE_TENANT_SLUG || null;
   if (tenantSlug) log(`tenant: ${tenantSlug}`);
-  child.stdin.write(`${JSON.stringify({ cmd: 'configure', provider: deps.provider, workspace: deps.workspace, permission: 'read-only' })}\n`);
-  log(`configured provider=${deps.provider} workspace=${deps.workspace} permission=read-only`);
+  child.stdin.write(`${JSON.stringify({ cmd: 'configure', provider: deps.provider, workspace: deps.workspace, permission: deps.toolsMode })}\n`);
+  log(`configured provider=${deps.provider} workspace=${deps.workspace} permission=${deps.toolsMode}`);
 
   const channels = await api(deps, '/api/admin/envoy/channels', { token: creds.token });
   const allChannels = (channels?.channels ?? []).filter((c) => c?.id);
@@ -293,7 +319,12 @@ export async function runBridge(overrides = {}) {
     turnInFlight = true;
     try {
       log(`turn for message ${message.id} from ${message.authorSubject}`);
-      const reply = await runTurn(child, String(message.body ?? ''));
+      const reply = await runTurn(child, String(message.body ?? ''), {
+        onPermissionRequest: (req) => {
+          // Post to the channel the turn came from so the human sees it in context.
+          void postApprovalRequest(deps, creds.token, message.channelId, req);
+        },
+      });
       if (!reply) {
         log(`message ${message.id}: agent produced no text, skipping reply`);
         return;
@@ -320,7 +351,15 @@ export async function runBridge(overrides = {}) {
     seen.add(message.id);
     await saveSeen(deps, seen);
     if (message.authorKind !== 'human') return; // skip own replies + system lines
-    if (!String(message.body ?? '').trim()) return;
+    const text = String(message.body ?? '').trim();
+    if (!text) return;
+    // Approval replies go straight to the agent child, never become chat turns.
+    const approval = parseApprovalReply(text);
+    if (approval && child) {
+      log(`approval ${approval.decision}: ${approval.id}`);
+      child.stdin.write(`${JSON.stringify({ cmd: 'permission_response', id: approval.id, decision: approval.decision === 'approve' ? 'allow-once' : 'deny' })}\n`);
+      return;
+    }
     if (turnInFlight) turnQueue.push(message);
     else void processOne(message);
   };
