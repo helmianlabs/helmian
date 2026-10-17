@@ -331,11 +331,20 @@ export async function runBridge(overrides = {}) {
       }
       const truncated = reply.length > 4000 ? reply.slice(0, 3997) + "..." : reply;
       log(`message ${message.id}: sending reply, ${truncated.length} chars, preview: ${truncated.slice(0, 100)}`);
-      await api(deps, '/api/admin/envoy/messages', {
-        method: 'POST',
-        token: creds.token,
-        body: { body: truncated, channelId: message.channelId, idempotencyKey: `pc-bridge:${message.id}` },
-      });
+      const payload = { body: truncated, channelId: message.channelId, idempotencyKey: `pc-bridge:${message.id}` };
+      // Retry once on failure: the cloud may have saved the message but dropped
+      // the response (phantom failure). IdempotencyKey makes retry safe.
+      let posted = false;
+      for (let attempt = 1; attempt <= 2 && !posted; attempt++) {
+        try {
+          await api(deps, '/api/admin/envoy/messages', { method: 'POST', token: creds.token, body: payload });
+          posted = true;
+        } catch (err) {
+          if (attempt === 2) throw err;
+          log(`message ${message.id}: attempt ${attempt} failed, retrying...`);
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
       log(`replied to message ${message.id} in #${(watched.find((c) => c.id === message.channelId) || {}).slug || message.channelId} (${reply.length} chars)`);
     } catch (err) {
       logError(`failed on message ${message.id}:`, err?.message ?? err);
