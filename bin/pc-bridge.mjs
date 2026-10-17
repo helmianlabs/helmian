@@ -252,6 +252,8 @@ export async function runBridge(overrides = {}) {
   if (hello?.ok === false) logError('agent bridge warning:', hello.message);
   else log('agent ready:', hello?.provider ?? 'unknown provider');
 
+  const tenantSlug = process.env.HELMION_BRIDGE_TENANT_SLUG || null;
+  if (tenantSlug) log(`tenant: ${tenantSlug}`);
   child.stdin.write(`${JSON.stringify({ cmd: 'configure', provider: deps.provider, workspace: deps.workspace, permission: 'read-only' })}\n`);
   log(`configured provider=${deps.provider} workspace=${deps.workspace} permission=read-only`);
 
