@@ -302,6 +302,9 @@
           <form id="connector-form" class="config-controls" hidden><label>Provider <select id="connector-provider"><option value="slack">Slack</option><option value="discord">Discord</option><option value="github">GitHub</option></select></label><label>Lifecycle <select id="connector-lifecycle"><option value="draft">Draft</option><option value="testing">Testing</option><option value="approved">Approved</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Signing-secret reference name only <input id="connector-secret-ref" maxlength="160" placeholder="Vault reference name; never the secret value"></label><label><input id="connector-endpoint-ready" type="checkbox"> Public endpoint readiness declared</label><label>Allowed inbound channels <textarea id="connector-channels" maxlength="6000" placeholder="external channel ID | display label"></textarea></label><button type="submit">Save connector metadata</button></form>
           <p class="muted">Saving connector metadata does not create a webhook, exchange secrets, or send outbound messages.</p>
           <p class="preview">This is non-secret Organization metadata and readiness only. Slack and Discord have bounded inbound verifier routes. GitHub is represented in the selector and registration ledger, but GitHub OAuth, repository reads, and delivery are not wired yet.</p>
+          <h3>Outbound delivery</h3>
+          <p id="connector-outbound-status" class="note" role="status" aria-live="polite">Loading outbound delivery status…</p>
+          <div id="connector-outbound" class="config-grid"></div>
           <h3 id="provider-connections-heading">Tenant provider access</h3>
           <p id="provider-connections-status" class="note" role="status" aria-live="polite">Loading tenant provider references…</p>
           <div id="provider-connections-items" class="config-grid"></div>

@@ -3,10 +3,11 @@
 // Needs env: HELMION_DATABASE_URL (Neon pooled URL), HELMION_EXPECTED_ENDPOINT_ID,
 // HELMION_ADMIN_ISSUER, HELMION_ADMIN_CLIENT_ID, HELMION_ADMIN_REDIRECT_URI,
 // HELMION_ADMIN_SESSION_SECRET (sealed cookies; no in-memory sessions on serverless).
-import { createLiveHelmianCloudAdminHandler, LIVE_ADMIN_CONSOLE_COMMANDS_PATH, LIVE_ADMIN_CORA_TASKS_PATH, LIVE_ADMIN_CORA_APPROVALS_PATH } from '../helmian-admin/src/cloud/live-admin.mjs';
+import { createLiveHelmianCloudAdminHandler, LIVE_ADMIN_CONSOLE_COMMANDS_PATH, LIVE_ADMIN_CORA_TASKS_PATH, LIVE_ADMIN_CORA_APPROVALS_PATH, LIVE_ADMIN_CORA_CONNECTORS_PATH } from '../helmian-admin/src/cloud/live-admin.mjs';
 import { createConsoleCommandWorker } from '../helmian-admin/src/cloud/console-command-worker.mjs';
 import { createAgentTaskWorker } from '../helmian-admin/src/cora/agent-task-worker.mjs';
 import { createArtifactExecutionWorker } from '../helmian-admin/src/cora/artifact-execution-worker.mjs';
+import { createConnectorOutboundWorker } from '../helmian-admin/src/cora/connector-outbound-worker.mjs';
 import pg from 'pg';
 
 const REQUIRED = ['HELMION_DATABASE_URL', 'HELMION_EXPECTED_ENDPOINT_ID', 'HELMION_ADMIN_ISSUER', 'HELMION_ADMIN_CLIENT_ID', 'HELMION_ADMIN_REDIRECT_URI', 'HELMION_ADMIN_SESSION_SECRET'];
@@ -22,7 +23,8 @@ function boot() {
       const worker = createConsoleCommandWorker({ pool, workerId: 'worker:vercel-console' });
       const agentTaskWorker = createAgentTaskWorker({ pool, workerId: 'worker:vercel-agent-tasks' });
       const artifactExecutionWorker = createArtifactExecutionWorker({ pool, workerId: 'worker:vercel-artifact-executions' });
-      return { admin, worker, agentTaskWorker, artifactExecutionWorker };
+      const connectorOutboundWorker = createConnectorOutboundWorker({ pool, workerId: 'worker:vercel-connector-outbound' });
+      return { admin, worker, agentTaskWorker, artifactExecutionWorker, connectorOutboundWorker };
     })().catch((error) => { state = null; throw error; });
   }
   return state;
@@ -52,6 +54,8 @@ export default async function handler(req, res) {
   if (req.method === 'GET' && path.split('?')[0] === LIVE_ADMIN_CORA_TASKS_PATH) await booted.agentTaskWorker.runOnce().catch((e) => console.log('agent task worker', e.message));
   // Same for approved artifact execution requests: queue the desktop handoff when the approvals inbox is read.
   if (req.method === 'GET' && path.split('?')[0] === LIVE_ADMIN_CORA_APPROVALS_PATH) await booted.artifactExecutionWorker.runOnce().catch((e) => console.log('artifact execution worker', e.message));
+  // Same for queued connector messages: deliver them when the Connect surface is read.
+  if (req.method === 'GET' && path.split('?')[0] === LIVE_ADMIN_CORA_CONNECTORS_PATH) await booted.connectorOutboundWorker.runOnce().catch((e) => console.log('connector outbound worker', e.message));
   const handled = await booted.admin.handler(req, res);
   if (!handled && !res.writableEnded) { res.statusCode = 404; res.setHeader('content-type', 'application/json'); res.end('{"valid":false,"code":"ADMIN_ROUTE_NOT_FOUND"}'); }
 }
