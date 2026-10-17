@@ -46,6 +46,46 @@ const guardCheckAgain = document.querySelector('#guard-check-again');
 const guardAckAll = document.querySelector('#guard-ack-all');
 const guardFindings = document.querySelector('#guard-findings');
 const guardFindingsStatus = document.querySelector('#guard-findings-status');
+const guardShowAcked = document.querySelector('#guard-show-acked');
+const guardPulseToggle = document.querySelector('#guard-pulse');
+// Inline copy of web/shared/guard-motion.mjs (admin bundle is inlined into
+// the page, so this stays dependency-free rather than importing).
+function guardMotionState(finding, now = Date.now()) {
+  const severity = String(finding?.severity ?? 'info').toLowerCase();
+  const sightingCount = Number(finding?.sightingCount ?? 0) || 0;
+  const acked = !!finding?.acked;
+  const tone = severity === 'critical' ? 'red' : severity === 'warning' ? 'yellow' : 'grey';
+  if (acked) return { tone, pulse: false, acked: true };
+  const firstSeen = finding?.firstSeenAt ? new Date(finding.firstSeenAt).getTime() : NaN;
+  const unansweredMin = Number.isNaN(firstSeen) ? 0 : Math.max(0, (now - firstSeen) / 60000);
+  if (severity === 'critical') return { tone: 'red', pulse: true, acked: false };
+  if (severity === 'warning') {
+    const escalated = sightingCount >= 5 || unansweredMin >= 5;
+    const pulsing = sightingCount >= 3 || unansweredMin >= 2;
+    return { tone: escalated ? 'red' : 'yellow', pulse: escalated || pulsing, acked: false };
+  }
+  return { tone: 'grey', pulse: false, acked: false };
+}
+const guardMotionPrefs = {
+  showAcknowledged: localStorage.getItem('helmian.admin.guard.showAcked') === 'true',
+  pulse: localStorage.getItem('helmian.admin.guard.pulse') !== 'false',
+};
+function applyGuardMotionPrefs() {
+  if (guardShowAcked) guardShowAcked.checked = guardMotionPrefs.showAcknowledged;
+  if (guardPulseToggle) guardPulseToggle.checked = guardMotionPrefs.pulse;
+  const motionOn = guardMotionPrefs.pulse && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  guardFindings?.classList.toggle('guard-motion-off', !motionOn);
+  return motionOn;
+}
+function persistGuardMotion() {
+  guardMotionPrefs.showAcknowledged = guardShowAcked.checked;
+  guardMotionPrefs.pulse = guardPulseToggle.checked;
+  localStorage.setItem('helmian.admin.guard.showAcked', String(guardShowAcked.checked));
+  localStorage.setItem('helmian.admin.guard.pulse', String(guardPulseToggle.checked));
+  loadGuardFindings();
+}
+guardShowAcked?.addEventListener('change', persistGuardMotion);
+guardPulseToggle?.addEventListener('change', persistGuardMotion);
 const guardPreviewTab = document.querySelector('#guard-preview-tab');
 const capabilitiesStatus = document.querySelector('#capabilities-status');
 const capabilitiesNormal = document.querySelector('#capabilities-normal');
@@ -250,14 +290,20 @@ function renderGuardFindings(body) {
     guardFindingsStatus.textContent = 'Guard findings unavailable until the database migrations are applied.';
     return;
   }
+  const motionOn = applyGuardMotionPrefs();
+  // "Show acknowledged" hides acked info/warning cards only; acked
+  // criticals always stay visible (server rule preserved).
+  const visible = findings.filter((finding) => guardMotionPrefs.showAcknowledged || !finding.acked || finding.severity === 'critical');
   const unacked = findings.filter((finding) => !finding.acked);
   guardFindingsStatus.textContent = findings.length
-    ? `${findings.length} finding${findings.length === 1 ? '' : 's'} · ${unacked.length} unacknowledged`
+    ? `${findings.length} finding${findings.length === 1 ? '' : 's'} · ${unacked.length} unacknowledged · ${findings.length}/200 retained · Motion ${motionOn ? 'on (presentation only)' : 'off'}`
     : 'No Guard findings.';
   guardAckAll.disabled = unacked.length === 0;
-  for (const finding of findings) {
+  const now = Date.now();
+  for (const finding of visible) {
+    const motion = guardMotionState(finding, now);
     const card = document.createElement('div');
-    card.className = `guard-card ${finding.severity === 'critical' ? 'critical' : finding.severity === 'warning' ? 'warn' : ''}`;
+    card.className = `guard-card tone-${motion.tone}${motion.pulse && motionOn ? ' pulse' : ''} ${finding.severity === 'critical' ? 'critical' : finding.severity === 'warning' ? 'warn' : ''}`;
     const title = document.createElement('h3');
     title.textContent = `${finding.severity} · ${finding.title}`;
     const summary = document.createElement('p');
