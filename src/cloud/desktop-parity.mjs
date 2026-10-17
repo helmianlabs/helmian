@@ -18,10 +18,10 @@ const PARITY = Object.freeze([
     id: 'workspace',
     desktop: 'Local project selection, branch, lease, migration and evidence inventories',
     desktopEvidence: 'desktop/Helmion.Desktop/MainWindow.xaml:2661-2890',
-    cloud: 'Tenant workspace snapshot and personal layout preferences',
-    cloudEvidence: 'src/cloud/live-admin.mjs:618-628; src/cloud/live-admin.mjs:836-849',
+    cloud: 'Tenant project registry with per-user active-project selection, GitHub repo bindings, computed source inventory, and cloud write leases for the desktop handoff',
+    cloudEvidence: 'src/cloud/live-admin.mjs:LIVE_ADMIN_WORKSPACE_PROJECTS_PATH; src/cloud/live-admin.mjs:LIVE_ADMIN_WORKSPACE_ACTIVE_PROJECT_PATH; src/cloud/live-admin.mjs:LIVE_ADMIN_WORKSPACE_REPO_BINDINGS_PATH; src/cora/workspace-lease.mjs',
     status: 'partial',
-    missing: 'No hosted project-folder selector, local lease, or source inventory is exposed.',
+    missing: 'Cloud lease/mutual-exclusion design beyond the handoff lease needs a design call; branch and migration inventories are still desktop-only.',
   },
   {
     id: 'console',
