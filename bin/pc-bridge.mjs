@@ -20,6 +20,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { openVault, readDeviceToken, defaultVaultPath, PROVIDER_KEY_ENV } from '../src/runner/vault.mjs';
 
 const CLOUD = 'https://helmian.cloud';
 const POLL_MS = 5000;
@@ -41,6 +42,7 @@ function defaultDeps() {
     execPath: process.execPath,
     ablyImpl: null, // tests inject a fake { Realtime }; default is dynamic import('ably')
     noAbly: process.env.HELMION_BRIDGE_NO_ABLY === '1',
+    vaultPath: null, // null = defaultVaultPath(homedir()); tests inject a tmp path
     log: (...args) => console.log('[pc-bridge]', ...args),
     logError: (...args) => console.error('[pc-bridge]', ...args),
     promptCode: null, // tests inject an async () => code; default: HELMION_BRIDGE_PAIRING_CODE env, else prompt stdin
@@ -122,13 +124,41 @@ async function saveSeen(deps, seen) {
   }
 }
 
-function startAgent(deps) {
-  const child = deps.spawnImpl(deps.execPath, [deps.helmionBin, 'agent-bridge'], { stdio: ['pipe', 'pipe', 'inherit'] });
+function startAgent(deps, extraEnv = {}) {
+  const child = deps.spawnImpl(deps.execPath, [deps.helmionBin, 'agent-bridge'], {
+    stdio: ['pipe', 'pipe', 'inherit'],
+    env: { ...process.env, ...extraEnv },
+  });
   child.on('error', (err) => {
     deps.logError('agent process failed to start:', err?.message ?? err);
     process.exit(1);
   });
   return child;
+}
+
+// Credential vault (runner v1): if the vault holds a key for the configured
+// provider, it wins over the environment variable. The child inherits the
+// bridge's env, so setting process.env here reaches the agent. Never throws:
+// any vault problem falls back to plain env vars and is logged.
+async function loadVaultKey(deps) {
+  const envName = PROVIDER_KEY_ENV[String(deps.provider || '').toLowerCase()];
+  if (!envName) return {};
+  try {
+    const token = await readDeviceToken(deps.tokenPath);
+    if (!token) return {};
+    const vaultPath = deps.vaultPath || defaultVaultPath(homedir());
+    const vault = await openVault({ vaultPath, deviceToken: token });
+    const secret = await vault.get(deps.provider);
+    if (!secret) {
+      deps.log(`provider key: environment (${envName})`);
+      return {};
+    }
+    deps.log(`provider key: vault (${envName})`);
+    return { [envName]: secret };
+  } catch (err) {
+    deps.logError('vault unavailable, using environment:', err?.message ?? err);
+    return {};
+  }
 }
 
 // NDJSON helpers for the agent child. Resolves with the concatenated
@@ -190,7 +220,7 @@ export async function runBridge(overrides = {}) {
     if (!creds) return { ok: false, reason: 'pairing failed' };
   }
 
-  const child = startAgent(deps);
+  const child = startAgent(deps, await loadVaultKey(deps));
   const hello = await waitForHello(child);
   if (hello?.ok === false) logError('agent bridge warning:', hello.message);
   else log('agent ready:', hello?.provider ?? 'unknown provider');
