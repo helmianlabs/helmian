@@ -23,6 +23,7 @@ import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { createEvidenceStore, handleEvidenceRoute, EVIDENCE_HANDOFFS_PATH, EVIDENCE_CHECKPOINTS_PATH, EVIDENCE_RUNS_LEDGER_PATH, EVIDENCE_LEASES_POSTURE_PATH } from './evidence.mjs';
+import { handleConnectorOutboundRoute } from './connector-outbound.mjs';
 import { handleReleaseRoadmapRoute, RELEASE_ROADMAP_PATH } from './release-manifest.mjs';
 import { createAppSessionStore } from './app-sessions.mjs';
 import { createOrgInviteStore, INVITE_TOKEN } from './org-invites.mjs';
@@ -959,6 +960,9 @@ export async function createLiveHelmianCloudAdminHandler({
     // tenant_id: they stay owner/admin-only until tenant scoping exists.
     // Route handling lives in evidence.mjs next to the store.
     if (await handleEvidenceRoute({ request, response, requestUrl, evidence, activeTenantActor, send, TenantAuthorizationError })) return true;
+    // Connector outbound: /admin test delivery. Route handling lives in
+    // connector-outbound.mjs; the drain worker delivers the queued message.
+    if (await handleConnectorOutboundRoute({ request, response, requestUrl, pool, activeActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_PATH) {
       try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.readPublishedConfig(actor) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_SELECTOR_INVALID' : 'CORA_CONFIG_READ_FAILED' })); }
