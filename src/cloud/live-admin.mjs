@@ -22,6 +22,7 @@ import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-act
 import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 import { createGuardStore } from './guard-findings.mjs';
+import { createEvidenceStore, handleEvidenceRoute, EVIDENCE_HANDOFFS_PATH, EVIDENCE_CHECKPOINTS_PATH, EVIDENCE_RUNS_LEDGER_PATH, EVIDENCE_LEASES_POSTURE_PATH } from './evidence.mjs';
 import { createAppSessionStore } from './app-sessions.mjs';
 import { createOrgInviteStore, INVITE_TOKEN } from './org-invites.mjs';
 import { createCoraOrganizationConfigRepository } from '../cora/organization-config-repository.mjs';
@@ -99,6 +100,10 @@ export const LIVE_GUARD_BROWSER_EVENTS_PATH = '/api/guard/browser-events';
 export const LIVE_ARTIFACT_EXECUTION_RESULT_PATH = '/api/artifact-execution/result';
 export const LIVE_ADMIN_GUARD_FINDINGS_PATH = '/api/admin/guard/findings';
 export const LIVE_ADMIN_GUARD_ACKS_PATH = '/api/admin/guard/acks';
+export const LIVE_ADMIN_MAESTRO_HANDOFFS_PATH = EVIDENCE_HANDOFFS_PATH;
+export const LIVE_ADMIN_MAESTRO_CHECKPOINTS_PATH = EVIDENCE_CHECKPOINTS_PATH;
+export const LIVE_ADMIN_RUNS_LEDGER_PATH = EVIDENCE_RUNS_LEDGER_PATH;
+export const LIVE_ADMIN_LEASES_POSTURE_PATH = EVIDENCE_LEASES_POSTURE_PATH;
 export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
 export const LIVE_ADMIN_CORA_CONFIGS_PATH = '/api/admin/cora/configs';
 export const LIVE_ADMIN_CORA_TRANSITION_PATH = '/api/admin/cora/configs/transition';
@@ -283,6 +288,7 @@ export async function createLiveHelmianCloudAdminHandler({
   providerVaultAdapter: suppliedProviderVaultAdapter = null,
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
   consoleCommandRepository: suppliedConsoleCommandRepository = null,
+  evidenceStore: suppliedEvidenceStore = null,
   envoyStore: suppliedEnvoyStore = null,
   appSessionStore: suppliedAppSessionStore = null,
   orgInviteStore: suppliedOrgInviteStore = null,
@@ -304,6 +310,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
   const envoy = suppliedEnvoyStore ?? createEnvoyStore(pool);
   const guard = createGuardStore(pool);
+  const evidence = suppliedEvidenceStore ?? createEvidenceStore(pool);
   const appSessions = suppliedAppSessionStore ?? createAppSessionStore(pool);
   const invites = suppliedOrgInviteStore ?? createOrgInviteStore(pool);
   const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
@@ -946,6 +953,11 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.code === '42P01' ? 503 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GUARD_MEMBERSHIP_REQUIRED' : error?.code === '42P01' ? 'GUARD_MIGRATION_PENDING' : 'GUARD_ACK_INVALID' })); }
       return true;
     }
+    // Evidence reads (PARITY-007). Handoffs, checkpoints, and Maestro leases come
+    // from pre-tenant migration-002 tables keyed by project_slug with no
+    // tenant_id: they stay owner/admin-only until tenant scoping exists.
+    // Route handling lives in evidence.mjs next to the store.
+    if (await handleEvidenceRoute({ request, response, requestUrl, evidence, activeTenantActor, send, TenantAuthorizationError })) return true;
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_PATH) {
       try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.readPublishedConfig(actor) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'CORA_SELECTOR_INVALID' : 'CORA_CONFIG_READ_FAILED' })); }
