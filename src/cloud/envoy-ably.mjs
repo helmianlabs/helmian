@@ -3,7 +3,7 @@
 // Two pieces:
 //   1. publishEnvoyMessage: fire-and-forget REST publish after a message is
 //      durably stored (hooked into envoy-chat.mjs appendMessage). Never throws.
-//   2. POST /api/admin/desktop/ably-token: mints a subscribe-only Ably token
+//   2. POST /api/admin/envoy/ably-token: mints a subscribe-only Ably token
 //      request for the bridge (device-token auth), following the Herald
 //      signed-token-request pattern (web/marketing/api/_herald-realtime.js).
 //
@@ -13,7 +13,7 @@
 
 import { createHmac, randomBytes } from 'node:crypto';
 
-export const ENVOY_ABLY_TOKEN_PATH = '/api/admin/desktop/ably-token';
+export const ENVOY_ABLY_TOKEN_PATH = '/api/admin/envoy/ably-token';
 export const ENVOY_ABLY_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 min; the bridge client auto-renews
 const ENVOY_ABLY_REST = 'https://rest.ably.io';
 
@@ -132,7 +132,7 @@ export function createBridgeTokenRequest({
   });
 }
 
-// Route delegate: POST /api/admin/desktop/ably-token (device-token auth via
+// Route delegate: POST /api/admin/envoy/ably-token (device-token auth via
 // the existing activeTenantActor, same as the envoy paths). Returns false
 // when the request is not ours.
 export async function handleEnvoyAblyRoute({
