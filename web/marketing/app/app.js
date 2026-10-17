@@ -448,8 +448,22 @@ async function loadActivity() {
 async function loadEvidence() {
   await loadFeedData();
   const tb = $('#evidence');
-  if (!state.events.length) { const tr = el('tr'); const td = el('td', 'muted', 'No evidence recorded yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); return; }
-  tb.replaceChildren(...state.events.slice(0, 100).map((e) => { const tr = el('tr'); const st = el('span', `status ${String(e.status).toUpperCase() === 'ALLOW' ? 'ok' : 'warn'}`, String(e.status ?? '').toLowerCase()); const td = el('td'); td.append(st); tr.append(el('td', 'muted', formatTime(e.createdAt)), el('td', null, plainEvent(e).title), el('td', 'muted', e.actorRole || ''), td); return tr; }));
+  if (!state.events.length) { const tr = el('tr'); const td = el('td', 'muted', 'No evidence recorded yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); }
+  else tb.replaceChildren(...state.events.slice(0, 100).map((e) => { const tr = el('tr'); const st = el('span', `status ${String(e.status).toUpperCase() === 'ALLOW' ? 'ok' : 'warn'}`, String(e.status ?? '').toLowerCase()); const td = el('td'); td.append(st); tr.append(el('td', 'muted', formatTime(e.createdAt)), el('td', null, plainEvent(e).title), el('td', 'muted', e.actorRole || ''), td); return tr; }));
+  // Handoffs and checkpoints are owner/admin-only reads; members see a note.
+  const note = $('#evidence-note');
+  const [h, c] = await Promise.allSettled([api('/api/admin/maestro/handoffs?limit=20'), api('/api/admin/maestro/checkpoints?limit=20')]);
+  const hb = $('#evidence-handoffs'); const cb = $('#evidence-checkpoints');
+  if (h.status === 'fulfilled') {
+    const list = Array.isArray(h.value.handoffs) ? h.value.handoffs : [];
+    hb.replaceChildren(...(list.length ? list.map((x) => { const card = el('article', 'card'); card.append(el('div', 'title', `#${x.id} · ${x.direction}`), el('div', 'meta', `${x.status} · ${x.projectSlug} · ${formatTime(x.createdAt)}`)); if (x.summary) card.append(el('div', 'sm', x.summary)); return card; }) : [el('p', 'muted sm', 'No handoffs recorded.')]));
+  } else hb.replaceChildren();
+  if (c.status === 'fulfilled') {
+    const list = Array.isArray(c.value.checkpoints) ? c.value.checkpoints : [];
+    cb.replaceChildren(...(list.length ? list.map((x) => { const card = el('article', 'card'); card.append(el('div', 'title', `#${x.id} · ${x.coordinatorId}`), el('div', 'meta', `${x.projectSlug} · ${formatTime(x.createdAt)}`), el('div', 'sm', x.workCompleted || ''), el('div', 'meta', `Next safe action: ${x.nextSafeAction || '—'}`)); return card; }) : [el('p', 'muted sm', 'No checkpoints recorded.')]));
+  } else cb.replaceChildren();
+  const denied = (h.status === 'rejected' && h.reason?.status === 403) || (c.status === 'rejected' && c.reason?.status === 403);
+  note.textContent = denied ? 'Handoffs and checkpoints are visible to owners and admins.' : '';
 }
 async function loadIntegrations() {
   const [c, p] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections')]);
