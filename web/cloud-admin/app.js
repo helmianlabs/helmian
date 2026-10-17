@@ -52,6 +52,9 @@ const composerStatus = document.querySelector('#composer-status');
 const workspaceProjectsStatus = document.querySelector('#workspace-projects-status');
 const workspaceProjectCards = document.querySelector('#workspace-project-cards');
 const workspaceProjectForm = document.querySelector('#workspace-project-form');
+const workspaceActiveProjectRow = document.querySelector('#workspace-active-project-row');
+const workspaceActiveProjectSelect = document.querySelector('#workspace-active-project');
+const workspaceActiveProjectNote = document.querySelector('#workspace-active-project-note');
 const workspaceProjectKey = document.querySelector('#workspace-project-key');
 const workspaceProjectName = document.querySelector('#workspace-project-name');
 const workspaceProjectSource = document.querySelector('#workspace-project-source');
@@ -493,24 +496,90 @@ async function loadWorkspaceLayout() {
   finally { workspaceSettings.removeAttribute('aria-busy'); }
 }
 
-function renderWorkspaceProjects(body) {
+function renderWorkspaceProjects(body, activeProjectKey) {
   workspaceProjectCards.replaceChildren();
   const projects = Array.isArray(body.projects) ? body.projects : [];
   workspaceProjectsStatus.textContent = projects.length ? `${projects.length} tenant project${projects.length === 1 ? '' : 's'} registered. Execution remains not performed.` : 'No tenant projects are registered yet.';
   workspaceProjectForm.hidden = body.canManage !== true;
+  // Active-project selector.
+  const selectable = projects.filter((p) => p.lifecycle === 'active');
+  workspaceActiveProjectRow.hidden = selectable.length === 0;
+  workspaceActiveProjectSelect.replaceChildren();
+  const none = document.createElement('option'); none.value = ''; none.textContent = 'None selected'; workspaceActiveProjectSelect.append(none);
+  for (const project of selectable) {
+    const option = document.createElement('option');
+    option.value = project.projectKey; option.textContent = `${project.displayName} · ${project.projectKey}`;
+    if (project.projectKey === activeProjectKey) option.selected = true;
+    workspaceActiveProjectSelect.append(option);
+  }
+  if (activeProjectKey && !selectable.some((p) => p.projectKey === activeProjectKey)) {
+    workspaceActiveProjectNote.textContent = 'Previously selected project is no longer active.';
+  } else {
+    workspaceActiveProjectNote.textContent = '';
+  }
   for (const project of projects) {
     const card = document.createElement('article');
     card.className = 'config-item';
+    const binding = project.repoBinding;
     card.append(
-      configItem('Project', `${project.displayName} · ${project.projectKey}`),
+      configItem('Project', `${project.displayName} · ${project.projectKey}${project.projectKey === activeProjectKey ? ' · active' : ''}`),
       configItem('Source', `${project.sourceKind} · branch ${project.defaultBranch}`),
       configItem('Lifecycle', project.lifecycle),
       configItem('Execution', project.execution || 'not_performed'),
-      configItem('Source inventory', project.sourceInventory || 'not_connected'),
+      configItem('Source inventory', project.sourceInventory || 'unbound'),
+      configItem('Repo binding', binding ? `${binding.repoOwner}/${binding.repoName}` : 'Unbound'),
     );
+    if (body.canManage === true) {
+      const bindForm = document.createElement('form');
+      bindForm.className = 'config-controls';
+      const ownerInput = document.createElement('input');
+      ownerInput.placeholder = 'Repo owner'; ownerInput.setAttribute('aria-label', `Repo owner for ${project.projectKey}`); ownerInput.maxLength = 39;
+      ownerInput.value = binding ? binding.repoOwner : '';
+      const nameInput = document.createElement('input');
+      nameInput.placeholder = 'Repo name'; nameInput.setAttribute('aria-label', `Repo name for ${project.projectKey}`); nameInput.maxLength = 100;
+      nameInput.value = binding ? binding.repoName : '';
+      const bindButton = document.createElement('button');
+      bindButton.type = 'submit'; bindButton.textContent = binding ? 'Rebind repo' : 'Bind repo';
+      const bindNote = document.createElement('span'); bindNote.className = 'note'; bindNote.setAttribute('role', 'status');
+      bindForm.append(ownerInput, nameInput, bindButton, bindNote);
+      bindForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        bindNote.textContent = 'Binding…';
+        try {
+          const response = await fetch('/api/admin/workspace/repo-bindings', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey: project.projectKey, repoOwner: ownerInput.value.trim(), repoName: nameInput.value.trim() }) });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.code || 'Binding failed');
+          bindNote.textContent = `Bound to ${result.repoOwner}/${result.repoName}.`;
+          await loadWorkspaceProjects();
+        } catch (error) { bindNote.textContent = `Binding failed: ${error.message}`; }
+      });
+      card.append(bindForm);
+    }
     workspaceProjectCards.append(card);
   }
 }
+
+async function loadWorkspaceActiveProject() {
+  try {
+    const response = await fetch('/api/admin/workspace/active-project', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) return null;
+    return body.projectKey ?? null;
+  } catch { return null; }
+}
+
+workspaceActiveProjectSelect.addEventListener('change', async () => {
+  const projectKey = workspaceActiveProjectSelect.value;
+  if (!projectKey) return;
+  workspaceActiveProjectNote.textContent = 'Selecting…';
+  try {
+    const response = await fetch('/api/admin/workspace/active-project', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey }) });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.code || 'Selection failed');
+    workspaceActiveProjectNote.textContent = `Active project: ${body.projectKey}.`;
+    await loadWorkspaceProjects();
+  } catch (error) { workspaceActiveProjectNote.textContent = `Selection failed: ${error.message}`; }
+});
 
 async function loadWorkspaceProjects() {
   workspaceProjectsStatus.textContent = 'Loading tenant project registry…';
@@ -518,10 +587,12 @@ async function loadWorkspaceProjects() {
     const response = await fetch('/api/admin/workspace/projects', { credentials: 'same-origin' });
     const body = await response.json();
     if (!response.ok) throw Object.assign(new Error(body.code || 'Workspace projects unavailable'), { status: response.status });
-    renderWorkspaceProjects(body);
+    const activeProjectKey = await loadWorkspaceActiveProject();
+    renderWorkspaceProjects(body, activeProjectKey);
   } catch (error) {
     workspaceProjectCards.replaceChildren();
     workspaceProjectForm.hidden = true;
+    workspaceActiveProjectRow.hidden = true;
     workspaceProjectsStatus.textContent = error.status === 403 ? 'Project registry unavailable: Organization membership is required.' : `Project registry unavailable: ${error.message}`;
   }
 }
