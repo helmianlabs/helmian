@@ -1192,9 +1192,29 @@ async function loadOverview() {
     status.textContent = `Organization ${body.actor.tenantId} · you are ${body.actor.role}`;
     fillCards(document.querySelector('#overview-cards'), [['Active projects', c.activeProjects], ['Members', c.members], ['Agent tasks', c.agentTasks], ['Verified AI providers', c.verifiedProviders], ['Console commands waiting', body.console?.queued ?? 0], ['Console commands run', body.console?.ran ?? 0]]);
     const s = body.settings || {};
+    const b = s.build || {};
     document.querySelector('#settings-status').textContent = `Signed in as ${body.actor.subject}`;
-    fillCards(document.querySelector('#settings-cards'), [['Organization', body.actor.tenantId], ['Role', body.actor.role], ['Sign-in (Clerk OIDC)', s.signIn ? 'configured' : 'missing'], ['Database (Neon)', s.database ? 'connected' : 'missing'], ['Cora provider', s.coraProvider || 'none'], ['Cloud console worker', s.consoleWorker ? 'on' : 'off'], ['Environment', s.environment || 'unknown']]);
+    fillCards(document.querySelector('#settings-cards'), [['Organization', body.actor.tenantId], ['Role', body.actor.role], ['Sign-in (Clerk OIDC)', s.signIn ? 'configured' : 'missing'], ['Database (Neon)', s.database ? 'connected' : 'missing'], ['Cora provider', s.coraProvider || 'none'], ['Cloud console worker', s.consoleWorker ? 'on' : 'off'], ['Environment', s.environment || 'unknown'],
+      ['Safety · provider keys', 'Stay on the desktop machine; the cloud never accepts, stores, or displays them'],
+      ['Safety · agent config', 'Writes only when you Sync Profile'],
+      ['Safety · deploy / high-risk', 'Needs human confirm (not auto)'],
+      ['Safety · advisor output', 'Stays low-trust until you promote'],
+      ['Build version', b.version || 'unknown'], ['Build runtime', b.runtime || 'unknown'],
+      ['Build region', b.region || 'unknown'], ['Build Clerk instance', b.clerkInstance || 'not configured']]);
+    loadOverviewActivity().catch(() => {});
   } catch (error) { status.textContent = `Overview unavailable: ${error.message}`; }
+}
+
+async function loadOverviewActivity() {
+  const container = document.querySelector('#overview-activity');
+  try {
+    const response = await fetch('/api/admin/events?limit=8', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.code || 'unavailable');
+    const events = Array.isArray(body.events) ? body.events : [];
+    if (!events.length) { container.textContent = 'No recent audited activity.'; return; }
+    fillCards(container, events.map((event) => [`${event.status} · ${event.actionType}`, `${event.summary || ''} · ${event.actor || ''}${event.createdAt ? ` · ${new Date(event.createdAt).toLocaleString()}` : ''}`]));
+  } catch { container.textContent = 'Recent activity unavailable.'; }
 }
 
 async function loadRelease() {
@@ -1208,6 +1228,28 @@ async function loadRelease() {
     status.textContent = `Latest desktop release: ${releases[0].tag}`;
     fillCards(document.querySelector('#release-cards'), releases.map((r) => [r.tag, `${r.name || r.tag} · ${new Date(r.publishedAt).toLocaleDateString()} · ${r.assets.map((a) => `${a.name} (${a.downloads} downloads)`).join(', ') || 'no files'}`]));
   } catch (error) { status.textContent = `Release status unavailable: ${error.message}`; }
+  loadReleaseRoadmap().catch(() => {});
+}
+
+async function loadReleaseRoadmap() {
+  const container = document.querySelector('#release-roadmap');
+  try {
+    const response = await fetch('/api/admin/release/roadmap', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.code || 'unavailable');
+    container.replaceChildren();
+    const sections = [
+      ['Roadmap phases', (body.phases || []).map((phase) => [`${phase.id} · ${phase.name} — ${phase.status}`, `${phase.focus}. ${phase.cloudNote}`])],
+      ['Capabilities', (body.capabilities || []).map((cap) => [`${cap.name} — ${cap.cloudStatus}`, `${cap.intent}. ${cap.verification}.`])],
+      ['Boundaries', (body.boundaries || []).map((boundary) => [boundary.name, boundary.text])],
+    ];
+    for (const [title, pairs] of sections) {
+      const heading = document.createElement('h3'); heading.textContent = title; container.append(heading);
+      const list = document.createElement('div'); list.className = 'config-list';
+      for (const [label, value] of pairs) { const card = document.createElement('article'); card.className = 'config-item'; card.append(configItem(label, value)); list.append(card); }
+      container.append(list);
+    }
+  } catch { container.textContent = 'Roadmap unavailable.'; }
 }
 
 async function load() {
