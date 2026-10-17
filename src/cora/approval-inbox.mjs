@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
 import { appendAuditEvent } from '../cloud/audit-event-repository.mjs';
+import { enqueueConnectorMessage } from './connector-outbound-worker.mjs';
 
 const DECISIONS = new Set(['approve', 'reject']);
 const KINDS = new Set(['artifact_execution_request']);
@@ -60,7 +61,7 @@ export function createApprovalInboxRepository(pool) {
     async decide(actor, input) {
       if (!['owner', 'admin'].includes(String(actor?.role ?? '').toLowerCase())) throw Object.assign(new Error('approval decision requires owner or admin membership'), { status: 403 });
       const active = context(actor); const decision = normalizeApprovalDecision(input);
-      return withTenantTransaction(pool, active, async (client) => {
+      const outcome = await withTenantTransaction(pool, active, async (client) => {
         await requireActiveTenantMembership(client, active);
         const request = await client.query('select receipt_id, status from helmion.cora_artifact_execution_requests where tenant_id=$1 and receipt_id=$2', [active.tenantId, decision.requestReceiptId]);
         if (request.rowCount !== 1 || request.rows[0].status !== 'approval_required') throw new Error('approval request is unavailable or already decided');
@@ -70,12 +71,21 @@ export function createApprovalInboxRepository(pool) {
           // Every approval lands in the audit ledger in the same transaction,
           // before any worker can act on the decision.
           await appendAuditEvent(client, active, { actionType: 'cora.approval.decided', canonicalTarget: { requestKind: decision.requestKind, requestReceiptId: decision.requestReceiptId, decisionReceiptId: inserted.rows[0].receipt_id }, policyVersion: 'approval-inbox.v1', decision: decision.decision === 'approve' ? 'ALLOW' : 'DENY', privacySummary: `${decision.decision === 'approve' ? 'Approved' : 'Rejected'} the ${decision.requestKind} request`, result: { decision: decision.decision, receiptId: inserted.rows[0].receipt_id } });
-          return { durable: true, ...decisionReceipt(inserted.rows[0]), source: 'organization_approval_receipts' };
+          return { result: { durable: true, ...decisionReceipt(inserted.rows[0]), source: 'organization_approval_receipts' }, notify: { decision: decision.decision, requestKind: decision.requestKind, requestReceiptId: decision.requestReceiptId, decisionReceiptId: inserted.rows[0].receipt_id } };
         }
         const replay = await client.query('select tenant_id, request_kind, request_receipt_id, decision, reason, actor_subject, actor_role, idempotency_key, receipt_id, created_at from helmion.cora_approval_decisions where tenant_id=$1 and idempotency_key=$2', [active.tenantId, decision.idempotencyKey]);
         if (replay.rowCount !== 1 || replay.rows[0].request_kind !== decision.requestKind || replay.rows[0].request_receipt_id !== decision.requestReceiptId || replay.rows[0].decision !== decision.decision) throw new Error('approval decision idempotency key is already bound');
-        return { durable: true, ...decisionReceipt(replay.rows[0], true), source: 'organization_approval_receipts' };
+        return { result: { durable: true, ...decisionReceipt(replay.rows[0], true), source: 'organization_approval_receipts' }, notify: null };
       });
+      // Best-effort outbox notification for a fresh decision (replays do not
+      // re-notify). A failed enqueue never fails the decision itself.
+      if (outcome.notify) {
+        const verb = outcome.notify.decision === 'approve' ? 'Approved' : 'Rejected';
+        for (const provider of ['discord', 'slack']) {
+          await enqueueConnectorMessage({ pool, tenantId: active.tenantId, provider, channelLabel: 'approvals', text: `${verb} ${outcome.notify.requestKind}: request ${outcome.notify.requestReceiptId} (decision ${outcome.notify.decisionReceiptId}).` }).catch(() => {});
+        }
+      }
+      return outcome.result;
     },
   });
 }

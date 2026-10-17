@@ -19,6 +19,7 @@
 // drain — never forced. Fail-closed: without the lease table, nothing runs.
 
 import { acquireWorkspaceLease, releaseWorkspaceLease } from './workspace-lease.mjs';
+import { enqueueConnectorMessage } from './connector-outbound-worker.mjs';
 
 export const ARTIFACT_EXECUTION_WORKER_FORMAT = 'helmian.artifact-execution-run.v1';
 const WORKER_ID_PATTERN = /^worker:[a-z0-9][a-z0-9._:-]{0,95}$/;
@@ -107,7 +108,14 @@ export function createArtifactExecutionWorker({ pool, workerId = 'worker:cloud-a
         continue;
       }
       try {
-        processed.push(...await recordRuns(tenantId, rows));
+        const done = await recordRuns(tenantId, rows);
+        // Best-effort outbox notification per completed handoff. Never fails the run.
+        for (const item of done) {
+          for (const provider of ['discord', 'slack']) {
+            await enqueueConnectorMessage({ pool, tenantId, provider, channelLabel: 'artifact-executions', text: `Artifact execution ${item.receiptId} -> ${item.outcome}.` }).catch(() => {});
+          }
+        }
+        processed.push(...done);
       } finally {
         await releaseWorkspaceLease({ pool, tenantId, projectKey: null, leaseToken: lease.leaseToken })
           .catch((error) => log(`artifact execution lease release failed: ${error.message}`));

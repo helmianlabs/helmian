@@ -4,6 +4,7 @@ import { buildArtifactExecutionReceipt, normalizeArtifactExecutionRequest } from
 import { evaluateUsageBudget, normalizeBudgetPolicy } from './provider-usage-ledger.mjs';
 import { appendAuditEvent } from '../cloud/audit-event-repository.mjs';
 import { validateArtifactScriptContent, ARTIFACT_SCRIPT_CONTENT_FORMAT } from './artifact-script-content-validation.mjs';
+import { enqueueConnectorMessage } from './connector-outbound-worker.mjs';
 
 function context(actor) { if (!actor?.tenantId || !actor.subject || !actor.role || !actor.sessionId || !actor.requestId) throw new Error('verified Organization membership is required'); return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: actor.sessionId, requestId: actor.requestId }; }
 const SELECT = 'receipt_id, artifact_receipt_id, script_receipt_id, source_link_receipt_ids, catalog_entry_id, provider, model, modality, estimated_requested_tokens, estimated_audio_seconds, estimated_image_units, estimated_video_units, estimated_cost_minor, currency, external_execution, policy_decision, budget_state, status, approval_ref, actor_subject, created_at';
@@ -76,6 +77,12 @@ export function createArtifactExecutionRepository(pool) { return Object.freeze({
       }
       await appendAuditEvent(client, active, { actionType: 'artifact.execution_result_ingested', canonicalTarget: { resource: 'cora_artifact_execution_run', requestReceiptId: result.requestReceiptId, runId: String(runId) }, policyVersion: 'artifact-execution-result.v1', decision: 'ALLOW', privacySummary: 'Desktop-reported execution completion; content hash verified against the approved script', result: { scriptContentHash: result.scriptContentHash, artifactDescriptor: result.artifactDescriptor, completedAt: result.completedAt } });
       await client.query('commit');
+      // Best-effort outbox notification for the completed handoff. Never fails the ingest.
+      if (transitioned.rowCount === 1) {
+        for (const provider of ['discord', 'slack']) {
+          await enqueueConnectorMessage({ pool, tenantId, provider, channelLabel: 'artifact-executions', text: `Artifact execution ${result.requestReceiptId} -> completed.` }).catch(() => {});
+        }
+      }
       return { durable: true, runId: String(runId), requestReceiptId: result.requestReceiptId, outcome: 'completed' };
     } catch (error) {
       await client.query('rollback').catch(() => {});
