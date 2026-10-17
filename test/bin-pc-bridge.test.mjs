@@ -94,6 +94,7 @@ test('bridge pairs on first run, marks history seen, answers humans, skips agent
     promptCode: async () => 'testcode',
     log: () => {},
     logError: () => {},
+    noAbly: true,
   });
   t.after(() => handle.stop());
   assert.equal(handle.ok, true);
@@ -164,11 +165,163 @@ test('bridge resumes from a saved seen set and reuses a saved token', async (t) 
     promptCode: async () => { prompted = true; return 'unused'; },
     log: () => {},
     logError: () => {},
+    noAbly: true,
   });
   t.after(() => handle.stop());
   assert.equal(handle.ok, true);
   assert.equal(prompted, false, 'saved token means no pairing prompt');
   const exchangeCalls = cloud.calls.filter((c) => c.url.endsWith('/api/admin/desktop/link/exchange'));
   assert.equal(exchangeCalls.length, 0);
+  await handle.stop();
+});
+
+// ---- Bridge v2 transport selection: Ably push vs HTTPS polling ----
+
+function makeFakeAbly() {
+  const instances = [];
+  class FakeChannel {
+    constructor(name) { this.name = name; this.subs = []; }
+    subscribe(eventName, cb) { this.subs.push({ eventName, cb }); return Promise.resolve(); }
+    emitMessage(data) { for (const s of this.subs) if (s.eventName === 'message') s.cb({ data }); }
+  }
+  class FakeRealtime {
+    constructor(opts) {
+      this.opts = opts;
+      this.channelsMap = new Map();
+      this.connHandlers = {};
+      this.connection = { on: (ev, fn) => { this.connHandlers[ev] = fn; } };
+      this.closed = false;
+      instances.push(this);
+    }
+    get channels() {
+      return {
+        get: (name) => {
+          if (!this.channelsMap.has(name)) this.channelsMap.set(name, new FakeChannel(name));
+          return this.channelsMap.get(name);
+        },
+      };
+    }
+    close() { this.closed = true; }
+  }
+  return { Realtime: FakeRealtime, instances };
+}
+
+function withAblyToken(cloud, { ok = true } = {}) {
+  const orig = cloud.fetchImpl;
+  const json = (obj, good = true) => ({ ok: good, status: good ? 200 : 503, json: async () => obj });
+  cloud.fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    if (u.pathname === '/api/admin/desktop/ably-token') {
+      cloud.calls.push({ url, method: opts.method ?? 'GET', body: opts.body });
+      if (!ok) return json({ valid: false, code: 'ENVOY_ABLY_NOT_CONFIGURED' }, false);
+      return json({
+        valid: true,
+        tokenRequest: { keyName: 'k', ttl: 300000, capability: '{}', clientId: 'c', timestamp: 1, nonce: 'n', mac: 'm' },
+        channel: 'envoy:org-a:ch-1',
+        expiresAt: 't',
+      });
+    }
+    return orig(url, opts);
+  };
+}
+
+function bridgeDeps(tmp, cloud, extra = {}) {
+  return {
+    fetchImpl: cloud.fetchImpl,
+    spawnImpl: () => makeFakeChild().child,
+    execPath: 'node',
+    helmionBin: 'fake-helmion.mjs',
+    bridgeDir: tmp,
+    tokenPath: join(tmp, 'token.json'),
+    cursorPath: join(tmp, 'cursor.json'),
+    pollMs: 40,
+    promptCode: async () => 'testcode',
+    log: () => {},
+    logError: () => {},
+    ...extra,
+  };
+}
+
+test('bridge uses Ably push when the token succeeds', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-ably-'));
+  const cloud = makeFakeCloud();
+  withAblyToken(cloud, { ok: true });
+  const ably = makeFakeAbly();
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { ablyImpl: ably }));
+  t.after(() => handle.stop());
+  assert.equal(handle.ok, true);
+  assert.equal(handle.transport, 'ably');
+
+  // Subscribed to the server-provided channel with the message handler.
+  const rt = ably.instances[0];
+  const chan = rt.channelsMap.get('envoy:org-a:ch-1');
+  assert.ok(chan, 'subscribed to envoy:org-a:ch-1');
+  assert.equal(chan.subs.length, 1);
+
+  // A push message flows through the same turn pipeline as a poll.
+  chan.emitMessage({ id: 'a1', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', body: 'via ably', createdAt: 't' });
+  await new Promise((r) => setTimeout(r, 400));
+  const posts = cloud.calls.filter((c) => c.url.endsWith('/api/admin/envoy/messages') && c.method === 'POST');
+  assert.equal(posts.length, 1);
+  assert.equal(JSON.parse(posts[0].body).idempotencyKey, 'pc-bridge:a1');
+
+  // No polling timer in Ably mode: only the seen-init GET and the
+  // post-subscribe catch-up GET happened.
+  const gets = cloud.calls.filter((c) => c.url.includes('/api/admin/envoy/messages?') && c.method === 'GET');
+  assert.ok(gets.length <= 2, `expected at most 2 message GETs, got ${gets.length}`);
+  await handle.stop();
+  assert.equal(rt.closed, true, 'realtime client closed on stop');
+});
+
+test('bridge falls back to polling when the Ably token fails', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-ably-'));
+  const cloud = makeFakeCloud();
+  withAblyToken(cloud, { ok: false });
+  const ably = makeFakeAbly();
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { ablyImpl: ably }));
+  t.after(() => handle.stop());
+  assert.equal(handle.ok, true);
+  assert.equal(handle.transport, 'polling');
+  assert.equal(ably.instances.length, 0, 'no realtime client when token fails');
+
+  // Polling actually runs: new human message gets answered.
+  cloud.messages.push({ id: 'p1', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', body: 'via poll', createdAt: 't' });
+  await new Promise((r) => setTimeout(r, 400));
+  const posts = cloud.calls.filter((c) => c.url.endsWith('/api/admin/envoy/messages') && c.method === 'POST');
+  assert.equal(posts.length, 1);
+  assert.equal(JSON.parse(posts[0].body).idempotencyKey, 'pc-bridge:p1');
+  await handle.stop();
+});
+
+test('bridge stays on polling when Ably is disabled', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-ably-'));
+  const cloud = makeFakeCloud();
+  withAblyToken(cloud, { ok: true });
+  const ably = makeFakeAbly();
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { ablyImpl: ably, noAbly: true }));
+  t.after(() => handle.stop());
+  assert.equal(handle.transport, 'polling');
+  assert.equal(ably.instances.length, 0);
+  const tokenCalls = cloud.calls.filter((c) => c.url.endsWith('/api/admin/desktop/ably-token'));
+  assert.equal(tokenCalls.length, 0, 'no token request when disabled');
+  await handle.stop();
+});
+
+test('bridge drops to polling when the Ably connection fails late', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-ably-'));
+  const cloud = makeFakeCloud();
+  withAblyToken(cloud, { ok: true });
+  const ably = makeFakeAbly();
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { ablyImpl: ably }));
+  t.after(() => handle.stop());
+  assert.equal(handle.transport, 'ably');
+  const rt = ably.instances[0];
+
+  // Simulate a late connection failure: polling must start.
+  rt.connHandlers.failed();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(handle.transport, 'polling');
+  const gets = cloud.calls.filter((c) => c.url.includes('/api/admin/envoy/messages?') && c.method === 'GET');
+  assert.ok(gets.length >= 3, 'poll timer started after late failure');
   await handle.stop();
 });

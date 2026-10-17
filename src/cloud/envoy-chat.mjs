@@ -1,3 +1,5 @@
+import { publishEnvoyMessage } from './envoy-ably.mjs';
+
 const KINDS = new Set(['team', 'direct', 'agent']);
 const AUTHORS = new Set(['human', 'agent', 'system']);
 
@@ -126,7 +128,7 @@ export function createEnvoyStore(pool) {
       });
       const idempotencyKey = text(input?.idempotencyKey, 'idempotency key', 200);
       const context = contextFor(actor);
-      return withTenantTransaction(pool, context, async (client) => {
+      const out = await withTenantTransaction(pool, context, async (client) => {
         await requireActiveTenantMembership(client, context);
         const result = await client.query(
           `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key)
@@ -143,6 +145,15 @@ export function createEnvoyStore(pool) {
         if (!row) throw new Error('Envoy message receipt was not durable');
         return { receipt: Object.freeze({ format: 'helmion.envoy-message-receipt.v1', durable: true, replayed: result.rowCount !== 1, message: rowMessage(row) }) };
       });
+      // Realtime push for the PC bridge (v2). Fire-and-forget: the write is
+      // already durable above, and a realtime failure must never fail the send.
+      // publishEnvoyMessage never throws by contract.
+      void publishEnvoyMessage({
+        tenantId: context.tenantId,
+        channelId: out.receipt.message.channelId,
+        message: out.receipt.message,
+      });
+      return out;
     },
     async appendConnectorMessage(binding) {
       const actor = { tenantId: binding.tenantId, subject: binding.subject, role: binding.role, sessionId: binding.sessionId, requestId: binding.requestId };
