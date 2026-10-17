@@ -286,7 +286,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     'service-not-allowed': "The browser's speech service is unavailable.",
   };
   function sendCommand(text) {
-    const trimmed = String(text ?? '').trim();
+    const trimmed = String(text ?? '').trim().replace(/[.!?…]+$/, '');
     if (!/send it$/i.test(trimmed)) return undefined;
     const rest = trimmed.slice(0, -'send it'.length).trim();
     return rest || null;
@@ -308,6 +308,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     recognition.onstart = () => { listening = true; handlers.onState?.('listening'); };
     recognition.onresult = (event) => {
       if (!voiceMode) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
       const text = Array.from(event.results ?? []).filter((result) => result.isFinal).map((result) => result?.[0]?.transcript ?? '').join(' ').trim();
       if (!text) return;
       const cmd = sendCommand(text);
@@ -318,7 +319,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       if (event?.error === 'aborted') return;
       handlers.onError?.(ERROR_MESSAGES[event?.error] ?? 'Dictation stopped before a usable transcript was produced.');
     };
-    recognition.onend = () => { listening = false; recognition = null; if (voiceMode) startTurn(); else handlers.onState?.('idle'); };
+    recognition.onend = () => { listening = false; recognition = null; const hidden = typeof document !== 'undefined' && document.hidden; if (voiceMode && !hidden) startTurn(); else if (!voiceMode) handlers.onState?.('idle'); };
     recognition.start();
   }
   function setVoiceMode(on, next = {}) {
@@ -326,6 +327,17 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     if (on && !voiceMode) { voiceMode = true; handlers = next; startTurn(); return true; }
     if (!on && voiceMode) { voiceMode = false; handlers = {}; stopTurn(); cancelSpeech(); next.onState?.('idle'); return true; }
     return false;
+  }
+  // Pause the mic while the tab is hidden: speech meant for another tab must
+  // never be transcribed, and "send it" must never fire from a hidden tab.
+  // Resumes automatically when the tab is visible again.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('visibilitychange', () => {
+      try {
+        if (document.hidden) { stopTurn(); cancelSpeech(); }
+        else if (voiceMode && !listening) { startTurn(); }
+      } catch {}
+    });
   }
   function speak(text) {
     if (!voiceMode || !canSpeak) return false;
