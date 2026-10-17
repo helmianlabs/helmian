@@ -73,7 +73,7 @@
       <button id="sidebar-toggle" class="icon-btn only-mobile" type="button" aria-label="Open sidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
       <div id="view-title" class="view-title">Console</div>
       <button id="fullscreen" class="btn ghost sm hide-mobile" type="button">Full screen</button>
-      <button id="guard-toggle" class="icon-btn only-mobile" type="button" aria-label="Open workbench panel" aria-controls="guard" aria-expanded="false">⛨<span id="guard-count" class="dot-count" hidden></span></button>
+      <button id="guard-toggle" class="icon-btn only-mobile" type="button" aria-label="Open panels" aria-controls="guard" aria-expanded="false">⛨<span id="guard-count" class="dot-count" hidden></span></button>
     </header>
 
     <section id="signed-out" class="view hero" hidden>
@@ -254,24 +254,18 @@
     </section>
   </main>
 
-  <!-- RIGHT: WORKBENCH PANEL (desktop EXE parity: Guard | Browser | Canvas | Preview | Create) -->
-  <aside id="guard" class="guard" aria-label="Workbench panel">
-    <div class="panel-tabs" role="tablist" aria-label="Workbench">
-      <button class="panel-tab active" type="button" role="tab" data-panel-tab="guard" aria-selected="true">Guard<span id="panel-guard-count" class="tab-badge" hidden></span></button>
-      <button class="panel-tab" type="button" role="tab" data-panel-tab="browser" aria-selected="false">Browser</button>
-      <button class="panel-tab" type="button" role="tab" data-panel-tab="canvas" aria-selected="false">Canvas</button>
-      <button class="panel-tab" type="button" role="tab" data-panel-tab="preview" aria-selected="false">Preview</button>
-      <button class="panel-tab" type="button" role="tab" data-panel-tab="create" aria-selected="false">Create</button>
-      <button id="guard-close" class="icon-btn sm only-mobile" type="button" aria-label="Close panel">×</button>
-    </div>
-
-    <div class="panel-pane active" data-panel-pane="guard" role="tabpanel" aria-label="Guard feed">
-      <div class="guard-head">
-        <span class="title">GUARD FEED</span>
+  <!-- RIGHT: GUARD PANEL + WORKBENCH PANEL (independent, collapsible; desktop EXE parity) -->
+  <aside id="guard" class="guard" aria-label="Guard and workbench panels">
+    <section id="guard-panel" class="guard-panel" aria-label="Guard panel">
+      <div class="guard-head guard-panel-head">
+        <span class="title">GUARD FEED</span><span id="guard-panel-count" class="tab-badge" hidden></span>
         <select id="feed-filter" aria-label="Filter feed"><option value="all">All</option><option value="critical">Critical</option><option value="warning">Warnings</option><option value="info">Info</option></select>
         <button id="feed-clear" class="icon-btn sm" type="button" aria-label="Clear acknowledged" title="Clear acknowledged">⌫</button>
         <button id="feed-ack-all" class="icon-btn sm" type="button" aria-label="Acknowledge all findings" title="Acknowledge all findings">✓</button>
+        <button id="guard-collapse" class="icon-btn sm" type="button" aria-label="Collapse Guard panel" aria-expanded="true" aria-controls="guard-panel-body">–</button>
+        <button id="guard-close" class="icon-btn sm only-mobile" type="button" aria-label="Close panels">×</button>
       </div>
+      <div id="guard-panel-body">
       <div class="agent"><span class="dot live"></span><span id="active-agent">No active agent</span></div>
       <div id="feed-progress" class="feed-progress" hidden></div>
       <div id="feed" class="feed"></div>
@@ -281,9 +275,19 @@
         <label class="toggle"><input type="checkbox" id="opt-approvals" checked> Show approval requests</label>
         <label class="toggle"><input type="checkbox" id="opt-auto" checked> Auto-refresh</label>
       </details>
-    </div>
+      </div>
+    </section>
 
-    <div class="panel-pane" data-panel-pane="browser" role="tabpanel" aria-label="Browser" hidden>
+    <section id="workbench" class="workbench" aria-label="Workbench panel">
+    <div class="panel-tabs" role="tablist" aria-label="Workbench">
+      <button class="panel-tab active" type="button" role="tab" data-panel-tab="browser" aria-selected="true">Browser</button>
+      <button class="panel-tab" type="button" role="tab" data-panel-tab="canvas" aria-selected="false">Canvas</button>
+      <button class="panel-tab" type="button" role="tab" data-panel-tab="preview" aria-selected="false">Preview</button>
+      <button class="panel-tab" type="button" role="tab" data-panel-tab="create" aria-selected="false">Create</button>
+      <button id="workbench-collapse" class="icon-btn sm" type="button" aria-label="Collapse workbench panel" aria-expanded="true" aria-controls="workbench-body">–</button>
+    </div>
+    <div id="workbench-body">
+    <div class="panel-pane active" data-panel-pane="browser" role="tabpanel" aria-label="Browser">
       <div class="pane-head"><span class="eyebrow">BROWSER</span></div>
       <p class="muted sm">Browse a public HTTPS site inside Helmian. The cloud never fetches page content, and every visit is written to the audit trail.</p>
       <form id="browser-form" class="browser-form">
@@ -351,6 +355,8 @@
         <div id="create-detail-list" class="kv" style="margin-top:8px"></div>
       </details>
     </div>
+    </div>
+    </section>
   </aside>
   <div id="scrim" class="scrim" hidden></div>
 </div>

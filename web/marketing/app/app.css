@@ -106,13 +106,23 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .guard-head { display:flex; align-items:center; gap:8px; } .guard-head .title { font-weight:700; letter-spacing:.08em; font-size:12px; flex:1; }
 .guard-head select { padding:4px 8px; font-size:12px; }
 
+/* right: independent collapsible panels — Guard above, Workbench below (desktop EXE parity) */
+.guard-panel { display:flex; flex-direction:column; min-height:0; flex:none; }
+.guard-panel-head .tab-badge { position:static; }
+#guard-panel-body { display:flex; flex-direction:column; gap:12px; min-height:0; overflow-y:auto; max-height:44dvh; }
+.guard-panel.collapsed #guard-panel-body { display:none; }
+.workbench { display:flex; flex-direction:column; min-height:0; flex:1; border-top:1px solid var(--border); padding-top:12px; }
+#workbench-body { display:flex; flex-direction:column; min-height:0; flex:1; }
+.workbench.collapsed #workbench-body { display:none; }
+.workbench .panel-tabs #workbench-collapse { margin-left:auto; }
+.guard .icon-btn.sm { min-width:40px; min-height:40px; }
+
 /* right: workbench panel tabs (desktop EXE parity) */
 .panel-tabs { display:flex; align-items:center; gap:2px; flex:none; border-bottom:1px solid var(--border); padding-bottom:8px; overflow-x:auto; }
 .panel-tab { position:relative; border:0; background:transparent; color:var(--muted); font-weight:700; font-size:12px; letter-spacing:.04em; padding:8px 10px; border-radius:6px 6px 0 0; cursor:pointer; white-space:nowrap; min-height:40px; }
 .panel-tab:hover { color:var(--text); background:var(--panel-2); }
 .panel-tab.active { color:var(--text); box-shadow:inset 0 -2px 0 var(--accent); }
 .tab-badge { position:absolute; top:2px; right:2px; min-width:16px; height:16px; border-radius:8px; background:var(--red); color:#fff; font-size:10px; font-weight:700; display:grid; place-items:center; padding:0 4px; }
-.panel-tabs #guard-close { margin-left:auto; }
 .panel-pane { display:flex; flex-direction:column; gap:12px; min-height:0; flex:1; overflow-y:auto; }
 .panel-pane.active { display:flex; }
 .pane-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }

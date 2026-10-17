@@ -7,7 +7,7 @@ export const ADVANCED_VIEWS = Object.freeze(['devices', 'overview', 'settings', 
 // (BROWSE-001), not the Advanced accordion. They stay in VIEWS/VIEW_TITLES so
 // old #hash links resolve, and show() redirects them to the panel tab.
 export const PANEL_VIEWS = Object.freeze(['browser', 'canvas', 'preview', 'create']);
-export const PANEL_TABS = Object.freeze(['guard', 'browser', 'canvas', 'preview', 'create']);
+export const PANEL_TABS = Object.freeze(['browser', 'canvas', 'preview', 'create']);
 export const PROVIDERS = Object.freeze(['Claude', 'ChatGPT', 'Grok', 'Gemini']);
 export const PROVIDER_REGISTRY = Object.freeze([
   { key: 'slack', name: 'Slack', kind: 'Team chat' }, { key: 'discord', name: 'Discord', kind: 'Team chat' }, { key: 'github', name: 'GitHub', kind: 'Code' },

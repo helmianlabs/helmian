@@ -153,7 +153,21 @@ test('devices empty-state points at Clerk unify and Connect phone', () => {
   assert.doesNotMatch(js, /Remote Control sign-in is separate until Clerk is unified/);
 });
 
-test('workbench panel tabs replace the desktop-only stubs (BROWSE-001)', () => {
+test('independent Guard panel + workbench tabs (BROWSE-001 layout correction)', () => {
+  // Guard is its own collapsible panel, not a tab: findings stay visible
+  // while another workbench tab is active.
+  assert.match(html, /id="guard-panel"/);
+  assert.match(html, /id="guard-panel-body"/);
+  assert.match(html, /id="guard-collapse"/);
+  assert.match(html, /id="guard-panel-count"/);
+  assert.doesNotMatch(html, /data-panel-tab="guard"/);
+  assert.doesNotMatch(html, /data-panel-pane="guard"/);
+  assert.doesNotMatch(html, /id="panel-guard-count"/);
+  // Workbench holds the four tabs only.
+  assert.match(html, /id="workbench"/);
+  assert.match(html, /id="workbench-body"/);
+  assert.match(html, /id="workbench-collapse"/);
+  assert.deepEqual(PANEL_TABS, ['browser', 'canvas', 'preview', 'create']);
   for (const t of PANEL_TABS) {
     assert.match(html, new RegExp(`data-panel-tab="${t}"`), t);
     assert.match(html, new RegExp(`data-panel-pane="${t}"`), t);
@@ -162,4 +176,6 @@ test('workbench panel tabs replace the desktop-only stubs (BROWSE-001)', () => {
   assert.doesNotMatch(html, /Desktop only/);
   assert.match(css, /\.guard-head \{ position:sticky/);
   assert.match(css, /\.panel-tabs \{ position:sticky/);
+  assert.match(css, /\.guard-panel\.collapsed #guard-panel-body/);
+  assert.match(css, /\.workbench\.collapsed #workbench-body/);
 });
