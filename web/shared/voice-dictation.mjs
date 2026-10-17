@@ -37,7 +37,7 @@ export function createVoiceController({
   // "send it" command: the text to submit, null when empty after stripping,
   // undefined when the transcript is not a send command.
   function sendCommand(text) {
-    const trimmed = String(text ?? '').trim();
+    const trimmed = String(text ?? '').trim().replace(/[.!?…]+$/, '');
     if (!/send it$/i.test(trimmed)) return undefined;
     const rest = trimmed.slice(0, -'send it'.length).trim();
     return rest || null;
@@ -65,6 +65,7 @@ export function createVoiceController({
     };
     recognition.onresult = (event) => {
       if (!voiceMode) return; // commands only act while the toggle is on
+      if (typeof document !== 'undefined' && document.hidden) return; // never transcribe a hidden tab
       const text = Array.from(event.results ?? [])
         .filter((result) => result.isFinal)
         .map((result) => result?.[0]?.transcript ?? '')
@@ -83,8 +84,9 @@ export function createVoiceController({
     recognition.onend = () => {
       listening = false;
       recognition = null;
-      if (voiceMode) startTurn(); // next turn of the loop
-      else handlers.onState?.('idle');
+      const hidden = typeof document !== 'undefined' && document.hidden;
+      if (voiceMode && !hidden) startTurn(); // next turn of the loop
+      else if (!voiceMode) handlers.onState?.('idle');
     };
     recognition.start();
   }
@@ -109,6 +111,18 @@ export function createVoiceController({
       return true;
     }
     return false;
+  }
+
+  // Pause the mic while the tab is hidden: speech meant for another tab must
+  // never be transcribed, and "send it" must never fire from a hidden tab.
+  // Resumes automatically when the tab is visible again.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('visibilitychange', () => {
+      try {
+        if (document.hidden) { stopTurn(); cancelSpeech(); }
+        else if (voiceMode && !listening) { startTurn(); }
+      } catch {}
+    });
   }
 
   function speak(text) {
