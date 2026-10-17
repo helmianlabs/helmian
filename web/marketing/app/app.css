@@ -258,3 +258,8 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   .feed-settings summary { padding:10px 0; }
   .toggle { min-height:40px; font-size:14px; }
 }
+.icon-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--border); }
+.icon-row:first-child { border-top:none; }
+.icon-current { font-size:20px; width:28px; text-align:center; }
+.icon-row > span:nth-child(2) { flex:1; min-width:0; }
+.icon-input { width:64px; text-align:center; font-size:18px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:6px 4px; }

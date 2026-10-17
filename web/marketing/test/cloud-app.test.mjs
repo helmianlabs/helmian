@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, VIEW_TITLES_PLAYFUL, VIEW_TITLES_PLAIN, viewTitles, isPlainEmojiMode, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -34,7 +34,7 @@ test('no technical disclaimers and no framework', () => {
 
 test('only known admin + remote APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/workspace/active-project', '/api/admin/workspace/canvas', '/api/admin/workspace/projects', '/api/herald-config', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/workspace/active-project', '/api/admin/workspace/agent-icons', '/api/admin/workspace/canvas', '/api/admin/workspace/layout-preferences', '/api/admin/workspace/projects', '/api/herald-config', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
 });
 
 test('models', () => {
@@ -105,6 +105,20 @@ test('phone primary nav + Advanced + Show details (Troy polish)', () => {
   assert.doesNotMatch(primary, /data-view="devices"/);
   const advanced = html.match(/id="advanced-nav"[\s\S]*?<\/details>/)[0];
   for (const v of ADVANCED_VIEWS) assert.match(advanced, new RegExp(`data-view="${v}"`));
+});
+
+test('viewTitles selects playful vs plain titles (emoji mode)', () => {
+  assert.equal(VIEW_TITLES.console, '💬 Chat'); // playful alias preserved
+  assert.equal(viewTitles('playful').console, '💬 Chat');
+  assert.equal(viewTitles('plain').console, 'Chat');
+  assert.equal(viewTitles('plain').workspace, 'Projects');
+  assert.equal(viewTitles(undefined).agents, '🤖 Agents');
+  assert.equal(viewTitles('wild').agents, '🤖 Agents');
+  assert.equal(isPlainEmojiMode('plain'), true);
+  assert.equal(isPlainEmojiMode('playful'), false);
+  assert.equal(isPlainEmojiMode(undefined), false);
+  assert.match(html, /id="emoji-mode"/);
+  assert.match(html, /id="agent-icons-picker"/);
 });
 
 test('agentsModel maps providers and sessions', () => {

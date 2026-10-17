@@ -1,6 +1,11 @@
 // Pure helpers for the Helmian Cloud app (no DOM) so they can be unit tested.
 export const VIEWS = Object.freeze(['home', 'console', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'integrations', 'agents', 'create', 'browser', 'canvas', 'preview', 'release']);
-export const VIEW_TITLES = Object.freeze({ home: '🏠 Home', console: '💬 Chat', overview: '📊 Overview', settings: '⚙️ Settings', workspace: '🗂️ Projects', devices: '📱 Devices', activity: '📡 Live activity', evidence: '📦 Evidence', approvals: '✅ Approvals', integrations: '🔌 Integrations', agents: '🤖 Agents', create: '✨ Create', browser: '🌐 Browser', canvas: '🎨 Canvas', preview: '👁 Preview', release: '🚀 Release roadmap' });
+export const VIEW_TITLES_PLAYFUL = Object.freeze({ home: '🏠 Home', console: '💬 Chat', overview: '📊 Overview', settings: '⚙️ Settings', workspace: '🗂️ Projects', devices: '📱 Devices', activity: '📡 Live activity', evidence: '📦 Evidence', approvals: '✅ Approvals', integrations: '🔌 Integrations', agents: '🤖 Agents', create: '✨ Create', browser: '🌐 Browser', canvas: '🎨 Canvas', preview: '👁 Preview', release: '🚀 Release roadmap' });
+export const VIEW_TITLES_PLAIN = Object.freeze({ home: 'Home', console: 'Chat', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', agents: 'Agents', create: 'Create', browser: 'Browser', canvas: 'Canvas', preview: 'Preview', release: 'Release roadmap' });
+// VIEW_TITLES stays as the playful alias for existing importers; viewTitles() picks per preference.
+export const VIEW_TITLES = VIEW_TITLES_PLAYFUL;
+export function viewTitles(emojiMode) { return emojiMode === 'plain' ? VIEW_TITLES_PLAIN : VIEW_TITLES_PLAYFUL; }
+export function isPlainEmojiMode(emojiMode) { return emojiMode === 'plain'; }
 export const PRIMARY_VIEWS = Object.freeze(['home', 'console', 'workspace', 'approvals']);
 export const ADVANCED_VIEWS = Object.freeze(['devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'agents', 'release']);
 // Browser, Canvas, Preview, Create live in the right workbench panel now

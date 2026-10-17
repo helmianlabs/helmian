@@ -184,6 +184,7 @@
       <h2>Settings</h2>
       <div class="panel kv">
         <label class="row"><span>Theme</span><select id="theme"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
+        <label class="row"><span>Emoji style</span><select id="emoji-mode"><option value="playful">Playful</option><option value="plain">Plain</option></select></label>
       </div>
       <div class="panel" id="invite-panel" hidden><div class="eyebrow">INVITE PEOPLE</div>
         <p class="muted sm">Share a link. Anyone who opens it can create an account and join as a member.</p>
@@ -237,6 +238,12 @@
         <a class="btn sm" href="#integrations">Integrations</a>
       </div>
       <div id="agents-cards" class="grid"></div>
+      <div class="panel" style="margin-top:12px">
+        <div class="side-head" style="padding:0 0 8px"><span>AGENT ICONS</span></div>
+        <p class="muted sm">Give each agent your own emoji. Shows on agent cards and chat tabs.</p>
+        <div id="agent-icons-picker"></div>
+        <p id="agent-icons-status" class="muted sm" role="status" aria-live="polite"></p>
+      </div>
       <div class="panel" style="margin-top:12px">
         <div class="side-head" style="padding:0 0 8px"><span>OPEN SESSIONS</span></div>
         <div id="agents-sessions"></div>
