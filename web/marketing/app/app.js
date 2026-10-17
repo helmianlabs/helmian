@@ -695,6 +695,7 @@ async function loadHome() {
 
 // ---- console (Envoy) ----
 async function loadConsole() {
+  loadOnboarding();
   if (!state.channelId) {
     try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); const kindTag = (k) => k && k !== 'team' ? ` · ${k}` : ''; sel.replaceChildren(...chans.map((c) => { const o = el('option', null, `${c.title || c.slug || 'Channel'}${kindTag(c.kind)}`); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
       if (!state.channelId && isAdminRole(state.actor?.role)) { const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' }); state.channelId = made.channel?.id ?? null; if (state.channelId) toast('Team channel created', 'ok'); }
@@ -1041,8 +1042,78 @@ $('#desktop-link').onclick = async () => {
   try { const r = await post('/api/admin/desktop/link/start', { label: 'Helmian desktop' }); const c = $('#desktop-code'); c.hidden = false; c.textContent = r.code; toast('Code is valid for 10 minutes'); }
   catch { toast('Could not create a code — try again'); }
 };
+// ---- providers (runner vault presence) ----
+const PROVIDER_META = [
+  ['gemini', 'Gemini'],
+  ['claude', 'Claude'],
+  ['openai', 'ChatGPT'],
+  ['grok', 'Grok'],
+  ['xai', 'xAI'],
+];
+async function loadProviders() {
+  const box = $('#providers-cards');
+  let presence = [];
+  try { const body = await api('/api/admin/envoy/runner/presence'); presence = Array.isArray(body.presence) ? body.presence : []; }
+  catch { box.replaceChildren(el('p', 'muted sm', 'Provider status is unavailable right now.')); return; }
+  const byProvider = new Map(presence.map((r) => [String(r.provider).toLowerCase(), r]));
+  box.replaceChildren(...PROVIDER_META.map(([key, label]) => {
+    const row = byProvider.get(key);
+    const connected = row?.connected === true;
+    const card = el('article', 'card');
+    const icon = agentIconFor(label);
+    card.append(el('div', 'title', icon ? `${icon} ${label}` : label));
+    const meta = el('div', 'meta');
+    meta.append(el('span', `status ${connected ? 'ok' : ''}`, connected ? 'Connected' : 'Not connected'));
+    card.append(meta);
+    if (connected && row?.updatedAt) card.append(el('div', 'meta muted sm', `since ${formatTime(row.updatedAt)}`));
+    if (!connected) {
+      const btn = el('button', 'btn primary sm', 'Connect');
+      btn.type = 'button';
+      btn.onclick = () => {
+        if (card.querySelector('.connect-help')) { card.querySelector('.connect-help').remove(); return; }
+        const help = el('div', 'connect-help');
+        help.append(el('p', 'muted sm', 'Your key never touches the cloud. On your runner or PC, run:'));
+        const code = el('code', 'code', `node bin/runner-vault.mjs store ${key}`);
+        const copy = el('button', 'btn ghost sm', 'Copy command');
+        copy.type = 'button';
+        copy.onclick = async () => { try { await navigator.clipboard.writeText(code.textContent); toast('Command copied', 'ok'); } catch { toast('Copy failed'); } };
+        help.append(code, copy);
+        help.append(el('p', 'muted sm', 'Paste your key when asked (input is hidden), then restart the bridge. Status updates on next start.'));
+        card.append(help);
+      };
+      const actions = el('div', 'row-btns left');
+      actions.append(btn);
+      card.append(actions);
+    }
+    return card;
+  }));
+}
+
+// ---- onboarding checklist (first run) ----
+async function loadOnboarding() {
+  const box = $('#onboarding');
+  if (!box || store.get('onboardingDismissed')) { if (box) box.hidden = true; return; }
+  let channels = [], presence = [];
+  try { const c = await api('/api/admin/envoy/channels'); channels = Array.isArray(c.channels) ? c.channels : []; } catch {}
+  try { const r = await api('/api/admin/envoy/runner/presence'); presence = Array.isArray(r.presence) ? r.presence : []; } catch {}
+  const steps = [
+    { done: presence.length > 0, label: 'Pair your bridge or runner', hint: 'Settings, then Link desktop app.' },
+    { done: channels.length > 0, label: 'Create your team channel', hint: 'Chat, then + Channel.' },
+    { done: presence.some((r) => r.connected), label: 'Connect an AI provider', hint: 'Settings, then AI Providers.' },
+  ];
+  if (steps.every((s) => s.done)) { box.hidden = true; return; }
+  box.hidden = false;
+  $('#onboarding-list').replaceChildren(...steps.map((s) => {
+    const li = el('li', s.done ? 'done' : '');
+    li.append(el('strong', null, s.done ? '✓ ' : '', s.label), el('div', 'muted sm', s.hint));
+    return li;
+  }));
+}
+$('#onboarding-dismiss').onclick = () => { store.set('onboardingDismissed', true); $('#onboarding').hidden = true; };
+
 async function loadSettings() {
   loadInvites();
+  loadProviders();
   const prov = await api('/api/admin/provider-connections').catch(() => ({}));
   const conns = Array.isArray(prov.connections) ? prov.connections : [];
   $('#api-keys').replaceChildren(...(conns.length ? conns.map((c) => row(c.displayName || c.provider || 'Provider', maskSecret(c.secretHint || c.keyHint), 'mask')) : [el('p', 'muted sm', 'No API keys saved yet.')]));
