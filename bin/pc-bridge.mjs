@@ -140,6 +140,32 @@ function startAgent(deps, extraEnv = {}) {
 // provider, it wins over the environment variable. The child inherits the
 // bridge's env, so setting process.env here reaches the agent. Never throws:
 // any vault problem falls back to plain env vars and is logged.
+// Reports vault presence to the cloud (presence-only booleans, never secrets)
+// so Settings can show which providers are connected. Best-effort: never
+// throws, never blocks startup.
+async function reportPresence(deps, token) {
+  try {
+    const vaultPath = deps.vaultPath || defaultVaultPath(homedir());
+    const deviceToken = await readDeviceToken(deps.tokenPath);
+    if (!deviceToken) return;
+    const vault = await openVault({ vaultPath, deviceToken });
+    const rows = await vault.status();
+    const providers = new Set(rows.map((r) => String(r.provider).toLowerCase()));
+    // The env-configured provider counts too when the vault does not have it.
+    const envName = PROVIDER_KEY_ENV[String(deps.provider || '').toLowerCase()];
+    if (envName && process.env[envName]) providers.add(String(deps.provider).toLowerCase());
+    for (const provider of providers) {
+      await api(deps, '/api/admin/envoy/runner/presence', {
+        method: 'POST', token,
+        body: { provider, connected: true },
+      });
+    }
+    if (providers.size > 0) deps.log(`presence reported: ${[...providers].join(', ')}`);
+  } catch (err) {
+    deps.logError('presence report failed:', err?.message ?? err);
+  }
+}
+
 async function loadVaultKey(deps) {
   const envName = PROVIDER_KEY_ENV[String(deps.provider || '').toLowerCase()];
   if (!envName) return {};
@@ -221,6 +247,7 @@ export async function runBridge(overrides = {}) {
   }
 
   const child = startAgent(deps, await loadVaultKey(deps));
+  void reportPresence(deps, creds.token);
   const hello = await waitForHello(child);
   if (hello?.ok === false) logError('agent bridge warning:', hello.message);
   else log('agent ready:', hello?.provider ?? 'unknown provider');
