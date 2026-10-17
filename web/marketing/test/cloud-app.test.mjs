@@ -94,8 +94,8 @@ test('desktopsModel empty and rows', () => {
 test('phone primary nav + Advanced + Show details (Troy polish)', () => {
   assert.deepEqual([...PRIMARY_VIEWS], ['home', 'console', 'workspace', 'approvals']);
   assert.ok(ADVANCED_VIEWS.includes('devices'));
-  assert.equal(VIEW_TITLES.console, 'Chat');
-  assert.equal(VIEW_TITLES.workspace, 'Projects');
+  assert.equal(VIEW_TITLES.console, '💬 Chat');
+  assert.equal(VIEW_TITLES.workspace, '🗂️ Projects');
   assert.match(html, /id="advanced-nav"/);
   assert.match(html, /class="[^"]*show-details/);
   assert.doesNotMatch(html, /id="mcp-toggle"/);
@@ -117,14 +117,14 @@ test('agentsModel maps providers and sessions', () => {
   assert.equal(m.active[0].name, 'Fix');
   assert.equal(m.empty, false);
   assert.ok(VIEWS.includes('agents'));
-  assert.equal(VIEW_TITLES.agents, 'Agents');
+  assert.equal(VIEW_TITLES.agents, '🤖 Agents');
   assert.match(html, /data-view-panel="agents"/);
   assert.match(html, /id="agents-refresh"/);
 });
 
 test('createModel maps receipts and builds review payload', () => {
   assert.ok(VIEWS.includes('create'));
-  assert.equal(VIEW_TITLES.create, 'Create');
+  assert.equal(VIEW_TITLES.create, '✨ Create');
   assert.ok(PANEL_VIEWS.includes('create'));
   assert.ok(!ADVANCED_VIEWS.includes('create'));
   assert.deepEqual(CREATE_TYPES.map((x) => x.id), ['training', 'orientation']);
