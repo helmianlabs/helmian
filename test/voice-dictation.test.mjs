@@ -3,7 +3,7 @@
 // web/shared/voice-dictation.mjs (inlined into the /app bundle).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createVoiceController, stripSpeechMarkup } from '../web/shared/voice-dictation.mjs';
+import { createVoiceController, stripSpeechMarkup, chunkForSpeech } from '../web/shared/voice-dictation.mjs';
 
 function makeFakes() {
   const instances = [];
@@ -256,4 +256,41 @@ test('speak() delays when interrupting playing audio (Chrome cancel quirk)', asy
   await new Promise((r) => setTimeout(r, 250));
   assert.equal(f.spoken.length, 1);
   assert.equal(f.spoken[0].text, 'hello');
+});
+
+test('chunkForSpeech splits long replies into sentence-sized pieces', () => {
+  const short = chunkForSpeech('Hello there.');
+  assert.deepEqual(short, ['Hello there.']);
+  const long = chunkForSpeech('First sentence here. Second sentence there. Third one too.');
+  assert.ok(long.length === 3, `expected 3 chunks, got ${long.length}`);
+  assert.ok(long.every((c) => c.length <= 180));
+  const oneLongSentence = chunkForSpeech('x'.repeat(400));
+  assert.ok(oneLongSentence.length >= 3, 'overlong sentence is hard-split');
+  assert.deepEqual(chunkForSpeech(''), []);
+});
+
+test('speak() chains chunks via onend so long replies are fully spoken', () => {
+  const f = makeFakes();
+  const { v } = voiceOn(f, { mode: 'voice' });
+  const reply = 'First part here. Second part there. Third part everywhere.';
+  assert.equal(v.speak(reply), true);
+  assert.equal(f.spoken.length, 1);
+  assert.equal(f.spoken[0].text, 'First part here.');
+  f.spoken[0].onend(); // first chunk finished -> pump the next
+  assert.equal(f.spoken.length, 2);
+  assert.equal(f.spoken[1].text, 'Second part there.');
+  f.spoken[1].onend();
+  assert.equal(f.spoken.length, 3);
+  assert.equal(f.spoken[2].text, 'Third part everywhere.');
+});
+
+test('a new speak() replaces the queued reply in progress', () => {
+  const f = makeFakes();
+  const { v } = voiceOn(f, { mode: 'voice' });
+  v.speak('First part here. Second part there.');
+  assert.equal(f.spoken.length, 1);
+  v.speak('Brand new reply.');
+  f.spoken[0].onend(); // old queue was cleared; nothing more pumps
+  assert.equal(f.spoken.length, 2);
+  assert.equal(f.spoken[1].text, 'Brand new reply.');
 });
