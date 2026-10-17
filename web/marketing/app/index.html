@@ -314,8 +314,14 @@
       <div id="canvas-body">
         <label class="field-stack"><span class="muted sm">Notes</span>
           <textarea id="canvas-note" rows="6" maxlength="32768" aria-label="Canvas notes"></textarea></label>
-        <label class="field-stack" style="margin-top:8px"><span class="muted sm">Decision</span>
-          <textarea id="canvas-decision" rows="3" maxlength="32768" aria-label="Canvas decision"></textarea></label>
+        <div style="margin-top:8px">
+          <span class="muted sm">Decision log</span>
+          <ol id="canvas-decisions" class="canvas-decisions" aria-live="polite"></ol>
+          <div class="row-btns left" style="margin-top:8px">
+            <input id="canvas-decision-input" maxlength="32768" placeholder="Record a decision" aria-label="Record a decision">
+            <button id="canvas-decision-record" class="btn primary sm" type="button">Record</button>
+          </div>
+        </div>
         <div class="row-btns left" style="margin-top:8px">
           <button id="canvas-save" class="btn primary sm" type="button">Save</button>
         </div>
