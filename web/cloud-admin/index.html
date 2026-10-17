@@ -40,6 +40,14 @@
     .guard-card.critical { border-left-color: #f07f7f; }
     .guard-card h3 { font-size: .9rem; margin: 0 0 .35rem; }
     .guard-card p { color: #aebbd0; font-size: .8rem; margin: .25rem 0 0; }
+    .guard-card.pulse { animation: guard-pulse 1.6s ease-in-out infinite; }
+    .guard-card.tone-red.pulse { border-color: #f07f7f; box-shadow: 0 0 0 1px #f07f744, 0 0 16px #f07f733; }
+    .guard-card.tone-yellow.pulse { border-color: #f2c879; box-shadow: 0 0 0 1px #f2c87944, 0 0 16px #f2c87933; }
+    @keyframes guard-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+    .guard-motion-off .guard-card.pulse, .guard-motion-off .guard-card { animation: none; }
+    @media (prefers-reduced-motion: reduce) { .guard-card.pulse { animation: none; } }
+    .guard-toggle { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; color: #aebbd0; margin-left: .6rem; }
+    .guard-toggle input { accent-color: #7ee2a8; }
     .guard-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; margin-top: 1rem; }
     .guard-actions button { margin: 0; padding: .55rem .4rem; font-size: .78rem; background: #2b3547; color: #e8edf5; }
     .guard-actions button:disabled { opacity: .65; cursor: not-allowed; }
@@ -481,7 +489,7 @@
       <p class="preview" id="guard-findings-status">Loading Guard findings.</p>
       <div id="guard-findings" aria-live="polite"></div>
       <div id="guard-events" aria-live="polite"></div>
-      <div class="guard-actions"><button id="guard-check-again" type="button">Check again</button><button id="guard-ack-all" type="button">Ack all</button></div>
+      <div class="guard-actions"><button id="guard-check-again" type="button">Check again</button><button id="guard-ack-all" type="button">Ack all</button><label class="guard-toggle"><input id="guard-show-acked" type="checkbox"> Show acknowledged</label><label class="guard-toggle"><input id="guard-pulse" type="checkbox" checked> Pulse animations</label></div>
     </aside>
   </div>
   <script type="module" src="/admin/assets/app.js"></script>
