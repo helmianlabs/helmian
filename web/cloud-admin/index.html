@@ -176,6 +176,7 @@
             <button class="nav-item" type="button" data-target="section-tasks">Agents</button>
             <button class="nav-item" type="button" data-target="section-governance">Governance</button>
             <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
+            <button class="nav-item" type="button" data-target="section-evidence">Evidence</button>
             <button class="nav-item" type="button" data-target="section-readiness">Readiness</button>
             <button class="nav-item" type="button" data-target="section-desktop-parity">Desktop parity</button>
             <button class="nav-item" type="button" data-target="section-capabilities">Cora capabilities</button>
@@ -321,6 +322,27 @@
           <div id="audit-events" aria-live="polite"></div>
           <button id="audit-next" class="secondary" type="button" hidden>Load older events</button>
           <p class="preview">Read-only durable audit records from this Organization. Export is a bounded redacted CSV with an audit receipt; no email, storage, provider call, raw payload, or Plant/facility authority is used.</p>
+        </section>
+        <section id="section-evidence" class="card" aria-labelledby="evidence-heading">
+          <h2 id="evidence-heading">Evidence</h2>
+          <p class="preview">Durable records of what the Maestro and the workers did: handoffs, checkpoints, run receipts, and who currently holds the pen. Handoffs, checkpoints, and Maestro leases predate tenant scoping and are visible to owners and admins only.</p>
+          <div class="config-grid" aria-label="Evidence contract">
+            <div class="config-item"><strong>CHECKPOINT</strong><span>Work completed, files changed, tests, risks, and next action.</span></div>
+            <div class="config-item"><strong>HANDOFF</strong><span>Source, target, completeness, and the exact checkpoint identity.</span></div>
+            <div class="config-item"><strong>DURABILITY</strong><span>Acknowledged commit result before state is presented as durable.</span></div>
+          </div>
+          <h3>Handoff timeline</h3>
+          <p id="evidence-handoffs-status" class="note" role="status" aria-live="polite">Loading handoffs…</p>
+          <div id="evidence-handoffs" class="config-grid" aria-live="polite"></div>
+          <h3>Checkpoints</h3>
+          <p id="evidence-checkpoints-status" class="note" role="status" aria-live="polite">Loading checkpoints…</p>
+          <div id="evidence-checkpoints" class="config-grid" aria-live="polite"></div>
+          <h3>Run receipts</h3>
+          <p id="evidence-ledger-status" class="note" role="status" aria-live="polite">Loading run receipts…</p>
+          <div id="evidence-ledger" class="config-grid" aria-live="polite"></div>
+          <h3>Who holds the pen</h3>
+          <p id="evidence-leases-status" class="note" role="status" aria-live="polite">Loading lease posture…</p>
+          <div id="evidence-leases" class="config-grid" aria-live="polite"></div>
         </section>
         <section id="section-readiness" class="card" aria-labelledby="readiness-heading">
           <h2 id="readiness-heading">Organization onboarding readiness</h2>
