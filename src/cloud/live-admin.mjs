@@ -21,6 +21,7 @@ import {
 import { AIMFORGE_EQUIPMENT_SAFETY_TOOL_NAMES } from '../cora/aimforge-board-action.mjs';
 import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
+import { createGuardStore } from './guard-findings.mjs';
 import { createAppSessionStore } from './app-sessions.mjs';
 import { createOrgInviteStore, INVITE_TOKEN } from './org-invites.mjs';
 import { createCoraOrganizationConfigRepository } from '../cora/organization-config-repository.mjs';
@@ -94,6 +95,9 @@ export const LIVE_APP_SESSION_STEPS_PATH = '/api/admin/app/sessions/steps';
 export const LIVE_APP_SESSION_STEPS_UPDATE_PATH = '/api/admin/app/sessions/steps/update';
 export const LIVE_ADMIN_ENVOY_MESSAGES_PATH = '/api/admin/envoy/messages';
 export const LIVE_ADMIN_ENVOY_STREAM_PATH = '/api/admin/envoy/stream';
+export const LIVE_GUARD_BROWSER_EVENTS_PATH = '/api/guard/browser-events';
+export const LIVE_ADMIN_GUARD_FINDINGS_PATH = '/api/admin/guard/findings';
+export const LIVE_ADMIN_GUARD_ACKS_PATH = '/api/admin/guard/acks';
 export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
 export const LIVE_ADMIN_CORA_CONFIGS_PATH = '/api/admin/cora/configs';
 export const LIVE_ADMIN_CORA_TRANSITION_PATH = '/api/admin/cora/configs/transition';
@@ -296,6 +300,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const ownsPool = !suppliedPool;
   const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
   const envoy = suppliedEnvoyStore ?? createEnvoyStore(pool);
+  const guard = createGuardStore(pool);
   const appSessions = suppliedAppSessionStore ?? createAppSessionStore(pool);
   const invites = suppliedOrgInviteStore ?? createOrgInviteStore(pool);
   const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
@@ -893,6 +898,36 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {
       try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['body', 'channelId', 'idempotencyKey']); if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.appendMessage(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_MESSAGE_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_GUARD_BROWSER_EVENTS_PATH) {
+      try {
+        const desktop = await invites.desktopIdentity(bearerToken(request)).catch(() => null);
+        if (!desktop?.subject || !desktop?.tenantId) throw Object.assign(new Error('Device token required'), { status: 403 });
+        const body = await readJsonObject(request);
+        // Single finding or a batch: { findings: [...] }.
+        const inputs = Array.isArray(body.findings)
+          ? body.findings
+          : (exactKeys(body, ['fingerprint', 'source', 'severity', 'title', 'detail', 'pageRef']), [body]);
+        if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted');
+        if (inputs.length > 50) throw Object.assign(new Error('batch too large'), { status: 400 });
+        const results = [];
+        for (const input of inputs) {
+          results.push(await guard.ingestFinding({ tenantId: desktop.tenantId, subject: desktop.subject }, input));
+        }
+        send(response, 200, JSON.stringify({ valid: true, ingested: results.length, results }));
+      }
+      catch (error) { send(response, error?.status === 403 ? 403 : error?.code === '42P01' ? 503 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GUARD_DEVICE_REQUIRED' : error?.code === '42P01' ? 'GUARD_MIGRATION_PENDING' : 'GUARD_FINDING_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_GUARD_FINDINGS_PATH) {
+      try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await guard.listFindings(actor, requestUrl.searchParams.get('limit')) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.code === '42P01' ? 503 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GUARD_MEMBERSHIP_REQUIRED' : error?.code === '42P01' ? 'GUARD_MIGRATION_PENDING' : 'GUARD_FINDINGS_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_GUARD_ACKS_PATH) {
+      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['fingerprint']); if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await guard.ackFinding(actor, body.fingerprint) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.code === '42P01' ? 503 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GUARD_MEMBERSHIP_REQUIRED' : error?.code === '42P01' ? 'GUARD_MIGRATION_PENDING' : 'GUARD_ACK_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_PATH) {
