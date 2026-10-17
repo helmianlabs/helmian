@@ -16,3 +16,24 @@ test('workspace layout rejects incomplete shelves, unsupported authority, and in
   assert.throws(() => normalizeWorkspaceLayout({ visibleShelves: shelves, panelOrder: shelves, density: 'comfortable', defaultEnvoyChannelId: null, plantId: 'warehouse-1' }), /unsupported/iu);
   assert.throws(() => normalizeWorkspaceLayout({ visibleShelves: shelves, panelOrder: shelves, density: 'comfortable', defaultEnvoyChannelId: 'customer-b' }), /invalid/iu);
 });
+
+test('workspace layout emojiMode defaults to playful and accepts plain', () => {
+  const base = { visibleShelves: shelves, panelOrder: shelves, density: 'comfortable', defaultEnvoyChannelId: null };
+  assert.equal(normalizeWorkspaceLayout({ ...base, emojiMode: 'playful' }).emojiMode, 'playful');
+  assert.equal(normalizeWorkspaceLayout({ ...base, emojiMode: 'plain' }).emojiMode, 'plain');
+  assert.equal(normalizeWorkspaceLayout({ ...base, emojiMode: 'PLAIN' }).emojiMode, 'plain');
+  assert.equal(normalizeWorkspaceLayout({ ...base, emojiMode: null }).emojiMode, null);
+  assert.equal(normalizeWorkspaceLayout({ ...base, emojiMode: '' }).emojiMode, null);
+  assert.throws(() => normalizeWorkspaceLayout({ ...base, emojiMode: 'wild' }), /emojiMode is invalid/iu);
+});
+
+test('workspace layout effective emojiMode resolves null to playful', () => {
+  const base = { visibleShelves: shelves, panelOrder: shelves, density: 'comfortable', defaultEnvoyChannelId: null };
+  const withNull = effectiveWorkspaceLayout({ role: 'member', roleDefault: { ...base, emojiMode: null }, personal: null });
+  assert.equal(withNull.emojiMode, 'playful');
+  const personal = effectiveWorkspaceLayout({ role: 'member', roleDefault: roleDefaultLayout('member'), personal: { emojiMode: 'plain' } });
+  assert.equal(personal.emojiMode, 'plain');
+  assert.equal(personal.source, 'role_default_plus_user_override');
+  const rolePlain = effectiveWorkspaceLayout({ role: 'member', roleDefault: { ...base, emojiMode: 'plain' }, personal: null });
+  assert.equal(rolePlain.emojiMode, 'plain');
+});
