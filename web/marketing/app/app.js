@@ -35,6 +35,27 @@ $('#sidebar-toggle').onclick = () => drawer('sidebar', true); $('#sidebar-close'
 $('#guard-toggle').onclick = () => drawer('guard', true); $('#guard-close').onclick = () => drawer('guard', false);
 $('#scrim').onclick = () => { drawer('sidebar', false); drawer('guard', false); };
 $('#fullscreen').onclick = () => { shell.classList.toggle('full'); $('#fullscreen').textContent = shell.classList.contains('full') ? 'Exit full screen' : 'Full screen'; };
+
+// ---- independent collapsible panels: Guard + Workbench (desktop EXE parity) ----
+function setPanelCollapsed(which, collapsed) {
+  const panel = which === 'guard' ? $('#guard-panel') : $('#workbench');
+  const btn = which === 'guard' ? $('#guard-collapse') : $('#workbench-collapse');
+  if (!panel || !btn) return;
+  panel.classList.toggle('collapsed', collapsed);
+  const label = which === 'guard' ? 'Guard' : 'workbench';
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${label} panel`);
+  btn.textContent = collapsed ? '+' : '–';
+  store.set(which === 'guard' ? 'guardCollapsed' : 'workbenchCollapsed', collapsed);
+}
+$('#guard-collapse').onclick = () => setPanelCollapsed('guard', !$('#guard-panel').classList.contains('collapsed'));
+$('#workbench-collapse').onclick = () => setPanelCollapsed('workbench', !$('#workbench').classList.contains('collapsed'));
+setPanelCollapsed('guard', store.get('guardCollapsed', false));
+setPanelCollapsed('workbench', store.get('workbenchCollapsed', false));
+
+// #guard deep links open the Guard panel itself (it is a panel, not a tab).
+function hashIsGuard() { return String(location.hash).replace(/^#\/?/, '').toLowerCase() === 'guard'; }
+function openGuardPanel() { setPanelCollapsed('guard', false); if (narrow()) drawer('guard', true); }
 $('#mcp-find-btn').onclick = () => { $('#mcp-result').textContent = $('#mcp-find').value.trim() ? `No matches for “${$('#mcp-find').value.trim()}” — no audit has been run yet.` : 'No audit yet. Run one from the desktop app to see results here.'; };
 
 // ---- views ----
@@ -56,9 +77,9 @@ function show(view) {
   loaders[view]?.().catch(() => {});
 }
 
-// ---- workbench panel tabs (desktop EXE parity: Guard | Browser | Canvas | Preview | Create) ----
+// ---- workbench panel tabs (Browser | Canvas | Preview | Create; Guard is its own panel) ----
 function selectPanelTab(name, { openDrawer = false } = {}) {
-  const tab = PANEL_TABS.includes(name) ? name : 'guard';
+  const tab = PANEL_TABS.includes(name) ? name : 'browser';
   for (const b of document.querySelectorAll('.panel-tab')) {
     const active = b.dataset.panelTab === tab;
     b.classList.toggle('active', active);
@@ -71,7 +92,7 @@ function selectPanelTab(name, { openDrawer = false } = {}) {
 }
 for (const b of document.querySelectorAll('.panel-tab')) b.onclick = () => selectPanelTab(b.dataset.panelTab);
 for (const b of document.querySelectorAll('.nav-item')) b.onclick = () => { if (location.hash !== `#${b.dataset.view}`) location.hash = b.dataset.view; else show(b.dataset.view); };
-window.addEventListener('hashchange', () => show(viewFromHash(location.hash, { phone: narrow() })));
+window.addEventListener('hashchange', () => { if (hashIsGuard()) { openGuardPanel(); return; } show(viewFromHash(location.hash, { phone: narrow() })); });
 
 // ---- projects (sidebar + workspace) ----
 async function loadProjects() {
@@ -315,10 +336,9 @@ function renderFeed() {
     .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
   const critical = merged.filter((c) => c.severity === 'critical').length;
   $('#guard-count').hidden = critical === 0; $('#guard-count').textContent = String(critical);
-  // Workbench panel badge: unacknowledged findings keep the Guard tab noticeable
-  // now that the feed is one tab among five (BROWSE-001).
+  // Guard panel badge: unacknowledged findings keep the Guard panel noticeable.
   const unacked = (state.findings ?? []).filter((f) => !f.acked).length;
-  const tabBadge = $('#panel-guard-count');
+  const tabBadge = $('#guard-panel-count');
   if (tabBadge) { tabBadge.hidden = unacked === 0; tabBadge.textContent = String(unacked); }
   const feed = $('#feed');
   if (!merged.length) { feed.replaceChildren(empty('All clear', 'Alerts from your agents show up here.')); return; }
@@ -658,7 +678,7 @@ $('#browser-form').onsubmit = async (e) => {
   status.textContent = 'Checking…';
   try {
     const result = await post('/api/admin/browser/navigate', { url: $('#browser-url').value.trim() });
-    viewport.src = result.url;
+    viewport.src = toEmbeddableUrl(result.url);
     wrap.hidden = false;
     viewport.dataset.externalUrl = result.url;
     status.textContent = 'Loaded inside Helmian. Recorded in the audit trail.';
@@ -670,6 +690,26 @@ $('#browser-open-external').onclick = () => {
   const url = $('#browser-viewport').dataset.externalUrl;
   if (url) window.open(url, '_blank', 'noopener');
 };
+
+// YouTube watch pages refuse framing, but the /embed/ player is made for it.
+function toEmbeddableUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const shortId = (s) => (s && /^[\w-]{11}$/.test(s) ? s : null);
+    if (host === 'www.youtube.com' || host === 'youtube.com' || host === 'm.youtube.com') {
+      const id = shortId(u.searchParams.get('v'))
+        || (u.pathname.startsWith('/shorts/') ? shortId(u.pathname.split('/')[2]) : null)
+        || (u.pathname.startsWith('/embed/') ? shortId(u.pathname.split('/')[2]) : null);
+      if (id) return `https://www.youtube.com/embed/${id}`;
+    }
+    if (host === 'youtu.be') {
+      const id = shortId(u.pathname.split('/')[1]);
+      if (id) return `https://www.youtube.com/embed/${id}`;
+    }
+  } catch { /* fall through to the original URL */ }
+  return url;
+}
 
 // ---- workbench panel: Canvas (per-project scratchpad) ----
 async function loadCanvas() {
@@ -749,7 +789,7 @@ async function loadPreview() {
 $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 
 const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: loadAgents, release: loadRelease };
-const panelLoaders = { guard: null, browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
+const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- boot ----
 async function boot() {
