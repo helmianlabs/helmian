@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -271,7 +271,15 @@ async function loadSessions() {
 // a toggle enabling a full voice loop. Dictation inserts into #prompt; a
 // final transcript ending with "send it" submits the composer; agent
 // replies are spoken aloud. Toggle off stops everything.
-function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition, synthesis = globalThis.speechSynthesis, Utterance = globalThis.SpeechSynthesisUtterance } = {}) {
+//
+// TTS: Kokoro (fully local) is the primary engine; the ~300MB model
+// lazy-loads on the first spoken reply via the import map in index.html.
+// speechSynthesis is the automatic fallback.
+// Default Kokoro voice preset (a voice setting UI comes later).
+const KOKORO_VOICE = 'af_heart';
+const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+const KOKORO_SAMPLE_RATE = 24000;
+function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition, synthesis = globalThis.speechSynthesis, Utterance = globalThis.SpeechSynthesisUtterance, kokoroLoader = null, makeAudioContext = null } = {}) {
   const supported = typeof Recognition === 'function';
   const canSpeak = typeof synthesis?.speak === 'function' && typeof Utterance === 'function';
   let recognition = null;
@@ -569,7 +577,14 @@ async function loadLog() {
     const lines = logLines(await api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(state.channelId)}`), state.actor?.subject);
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     if (!lines.length) { log.replaceChildren(sys('channel connected · say hello below')); return; }
-    log.replaceChildren(...lines.map((l) => { const d = el('div', 'line'); d.append(el('span', 'ts', l.ts ? `[${l.ts}] ` : ''), el('span', l.mine ? 'me' : 'who', `${l.who}> `), document.createTextNode(l.text)); return d; }));
+    log.replaceChildren(...lines.map((l) => {
+      const d = el('div', 'line');
+      // Bridge replies get the Maestro name plus the user's chosen Maestro icon, if any.
+      const icon = l.bridge ? agentIconFor(BRIDGE_DISPLAY_NAME) : null;
+      const whoText = icon ? `${icon} ${l.who}> ` : `${l.who}> `;
+      d.append(el('span', 'ts', l.ts ? `[${l.ts}] ` : ''), el('span', l.mine ? 'me' : 'who', whoText), document.createTextNode(l.text));
+      return d;
+    }));
     for (const l of lines) {
       if (!l.id || seenMessageIds.has(l.id)) continue;
       seenMessageIds.add(l.id);
