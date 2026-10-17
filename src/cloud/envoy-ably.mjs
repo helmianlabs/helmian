@@ -12,6 +12,7 @@
 // uses). Everything no-ops gracefully when the key is unset.
 
 import { createHmac, randomBytes } from 'node:crypto';
+import { handleRunnerPresenceRoute } from './runner-presence.mjs';
 
 export const ENVOY_ABLY_TOKEN_PATH = '/api/admin/envoy/ably-token';
 export const ENVOY_ABLY_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 min; the bridge client auto-renews
@@ -133,8 +134,10 @@ export function createBridgeTokenRequest({
 }
 
 // Route delegate: POST /api/admin/envoy/ably-token (device-token auth via
-// the existing activeTenantActor, same as the envoy paths). Returns false
-// when the request is not ours.
+// the existing activeTenantActor, same as the envoy paths). Also delegates
+// /api/admin/envoy/runner/presence to runner-presence.mjs: live-admin.mjs is
+// frozen at the push size limit, so new envoy sub-routes hang off this hook.
+// Returns false when the request is not ours.
 export async function handleEnvoyAblyRoute({
   request,
   response,
@@ -145,6 +148,7 @@ export async function handleEnvoyAblyRoute({
   readJson,
   ablyKey = process.env.ABLY_API_KEY,
 } = {}) {
+  if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (request?.method !== 'POST' || requestUrl?.pathname !== ENVOY_ABLY_TOKEN_PATH) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
   try {
