@@ -400,6 +400,17 @@ function insertDictation(text) {
   box.oninput();
   box.focus();
 }
+// Second net for the "send it" command: after every insert, check whether the
+// composer's full text ends with "send it" (covers words split across turns
+// or chunks the turn-level matcher never saw as one phrase).
+function checkComposerForSendCommand() {
+  const box = $('#prompt');
+  const cleaned = box.value.trim().replace(/[.!?…]+$/, '');
+  if (!/send it$/i.test(cleaned)) return false;
+  box.value = cleaned.slice(0, -'send it'.length).trim();
+  box.oninput();
+  return true;
+}
 function updateVoiceChips() {
   for (const [chip, mode] of [[dictateChip, 'dictate'], [voiceChatChip, 'voice']]) {
     if (!chip) continue;
@@ -416,7 +427,10 @@ function toggleVoiceChip(mode) {
     if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy(mode)); store.set('voicePrivacySeen', true); }
     voice.setVoiceMode(true, {
       mode,
-      onTranscript: insertDictation,
+      onTranscript: (text) => {
+        insertDictation(text);
+        if (checkComposerForSendCommand() && $('#prompt').value.trim()) $('#composer').requestSubmit();
+      },
       onSubmit: (text) => { if (text) insertDictation(text); if ($('#prompt').value.trim()) $('#composer').requestSubmit(); },
       onState: updateVoiceChips,
       onError: (msg) => { toast(msg); updateVoiceChips(); },
