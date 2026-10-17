@@ -345,49 +345,182 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       } catch {}
     });
   }
-  // TTS engine seam: the controller only calls tts.speak / tts.cancel.
-  // v1 is the browser's speechSynthesis; the Kokoro engine replaces these
-  // two functions when it lands (browser WebGPU build or runner endpoint).
-  //
+  // ---- Legacy speechSynthesis engine (fallback) ----
   // Long replies are chunked: Chrome's speechSynthesis truncates long
   // utterances, so a reply goes out as sentence-sized pieces chained via
   // onend. A new reply clears the queue; toggle-off cancels everything.
-  const ttsQueue = [];
-  let ttsSpeaking = false;
-  function pumpSpeech() {
-    if (ttsSpeaking || ttsQueue.length === 0 || !canSpeak) return;
-    const utter = new Utterance(ttsQueue.shift());
-    ttsSpeaking = true;
-    utter.onend = () => { ttsSpeaking = false; pumpSpeech(); };
-    utter.onerror = () => { ttsSpeaking = false; pumpSpeech(); };
+  const synthQueue = [];
+  let synthSpeaking = false;
+  function pumpSynth() {
+    if (synthSpeaking || synthQueue.length === 0 || !canSpeak) return;
+    const utter = new Utterance(synthQueue.shift());
+    synthSpeaking = true;
+    utter.onend = () => { synthSpeaking = false; pumpSynth(); };
+    utter.onerror = () => { synthSpeaking = false; pumpSynth(); };
     try { synthesis.speak(utter); }
-    catch { ttsSpeaking = false; }
+    catch { synthSpeaking = false; }
   }
-  const tts = {
-    speak(text) {
-      if (!canSpeak) return false;
-      const clean = stripSpeechMarkup(text);
-      if (!clean) return false;
+  const synthEngine = {
+    // Speak pre-chunked text. interrupt=false appends without silencing
+    // what is playing (used when Kokoro hands a reply over mid-stream).
+    speakChunks(chunks, { interrupt = true } = {}) {
+      if (!canSpeak || !chunks.length) return false;
       let wasSpeaking = false;
-      try { wasSpeaking = !!synthesis.speaking; } catch {}
-      try { synthesis.cancel(); } catch {}
-      ttsQueue.length = 0;
-      ttsSpeaking = false;
-      ttsQueue.push(...chunkForSpeech(clean));
+      if (interrupt) {
+        try { wasSpeaking = !!synthesis.speaking; } catch {}
+        try { synthesis.cancel(); } catch {}
+        synthQueue.length = 0;
+        synthSpeaking = false;
+      }
+      synthQueue.push(...chunks);
       // Chrome quirk: cancel() takes effect asynchronously, so a speak()
       // issued in the same tick can be swallowed. Only delay when we actually
       // interrupted playing audio; the common case stays synchronous.
-      if (wasSpeaking) setTimeout(pumpSpeech, 150);
-      else pumpSpeech();
+      if (interrupt && wasSpeaking) setTimeout(pumpSynth, 150);
+      else pumpSynth();
       return true;
     },
     cancel() {
-      ttsQueue.length = 0;
-      ttsSpeaking = false;
+      synthQueue.length = 0;
+      synthSpeaking = false;
       if (!canSpeak) return;
       try { synthesis.cancel(); } catch {}
     },
   };
+
+  // ---- Kokoro engine (primary where Web Audio exists) ----
+  let kokoro = null;          // loaded KokoroTTS instance
+  let kokoroFailed = false;   // a Kokoro failure poisons it for this page session
+  let playToken = 0;          // cancel() bumps it; late audio is ignored
+  let activeSource = null;    // currently playing AudioBufferSourceNode
+  let audioCtx = null;
+  const kokoroQueue = [];     // [{ text, token }]
+  let kokoroPlaying = false;
+
+  function canTryKokoro() {
+    if (kokoroFailed) return false;
+    if (kokoro) return true;
+    if (kokoroLoader) return true; // injected (tests) -> environment is faked too
+    try {
+      const AC = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+      return typeof AC === 'function';
+    } catch { return false; }
+  }
+
+  function defaultKokoroLoader() {
+    // Resolves via the import map in index.html; the ~300MB model downloads
+    // once, on first use, and is cached by the browser afterwards.
+    return import('kokoro-js').then((mod) => mod.KokoroTTS.from_pretrained(KOKORO_MODEL, {
+      dtype: 'q8',
+      device: (typeof navigator !== 'undefined' && navigator.gpu) ? 'webgpu' : 'wasm',
+    }));
+  }
+
+  async function ensureKokoro() {
+    if (kokoro) return kokoro;
+    kokoro = await (kokoroLoader ?? defaultKokoroLoader)();
+    return kokoro;
+  }
+
+  function ensureAudioCtx() {
+    if (audioCtx) return audioCtx;
+    if (makeAudioContext) { audioCtx = makeAudioContext(); return audioCtx; }
+    const AC = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+    if (typeof AC !== 'function') throw new Error('Web Audio is not available');
+    audioCtx = new AC();
+    return audioCtx;
+  }
+
+  function playPcm(pcm, sampleRate) {
+    const ctx = ensureAudioCtx();
+    if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+      try { const r = ctx.resume(); if (r && typeof r.catch === 'function') r.catch(() => {}); } catch {}
+    }
+    const buf = ctx.createBuffer(1, pcm.length, sampleRate);
+    buf.getChannelData(0).set(pcm);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    return src;
+  }
+
+  // A Kokoro failure hands the failed chunk and everything still queued to
+  // speechSynthesis instead.
+  function kokoroFallback(failedItem) {
+    const chunks = [];
+    if (failedItem) chunks.push(failedItem.text);
+    for (const item of kokoroQueue.splice(0)) chunks.push(item.text);
+    if (chunks.length) synthEngine.speakChunks(chunks, { interrupt: false });
+  }
+
+  async function pumpKokoro() {
+    if (kokoroPlaying || kokoroQueue.length === 0) return;
+    const item = kokoroQueue.shift();
+    kokoroPlaying = true;
+    let out;
+    try {
+      const engine = await ensureKokoro();
+      out = await engine.generate(item.text, { voice: KOKORO_VOICE });
+    } catch {
+      kokoroPlaying = false;
+      kokoroFailed = true;
+      kokoroFallback(item);
+      return;
+    }
+    if (item.token !== playToken) { kokoroPlaying = false; pumpKokoro(); return; } // cancelled mid-generate
+    let src;
+    try {
+      const pcm = out?.audio ?? out?.data;
+      if (!pcm || !pcm.length) throw new Error('Kokoro returned no audio');
+      src = playPcm(pcm, out?.sampling_rate ?? KOKORO_SAMPLE_RATE);
+    } catch {
+      kokoroPlaying = false;
+      kokoroFailed = true;
+      kokoroFallback(item);
+      return;
+    }
+    activeSource = src;
+    src.onended = () => {
+      kokoroPlaying = false;
+      if (activeSource === src) activeSource = null;
+      pumpKokoro();
+    };
+    try { src.start(); }
+    catch { kokoroPlaying = false; if (activeSource === src) activeSource = null; pumpKokoro(); }
+  }
+
+  function kokoroCancel() {
+    playToken += 1; // orphan any in-flight generation
+    kokoroQueue.length = 0;
+    kokoroPlaying = false;
+    if (activeSource) {
+      try { activeSource.stop(); } catch {}
+      activeSource = null;
+    }
+  }
+
+  const tts = {
+    speak(text) {
+      const clean = stripSpeechMarkup(text);
+      if (!clean) return false;
+      const chunks = chunkForSpeech(clean);
+      if (!chunks.length) return false;
+      // A new reply replaces anything in progress, on either engine.
+      synthEngine.cancel();
+      kokoroCancel();
+      if (canTryKokoro()) {
+        for (const c of chunks) kokoroQueue.push({ text: c, token: playToken });
+        void pumpKokoro();
+        return true;
+      }
+      return synthEngine.speakChunks(chunks);
+    },
+    cancel() {
+      synthEngine.cancel();
+      kokoroCancel();
+    },
+  };
+
   function speak(text) {
     if (!voiceMode || voiceKind !== 'voice') return false; // dictate mode never speaks
     return tts.speak(text);
@@ -426,8 +559,8 @@ const voice = createVoiceController();
 const seenMessageIds = new Set();
 const voicePrivacy = (mode) => mode === 'voice'
   ? es(
-    '🎙️ Voice chat: talk, say "send it" to submit, and replies are spoken aloud. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.',
-    'Voice chat: talk, say "send it" to submit, and replies are spoken aloud. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.'
+    '🎙️ Voice chat: talk, say "send it" to submit, and replies are spoken aloud in a natural voice. First use downloads a one-time ~300MB voice model, use WiFi. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.',
+    'Voice chat: talk, say "send it" to submit, and replies are spoken aloud in a natural voice. First use downloads a one-time ~300MB voice model, use WiFi. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.'
   )
   : es(
     '🎙️ Dictate: talk, text lands in the composer, say "send it" to submit. Replies are not spoken aloud — you read them. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Dictate again to turn it off.',
