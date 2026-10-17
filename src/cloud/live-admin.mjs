@@ -135,6 +135,8 @@ export const LIVE_ADMIN_PROVIDER_CONNECTIONS_PATH = '/api/admin/provider-connect
 export const LIVE_ADMIN_GEMINI_OAUTH_START_PATH = '/api/admin/provider-oauth/gemini/start';
 export const LIVE_ADMIN_GEMINI_OAUTH_CALLBACK_PATH = '/api/admin/provider-oauth/gemini/callback';
 export const LIVE_ADMIN_WORKSPACE_PROJECTS_PATH = '/api/admin/workspace/projects';
+export const LIVE_ADMIN_WORKSPACE_ACTIVE_PROJECT_PATH = '/api/admin/workspace/active-project';
+export const LIVE_ADMIN_WORKSPACE_REPO_BINDINGS_PATH = '/api/admin/workspace/repo-bindings';
 export const LIVE_ADMIN_CONSOLE_COMMANDS_PATH = '/api/admin/workspace/console/commands';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
@@ -1129,6 +1131,50 @@ export async function createLiveHelmianCloudAdminHandler({
         send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.save(actor, body) }));
       } catch (error) {
         send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_PROJECTS_ADMIN_REQUIRED' : 'WORKSPACE_PROJECTS_INVALID' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_ACTIVE_PROJECT_PATH) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.getActiveProject(actor) }));
+      } catch (error) {
+        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_ACTIVE_PROJECT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'WORKSPACE_ACTIVE_PROJECT_INVALID' : 'WORKSPACE_ACTIVE_PROJECT_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_ACTIVE_PROJECT_PATH) {
+      try {
+        const actor = await activeTenantActor(request);
+        const body = await readJsonObject(request);
+        exactKeys(body, ['projectKey']);
+        send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.setActiveProject(actor, body) }));
+      } catch (error) {
+        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 404 ? 404 : error?.status === 409 ? 409 : error?.status === 503 ? 503 : 400;
+        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'WORKSPACE_ACTIVE_PROJECT_MEMBERSHIP_REQUIRED' : status === 404 ? 'WORKSPACE_ACTIVE_PROJECT_NOT_FOUND' : status === 409 ? 'WORKSPACE_ACTIVE_PROJECT_NOT_ACTIVE' : status === 503 ? 'WORKSPACE_ACTIVE_PROJECT_UNAVAILABLE' : 'WORKSPACE_ACTIVE_PROJECT_INVALID' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_REPO_BINDINGS_PATH) {
+      try {
+        if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
+        const actor = await activeTenantActor(request);
+        send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.listRepoBindings(actor) }));
+      } catch (error) {
+        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_REPO_BINDINGS_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'WORKSPACE_REPO_BINDINGS_INVALID' : 'WORKSPACE_REPO_BINDINGS_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_REPO_BINDINGS_PATH) {
+      try {
+        const actor = await activeActor(request);
+        const body = await readJsonObject(request);
+        exactKeys(body, ['installationId', 'projectKey', 'repoName', 'repoOwner']);
+        send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.bindRepo(actor, body) }));
+      } catch (error) {
+        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 404 ? 404 : error?.status === 503 ? 503 : 400;
+        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'WORKSPACE_REPO_BINDINGS_ADMIN_REQUIRED' : status === 404 ? 'WORKSPACE_REPO_BINDINGS_PROJECT_NOT_FOUND' : status === 503 ? 'WORKSPACE_REPO_BINDINGS_UNAVAILABLE' : 'WORKSPACE_REPO_BINDINGS_INVALID' }));
       }
       return true;
     }
