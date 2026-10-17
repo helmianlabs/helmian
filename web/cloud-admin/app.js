@@ -205,6 +205,7 @@ const workspacePresetFocus = document.querySelector('#workspace-preset-focus');
 const workspacePresetFull = document.querySelector('#workspace-preset-full');
 const workspacePanelOrder = document.querySelector('#workspace-panel-order');
 const workspaceDensity = document.querySelector('#workspace-density');
+const workspaceEmojiMode = document.querySelector('#workspace-emoji-mode');
 const workspaceDefaultChannel = document.querySelector('#workspace-default-channel');
 const workspaceRoleDefaultControls = document.querySelector('#workspace-role-default-controls');
 const workspaceRoleDefaultStatus = document.querySelector('#workspace-role-default-status');
@@ -646,8 +647,10 @@ function renderWorkspaceLayout(body) {
   for (const checkbox of document.querySelectorAll('[data-layout-shelf]')) checkbox.checked = model.layout.visibleShelves?.includes(checkbox.dataset.layoutShelf) ?? false;
   workspacePanelOrder.value = (model.layout.panelOrder ?? []).join(',');
   workspaceDensity.value = model.layout.density ?? 'comfortable';
+  if (workspaceEmojiMode) workspaceEmojiMode.value = model.layout.emojiMode ?? 'playful';
   workspaceDefaultChannel.value = model.layout.defaultEnvoyChannelId ?? '';
   applyWorkspaceLayout(model.layout);
+  applyAdminEmojiMode(model.layout.emojiMode ?? 'playful');
   workspaceLayoutStatus.textContent = model.statusLabel;
 }
 
@@ -806,7 +809,26 @@ async function loadWorkspaceRoleDefaults() {
 }
 
 function layoutInput() {
-  return { visibleShelves: [...document.querySelectorAll('[data-layout-shelf]:checked')].map((item) => item.dataset.layoutShelf), panelOrder: workspacePanelOrder.value.split(',').map((item) => item.trim()).filter(Boolean), density: workspaceDensity.value, defaultEnvoyChannelId: workspaceDefaultChannel.value || null };
+  return { visibleShelves: [...document.querySelectorAll('[data-layout-shelf]:checked')].map((item) => item.dataset.layoutShelf), panelOrder: workspacePanelOrder.value.split(',').map((item) => item.trim()).filter(Boolean), density: workspaceDensity.value, emojiMode: workspaceEmojiMode?.value ?? 'playful', defaultEnvoyChannelId: workspaceDefaultChannel.value || null };
+}
+
+// Emoji style for /admin nav labels. Playful is the shipped look; plain
+// strips emojis. Governance and Audit / Analysis are sober in both modes.
+const ADMIN_NAV_TITLES = Object.freeze({
+  overview: ['📊 Overview', 'Overview'], chat: ['💬 Chat', 'Chat'], projects: ['🗂️ Projects', 'Projects'],
+  approvals: ['✅ Approvals', 'Approvals'], console: ['💻 Console', 'Console'], cora: ['🧠 Cora', 'Cora'],
+  prepare: ['📝 Prepare', 'Prepare'], artifact: ['✨ Artifact Studio', 'Artifact Studio'], connectors: ['🔌 Connect', 'Connect'],
+  agents: ['🤖 Agents', 'Agents'], evidence: ['📦 Evidence', 'Evidence'], readiness: ['🩺 Readiness', 'Readiness'],
+  'desktop-parity': ['🖥️ Desktop parity', 'Desktop parity'], capabilities: ['🧰 Cora capabilities', 'Cora capabilities'],
+  people: ['👥 People & permissions', 'People & permissions'], settings: ['⚙️ Settings', 'Settings'],
+  release: ['🚀 Release', 'Release'], admin: ['🔑 Admin', 'Admin'],
+});
+function applyAdminEmojiMode(mode) {
+  const plain = mode === 'plain';
+  for (const btn of document.querySelectorAll('[data-nav-key]')) {
+    const pair = ADMIN_NAV_TITLES[btn.dataset.navKey];
+    if (pair) btn.textContent = plain ? pair[1] : pair[0];
+  }
 }
 
 async function loadEnvoyMessages() {
