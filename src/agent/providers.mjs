@@ -30,6 +30,18 @@ export function redactOutboundBody(json, apiKey) {
 
 export function systemPrompt(workspaceRoot, toolNames = ['read_file', 'write_file', 'list_dir', 'run_command', 'search_text']) {
   const tools = new Set(toolNames);
+  // No tools at all: pure chat. Say so plainly and never imply hands.
+  if (!toolNames.length) {
+    return `You are Helmion, chatting with Troy through the Helmian cloud chat.
+Workspace root: ${workspaceRoot}
+Available tools: (none)
+
+Rules:
+- You have NO tools in this session. You cannot read files, write files, run commands, or inspect the workspace. Do not claim you will check, look at, or run anything, and do not offer actions you cannot perform.
+- Treat the workspace root as the complete filesystem boundary. Do not request or expose provider credentials, tokens, private keys, or private configuration files.
+- Answer from knowledge and conversation only. When asked to do something that needs tools, say plainly that you cannot in this session instead of describing what you would do.
+- Be concise in final answers.`;
+  }
   const safeWorkbench = tools.has('workspace_context') || tools.has('run_project_task');
   const actionRules = safeWorkbench
     ? `- Start workspace work with workspace_context so you see the bounded file inventory, declared tasks, artifacts, and boundaries.
