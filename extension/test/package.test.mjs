@@ -95,12 +95,18 @@ test('it asks for exactly ONE permission, and that one is storage', () => {
   // that vanishes when Chrome evicts the service worker is not evidence.
   //
   // ONE permission. Not "storage plus downloads" — the export uses a blob URL
-  // and an anchor, which needs none. Not host permissions. Not unlimitedStorage
-  // — the ledger caps itself instead. Every extra permission asked for is trust
-  // spent, and this test is what stops the list quietly growing.
+  // and an anchor, which needs none. Not unlimitedStorage — the ledger caps
+  // itself instead. Every extra permission asked for is trust spent, and this
+  // test is what stops the list quietly growing.
   assert.deepEqual(manifest.permissions, ['storage']);
-  assert.equal(manifest.host_permissions, undefined);
   assert.equal(manifest.optional_permissions, undefined);
+  // Host permissions: exactly one deliberate exception, added per explicit
+  // instruction for the OPT-IN Guard findings upload (background/upload.js).
+  // It is disabled by default and does nothing without the user's explicit
+  // opt-in plus a device token. It needs Troy's manual browser testing before
+  // it is treated as verified. This assertion pins the exception to exactly
+  // helmian.cloud and nothing broader — it must never quietly grow.
+  assert.deepEqual(manifest.host_permissions, ['https://helmian.cloud/*']);
 });
 
 test('the only thing that uses the storage permission is the ledger', async () => {
@@ -184,6 +190,20 @@ function isShippedFile(file) {
   return !segments.includes('test') && !segments.includes('test-support');
 }
 
+// The ONE deliberate exception to the no-network rule. background/upload.js is
+// the opt-in cloud upload for Guard findings: disabled by default, only runs
+// when the user enables it in the popup settings AND provides a device token.
+// Added per explicit instruction; needs Troy's manual browser testing before it
+// is treated as verified. Everything else in the extension must stay
+// network-free, and this allowlist must never grow without the same level of
+// deliberate review.
+const NETWORK_ALLOWLIST = ['background/upload.js'];
+
+function isAllowlisted(file) {
+  const relative = path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/');
+  return NETWORK_ALLOWLIST.includes(relative);
+}
+
 test('nothing in the extension calls out to the network', async () => {
   // Phase 1 is a local regular expression. If any of this ever starts making
   // requests, that is a decision somebody should have to make on purpose.
@@ -192,6 +212,7 @@ test('nothing in the extension calls out to the network', async () => {
   assert.ok(shipped.length > 0, 'the file walk found nothing to check, so this test proves nothing');
 
   for (const file of shipped) {
+    if (isAllowlisted(file)) continue;
     const source = await readFile(file, 'utf8');
     for (const pattern of NETWORK_PATTERNS) {
       assert.ok(
@@ -199,6 +220,15 @@ test('nothing in the extension calls out to the network', async () => {
         `${path.relative(EXTENSION_ROOT, file)} matches ${pattern} — phase 1 reaches the network nowhere`,
       );
     }
+  }
+});
+
+test('the network allowlist holds exactly the opt-in upload module', async () => {
+  assert.deepEqual(NETWORK_ALLOWLIST, ['background/upload.js']);
+  const files = await listJsFiles(EXTENSION_ROOT);
+  const shipped = files.filter(isShippedFile).map((file) => path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/'));
+  for (const allowed of NETWORK_ALLOWLIST) {
+    assert.ok(shipped.includes(allowed), `${allowed} is allowlisted but not a shipped file`);
   }
 });
 

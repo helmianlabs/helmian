@@ -6,6 +6,9 @@
   "permissions": [
     "storage"
   ],
+  "host_permissions": [
+    "https://helmian.cloud/*"
+  ],
   "background": {
     "service_worker": "background/worker.js",
     "type": "module"

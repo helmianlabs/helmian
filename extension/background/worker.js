@@ -26,6 +26,11 @@
 import { scanBlocks } from './scan.js';
 import { scanProse } from './claims.js';
 import {
+  getUploadSettings,
+  setUploadSettings,
+  uploadNewFindings,
+} from './upload.js';
+import {
   appendEntry,
   chromeStorage,
   clearLedger,
@@ -94,6 +99,8 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:ledger',
   'helmion:ledger-export',
   'helmion:ledger-clear',
+  'helmion:guard-upload',
+  'helmion:guard-upload-settings',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -169,6 +176,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (type === 'helmion:ledger-clear') {
       clearLedger(ledger)
         .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // ─── OPT-IN CLOUD UPLOAD ────────────────────────────────────────────────
+    //
+    // Disabled by default. The popup settings UI is the only caller. See
+    // background/upload.js for the full explanation and the warning that this
+    // needs Troy's manual browser testing.
+    if (type === 'helmion:guard-upload-settings') {
+      const payload = message.settings || {};
+      const isWrite = Object.prototype.hasOwnProperty.call(payload, 'enabled')
+        || Object.prototype.hasOwnProperty.call(payload, 'deviceToken');
+      const done = isWrite
+        ? setUploadSettings(ledger, { enabled: payload.enabled, deviceToken: payload.deviceToken })
+        : getUploadSettings(ledger);
+      done
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:guard-upload') {
+      getUploadSettings(ledger)
+        .then((settings) => {
+          if (!settings.enabled) { sendResponse({ ok: true, skipped: 'not-enabled' }); return; }
+          return uploadNewFindings(ledger).then((result) => sendResponse({ ok: true, ...result }));
+        })
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }

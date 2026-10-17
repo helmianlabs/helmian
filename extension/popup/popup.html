@@ -8,7 +8,7 @@
 <body>
   <header>
     <h1>Helmion Guard</h1>
-    <p id="tagline">Every flag it raises is logged on this machine, and nowhere else.</p>
+    <p id="tagline">Every flag it raises is logged on this machine. Cloud upload is opt-in.</p>
   </header>
 
   <section id="guardStatus" class="guard-status" aria-live="polite">
@@ -37,6 +37,18 @@
     <button id="clearBtn" type="button" class="danger-btn">Clear log</button>
   </div>
 
+  <section id="upload" aria-live="polite">
+    <h2>Cloud upload (opt-in)</h2>
+    <p class="muted">Send new findings to your Helmian cloud Guard ledger. Off by default. Needs a device token from a paired desktop.</p>
+    <label class="row"><input id="uploadEnabled" type="checkbox"> Upload new findings to Helmian cloud</label>
+    <label class="row">Device token <input id="uploadToken" type="password" autocomplete="off" placeholder="Paste device token"></label>
+    <div class="actions">
+      <button id="uploadSave" type="button">Save upload settings</button>
+      <button id="uploadNow" type="button">Upload now</button>
+    </div>
+    <p id="uploadStatus" class="muted" role="status"></p>
+  </section>
+
   <p id="confirm" class="confirm" hidden>
     This deletes every logged flag on this machine and cannot be undone.
     <button id="confirmClear" type="button" class="danger-btn">Yes, delete them</button>
@@ -49,9 +61,9 @@
 
   <footer>
     <p class="muted">
-      The log stays in this browser profile. Nothing is uploaded — this extension
-      makes no network calls at all, and a test in its own suite fails the build
-      if that ever changes. The export file contains excerpts of your
+      The log stays in this browser profile unless you enable cloud upload
+      above. Upload is opt-in and off by default; when enabled, new findings
+      are sent to your Helmian cloud. The export file contains excerpts of your
       conversations; read it before you share it.
     </p>
   </footer>
