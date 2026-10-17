@@ -17,6 +17,7 @@ function makeFakes() {
   const synthesis = {
     speak(u) { spoken.push(u); },
     cancel() { cancelled++; },
+    speaking: false,
   };
   class FakeUtterance { constructor(text) { this.text = text; } }
   return { instances, FakeRecognition, spoken, synthesis, FakeUtterance, get cancelled() { return cancelled; } };
@@ -244,4 +245,15 @@ test('mode defaults to dictate', () => {
   const f = makeFakes();
   const { v } = voiceOn(f);
   assert.equal(v.mode, 'dictate');
+});
+
+test('speak() delays when interrupting playing audio (Chrome cancel quirk)', async () => {
+  const f = makeFakes();
+  f.synthesis.speaking = true;
+  const { v } = voiceOn(f, { mode: 'voice' });
+  assert.equal(v.speak('hello'), true);
+  assert.equal(f.spoken.length, 0); // delayed, not swallowed
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(f.spoken.length, 1);
+  assert.equal(f.spoken[0].text, 'hello');
 });
