@@ -33,7 +33,9 @@ function fakePool() {
       if (q.startsWith('select id, slug, title, kind, created_by_subject')) return { rowCount: channels.length, rows: channels };
       if (q.startsWith('select id from helmion.envoy_channels')) return channels.some((row) => row.id === values[1]) ? { rowCount: 1, rows: [{ id: values[1] }] } : { rowCount: 0, rows: [] };
       if (q.startsWith('insert into helmion.envoy_channels')) {
-        const row = { id: 'channel-2', slug: values[1], title: values[2], kind: values[3], created_by_subject: values[4], created_at: 'now' };
+        const existing = channels.find((row) => row.slug === values[1]);
+        if (existing) return { rowCount: 1, rows: [{ ...existing, inserted: false }] };
+        const row = { id: `channel-${channels.length + 1}`, slug: values[1], title: values[2], kind: values[3], created_by_subject: values[4], created_at: 'now', inserted: true };
         channels.push(row); return { rowCount: 1, rows: [row] };
       }
       if (q.startsWith('insert into helmion.envoy_messages')) {
@@ -45,6 +47,9 @@ function fakePool() {
       if (q.includes(' from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and id > $3')) {
         const rows = messages.filter((row) => row.tenant_id === values[0] && row.channel_id === values[1] && Number(row.id) > Number(values[2]));
         return { rowCount: rows.length, rows };
+      }
+      if (q.startsWith('insert into helmion.audit_events')) {
+        return { rowCount: 1, rows: [{ id: 'audit-1' }] };
       }
       if (q.startsWith('select id, channel_id, author_subject, author_kind, body, idempotency_key')) {
         const rows = messages.filter((row) => row.tenant_id === values[0] && row.channel_id === values[1]
@@ -88,6 +93,20 @@ test('authenticated Envoy route resolves organization from membership and replay
   assert.deepEqual((await incremental.json()).messages, []);
   const invalidCursor = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=${channelId}&after_id=not-a-cursor`, { headers });
   assert.equal(invalidCursor.status, 400);
+});
+
+test('Envoy channel creation reports inserted so the UI can distinguish duplicates', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' };
+  const payload = JSON.stringify({ slug: 'dup-test', title: 'Dup Test', kind: 'team' });
+  const first = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_CHANNELS_PATH}`, { method: 'POST', headers, body: payload });
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).inserted, true);
+  const second = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_CHANNELS_PATH}`, { method: 'POST', headers, body: payload });
+  const secondBody = await second.json();
+  assert.equal(second.status, 200);
+  assert.equal(secondBody.inserted, false);
+  assert.equal(secondBody.channel.slug, 'dup-test');
 });
 
 test('Envoy rejects tenant selectors instead of allowing body or URL cross-organization injection', async (t) => {
