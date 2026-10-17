@@ -63,10 +63,10 @@ const PARITY = Object.freeze([
     id: 'connectors',
     desktop: 'Connectors shelf for Discord, GitHub and Slack',
     desktopEvidence: 'desktop/Helmion.Desktop/MainWindow.xaml:2178-2182; desktop/Helmion.Desktop/MainWindow.xaml:3304-3324',
-    cloud: 'Connector registration metadata and readiness',
-    cloudEvidence: 'web/cloud-admin/index.html:227-232; src/cloud/live-admin.mjs:790-800',
+    cloud: 'Connector registration metadata, outbound Discord/Slack delivery via durable outbox, GitHub repo verification on bind',
+    cloudEvidence: 'web/cloud-admin/index.html:291-310; src/cora/connector-outbound-worker.mjs; src/cloud/connector-outbound.mjs; sql/052_connector_outbound_outbox.sql',
     status: 'partial',
-    missing: 'Hosted registration does not itself establish OAuth, secrets, or outbound delivery.',
+    missing: 'GitHub OAuth and repository reads are still not wired; outbound delivery needs webhook URLs in server configuration. The desktop reads from Discord/Slack but never sends, so outbound delivery is a new cloud capability, not parity.',
   },
   {
     id: 'agents',

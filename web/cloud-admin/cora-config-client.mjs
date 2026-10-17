@@ -68,6 +68,7 @@ export function createCoraConfigClient({ fetchImpl = fetch } = {}) {
     decideApproval(input) { return requestJson(fetchImpl, '/api/admin/cora/approvals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     readConnectors() { return requestJson(fetchImpl, '/api/admin/cora/connectors'); },
     saveConnector(input) { return requestJson(fetchImpl, '/api/admin/cora/connectors', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
+    sendConnectorTestMessage(provider) { return requestJson(fetchImpl, '/api/admin/connectors/outbox/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider }) }); },
     readProviderConnections() { return requestJson(fetchImpl, '/api/admin/provider-connections'); },
     saveProviderConnection(input) { return requestJson(fetchImpl, '/api/admin/provider-connections', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); },
     readOrganizationMemberships() { return requestJson(fetchImpl, '/api/admin/organization/memberships'); },

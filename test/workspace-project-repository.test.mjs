@@ -120,16 +120,32 @@ test('active project rejects archived projects', async () => {
 
 test('repo binding create/list round-trips and rejects non-admins', async () => {
   const fake = richPool({ projects: [proj('helmian-cloud')] });
-  const repo = createWorkspaceProjectRepository(fake.pool);
+  const verifiedRepo = async () => ({ verified: true, note: 'repository exists' });
+  const repo = createWorkspaceProjectRepository(fake.pool, { verifyRepo: verifiedRepo });
   const bound = await repo.bindRepo(actor, { projectKey: 'helmian-cloud', repoOwner: 'helmianlabs', repoName: 'helmian' });
   assert.equal(bound.durable, true);
   assert.equal(bound.repoOwner, 'helmianlabs');
+  assert.equal(bound.verified, true);
   const listed = await repo.listRepoBindings(actor);
   assert.equal(listed.bindings.length, 1);
   assert.equal(listed.bindings[0].repoName, 'helmian');
   await assert.rejects(() => repo.bindRepo({ ...actor, role: 'member' }, { projectKey: 'helmian-cloud', repoOwner: 'helmianlabs', repoName: 'helmian' }), (e) => e.status === 403);
   await assert.rejects(() => repo.bindRepo(actor, { projectKey: 'helmian-cloud', repoOwner: 'not valid!', repoName: 'helmian' }), (e) => e.status === 400);
   await assert.rejects(() => repo.bindRepo(actor, { projectKey: 'missing', repoOwner: 'helmianlabs', repoName: 'helmian' }), (e) => e.status === 404);
+});
+
+test('repo binding rejects unknown repos and degrades when GitHub is unreachable', async () => {
+  const fake = richPool({ projects: [proj('helmian-cloud')] });
+  const notFound = async () => ({ verified: false, note: 'repository not found', notFound: true });
+  await assert.rejects(
+    () => createWorkspaceProjectRepository(fake.pool, { verifyRepo: notFound }).bindRepo(actor, { projectKey: 'helmian-cloud', repoOwner: 'nope', repoName: 'nope' }),
+    (e) => e.status === 400 && /not found/i.test(e.message),
+  );
+  const degraded = async () => ({ verified: false, note: 'github unreachable; bind accepted without verification' });
+  const accepted = await createWorkspaceProjectRepository(fake.pool, { verifyRepo: degraded }).bindRepo(actor, { projectKey: 'helmian-cloud', repoOwner: 'helmianlabs', repoName: 'helmian' });
+  assert.equal(accepted.durable, true);
+  assert.equal(accepted.verified, false);
+  assert.match(accepted.verificationNote, /without verification/);
 });
 
 test('sourceInventory is bound/unbound/mirror from real state', async () => {
