@@ -95,10 +95,10 @@
     <aside class="rail" aria-label="Helmian navigation">
       <div class="brand">HELMian</div>
       <nav id="workspace-nav" aria-label="Workspace sections">
-        <button class="nav-item" type="button" data-target="section-overview">📊 Overview</button>
-        <button class="nav-item active" type="button" data-target="section-chat" aria-current="page">💬 Chat</button>
-        <button class="nav-item" type="button" data-target="section-projects">🗂️ Projects</button>
-        <button class="nav-item" type="button" data-target="section-approvals">✅ Approvals</button>
+        <button class="nav-item" type="button" data-nav-key="overview" data-target="section-overview">📊 Overview</button>
+        <button class="nav-item active" type="button" data-nav-key="chat" data-target="section-chat" aria-current="page">💬 Chat</button>
+        <button class="nav-item" type="button" data-nav-key="projects" data-target="section-projects">🗂️ Projects</button>
+        <button class="nav-item" type="button" data-nav-key="approvals" data-target="section-approvals">✅ Approvals</button>
         <button class="nav-item" type="button" data-target="section-advanced">Advanced</button>
       </nav>
       <p id="workspace-nav-hint" class="preview"></p>
@@ -144,6 +144,7 @@
           </div></fieldset>
           <label>Panel order <input id="workspace-panel-order" maxlength="80" aria-describedby="workspace-layout-status" placeholder="chat,cora,prepare,artifact,governance"></label>
           <label>Density <select id="workspace-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+          <label>Emoji style <select id="workspace-emoji-mode"><option value="playful">Playful</option><option value="plain">Plain</option></select></label>
           <label>Default Envoy channel <select id="workspace-default-channel"><option value="">No default channel</option></select></label>
           <div class="config-controls"><button id="workspace-layout-save" type="button">Save layout</button><button id="workspace-layout-reset" class="secondary" type="button">Reset to role default</button><button id="workspace-settings-close" class="secondary" type="button">Close</button></div>
           <div class="config-controls" aria-label="Workspace layout presets"><span class="note">Quick layout:</span><button id="workspace-preset-operations" class="secondary" type="button">Operations</button><button id="workspace-preset-focus" class="secondary" type="button">Focus prepare</button><button id="workspace-preset-full" class="secondary" type="button">Show all</button></div>
@@ -170,22 +171,22 @@
         <details id="section-advanced" class="card advanced">
           <summary>Advanced</summary>
           <nav id="advanced-index" class="advanced-index" aria-label="Advanced sections">
-            <button class="nav-item" type="button" data-target="workspace-console">💻 Console</button>
-            <button class="nav-item" type="button" data-target="section-cora">🧠 Cora</button>
-            <button class="nav-item" type="button" data-target="section-prepare">📝 Prepare</button>
-            <button class="nav-item" type="button" data-target="section-artifact">✨ Artifact Studio</button>
-            <button class="nav-item" type="button" data-target="section-connectors">🔌 Connect</button>
-            <button class="nav-item" type="button" data-target="section-tasks">🤖 Agents</button>
+            <button class="nav-item" type="button" data-nav-key="console" data-target="workspace-console">💻 Console</button>
+            <button class="nav-item" type="button" data-nav-key="cora" data-target="section-cora">🧠 Cora</button>
+            <button class="nav-item" type="button" data-nav-key="prepare" data-target="section-prepare">📝 Prepare</button>
+            <button class="nav-item" type="button" data-nav-key="artifact" data-target="section-artifact">✨ Artifact Studio</button>
+            <button class="nav-item" type="button" data-nav-key="connectors" data-target="section-connectors">🔌 Connect</button>
+            <button class="nav-item" type="button" data-nav-key="agents" data-target="section-tasks">🤖 Agents</button>
             <button class="nav-item" type="button" data-target="section-governance">Governance</button>
             <button class="nav-item" type="button" data-target="section-audit">Audit / Analysis</button>
-            <button class="nav-item" type="button" data-target="section-evidence">📦 Evidence</button>
-            <button class="nav-item" type="button" data-target="section-readiness">🩺 Readiness</button>
-            <button class="nav-item" type="button" data-target="section-desktop-parity">🖥️ Desktop parity</button>
-            <button class="nav-item" type="button" data-target="section-capabilities">🧰 Cora capabilities</button>
-            <button class="nav-item" type="button" data-target="section-people">👥 People & permissions</button>
-            <button class="nav-item" type="button" data-target="section-settings">⚙️ Settings</button>
-            <button class="nav-item" type="button" data-target="section-release">🚀 Release</button>
-            <button class="nav-item" type="button" data-target="section-cora" data-admin-only hidden>🔑 Admin</button>
+            <button class="nav-item" type="button" data-nav-key="evidence" data-target="section-evidence">📦 Evidence</button>
+            <button class="nav-item" type="button" data-nav-key="readiness" data-target="section-readiness">🩺 Readiness</button>
+            <button class="nav-item" type="button" data-nav-key="desktop-parity" data-target="section-desktop-parity">🖥️ Desktop parity</button>
+            <button class="nav-item" type="button" data-nav-key="capabilities" data-target="section-capabilities">🧰 Cora capabilities</button>
+            <button class="nav-item" type="button" data-nav-key="people" data-target="section-people">👥 People & permissions</button>
+            <button class="nav-item" type="button" data-nav-key="settings" data-target="section-settings">⚙️ Settings</button>
+            <button class="nav-item" type="button" data-nav-key="release" data-target="section-release">🚀 Release</button>
+            <button class="nav-item" type="button" data-nav-key="admin" data-target="section-cora" data-admin-only hidden>🔑 Admin</button>
           </nav>
           <p class="preview">Organization workspace tools mirrored from the desktop app; external execution and browser automation are unavailable from the web. Project registration is tenant metadata only. It does not grant filesystem, source, worker, or provider execution access.</p>
         <section id="workspace-console" class="card" aria-labelledby="workspace-console-heading">
