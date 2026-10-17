@@ -211,7 +211,7 @@ function withAblyToken(cloud, { ok = true } = {}) {
   const json = (obj, good = true) => ({ ok: good, status: good ? 200 : 503, json: async () => obj });
   cloud.fetchImpl = async (url, opts = {}) => {
     const u = new URL(url);
-    if (u.pathname === '/api/admin/desktop/ably-token') {
+    if (u.pathname === '/api/admin/envoy/ably-token') {
       cloud.calls.push({ url, method: opts.method ?? 'GET', body: opts.body });
       if (!ok) return json({ valid: false, code: 'ENVOY_ABLY_NOT_CONFIGURED' }, false);
       return json({
@@ -323,5 +323,25 @@ test('bridge drops to polling when the Ably connection fails late', async (t) =>
   assert.equal(handle.transport, 'polling');
   const gets = cloud.calls.filter((c) => c.url.includes('/api/admin/envoy/messages?') && c.method === 'GET');
   assert.ok(gets.length >= 3, 'poll timer started after late failure');
+  await handle.stop();
+});
+
+test('bridge pairs from HELMION_BRIDGE_PAIRING_CODE when no promptCode is injected', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-envcode-'));
+  const cloud = makeFakeCloud();
+  const prev = process.env.HELMION_BRIDGE_PAIRING_CODE;
+  process.env.HELMION_BRIDGE_PAIRING_CODE = '  envcode9 ';
+  t.after(() => {
+    if (prev === undefined) delete process.env.HELMION_BRIDGE_PAIRING_CODE;
+    else process.env.HELMION_BRIDGE_PAIRING_CODE = prev;
+  });
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { promptCode: undefined }));
+  t.after(() => handle.stop());
+  assert.equal(handle.ok, true);
+  const exchangeCalls = cloud.calls.filter((c) => c.url.endsWith('/api/admin/desktop/link/exchange'));
+  assert.equal(exchangeCalls.length, 1);
+  assert.deepEqual(JSON.parse(exchangeCalls[0].body), { code: 'ENVCODE9' }, 'env code is trimmed and uppercased');
+  const saved = JSON.parse(await readFile(join(tmp, 'token.json'), 'utf8'));
+  assert.equal(saved.token, 'tok-1');
   await handle.stop();
 });
