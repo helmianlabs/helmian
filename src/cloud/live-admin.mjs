@@ -96,6 +96,7 @@ export const LIVE_APP_SESSION_STEPS_UPDATE_PATH = '/api/admin/app/sessions/steps
 export const LIVE_ADMIN_ENVOY_MESSAGES_PATH = '/api/admin/envoy/messages';
 export const LIVE_ADMIN_ENVOY_STREAM_PATH = '/api/admin/envoy/stream';
 export const LIVE_GUARD_BROWSER_EVENTS_PATH = '/api/guard/browser-events';
+export const LIVE_ARTIFACT_EXECUTION_RESULT_PATH = '/api/artifact-execution/result';
 export const LIVE_ADMIN_GUARD_FINDINGS_PATH = '/api/admin/guard/findings';
 export const LIVE_ADMIN_GUARD_ACKS_PATH = '/api/admin/guard/acks';
 export const LIVE_ADMIN_CORA_CONFIG_PATH = '/api/admin/cora/config';
@@ -920,6 +921,19 @@ export async function createLiveHelmianCloudAdminHandler({
         send(response, 200, JSON.stringify({ valid: true, ingested: results.length, results }));
       }
       catch (error) { send(response, error?.status === 403 ? 403 : error?.code === '42P01' ? 503 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GUARD_DEVICE_REQUIRED' : error?.code === '42P01' ? 'GUARD_MIGRATION_PENDING' : 'GUARD_FINDING_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ARTIFACT_EXECUTION_RESULT_PATH) {
+      try {
+        const desktop = await invites.desktopIdentity(bearerToken(request)).catch(() => null);
+        if (!desktop?.subject || !desktop?.tenantId) throw Object.assign(new Error('Device token required'), { status: 403 });
+        const body = await readJsonObject(request);
+        exactKeys(body, ['requestReceiptId', 'scriptContentHash', 'artifactDescriptor', 'completedAt']);
+        if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted');
+        const result = await artifactExecution.ingestResult({ tenantId: desktop.tenantId, subject: desktop.subject }, body);
+        send(response, 200, JSON.stringify({ valid: true, ...result }));
+      }
+      catch (error) { send(response, error?.status === 403 ? 403 : error?.status === 404 ? 404 : error?.status === 409 ? 409 : error?.code === '42P01' ? 503 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ARTIFACT_RESULT_DEVICE_REQUIRED' : error?.status === 404 ? 'ARTIFACT_RESULT_UNKNOWN_REQUEST' : error?.status === 409 ? 'ARTIFACT_RESULT_CONFLICT' : error?.code === '42P01' ? 'ARTIFACT_RESULT_MIGRATION_PENDING' : 'ARTIFACT_RESULT_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_GUARD_FINDINGS_PATH) {
