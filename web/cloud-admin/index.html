@@ -444,12 +444,10 @@
         <button id="guard-preview-tab" class="guard-tab" type="button">Preview · intents</button>
       </div>
       <h2 id="guard-heading">Governance</h2>
-      <p class="preview">Read-only governance preview. Live findings will come from the Neon event ledger.</p>
-      <div class="guard-card critical"><h3>Browser guard · not connected</h3><p>The hosted workspace has no browser-control authority in this slice.</p></div>
-      <div class="guard-card warn"><h3>Builder activity · waiting</h3><p>No builder is selected. No model can write or deploy from this panel.</p></div>
-      <div class="guard-card"><h3>Governance · ready to wire</h3><p>Risk, approval and rollback cards will appear after the ledger and monitor service are implemented.</p></div>
+      <p class="preview" id="guard-findings-status">Loading Guard findings.</p>
+      <div id="guard-findings" aria-live="polite"></div>
       <div id="guard-events" aria-live="polite"></div>
-      <div class="guard-actions"><button id="guard-check-again" type="button">Check again</button><button type="button" disabled>Ack all</button><button type="button" disabled>Quarantine</button><button type="button" disabled>Tests</button></div>
+      <div class="guard-actions"><button id="guard-check-again" type="button">Check again</button><button id="guard-ack-all" type="button">Ack all</button></div>
     </aside>
   </div>
   <script type="module" src="/admin/assets/app.js"></script>
