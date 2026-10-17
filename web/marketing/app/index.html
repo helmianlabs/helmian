@@ -285,12 +285,16 @@
 
     <div class="panel-pane" data-panel-pane="browser" role="tabpanel" aria-label="Browser" hidden>
       <div class="pane-head"><span class="eyebrow">BROWSER</span></div>
-      <p class="muted sm">Open a public HTTPS site in your own browser. The cloud never fetches page content, and every launch is written to the audit trail.</p>
+      <p class="muted sm">Browse a public HTTPS site inside Helmian. The cloud never fetches page content, and every visit is written to the audit trail.</p>
       <form id="browser-form" class="browser-form">
         <input id="browser-url" type="text" inputmode="url" placeholder="https://example.com" aria-label="Website address" maxlength="4096" autocomplete="off" spellcheck="false">
-        <button class="btn primary sm" type="submit">Open</button>
+        <button class="btn primary sm" type="submit">Go</button>
       </form>
       <p id="browser-status" class="muted sm" role="status" aria-live="polite"></p>
+      <div id="browser-viewport-wrap" class="browser-viewport-wrap" hidden>
+        <iframe id="browser-viewport" class="browser-viewport" title="Embedded browser" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+        <p class="muted sm">Some sites block embedding. If the page stays blank, <button id="browser-open-external" class="linklike" type="button">open it in your browser</button>.</p>
+      </div>
     </div>
 
     <div class="panel-pane" data-panel-pane="canvas" role="tabpanel" aria-label="Canvas" hidden>

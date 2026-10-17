@@ -119,6 +119,9 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .browser-form { display:flex; gap:8px; }
 .browser-form input { flex:1; min-width:0; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:8px 10px; outline:none; font-family:var(--mono); font-size:12px; }
 .browser-form input:focus { border-color:var(--accent); }
+.browser-viewport-wrap { margin-top:12px; }
+.browser-viewport { width:100%; height:min(480px, 52vh); border:1px solid var(--border); border-radius:var(--radius); background:#fff; }
+.linklike { background:none; border:none; padding:0; color:var(--accent); font:inherit; cursor:pointer; text-decoration:underline; }
 #canvas-note, #canvas-decision { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:8px 10px; outline:none; resize:vertical; }
 #canvas-note:focus, #canvas-decision:focus { border-color:var(--accent); }
 .preview-list { display:flex; flex-direction:column; gap:8px; }
