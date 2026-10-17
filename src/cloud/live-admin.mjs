@@ -23,6 +23,7 @@ import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { createEvidenceStore, handleEvidenceRoute, EVIDENCE_HANDOFFS_PATH, EVIDENCE_CHECKPOINTS_PATH, EVIDENCE_RUNS_LEDGER_PATH, EVIDENCE_LEASES_POSTURE_PATH } from './evidence.mjs';
+import { handleReleaseRoadmapRoute, RELEASE_ROADMAP_PATH } from './release-manifest.mjs';
 import { createAppSessionStore } from './app-sessions.mjs';
 import { createOrgInviteStore, INVITE_TOKEN } from './org-invites.mjs';
 import { createCoraOrganizationConfigRepository } from '../cora/organization-config-repository.mjs';
@@ -1219,6 +1220,9 @@ export async function createLiveHelmianCloudAdminHandler({
       }
       return true;
     }
+    if (request.method === 'GET' && requestUrl.pathname === RELEASE_ROADMAP_PATH) {
+      return handleReleaseRoadmapRoute({ request, response, activeTenantActor, send, TenantAuthorizationError });
+    }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_OVERVIEW_PATH) {
       try {
         if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 });
@@ -1239,6 +1243,12 @@ export async function createLiveHelmianCloudAdminHandler({
           coraProvider: env.HELMION_CORA_PROVIDER || null,
           consoleWorker: env.HELMION_CONSOLE_WORKER === '1',
           environment: env.HELMION_CLOUD_ENVIRONMENT || null,
+          build: {
+            version: env.HELMION_BUILD_VERSION || '0.1.0',
+            runtime: 'Vercel serverless + Neon Postgres',
+            region: 'us-west-2',
+            clerkInstance: env.HELMION_CLERK_INSTANCE || null,
+          },
         };
         send(response, 200, JSON.stringify({ valid: true, actor: { subject: actor.subject, tenantId: actor.tenantId, role: actor.role }, ...overview, settings }));
       } catch (error) {
