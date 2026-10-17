@@ -702,6 +702,14 @@ async function loadConsole() {
     } catch {}
   }
   await loadLog();
+  // Poll for new messages every 3 seconds when the page is visible.
+  // The bridge posts replies via the API; without polling the user must
+  // manually refresh or switch tabs to see them.
+  setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    if (!state.channelId) return;
+    loadLog().catch(() => {});
+  }, 3000);
 }
 async function loadLog() {
   const log = $('#log');
