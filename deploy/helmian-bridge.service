@@ -1,0 +1,18 @@
+[Unit]
+Description=Helmian cloud bridge (runner agent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=helmian
+WorkingDirectory=/opt/helmian
+EnvironmentFile=/etc/helmian/bridge.env
+ExecStart=/usr/bin/node bin/pc-bridge.mjs
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
