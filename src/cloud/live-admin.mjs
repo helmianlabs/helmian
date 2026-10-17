@@ -379,14 +379,14 @@ export async function createLiveHelmianCloudAdminHandler({
     } finally { client.release(); }
   }
 
-  // Desktop app links (Bearer hdt_...) are accepted only on Envoy chat routes.
+  // Device tokens: Envoy routes only.
   const bearerToken = (request) => { const h = String(request.headers?.authorization ?? ''); return h.startsWith('Bearer ') ? h.slice(7).trim() : ''; };
   const isEnvoyPath = (request) => new URL(request.url, 'http://local').pathname.startsWith('/api/admin/envoy/');
   async function deriveTenantActor(request) {
     let claimed = sessionIdentity(request);
     if (!claimed?.subject && isEnvoyPath(request) && bearerToken(request)) {
       const desktop = await invites.desktopIdentity(bearerToken(request)).catch(() => null);
-      if (desktop) claimed = { subject: desktop.subject };
+      if (desktop) claimed = { subject: desktop.subject, viaDeviceToken: true };
     }
     if (!claimed?.subject) throw Object.assign(new Error('Identity required'), { status: 403 });
     const client = await pool.connect();
@@ -396,7 +396,9 @@ export async function createLiveHelmianCloudAdminHandler({
         [claimed.subject],
       );
       if (membership.rowCount !== 1) throw Object.assign(new Error('Exactly one active organization membership is required'), { status: 403 });
-      return { subject: claimed.subject, tenantId: membership.rows[0].tenant_id, role: membership.rows[0].role };
+      const actor = { subject: claimed.subject, tenantId: membership.rows[0].tenant_id, role: membership.rows[0].role };
+      if (claimed.viaDeviceToken === true) actor.viaDeviceToken = true;
+      return actor;
     } finally { client.release(); }
   }
 
@@ -568,7 +570,7 @@ export async function createLiveHelmianCloudAdminHandler({
          limit 25`,
         [context.tenantId],
       );
-      // withTenantTransaction spreads arrays into objects; wrap it.
+      // Wrap: withTenantTransaction spreads arrays into objects.
       return { events: result.rows.map((row) => ({
         id: String(row.id),
         actionType: String(row.action_type).slice(0, 120),
@@ -627,7 +629,7 @@ export async function createLiveHelmianCloudAdminHandler({
       try {
         const login = await identity.beginLogin();
         const cookies = [`helmion_admin_login_state=${login.state}; ${cookieOptions('/admin')}`];
-        // Post-login destination is fixed (no open redirect).
+        // Fixed destination (no open redirect).
         if (requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH) cookies.push(`helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}`);
         send(response, 302, '', 'text/plain; charset=utf-8', { location: login.url, 'set-cookie': cookies.length === 1 ? cookies[0] : cookies });
       }
@@ -643,7 +645,7 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SIGNUP_PATH) {
       try {
-        // Clerk owns registration; return via OIDC login.
+        // Clerk owns registration; use OIDC login.
         const signup = new URL('/sign-up', identity.issuer);
         signup.searchParams.set('redirect_url', new URL(LIVE_ADMIN_LOGIN_PATH, requestOrigin(request, env)).toString());
         // Fixed post-signup destination: user app path.
