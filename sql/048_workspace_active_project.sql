@@ -8,9 +8,10 @@ create table if not exists helmion.workspace_active_project_selections (
   id bigserial primary key,
   tenant_id text not null references helmion.tenants(tenant_id) on delete cascade,
   subject text not null check (char_length(subject) between 1 and 256),
-  project_key text not null references helmion.workspace_projects(project_key) on delete cascade,
+  project_key text not null,
   selected_at timestamptz not null default clock_timestamp(),
-  unique (tenant_id, subject)
+  unique (tenant_id, subject),
+  foreign key (tenant_id, project_key) references helmion.workspace_projects(tenant_id, project_key) on delete cascade
 );
 
 create index if not exists workspace_active_project_selections_tenant_idx
