@@ -1,10 +1,13 @@
-import { VIEW_TITLES, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
 const store = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(`helmian.app.${k}`)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(`helmian.app.${k}`, JSON.stringify(v)); } catch {} } };
-const state = { serverSessions: false, actor: null, projects: [], channelId: null, sessions: store.get('sessions', []), activeSession: store.get('activeSession', null), events: [], approvals: [], ack: new Set(store.get('ack', [])), cleared: new Set(store.get('cleared', [])), pendingProvider: null, steps: null, usage: null, overview: null };
+const state = { serverSessions: false, actor: null, projects: [], channelId: null, sessions: store.get('sessions', []), activeSession: store.get('activeSession', null), events: [], approvals: [], ack: new Set(store.get('ack', [])), cleared: new Set(store.get('cleared', [])), pendingProvider: null, steps: null, usage: null, overview: null, emojiMode: store.get('emojiMode', 'playful'), agentIcons: {} };
 const narrow = () => window.matchMedia('(max-width: 900px)').matches;
+// es(): empty-state string picker — playful emoji vs plain text. Sober
+// surfaces (Guard, audit, approvals, evidence) never go through here.
+const es = (playful, plain) => isPlainEmojiMode(state.emojiMode) ? plain : playful;
 
 async function api(path, init = {}) {
   const res = await fetch(path, { credentials: 'same-origin', ...init });
@@ -16,7 +19,106 @@ const post = (path, data) => api(path, { method: 'POST', headers: { 'content-typ
 function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
 function empty(title, sub) { const d = el('div', 'empty'); d.append(el('p', 't', title)); if (sub) d.append(el('p', 'sm', sub)); return d; }
 function row(k, v, cls) { const r = el('div', 'row'); r.append(el('span', null, k), el('span', cls, v)); return r; }
-let toastTimer; function toast(msg, kind) { const t = $('#toast'); t.textContent = (kind === 'ok' ? '✅ ' : '') + msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600); }
+let toastTimer; function toast(msg, kind) { const t = $('#toast'); const prefix = kind === 'ok' && !isPlainEmojiMode(state.emojiMode) ? '✅ ' : ''; t.textContent = prefix + msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600); }
+
+// ---- emoji mode preference (playful vs plain) ----
+function setNavLabel(btn, label) {
+  for (const node of [...btn.childNodes]) if (node.nodeType === 3) node.remove();
+  btn.prepend(document.createTextNode(label));
+}
+function applyEmojiMode(mode) {
+  state.emojiMode = mode === 'plain' ? 'plain' : 'playful';
+  store.set('emojiMode', state.emojiMode);
+  const titles = viewTitles(state.emojiMode);
+  for (const b of document.querySelectorAll('.nav-item[data-view]')) {
+    const label = titles[b.dataset.view];
+    if (label) setNavLabel(b, label);
+  }
+  for (const b of document.querySelectorAll('.panel-tab[data-panel-tab]')) {
+    const label = titles[b.dataset.panelTab];
+    if (label) b.textContent = label;
+  }
+  const shelfEmpty = $('#project-shelf-empty');
+  if (shelfEmpty) shelfEmpty.textContent = es('🗂️ Nothing here yet — start your first project.', 'Nothing here yet — start your first project.');
+  renderAgentIcons();
+  const current = document.querySelector('.nav-item.active')?.dataset.view;
+  if (current) $('#view-title').textContent = titles[current] ?? '';
+  const sel = $('#emoji-mode');
+  if (sel) sel.value = state.emojiMode;
+}
+async function loadEmojiMode() {
+  try {
+    const body = await api('/api/admin/workspace/layout-preferences');
+    const mode = body?.layout?.emojiMode;
+    applyEmojiMode(mode === 'plain' ? 'plain' : 'playful');
+  } catch { applyEmojiMode(store.get('emojiMode', 'playful')); }
+}
+async function saveEmojiMode(mode) {
+  try {
+    const body = await api('/api/admin/workspace/layout-preferences');
+    const layout = body?.layout ?? {};
+    await api('/api/admin/workspace/layout-preferences', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ visibleShelves: layout.visibleShelves, panelOrder: layout.panelOrder, density: layout.density, emojiMode: mode, defaultEnvoyChannelId: layout.defaultEnvoyChannelId ?? null }) });
+    applyEmojiMode(mode);
+    toast('Emoji style saved', 'ok');
+  } catch { toast('Could not save emoji style'); applyEmojiMode(store.get('emojiMode', 'playful')); }
+}
+$('#emoji-mode').onchange = (e) => saveEmojiMode(e.target.value);
+
+// ---- custom agent icons (per-user emoji per provider) ----
+const AGENT_ICON_PROVIDERS = Object.freeze(['Maestro', 'Claude', 'ChatGPT', 'Grok', 'Gemini']);
+const graphemeCount = (text) => [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(String(text ?? ''))].length;
+function agentIconFor(provider) { return state.agentIcons?.[provider] ?? null; }
+function renderAgentIcons() {
+  for (const chip of document.querySelectorAll('#session-chips .chip[data-provider]')) {
+    const provider = chip.dataset.provider;
+    const icon = agentIconFor(provider);
+    chip.textContent = icon ? `${icon} ${provider}` : provider;
+  }
+  renderIconPicker();
+}
+async function loadAgentIcons() {
+  try {
+    const body = await api('/api/admin/workspace/agent-icons');
+    state.agentIcons = body?.icons ?? {};
+  } catch { state.agentIcons = {}; }
+  renderAgentIcons();
+}
+async function saveAgentIcon(provider, iconText) {
+  const input = $(`#icon-input-${provider.toLowerCase()}`);
+  const status = $('#agent-icons-status');
+  const value = (iconText ?? '').trim();
+  if (value && graphemeCount(value) !== 1) { status.textContent = 'Use exactly one emoji.'; return; }
+  try {
+    await api('/api/admin/workspace/agent-icons', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ providerName: provider, iconEmoji: value || null }) });
+    state.agentIcons[provider] = value || null;
+    renderAgentIcons();
+    status.textContent = value ? `Icon saved for ${provider}.` : `Icon cleared for ${provider}.`;
+    toast(value ? 'Agent icon saved' : 'Agent icon cleared', 'ok');
+  } catch (error) { status.textContent = error.body?.message || error.message || 'Could not save the icon.'; }
+}
+function renderIconPicker() {
+  const wrap = $('#agent-icons-picker');
+  if (!wrap) return;
+  wrap.replaceChildren(...AGENT_ICON_PROVIDERS.map((provider) => {
+    const row = el('div', 'icon-row');
+    const current = agentIconFor(provider);
+    row.append(el('span', 'icon-current', current ?? '—'), el('span', null, provider));
+    const input = el('input', 'icon-input');
+    input.id = `icon-input-${provider.toLowerCase()}`;
+    input.maxLength = 16;
+    input.placeholder = 'Emoji';
+    input.setAttribute('aria-label', `Icon for ${provider}`);
+    input.autocomplete = 'off';
+    const hint = el('span', 'muted sm', '');
+    input.oninput = () => { hint.textContent = input.value && graphemeCount(input.value) !== 1 ? 'One emoji only' : ''; };
+    const save = el('button', 'btn sm');
+    save.type = 'button';
+    save.textContent = 'Save';
+    save.onclick = () => saveAgentIcon(provider, input.value);
+    row.append(input, hint, save);
+    return row;
+  }));
+}
 
 // ---- appearance ----
 function applyTheme(theme) { document.documentElement.dataset.theme = theme; $('#theme').value = theme; $('#theme-quick').value = theme; store.set('theme', theme); }
@@ -70,7 +172,7 @@ function show(view) {
   shell.dataset.view = view;
   for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view;
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
-  $('#view-title').textContent = VIEW_TITLES[view];
+  $('#view-title').textContent = viewTitles(state.emojiMode)[view];
   const adv = $('#advanced-nav');
   if (adv) adv.open = ADVANCED_VIEWS.includes(view);
   if (narrow()) drawer('sidebar', false);
@@ -191,7 +293,7 @@ function renderSteps() {
   box.hidden = !can;
   if (!can) { feed.hidden = true; return; }
   if (!m || !m.total) {
-    $('#tp-summary').textContent = '📝 No plan yet — add the steps this session should take.'; $('#tp-bar').style.width = '0%'; $('#tp-list').replaceChildren(); $('#tp-edit').textContent = 'Add plan'; feed.hidden = true; return;
+    $('#tp-summary').textContent = es('📝 No plan yet — add the steps this session should take.', 'No plan yet — add the steps this session should take.'); $('#tp-bar').style.width = '0%'; $('#tp-list').replaceChildren(); $('#tp-edit').textContent = 'Add plan'; feed.hidden = true; return;
   }
   $('#tp-edit').textContent = 'Edit plan'; $('#tp-summary').textContent = m.summary; $('#tp-bar').style.width = `${m.pct}%`;
   $('#tp-list').replaceWith(Object.assign(stepList(m, false), { id: 'tp-list' }));
@@ -562,7 +664,8 @@ async function loadAgents() {
   const cards = $('#agents-cards');
   cards.replaceChildren(...model.agents.map((a) => {
     const card = el('article', 'card');
-    card.append(el('div', 'title', a.name), el('div', 'meta'));
+    const icon = agentIconFor(a.name);
+    card.append(el('div', 'title', icon ? `${icon} ${a.name}` : a.name), el('div', 'meta'));
     card.lastChild.append(el('span', `status ${a.connected ? 'ok' : ''}`, a.connected ? 'Connected' : 'Not connected'));
     if (a.connected && a.lifecycle) card.append(el('div', 'meta', a.lifecycle));
     return card;
@@ -592,7 +695,7 @@ async function loadCreate() {
   try {
     const body = await api('/api/admin/cora/artifacts');
     const model = createModel(body);
-    if (model.empty) box.replaceChildren(empty('✨ No requests yet — describe what you want to create.'));
+    if (model.empty) box.replaceChildren(empty(es('✨ No requests yet — describe what you want to create.', 'No requests yet — describe what you want to create.')));
     else {
       const wrap = el('div', 'create-hist');
       wrap.replaceChildren(...model.receipts.map((r) => {
@@ -719,7 +822,7 @@ async function loadCanvas() {
   const body = $('#canvas-body');
   if (!projectKey) {
     body.hidden = true;
-    status.textContent = '🎨 Pick a project first — the canvas is saved per project.';
+    status.textContent = es('🎨 Pick a project first — the canvas is saved per project.', 'Pick a project first — the canvas is saved per project.');
     return;
   }
   body.hidden = false;
@@ -739,7 +842,7 @@ async function loadCanvas() {
 $('#canvas-save').onclick = async () => {
   const projectKey = state.activeProjectKey;
   const status = $('#canvas-status');
-  if (!projectKey) { status.textContent = '🎨 Pick a project first — the canvas is saved per project.'; return; }
+  if (!projectKey) { status.textContent = es('🎨 Pick a project first — the canvas is saved per project.', 'Pick a project first — the canvas is saved per project.'); return; }
   status.textContent = 'Saving…';
   try {
     await api('/api/admin/workspace/canvas', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey, noteText: $('#canvas-note').value, decisionText: $('#canvas-decision').value }) });
@@ -766,7 +869,7 @@ async function loadPreview() {
     const body = await api('/api/admin/runs/ledger?limit=50');
     const runs = (Array.isArray(body.runs) ? body.runs : []).filter((r) => r.kind === 'artifact_execution' && r.outcome === 'completed');
     if (!runs.length) {
-      box.replaceChildren(empty('👁 Nothing generated yet — finished runs will appear here.'));
+      box.replaceChildren(empty(es('👁 Nothing generated yet — finished runs will appear here.', 'Nothing generated yet — finished runs will appear here.')));
       return;
     }
     box.replaceChildren(...runs.map((r) => {
@@ -802,10 +905,12 @@ async function boot() {
     return;
   }
   state.actor = model.actor;
-  $('#svc-dot').classList.add('live'); $('#svc-text').textContent = '🟢 Cloud service · Connected - live';
+  $('#svc-dot').classList.add('live'); $('#svc-text').textContent = es('🟢 Cloud service · Connected - live', 'Cloud service · Connected - live');
   $('#account').textContent = `${model.actor.tenantId} · ${model.actor.role}`;
   $('#admin-link').hidden = !isAdminRole(model.actor.role); $('#signout').hidden = false;
   renderSessions(); loadSessions();
+  loadEmojiMode().catch(() => {});
+  loadAgentIcons().catch(() => {});
   if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${model.actor.tenantId}!`, 'ok'); history.replaceState(null, '', location.pathname + location.hash); }
   const initialView = viewFromHash(location.hash, { phone: narrow() });
   show(initialView);
