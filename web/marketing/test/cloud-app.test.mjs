@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, PRIMARY_VIEWS, ADVANCED_VIEWS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -11,7 +11,12 @@ test('three columns: sidebar, center console, Guard Feed', () => {
   for (const id of ['sidebar', 'main', 'guard', 'project-filter', 'new-project-form', 'appearance', 'sessions', 'log', 'prompt', 'mcp-panel', 'session-chips', 'session-form', 'feed', 'feed-filter', 'feed-clear', 'run-suite', 'active-agent']) assert.match(html, new RegExp(`id="${id}"`), id);
   for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'SESSIONS', 'GUARD FEED', 'MCP SECURITY', 'Full screen', 'Prompt...', '+ Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'SHOW DETAILS', 'ADVANCED', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap', 'Devices', 'Connect phone', 'No Desktop connected yet', 'Chat', 'Projects', 'Approvals']) assert.ok(html.includes(label), label);
   for (const p of ['Claude', 'ChatGPT', 'Grok', 'Gemini']) assert.match(html, new RegExp(`data-provider="${p}"`));
-  for (const view of VIEWS) assert.match(html, new RegExp(`data-view-panel="${view}"`), view);
+  for (const view of VIEWS) {
+    // Browser, Canvas, Preview, Create live in the right workbench panel now
+    // (BROWSE-001), not as center views.
+    if (PANEL_VIEWS.includes(view)) assert.match(html, new RegExp(`data-panel-pane="${view}"`), view);
+    else assert.match(html, new RegExp(`data-view-panel="${view}"`), view);
+  }
   assert.match(html, /href="\/admin\/auth\/login\?return=\/app"/);
 });
 
@@ -29,7 +34,7 @@ test('no technical disclaimers and no framework', () => {
 
 test('only known admin + remote APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/session', '/api/admin/workspace/active-project', '/api/admin/workspace/projects', '/api/herald-config', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/workspace/active-project', '/api/admin/workspace/canvas', '/api/admin/workspace/projects', '/api/herald-config', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
 });
 
 test('models', () => {
@@ -120,7 +125,8 @@ test('agentsModel maps providers and sessions', () => {
 test('createModel maps receipts and builds review payload', () => {
   assert.ok(VIEWS.includes('create'));
   assert.equal(VIEW_TITLES.create, 'Create');
-  assert.ok(ADVANCED_VIEWS.includes('create'));
+  assert.ok(PANEL_VIEWS.includes('create'));
+  assert.ok(!ADVANCED_VIEWS.includes('create'));
   assert.deepEqual(CREATE_TYPES.map((x) => x.id), ['training', 'orientation']);
   const m = createModel({ receipts: [{ receiptId: 'r1', title: 'Onboard guide', artifactType: 'orientation', status: 'draft', objective: 'Help new hires', department: 'ops', sourceRefs: [{ citation: 'SOP-1', title: 'SOP-1' }] }] });
   assert.equal(m.empty, false);
@@ -132,7 +138,7 @@ test('createModel maps receipts and builds review payload', () => {
   assert.equal(p.sourceRefs.length, 1);
   assert.equal(p.approvalReason, null);
   assert.match(p.idempotencyKey, /^create-/);
-  assert.match(html, /data-view-panel="create"/);
+  assert.match(html, /data-panel-pane="create"/);
   assert.match(html, /id="create-review"/);
   assert.match(html, />Review</);
 });
@@ -147,8 +153,13 @@ test('devices empty-state points at Clerk unify and Connect phone', () => {
   assert.doesNotMatch(js, /Remote Control sign-in is separate until Clerk is unified/);
 });
 
-test('desktop-only stubs and Guard Feed phone polish', () => {
-  for (const v of ['browser', 'canvas', 'preview']) { assert.match(html, new RegExp(`data-view-panel="${v}"`)); assert.ok(ADVANCED_VIEWS.includes(v)); }
-  assert.equal((html.match(/Desktop only/g) || []).length, 3);
+test('workbench panel tabs replace the desktop-only stubs (BROWSE-001)', () => {
+  for (const t of PANEL_TABS) {
+    assert.match(html, new RegExp(`data-panel-tab="${t}"`), t);
+    assert.match(html, new RegExp(`data-panel-pane="${t}"`), t);
+  }
+  for (const v of ['browser', 'canvas', 'preview', 'create']) assert.ok(!ADVANCED_VIEWS.includes(v), v);
+  assert.doesNotMatch(html, /Desktop only/);
   assert.match(css, /\.guard-head \{ position:sticky/);
+  assert.match(css, /\.panel-tabs \{ position:sticky/);
 });
