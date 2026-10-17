@@ -50,11 +50,14 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .topbar { display:flex; align-items:center; gap:8px; height:52px; padding:0 16px; border-bottom:1px solid var(--border); background:var(--panel); flex:none; }
 .view-title { flex:1; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .view { padding:20px 24px; overflow-y:auto; flex:1; }
-.btn { display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:var(--radius); padding:8px 14px; font-weight:600; text-decoration:none; cursor:pointer; }
+.btn { display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:var(--radius); padding:8px 14px; font-weight:600; text-decoration:none; cursor:pointer; min-height:40px; }
 .btn:hover { border-color:var(--muted); } .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; } .btn.primary:hover { background:var(--accent-hover); }
 .btn.ghost { background:transparent; } .btn.sm { padding:5px 10px; font-size:12px; } .btn.full { width:100%; }
 .btn.danger { background:var(--red); border-color:var(--red); color:#fff; } .btn:disabled { opacity:.5; cursor:default; }
 .icon-btn { width:34px; height:34px; border-radius:var(--radius); border:1px solid var(--border); background:var(--panel-2); display:grid; place-items:center; cursor:pointer; position:relative; flex:none; }
+@media (pointer:coarse) {
+  .icon-btn { width:40px; height:40px; }
+}
 .icon-btn.sm { width:28px; height:28px; }
 .dot-count { position:absolute; top:-4px; right:-4px; min-width:16px; height:16px; border-radius:8px; background:var(--red); font-size:10px; font-weight:700; display:grid; place-items:center; padding:0 3px; }
 .only-mobile { display:none !important; }
@@ -200,7 +203,8 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   h1 { font-size:19px; } .eyebrow:not(summary) { display:none; }
   .sidebar { padding:10px 8px; gap:10px; }
   .logo span, .faint.sm.pad { display:none; }
-  .search, .inline-form input, .field select, .session-form input, select { padding:6px 8px; }
+  .search, .inline-form input, .field select, .session-form input, select { padding:6px 8px; min-height:40px; }
+  .btn.sm { min-height:40px; padding:8px 12px; }
 }
 
 /* Devices (Herald Remote Control list patterns) */

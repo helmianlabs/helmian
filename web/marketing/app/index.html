@@ -28,7 +28,7 @@
       </form>
       <input id="project-filter" class="search" type="search" placeholder="Search projects" aria-label="Search projects">
       <ul id="project-shelf" class="shelf"></ul>
-      <p id="project-shelf-empty" class="faint sm pad">No projects yet.</p>
+      <p id="project-shelf-empty" class="faint sm pad">🗂️ Nothing here yet — start your first project.</p>
     </section>
 
     <details class="side-group accordion" id="appearance">
@@ -40,22 +40,22 @@
       <div class="side-head"><span>SESSIONS</span></div>
       <ul id="sessions" class="sessions"></ul>
       <nav id="nav" class="submenu" aria-label="Primary">
-        <button class="nav-item" type="button" data-view="home">Home</button>
-        <button class="nav-item active" type="button" data-view="console">Chat</button>
-        <button class="nav-item" type="button" data-view="workspace">Projects</button>
-        <button class="nav-item" type="button" data-view="approvals">Approvals<span id="approvals-badge" class="badge" hidden></span></button>
+        <button class="nav-item" type="button" data-view="home">🏠 Home</button>
+        <button class="nav-item active" type="button" data-view="console">💬 Chat</button>
+        <button class="nav-item" type="button" data-view="workspace">🗂️ Projects</button>
+        <button class="nav-item" type="button" data-view="approvals">✅ Approvals<span id="approvals-badge" class="badge" hidden></span></button>
       </nav>
       <details class="side-group accordion advanced-nav" id="advanced-nav">
         <summary class="side-head"><span>ADVANCED</span><span class="chev">▾</span></summary>
         <nav class="submenu advanced-menu" aria-label="Advanced">
-          <button class="nav-item" type="button" data-view="devices">Devices</button>
-          <button class="nav-item" type="button" data-view="overview">Overview</button>
-          <button class="nav-item" type="button" data-view="settings">Settings</button>
-          <button class="nav-item" type="button" data-view="activity">Live activity</button>
-          <button class="nav-item" type="button" data-view="evidence">Evidence</button>
-          <button class="nav-item" type="button" data-view="integrations">Integrations</button>
-          <button class="nav-item" type="button" data-view="agents">Agents</button>
-          <button class="nav-item" type="button" data-view="release">Release roadmap</button>
+          <button class="nav-item" type="button" data-view="devices">📱 Devices</button>
+          <button class="nav-item" type="button" data-view="overview">📊 Overview</button>
+          <button class="nav-item" type="button" data-view="settings">⚙️ Settings</button>
+          <button class="nav-item" type="button" data-view="activity">📡 Live activity</button>
+          <button class="nav-item" type="button" data-view="evidence">📦 Evidence</button>
+          <button class="nav-item" type="button" data-view="integrations">🔌 Integrations</button>
+          <button class="nav-item" type="button" data-view="agents">🤖 Agents</button>
+          <button class="nav-item" type="button" data-view="release">🚀 Release roadmap</button>
         </nav>
       </details>
     </section>
@@ -280,15 +280,15 @@
 
     <section id="workbench" class="workbench" aria-label="Workbench panel">
     <div class="panel-tabs" role="tablist" aria-label="Workbench">
-      <button class="panel-tab active" type="button" role="tab" data-panel-tab="browser" aria-selected="true">Browser</button>
-      <button class="panel-tab" type="button" role="tab" data-panel-tab="canvas" aria-selected="false">Canvas</button>
-      <button class="panel-tab" type="button" role="tab" data-panel-tab="preview" aria-selected="false">Preview</button>
-      <button class="panel-tab" type="button" role="tab" data-panel-tab="create" aria-selected="false">Create</button>
+      <button class="panel-tab active" type="button" role="tab" data-panel-tab="browser" aria-selected="true">🌐 Browser</button>
+      <button class="panel-tab" type="button" role="tab" data-panel-tab="canvas" aria-selected="false">🎨 Canvas</button>
+      <button class="panel-tab" type="button" role="tab" data-panel-tab="preview" aria-selected="false">👁 Preview</button>
+      <button class="panel-tab" type="button" role="tab" data-panel-tab="create" aria-selected="false">✨ Create</button>
       <button id="workbench-collapse" class="icon-btn sm" type="button" aria-label="Collapse workbench panel" aria-expanded="true" aria-controls="workbench-body">–</button>
     </div>
     <div id="workbench-body">
     <div class="panel-pane active" data-panel-pane="browser" role="tabpanel" aria-label="Browser">
-      <div class="pane-head"><span class="eyebrow">BROWSER</span></div>
+      <div class="pane-head"><span class="eyebrow">🌐 BROWSER</span></div>
       <p class="muted sm">Browse a public HTTPS site inside Helmian. The cloud never fetches page content, and every visit is written to the audit trail.</p>
       <form id="browser-form" class="browser-form">
         <input id="browser-url" type="text" inputmode="url" placeholder="https://example.com" aria-label="Website address" maxlength="4096" autocomplete="off" spellcheck="false">

@@ -1,6 +1,6 @@
 // Pure helpers for the Helmian Cloud app (no DOM) so they can be unit tested.
 export const VIEWS = Object.freeze(['home', 'console', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'integrations', 'agents', 'create', 'browser', 'canvas', 'preview', 'release']);
-export const VIEW_TITLES = Object.freeze({ home: 'Home', console: 'Chat', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', agents: 'Agents', create: 'Create', browser: 'Browser', canvas: 'Canvas', preview: 'Preview', release: 'Release roadmap' });
+export const VIEW_TITLES = Object.freeze({ home: '🏠 Home', console: '💬 Chat', overview: '📊 Overview', settings: '⚙️ Settings', workspace: '🗂️ Projects', devices: '📱 Devices', activity: '📡 Live activity', evidence: '📦 Evidence', approvals: '✅ Approvals', integrations: '🔌 Integrations', agents: '🤖 Agents', create: '✨ Create', browser: '🌐 Browser', canvas: '🎨 Canvas', preview: '👁 Preview', release: '🚀 Release roadmap' });
 export const PRIMARY_VIEWS = Object.freeze(['home', 'console', 'workspace', 'approvals']);
 export const ADVANCED_VIEWS = Object.freeze(['devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'agents', 'release']);
 // Browser, Canvas, Preview, Create live in the right workbench panel now
