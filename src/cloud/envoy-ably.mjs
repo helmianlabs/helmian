@@ -69,6 +69,7 @@ export async function publishEnvoyMessage({
   const channel = envoyChannelName(tenantId, channelId);
   const data = {
     id: String(message?.id ?? ''),
+    channelId: String(channelId ?? ''),
     authorKind: String(message?.authorKind ?? ''),
     authorSubject: String(message?.authorSubject ?? ''),
     body: String(message?.body ?? ''),
