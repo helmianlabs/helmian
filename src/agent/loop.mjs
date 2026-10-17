@@ -75,7 +75,61 @@ export function combineSignals(...signals) {
  * Shared multi-round tool loop used by CLI REPL and the Windows EXE bridge.
  * onEvent({ type, ... }) receives progress for the UI.
  */
-export async function runAgentTurn({
+import { snapshotCheckpoint } from '../core/maestro-watchdog.mjs';
+
+// Optional per-task watchdog (see src/core/maestro-watchdog.mjs). When the
+// caller passes `taskWatchdog` (from createTaskWatchdog) plus a `taskId`, the
+// turn runs under an AbortController armed at `timeoutMs` (default 60s): a
+// hung turn is aborted, its partial transcript snapshotted, and the
+// watchdog's onTimeout handler reassigns it. Without these options the turn
+// runs exactly as before — the bridge's read-only path is untouched.
+export async function runAgentTurn(options = {}) {
+  const {
+    taskWatchdog = null,
+    taskId = null,
+    taskAgentId = null,
+    timeoutMs = 60_000,
+    signal: callerSignal = null,
+    ...rest
+  } = options;
+  if (!taskWatchdog || taskId === null || taskId === undefined || String(taskId).trim() === '') {
+    return runAgentTurnInner({ ...rest, signal: callerSignal });
+  }
+  const controller = new AbortController();
+  const forwardAbort = () => {
+    try {
+      controller.abort(callerSignal?.reason);
+    } catch {
+      // A broken caller signal must not break the watchdog's own abort path.
+    }
+  };
+  if (callerSignal) {
+    if (callerSignal.aborted) forwardAbort();
+    else if (typeof callerSignal.addEventListener === 'function') {
+      callerSignal.addEventListener('abort', forwardAbort, { once: true });
+    }
+  }
+  const release = taskWatchdog.watch({
+    taskId,
+    agentId: taskAgentId ?? rest.provider?.label ?? 'unknown',
+    providerId: rest.provider?.id ?? null,
+    timeoutMs,
+    abort: () => controller.abort(),
+    getCheckpoint: () => snapshotCheckpoint(rest.messages),
+  });
+  try {
+    return await runAgentTurnInner({ ...rest, signal: controller.signal });
+  } finally {
+    try {
+      callerSignal?.removeEventListener?.('abort', forwardAbort);
+    } catch {
+      // ignore
+    }
+    release();
+  }
+}
+
+async function runAgentTurnInner({
   userText,
   messages,
   provider,
