@@ -403,6 +403,12 @@ async function loadCoraCapabilities() {
   catch (error) { capabilitiesNormal.replaceChildren(); capabilitiesRegistered.replaceChildren(); capabilitiesHighRisk.replaceChildren(); capabilitiesRouting.replaceChildren(); capabilitiesStatus.textContent = error.status === 403 ? 'Cora capabilities unavailable: active Organization membership is required.' : `Cora capabilities unavailable: ${error.message}`; }
 }
 
+function formatEnvoyTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'time unavailable';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
 function renderMessages(body) {
   envoyMessages = body.messages ?? [];
   envoyCursor = body.nextCursor ?? envoyMessages.at(-1)?.id ?? null;
@@ -423,7 +429,7 @@ function renderMessageList() {
     card.className = 'message';
     const meta = document.createElement('div');
     meta.className = 'message-meta';
-    meta.textContent = `${message.authorKind === 'human' ? 'Member' : message.authorKind} · ${message.createdAt || 'time unavailable'}`;
+    meta.textContent = `${message.authorKind === 'human' ? 'Member' : message.authorKind} · ${formatEnvoyTime(message.createdAt)}`;
     const text = document.createElement('p');
     text.textContent = message.body;
     card.append(meta, text);
@@ -568,14 +574,17 @@ async function loadEnvoyMessages() {
 }
 
 async function pollEnvoyMessages() {
-  if (!envoyChannel.value || !envoyCursor) return;
+  if (!envoyChannel.value) return;
   try {
-    const body = await envoy.listMessages(envoyChannel.value, { afterId: envoyCursor });
+    const body = envoyCursor
+      ? await envoy.listMessages(envoyChannel.value, { afterId: envoyCursor })
+      : await envoy.listMessages(envoyChannel.value);
     const seen = new Set(envoyMessages.map((message) => message.id));
     for (const message of body.messages ?? []) {
       if (!seen.has(message.id)) envoyMessages.push(message);
     }
-    envoyCursor = body.nextCursor ?? envoyCursor;
+    envoyMessages.sort((a, b) => Number(a.id) - Number(b.id));
+    envoyCursor = body.nextCursor ?? envoyCursor ?? envoyMessages.at(-1)?.id ?? null;
     renderMessageList();
     if (!envoyStream) composerStatus.textContent = body.messages?.length ? 'New messages loaded.' : 'Envoy connected; no new messages.';
   } catch (error) {
@@ -616,6 +625,12 @@ function startEnvoyRealtime() {
           startEnvoyPolling();
           composerStatus.textContent = `Envoy reconnecting (attempt ${detail.attempt}); cursor polling fallback active.`;
         } else if (status === 'revoked') {
+          envoyStream?.close(); envoyStream = null;
+          if (envoyTimer) window.clearInterval(envoyTimer);
+          envoyTimer = null;
+          envoyChannel.disabled = true;
+          composerInput.disabled = true;
+          composerSend.disabled = true;
           composerStatus.textContent = 'Envoy membership was revoked. Sign in again.';
         }
       },
@@ -979,7 +994,8 @@ async function load() {
   await loadOrganizationReadiness();
   await loadDesktopParity();
   await loadCoraCapabilities();
-  await loadEnvoyChannels();
+  try { await loadEnvoyChannels(); }
+  catch (error) { composerStatus.textContent = `Chat channels unavailable: ${error.message}. The rest of the console still works.`; }
   workspaceSettingsOpen.hidden = false;
   await loadWorkspaceLayout();
   await loadWorkspaceProjects();
@@ -1198,7 +1214,9 @@ composerNewChannel.onclick = () => {
       if (result.channel?.id) envoyChannel.value = result.channel.id;
       await loadEnvoyMessages();
       startEnvoyRealtime();
-      composerStatus.textContent = `Channel “${result.channel?.title ?? title}” created.`;
+      composerStatus.textContent = result.inserted === false
+        ? `Channel “${result.channel?.title ?? title}” already exists — opened it.`
+        : `Channel “${result.channel?.title ?? title}” created.`;
     } catch (error) {
       create.disabled = false;
       composerStatus.textContent = `Channel not created: ${error.message}`;
