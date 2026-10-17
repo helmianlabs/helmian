@@ -15,19 +15,31 @@
 // - Toggle OFF stops everything: recognition stops, speech cancels.
 // - The mic pauses while the tab is hidden and resumes when visible.
 //
-// TTS ENGINE SEAM: v1 speaks via the browser's built-in speechSynthesis
-// (zero backend, works everywhere). The Kokoro engine plugs in here later —
-// either the browser WebGPU build or a runner-side endpoint — by replacing
-// speakWithEngine; the controller only ever calls tts.speak(text).
+// TTS ENGINE SEAM: the controller only calls tts.speak(text) / tts.cancel().
+//
+// Primary engine is Kokoro (kokoro-js, fully local, Apache 2.0): the ~300MB
+// model lazy-loads on the first spoken reply (dynamic import via the import
+// map in index.html) and is cached by the browser afterwards. Fallback is the
+// browser's speechSynthesis, which also covers environments without Web Audio.
 //
 // Recognition and speech are dependency-injected for tests. Defaults use
 // the browser's SpeechRecognition (Chrome/Edge; Firefox has neither, so
-// `supported` is false) and speechSynthesis.
+// `supported` is false), speechSynthesis, and AudioContext.
+
+// Default Kokoro voice preset (a voice setting UI comes later).
+export const KOKORO_VOICE = 'af_heart';
+export const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+const KOKORO_SAMPLE_RATE = 24000;
 
 export function createVoiceController({
   Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition,
   synthesis = globalThis.speechSynthesis,
   Utterance = globalThis.SpeechSynthesisUtterance,
+  // Kokoro injection for tests: kokoroLoader() resolves to a KokoroTTS-like
+  // ({ generate(text, { voice }) -> { audio, sampling_rate } }),
+  // makeAudioContext() resolves to an AudioContext-like.
+  kokoroLoader = null,
+  makeAudioContext = null,
 } = {}) {
   const supported = typeof Recognition === 'function';
   const canSpeak = typeof synthesis?.speak === 'function' && typeof Utterance === 'function';
@@ -133,47 +145,183 @@ export function createVoiceController({
     });
   }
 
-  // TTS engine seam: the controller only calls tts.speak / tts.cancel.
-  // v1 is the browser's speechSynthesis; the Kokoro engine replaces these
-  // two functions when it lands (browser WebGPU build or runner endpoint).
-  //
+  // ---- Legacy speechSynthesis engine (fallback) ----
   // Long replies are chunked: Chrome's speechSynthesis truncates long
   // utterances, so a reply goes out as sentence-sized pieces chained via
   // onend. A new reply clears the queue; toggle-off cancels everything.
-  const ttsQueue = [];
-  let ttsSpeaking = false;
-  function pumpSpeech() {
-    if (ttsSpeaking || ttsQueue.length === 0 || !canSpeak) return;
-    const utter = new Utterance(ttsQueue.shift());
-    ttsSpeaking = true;
-    utter.onend = () => { ttsSpeaking = false; pumpSpeech(); };
-    utter.onerror = () => { ttsSpeaking = false; pumpSpeech(); };
+  const synthQueue = [];
+  let synthSpeaking = false;
+  function pumpSynth() {
+    if (synthSpeaking || synthQueue.length === 0 || !canSpeak) return;
+    const utter = new Utterance(synthQueue.shift());
+    synthSpeaking = true;
+    utter.onend = () => { synthSpeaking = false; pumpSynth(); };
+    utter.onerror = () => { synthSpeaking = false; pumpSynth(); };
     try { synthesis.speak(utter); }
-    catch { ttsSpeaking = false; }
+    catch { synthSpeaking = false; }
   }
-  const tts = {
-    speak(text) {
-      if (!canSpeak) return false;
-      const clean = stripSpeechMarkup(text);
-      if (!clean) return false;
+  const synthEngine = {
+    // Speak pre-chunked text. interrupt=false appends without silencing
+    // what is playing (used when Kokoro hands a reply over mid-stream).
+    speakChunks(chunks, { interrupt = true } = {}) {
+      if (!canSpeak || !chunks.length) return false;
       let wasSpeaking = false;
-      try { wasSpeaking = !!synthesis.speaking; } catch {}
-      try { synthesis.cancel(); } catch {}
-      ttsQueue.length = 0;
-      ttsSpeaking = false;
-      ttsQueue.push(...chunkForSpeech(clean));
+      if (interrupt) {
+        try { wasSpeaking = !!synthesis.speaking; } catch {}
+        try { synthesis.cancel(); } catch {}
+        synthQueue.length = 0;
+        synthSpeaking = false;
+      }
+      synthQueue.push(...chunks);
       // Chrome quirk: cancel() takes effect asynchronously, so a speak()
       // issued in the same tick can be swallowed. Only delay when we actually
       // interrupted playing audio; the common case stays synchronous.
-      if (wasSpeaking) setTimeout(pumpSpeech, 150);
-      else pumpSpeech();
+      if (interrupt && wasSpeaking) setTimeout(pumpSynth, 150);
+      else pumpSynth();
       return true;
     },
     cancel() {
-      ttsQueue.length = 0;
-      ttsSpeaking = false;
+      synthQueue.length = 0;
+      synthSpeaking = false;
       if (!canSpeak) return;
       try { synthesis.cancel(); } catch {}
+    },
+  };
+
+  // ---- Kokoro engine (primary where Web Audio exists) ----
+  let kokoro = null;          // loaded KokoroTTS instance
+  let kokoroFailedAt = 0;     // timestamp of last Kokoro failure; retry after 60s
+  const KOKORO_RETRY_MS = 60000;
+  let playToken = 0;          // cancel() bumps it; late audio is ignored
+  let activeSource = null;    // currently playing AudioBufferSourceNode
+  let audioCtx = null;
+  const kokoroQueue = [];     // [{ text, token }]
+  let kokoroPlaying = false;
+
+  function canTryKokoro() {
+    if (kokoro) return true;
+    if (kokoroLoader) return true; // injected (tests) -> environment is faked too
+    // Allow retry 60s after a failure (transient: network, phone sleep, memory)
+    if (kokoroFailedAt && Date.now() - kokoroFailedAt < KOKORO_RETRY_MS) return false;
+    try {
+      const AC = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+      return typeof AC === 'function';
+    } catch { return false; }
+  }
+
+  function defaultKokoroLoader() {
+    // Resolves via the import map in index.html; the ~300MB model downloads
+    // once, on first use, and is cached by the browser afterwards.
+    return import('kokoro-js').then((mod) => mod.KokoroTTS.from_pretrained(KOKORO_MODEL, {
+      dtype: 'q8',
+      device: (typeof navigator !== 'undefined' && navigator.gpu) ? 'webgpu' : 'wasm',
+    }));
+  }
+
+  async function ensureKokoro() {
+    if (kokoro) return kokoro;
+    kokoro = await (kokoroLoader ?? defaultKokoroLoader)();
+    return kokoro;
+  }
+
+  function ensureAudioCtx() {
+    if (audioCtx) return audioCtx;
+    if (makeAudioContext) { audioCtx = makeAudioContext(); return audioCtx; }
+    const AC = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+    if (typeof AC !== 'function') throw new Error('Web Audio is not available');
+    audioCtx = new AC();
+    return audioCtx;
+  }
+
+  function playPcm(pcm, sampleRate) {
+    const ctx = ensureAudioCtx();
+    if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+      try { const r = ctx.resume(); if (r && typeof r.catch === 'function') r.catch(() => {}); } catch {}
+    }
+    const buf = ctx.createBuffer(1, pcm.length, sampleRate);
+    buf.getChannelData(0).set(pcm);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    return src;
+  }
+
+  // A Kokoro failure hands the failed chunk and everything still queued to
+  // speechSynthesis instead.
+  function kokoroFallback(failedItem) {
+    const chunks = [];
+    if (failedItem) chunks.push(failedItem.text);
+    for (const item of kokoroQueue.splice(0)) chunks.push(item.text);
+    if (chunks.length) synthEngine.speakChunks(chunks, { interrupt: false });
+  }
+
+  async function pumpKokoro() {
+    if (kokoroPlaying || kokoroQueue.length === 0) return;
+    const item = kokoroQueue.shift();
+    kokoroPlaying = true;
+    let out;
+    try {
+      const engine = await ensureKokoro();
+      out = await engine.generate(item.text, { voice: KOKORO_VOICE });
+    } catch (err) {
+      kokoroPlaying = false;
+      kokoroFailedAt = Date.now();
+      console.warn('[voice] Kokoro generate failed, falling back:', err?.message ?? err);
+      kokoroFallback(item);
+      return;
+    }
+    if (item.token !== playToken) { kokoroPlaying = false; pumpKokoro(); return; } // cancelled mid-generate
+    let src;
+    try {
+      const pcm = out?.audio ?? out?.data;
+      if (!pcm || !pcm.length) throw new Error('Kokoro returned no audio');
+      src = playPcm(pcm, out?.sampling_rate ?? KOKORO_SAMPLE_RATE);
+    } catch (err) {
+      kokoroPlaying = false;
+      kokoroFailedAt = Date.now();
+      console.warn('[voice] Kokoro playback failed, falling back:', err?.message ?? err);
+      kokoroFallback(item);
+      return;
+    }
+    activeSource = src;
+    src.onended = () => {
+      kokoroPlaying = false;
+      if (activeSource === src) activeSource = null;
+      pumpKokoro();
+    };
+    try { src.start(); }
+    catch { kokoroPlaying = false; if (activeSource === src) activeSource = null; pumpKokoro(); }
+  }
+
+  function kokoroCancel() {
+    playToken += 1; // orphan any in-flight generation
+    kokoroQueue.length = 0;
+    kokoroPlaying = false;
+    if (activeSource) {
+      try { activeSource.stop(); } catch {}
+      activeSource = null;
+    }
+  }
+
+  const tts = {
+    speak(text) {
+      const clean = stripSpeechMarkup(text);
+      if (!clean) return false;
+      const chunks = chunkForSpeech(clean);
+      if (!chunks.length) return false;
+      // A new reply replaces anything in progress, on either engine.
+      synthEngine.cancel();
+      kokoroCancel();
+      if (canTryKokoro()) {
+        for (const c of chunks) kokoroQueue.push({ text: c, token: playToken });
+        void pumpKokoro();
+        return true;
+      }
+      return synthEngine.speakChunks(chunks);
+    },
+    cancel() {
+      synthEngine.cancel();
+      kokoroCancel();
     },
   };
 
