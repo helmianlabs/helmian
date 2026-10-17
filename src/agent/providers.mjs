@@ -648,9 +648,14 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = 
     throw error;
   }
   const data = JSON.parse(raw);
-  const parts = data.candidates?.[0]?.content?.parts || [];
+  const candidates = data.candidates || [];
+  const parts = candidates[0]?.content?.parts || [];
   let content = '';
   const toolCalls = [];
+  // Diagnostic: log when we get no usable text (intermittent empty replies)
+  if (parts.length === 0) {
+    console.warn(`[gemini] No parts in response. Candidates: ${candidates.length}, hasContent: ${!!candidates[0]?.content}, promptFeedback: ${JSON.stringify(data.promptFeedback || {}).slice(0, 200)}`);
+  }
   for (const p of parts) {
     // Thought-only parts (thinking models) have no user-visible text; keep them in geminiParts.
     if (p.text && !p.thought) content += p.text;
@@ -672,6 +677,11 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = 
     }
   }
   // geminiParts: exact model turn for history replay (signatures + thought parts).
+  // Diagnostic: if we got parts but no content, log why (thought-only? no text?)
+  if (parts.length > 0 && !content) {
+    const partSummary = parts.map(p => `{text:${!!p.text},thought:${!!p.thought},fn:${!!p.functionCall}}`).join(',');
+    console.warn(`[gemini] Got ${parts.length} parts but empty content. Parts: ${partSummary}`);
+  }
   return { role: 'assistant', content, toolCalls, raw: data, geminiParts: parts };
 }
 
