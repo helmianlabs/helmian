@@ -238,3 +238,36 @@ export function createEvidenceStore(pool) {
     },
   });
 }
+
+export const EVIDENCE_HANDOFFS_PATH = '/api/admin/maestro/handoffs';
+export const EVIDENCE_CHECKPOINTS_PATH = '/api/admin/maestro/checkpoints';
+export const EVIDENCE_RUNS_LEDGER_PATH = '/api/admin/runs/ledger';
+export const EVIDENCE_LEASES_POSTURE_PATH = '/api/admin/leases/posture';
+
+// HTTP route handling for the evidence reads. Kept here (instead of the live
+// admin handler) so the route surface lives next to the store. Returns true
+// when the request was handled, false when it is not an evidence route.
+export async function handleEvidenceRoute({ request, response, requestUrl, evidence, activeTenantActor, send, TenantAuthorizationError }) {
+  const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
+  if (request.method === 'GET' && requestUrl.pathname === EVIDENCE_HANDOFFS_PATH) {
+    try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await evidence.listHandoffs(actor, requestUrl.searchParams.get('limit')) })); }
+    catch (error) { send(response, membershipError(error) ? 403 : 503, JSON.stringify({ valid: false, code: membershipError(error) ? 'EVIDENCE_MEMBERSHIP_REQUIRED' : 'EVIDENCE_HANDOFFS_READ_FAILED' })); }
+    return true;
+  }
+  if (request.method === 'GET' && requestUrl.pathname === EVIDENCE_CHECKPOINTS_PATH) {
+    try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await evidence.listCheckpoints(actor, requestUrl.searchParams.get('limit')) })); }
+    catch (error) { send(response, membershipError(error) ? 403 : 503, JSON.stringify({ valid: false, code: membershipError(error) ? 'EVIDENCE_MEMBERSHIP_REQUIRED' : 'EVIDENCE_CHECKPOINTS_READ_FAILED' })); }
+    return true;
+  }
+  if (request.method === 'GET' && requestUrl.pathname === EVIDENCE_RUNS_LEDGER_PATH) {
+    try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await evidence.listRunLedger(actor, requestUrl.searchParams.get('limit')) })); }
+    catch (error) { send(response, membershipError(error) ? 403 : 503, JSON.stringify({ valid: false, code: membershipError(error) ? 'EVIDENCE_MEMBERSHIP_REQUIRED' : 'EVIDENCE_LEDGER_READ_FAILED' })); }
+    return true;
+  }
+  if (request.method === 'GET' && requestUrl.pathname === EVIDENCE_LEASES_POSTURE_PATH) {
+    try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await evidence.listLeasePosture(actor) })); }
+    catch (error) { send(response, membershipError(error) ? 403 : 503, JSON.stringify({ valid: false, code: membershipError(error) ? 'EVIDENCE_MEMBERSHIP_REQUIRED' : 'EVIDENCE_LEASES_READ_FAILED' })); }
+    return true;
+  }
+  return false;
+}
