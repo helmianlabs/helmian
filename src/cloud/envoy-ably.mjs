@@ -13,6 +13,7 @@
 
 import { createHmac, randomBytes } from 'node:crypto';
 import { handleRunnerPresenceRoute } from './runner-presence.mjs';
+import { handleAgentSessionsRoute } from './agent-sessions.mjs';
 
 export const ENVOY_ABLY_TOKEN_PATH = '/api/admin/envoy/ably-token';
 export const ENVOY_ABLY_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 min; the bridge client auto-renews
@@ -149,6 +150,7 @@ export async function handleEnvoyAblyRoute({
   ablyKey = process.env.ABLY_API_KEY,
 } = {}) {
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
+  if (await handleAgentSessionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (request?.method !== 'POST' || requestUrl?.pathname !== ENVOY_ABLY_TOKEN_PATH) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
   try {
