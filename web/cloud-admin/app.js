@@ -149,6 +149,8 @@ const connectorStatus = document.querySelector('#connector-status');
 const connectorSurfaceStatus = document.querySelector('#connector-surface-status');
 const connectorSurfaceButtons = [...document.querySelectorAll('[data-connector-surface]')];
 const connectorItems = document.querySelector('#connector-items');
+const connectorOutbound = document.querySelector('#connector-outbound');
+const connectorOutboundStatus = document.querySelector('#connector-outbound-status');
 const connectorForm = document.querySelector('#connector-form');
 const connectorProvider = document.querySelector('#connector-provider');
 const connectorLifecycle = document.querySelector('#connector-lifecycle');
@@ -1078,7 +1080,49 @@ function renderApprovalInbox(body) {
 async function loadApprovalInbox() { approvalInboxStatus.textContent = 'Loading Organization approvals…'; try { renderApprovalInbox(await coraClient.readApprovals({ status: approvalInboxFilters.value || null })); } catch (error) { approvalInboxItems.replaceChildren(); approvalInboxStatus.textContent = error.status === 403 ? 'Approvals unavailable: active Organization membership is required.' : `Approvals unavailable: ${error.message}`; } }
 approvalInboxFilters.onchange = () => loadApprovalInbox().catch(() => {});
 
-function renderConnectors(body) { const model = connectorRegistrationPanelModel(body); connectorItems.replaceChildren(); connectorStatus.textContent = model.statusLabel; if (model.empty) { connectorItems.textContent = model.statusLabel; return; } for (const registration of model.registrations) { const item = document.createElement('article'); item.className = 'config-item'; item.textContent = `${registration.provider} · ${registration.lifecycle} · endpoint readiness: ${registration.publicEndpointReady ? 'declared' : 'not declared'} · verifier: ${registration.lastVerifiedStatus} · inbound delivery not enabled by this panel`; connectorItems.append(item); } }
+function renderConnectors(body) { const model = connectorRegistrationPanelModel(body); connectorItems.replaceChildren(); connectorStatus.textContent = model.statusLabel; renderConnectorOutbound(body.verifierStatus); if (model.empty) { connectorItems.textContent = model.statusLabel; return; } for (const registration of model.registrations) { const item = document.createElement('article'); item.className = 'config-item'; item.textContent = `${registration.provider} · ${registration.lifecycle} · endpoint readiness: ${registration.publicEndpointReady ? 'declared' : 'not declared'} · verifier: ${registration.lastVerifiedStatus} · inbound delivery not enabled by this panel`; connectorItems.append(item); } }
+
+function renderConnectorOutbound(verifierStatus) {
+  connectorOutbound.replaceChildren();
+  const status = verifierStatus ?? {};
+  const isAdmin = ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase());
+  const providers = ['discord', 'slack'];
+  const anyConfigured = providers.some((provider) => status[provider]?.outboundDelivery);
+  connectorOutboundStatus.textContent = anyConfigured
+    ? 'Outbound delivery is configured for at least one provider. Webhook URLs are never displayed here.'
+    : 'Outbound delivery is not configured. Set the webhook URL in server configuration to enable delivery.';
+  for (const provider of providers) {
+    const configured = Boolean(status[provider]?.outboundDelivery);
+    const item = document.createElement('article');
+    item.className = 'config-item';
+    const label = document.createElement('strong');
+    label.textContent = `${provider[0].toUpperCase()}${provider.slice(1)} · outbound ${configured ? 'configured' : 'not configured'}`;
+    item.append(label);
+    if (isAdmin) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'secondary';
+      button.textContent = 'Send test message';
+      button.disabled = !configured;
+      button.title = configured ? 'Queue a test message for delivery' : 'Configure the webhook URL first';
+      button.onclick = async () => {
+        button.disabled = true;
+        connectorOutboundStatus.textContent = `Queueing ${provider} test message…`;
+        try {
+          await coraClient.sendConnectorTestMessage(provider);
+          connectorOutboundStatus.textContent = `Test message queued for ${provider}. It delivers when the Connect surface is read.`;
+        } catch (error) {
+          connectorOutboundStatus.textContent = error.status === 403 ? 'Test delivery requires owner or admin membership.' : `Test message not queued: ${error.message}`;
+        } finally {
+          // Client-side rate limit: one test per provider per 30 seconds.
+          setTimeout(() => { button.disabled = !configured; }, 30000);
+        }
+      };
+      item.append(button);
+    }
+    connectorOutbound.append(item);
+  }
+}
 function selectConnectorSurface(surface) {
   connectorSurfaceButtons.forEach((button) => {
     const selected = button.dataset.connectorSurface === surface;
@@ -1098,7 +1142,7 @@ function selectConnectorSurface(surface) {
   connectorForm?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 connectorSurfaceButtons.forEach((button) => { button.onclick = () => selectConnectorSurface(button.dataset.connectorSurface); });
-async function loadConnectors() { connectorStatus.textContent = 'Loading connector registration metadata…'; try { const body = await coraClient.readConnectors(); renderConnectors(body); if (connectorForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) connectorForm.hidden = false; } catch (error) { connectorItems.replaceChildren(); connectorStatus.textContent = error.status === 403 ? 'Connector metadata unavailable: active Organization membership is required.' : `Connector metadata unavailable: ${error.message}`; } }
+async function loadConnectors() { connectorStatus.textContent = 'Loading connector registration metadata…'; try { const body = await coraClient.readConnectors(); renderConnectors(body); if (connectorForm && ['owner', 'admin'].includes(String(window.helmianActorRole ?? '').toLowerCase())) connectorForm.hidden = false; } catch (error) { connectorItems.replaceChildren(); connectorOutbound.replaceChildren(); connectorOutboundStatus.textContent = 'Outbound delivery status unavailable.'; connectorStatus.textContent = error.status === 403 ? 'Connector metadata unavailable: active Organization membership is required.' : `Connector metadata unavailable: ${error.message}`; } }
 connectorForm.onsubmit = async (event) => { event.preventDefault(); connectorStatus.textContent = 'Saving connector metadata…'; try { const channels = connectorChannels.value.split('\n').map((line) => line.split('|').map((part) => part.trim())).filter((parts) => parts.length >= 2 && parts[0] && parts[1]).map(([externalChannelId, label]) => ({ externalChannelId, label, enabled: true })); await coraClient.saveConnector({ provider: connectorProvider.value, lifecycle: connectorLifecycle.value, enabled: connectorLifecycle.value === 'enabled', publicEndpointReady: connectorEndpointReady.checked, secretReferenceName: connectorSecretRef.value.trim() || null, allowedInboundChannels: channels }); connectorStatus.textContent = 'Connector metadata saved. No secret value, webhook, OAuth flow, provider call, or delivery was performed.'; await loadConnectors(); } catch (error) { connectorStatus.textContent = `Connector metadata not saved: ${error.message}`; } };
 
 function renderProviderConnections(body) { const model = providerConnectionPanelModel(body); providerConnectionsItems.replaceChildren(); providerConnectionsStatus.textContent = model.statusLabel; if (model.empty) { providerConnectionsItems.textContent = model.statusLabel; return; } for (const connection of model.connections) { const item = document.createElement('article'); item.className = 'config-item'; item.append(configItem('Provider', `${connection.providerId} · ${connection.authMode}`), configItem('Vault reference', connection.credentialReference), configItem('Lifecycle', connection.lifecycle), configItem('Readiness', 'External vault verification required'), configItem('Tools', 'Not granted'), configItem('Invocation', 'Not performed')); providerConnectionsItems.append(item); } }
