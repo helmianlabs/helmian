@@ -413,6 +413,24 @@ async function decide(item, decision) {
   catch { toast('Decision not saved — try again'); }
   await loadFeedData(); if (shell.dataset.view === 'approvals') renderApprovals();
 }
+// Inline copy of web/shared/guard-motion.mjs (desktop parity for the Guard
+// feed; /app applies motion only, no toggles).
+function guardMotionState(finding, now = Date.now()) {
+  const severity = String(finding?.severity ?? 'info').toLowerCase();
+  const sightingCount = Number(finding?.sightingCount ?? 0) || 0;
+  const acked = !!finding?.acked;
+  const tone = severity === 'critical' ? 'red' : severity === 'warning' ? 'yellow' : 'grey';
+  if (acked) return { tone, pulse: false, acked: true };
+  const firstSeen = finding?.firstSeenAt ? new Date(finding.firstSeenAt).getTime() : NaN;
+  const unansweredMin = Number.isNaN(firstSeen) ? 0 : Math.max(0, (now - firstSeen) / 60000);
+  if (severity === 'critical') return { tone: 'red', pulse: true, acked: false };
+  if (severity === 'warning') {
+    const escalated = sightingCount >= 5 || unansweredMin >= 5;
+    const pulsing = sightingCount >= 3 || unansweredMin >= 2;
+    return { tone: escalated ? 'red' : 'yellow', pulse: escalated || pulsing, acked: false };
+  }
+  return { tone: 'grey', pulse: false, acked: false };
+}
 function findingCards() {
   // Guard findings carry server-side ack state; criticals are never hidden by ack.
   return (state.findings ?? []).map((f) => ({
@@ -445,7 +463,8 @@ function renderFeed() {
   const feed = $('#feed');
   if (!merged.length) { feed.replaceChildren(empty('All clear', 'Alerts from your agents show up here.')); return; }
   feed.replaceChildren(...merged.slice(0, 60).map((c) => {
-    const a = el('article', `alert ${c.severity}${c.ack ? ' ack' : ''}`);
+    const motion = c.finding ? guardMotionState(c.finding) : null;
+    const a = el('article', `alert ${c.severity}${c.ack ? ' ack' : ''}${motion ? ` tone-${motion.tone}${motion.pulse ? ' pulse' : ''}` : ''}`);
     const h = el('div', 'h'); h.append(el('span', null, c.title), el('span', 't', c.at ? formatTime(c.at) : '')); a.append(h);
     if (c.body) a.append(el('div', 'b', c.body));
     const actions = el('div', 'actions');
@@ -814,12 +833,32 @@ function toEmbeddableUrl(url) {
   return url;
 }
 
-// ---- workbench panel: Canvas (per-project scratchpad) ----
+// ---- workbench panel: Canvas (per-project scratchpad + decision log) ----
+function renderDecisionLog(decisions, unavailable) {
+  const list = $('#canvas-decisions');
+  list.replaceChildren();
+  if (unavailable) {
+    list.append(el('li', 'muted sm', es('📝 The decision log is not available yet — ask your admin to run the database migrations.', 'The decision log is not available yet — ask your admin to run the database migrations.')));
+    return;
+  }
+  if (!decisions.length) {
+    list.append(el('li', 'muted sm', es('📝 No decisions recorded yet — they will appear here.', 'No decisions recorded yet — they will appear here.')));
+    return;
+  }
+  for (const d of decisions) {
+    const item = el('li', 'decision-entry');
+    item.append(el('div', null, d.decisionText ?? ''));
+    const meta = el('div', 'muted sm', d.recordedAt ? formatTime(d.recordedAt) : '');
+    item.append(meta);
+    list.append(item);
+  }
+}
 async function loadCanvas() {
   const status = $('#canvas-status');
   const projectKey = state.activeProjectKey;
   $('#canvas-project').textContent = projectKey ?? '';
   const body = $('#canvas-body');
+  $('#canvas-decision-input').placeholder = es('📝 Record a decision…', 'Record a decision…');
   if (!projectKey) {
     body.hidden = true;
     status.textContent = es('🎨 Pick a project first — the canvas is saved per project.', 'Pick a project first — the canvas is saved per project.');
@@ -831,7 +870,7 @@ async function loadCanvas() {
     const data = await api(`/api/admin/workspace/canvas?projectKey=${encodeURIComponent(projectKey)}`);
     if (state.activeProjectKey !== projectKey) return;
     $('#canvas-note').value = data.noteText ?? '';
-    $('#canvas-decision').value = data.decisionText ?? '';
+    renderDecisionLog(data.decisions ?? [], !!data.decisionsUnavailable);
     status.textContent = data.canvasUnavailable
       ? 'Canvas storage is not available yet.'
       : (data.updatedAt ? `Saved ${formatTime(data.updatedAt)} · no provider call` : 'Empty canvas — no provider call.');
@@ -845,11 +884,28 @@ $('#canvas-save').onclick = async () => {
   if (!projectKey) { status.textContent = es('🎨 Pick a project first — the canvas is saved per project.', 'Pick a project first — the canvas is saved per project.'); return; }
   status.textContent = 'Saving…';
   try {
-    await api('/api/admin/workspace/canvas', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey, noteText: $('#canvas-note').value, decisionText: $('#canvas-decision').value }) });
+    await api('/api/admin/workspace/canvas', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey, noteText: $('#canvas-note').value }) });
     status.textContent = 'Saved · no provider call';
     toast('Canvas saved');
   } catch (error) {
     status.textContent = error.status === 404 ? 'That project no longer exists.' : 'Not saved — try again.';
+  }
+};
+$('#canvas-decision-record').onclick = async () => {
+  const projectKey = state.activeProjectKey;
+  const status = $('#canvas-status');
+  const input = $('#canvas-decision-input');
+  if (!projectKey) { status.textContent = es('🎨 Pick a project first — the canvas is saved per project.', 'Pick a project first — the canvas is saved per project.'); return; }
+  const decisionText = input.value.trim();
+  if (!decisionText) { status.textContent = es('📝 Write the decision first, then record it.', 'Write the decision first, then record it.'); return; }
+  status.textContent = 'Recording…';
+  try {
+    await api('/api/admin/workspace/canvas/decisions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey, decisionText }) });
+    input.value = '';
+    status.textContent = 'Decision recorded · no provider call';
+    await loadCanvas();
+  } catch (error) {
+    status.textContent = error.status === 404 ? 'That project no longer exists.' : error.status === 503 ? 'The decision log is not available yet.' : 'Not recorded — try again.';
   }
 };
 

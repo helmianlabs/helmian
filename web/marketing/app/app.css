@@ -148,6 +148,11 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .feed { display:flex; flex-direction:column; gap:8px; }
 .alert { background:var(--panel-2); border:1px solid var(--border); border-left:4px solid var(--accent); border-radius:var(--radius); padding:10px 12px; font-size:13px; }
 .alert.warning { border-left-color:var(--amber); } .alert.critical { border-left-color:var(--red); background:rgba(239,68,68,.08); }
+.alert.pulse { animation:guard-pulse 1.6s ease-in-out infinite; }
+.alert.tone-red.pulse { border-color:var(--red); box-shadow:0 0 0 1px rgba(239,68,68,.35), 0 0 16px rgba(239,68,68,.25); }
+.alert.tone-yellow.pulse { border-color:var(--amber); box-shadow:0 0 0 1px rgba(245,158,11,.35), 0 0 16px rgba(245,158,11,.25); }
+@keyframes guard-pulse { 0%,100% { opacity:1; } 50% { opacity:.55; } }
+@media (prefers-reduced-motion:reduce) { .alert.pulse { animation:none; } }
 .alert.ack { border-left-color:var(--amber); background:rgba(245,158,11,.06); }
 .alert .h { display:flex; justify-content:space-between; gap:8px; font-weight:600; } .alert .h .t { color:var(--faint); font-weight:400; font-size:11px; white-space:nowrap; }
 .alert .b { color:var(--muted); margin-top:2px; } .alert .actions { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
@@ -171,6 +176,9 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .shell.signed-out { grid-template-columns:1fr !important; } .shell.signed-out .sidebar, .shell.signed-out .guard, .shell.signed-out #sidebar-toggle, .shell.signed-out #guard-toggle, .shell.signed-out #fullscreen { display:none !important; }
 .sessions .x { border:0; background:none; color:var(--faint); cursor:pointer; padding:0 2px; margin-left:4px; font-size:14px; } .sessions .x:hover { color:var(--red); }
 .row-btns.left { justify-content:flex-start; margin:6px 0; }
+.canvas-decisions { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.canvas-decisions .decision-entry { background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius); padding:8px 10px; font-size:13px; }
+#canvas-decision-input { flex:1; min-width:0; background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius); padding:6px 10px; }
 .invite-new { display:flex; gap:6px; margin:8px 0; } .invite-new input { flex:1; min-width:0; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:7px 10px; font-family:var(--mono); font-size:12px; }
 .code { font:700 28px/1 var(--mono); letter-spacing:.12em; color:var(--accent); margin-top:10px; }
 
