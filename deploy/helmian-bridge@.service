@@ -1,0 +1,23 @@
+[Unit]
+Description=Helmian cloud bridge (tenant %i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=helmian-t-%i
+WorkingDirectory=/opt/helmian
+EnvironmentFile=/etc/helmian/tenants/%i.env
+ExecStart=/usr/bin/node bin/pc-bridge.mjs
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# Tenant isolation: the bridge only needs its own home, the repo (read-only),
+# and loopback. No access to other tenants' homes.
+ProtectHome=read-only
+ReadWritePaths=/home/helmian-t-%i
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
