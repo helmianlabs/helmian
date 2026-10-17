@@ -36,10 +36,10 @@ const PARITY = Object.freeze([
     id: 'artifact-studio',
     desktop: 'Create/Preview artifact workspace with local split panes',
     desktopEvidence: 'desktop/Helmion.Desktop/MainWindow.xaml:2942-3402',
-    cloud: 'Artifact Studio intent, source, script, and execution-request receipts',
-    cloudEvidence: 'web/cloud-admin/index.html:279-319; src/cloud/live-admin.mjs:730-780',
+    cloud: 'Artifact Studio intent, source, script, and execution-request receipts; the cloud worker drains approved and pre-approved queued requests as needs_desktop; the paired desktop reports completion back through the device-authed result endpoint (needs_desktop -> completed); script text is content-validated at request time',
+    cloudEvidence: 'web/cloud-admin/index.html:279-319; src/cloud/live-admin.mjs:730-780; src/cora/artifact-execution-worker.mjs; src/cora/artifact-execution-repository.mjs',
     status: 'partial',
-    missing: 'Cloud records bounded intents and preflights; it does not execute the desktop artifact workflow.',
+    missing: 'The generative step still runs on the paired desktop: the cloud never invokes providers, generates media, or holds credentials (019 contract).',
   },
   {
     id: 'guard',

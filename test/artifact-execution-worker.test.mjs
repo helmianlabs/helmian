@@ -31,8 +31,16 @@ function fakePool({ requests, decisions, existingLeases = [] }) {
       if (q.includes('from helmion.cora_artifact_execution_requests r')) {
         return {
           rows: requests
-            .filter((r) => decisions.some((d) => d.request_receipt_id === r.receipt_id && d.decision === 'approve') && !runs.some((run) => run.execution_request_id === r.id))
-            .map((r) => ({ id: r.id, tenant_id: r.tenant_id, receipt_id: r.receipt_id, decision_receipt_id: decisions.find((d) => d.request_receipt_id === r.receipt_id).receipt_id })),
+            .filter((r) => {
+              const approvedDecision = decisions.some((d) => d.request_receipt_id === r.receipt_id && d.decision === 'approve');
+              const preapproved = r.status === 'queued' && r.approval_ref != null;
+              const claimable = (r.status === 'approval_required' && approvedDecision) || preapproved;
+              return claimable && !runs.some((run) => run.execution_request_id === r.id);
+            })
+            .map((r) => {
+              const decision = decisions.find((d) => d.request_receipt_id === r.receipt_id && d.decision === 'approve');
+              return { id: r.id, tenant_id: r.tenant_id, receipt_id: r.receipt_id, decision_receipt_id: decision ? decision.receipt_id : `approval_ref:${r.approval_ref}` };
+            }),
         };
       }
       if (q.startsWith('insert into helmion.cora_artifact_execution_runs')) { runs.push({ tenant_id: params[0], execution_request_id: params[1], request_receipt_id: params[2], decision_receipt_id: params[3], outcome: params[5], result: JSON.parse(params[6]) }); return { rowCount: 1, rows: [] }; }
@@ -45,9 +53,9 @@ function fakePool({ requests, decisions, existingLeases = [] }) {
 
 test('worker queues approved requests as needs_desktop and ignores the rest', async () => {
   const requests = [
-    { id: 1, tenant_id: 't-a', receipt_id: 'exec-receipt-0001' },
-    { id: 2, tenant_id: 't-a', receipt_id: 'exec-receipt-0002' },
-    { id: 3, tenant_id: 't-a', receipt_id: 'exec-receipt-0003' },
+    { id: 1, tenant_id: 't-a', receipt_id: 'exec-receipt-0001', status: 'approval_required' },
+    { id: 2, tenant_id: 't-a', receipt_id: 'exec-receipt-0002', status: 'approval_required' },
+    { id: 3, tenant_id: 't-a', receipt_id: 'exec-receipt-0003', status: 'approval_required' },
   ];
   const decisions = [
     { request_receipt_id: 'exec-receipt-0001', decision: 'approve', receipt_id: 'decision-receipt-0001' },
@@ -65,6 +73,25 @@ test('worker queues approved requests as needs_desktop and ignores the rest', as
   assert.equal((await worker.runOnce()).length, 0, 'each request runs once');
 });
 
+test('worker drains pre-approved queued requests without a decision row', async () => {
+  const requests = [
+    { id: 1, tenant_id: 't-a', receipt_id: 'exec-receipt-0001', status: 'queued', approval_ref: 'pre-approval-0001' },
+    { id: 2, tenant_id: 't-a', receipt_id: 'exec-receipt-0002', status: 'approval_required' },
+    { id: 3, tenant_id: 't-a', receipt_id: 'exec-receipt-0003', status: 'queued', approval_ref: null },
+    { id: 4, tenant_id: 't-a', receipt_id: 'exec-receipt-0004', status: 'blocked' },
+  ];
+  const decisions = [];
+  const { pool, runs } = fakePool({ requests, decisions });
+  const worker = createArtifactExecutionWorker({ pool, workerId: 'worker:test-artifact' });
+  const done = await worker.runOnce();
+  assert.equal(done.length, 1, 'only the pre-approved queued request is drained; undecided, ref-less queued, and blocked are untouched');
+  assert.equal(done[0].receiptId, 'exec-receipt-0001');
+  assert.equal(done[0].outcome, 'needs_desktop');
+  assert.equal(runs[0].decision_receipt_id, 'approval_ref:pre-approval-0001');
+  assert.ok(runs.every((run) => run.outcome === 'needs_desktop'), 'the worker never writes completed or any other outcome');
+  assert.equal((await worker.runOnce()).length, 0, 'each request runs once');
+});
+
 test('worker is a no-op when migration 046 is not applied', async () => {
   const pool = { connect: async () => ({ async query(sql) { const q = String(sql).replace(/\s+/g, ' ').trim().toLowerCase(); if (['begin', 'commit', 'rollback'].includes(q)) return { rows: [] }; const error = new Error('relation "helmion.cora_artifact_execution_runs" does not exist'); error.code = '42P01'; throw error; }, release() {} }) };
   const done = await createArtifactExecutionWorker({ pool }).runOnce();
@@ -77,7 +104,7 @@ test('worker rejects invalid ids and missing pool', () => {
 });
 
 test('worker skips items when the write lease is held and releases its own lease', async () => {
-  const requests = [{ id: 1, tenant_id: 't-a', receipt_id: 'exec-receipt-0001' }];
+  const requests = [{ id: 1, tenant_id: 't-a', receipt_id: 'exec-receipt-0001', status: 'approval_required' }];
   const decisions = [{ request_receipt_id: 'exec-receipt-0001', decision: 'approve', receipt_id: 'decision-receipt-0001' }];
   const held = {
     tenant_id: 't-a', project_key: null, holder: 'worker:other', lease_token: '11111111-1111-4111-8111-111111111111',

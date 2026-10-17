@@ -5,6 +5,10 @@
 // constraint, so the provider call happens off-cloud. Approved requests are
 // recorded as 'needs_desktop' for the paired Helmian desktop (or a future
 // runner) to pick up. Never acts on reject decisions or undecided requests.
+// Pre-approved requests (status 'queued', set at append time by an owner or
+// admin via approvalRef) carry no decision row; the worker drains them too,
+// recording needs_desktop with the approval_ref as the decision reference.
+// decide() still refuses anything that is not approval_required.
 // Idempotent: one run row per request, claimed with SELECT ... FOR UPDATE
 // SKIP LOCKED like the console and agent-task workers.
 //
@@ -32,14 +36,16 @@ export function createArtifactExecutionWorker({ pool, workerId = 'worker:cloud-a
       let claimed;
       try {
         claimed = await client.query(
-          `select r.id, r.tenant_id, r.receipt_id, d.receipt_id as decision_receipt_id
+          `select r.id, r.tenant_id, r.receipt_id,
+                  coalesce(d.receipt_id, 'approval_ref:' || r.approval_ref) as decision_receipt_id
            from helmion.cora_artifact_execution_requests r
-           join helmion.cora_approval_decisions d
+           left join helmion.cora_approval_decisions d
              on d.tenant_id = r.tenant_id
             and d.request_kind = 'artifact_execution_request'
             and d.request_receipt_id = r.receipt_id
             and d.decision = 'approve'
-           where r.status = 'approval_required'
+           where ((r.status = 'approval_required' and d.receipt_id is not null)
+               or (r.status = 'queued' and r.approval_ref is not null))
              and not exists (select 1 from helmion.cora_artifact_execution_runs e where e.tenant_id = r.tenant_id and e.execution_request_id = r.id)
            order by r.created_at, r.id limit $1 for update of r skip locked`,
           [limit],
