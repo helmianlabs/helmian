@@ -23,6 +23,14 @@ const auditEvents = document.querySelector('#audit-events');
 const auditNext = document.querySelector('#audit-next');
 const auditExport = document.querySelector('#audit-export');
 const auditExportStatus = document.querySelector('#audit-export-status');
+const evidenceHandoffsStatus = document.querySelector('#evidence-handoffs-status');
+const evidenceHandoffs = document.querySelector('#evidence-handoffs');
+const evidenceCheckpointsStatus = document.querySelector('#evidence-checkpoints-status');
+const evidenceCheckpoints = document.querySelector('#evidence-checkpoints');
+const evidenceLedgerStatus = document.querySelector('#evidence-ledger-status');
+const evidenceLedger = document.querySelector('#evidence-ledger');
+const evidenceLeasesStatus = document.querySelector('#evidence-leases-status');
+const evidenceLeases = document.querySelector('#evidence-leases');
 const peopleStatus = document.querySelector('#people-status');
 const peopleMembers = document.querySelector('#people-members');
 const peopleRoleCatalog = document.querySelector('#people-role-catalog');
@@ -35,6 +43,9 @@ const readinessCards = document.querySelector('#readiness-cards');
 const desktopParityStatus = document.querySelector('#desktop-parity-status');
 const desktopParityCards = document.querySelector('#desktop-parity-cards');
 const guardCheckAgain = document.querySelector('#guard-check-again');
+const guardAckAll = document.querySelector('#guard-ack-all');
+const guardFindings = document.querySelector('#guard-findings');
+const guardFindingsStatus = document.querySelector('#guard-findings-status');
 const guardPreviewTab = document.querySelector('#guard-preview-tab');
 const capabilitiesStatus = document.querySelector('#capabilities-status');
 const capabilitiesNormal = document.querySelector('#capabilities-normal');
@@ -229,6 +240,74 @@ function renderPolicy(body) {
   policyConfirmation.hidden = true;
 }
 
+function renderGuardFindings(body) {
+  guardFindings.replaceChildren();
+  const findings = body.findings ?? [];
+  if (body.migrationPending) {
+    guardFindingsStatus.textContent = 'Guard findings unavailable until the database migrations are applied.';
+    return;
+  }
+  const unacked = findings.filter((finding) => !finding.acked);
+  guardFindingsStatus.textContent = findings.length
+    ? `${findings.length} finding${findings.length === 1 ? '' : 's'} · ${unacked.length} unacknowledged`
+    : 'No Guard findings.';
+  guardAckAll.disabled = unacked.length === 0;
+  for (const finding of findings) {
+    const card = document.createElement('div');
+    card.className = `guard-card ${finding.severity === 'critical' ? 'critical' : finding.severity === 'warning' ? 'warn' : ''}`;
+    const title = document.createElement('h3');
+    title.textContent = `${finding.severity} · ${finding.title}`;
+    const summary = document.createElement('p');
+    const bits = [`source: ${finding.source}`, `sightings: ${finding.sightingCount}`];
+    if (finding.pageRef) bits.push(`page: ${finding.pageRef}`);
+    if (finding.lastSeenAt) bits.push(`last seen: ${new Date(finding.lastSeenAt).toLocaleString()}`);
+    if (finding.acked) bits.push(`acknowledged by ${finding.ackedBy ?? 'unknown'}`);
+    summary.textContent = bits.join(' · ');
+    card.append(title, summary);
+    if (!finding.acked) {
+      const ack = document.createElement('button');
+      ack.type = 'button';
+      ack.textContent = 'Acknowledge';
+      ack.onclick = async () => {
+        ack.disabled = true;
+        try { await ackGuardFinding(finding.fingerprint); await loadGuardFindings(); }
+        catch (error) { ack.disabled = false; guardFindingsStatus.textContent = `Acknowledgement failed: ${error.message}`; }
+      };
+      card.append(ack);
+    }
+    guardFindings.append(card);
+  }
+}
+
+async function ackGuardFinding(fingerprint) {
+  const response = await fetch('/api/admin/guard/acks', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fingerprint }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.code ?? 'acknowledgement failed');
+}
+
+async function loadGuardFindings() {
+  guardFindingsStatus.textContent = 'Loading Guard findings.';
+  try {
+    const response = await fetch('/api/admin/guard/findings', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw Object.assign(new Error(body.code ?? 'Guard findings unavailable'), { status: response.status });
+    renderGuardFindings(body);
+  } catch (error) {
+    guardFindings.replaceChildren();
+    guardAckAll.disabled = true;
+    guardFindingsStatus.textContent = error.status === 403
+      ? 'Guard findings unavailable: active Organization membership is required.'
+      : error.status === 503
+        ? 'Guard findings unavailable until the database migrations are applied.'
+        : `Guard findings unavailable: ${error.message}`;
+  }
+}
+
 function renderEvents(body) {
   guardEvents.replaceChildren();
   const heading = document.createElement('h3');
@@ -389,6 +468,101 @@ async function loadDesktopParity() {
     desktopParityCards.replaceChildren();
     desktopParityStatus.textContent = error.status === 403 ? 'Desktop parity unavailable: active Organization membership is required.' : `Desktop parity unavailable: ${error.message}`;
   }
+}
+
+function evidenceWhen(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Timestamp unavailable' : date.toLocaleString();
+}
+
+function renderEvidenceHandoffs(body) {
+  evidenceHandoffs.replaceChildren();
+  const handoffs = Array.isArray(body.handoffs) ? body.handoffs : [];
+  evidenceHandoffsStatus.textContent = handoffs.length
+    ? `Showing ${handoffs.length} Maestro handoff(s), latest first.${body.migrationPending ? ' Some records are unavailable until migrations are applied.' : ''}`
+    : body.migrationPending ? 'Handoff records are unavailable until the Maestro migration is applied.' : 'No handoffs recorded.';
+  for (const h of handoffs) {
+    const card = document.createElement('article'); card.className = 'config-item';
+    const title = document.createElement('strong'); title.textContent = `#${h.id} · ${h.direction}`;
+    const status = document.createElement('span'); status.textContent = h.status;
+    const meta = document.createElement('span'); meta.textContent = `${h.projectSlug} · ${evidenceWhen(h.createdAt)}${h.checkpointId != null ? ` · checkpoint #${h.checkpointId}` : ''}${h.confirmedBy ? ` · confirmed by ${h.confirmedBy}` : ''}`;
+    card.append(title, status, meta);
+    if (h.summary) { const s = document.createElement('span'); s.textContent = h.summary; card.append(s); }
+    if (h.evidence) { const e = document.createElement('span'); e.textContent = h.evidence; card.append(e); }
+    if (h.warning) { const w = document.createElement('span'); w.textContent = `Warning: ${h.warning}`; card.append(w); }
+    evidenceHandoffs.append(card);
+  }
+}
+
+function renderEvidenceCheckpoints(body) {
+  evidenceCheckpoints.replaceChildren();
+  const checkpoints = Array.isArray(body.checkpoints) ? body.checkpoints : [];
+  evidenceCheckpointsStatus.textContent = checkpoints.length
+    ? `Showing ${checkpoints.length} checkpoint(s), latest first.${body.migrationPending ? ' Some records are unavailable until migrations are applied.' : ''}`
+    : body.migrationPending ? 'Checkpoint records are unavailable until the Maestro migration is applied.' : 'No checkpoints recorded.';
+  for (const c of checkpoints) {
+    const card = document.createElement('article'); card.className = 'config-item';
+    const title = document.createElement('strong'); title.textContent = `#${c.id} · ${c.coordinatorId}`;
+    const meta = document.createElement('span'); meta.textContent = `${c.projectSlug} · ${evidenceWhen(c.createdAt)}`;
+    card.append(title, meta);
+    card.append(configItem('Work completed', c.workCompleted || '—'));
+    if (c.filesChanged?.length) card.append(configItem('Files changed', c.filesChanged.join(', ')));
+    if (c.testResults?.length) card.append(configItem('Test results', c.testResults.join('; ')));
+    if (c.openBlockers?.length) card.append(configItem('Open blockers', c.openBlockers.join('; ')));
+    if (c.unresolvedRisks?.length) card.append(configItem('Risks', c.unresolvedRisks.join('; ')));
+    card.append(configItem('Next safe action', c.nextSafeAction || '—'));
+    evidenceCheckpoints.append(card);
+  }
+}
+
+function renderEvidenceLedger(body) {
+  evidenceLedger.replaceChildren();
+  const runs = Array.isArray(body.runs) ? body.runs : [];
+  evidenceLedgerStatus.textContent = runs.length
+    ? `Showing ${runs.length} run receipt(s), latest first.${body.migrationPending ? ' Some tables are unavailable until migrations are applied.' : ''}`
+    : body.migrationPending ? 'Run receipts are unavailable until the worker migrations are applied.' : 'No runs recorded.';
+  const kindLabel = { console_command: 'Console', agent_task: 'Agent task', artifact_execution: 'Artifact' };
+  for (const r of runs) {
+    evidenceLedger.append(configItem(
+      `${kindLabel[r.kind] ?? r.kind} · ${r.outcome}`,
+      `${r.receipt || `#${r.id}`} · ${evidenceWhen(r.createdAt)}${r.summary ? ` · ${r.summary}` : ''}`,
+    ));
+  }
+}
+
+function renderEvidenceLeases(body) {
+  evidenceLeases.replaceChildren();
+  const leases = Array.isArray(body.leases) ? body.leases : [];
+  evidenceLeasesStatus.textContent = leases.length
+    ? `${leases.length} active lease(s).${body.migrationPending ? ' Some tables are unavailable until migrations are applied.' : ''}`
+    : body.migrationPending ? 'Lease posture is unavailable until the lease migrations are applied.' : 'No active leases. Nothing holds the pen.';
+  for (const l of leases) {
+    const remaining = Number.isFinite(l.secondsRemaining)
+      ? (l.secondsRemaining >= 0 ? `expires in ${l.secondsRemaining}s` : `stale ${Math.abs(l.secondsRemaining)}s ago`)
+      : 'expiry unknown';
+    evidenceLeases.append(configItem(`${l.scope} · ${l.holder}`, `${remaining} (${evidenceWhen(l.expiresAt)})`));
+  }
+}
+
+async function loadEvidenceSection() {
+  const restricted = 'Evidence unavailable: owner or admin membership is required.';
+  const jobs = [
+    ['/api/admin/maestro/handoffs', evidenceHandoffsStatus, renderEvidenceHandoffs, 'Loading handoffs…'],
+    ['/api/admin/maestro/checkpoints', evidenceCheckpointsStatus, renderEvidenceCheckpoints, 'Loading checkpoints…'],
+    ['/api/admin/runs/ledger', evidenceLedgerStatus, renderEvidenceLedger, 'Loading run receipts…'],
+    ['/api/admin/leases/posture', evidenceLeasesStatus, renderEvidenceLeases, 'Loading lease posture…'],
+  ];
+  await Promise.all(jobs.map(async ([path, statusEl, render, loadingText]) => {
+    statusEl.textContent = loadingText;
+    try {
+      const response = await fetch(path, { credentials: 'same-origin' });
+      const body = await response.json();
+      if (!response.ok) throw Object.assign(new Error(body.code ?? 'Evidence unavailable'), { status: response.status });
+      render(body);
+    } catch (error) {
+      statusEl.textContent = error.status === 403 ? restricted : `Evidence unavailable: ${error.message}`;
+    }
+  }));
 }
 
 function renderCoraCapabilities(body) {
@@ -1064,7 +1238,9 @@ async function load() {
   await loadPolicy();
   await loadOrganizationPeople();
   await loadOrganizationReadiness();
+  await loadGuardFindings().catch(() => {});
   await loadDesktopParity();
+  await loadEvidenceSection().catch(() => {});
   await loadCoraCapabilities();
   try { await loadEnvoyChannels(); }
   catch (error) { composerStatus.textContent = `Chat channels unavailable: ${error.message}. The rest of the console still works.`; }
@@ -1127,8 +1303,24 @@ async function saveWorkspaceLayout(input = layoutInput(), status = 'Saving your 
 guardCheckAgain?.addEventListener('click', async () => {
   guardCheckAgain.disabled = true;
   guardCheckAgain.textContent = 'Checking…';
-  try { await loadOrganizationReadiness(); }
+  try { await loadOrganizationReadiness(); await loadGuardFindings(); }
   finally { guardCheckAgain.disabled = false; guardCheckAgain.textContent = 'Check again'; }
+});
+guardAckAll?.addEventListener('click', async () => {
+  guardAckAll.disabled = true;
+  guardFindingsStatus.textContent = 'Acknowledging findings…';
+  try {
+    const response = await fetch('/api/admin/guard/findings', { credentials: 'same-origin' });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.code ?? 'Guard findings unavailable');
+    for (const finding of body.findings ?? []) {
+      if (!finding.acked) await ackGuardFinding(finding.fingerprint);
+    }
+    await loadGuardFindings();
+  } catch (error) {
+    guardFindingsStatus.textContent = `Acknowledgement failed: ${error.message}`;
+    guardAckAll.disabled = false;
+  }
 });
 guardPreviewTab?.addEventListener('click', () => {
   document.querySelector('#section-prepare')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
