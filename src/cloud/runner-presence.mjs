@@ -121,7 +121,7 @@ export async function handleRunnerPresenceRoute({
     }
   } catch (error) {
     const status = membershipError(error) ? 403 : (error?.status === 503 ? 503 : 400);
-    send(response, status, JSON.stringify({ valid: false, code: 'RUNNER_PRESENCE_FAILED' }));
+    send(response, status, JSON.stringify({ valid: false, code: 'RUNNER_PRESENCE_FAILED', detail: error?.message ?? String(error) }));
   }
   return true;
 }
