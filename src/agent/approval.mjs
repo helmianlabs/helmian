@@ -82,6 +82,20 @@ export function summarizeToolCall(tool, args, maxLength = 220) {
     case 'run_command':
       body = `run_command: ${String(a.command ?? '')}`;
       break;
+    case 'helmion_run_powershell':
+      body = `helmion_run_powershell: ${String(a.command ?? '')}`;
+      break;
+    case 'helmion_write_file': {
+      const bytes = Buffer.byteLength(String(a.content ?? a.bytes ?? ''), 'utf8');
+      body = `helmion_write_file: ${String(a.path ?? '')} (${bytes} bytes)`;
+      break;
+    }
+    case 'helmion_read_file':
+      body = `helmion_read_file: ${String(a.path ?? '')}`;
+      break;
+    case 'helmion_list_dir':
+      body = `helmion_list_dir: ${String(a.path ?? '.')}`;
+      break;
     case 'write_file': {
       const bytes = Buffer.byteLength(String(a.content ?? ''), 'utf8');
       body = `write_file: ${String(a.path ?? '')} (${bytes} bytes)`;
