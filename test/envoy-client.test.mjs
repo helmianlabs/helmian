@@ -53,6 +53,13 @@ test('client creates a channel with exact keys and same-origin auth', async () =
   assert.equal(result.channel.id, 'c-9');
 });
 
+test('client surfaces the inserted flag so the UI can report duplicate channel names', async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({ channel: { id: 'c-1', slug: 'ops', title: 'Operations', kind: 'team' }, inserted: false }), { status: 200 });
+  const result = await createEnvoyClient({ fetchImpl }).createChannel({ kind: 'team', slug: 'ops', title: 'Ops' });
+  assert.equal(result.inserted, false);
+  assert.equal(result.channel.id, 'c-1');
+});
+
 test('Envoy client opens same-origin SSE without tenant selectors and handles message/error events', () => {
   const calls = []; const listeners = {};
   class FakeEventSource {

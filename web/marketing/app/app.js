@@ -175,7 +175,7 @@ async function loadHome() {
 // ---- console (Envoy) ----
 async function loadConsole() {
   if (!state.channelId) {
-    try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); sel.replaceChildren(...chans.map((c) => { const o = el('option', null, c.name || c.displayName || c.channelKey || 'Channel'); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
+    try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); sel.replaceChildren(...chans.map((c) => { const o = el('option', null, c.title || c.slug || 'Channel'); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
       if (!state.channelId && isAdminRole(state.actor?.role)) { const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' }); state.channelId = made.channel?.id ?? null; if (state.channelId) toast('Team channel created'); }
     } catch {}
   }
@@ -194,6 +194,43 @@ async function loadLog() {
   } catch { log.replaceChildren(sys('console is reconnecting…')); }
 }
 $('#channel').onchange = (e) => { state.channelId = e.target.value; loadLog(); };
+$('#new-channel').onclick = () => {
+  if ($('#new-channel-form')) return;
+  const form = el('form', 'channel-form');
+  form.id = 'new-channel-form';
+  const input = el('input', null);
+  input.placeholder = 'New channel name...';
+  input.maxLength = 120;
+  input.setAttribute('aria-label', 'New channel name');
+  const create = el('button', 'btn primary sm', 'Create');
+  create.type = 'submit';
+  const cancel = el('button', 'btn ghost sm', 'Cancel');
+  cancel.type = 'button';
+  form.append(input, create, cancel);
+  $('#log').before(form);
+  input.focus();
+  cancel.onclick = () => form.remove();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const title = input.value.trim();
+    if (!title) { toast('Enter a channel name.'); input.focus(); return; }
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'channel';
+    create.disabled = true;
+    try {
+      const result = await post('/api/admin/envoy/channels', { kind: 'team', slug, title });
+      form.remove();
+      state.channelId = null;
+      await loadConsole();
+      if (result.channel?.id) {
+        state.channelId = result.channel.id;
+        const sel = $('#channel');
+        if ([...sel.options].some((o) => o.value === result.channel.id)) sel.value = result.channel.id;
+        await loadLog();
+      }
+      toast(result.inserted === false ? `Channel "${result.channel?.title ?? title}" already exists — opened it.` : `Channel "${result.channel?.title ?? title}" created.`);
+    } catch { create.disabled = false; toast('Channel not created.'); }
+  };
+};
 const prompt = $('#prompt');
 prompt.oninput = () => { prompt.style.height = 'auto'; prompt.style.height = `${Math.min(prompt.scrollHeight, 200)}px`; };
 prompt.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); $('#composer').requestSubmit(); } };

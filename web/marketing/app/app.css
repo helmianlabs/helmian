@@ -61,6 +61,8 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 
 .console { display:flex; flex-direction:column; gap:12px; padding:16px; position:relative; }
 .console-head { display:flex; justify-content:space-between; align-items:center; }
+.channel-form { display:flex; gap:8px; align-items:center; }
+.channel-form input { flex:1; min-width:0; }
 .log { flex:1; min-height:160px; overflow-y:auto; background:#060A14; border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; font:12.5px/1.6 var(--mono); color:#CBD5E1; }
 .log .line { white-space:pre-wrap; word-break:break-word; } .log .ts { color:var(--faint); } .log .who { color:var(--accent); } .log .me { color:var(--green); } .log .sys { color:var(--muted); }
 .composer { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:10px; }

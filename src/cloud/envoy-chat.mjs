@@ -83,7 +83,7 @@ export function createEnvoyStore(pool) {
         if (result.rows[0]?.inserted) {
           await appendAuditEvent(client, context, { actionType: 'envoy.channel.created', canonicalTarget: { channelId: String(result.rows[0].id), slug: channel.slug, kind: channel.kind }, policyVersion: 'envoy-chat.v1', decision: 'ALLOW', privacySummary: `Created the ${channel.title} channel`, result: { created: true } });
         }
-        return { channel: Object.freeze({ id: String(result.rows[0].id), slug: String(result.rows[0].slug), title: String(result.rows[0].title), kind: String(result.rows[0].kind), createdBySubject: String(result.rows[0].created_by_subject), createdAt: result.rows[0].created_at }) };
+        return { channel: Object.freeze({ id: String(result.rows[0].id), slug: String(result.rows[0].slug), title: String(result.rows[0].title), kind: String(result.rows[0].kind), createdBySubject: String(result.rows[0].created_by_subject), createdAt: result.rows[0].created_at }), inserted: result.rows[0]?.inserted === true };
       });
     },
     async listMessages(actor, channelId, limit = 50, afterId = null) {
