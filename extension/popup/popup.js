@@ -145,4 +145,50 @@ $('confirmClear').addEventListener('click', async () => {
   refresh();
 });
 
+// OPT-IN cloud upload settings. Off by default; the background worker only
+// uploads when this is enabled AND a device token is set. See
+// background/upload.js — this UI needs Troy's manual browser testing.
+function askWithPayload(type, payload) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+        void chrome.runtime.lastError;
+        resolve(response || { ok: false, error: 'the background worker did not answer' });
+      });
+    } catch (error) {
+      resolve({ ok: false, error: error.message });
+    }
+  });
+}
+
+async function refreshUploadSettings() {
+  const result = await askWithPayload('helmion:guard-upload-settings', { settings: {} });
+  if (result.ok && result.settings) {
+    $('uploadEnabled').checked = result.settings.enabled === true;
+    $('uploadStatus').textContent = result.settings.enabled
+      ? (result.settings.hasToken ? 'Upload enabled. New findings will be sent to your Helmian cloud.' : 'Upload enabled, but no device token is set — nothing will be sent.')
+      : 'Upload is off. Findings stay on this machine.';
+  }
+}
+
+$('uploadSave').addEventListener('click', async () => {
+  const result = await askWithPayload('helmion:guard-upload-settings', {
+    settings: { enabled: $('uploadEnabled').checked, deviceToken: $('uploadToken').value },
+  });
+  if (!result.ok) { $('uploadStatus').textContent = `Settings not saved: ${result.error}`; return; }
+  $('uploadToken').value = '';
+  await refreshUploadSettings();
+});
+
+$('uploadNow').addEventListener('click', async () => {
+  $('uploadStatus').textContent = 'Uploading…';
+  const result = await ask('helmion:guard-upload');
+  if (!result.ok) { $('uploadStatus').textContent = `Upload failed: ${result.error}`; return; }
+  if (result.skipped) { $('uploadStatus').textContent = result.skipped === 'not-enabled' ? 'Upload is off — enable it above first.' : 'No device token set — save one above first.'; return; }
+  $('uploadStatus').textContent = result.uploaded
+    ? `Uploaded ${result.uploaded} finding${result.uploaded === 1 ? '' : 's'}${result.remaining ? `, ${result.remaining} remaining` : ''}.`
+    : 'Nothing new to upload.';
+});
+
 refresh();
+refreshUploadSettings();
