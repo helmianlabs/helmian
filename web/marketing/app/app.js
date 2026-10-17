@@ -651,16 +651,24 @@ function clientValidBrowserUrl(value) {
 $('#browser-form').onsubmit = async (e) => {
   e.preventDefault();
   const status = $('#browser-status');
+  const wrap = $('#browser-viewport-wrap');
+  const viewport = $('#browser-viewport');
   const clientError = clientValidBrowserUrl($('#browser-url').value);
   if (clientError) { status.textContent = clientError; return; }
   status.textContent = 'Checking…';
   try {
     const result = await post('/api/admin/browser/navigate', { url: $('#browser-url').value.trim() });
-    status.textContent = 'Opened in your browser. Recorded in the audit trail.';
-    window.open(result.url, '_blank', 'noopener');
+    viewport.src = result.url;
+    wrap.hidden = false;
+    viewport.dataset.externalUrl = result.url;
+    status.textContent = 'Loaded inside Helmian. Recorded in the audit trail.';
   } catch (error) {
     status.textContent = error.body?.message || error.message || 'That address was not accepted.';
   }
+};
+$('#browser-open-external').onclick = () => {
+  const url = $('#browser-viewport').dataset.externalUrl;
+  if (url) window.open(url, '_blank', 'noopener');
 };
 
 // ---- workbench panel: Canvas (per-project scratchpad) ----
