@@ -276,3 +276,7 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .icon-current { font-size:20px; width:28px; text-align:center; }
 .icon-row > span:nth-child(2) { flex:1; min-width:0; }
 .icon-input { width:64px; text-align:center; font-size:18px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:6px 4px; }
+
+.voice-engine { font-size:11px; color:var(--muted); padding:5px 8px; }
+.voice-engine.kokoro { color:var(--green, #4ade80); }
+.voice-engine.fallback { color:var(--yellow, #facc15); }
