@@ -390,7 +390,8 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
 
   // ---- Kokoro engine (primary where Web Audio exists) ----
   let kokoro = null;          // loaded KokoroTTS instance
-  let kokoroFailed = false;   // a Kokoro failure poisons it for this page session
+  let kokoroFailedAt = 0;     // timestamp of last Kokoro failure; retry after 60s
+  const KOKORO_RETRY_MS = 60000;
   let playToken = 0;          // cancel() bumps it; late audio is ignored
   let activeSource = null;    // currently playing AudioBufferSourceNode
   let audioCtx = null;
@@ -398,8 +399,9 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   let kokoroPlaying = false;
 
   function canTryKokoro() {
-    if (kokoroFailed) return false;
     if (kokoro) return true;
+    // Allow retry 60s after a failure (transient: network, phone sleep, memory)
+    if (kokoroFailedAt && Date.now() - kokoroFailedAt < KOKORO_RETRY_MS) return false;
     if (kokoroLoader) return true; // injected (tests) -> environment is faked too
     try {
       const AC = globalThis.AudioContext ?? globalThis.webkitAudioContext;
@@ -461,9 +463,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     try {
       const engine = await ensureKokoro();
       out = await engine.generate(item.text, { voice: KOKORO_VOICE });
-    } catch {
+    } catch (err) {
       kokoroPlaying = false;
-      kokoroFailed = true;
+      kokoroFailedAt = Date.now();
+      console.warn('[voice] Kokoro generate failed, falling back:', err?.message ?? err);
       kokoroFallback(item);
       return;
     }
@@ -473,9 +476,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       const pcm = out?.audio ?? out?.data;
       if (!pcm || !pcm.length) throw new Error('Kokoro returned no audio');
       src = playPcm(pcm, out?.sampling_rate ?? KOKORO_SAMPLE_RATE);
-    } catch {
+    } catch (err) {
       kokoroPlaying = false;
-      kokoroFailed = true;
+      kokoroFailedAt = Date.now();
+      console.warn('[voice] Kokoro playback failed, falling back:', err?.message ?? err);
       kokoroFallback(item);
       return;
     }
