@@ -7,18 +7,26 @@
 // runner) to pick up. Never acts on reject decisions or undecided requests.
 // Idempotent: one run row per request, claimed with SELECT ... FOR UPDATE
 // SKIP LOCKED like the console and agent-task workers.
+//
+// Mutual exclusion: before recording a run row, the worker acquires the
+// workspace write lease for the request's scope. Artifact execution requests
+// carry no project key, so the lease is tenant-scoped (projectKey null).
+// If the lease cannot be acquired the item is skipped and left for the next
+// drain — never forced. Fail-closed: without the lease table, nothing runs.
+
+import { acquireWorkspaceLease, releaseWorkspaceLease } from './workspace-lease.mjs';
 
 export const ARTIFACT_EXECUTION_WORKER_FORMAT = 'helmian.artifact-execution-run.v1';
 const WORKER_ID_PATTERN = /^worker:[a-z0-9][a-z0-9._:-]{0,95}$/;
+const LEASE_TTL_MS = 120000;
 
 export function createArtifactExecutionWorker({ pool, workerId = 'worker:cloud-artifact-executions', batchSize = 10, log = () => {} } = {}) {
   if (!pool?.connect) throw new Error('artifact execution worker needs a Postgres pool');
   if (!WORKER_ID_PATTERN.test(workerId)) throw new Error('artifact execution worker id is invalid');
   const limit = Math.min(Math.max(Number(batchSize) || 10, 1), 50);
 
-  async function runOnce() {
+  async function claimBatch() {
     const client = await pool.connect();
-    const processed = [];
     try {
       await client.query('begin');
       let claimed;
@@ -38,17 +46,33 @@ export function createArtifactExecutionWorker({ pool, workerId = 'worker:cloud-a
         );
       } catch (error) {
         // Migration 046 not applied yet: nothing to drain.
-        if (error?.code === '42P01') { await client.query('rollback').catch(() => {}); return processed; }
+        await client.query('rollback').catch(() => {});
+        if (error?.code === '42P01') return [];
         throw error;
       }
-      for (const request of claimed.rows) {
+      await client.query('commit');
+      return claimed.rows;
+    } catch (error) {
+      await client.query('rollback').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function recordRuns(tenantId, rows) {
+    const processed = [];
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      for (const request of rows) {
         const run = { outcome: 'needs_desktop', result: { reason: 'Approved. The provider call runs on the paired Helmian desktop (external execution); this receipt queues the handoff.' } };
-        await client.query(
+        const inserted = await client.query(
           `insert into helmion.cora_artifact_execution_runs (tenant_id, execution_request_id, request_receipt_id, decision_receipt_id, worker_id, outcome, result)
            values ($1,$2,$3,$4,$5,$6,$7::jsonb) on conflict (tenant_id, execution_request_id) do nothing`,
           [request.tenant_id, request.id, request.receipt_id, request.decision_receipt_id, workerId, run.outcome, JSON.stringify({ format: ARTIFACT_EXECUTION_WORKER_FORMAT, ...run.result })],
         );
-        processed.push({ receiptId: request.receipt_id, decisionReceiptId: request.decision_receipt_id, outcome: run.outcome });
+        if (inserted.rowCount === 1) processed.push({ receiptId: request.receipt_id, decisionReceiptId: request.decision_receipt_id, outcome: run.outcome });
       }
       await client.query('commit');
     } catch (error) {
@@ -56,6 +80,32 @@ export function createArtifactExecutionWorker({ pool, workerId = 'worker:cloud-a
       throw error;
     } finally {
       client.release();
+    }
+    return processed;
+  }
+
+  async function runOnce() {
+    const claimed = await claimBatch();
+    if (claimed.length === 0) return [];
+    const byTenant = new Map();
+    for (const request of claimed) {
+      if (!byTenant.has(request.tenant_id)) byTenant.set(request.tenant_id, []);
+      byTenant.get(request.tenant_id).push(request);
+    }
+    const processed = [];
+    for (const [tenantId, rows] of byTenant) {
+      // No project key on the request: lease at tenant scope. Skip on failure — never force.
+      const lease = await acquireWorkspaceLease({ pool, tenantId, projectKey: null, holder: workerId, ttlMs: LEASE_TTL_MS });
+      if (!lease.acquired) {
+        log(`artifact execution write lease not acquired (${lease.reason}); leaving ${rows.length} request(s) for the next drain`);
+        continue;
+      }
+      try {
+        processed.push(...await recordRuns(tenantId, rows));
+      } finally {
+        await releaseWorkspaceLease({ pool, tenantId, projectKey: null, leaseToken: lease.leaseToken })
+          .catch((error) => log(`artifact execution lease release failed: ${error.message}`));
+      }
     }
     for (const p of processed) log(`artifact execution ${p.receiptId} -> ${p.outcome}`);
     return processed;

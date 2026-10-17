@@ -2,12 +2,32 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createArtifactExecutionWorker, ARTIFACT_EXECUTION_WORKER_FORMAT } from '../src/cora/artifact-execution-worker.mjs';
 
-function fakePool({ requests, decisions }) {
+function fakePool({ requests, decisions, existingLeases = [] }) {
   const runs = [];
+  const leases = existingLeases.map((l, i) => ({ id: i + 1, ...l }));
   const client = {
     async query(sql, params = []) {
       const q = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
       if (['begin', 'commit', 'rollback'].includes(q)) return { rows: [] };
+      if (q.includes('from helmion.workspace_write_leases') && q.includes('for update')) {
+        if (q.includes('lease_token=$2')) {
+          const found = leases.find((l) => l.lease_token === params[1]);
+          return { rows: found ? [found] : [], rowCount: found ? 1 : 0 };
+        }
+        const active = leases.find((l) => l.status === 'ACTIVE');
+        return { rows: active ? [active] : [], rowCount: active ? 1 : 0 };
+      }
+      if (q.startsWith('insert into helmion.workspace_write_leases')) {
+        if (leases.some((l) => l.status === 'ACTIVE')) { const error = new Error('duplicate'); error.code = '23505'; throw error; }
+        leases.push({ id: leases.length + 1, tenant_id: params[0], project_key: params[1], holder: params[2], lease_token: params[3], status: 'ACTIVE', expires_at: params[4] });
+        return { rowCount: 1, rows: [] };
+      }
+      if (q.startsWith('update helmion.workspace_write_leases')) {
+        const target = leases.find((l) => l.id === params[params.length - 1]);
+        if (target) { target.status = q.includes("'expired'") ? 'EXPIRED' : 'RELEASED'; target.closed_at = new Date().toISOString(); }
+        return { rowCount: 1, rows: [] };
+      }
+      if (q.startsWith('insert into helmion.audit_events')) return { rowCount: 1, rows: [{ id: '7' }] };
       if (q.includes('from helmion.cora_artifact_execution_requests r')) {
         return {
           rows: requests
@@ -20,7 +40,7 @@ function fakePool({ requests, decisions }) {
     },
     release() {},
   };
-  return { pool: { connect: async () => client }, runs };
+  return { pool: { connect: async () => client }, runs, leases };
 }
 
 test('worker queues approved requests as needs_desktop and ignores the rest', async () => {
@@ -54,4 +74,26 @@ test('worker is a no-op when migration 046 is not applied', async () => {
 test('worker rejects invalid ids and missing pool', () => {
   assert.throws(() => createArtifactExecutionWorker({}));
   assert.throws(() => createArtifactExecutionWorker({ pool: { connect() {} }, workerId: 'bad' }));
+});
+
+test('worker skips items when the write lease is held and releases its own lease', async () => {
+  const requests = [{ id: 1, tenant_id: 't-a', receipt_id: 'exec-receipt-0001' }];
+  const decisions = [{ request_receipt_id: 'exec-receipt-0001', decision: 'approve', receipt_id: 'decision-receipt-0001' }];
+  const held = {
+    tenant_id: 't-a', project_key: null, holder: 'worker:other', lease_token: '11111111-1111-4111-8111-111111111111',
+    status: 'ACTIVE', expires_at: new Date(Date.now() + 60000).toISOString(),
+  };
+  const { pool, runs, leases } = fakePool({ requests, decisions, existingLeases: [held] });
+  const worker = createArtifactExecutionWorker({ pool, workerId: 'worker:test-artifact' });
+  const done = await worker.runOnce();
+  assert.deepEqual(done, [], 'held lease means nothing is recorded; items stay for the next drain');
+  assert.equal(runs.length, 0);
+  assert.equal(leases.filter((l) => l.status === 'ACTIVE').length, 1, 'the foreign lease is untouched');
+
+  // Without the foreign lease, the worker acquires, records, and releases.
+  const free = fakePool({ requests, decisions });
+  const done2 = await createArtifactExecutionWorker({ pool: free.pool, workerId: 'worker:test-artifact' }).runOnce();
+  assert.equal(done2.length, 1);
+  assert.equal(free.leases.filter((l) => l.status === 'ACTIVE').length, 0, 'own lease is released after the run');
+  assert.equal(free.leases.filter((l) => l.status === 'RELEASED').length, 1);
 });
