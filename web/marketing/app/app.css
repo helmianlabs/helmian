@@ -74,6 +74,11 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .tools, .chips { display:flex; gap:6px; flex-wrap:wrap; }
 .chip { border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:999px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; }
 .chip:hover, .chip.active { border-color:var(--accent); color:var(--accent); }
+.chip.tool.recording { border-color:var(--red); color:var(--red); }
+.chip.tool.recording::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; background:currentColor; margin-right:6px; animation:dictate-pulse 1.2s ease-in-out infinite; }
+@keyframes dictate-pulse { 0%, 100% { opacity:1; } 50% { opacity:.25; } }
+@media (prefers-reduced-motion: reduce) { .chip.tool.recording::before { animation:none; } }
+.chip:disabled { opacity:.45; cursor:default; }
 .new-session { display:flex; flex-direction:column; gap:8px; }
 .session-form { display:flex; gap:6px; flex-wrap:wrap; } .session-form input { flex:1; min-width:140px; }
 .mcp { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; }
