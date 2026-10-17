@@ -23,6 +23,8 @@ import { buildMaestroWorkspaceSnapshot } from './maestro-workspace.mjs';
 import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { createEvidenceStore, handleEvidenceRoute, EVIDENCE_HANDOFFS_PATH, EVIDENCE_CHECKPOINTS_PATH, EVIDENCE_RUNS_LEDGER_PATH, EVIDENCE_LEASES_POSTURE_PATH } from './evidence.mjs';
+import { createCanvasStore, handleCanvasRoute } from './workspace-canvas.mjs';
+import { handleBrowserRoute } from './browser-launcher.mjs';
 import { handleConnectorOutboundRoute } from './connector-outbound.mjs';
 import { handleReleaseRoadmapRoute, RELEASE_ROADMAP_PATH } from './release-manifest.mjs';
 import { createAppSessionStore } from './app-sessions.mjs';
@@ -291,6 +293,7 @@ export async function createLiveHelmianCloudAdminHandler({
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
   consoleCommandRepository: suppliedConsoleCommandRepository = null,
   evidenceStore: suppliedEvidenceStore = null,
+  canvasStore: suppliedCanvasStore = null,
   envoyStore: suppliedEnvoyStore = null,
   appSessionStore: suppliedAppSessionStore = null,
   orgInviteStore: suppliedOrgInviteStore = null,
@@ -313,6 +316,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const envoy = suppliedEnvoyStore ?? createEnvoyStore(pool);
   const guard = createGuardStore(pool);
   const evidence = suppliedEvidenceStore ?? createEvidenceStore(pool);
+  const canvas = suppliedCanvasStore ?? createCanvasStore(pool);
   const appSessions = suppliedAppSessionStore ?? createAppSessionStore(pool);
   const invites = suppliedOrgInviteStore ?? createOrgInviteStore(pool);
   const coraConfig = suppliedCoraConfigRepository ?? createCoraOrganizationConfigRepository(pool);
@@ -473,7 +477,7 @@ export async function createLiveHelmianCloudAdminHandler({
       await requireActiveTenantMembership(client, context);
       return {};
     });
-    // Repositories (e.g. Cora config history) require session/request ids like activeTenantActor provides.
+    // Repositories (e.g. Cora config history) need the session/request ids activeTenantActor provides.
     return { ...actor, sessionId: context.sessionId, requestId: context.requestId };
   }
 
@@ -638,13 +642,11 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SIGNUP_PATH) {
       try {
-        // Clerk's hosted Account Portal owns registration. Returning to the
-        // existing OIDC login route after signup preserves the server-side
-        // Helmian session boundary instead of pretending signup itself created
-        // an admin session.
+        // Clerk's Account Portal owns registration; return via the OIDC login route
+        // to preserve the server-side session boundary.
         const signup = new URL('/sign-up', identity.issuer);
         signup.searchParams.set('redirect_url', new URL(LIVE_ADMIN_LOGIN_PATH, requestOrigin(request, env)).toString());
-        // Only the fixed user app path is accepted as a post-signup destination.
+        // Fixed post-signup destination: the user app path only.
         const extra = requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH ? { 'set-cookie': `helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}` } : {};
         send(response, 302, '', 'text/plain; charset=utf-8', { location: signup.toString(), ...extra });
       } catch { send(response, 503, JSON.stringify({ error: 'identity_gateway_unavailable', code: 'ADMIN_IDENTITY_NOT_CONFIGURED' })); }
@@ -955,13 +957,12 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.code === '42P01' ? 503 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'GUARD_MEMBERSHIP_REQUIRED' : error?.code === '42P01' ? 'GUARD_MIGRATION_PENDING' : 'GUARD_ACK_INVALID' })); }
       return true;
     }
-    // Evidence reads (PARITY-007). Handoffs, checkpoints, and Maestro leases come
-    // from pre-tenant migration-002 tables keyed by project_slug with no
-    // tenant_id: they stay owner/admin-only until tenant scoping exists.
-    // Route handling lives in evidence.mjs next to the store.
+    // PARITY-007 evidence reads (pre-tenant tables, owner/admin-only; see evidence.mjs).
     if (await handleEvidenceRoute({ request, response, requestUrl, evidence, activeTenantActor, send, TenantAuthorizationError })) return true;
-    // Connector outbound: /admin test delivery. Route handling lives in
-    // connector-outbound.mjs; the drain worker delivers the queued message.
+    // BROWSE-001 canvas + browser launcher (see workspace-canvas.mjs, browser-launcher.mjs).
+    if (await handleCanvasRoute({ request, response, requestUrl, pool, canvas, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
+    if (await handleBrowserRoute({ request, response, requestUrl, pool, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
+    // CONN-001 outbox test delivery (see connector-outbound.mjs).
     if (await handleConnectorOutboundRoute({ request, response, requestUrl, pool, activeActor, send, readJsonObject, exactKeys, TenantAuthorizationError })) return true;
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_PATH) {
       try { if (requestUrl.searchParams.has('tenant_id') || requestUrl.searchParams.has('organization_id')) throw Object.assign(new Error('Organization selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await coraConfig.readPublishedConfig(actor) })); }
