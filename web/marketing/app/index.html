@@ -23,6 +23,7 @@
       <div class="side-head"><span>PROJECTS</span><button id="new-project" class="link-btn" type="button">+ New</button></div>
       <form id="new-project-form" class="inline-form" hidden>
         <input id="new-project-name" placeholder="Project name" aria-label="Project name" required maxlength="80">
+        <select id="new-project-source" aria-label="Project source"><option value="cloud">Cloud</option><option value="desktop_mirror">Desktop mirror</option><option value="external">External</option></select>
         <div class="row-btns"><button type="button" id="new-project-cancel" class="btn ghost sm">Cancel</button><button type="submit" class="btn primary sm">Create</button></div>
       </form>
       <input id="project-filter" class="search" type="search" placeholder="Search projects" aria-label="Search projects">

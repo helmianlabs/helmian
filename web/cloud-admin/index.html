@@ -120,6 +120,11 @@
         <div id="workspace-projects">
           <h3 id="workspace-projects-heading">Projects</h3>
           <p id="workspace-projects-status" class="note" role="status" aria-live="polite">Loading tenant project registry…</p>
+          <div class="config-controls" id="workspace-active-project-row" hidden>
+            <label for="workspace-active-project">Active project</label>
+            <select id="workspace-active-project" aria-label="Active project"></select>
+            <span id="workspace-active-project-note" class="note" role="status"></span>
+          </div>
           <div id="workspace-project-cards" class="config-grid"></div>
           <form id="workspace-project-form" class="config-controls" hidden>
             <input id="workspace-project-key" aria-label="Project key" maxlength="96" placeholder="Project key" required>

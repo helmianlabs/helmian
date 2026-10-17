@@ -56,24 +56,31 @@ window.addEventListener('hashchange', () => show(viewFromHash(location.hash, { p
 async function loadProjects() {
   try { const m = projectsModel(await api('/api/admin/workspace/projects')); state.projects = m.projects; $('#new-project').hidden = !m.canManage; }
   catch { state.projects = []; }
+  try { const a = await api('/api/admin/workspace/active-project'); state.activeProjectKey = a.projectKey ?? null; }
+  catch { state.activeProjectKey = null; }
+  renderShelf(); renderWorkspace();
+}
+async function setActiveProject(projectKey) {
+  try { await post('/api/admin/workspace/active-project', { projectKey }); state.activeProjectKey = projectKey; toast('Active project set'); }
+  catch { toast('Could not set the active project'); }
   renderShelf(); renderWorkspace();
 }
 function renderShelf() {
   const list = filterProjects(state.projects, $('#project-filter').value);
-  $('#project-shelf').replaceChildren(...list.map((p) => { const li = el('li', null, p.name); li.title = p.key; li.onclick = () => { location.hash = 'workspace'; }; return li; }));
+  $('#project-shelf').replaceChildren(...list.map((p) => { const li = el('li', p.key === state.activeProjectKey ? 'active' : null, `${p.name}${p.key === state.activeProjectKey ? ' · active' : ''}`); li.title = p.key; li.onclick = () => { setActiveProject(p.key); location.hash = 'workspace'; }; return li; }));
   $('#project-shelf-empty').hidden = list.length > 0;
 }
 function renderWorkspace() {
   const box = $('#workspace-cards');
   if (!state.projects.length) { box.replaceChildren(empty('No projects yet.', 'Use “+ New” in the sidebar to add one.')); return; }
-  box.replaceChildren(...state.projects.map((p) => { const c = el('article', 'card'); const st = el('span', `status ${p.lifecycle === 'active' ? 'ok' : ''}`, p.lifecycle); c.append(el('div', 'title', p.name), el('div', 'meta', `${p.key} · ${p.branch}`), el('div', 'meta')); c.lastChild.append(st); return c; }));
+  box.replaceChildren(...state.projects.map((p) => { const c = el('article', 'card'); const st = el('span', `status ${p.lifecycle === 'active' ? 'ok' : ''}`, p.lifecycle); const active = p.key === state.activeProjectKey ? ' · active project' : ''; c.append(el('div', 'title', p.name), el('div', 'meta', `${p.key} · ${p.branch}${active}`), el('div', 'meta')); c.lastChild.append(st); c.onclick = () => setActiveProject(p.key); c.style.cursor = 'pointer'; return c; }));
 }
 $('#project-filter').oninput = renderShelf;
 $('#new-project').onclick = () => { $('#new-project-form').hidden = false; $('#new-project-name').focus(); };
 $('#new-project-cancel').onclick = () => { $('#new-project-form').hidden = true; };
 $('#new-project-form').onsubmit = async (e) => {
   e.preventDefault(); const name = $('#new-project-name').value.trim(); if (!name) return;
-  try { await post('/api/admin/workspace/projects', { projectKey: projectKeyFromName(name), displayName: name, sourceKind: 'git', defaultBranch: 'main', lifecycle: 'active' }); $('#new-project-form').reset(); $('#new-project-form').hidden = true; toast('Project created'); await loadProjects(); }
+  try { await post('/api/admin/workspace/projects', { projectKey: projectKeyFromName(name), displayName: name, sourceKind: $('#new-project-source').value || 'cloud', defaultBranch: 'main', lifecycle: 'active' }); $('#new-project-form').reset(); $('#new-project-form').hidden = true; toast('Project created'); await loadProjects(); }
   catch { toast('Could not create that project — try a different name'); }
 };
 
