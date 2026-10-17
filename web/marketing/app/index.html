@@ -107,6 +107,11 @@
           <div class="row-btns"><button id="tp-cancel" class="btn ghost sm" type="button">Cancel</button><button class="btn primary sm" type="submit">Save plan</button></div>
         </form>
       </div>
+      <div id="onboarding" class="panel" hidden>
+        <div class="eyebrow">GETTING STARTED</div>
+        <ol id="onboarding-list" class="checklist"></ol>
+        <div class="row-btns left"><button id="onboarding-dismiss" class="btn ghost sm" type="button">Dismiss</button></div>
+      </div>
       <div id="log" class="log" aria-live="polite" role="log"></div>
       <form id="composer" class="composer">
         <textarea id="prompt" rows="1" placeholder="Prompt..." aria-label="Prompt"></textarea>
@@ -198,6 +203,10 @@
         <div class="row-btns left"><button id="invite-create" class="btn primary sm" type="button">Create invite link</button></div>
         <div id="invite-new" class="invite-new" hidden><input id="invite-url" readonly aria-label="Invite link"><button id="invite-copy" class="btn sm" type="button">Copy</button><a id="invite-sms" class="btn sm" href="#">Text it</a></div>
         <div id="invite-list" class="kv"></div>
+      </div>
+      <div class="panel" id="providers-panel"><div class="eyebrow">AI PROVIDERS</div>
+        <p class="muted sm">Keys live on your runner or PC, never in the cloud. Connect a provider to let the bridge answer with it.</p>
+        <div id="providers-cards" class="cards"></div>
       </div>
       <div class="panel"><div class="eyebrow">DESKTOP APP</div>
         <p class="muted sm">Link the desktop app for Team chat: press the button, then type the code in the EXE Team chat panel.</p>
