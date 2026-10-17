@@ -696,7 +696,7 @@ async function loadHome() {
 // ---- console (Envoy) ----
 async function loadConsole() {
   if (!state.channelId) {
-    try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); sel.replaceChildren(...chans.map((c) => { const o = el('option', null, c.title || c.slug || 'Channel'); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
+    try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); const kindTag = (k) => k && k !== 'team' ? ` · ${k}` : ''; sel.replaceChildren(...chans.map((c) => { const o = el('option', null, `${c.title || c.slug || 'Channel'}${kindTag(c.kind)}`); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
       if (!state.channelId && isAdminRole(state.actor?.role)) { const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' }); state.channelId = made.channel?.id ?? null; if (state.channelId) toast('Team channel created', 'ok'); }
     } catch {}
   }
@@ -735,11 +735,14 @@ $('#new-channel').onclick = () => {
   input.placeholder = 'New channel name...';
   input.maxLength = 120;
   input.setAttribute('aria-label', 'New channel name');
+  const kind = el('select', null);
+  kind.setAttribute('aria-label', 'Channel kind');
+  for (const [v, label] of [['team', 'Team'], ['direct', 'Direct'], ['agent', 'Agent']]) { const o = el('option', null, label); o.value = v; kind.append(o); }
   const create = el('button', 'btn primary sm', 'Create');
   create.type = 'submit';
   const cancel = el('button', 'btn ghost sm', 'Cancel');
   cancel.type = 'button';
-  form.append(input, create, cancel);
+  form.append(input, kind, create, cancel);
   $('#log').before(form);
   input.focus();
   cancel.onclick = () => form.remove();
@@ -750,7 +753,7 @@ $('#new-channel').onclick = () => {
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'channel';
     create.disabled = true;
     try {
-      const result = await post('/api/admin/envoy/channels', { kind: 'team', slug, title });
+      const result = await post('/api/admin/envoy/channels', { kind: kind.value || 'team', slug, title });
       form.remove();
       state.channelId = null;
       await loadConsole();
