@@ -217,6 +217,48 @@ actions; nothing else is reachable.
 
 Full wire contract: [`docs/herald/REMOTE_CONTROL_V1.md`](docs/herald/REMOTE_CONTROL_V1.md).
 
+## Cloud and runner: Helmian beyond one PC
+
+The kernel above runs on your machine. The cloud layer gives it an always-on
+home: chat, approvals, and orchestration live on the web, while compute lives
+wherever you put it. The architecture is hub and spoke. Your phone talks only
+to the cloud (the hub). A bridge (the spoke) connects the cloud to compute,
+whether that is your PC, a Hetzner box, or both at once.
+
+- **Cloud**: Vercel (web app + API) + Neon Postgres (chat history, audit,
+  leases, all tenant-scoped). The cloud never holds provider API keys.
+- **Bridge** (`bin/pc-bridge.mjs`): pairs once via the app, subscribes to the
+  cloud chat over Ably (with HTTPS polling fallback), and runs a local agent
+  to answer. One bridge can watch every channel.
+- **Credential vault** (`src/runner/vault.mjs`, `bin/runner-vault.mjs`):
+  per-user AES-256-GCM vault on the runner. The encryption key derives from
+  the bridge's device token, so wiping the token crypto-shreds the vault.
+  Provider keys never transit the cloud; the cloud only sees presence
+  booleans ("Gemini: connected").
+- **Tools mode**: the bridge runs chat-only by default. Set
+  `HELMION_BRIDGE_TOOLS=ask` and the agent can use tools with human approval:
+  requests post to the team channel, you reply `approve <id>` or `deny <id>`
+  from the app or your phone.
+- **Local MCP server** (`src/mcp/local-exec-server.mjs`,
+  `bin/mcp-helmion-local.mjs`): exposes governed local work (PowerShell,
+  file read/write) as MCP tools, so any MCP-capable AI can do local work
+  through Helmian's approval gate and audit. Fresh trust domain, off by
+  default.
+- **Multi-tenant runner**: one box hosts many tenants. Each tenant gets an
+  isolated Linux user, a private vault, a workspace, and a dedicated bridge
+  (`helmian-bridge@<slug>.service`). Provision with
+  `bin/provision-tenant.mjs` (run as root on the box).
+- **Self-hosting**: bring your own Hetzner, Neon, Vercel, Clerk, and Ably.
+  `deploy/provision-runner.sh` builds a box from scratch;
+  [`docs/self-host-hetzner.md`](docs/self-host-hetzner.md) walks the whole
+  path. About $22/mo for the box; everything else has a free tier.
+
+The product direction: Envoy chat as a sliding side panel, the Maestro plus a
+live Agents dashboard in the center (named agent sessions, each bound to a
+provider, Maestro dispatching with @name/@all), Guard on the right. Agents
+are named rows in a sessions table, not hardcoded provider tabs, including
+the Maestro itself.
+
 ## Workspace initialization
 
 Verification and `helmion init` are covered in [Quick start](#quick-start). Two
