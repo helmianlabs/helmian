@@ -1,4 +1,4 @@
-import { VIEW_TITLES, ADVANCED_VIEWS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
+import { VIEW_TITLES, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -40,6 +40,12 @@ $('#mcp-find-btn').onclick = () => { $('#mcp-result').textContent = $('#mcp-find
 // ---- views ----
 function show(view) {
   if (!state.actor) return;
+  if (PANEL_VIEWS.includes(view)) {
+    // Browser, Canvas, Preview, Create live in the right workbench panel now
+    // (BROWSE-001); keep chat visible and select the tab instead.
+    selectPanelTab(view, { openDrawer: true });
+    view = 'console';
+  }
   shell.dataset.view = view;
   for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view;
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
@@ -49,6 +55,21 @@ function show(view) {
   if (narrow()) drawer('sidebar', false);
   loaders[view]?.().catch(() => {});
 }
+
+// ---- workbench panel tabs (desktop EXE parity: Guard | Browser | Canvas | Preview | Create) ----
+function selectPanelTab(name, { openDrawer = false } = {}) {
+  const tab = PANEL_TABS.includes(name) ? name : 'guard';
+  for (const b of document.querySelectorAll('.panel-tab')) {
+    const active = b.dataset.panelTab === tab;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  }
+  for (const p of document.querySelectorAll('[data-panel-pane]')) p.hidden = p.dataset.panelPane !== tab;
+  store.set('panelTab', tab);
+  if (narrow() && openDrawer) drawer('guard', true);
+  panelLoaders[tab]?.().catch(() => {});
+}
+for (const b of document.querySelectorAll('.panel-tab')) b.onclick = () => selectPanelTab(b.dataset.panelTab);
 for (const b of document.querySelectorAll('.nav-item')) b.onclick = () => { if (location.hash !== `#${b.dataset.view}`) location.hash = b.dataset.view; else show(b.dataset.view); };
 window.addEventListener('hashchange', () => show(viewFromHash(location.hash, { phone: narrow() })));
 
@@ -59,11 +80,15 @@ async function loadProjects() {
   try { const a = await api('/api/admin/workspace/active-project'); state.activeProjectKey = a.projectKey ?? null; }
   catch { state.activeProjectKey = null; }
   renderShelf(); renderWorkspace();
+  const canvasPane = document.querySelector('[data-panel-pane="canvas"]');
+  if (canvasPane && !canvasPane.hidden) loadCanvas().catch(() => {});
 }
 async function setActiveProject(projectKey) {
   try { await post('/api/admin/workspace/active-project', { projectKey }); state.activeProjectKey = projectKey; toast('Active project set'); }
   catch { toast('Could not set the active project'); }
   renderShelf(); renderWorkspace();
+  const canvasPane = document.querySelector('[data-panel-pane="canvas"]');
+  if (canvasPane && !canvasPane.hidden) loadCanvas().catch(() => {});
 }
 function renderShelf() {
   const list = filterProjects(state.projects, $('#project-filter').value);
@@ -290,6 +315,11 @@ function renderFeed() {
     .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
   const critical = merged.filter((c) => c.severity === 'critical').length;
   $('#guard-count').hidden = critical === 0; $('#guard-count').textContent = String(critical);
+  // Workbench panel badge: unacknowledged findings keep the Guard tab noticeable
+  // now that the feed is one tab among five (BROWSE-001).
+  const unacked = (state.findings ?? []).filter((f) => !f.acked).length;
+  const tabBadge = $('#panel-guard-count');
+  if (tabBadge) { tabBadge.hidden = unacked === 0; tabBadge.textContent = String(unacked); }
   const feed = $('#feed');
   if (!merged.length) { feed.replaceChildren(empty('All clear', 'Alerts from your agents show up here.')); return; }
   feed.replaceChildren(...merged.slice(0, 60).map((c) => {
@@ -604,7 +634,114 @@ $('#create-form').onsubmit = async (e) => {
   }
 };
 
-const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: loadAgents, create: loadCreate, release: loadRelease };
+// ---- workbench panel: Browser (validated launcher) ----
+function clientValidBrowserUrl(value) {
+  // Basic client-side mirror of the server policy; the server is authoritative.
+  const candidate = String(value ?? '').trim();
+  if (!candidate || candidate.length > 4096) return 'Enter a public HTTPS website address.';
+  const withScheme = candidate.includes('://') ? candidate : `https://${candidate}`;
+  let url;
+  try { url = new URL(withScheme); } catch { return 'Helmian Browser opens public HTTPS websites only.'; }
+  if (url.protocol !== 'https:' || !url.hostname) return 'Helmian Browser opens public HTTPS websites only.';
+  if (url.username || url.password) return 'Website addresses containing embedded credentials are refused.';
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return 'Local and private-network websites are outside the Browser boundary.';
+  return null;
+}
+$('#browser-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const status = $('#browser-status');
+  const clientError = clientValidBrowserUrl($('#browser-url').value);
+  if (clientError) { status.textContent = clientError; return; }
+  status.textContent = 'Checking…';
+  try {
+    const result = await post('/api/admin/browser/navigate', { url: $('#browser-url').value.trim() });
+    status.textContent = 'Opened in your browser. Recorded in the audit trail.';
+    window.open(result.url, '_blank', 'noopener');
+  } catch (error) {
+    status.textContent = error.body?.message || error.message || 'That address was not accepted.';
+  }
+};
+
+// ---- workbench panel: Canvas (per-project scratchpad) ----
+async function loadCanvas() {
+  const status = $('#canvas-status');
+  const projectKey = state.activeProjectKey;
+  $('#canvas-project').textContent = projectKey ?? '';
+  const body = $('#canvas-body');
+  if (!projectKey) {
+    body.hidden = true;
+    status.textContent = 'Select a project first — the canvas is saved per project.';
+    return;
+  }
+  body.hidden = false;
+  status.textContent = 'Loading…';
+  try {
+    const data = await api(`/api/admin/workspace/canvas?projectKey=${encodeURIComponent(projectKey)}`);
+    if (state.activeProjectKey !== projectKey) return;
+    $('#canvas-note').value = data.noteText ?? '';
+    $('#canvas-decision').value = data.decisionText ?? '';
+    status.textContent = data.canvasUnavailable
+      ? 'Canvas storage is not available yet.'
+      : (data.updatedAt ? `Saved ${formatTime(data.updatedAt)} · no provider call` : 'Empty canvas — no provider call.');
+  } catch {
+    status.textContent = 'Could not load the canvas — try again in a moment.';
+  }
+}
+$('#canvas-save').onclick = async () => {
+  const projectKey = state.activeProjectKey;
+  const status = $('#canvas-status');
+  if (!projectKey) { status.textContent = 'Select a project first.'; return; }
+  status.textContent = 'Saving…';
+  try {
+    await api('/api/admin/workspace/canvas', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectKey, noteText: $('#canvas-note').value, decisionText: $('#canvas-decision').value }) });
+    status.textContent = 'Saved · no provider call';
+    toast('Canvas saved');
+  } catch (error) {
+    status.textContent = error.status === 404 ? 'That project no longer exists.' : 'Not saved — try again.';
+  }
+};
+
+// ---- workbench panel: Preview (receipt gallery, metadata only) ----
+function previewTitle(descriptor) {
+  if (descriptor && typeof descriptor === 'object') {
+    for (const key of ['title', 'name', 'label', 'artifact']) {
+      if (typeof descriptor[key] === 'string' && descriptor[key].trim()) return descriptor[key].trim();
+    }
+  }
+  return 'Artifact';
+}
+async function loadPreview() {
+  const box = $('#preview-list');
+  box.replaceChildren(el('p', 'muted sm', 'Loading…'));
+  try {
+    const body = await api('/api/admin/runs/ledger?limit=50');
+    const runs = (Array.isArray(body.runs) ? body.runs : []).filter((r) => r.kind === 'artifact_execution' && r.outcome === 'completed');
+    if (!runs.length) {
+      box.replaceChildren(empty('No completed artifacts yet.', 'When the desktop reports a finished artifact, its receipt shows up here.'));
+      return;
+    }
+    box.replaceChildren(...runs.map((r) => {
+      const card = el('article', 'preview-card');
+      card.append(el('div', 't', previewTitle(r.descriptor)));
+      card.append(el('div', 'meta', `Completed ${formatTime(r.completedAt || r.createdAt)}${r.reportedBy ? ` · reported by ${r.reportedBy}` : ''}`));
+      if (r.descriptor && typeof r.descriptor === 'object') {
+        const dl = el('dl');
+        for (const [k, v] of Object.entries(r.descriptor).slice(0, 12)) dl.append(el('dt', null, k), el('dd', null, String(v)));
+        card.append(dl);
+      }
+      if (r.scriptContentHash) card.append(el('div', 'hash', `script sha256: ${r.scriptContentHash}`));
+      card.append(el('div', 'meta', `receipt ${r.receipt}`));
+      return card;
+    }));
+  } catch (error) {
+    box.replaceChildren(empty('Preview receipts are not available.', error.status === 403 ? 'Owners and admins can see artifact receipts.' : 'Try again in a moment.'));
+  }
+}
+$('#preview-refresh').onclick = () => loadPreview().catch(() => {});
+
+const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: loadAgents, release: loadRelease };
+const panelLoaders = { guard: null, browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- boot ----
 async function boot() {
@@ -622,7 +759,9 @@ async function boot() {
   $('#admin-link').hidden = !isAdminRole(model.actor.role); $('#signout').hidden = false;
   renderSessions(); loadSessions();
   if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${model.actor.tenantId}!`); history.replaceState(null, '', location.pathname + location.hash); }
-  show(viewFromHash(location.hash, { phone: narrow() }));
+  const initialView = viewFromHash(location.hash, { phone: narrow() });
+  show(initialView);
+  if (!PANEL_VIEWS.includes(initialView)) selectPanelTab(store.get('panelTab', 'guard'));
   loadProjects(); loadSteps(); loadFeedData();
   setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); loadSteps(); if (shell.dataset.view === 'console') loadLog(); if (shell.dataset.view === 'home') loadHome(); }, 6000);
 }
