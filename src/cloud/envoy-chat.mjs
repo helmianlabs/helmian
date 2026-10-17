@@ -113,7 +113,17 @@ export function createEnvoyStore(pool) {
       });
     },
     async appendMessage(actor, input) {
-      const message = normalizeEnvoyMessage({ ...input, authorSubject: actor.subject, authorKind: 'human' });
+      // Device-token callers (the PC bridge) post as agent-authored messages
+      // so replies do not render as the user talking to themselves. Both
+      // fields are server-derived from the verified token; the client sends
+      // only body, channelId, and idempotencyKey. Browser sessions stay
+      // forced to human exactly as before.
+      const isBridge = actor?.viaDeviceToken === true;
+      const message = normalizeEnvoyMessage({
+        ...input,
+        authorSubject: isBridge ? `${actor.subject}:bridge` : actor.subject,
+        authorKind: isBridge ? 'agent' : 'human',
+      });
       const idempotencyKey = text(input?.idempotencyKey, 'idempotency key', 200);
       const context = contextFor(actor);
       return withTenantTransaction(pool, context, async (client) => {

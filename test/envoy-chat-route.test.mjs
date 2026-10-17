@@ -165,3 +165,41 @@ test('admin API rejects supplied cross-origin requests but allows the same origi
   const sameOrigin = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers: { ...headers, origin: new URL(app.url).origin, 'content-type': 'application/json' }, body: JSON.stringify({ channelId: 'channel-1', body: 'allowed', idempotencyKey: 'message-origin-2' }) });
   assert.equal(sameOrigin.status, 200);
 });
+
+test('device-token bridge posts as agent with :bridge subject; browser posts stay human', async (t) => {
+  const invites = {
+    desktopIdentity: async (token) => token === 'bridge-token' ? { subject: 'user-1', tenantId: 'org-a' } : null,
+  };
+  const app = await fixture({ orgInviteStore: invites }); t.after(app.close);
+  const bridgeHeaders = { authorization: 'Bearer bridge-token', 'content-type': 'application/json' };
+  const payload = JSON.stringify({ channelId: 'channel-1', body: 'hello from bridge', idempotencyKey: 'bridge-1' });
+  const res = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers: bridgeHeaders, body: payload });
+  assert.equal(res.status, 200);
+  const receipt = (await res.json()).receipt;
+  assert.equal(receipt.message.authorKind, 'agent');
+  assert.equal(receipt.message.authorSubject, 'user-1:bridge');
+  // Duplicate bridge reply with the same idempotency key is absorbed.
+  const replay = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers: bridgeHeaders, body: payload });
+  assert.equal((await replay.json()).receipt.replayed, true);
+  // Browser session posts stay forced to human with the bare subject.
+  const browserHeaders = { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' };
+  const browserPayload = JSON.stringify({ channelId: 'channel-1', body: 'hello from browser', idempotencyKey: 'browser-1' });
+  const browserRes = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers: browserHeaders, body: browserPayload });
+  assert.equal(browserRes.status, 200);
+  const browserReceipt = (await browserRes.json()).receipt;
+  assert.equal(browserReceipt.message.authorKind, 'human');
+  assert.equal(browserReceipt.message.authorSubject, 'user-1');
+});
+
+test('device-token auth is rejected on non-Envoy paths and unknown tokens', async (t) => {
+  const invites = {
+    desktopIdentity: async (token) => token === 'bridge-token' ? { subject: 'user-1', tenantId: 'org-a' } : null,
+  };
+  const app = await fixture({ orgInviteStore: invites }); t.after(app.close);
+  const badHeaders = { authorization: 'Bearer wrong-token', 'content-type': 'application/json' };
+  const bad = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, {
+    method: 'POST', headers: badHeaders,
+    body: JSON.stringify({ channelId: 'channel-1', body: 'nope', idempotencyKey: 'bad-1' }),
+  });
+  assert.equal(bad.status, 403);
+});
