@@ -398,6 +398,13 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   const kokoroQueue = [];     // [{ text, token }]
   let kokoroPlaying = false;
 
+  function setVoiceStatus(text, cls) {
+    const el = document.getElementById('voice-engine');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'voice-engine ' + (cls || '');
+  }
+
   function canTryKokoro() {
     if (kokoro) return true;
     // Allow retry 60s after a failure (transient: network, phone sleep, memory)
@@ -420,6 +427,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
 
   async function ensureKokoro() {
     if (kokoro) return kokoro;
+    setVoiceStatus('Loading voice...', '');
     kokoro = await (kokoroLoader ?? defaultKokoroLoader)();
     return kokoro;
   }
@@ -449,6 +457,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // A Kokoro failure hands the failed chunk and everything still queued to
   // speechSynthesis instead.
   function kokoroFallback(failedItem) {
+    setVoiceStatus('System voice', 'fallback');
     const chunks = [];
     if (failedItem) chunks.push(failedItem.text);
     for (const item of kokoroQueue.splice(0)) chunks.push(item.text);
@@ -484,6 +493,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       return;
     }
     activeSource = src;
+    setVoiceStatus('Kokoro', 'kokoro');
     src.onended = () => {
       kokoroPlaying = false;
       if (activeSource === src) activeSource = null;
