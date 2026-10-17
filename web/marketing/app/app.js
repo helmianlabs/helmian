@@ -809,7 +809,8 @@ async function boot() {
   if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${model.actor.tenantId}!`); history.replaceState(null, '', location.pathname + location.hash); }
   const initialView = viewFromHash(location.hash, { phone: narrow() });
   show(initialView);
-  if (!PANEL_VIEWS.includes(initialView)) selectPanelTab(store.get('panelTab', 'guard'));
+  if (hashIsGuard()) openGuardPanel();
+  if (!PANEL_VIEWS.includes(initialView)) selectPanelTab(store.get('panelTab', 'browser'));
   loadProjects(); loadSteps(); loadFeedData();
   setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); loadSteps(); if (shell.dataset.view === 'console') loadLog(); if (shell.dataset.view === 'home') loadHome(); }, 6000);
 }
