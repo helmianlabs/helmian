@@ -136,6 +136,21 @@ export function createVoiceController({
   // TTS engine seam: the controller only calls tts.speak / tts.cancel.
   // v1 is the browser's speechSynthesis; the Kokoro engine replaces these
   // two functions when it lands (browser WebGPU build or runner endpoint).
+  //
+  // Long replies are chunked: Chrome's speechSynthesis truncates long
+  // utterances, so a reply goes out as sentence-sized pieces chained via
+  // onend. A new reply clears the queue; toggle-off cancels everything.
+  const ttsQueue = [];
+  let ttsSpeaking = false;
+  function pumpSpeech() {
+    if (ttsSpeaking || ttsQueue.length === 0 || !canSpeak) return;
+    const utter = new Utterance(ttsQueue.shift());
+    ttsSpeaking = true;
+    utter.onend = () => { ttsSpeaking = false; pumpSpeech(); };
+    utter.onerror = () => { ttsSpeaking = false; pumpSpeech(); };
+    try { synthesis.speak(utter); }
+    catch { ttsSpeaking = false; }
+  }
   const tts = {
     speak(text) {
       if (!canSpeak) return false;
@@ -144,15 +159,19 @@ export function createVoiceController({
       let wasSpeaking = false;
       try { wasSpeaking = !!synthesis.speaking; } catch {}
       try { synthesis.cancel(); } catch {}
+      ttsQueue.length = 0;
+      ttsSpeaking = false;
+      ttsQueue.push(...chunkForSpeech(clean));
       // Chrome quirk: cancel() takes effect asynchronously, so a speak()
       // issued in the same tick can be swallowed. Only delay when we actually
       // interrupted playing audio; the common case stays synchronous.
-      const run = () => { try { synthesis.speak(new Utterance(clean)); } catch {} };
-      if (wasSpeaking) setTimeout(run, 150);
-      else run();
+      if (wasSpeaking) setTimeout(pumpSpeech, 150);
+      else pumpSpeech();
       return true;
     },
     cancel() {
+      ttsQueue.length = 0;
+      ttsSpeaking = false;
       if (!canSpeak) return;
       try { synthesis.cancel(); } catch {}
     },
@@ -190,4 +209,17 @@ export function stripSpeechMarkup(text) {
     .replace(/^>\s?/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Split a reply into sentence-sized speakable chunks (browser TTS truncates
+// long utterances). Overlong single sentences are hard-split.
+export function chunkForSpeech(text, maxLen = 180) {
+  const chunks = [];
+  for (const sentence of String(text ?? '').split(/(?<=[.!?])\s+/)) {
+    const piece = sentence.trim();
+    if (!piece) continue;
+    if (piece.length <= maxLen) chunks.push(piece);
+    else for (let i = 0; i < piece.length; i += maxLen) chunks.push(piece.slice(i, i + maxLen).trim());
+  }
+  return chunks;
 }
