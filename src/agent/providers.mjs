@@ -654,7 +654,7 @@ async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = 
   const toolCalls = [];
   // Diagnostic: log when we get no usable text (intermittent empty replies)
   if (parts.length === 0) {
-    console.warn(`[gemini] No parts in response. Candidates: ${candidates.length}, hasContent: ${!!candidates[0]?.content}, promptFeedback: ${JSON.stringify(data.promptFeedback || {}).slice(0, 200)}`);
+    console.warn(`[gemini] No parts in response. Candidates: ${candidates.length}, hasContent: ${!!candidates[0]?.content}, finishReason: ${candidates[0]?.finishReason}, promptFeedback: ${JSON.stringify(data.promptFeedback || {}).slice(0, 200)}`);
   }
   for (const p of parts) {
     // Thought-only parts (thinking models) have no user-visible text; keep them in geminiParts.
