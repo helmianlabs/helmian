@@ -777,6 +777,22 @@ async function loadLog() {
       if (!l.mine && voice.voiceMode) voice.speak(l.text);
     }
     if (atBottom) log.scrollTop = log.scrollHeight;
+    // Sync to desktop Room panel (EXE clone)
+    try {
+      const roomMsg = document.getElementById('room-messages');
+      if (roomMsg) {
+        roomMsg.replaceChildren(...lines.map((l) => {
+          const card = el('div', 'room-card');
+          const head = el('div', 'room-card-head');
+          head.append(el('span', 'room-avatar', (l.who || '?').slice(0, 1).toUpperCase()));
+          head.append(el('strong', null, l.who || 'Unknown'));
+          if (l.ts) head.append(el('span', 'muted sm', ' ' + l.ts));
+          card.append(head, el('div', 'room-card-body', l.text));
+          return card;
+        }));
+        roomMsg.scrollTop = roomMsg.scrollHeight;
+      }
+    } catch {}
   } catch { log.replaceChildren(sys('console is reconnecting…')); }
 }
 $('#channel').onchange = (e) => { state.channelId = e.target.value; loadLog(); };
