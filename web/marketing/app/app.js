@@ -1656,7 +1656,33 @@ async function loadPreview() {
 }
 $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 
-const loaders = { home: loadHome, desktop: () => Promise.all([loadAgentSessions(), loadLog(), loadFeedData()]), console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
+async function loadDesktop() {
+  // Wire up panel collapse buttons (EXE style)
+  for (const btn of document.querySelectorAll('.dpanel-toggle')) {
+    if (btn.dataset.wired) continue;
+    btn.dataset.wired = '1';
+    btn.onclick = () => {
+      const panel = document.getElementById(btn.dataset.panel);
+      if (!panel) return;
+      panel.classList.toggle('collapsed');
+      btn.textContent = panel.classList.contains('collapsed') ? (btn.dataset.panel === 'dp-guard' ? '‹' : '›') : (btn.dataset.panel === 'dp-guard' ? '›' : '‹');
+      // Update grid columns based on visible panels
+      const grid = document.querySelector('.desktop-grid');
+      if (grid) {
+        const visible = ['dp-room', 'dp-maestro', 'dp-agents', 'dp-guard'].filter(id => {
+          const p = document.getElementById(id);
+          return p && !p.classList.contains('collapsed');
+        }).length;
+        grid.classList.remove('panels-1', 'panels-2', 'panels-3');
+        if (visible === 3) grid.classList.add('panels-3');
+        else if (visible === 2) grid.classList.add('panels-2');
+        else if (visible === 1) grid.classList.add('panels-1');
+      }
+    };
+  }
+  await Promise.all([loadAgentSessions(), loadLog(), loadFeedData()]);
+}
+const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- boot ----
