@@ -1907,7 +1907,30 @@ function wireDesktopComposers() {
       // For now, all messages show (EXE parity: tab switches visually)
     };
   }
-  // Wire Guard tabs (EXE parity): Guard/Browser/Canvas/Preview/Create switch panel content
+  // Room bottom provider tabs: Discord/GitHub/Slack connections (integrations not built yet)
+  const roomProviders = document.querySelector('#dp-room .dpanel-tabs.bottom');
+  if (roomProviders && !roomProviders.dataset.wired) {
+    roomProviders.dataset.wired = '1';
+    roomProviders.onclick = (e) => {
+      const btn = e.target.closest('[data-provider]');
+      if (!btn) return;
+      for (const b of roomProviders.querySelectorAll('[data-provider]')) b.classList.toggle('active', b === btn);
+      const provider = btn.dataset.provider;
+      toast(`${provider.charAt(0).toUpperCase() + provider.slice(1)} integration is not built yet. See Integrations in Settings.`);
+    };
+  }
+  // Console pills: explain what they are (EXE parity)
+  const pillInfo = {
+    full: 'Full context mode: Maestro sees the entire conversation history.',
+    polaris: 'Polaris: the routing policy that picks which model handles each task.',
+    evaluation: 'Evaluation mode: runs quality checks on agent outputs.',
+    agent: 'Agent configured: an AI provider is connected and ready.',
+  };
+  for (const pill of document.querySelectorAll('#dp-maestro [data-pill]')) {
+    if (pill.dataset.wired) continue;
+    pill.dataset.wired = '1';
+    pill.onclick = () => toast(pillInfo[pill.dataset.pill] || pill.dataset.pill);
+  }
   const guardPanel = document.getElementById('dp-guard');
   if (guardPanel) {
     const gtabs = guardPanel.querySelector('[data-gtab]');
