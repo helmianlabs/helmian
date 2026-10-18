@@ -490,3 +490,36 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .desktop-grid.panels-3 { grid-template-columns: 280px 1fr 340px; }
 .desktop-grid.panels-2 { grid-template-columns: 280px 1fr; }
 .desktop-grid.panels-1 { grid-template-columns: 1fr; }
+
+/* ---- Members list (Discord style) ---- */
+.dpanel-members {
+  border-top: 1px solid var(--border);
+}
+.dpanel-members summary {
+  cursor: pointer;
+  list-style: none;
+}
+.dpanel-members summary::-webkit-details-marker { display: none; }
+.member-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.member-item:hover { background: var(--panel-2); }
+.member-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.member-status.online { background: #22c55e; }
+.member-status.idle { background: #9ca3af; }
+.member-role {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-left: auto;
+}

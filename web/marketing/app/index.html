@@ -109,6 +109,10 @@
           </div>
           <div class="dpanel-subhead">CHANNELS / ISSUES</div>
           <div class="dpanel-scroll" id="room-messages"></div>
+          <details class="dpanel-members" id="room-members">
+            <summary class="dpanel-subhead">MEMBERS · <span id="members-count">0</span></summary>
+            <div class="dpanel-scroll" id="members-list" style="max-height: 200px;"></div>
+          </details>
           <form class="dpanel-composer" id="room-form">
             <input id="room-input" placeholder="Message the room..." aria-label="Message the room">
             <button type="submit" class="btn primary sm">Send</button>
