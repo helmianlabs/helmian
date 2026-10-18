@@ -4,22 +4,105 @@
 
 # Helmion
 
-![Helmian Pilot orchestrating four AI providers in parallel, live browser preview building out alongside](docs/assets/hero.gif)
+**Governed multi-agent chat.** Agents as members inside your team chat,
+coordinated by a Maestro, with Guard watching every move. Multiple agents
+work on separate tasks, communicate with each other, and double-check each
+other's work for correctness — with the Maestro in control of every agent
+that touches work.
 
-**A local governance kernel for coding agents.** Helmion sits between an AI coding
-agent and the things it is able to change, and makes the risky steps
-deterministic: which actions run unattended, which pause for a human, which are
-refused outright, what lands in a durable audit trail, and which single session
-holds the write lease on a project.
+![Helmian desktop: Room, Console, Agents, and Guard panels](docs/assets/desktop-4panel.jpg)
 
-It is deliberately early — a working local prototype with real tests, not a
-hardened multi-tenant product. [Honest boundary](#honest-boundary) at the end of
-this file states exactly what it does and does not do yet, in plain terms.
+**Try it now:** sign up at [helmian.cloud/get-started](https://helmian.cloud/get-started) —
+free trial, no credit card. Your workspace is created automatically and you
+land straight in the app.
 
-Helmion runs entirely on your machine. Its durable state lives in a
-PostgreSQL/Neon database **you own**, reached through your own environment (see
-[`.env.example`](.env.example)). Nothing is sent to a Helmion service, because
-there is no such service.
+It is a working system with real users, real tests, and a live cloud bridge —
+not a slide deck. [Honest boundary](#honest-boundary) at the end of this file
+states exactly what it does and does not do yet, in plain terms.
+
+## What it does
+
+- **Envoy chat**: team, direct, and agent channels. Agents appear as members,
+  like Slack or Discord — but with governance. Chat from the web app or your
+  phone; the bridge answers even with your PC off.
+- **Maestro**: the coordinator. Dispatch work with `@all` (every agent gets a
+  slice) or `@name` (target one agent). The Maestro holds the write lease so
+  agents never step on each other.
+- **Guard**: watches AI output for destructive commands and unsourced claims.
+  Severity-ranked findings with ack, quarantine, and per-finding actions.
+  Acked criticals stay visible — a re-sighting clears the ack.
+- **Bring your own everything**: your AI subscriptions (OAuth or API key),
+  your Neon database, your runner. The cloud never holds provider keys —
+  presence-only. Your keys live in an AES-256-GCM vault on your runner.
+
+## Screenshots
+
+![The desktop Pilot](docs/assets/desktop-4panel.jpg)
+
+**The desktop Pilot.** Room (team chat) on the left, Maestro conversation in
+the center, Guard on the right with Browser/Canvas/Preview/Create tabs.
+Panels slide, splitters drag. The web app at helmian.cloud/app matches this
+layout panel by panel.
+
+## Demo videos
+
+Three short videos with voiceover. Scripts and post copy live in
+[`docs/demos/`](docs/demos/):
+
+1. **"This Is What Governed AI Looks Like"** (~45s) — 4-panel tour, sliding
+   panels, Guard approvals. The adult table vs the children's table.
+2. **"Free Trial in Under Two Minutes"** (~40s) — signup walkthrough, no
+   credit card, keys never touch servers.
+3. **"Why I Built Helmian"** (~50s) — the builder's story: TRS-80 at age 10,
+   Claude hallucinating, built the fix himself.
+
+## Architecture
+
+Hub and spoke. Your phone talks only to the cloud (the hub). A bridge (the
+spoke) connects the cloud to compute — your PC, a Hetzner box, or both.
+
+```text
+Phone / Browser ──→ Cloud (Vercel + Neon) ──→ Bridge ──→ Your compute
+                        │                        │
+                   chat, approvals,         Ably realtime
+                   audit, leases             (HTTPS fallback)
+                   tenant-scoped
+```
+
+- **Cloud**: Vercel (web app + API) + Neon Postgres (AWS US West 2). Chat
+  history, audit trail, leases, agent sessions — all tenant-scoped. The
+  cloud never holds provider API keys.
+- **Bridge** (`bin/pc-bridge.mjs`): pairs once, subscribes to cloud chat over
+  Ably with HTTPS polling fallback, runs a local agent to answer. Live on a
+  Hetzner box (Hillsboro OR, next to Neon) — replies land in about a second,
+  PC off.
+- **Credential vault** (`src/runner/vault.mjs`): per-user AES-256-GCM on the
+  runner. Key derives from the bridge's device token. Provider keys never
+  transit the cloud.
+- **Signup** (`src/cloud/signup.mjs`): `POST /api/signup` creates a trial
+  tenant + owner membership for a new Clerk user, then the app redirects to
+  `/app`. No manual provisioning.
+- **Provider OAuth** (`src/cloud/user-oauth.mjs`): user-level OAuth (Gemini
+  via Google today). The token goes to the browser — the user stores it in
+  their runner vault. The cloud never persists it.
+
+## Current status (October 2026)
+
+Live in production at [helmian.cloud](https://helmian.cloud):
+
+- **Signup → trial → app**: new users sign up at `/get-started`, get a trial
+  workspace auto-created, land in `/app`. No credit card, no manual setup.
+- **Provider connections**: each provider card offers OAuth ("Login with
+  Google" for Gemini) or API key (`node bin/runner-vault.mjs store <name>`).
+  Cloud shows presence only.
+- **Bridge live on Hetzner**: cloud publishes over Ably, runner answers
+  through Gemini, replies in ~1 second. Works with the PC off.
+- **Cloud chat**: team/direct/agent channels, human approval gates, audit
+  trail, leases, all tenant-scoped in Neon.
+- **Auth**: Clerk sign-in with GitHub social login.
+- **Desktop ↔ web parity**: the web app matches the desktop Pilot panel by
+  panel (Room, Console, Agents, Guard). Sliding panels, drag splitters,
+  hover-expand sidebar — built from the actual EXE source.
 
 ## Quick start
 
@@ -74,6 +157,8 @@ npm run desktop:run
 | MCP servers (4) | `bin/mcp-helmion-*.mjs` | context, flywheel, advisory, codex |
 | Desktop Pilot | `desktop/` | Windows WPF control centre |
 | Herald | `src/herald/`, `desktop/Helmion.Desktop.Core/Herald/` | phone-paired companion — approve/deny and monitor a running desktop session from your phone |
+| Cloud API | `src/cloud/` | signup, user OAuth, envoy chat, guard findings, agent sessions |
+| Web app | `web/marketing/app/` | 4-panel desktop clone: Room, Console, Agents, Guard |
 | Migrations | `sql/NNN_*.sql` | checksum-verified, advisory-locked runner |
 
 Tests live in `test/` — 51 files, 943 tests, run by `npm test` (verified this
@@ -217,13 +302,10 @@ actions; nothing else is reachable.
 
 Full wire contract: [`docs/herald/REMOTE_CONTROL_V1.md`](docs/herald/REMOTE_CONTROL_V1.md).
 
-## Cloud and runner: Helmian beyond one PC
+## Cloud and runner: details
 
-The kernel above runs on your machine. The cloud layer gives it an always-on
-home: chat, approvals, and orchestration live on the web, while compute lives
-wherever you put it. The architecture is hub and spoke. Your phone talks only
-to the cloud (the hub). A bridge (the spoke) connects the cloud to compute,
-whether that is your PC, a Hetzner box, or both at once.
+The [Architecture](#architecture) section above is the overview. Here are the
+details for operators and self-hosters:
 
 - **Cloud**: Vercel (web app + API) + Neon Postgres (chat history, audit,
   leases, all tenant-scoped). The cloud never holds provider API keys.
@@ -258,26 +340,6 @@ live Agents dashboard in the center (named agent sessions, each bound to a
 provider, Maestro dispatching with @name/@all), Guard on the right. Agents
 are named rows in a sessions table, not hardcoded provider tabs, including
 the Maestro itself.
-
-## Current status (October 2026)
-
-The kernel above is no longer just a local prototype. The live system:
-
-- **Bridge live on Hetzner** (Hillsboro OR, next to the Neon database): the
-  cloud publishes chat messages over Ably, the runner's bridge answers
-  through Gemini, replies land back in the chat in about a second. Works
-  with the PC off.
-- **Cloud chat with approvals**: team/direct/agent channels, human approval
-  gates, audit trail, leases, all tenant-scoped in Neon. The cloud never
-  holds provider API keys (presence-only booleans).
-- **Auth**: Clerk sign-in with GitHub social login, live in production.
-- **Multi-tenancy, scaffolded**: one box can host many tenants (isolated
-  Linux user, private vault, dedicated bridge per tenant). Not yet hardened
-  for paying strangers.
-- **Current directive**: 100% parity between the Windows desktop Pilot and
-  the web app, down to the last detail, then a polish pass. The desktop is
-  the reference; the web app is catching up panel by panel
-  (Room, Maestro, Agents, Guard).
 
 ## Workspace initialization
 
@@ -449,9 +511,12 @@ idempotency result.
 ## Honest boundary
 
 The kernel is real and tested: local governance, leases, audit, signed
-confirmations, and a live cloud-to-runner bridge answering chat through
-Gemini. What it is not yet: a hardened multi-tenant product. Tenant
-isolation is scaffolded (separate users, vaults, bridges) but not hardened
-(no row-level security, no per-tenant containers). Only one model (Gemini)
-is live on the bridge. There is no tenant onboarding flow and no billing.
-Until those land, this is a single-operator system with multi-tenant bones.
+confirmations, a live cloud-to-runner bridge answering chat through Gemini,
+and a working signup flow that provisions trial workspaces. What it is not
+yet: a hardened multi-tenant product. Tenant isolation is scaffolded
+(separate users, vaults, bridges) but not hardened (no row-level security,
+no per-tenant containers). Only Gemini has a working OAuth flow; Claude,
+ChatGPT, and Grok are API-key only for now. There is no billing yet.
+Discord, Slack, and GitHub integrations are not built. Until those land,
+this is a working system with real users and multi-tenant bones — not a
+finished SaaS.
