@@ -1298,6 +1298,27 @@ function renderAgentSessions(container, sessions) {
     grid.append(card);
   }
   container.replaceChildren(head, grid);
+  // Sync to desktop Agents panel (EXE clone)
+  try {
+    const dpList = document.getElementById('agents-list');
+    const dpCount = document.getElementById('agents-count');
+    if (dpList) {
+      if (dpCount) dpCount.textContent = sessions.length;
+      dpList.replaceChildren(...sessions.map((s) => {
+        const card = el('div', 'agent-card');
+        const head = el('div', 'agent-card-head');
+        const avatar = el('span', 'room-avatar', (s.name || '?').slice(0, 1).toUpperCase());
+        const name = el('strong', null, s.name);
+        const status = el('span', 'muted sm', `${s.provider} - ${(s.status || 'idle').toUpperCase()}`);
+        const close = el('button', 'icon-btn sm', '×');
+        close.onclick = (e) => { e.stopPropagation(); closeAgentSession(s.id, s.name); };
+        head.append(avatar, name, status, close);
+        const body = el('div', 'muted sm', s.last_message || 'No messages yet — send from Maestro while this agent is selected.');
+        card.append(head, body);
+        return card;
+      }));
+    }
+  } catch {}
 }
 
 function showNewSessionDialog() {
@@ -1616,7 +1637,7 @@ async function loadPreview() {
 }
 $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 
-const loaders = { home: loadHome, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
+const loaders = { home: loadHome, desktop: () => Promise.all([loadAgentSessions(), loadLog()]), console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- boot ----
