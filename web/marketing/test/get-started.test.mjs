@@ -8,7 +8,7 @@ test('get-started page exists and prompts sign-up', () => {
   assert.match(html, /Create your free account/u);
   const js = readFileSync(new URL('../get-started/get-started.js', import.meta.url), 'utf8');
   assert.match(js, /mountSignUp/u);
-  assert.match(js, /Windows installer is coming soon/u);
+  assert.match(js, /\/api\/signup/u);
   assert.ok(existsSync(new URL('../downloads/helmian-guard-0.2.3.zip', import.meta.url)));
 });
 
