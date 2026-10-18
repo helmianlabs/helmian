@@ -474,3 +474,19 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .severity.critical { color: #ef4444; }
 .severity.warning { color: #eab308; }
 .guard-card-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+
+/* ---- Collapsible desktop panels ---- */
+.dpanel.collapsed { display: none; }
+.dpanel-toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+}
+.dpanel-toggle:hover { color: var(--text); }
+.desktop-grid.panels-3 { grid-template-columns: 280px 1fr 340px; }
+.desktop-grid.panels-2 { grid-template-columns: 280px 1fr; }
+.desktop-grid.panels-1 { grid-template-columns: 1fr; }
