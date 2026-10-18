@@ -126,7 +126,7 @@
         <!-- Panel 2: MAESTRO -->
         <div class="dpanel maestro" id="dp-maestro">
           <div class="dpanel-head"><span class="eyebrow accent">MAESTRO</span><strong>Conversation</strong><button class="dpanel-toggle" data-panel="dp-maestro" aria-label="Collapse panel">‹</button></div>
-          <div class="dpanel-meta"><span class="chip sm">Full</span><span class="muted sm">SCOPED FOLDER · <span id="maestro-scope">E:\Helmion\.helmion</span></span><span class="muted sm">APPLIES NEXT TURN</span><span class="muted sm">model: <span id="maestro-model">gemini</span></span></div>
+          <div class="dpanel-meta"><span class="chip sm">Full</span><span class="chip sm ghost">Polaris</span><span class="chip sm ghost">Evaluation</span><span class="chip sm ghost">Agent configured</span><span class="muted sm">SCOPED FOLDER · <span id="maestro-scope">E:\Helmion\.helmion</span></span><span class="muted sm">APPLIES NEXT TURN</span><span class="muted sm">model: <span id="maestro-model">gemini</span></span></div>
           <div class="dpanel-scroll" id="maestro-messages"></div>
           <div class="dpanel-composer-opts muted sm">
             <label class="chip sm"><input type="checkbox" id="maestro-autoaccept" checked> auto-accept edits</label>
@@ -135,9 +135,11 @@
             <button class="chip sm" id="maestro-voice" type="button" aria-pressed="false">🗣️ Voice chat</button>
           </div>
           <form class="dpanel-composer" id="maestro-form">
+            <button class="btn ghost sm" id="maestro-slash" type="button" title="Slash commands">/</button>
             <input id="maestro-input" placeholder="Type your message or @path/to/file" aria-label="Maestro message">
             <button type="submit" class="btn primary sm">Send</button>
           </form>
+          <div class="dpanel-workspace muted sm">workspace: (<span id="maestro-workspace">E:\Helmian</span>)</div>
           <div class="dpanel-tabs bottom" id="maestro-providers">
             <button class="chip sm active" data-provider="maestro">Maestro</button>
             <button class="chip sm" data-provider="claude">Claude</button>

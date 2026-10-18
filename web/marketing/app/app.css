@@ -483,6 +483,15 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   color: #fff;
   border-color: transparent;
 }
+.dpanel-workspace {
+  padding: 4px 12px 8px;
+  font-size: 12px;
+}
+/* ---- Agent status colors (EXE clone) ---- */
+.status-grey { color: var(--muted); }
+.status-green { color: #2ecc71; font-weight: 600; }
+.status-yellow { color: #f1c40f; font-weight: 600; }
+.status-red { color: #e74c3c; font-weight: 600; }
 
 
 /* ---- Agent cards (EXE clone) ---- */
