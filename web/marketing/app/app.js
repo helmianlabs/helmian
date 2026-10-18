@@ -1383,14 +1383,15 @@ function renderAgentSessions(container, sessions) {
         const card = el('div', 'agent-card');
         const head = el('div', 'agent-card-head');
         const avatar = el('span', 'room-avatar', (s.name || '?').slice(0, 1).toUpperCase());
-        const name = el('strong', null, s.name);
         // EXE status colors: GREY idle, GREEN live, YELLOW trouble, RED error
         const statusMap = { idle: 'GREY', active: 'GREEN', warning: 'YELLOW', error: 'RED' };
         const exeStatus = statusMap[String(s.status || 'idle').toLowerCase()] || 'GREY';
+        const dot = el('span', `member-status ${exeStatus.toLowerCase()}`);
+        const name = el('strong', null, s.name);
         const status = el('span', `muted sm status-${exeStatus.toLowerCase()}`, `${s.provider} - ${exeStatus}`);
         const close = el('button', 'icon-btn sm', '×');
         close.onclick = (e) => { e.stopPropagation(); closeAgentSession(s.id, s.name); };
-        head.append(avatar, name, status, close);
+        head.append(avatar, dot, name, status, close);
         const body = el('div', 'muted sm', s.last_message || 'No messages yet — send from Maestro while this agent is selected.');
         card.append(head, body);
         return card;
@@ -1399,37 +1400,48 @@ function renderAgentSessions(container, sessions) {
   } catch {}
 }
 
-function showNewSessionDialog() {
-  // Simple dialog using native prompt-style overlay
+function showNewSessionDialog(defaultProvider) {
+  // EXE-style dialog: "New Claude agent. Name it so you can tell it apart in the manager."
   const overlay = el('div', 'dialog-overlay');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;';
   const dialog = el('div', 'card');
-  dialog.style.cssText = 'min-width:320px;max-width:90vw;padding:20px;';
-  dialog.append(el('h3', null, 'New agent session'));
-
-  const nameLabel = el('label', 'muted sm', 'Name');
-  const nameInput = el('input', 'input');
-  nameInput.type = 'text';
-  nameInput.placeholder = 'e.g. Claude helper';
-  nameInput.style.cssText = 'width:100%;margin:4px 0 12px;';
+  dialog.style.cssText = 'min-width:340px;max-width:90vw;padding:20px;';
 
   const providerLabel = el('label', 'muted sm', 'Provider');
   const providerSelect = el('select', 'input');
   providerSelect.style.cssText = 'width:100%;margin:4px 0 12px;';
   for (const p of SESSION_PROVIDERS) {
-    const opt = el('option', null, p);
+    const opt = el('option', null, p.charAt(0).toUpperCase() + p.slice(1));
     opt.value = p;
     providerSelect.append(opt);
   }
+  if (defaultProvider) providerSelect.value = defaultProvider;
+  const title = el('h3', null, `New ${providerSelect.options[providerSelect.selectedIndex].text} agent. Name it so you can tell it apart in the manager.`);
+  providerSelect.onchange = () => { title.textContent = `New ${providerSelect.options[providerSelect.selectedIndex].text} agent. Name it so you can tell it apart in the manager.`; };
+  dialog.append(title);
 
-  const tierLabel = el('label', 'muted sm', 'Routing');
+  const nameInput = el('input', 'input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'e.g. Claude muse';
+  nameInput.style.cssText = 'width:100%;margin:4px 0 12px;';
+  dialog.append(nameInput);
+
+  dialog.append(el('div', 'muted sm', 'Optional session details · reasoning/model routing'));
+  const tierRow = el('div', 'row-btns');
+  tierRow.style.cssText = 'display:flex;gap:8px;margin:4px 0 16px;';
   const tierSelect = el('select', 'input');
-  tierSelect.style.cssText = 'width:100%;margin:4px 0 16px;';
+  tierSelect.style.cssText = 'flex:0 0 120px;';
   for (const t of SESSION_TIERS) {
     const opt = el('option', null, t.charAt(0).toUpperCase() + t.slice(1));
     opt.value = t;
     tierSelect.append(opt);
   }
+  const detailInput = el('input', 'input');
+  detailInput.type = 'text';
+  detailInput.placeholder = 'Details…';
+  detailInput.style.cssText = 'flex:1;';
+  tierRow.append(tierSelect, detailInput);
+  dialog.append(tierRow);
 
   const btnRow = el('div', 'row-btns');
   const cancelBtn = el('button', 'btn sm', 'Cancel');
@@ -1453,8 +1465,7 @@ function showNewSessionDialog() {
     }
   };
   btnRow.append(cancelBtn, createBtn);
-
-  dialog.append(nameLabel, nameInput, providerLabel, providerSelect, tierLabel, tierSelect, btnRow);
+  dialog.append(btnRow);
   overlay.append(dialog);
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   document.body.append(overlay);
