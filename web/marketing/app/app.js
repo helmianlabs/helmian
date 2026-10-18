@@ -1741,6 +1741,7 @@ async function loadDesktop() {
       // EXE-style: animate the grid column to zero via collapse classes
       const grid = document.querySelector('.desktop-grid');
       if (grid) {
+        grid.style.gridTemplateColumns = '';
         const collapseMap = { 'dp-room': 'room-collapsed', 'dp-agents': 'agents-collapsed', 'dp-guard': 'guard-collapsed' };
         const cls = collapseMap[btn.dataset.panel];
         if (cls) grid.classList.toggle(cls, isCollapsed);
@@ -1779,8 +1780,8 @@ async function loadDesktop() {
         split.classList.remove('dragging');
         split.removeEventListener('pointermove', onMove);
         split.removeEventListener('pointerup', onUp);
-        // Clear inline style so collapse classes work again
-        grid.style.gridTemplateColumns = '';
+        // Keep the inline sizes so panels stay where the user put them.
+        // Collapse toggles clear this when they run.
       };
       split.addEventListener('pointermove', onMove);
       split.addEventListener('pointerup', onUp);
@@ -1792,6 +1793,41 @@ async function loadDesktop() {
 }
 
 function wireDesktopComposers() {
+  // EXE-style sidebar: hover to expand, auto-collapse after delay (unless pinned)
+  const sidebar = document.getElementById('sidebar');
+  if (sidebar && !sidebar.dataset.railWired) {
+    sidebar.dataset.railWired = '1';
+    sidebar.classList.add('rail');
+    document.querySelector('.shell')?.classList.add('sidebar-rail');
+    let collapseTimer = null;
+    const expand = () => {
+      if (collapseTimer) { clearTimeout(collapseTimer); collapseTimer = null; }
+      sidebar.classList.remove('rail');
+      document.querySelector('.shell')?.classList.remove('sidebar-rail');
+    };
+    const scheduleCollapse = () => {
+      if (sidebar.dataset.pinned === '1') return;
+      if (collapseTimer) clearTimeout(collapseTimer);
+      collapseTimer = setTimeout(() => {
+        if (!sidebar.matches(':hover')) {
+          sidebar.classList.add('rail');
+          document.querySelector('.shell')?.classList.add('sidebar-rail');
+        }
+      }, 280);
+    };
+    sidebar.addEventListener('mouseenter', expand);
+    sidebar.addEventListener('mouseleave', scheduleCollapse);
+    // Double-click to pin/unpin
+    sidebar.addEventListener('dblclick', () => {
+      const pinned = sidebar.dataset.pinned === '1';
+      sidebar.dataset.pinned = pinned ? '0' : '1';
+      if (!pinned) {
+        sidebar.classList.remove('rail');
+        document.querySelector('.shell')?.classList.remove('sidebar-rail');
+      }
+      toast(pinned ? 'Sidebar unpinned' : 'Sidebar pinned open');
+    });
+  }
   // Wire Room panel composer (EXE parity): sends to the team channel like the main console
   const roomForm = document.getElementById('room-form');
   if (roomForm && !roomForm.dataset.wired) {
