@@ -115,7 +115,7 @@
             <div class="dpanel-scroll" id="members-list" style="max-height: 200px;"></div>
           </details>
           <form class="dpanel-composer" id="room-form">
-            <input id="room-input" placeholder="Message the room..." aria-label="Message the room">
+            <textarea id="room-input" placeholder="Message the room..." aria-label="Message the room" rows="3"></textarea>
             <button type="submit" class="btn primary sm">Send</button>
           </form>
           <div class="dpanel-tabs bottom">
@@ -134,13 +134,14 @@
             <span>Shift+Tab to plan</span>
             <button class="chip sm" id="maestro-dictate" type="button" aria-pressed="false">🎙️ Dictate</button>
             <button class="chip sm" id="maestro-voice" type="button" aria-pressed="false">🗣️ Voice chat</button>
+            <button class="chip sm ghost" id="maestro-voicetoggle" type="button" aria-pressed="false">voice: off</button>
+            <button class="chip sm" id="maestro-slash2" type="button" title="Slash commands">/</button>
           </div>
           <form class="dpanel-composer" id="maestro-form">
             <button class="btn ghost sm" id="maestro-plus" type="button" title="Tools and skills">+</button>
             <span class="muted" aria-hidden="true">&gt;</span>
             <input id="maestro-input" placeholder="Type your message or @path/to/file" aria-label="Maestro message">
             <button class="btn ghost sm" id="maestro-mic" type="button" title="Voice input">🎙️</button>
-            <button type="submit" class="btn primary sm">Send</button>
           </form>
           <div class="dpanel-workspace muted sm">workspace: (<span id="maestro-workspace">E:\Helmian</span>)</div>
           <div class="dpanel-tabs bottom" id="maestro-providers">
@@ -210,7 +211,7 @@
             <div class="muted sm" id="guard-create-status"></div>
             <div id="guard-create-list"></div>
           </div>
-          <div class="dpanel-tabs bottom">
+          <div class="dpanel-actions">
             <button class="btn ghost sm" id="guard-ackall">Ack all</button>
             <button class="btn ghost sm" id="guard-settings">Settings</button>
             <button class="btn ghost sm" id="guard-quarantine">Quarantine</button>
