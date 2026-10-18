@@ -466,6 +466,24 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 }
 .maestro-card-body { font-size: 13px; line-height: 1.4; }
 
+/* ---- Maestro composer options (EXE clone) ---- */
+.dpanel-composer-opts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  flex-wrap: wrap;
+}
+.dpanel-composer-opts .chip input[type="checkbox"] {
+  margin-right: 4px;
+  accent-color: var(--accent);
+}
+.dpanel-composer-opts .chip.recording {
+  background: var(--danger, #c0392b);
+  color: #fff;
+  border-color: transparent;
+}
+
 
 /* ---- Agent cards (EXE clone) ---- */
 .agent-card {

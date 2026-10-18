@@ -126,8 +126,14 @@
         <!-- Panel 2: MAESTRO -->
         <div class="dpanel maestro" id="dp-maestro">
           <div class="dpanel-head"><span class="eyebrow accent">MAESTRO</span><strong>Conversation</strong><button class="dpanel-toggle" data-panel="dp-maestro" aria-label="Collapse panel">‹</button></div>
-          <div class="dpanel-meta"><span class="chip sm">Full</span><span class="muted sm">SCOPED FOLDER · <span id="maestro-scope">E:\Helmion\.helmion</span></span><span class="muted sm">model: <span id="maestro-model">gemini</span></span></div>
+          <div class="dpanel-meta"><span class="chip sm">Full</span><span class="muted sm">SCOPED FOLDER · <span id="maestro-scope">E:\Helmion\.helmion</span></span><span class="muted sm">APPLIES NEXT TURN</span><span class="muted sm">model: <span id="maestro-model">gemini</span></span></div>
           <div class="dpanel-scroll" id="maestro-messages"></div>
+          <div class="dpanel-composer-opts muted sm">
+            <label class="chip sm"><input type="checkbox" id="maestro-autoaccept" checked> auto-accept edits</label>
+            <span>Shift+Tab to plan</span>
+            <button class="chip sm" id="maestro-dictate" type="button" aria-pressed="false">🎙️ Dictate</button>
+            <button class="chip sm" id="maestro-voice" type="button" aria-pressed="false">🗣️ Voice chat</button>
+          </div>
           <form class="dpanel-composer" id="maestro-form">
             <input id="maestro-input" placeholder="Type your message or @path/to/file" aria-label="Maestro message">
             <button type="submit" class="btn primary sm">Send</button>
@@ -165,7 +171,39 @@
           </div>
           <div class="dpanel-head"><span class="eyebrow">GUARD</span><strong id="guard-summary">0 crit · 0 warn · 0 total</strong><button class="dpanel-toggle" data-panel="dp-guard" aria-label="Collapse panel">›</button></div>
           <div class="dpanel-tabs" id="guard-filters"></div>
-          <div class="dpanel-scroll" id="guard-findings"></div>
+          <div class="dpanel-scroll" id="guard-findings" data-gtab-panel="guard"></div>
+          <div class="dpanel-scroll" id="guard-browser" data-gtab-panel="browser" hidden>
+            <form class="dpanel-composer" id="guard-browser-form">
+              <input id="guard-browser-url" placeholder="https://…" aria-label="Website address">
+              <button type="submit" class="btn primary sm">Go</button>
+            </form>
+            <div class="muted sm" id="guard-browser-status"></div>
+            <div id="guard-browser-wrap" hidden>
+              <iframe id="guard-browser-frame" title="Embedded website" sandbox="allow-scripts allow-same-origin" style="width:100%;height:320px;border:1px solid var(--border);border-radius:var(--radius);"></iframe>
+              <div class="muted sm"><button class="link-btn" id="guard-browser-external" type="button">Open outside Helmian</button></div>
+            </div>
+          </div>
+          <div class="dpanel-scroll" id="guard-canvas" data-gtab-panel="canvas" hidden>
+            <div class="muted sm" id="guard-canvas-status">Loading…</div>
+            <div id="guard-canvas-body" hidden>
+              <div class="dpanel-subhead">NOTE</div>
+              <p class="sm" id="guard-canvas-note"></p>
+              <div class="dpanel-subhead">DECISIONS · <span id="guard-canvas-count">0</span></div>
+              <div id="guard-canvas-decisions"></div>
+            </div>
+          </div>
+          <div class="dpanel-scroll" id="guard-preview" data-gtab-panel="preview" hidden>
+            <div class="muted sm" id="guard-preview-status">Loading…</div>
+            <div id="guard-preview-list"></div>
+          </div>
+          <div class="dpanel-scroll" id="guard-create" data-gtab-panel="create" hidden>
+            <form class="dpanel-composer" id="guard-create-form">
+              <input id="guard-create-prompt" placeholder="Describe what to create…" aria-label="Create request">
+              <button type="submit" class="btn primary sm">Add</button>
+            </form>
+            <div class="muted sm" id="guard-create-status"></div>
+            <div id="guard-create-list"></div>
+          </div>
           <div class="dpanel-tabs bottom">
             <button class="btn ghost sm" id="guard-ackall">Ack all</button>
             <button class="btn ghost sm" id="guard-settings">Settings</button>
