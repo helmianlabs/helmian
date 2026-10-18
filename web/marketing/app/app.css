@@ -441,6 +441,13 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   flex-shrink: 0;
 }
 .room-card-body { font-size: 13px; line-height: 1.4; }
+.helmian-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--accent);
+}
 
 /* ---- Maestro cards (EXE clone) ---- */
 .maestro-card {
