@@ -20,7 +20,7 @@
   <script type="module" src="/app/app.js"></script>
 </head>
 <body>
-<div id="shell" class="shell" data-view="console">
+<div id="shell" class="shell" data-view="desktop">
   <!-- LEFT SIDEBAR -->
   <aside id="sidebar" class="sidebar" aria-label="Helmian navigation">
     <div class="logo"><div class="logo-mark">H</div><div><strong>HELMIAN</strong><span>Personal Pilot</span></div>
@@ -48,7 +48,8 @@
       <ul id="sessions" class="sessions"></ul>
       <nav id="nav" class="submenu" aria-label="Primary">
         <button class="nav-item" type="button" data-view="home">🏠 Home</button>
-        <button class="nav-item active" type="button" data-view="console">💬 Chat</button>
+        <button class="nav-item active" type="button" data-view="desktop">🖥️ Desktop</button>
+        <button class="nav-item" type="button" data-view="console">💬 Chat</button>
         <button class="nav-item" type="button" data-view="workspace">🗂️ Projects</button>
         <button class="nav-item" type="button" data-view="approvals">✅ Approvals<span id="approvals-badge" class="badge" hidden></span></button>
       </nav>
@@ -92,6 +93,82 @@
         <a class="btn" href="/admin/auth/signup?return=/app">Create account</a>
         <p class="muted sm">Got an invite link? Open it first so you join the right team.</p>
         <p id="membership-note" class="muted sm" hidden></p>
+      </div>
+    </section>
+
+    <!-- Desktop (EXE clone): 4-panel layout -->
+    <section id="view-desktop" class="view desktop" data-view-panel="desktop" hidden>
+      <div class="desktop-grid">
+        <!-- Panel 1: ROOM -->
+        <div class="dpanel room" id="dp-room">
+          <div class="dpanel-head"><span class="eyebrow">ROOM</span><strong>Local room</strong><span class="badge-warn" id="room-setup-badge">SETUP NEEDED</span></div>
+          <div class="dpanel-tabs" id="room-sources">
+            <button class="chip sm active" data-source="all">All</button>
+            <button class="chip sm" data-source="discord">Discord</button>
+            <button class="chip sm" data-source="github">GitHub</button>
+          </div>
+          <div class="dpanel-subhead">CHANNELS / ISSUES</div>
+          <div class="dpanel-scroll" id="room-messages"></div>
+          <form class="dpanel-composer" id="room-form">
+            <input id="room-input" placeholder="Message the room..." aria-label="Message the room">
+            <button type="submit" class="btn primary sm">Send</button>
+          </form>
+          <div class="dpanel-tabs bottom">
+            <button class="chip sm active" data-provider="discord">Discord</button>
+            <button class="chip sm" data-provider="github">GitHub</button>
+            <button class="chip sm" data-provider="slack">Slack</button>
+          </div>
+        </div>
+        <!-- Panel 2: MAESTRO -->
+        <div class="dpanel maestro" id="dp-maestro">
+          <div class="dpanel-head"><span class="eyebrow accent">MAESTRO</span><strong>Conversation</strong></div>
+          <div class="dpanel-meta"><span class="chip sm">Full</span><span class="muted sm">SCOPED FOLDER · <span id="maestro-scope">E:\Helmion\.helmion</span></span><span class="muted sm">model: <span id="maestro-model">gemini</span></span></div>
+          <div class="dpanel-scroll" id="maestro-messages"></div>
+          <form class="dpanel-composer" id="maestro-form">
+            <input id="maestro-input" placeholder="Type your message or @path/to/file" aria-label="Maestro message">
+            <button type="submit" class="btn primary sm">Send</button>
+          </form>
+          <div class="dpanel-tabs bottom" id="maestro-providers">
+            <button class="chip sm active" data-provider="maestro">Maestro</button>
+            <button class="chip sm" data-provider="claude">Claude</button>
+            <button class="chip sm" data-provider="chatgpt">ChatGPT</button>
+            <button class="chip sm" data-provider="grok">Grok</button>
+            <button class="chip sm" data-provider="gemini">Gemini</button>
+          </div>
+        </div>
+        <!-- Panel 3: AGENTS -->
+        <div class="dpanel agents" id="dp-agents">
+          <div class="dpanel-head"><span class="eyebrow">AGENTS</span><strong><span id="agents-count">0</span> agents running</strong></div>
+          <div class="dpanel-tabs" id="agents-providers">
+            <button class="chip sm" data-provider="maestro">Maestro</button>
+            <button class="chip sm" data-provider="claude">Claude</button>
+            <button class="chip sm" data-provider="chatgpt">ChatGPT</button>
+            <button class="chip sm" data-provider="grok">Grok</button>
+            <button class="chip sm" data-provider="gemini">Gemini</button>
+          </div>
+          <div class="dpanel-subhead">@name or @all from Maestro · workers claim distinct slices</div>
+          <div class="dpanel-scroll" id="agents-list"></div>
+          <div class="dpanel-foot muted sm">Select a card → Maestro talks to that agent. Chat lines update live.</div>
+        </div>
+        <!-- Panel 4: GUARD -->
+        <div class="dpanel guard" id="dp-guard">
+          <div class="dpanel-tabs">
+            <button class="chip sm active" data-gtab="guard">Guard</button>
+            <button class="chip sm" data-gtab="browser">Browser</button>
+            <button class="chip sm" data-gtab="canvas">Canvas</button>
+            <button class="chip sm" data-gtab="preview">Preview</button>
+            <button class="chip sm" data-gtab="create">Create</button>
+          </div>
+          <div class="dpanel-head"><span class="eyebrow">GUARD</span><strong id="guard-summary">0 crit · 0 warn · 0 total</strong></div>
+          <div class="dpanel-tabs" id="guard-filters"></div>
+          <div class="dpanel-scroll" id="guard-findings"></div>
+          <div class="dpanel-tabs bottom">
+            <button class="btn ghost sm" id="guard-ackall">Ack all</button>
+            <button class="btn ghost sm" id="guard-settings">Settings</button>
+            <button class="btn ghost sm" id="guard-quarantine">Quarantine</button>
+            <button class="btn ghost sm" id="guard-tests">Tests</button>
+          </div>
+        </div>
       </div>
     </section>
 
