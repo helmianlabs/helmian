@@ -1210,9 +1210,28 @@ async function loadProviders() {
     card.append(meta);
     if (connected && row?.updatedAt) card.append(el('div', 'meta muted sm', `since ${formatTime(row.updatedAt)}`));
     if (!connected) {
-      const btn = el('button', 'btn primary sm', 'Connect');
-      btn.type = 'button';
-      btn.onclick = () => {
+      const oauthBtn = el('button', 'btn primary sm', '');
+      oauthBtn.type = 'button';
+      // OAuth label per provider
+      const oauthLabels = {
+        gemini: 'Login with Google',
+        claude: 'Connect Claude',
+        openai: 'Login with ChatGPT',
+        grok: 'Login with X',
+        xai: 'Login with X',
+      };
+      oauthBtn.textContent = oauthLabels[key] || 'Connect with OAuth';
+      oauthBtn.onclick = () => {
+        if (key === 'gemini') {
+          // Use the existing Gemini OAuth flow
+          location.href = '/api/admin/provider-oauth/gemini/start';
+        } else {
+          toast(`${label} OAuth is not built yet. Use API key below.`, 'info');
+        }
+      };
+      const keyBtn = el('button', 'btn ghost sm', 'Use API key');
+      keyBtn.type = 'button';
+      keyBtn.onclick = () => {
         if (card.querySelector('.connect-help')) { card.querySelector('.connect-help').remove(); return; }
         const help = el('div', 'connect-help');
         help.append(el('p', 'muted sm', 'Your key never touches the cloud. On your runner or PC, run:'));
@@ -1225,7 +1244,7 @@ async function loadProviders() {
         card.append(help);
       };
       const actions = el('div', 'row-btns left');
-      actions.append(btn);
+      actions.append(oauthBtn, keyBtn);
       card.append(actions);
     }
     return card;
