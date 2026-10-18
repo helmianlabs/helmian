@@ -327,10 +327,34 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .view.desktop { padding: 0; height: calc(100vh - 60px); }
 .desktop-grid {
   display: grid;
-  grid-template-columns: 280px 1fr 320px 340px;
-  gap: 1px;
+  grid-template-columns: 280px 6px minmax(0,1fr) 6px 320px 6px 340px;
+  gap: 0;
   height: 100%;
   background: var(--border);
+  transition: grid-template-columns 0.25s ease;
+}
+/* Splitter handles between panels (EXE-style drag to resize) */
+.dsplit {
+  background: transparent;
+  cursor: col-resize;
+  position: relative;
+  z-index: 5;
+}
+.dsplit:hover, .dsplit.dragging {
+  background: var(--accent);
+  opacity: 0.5;
+}
+/* Collapsed panel columns animate to zero (EXE slide behavior) */
+.desktop-grid.room-collapsed { grid-template-columns: 0px 6px minmax(0,1fr) 6px 320px 6px 340px; }
+.desktop-grid.agents-collapsed { grid-template-columns: 280px 6px minmax(0,1fr) 6px 0px 6px 340px; }
+.desktop-grid.guard-collapsed { grid-template-columns: 280px 6px minmax(0,1fr) 6px 320px 6px 0px; }
+.desktop-grid.room-collapsed.agents-collapsed { grid-template-columns: 0px 6px minmax(0,1fr) 6px 0px 6px 340px; }
+.desktop-grid.room-collapsed.guard-collapsed { grid-template-columns: 0px 6px minmax(0,1fr) 6px 320px 6px 0px; }
+.desktop-grid.agents-collapsed.guard-collapsed { grid-template-columns: 280px 6px minmax(0,1fr) 6px 0px 6px 0px; }
+.desktop-grid.room-collapsed.agents-collapsed.guard-collapsed { grid-template-columns: 0px 6px minmax(0,1fr) 6px 0px 6px 0px; }
+.dpanel.collapsed-panel {
+  overflow: hidden;
+  min-width: 0;
 }
 .dpanel {
   background: var(--panel);
@@ -404,12 +428,14 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   border-radius: 999px;
 }
 @media (max-width: 1200px) {
-  .desktop-grid { grid-template-columns: 240px 1fr 280px; }
+  .desktop-grid { grid-template-columns: 240px 6px minmax(0,1fr) 6px 280px 6px 0px; }
   .dpanel.guard { display: none; }
+  .dsplit[data-split="agents"] { display: none; }
 }
 @media (max-width: 900px) {
-  .desktop-grid { grid-template-columns: 1fr; }
+  .desktop-grid { grid-template-columns: 0px 0px minmax(0,1fr) 0px 0px 0px 0px; }
   .dpanel.room, .dpanel.agents, .dpanel.guard { display: none; }
+  .dsplit { display: none; }
 }
 
 /* ---- Room panel cards (EXE clone) ---- */
@@ -565,9 +591,10 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   padding: 4px 8px;
 }
 .dpanel-toggle:hover { color: var(--text); }
-.desktop-grid.panels-3 { grid-template-columns: 280px 1fr 340px; }
-.desktop-grid.panels-2 { grid-template-columns: 280px 1fr; }
-.desktop-grid.panels-1 { grid-template-columns: 1fr; }
+/* Legacy panel count classes (unused, kept for safety) */
+.desktop-grid.panels-3 { grid-template-columns: 280px 6px minmax(0,1fr) 6px 0px 6px 340px; }
+.desktop-grid.panels-2 { grid-template-columns: 280px 6px minmax(0,1fr) 6px 0px 6px 0px; }
+.desktop-grid.panels-1 { grid-template-columns: 0px 6px minmax(0,1fr) 6px 0px 6px 0px; }
 
 /* ---- Members list (Discord style) ---- */
 .dpanel-members {
