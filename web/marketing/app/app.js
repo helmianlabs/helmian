@@ -1581,7 +1581,22 @@ $('#browser-form').onsubmit = async (e) => {
   status.textContent = 'Checking…';
   try {
     const result = await post('/api/admin/browser/navigate', { url: $('#browser-url').value.trim() });
-    viewport.src = toEmbeddableUrl(result.url);
+    const embedUrl = toEmbeddableUrl(result.url);
+    // YouTube homepage and channel pages block iframe embedding.
+    // If it's YouTube without a video ID, don't show a broken iframe.
+    try {
+      const u = new URL(result.url);
+      const host = u.hostname.toLowerCase();
+      const isYouTube = host === 'youtube.com' || host === 'www.youtube.com' || host === 'm.youtube.com' || host === 'youtu.be';
+      if (isYouTube && embedUrl === result.url) {
+        status.textContent = 'YouTube blocks embedding this page. Paste a video link, or open it outside Helmian.';
+        viewport.dataset.externalUrl = result.url;
+        wrap.hidden = false;
+        viewport.src = 'about:blank';
+        return;
+      }
+    } catch {}
+    viewport.src = embedUrl;
     wrap.hidden = false;
     viewport.dataset.externalUrl = result.url;
     status.textContent = 'Loaded inside Helmian. Recorded in the audit trail.';
