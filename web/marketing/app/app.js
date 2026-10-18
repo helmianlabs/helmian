@@ -1223,10 +1223,13 @@ async function loadProviders() {
       oauthBtn.textContent = oauthLabels[key] || 'Connect with OAuth';
       oauthBtn.onclick = () => {
         if (key === 'gemini') {
-          // User-level OAuth: token goes to browser, user stores in vault
           location.href = '/api/provider-oauth/gemini/start';
+        } else if (key === 'openai') {
+          location.href = '/api/provider-oauth/openai/start';
+        } else if (key === 'grok' || key === 'xai') {
+          toast('Grok OAuth needs xAI partner credentials. Use API key for now.', 'info');
         } else {
-          toast(`${label} OAuth is not built yet. Use API key below.`, 'info');
+          toast(`${label} OAuth is not available. Use API key below.`, 'info');
         }
       };
       const keyBtn = el('button', 'btn ghost sm', 'Use API key');
