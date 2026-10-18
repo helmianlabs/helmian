@@ -787,6 +787,7 @@ async function loadLog() {
           head.append(el('span', 'room-avatar', (l.who || '?').slice(0, 1).toUpperCase()));
           head.append(el('strong', null, l.who || 'Unknown'));
           if (l.ts) head.append(el('span', 'muted sm', ' ' + l.ts));
+          head.append(el('span', 'helmian-badge', 'HELMIAN'));
           card.append(head, el('div', 'room-card-body', l.text));
           return card;
         }));
@@ -802,6 +803,7 @@ async function loadLog() {
           head.append(el('span', 'maestro-avatar', icon || (l.who || '?').slice(0, 1).toUpperCase()));
           head.append(el('strong', null, l.who || 'Unknown'));
           if (l.ts) head.append(el('span', 'muted sm', ' ' + l.ts));
+          head.append(el('span', 'helmian-badge', 'HELMIAN'));
           card.append(head, el('div', 'maestro-card-body', l.text));
           return card;
         }));
