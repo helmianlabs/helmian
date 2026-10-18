@@ -1227,7 +1227,7 @@ async function loadProviders() {
       // OAuth label per provider
       const oauthLabels = {
         gemini: 'Login with Google',
-        claude: 'Connect Claude',
+        claude: 'Claude Subscription',
         openai: 'Login with ChatGPT',
         grok: 'Login with X',
         xai: 'Login with X',
@@ -1240,6 +1240,8 @@ async function loadProviders() {
           location.href = '/api/provider-oauth/openai/start';
         } else if (key === 'grok' || key === 'xai') {
           location.href = '/api/provider-oauth/grok/start';
+        } else if (key === 'claude') {
+          toast('Run "claude setup-token" in your terminal, then paste the token using "Use API key" below.', 'info', 8000);
         } else {
           toast(`${label} OAuth is not available. Use API key below.`, 'info');
         }
