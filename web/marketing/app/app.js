@@ -1223,8 +1223,8 @@ async function loadProviders() {
       oauthBtn.textContent = oauthLabels[key] || 'Connect with OAuth';
       oauthBtn.onclick = () => {
         if (key === 'gemini') {
-          // Use the existing Gemini OAuth flow
-          location.href = '/api/admin/provider-oauth/gemini/start';
+          // User-level OAuth: token goes to browser, user stores in vault
+          location.href = '/api/provider-oauth/gemini/start';
         } else {
           toast(`${label} OAuth is not built yet. Use API key below.`, 'info');
         }
