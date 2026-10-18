@@ -107,8 +107,9 @@
             <button class="chip sm" data-source="discord">Discord</button>
             <button class="chip sm" data-source="github">GitHub</button>
           </div>
-          <div class="dpanel-subhead">CHANNELS / ISSUES</div>
+          <div class="dpanel-subhead">SOURCES</div>
           <div class="dpanel-scroll" id="room-messages"></div>
+          <div class="dpanel-subhead">CHANNELS / ISSUES</div>
           <details class="dpanel-members" id="room-members">
             <summary class="dpanel-subhead">MEMBERS · <span id="members-count">0</span></summary>
             <div class="dpanel-scroll" id="members-list" style="max-height: 200px;"></div>
@@ -135,13 +136,16 @@
             <button class="chip sm" id="maestro-voice" type="button" aria-pressed="false">🗣️ Voice chat</button>
           </div>
           <form class="dpanel-composer" id="maestro-form">
-            <button class="btn ghost sm" id="maestro-slash" type="button" title="Slash commands">/</button>
+            <button class="btn ghost sm" id="maestro-plus" type="button" title="Tools and skills">+</button>
+            <span class="muted" aria-hidden="true">&gt;</span>
             <input id="maestro-input" placeholder="Type your message or @path/to/file" aria-label="Maestro message">
+            <button class="btn ghost sm" id="maestro-mic" type="button" title="Voice input">🎙️</button>
             <button type="submit" class="btn primary sm">Send</button>
           </form>
           <div class="dpanel-workspace muted sm">workspace: (<span id="maestro-workspace">E:\Helmian</span>)</div>
           <div class="dpanel-tabs bottom" id="maestro-providers">
             <button class="chip sm active" data-provider="maestro">Maestro</button>
+            <button class="chip sm" data-provider="agents">AGENTS</button>
             <button class="chip sm" data-provider="claude">Claude</button>
             <button class="chip sm" data-provider="chatgpt">ChatGPT</button>
             <button class="chip sm" data-provider="grok">Grok</button>
