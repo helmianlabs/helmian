@@ -435,3 +435,42 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   flex-shrink: 0;
 }
 .room-card-body { font-size: 13px; line-height: 1.4; }
+
+/* ---- Agent cards (EXE clone) ---- */
+.agent-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.agent-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.agent-card-head .muted { margin-left: auto; }
+
+/* ---- Guard cards (EXE clone) ---- */
+.guard-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.guard-card.critical { border-left-color: #ef4444; }
+.guard-card.warning { border-left-color: #eab308; }
+.guard-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.severity.critical { color: #ef4444; }
+.severity.warning { color: #eab308; }
+.guard-card-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
