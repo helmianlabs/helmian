@@ -1760,6 +1760,8 @@ function wireDesktopComposers() {
   const roomForm = document.getElementById('room-form');
   if (roomForm && !roomForm.dataset.wired) {
     roomForm.dataset.wired = '1';
+    const roomInput = document.getElementById('room-input');
+    if (roomInput) roomInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); roomForm.requestSubmit(); } };
     roomForm.onsubmit = async (e) => {
       e.preventDefault();
       const input = document.getElementById('room-input');
@@ -1924,6 +1926,8 @@ function updateMaestroVoiceChips() {
     chip.classList.toggle('recording', active);
     chip.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
+  const toggle = document.getElementById('maestro-voicetoggle');
+  if (toggle) toggle.textContent = voice.voiceMode ? 'voice: on' : 'voice: off';
 }
 
 function toggleMaestroVoice(mode) {
@@ -1955,6 +1959,43 @@ function wireMaestroVoiceChips() {
     } else {
       chip.onclick = () => toggleMaestroVoice(mode);
     }
+  }
+  const toggle = document.getElementById('maestro-voicetoggle');
+  if (toggle && !toggle.dataset.wired) {
+    toggle.dataset.wired = '1';
+    toggle.title = 'Toggle voice mode';
+    toggle.onclick = () => toggleMaestroVoice(voice.voiceMode ? 'dictate' : 'voice');
+  }
+  const slash2 = document.getElementById('maestro-slash2');
+  if (slash2 && !slash2.dataset.wired) {
+    slash2.dataset.wired = '1';
+    slash2.onclick = () => {
+      const input = document.getElementById('maestro-input');
+      if (!input) return;
+      if (!input.value.startsWith('/')) input.value = '/' + input.value;
+      input.focus();
+    };
+  }
+  // Guard action buttons (EXE parity)
+  const gAckAll = document.getElementById('guard-ackall');
+  if (gAckAll && !gAckAll.dataset.wired) {
+    gAckAll.dataset.wired = '1';
+    gAckAll.onclick = () => document.getElementById('feed-ack-all')?.click();
+  }
+  const gSettings = document.getElementById('guard-settings');
+  if (gSettings && !gSettings.dataset.wired) {
+    gSettings.dataset.wired = '1';
+    gSettings.onclick = () => toast('Guard settings live in the desktop app');
+  }
+  const gQuarantine = document.getElementById('guard-quarantine');
+  if (gQuarantine && !gQuarantine.dataset.wired) {
+    gQuarantine.dataset.wired = '1';
+    gQuarantine.onclick = () => toast('Quarantine log lives in the desktop app');
+  }
+  const gTests = document.getElementById('guard-tests');
+  if (gTests && !gTests.dataset.wired) {
+    gTests.dataset.wired = '1';
+    gTests.onclick = () => toast('Test suite runs from the desktop app');
   }
 }
 
