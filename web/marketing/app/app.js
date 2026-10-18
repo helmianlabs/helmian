@@ -792,6 +792,21 @@ async function loadLog() {
         }));
         roomMsg.scrollTop = roomMsg.scrollHeight;
       }
+      // Sync to desktop Maestro panel (EXE clone) - same conversation, Maestro-styled cards
+      const maestroMsg = document.getElementById('maestro-messages');
+      if (maestroMsg) {
+        maestroMsg.replaceChildren(...lines.map((l) => {
+          const card = el('div', 'maestro-card');
+          const head = el('div', 'maestro-card-head');
+          const icon = l.bridge ? agentIconFor(BRIDGE_DISPLAY_NAME) : null;
+          head.append(el('span', 'maestro-avatar', icon || (l.who || '?').slice(0, 1).toUpperCase()));
+          head.append(el('strong', null, l.who || 'Unknown'));
+          if (l.ts) head.append(el('span', 'muted sm', ' ' + l.ts));
+          card.append(head, el('div', 'maestro-card-body', l.text));
+          return card;
+        }));
+        maestroMsg.scrollTop = maestroMsg.scrollHeight;
+      }
     } catch {}
   } catch { log.replaceChildren(sys('console is reconnecting…')); }
 }
@@ -1684,6 +1699,88 @@ async function loadDesktop() {
   }
   await Promise.all([loadAgentSessions(), loadLog(), loadFeedData()]);
   renderMemberList();
+  wireDesktopComposers();
+}
+
+function wireDesktopComposers() {
+  // Wire Room panel composer (EXE parity): sends to the team channel like the main console
+  const roomForm = document.getElementById('room-form');
+  if (roomForm && !roomForm.dataset.wired) {
+    roomForm.dataset.wired = '1';
+    roomForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('room-input');
+      const body = input.value.trim();
+      if (!body) return;
+      if (!state.channelId) { toast('No team channel yet — ask the owner to set one up'); return; }
+      const btn = roomForm.querySelector('button[type="submit"]');
+      if (btn) btn.disabled = true;
+      try {
+        await post('/api/admin/envoy/messages', { channelId: state.channelId, body, idempotencyKey: crypto.randomUUID() });
+        input.value = '';
+        await loadLog();
+      } catch { toast('Not sent — your message is still in the box'); }
+      finally { if (btn) btn.disabled = false; }
+    };
+  }
+  // Wire Maestro panel composer (EXE parity): sends to the team channel where the Maestro/bridge responds
+  const maestroForm = document.getElementById('maestro-form');
+  if (maestroForm && !maestroForm.dataset.wired) {
+    maestroForm.dataset.wired = '1';
+    maestroForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('maestro-input');
+      const body = input.value.trim();
+      if (!body) return;
+      if (!state.channelId) { toast('No team channel yet — ask the owner to set one up'); return; }
+      const btn = maestroForm.querySelector('button[type="submit"]');
+      if (btn) btn.disabled = true;
+      try {
+        await post('/api/admin/envoy/messages', { channelId: state.channelId, body, idempotencyKey: crypto.randomUUID() });
+        input.value = '';
+        await loadLog();
+      } catch { toast('Not sent — your message is still in the box'); }
+      finally { if (btn) btn.disabled = false; }
+    };
+  }
+  // Wire provider tab switching (visual only for now, EXE parity)
+  for (const tabs of document.querySelectorAll('#maestro-providers, #agents-providers')) {
+    if (tabs.dataset.wired) continue;
+    tabs.dataset.wired = '1';
+    tabs.onclick = (e) => {
+      const btn = e.target.closest('[data-provider]');
+      if (!btn) return;
+      for (const b of tabs.querySelectorAll('[data-provider]')) b.classList.toggle('active', b === btn);
+    };
+  }
+  // Wire Room sources tabs (EXE parity): All/Discord/GitHub filter
+  const roomSources = document.getElementById('room-sources');
+  if (roomSources && !roomSources.dataset.wired) {
+    roomSources.dataset.wired = '1';
+    roomSources.onclick = (e) => {
+      const btn = e.target.closest('[data-source]');
+      if (!btn) return;
+      for (const b of roomSources.querySelectorAll('[data-source]')) b.classList.toggle('active', b === btn);
+      // TODO: filter messages by source when Discord/GitHub integrations land
+      // For now, all messages show (EXE parity: tab switches visually)
+    };
+  }
+  // Wire Guard tabs (EXE parity): Guard/Browser/Canvas/Preview/Create
+  const guardPanel = document.getElementById('dp-guard');
+  if (guardPanel) {
+    const gtabs = guardPanel.querySelector('[data-gtab]');
+    if (gtabs && !gtabs.parentElement.dataset.wired) {
+      const tabContainer = gtabs.parentElement;
+      tabContainer.dataset.wired = '1';
+      tabContainer.onclick = (e) => {
+        const btn = e.target.closest('[data-gtab]');
+        if (!btn) return;
+        for (const b of tabContainer.querySelectorAll('[data-gtab]')) b.classList.toggle('active', b === btn);
+        // TODO: switch Guard panel content based on tab
+        // For now, Guard findings show (EXE parity: tab switches visually)
+      };
+    }
+  }
 }
 
 function renderMemberList() {
