@@ -436,6 +436,37 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 }
 .room-card-body { font-size: 13px; line-height: 1.4; }
 
+/* ---- Maestro cards (EXE clone) ---- */
+.maestro-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.maestro-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+.maestro-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-2, var(--accent));
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.maestro-card-body { font-size: 13px; line-height: 1.4; }
+
+
 /* ---- Agent cards (EXE clone) ---- */
 .agent-card {
   background: var(--panel-2);

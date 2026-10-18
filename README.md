@@ -259,6 +259,26 @@ provider, Maestro dispatching with @name/@all), Guard on the right. Agents
 are named rows in a sessions table, not hardcoded provider tabs, including
 the Maestro itself.
 
+## Current status (October 2026)
+
+The kernel above is no longer just a local prototype. The live system:
+
+- **Bridge live on Hetzner** (Hillsboro OR, next to the Neon database): the
+  cloud publishes chat messages over Ably, the runner's bridge answers
+  through Gemini, replies land back in the chat in about a second. Works
+  with the PC off.
+- **Cloud chat with approvals**: team/direct/agent channels, human approval
+  gates, audit trail, leases, all tenant-scoped in Neon. The cloud never
+  holds provider API keys (presence-only booleans).
+- **Auth**: Clerk sign-in with GitHub social login, live in production.
+- **Multi-tenancy, scaffolded**: one box can host many tenants (isolated
+  Linux user, private vault, dedicated bridge per tenant). Not yet hardened
+  for paying strangers.
+- **Current directive**: 100% parity between the Windows desktop Pilot and
+  the web app, down to the last detail, then a polish pass. The desktop is
+  the reference; the web app is catching up panel by panel
+  (Room, Maestro, Agents, Guard).
+
 ## Workspace initialization
 
 Verification and `helmion init` are covered in [Quick start](#quick-start). Two
@@ -428,14 +448,10 @@ idempotency result.
 
 ## Honest boundary
 
-The supplied evidence demonstrates a Claude Code-centered local prototype,
-shared Neon reads/writes, advisory use, and a positive-controlled distillation
-flow. It does not demonstrate a hardened cross-vendor product.
-
-This phase establishes the neutral state, switching seam, a cryptographic
-one-time confirmation primitive, a native desktop foundation, and a
-current-user read-only local-service slice. It does not yet provide
-authenticated identity enrollment, role-based access, tenant isolation,
-provider OAuth, governed provider execution, or a live Claude adapter. Until
-an authenticated owner/admin path enrolls trusted public keys, Tier B handoff
-actions remain blocked.
+The kernel is real and tested: local governance, leases, audit, signed
+confirmations, and a live cloud-to-runner bridge answering chat through
+Gemini. What it is not yet: a hardened multi-tenant product. Tenant
+isolation is scaffolded (separate users, vaults, bridges) but not hardened
+(no row-level security, no per-tenant containers). Only one model (Gemini)
+is live on the bridge. There is no tenant onboarding flow and no billing.
+Until those land, this is a single-operator system with multi-tenant bones.
