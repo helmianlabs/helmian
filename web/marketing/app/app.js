@@ -150,9 +150,21 @@ function setPanelCollapsed(which, collapsed) {
   btn.textContent = collapsed ? '+' : '–';
   store.set(which === 'guard' ? 'guardCollapsed' : 'workbenchCollapsed', collapsed);
 }
-$('#guard-collapse').onclick = () => setPanelCollapsed('guard', !$('#guard-panel').classList.contains('collapsed'));
+$('#guard-collapse').onclick = () => {
+  const grid = document.querySelector('.desktop-grid');
+  const isCollapsed = grid?.classList.toggle('guard-collapsed');
+  const btn = $('#guard-collapse');
+  btn.textContent = isCollapsed ? '+' : '–';
+  btn.setAttribute('aria-expanded', String(!isCollapsed));
+  btn.setAttribute('aria-label', `${isCollapsed ? 'Expand' : 'Collapse'} Guard panel`);
+  store.set('guardCollapsed', !!isCollapsed);
+};
 $('#workbench-collapse').onclick = () => setPanelCollapsed('workbench', !$('#workbench').classList.contains('collapsed'));
-setPanelCollapsed('guard', store.get('guardCollapsed', false));
+if (store.get('guardCollapsed', false)) {
+  document.querySelector('.desktop-grid')?.classList.add('guard-collapsed');
+  const btn = $('#guard-collapse');
+  if (btn) { btn.textContent = '+'; btn.setAttribute('aria-expanded', 'false'); }
+}
 setPanelCollapsed('workbench', store.get('workbenchCollapsed', false));
 
 // #guard deep links open the Guard panel itself (it is a panel, not a tab).
