@@ -212,10 +212,19 @@ export function createVoiceController({
   function defaultKokoroLoader() {
     // Resolves via the import map in index.html; the ~300MB model downloads
     // once, on first use, and is cached by the browser afterwards.
-    return import('kokoro-js').then((mod) => mod.KokoroTTS.from_pretrained(KOKORO_MODEL, {
-      dtype: 'q8',
-      device: (typeof navigator !== 'undefined' && navigator.gpu) ? 'webgpu' : 'wasm',
-    }));
+    // Try WebGPU first (faster), fall back to WASM if it fails (mobile).
+    return import('kokoro-js').then(async (mod) => {
+      const opts = { dtype: 'q8' };
+      const hasGpu = typeof navigator !== 'undefined' && navigator.gpu;
+      if (hasGpu) {
+        try {
+          return await mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'webgpu' });
+        } catch (err) {
+          console.warn('[voice] WebGPU failed, falling back to WASM:', err?.message ?? err);
+        }
+      }
+      return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'wasm' });
+    });
   }
 
   async function ensureKokoro() {
