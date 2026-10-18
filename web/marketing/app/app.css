@@ -574,6 +574,10 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 }
 .member-status.online { background: #22c55e; }
 .member-status.idle { background: #9ca3af; }
+.member-status.grey { background: #9ca3af; }
+.member-status.green { background: #22c55e; }
+.member-status.yellow { background: #f1c40f; }
+.member-status.red { background: #e74c3c; }
 .member-role {
   font-size: 10px;
   font-weight: 700;
