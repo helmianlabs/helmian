@@ -934,6 +934,25 @@ function renderFeed() {
     if (actions.childElementCount) a.append(actions);
     return a;
   }));
+  // Sync to desktop Guard panel (EXE clone)
+  try {
+    const dpFindings = document.getElementById('guard-findings');
+    const dpSummary = document.getElementById('guard-summary');
+    if (dpFindings) {
+      const crit = merged.filter((c) => c.severity === 'critical').length;
+      const warn = merged.filter((c) => c.severity === 'warning').length;
+      if (dpSummary) dpSummary.textContent = `${crit} crit · ${warn} warn · ${merged.length} total`;
+      dpFindings.replaceChildren(...merged.slice(0, 30).map((c) => {
+        const card = el('div', `guard-card ${c.severity}`);
+        const head = el('div', 'guard-card-head');
+        head.append(el('span', `severity ${c.severity}`, c.severity.toUpperCase()));
+        if (c.at) head.append(el('span', 'muted sm', formatTime(c.at)));
+        card.append(head, el('div', 'guard-card-title', c.title));
+        if (c.body) card.append(el('div', 'muted sm', String(c.body).slice(0, 200)));
+        return card;
+      }));
+    }
+  } catch {}
 }
 $('#feed-filter').onchange = renderFeed; $('#opt-info').onchange = renderFeed; $('#opt-approvals').onchange = renderFeed;
 $('#feed-clear').onclick = () => { for (const id of state.ack) state.cleared.add(id); for (const e of state.events) state.cleared.add(`evt:${e.id}`); store.set('cleared', [...state.cleared]); renderFeed(); };
@@ -1637,7 +1656,7 @@ async function loadPreview() {
 }
 $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 
-const loaders = { home: loadHome, desktop: () => Promise.all([loadAgentSessions(), loadLog()]), console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
+const loaders = { home: loadHome, desktop: () => Promise.all([loadAgentSessions(), loadLog(), loadFeedData()]), console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- boot ----
