@@ -1765,7 +1765,7 @@ function wireDesktopComposers() {
       // For now, all messages show (EXE parity: tab switches visually)
     };
   }
-  // Wire Guard tabs (EXE parity): Guard/Browser/Canvas/Preview/Create
+  // Wire Guard tabs (EXE parity): Guard/Browser/Canvas/Preview/Create switch panel content
   const guardPanel = document.getElementById('dp-guard');
   if (guardPanel) {
     const gtabs = guardPanel.querySelector('[data-gtab]');
@@ -1776,11 +1776,181 @@ function wireDesktopComposers() {
         const btn = e.target.closest('[data-gtab]');
         if (!btn) return;
         for (const b of tabContainer.querySelectorAll('[data-gtab]')) b.classList.toggle('active', b === btn);
-        // TODO: switch Guard panel content based on tab
-        // For now, Guard findings show (EXE parity: tab switches visually)
+        switchGuardTab(btn.dataset.gtab);
       };
     }
   }
+  // Guard panel: browser tab (validated embed, same policy as the workbench browser)
+  const gBrowserForm = document.getElementById('guard-browser-form');
+  if (gBrowserForm && !gBrowserForm.dataset.wired) {
+    gBrowserForm.dataset.wired = '1';
+    gBrowserForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const status = document.getElementById('guard-browser-status');
+      const wrap = document.getElementById('guard-browser-wrap');
+      const frame = document.getElementById('guard-browser-frame');
+      const clientError = clientValidBrowserUrl(document.getElementById('guard-browser-url').value);
+      if (clientError) { status.textContent = clientError; return; }
+      status.textContent = 'Checking…';
+      try {
+        const result = await post('/api/admin/browser/navigate', { url: document.getElementById('guard-browser-url').value.trim() });
+        frame.src = toEmbeddableUrl(result.url);
+        frame.dataset.externalUrl = result.url;
+        wrap.hidden = false;
+        status.textContent = 'Loaded inside Helmian. Recorded in the audit trail.';
+      } catch (error) {
+        status.textContent = error.body?.message || error.message || 'That address was not accepted.';
+      }
+    };
+    document.getElementById('guard-browser-external').onclick = () => {
+      const url = document.getElementById('guard-browser-frame').dataset.externalUrl;
+      if (url) window.open(url, '_blank', 'noopener');
+    };
+  }
+  // Guard panel: create tab (record a request, same API as the workbench create)
+  const gCreateForm = document.getElementById('guard-create-form');
+  if (gCreateForm && !gCreateForm.dataset.wired) {
+    gCreateForm.dataset.wired = '1';
+    gCreateForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('guard-create-prompt');
+      const prompt = input.value.trim();
+      if (!prompt) { toast('Describe what you want to create'); return; }
+      const status = document.getElementById('guard-create-status');
+      status.textContent = 'Recording…';
+      try {
+        const payload = createIntentPayload({ title: prompt.split(/\n/)[0].slice(0, 240), objective: prompt, type: 'other', department: '', sourcesText: '', stage: 'draft' });
+        const result = await post('/api/admin/cora/artifacts', payload);
+        input.value = '';
+        status.textContent = result.replayed ? 'That request was already on file.' : 'Review recorded.';
+        toast('Review recorded', 'ok');
+        loadGuardCreateList();
+      } catch (error) {
+        status.textContent = error.message || 'Could not record review';
+      }
+    };
+  }
+  // Maestro panel: voice chips (EXE parity) — same voice engine, targets the maestro composer
+  wireMaestroVoiceChips();
+}
+
+function insertMaestroDictation(text) {
+  const box = document.getElementById('maestro-input');
+  if (!box) return;
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? box.value.length;
+  const before = box.value.slice(0, start);
+  const after = box.value.slice(end);
+  const sep = before && !/[\s\n]$/.test(before) ? ' ' : '';
+  box.value = before + sep + text + after;
+  const pos = before.length + sep.length + text.length;
+  box.setSelectionRange(pos, pos);
+  box.focus();
+}
+
+function updateMaestroVoiceChips() {
+  for (const [id, mode] of [['maestro-dictate', 'dictate'], ['maestro-voice', 'voice']]) {
+    const chip = document.getElementById(id);
+    if (!chip) continue;
+    const active = voice.voiceMode && voice.mode === mode;
+    chip.classList.toggle('recording', active);
+    chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+}
+
+function toggleMaestroVoice(mode) {
+  if (voice.voiceMode && voice.mode === mode) {
+    voice.setVoiceMode(false, { onState: updateMaestroVoiceChips });
+  } else {
+    if (voice.voiceMode) voice.setVoiceMode(false, {});
+    if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy(mode)); store.set('voicePrivacySeen', true); }
+    voice.setVoiceMode(true, {
+      mode,
+      onTranscript: (text) => { insertMaestroDictation(text); },
+      onSubmit: (text) => { if (text) insertMaestroDictation(text); const f = document.getElementById('maestro-form'); if (document.getElementById('maestro-input').value.trim() && f) f.requestSubmit(); },
+      onState: updateMaestroVoiceChips,
+      onError: (msg) => { toast(msg); updateMaestroVoiceChips(); },
+    });
+  }
+  updateMaestroVoiceChips();
+}
+
+function wireMaestroVoiceChips() {
+  for (const [id, mode] of [['maestro-dictate', 'dictate'], ['maestro-voice', 'voice']]) {
+    const chip = document.getElementById(id);
+    if (!chip || chip.dataset.wired) continue;
+    chip.dataset.wired = '1';
+    chip.title = voicePrivacy(mode);
+    if (!voice.supported) {
+      chip.disabled = true;
+      chip.title = 'Voice is not supported by this browser — you can still type.';
+    } else {
+      chip.onclick = () => toggleMaestroVoice(mode);
+    }
+  }
+}
+
+async function switchGuardTab(name) {
+  // Show the selected tab panel, hide the others; lazy-load content on first open
+  for (const panel of document.querySelectorAll('#dp-guard [data-gtab-panel]')) {
+    panel.hidden = panel.dataset.gtabPanel !== name;
+  }
+  // The filters row and bottom buttons only apply to the Guard findings tab
+  const filters = document.getElementById('guard-filters');
+  if (filters) filters.style.display = name === 'guard' ? '' : 'none';
+  if (name === 'canvas') loadGuardCanvas();
+  else if (name === 'preview') loadGuardPreview();
+  else if (name === 'create') loadGuardCreateList();
+}
+
+async function loadGuardCanvas() {
+  const status = document.getElementById('guard-canvas-status');
+  const body = document.getElementById('guard-canvas-body');
+  const projectKey = state.activeProjectKey;
+  if (!projectKey) { status.textContent = 'Pick a project first — the canvas is saved per project.'; body.hidden = true; return; }
+  status.textContent = 'Loading…';
+  try {
+    const data = await api(`/api/admin/workspace/canvas?projectKey=${encodeURIComponent(projectKey)}`);
+    if (state.activeProjectKey !== projectKey) return;
+    document.getElementById('guard-canvas-note').textContent = (data.noteText || 'Empty canvas.').slice(0, 500);
+    const decisions = data.decisions ?? [];
+    document.getElementById('guard-canvas-count').textContent = decisions.length;
+    document.getElementById('guard-canvas-decisions').replaceChildren(...decisions.slice(0, 10).map((d) =>
+      el('div', 'guard-card', typeof d === 'string' ? d.slice(0, 200) : String(d.decisionText ?? d.text ?? '').slice(0, 200))));
+    status.textContent = '';
+    body.hidden = false;
+  } catch { status.textContent = 'Could not load the canvas.'; body.hidden = true; }
+}
+
+async function loadGuardPreview() {
+  const status = document.getElementById('guard-preview-status');
+  const list = document.getElementById('guard-preview-list');
+  status.textContent = 'Loading…';
+  try {
+    const body = await api('/api/admin/runs/ledger?limit=50');
+    const runs = (Array.isArray(body.runs) ? body.runs : []).filter((r) => r.kind === 'artifact_execution' && r.outcome === 'completed');
+    status.textContent = runs.length ? `${runs.length} finished.` : 'Nothing generated yet.';
+    list.replaceChildren(...runs.slice(0, 20).map((r) => {
+      const card = el('div', 'guard-card');
+      card.append(el('strong', 'sm', previewTitle(r.descriptor)), el('div', 'muted sm', `${r.kind} · ${r.outcome}`));
+      return card;
+    }));
+  } catch { status.textContent = 'Could not load previews.'; }
+}
+
+async function loadGuardCreateList() {
+  const list = document.getElementById('guard-create-list');
+  const status = document.getElementById('guard-create-status');
+  try {
+    const body = await api('/api/admin/cora/artifacts');
+    const model = createModel(body);
+    if (!status.textContent) status.textContent = model.empty ? 'No requests yet.' : `${model.receipts.length} on file.`;
+    list.replaceChildren(...model.receipts.slice(0, 15).map((r) => {
+      const card = el('div', 'guard-card');
+      card.append(el('strong', 'sm', r.title), el('div', 'muted sm', `${r.type} · ${r.status}`));
+      return card;
+    }));
+  } catch { if (!list.children.length) status.textContent = 'Could not load.'; }
 }
 
 function renderMemberList() {
