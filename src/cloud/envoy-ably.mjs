@@ -158,6 +158,11 @@ export async function handleEnvoyAblyRoute({
     await handler(request, response);
     return true;
   }
+  // User-level OAuth (Gemini/Google): token goes to browser, not cloud storage
+  if (requestUrl?.pathname?.startsWith('/api/provider-oauth/')) {
+    const { handleUserOAuthRoute } = await import('./user-oauth.mjs');
+    if (await handleUserOAuthRoute({ request, response, requestUrl, send })) return true;
+  }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleAgentSessionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (request?.method !== 'POST' || requestUrl?.pathname !== ENVOY_ABLY_TOKEN_PATH) return false;
