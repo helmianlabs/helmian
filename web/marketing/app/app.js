@@ -989,8 +989,18 @@ function renderFeed() {
       dpFindings.replaceChildren(...visible.slice(0, 30).map((c) => {
         const card = el('div', `guard-card ${c.severity}`);
         const head = el('div', 'guard-card-head');
-        head.append(el('span', `severity ${c.severity}`, c.severity.toUpperCase()));
+        // EXE severity icons: ✕ critical, ? unknown, ✓ ok
+        const icon = c.severity === 'critical' ? '✕' : c.severity === 'warning' ? '!' : c.severity === 'info' ? '✓' : '?';
+        head.append(el('span', `severity ${c.severity}`, `${icon} ${c.severity.toUpperCase()}`));
+        const sightings = Number(c.finding?.sightingCount || 0);
+        if (sightings > 0) head.append(el('span', 'muted sm', `×${sightings}`));
         if (c.at) head.append(el('span', 'muted sm', formatTime(c.at)));
+        // EXE has an Ack button on each card
+        if (!c.ack && c.finding?.fingerprint) {
+          const ackBtn = el('button', 'btn ghost sm', 'Ack');
+          ackBtn.onclick = (e) => { e.stopPropagation(); ackFinding(c.finding.fingerprint); };
+          head.append(ackBtn);
+        }
         card.append(head, el('div', 'guard-card-title', c.title));
         if (c.body) card.append(el('div', 'muted sm', String(c.body).slice(0, 200)));
         return card;
@@ -1864,17 +1874,17 @@ function wireDesktopComposers() {
   }
   // Maestro panel: voice chips (EXE parity) — same voice engine, targets the maestro composer
   wireMaestroVoiceChips();
-  // Maestro panel: slash command button (EXE parity) — focuses input with "/" typed
-  const slashBtn = document.getElementById('maestro-slash');
-  if (slashBtn && !slashBtn.dataset.wired) {
-    slashBtn.dataset.wired = '1';
-    slashBtn.onclick = () => {
-      const input = document.getElementById('maestro-input');
-      if (!input) return;
-      if (!input.value.startsWith('/')) input.value = '/' + input.value;
-      input.focus();
-      toast('Slash commands live in the desktop app for now');
-    };
+  // Maestro panel: + button (EXE parity) — tools and skills
+  const plusBtn = document.getElementById('maestro-plus');
+  if (plusBtn && !plusBtn.dataset.wired) {
+    plusBtn.dataset.wired = '1';
+    plusBtn.onclick = () => toast('Tools and connectors open from Integrations');
+  }
+  // Maestro panel: mic button (EXE parity) — toggles dictate mode
+  const micBtn = document.getElementById('maestro-mic');
+  if (micBtn && !micBtn.dataset.wired) {
+    micBtn.dataset.wired = '1';
+    micBtn.onclick = () => toggleMaestroVoice('dictate');
   }
   // Maestro panel: workspace indicator (EXE parity) — shows the active project
   const wsLabel = document.getElementById('maestro-workspace');
