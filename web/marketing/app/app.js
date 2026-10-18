@@ -733,6 +733,27 @@ async function loadConsole() {
     if (!state.channelId) return;
     loadLog().catch(() => {});
   }, 3000);
+  // Move chat into the sliding panel ("wall of sliding glass doors").
+  // The middle becomes the Maestro console; chat slides in from the right.
+  try {
+    const consoleView = document.getElementById('view-console');
+    const panelBody = document.getElementById('chat-panel-body');
+    const panel = document.getElementById('chat-panel');
+    const toggle = document.getElementById('chat-panel-toggle');
+    const closeBtn = document.getElementById('chat-panel-close');
+    if (consoleView && panelBody && panel && toggle) {
+      panelBody.appendChild(consoleView);
+      consoleView.hidden = false;
+      panel.hidden = false;
+      toggle.hidden = false;
+      const openPanel = () => panel.classList.add('open');
+      const closePanel = () => panel.classList.remove('open');
+      toggle.onclick = openPanel;
+      if (closeBtn) closeBtn.onclick = closePanel;
+      // Open by default on desktop, closed on mobile
+      if (window.innerWidth > 768) openPanel();
+    }
+  } catch {}
 }
 async function loadLog() {
   const log = $('#log');
