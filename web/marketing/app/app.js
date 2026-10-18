@@ -1239,7 +1239,7 @@ async function loadProviders() {
         } else if (key === 'openai') {
           location.href = '/api/provider-oauth/openai/start';
         } else if (key === 'grok' || key === 'xai') {
-          toast('Grok OAuth needs xAI partner credentials. Use API key for now.', 'info');
+          location.href = '/api/provider-oauth/grok/start';
         } else {
           toast(`${label} OAuth is not available. Use API key below.`, 'info');
         }
