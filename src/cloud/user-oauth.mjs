@@ -8,6 +8,8 @@ import { resolveGeminiOAuthConfig, createGeminiOAuthPkce } from './provider-oaut
 
 export const USER_GEMINI_OAUTH_START = '/api/provider-oauth/gemini/start';
 export const USER_GEMINI_OAUTH_CALLBACK = '/api/provider-oauth/gemini/callback';
+export const USER_OPENAI_OAUTH_START = '/api/provider-oauth/openai/start';
+export const USER_OPENAI_OAUTH_CALLBACK = '/api/provider-oauth/openai/callback';
 
 function oauthCookie(name, value) {
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`;
@@ -123,6 +125,96 @@ a{color:#60a5fa}</style></head>
           oauthCookie('helmion_user_gemini_verifier', ''),
         ],
       });
+      return true;
+    } catch (err) {
+      send(response, 500, `OAuth failed: ${err.message}. <a href="/app">Back to app</a>`, 'text/html');
+      return true;
+    }
+  }
+
+  // OpenAI "Sign in with ChatGPT" - Start
+  if (request?.method === 'GET' && pathname === USER_OPENAI_OAUTH_START) {
+    const clientId = process.env.HELMION_OPENAI_OAUTH_CLIENT_ID;
+    if (!clientId) {
+      send(response, 503, JSON.stringify({ error: 'ChatGPT OAuth not configured' }));
+      return true;
+    }
+    const origin = `${requestUrl.protocol}//${requestUrl.host}`;
+    const redirectUri = `${origin}${USER_OPENAI_OAUTH_CALLBACK}`;
+    const state = randomBytes(32).toString('base64url');
+    const verifier = randomBytes(32).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+
+    const authUrl = new URL('https://auth.openai.com/api/accounts/authorize');
+    authUrl.searchParams.set('client_id', clientId);
+    authUrl.searchParams.set('redirect_uri', redirectUri);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('scope', 'openid profile email offline_access');
+    authUrl.searchParams.set('state', state);
+    authUrl.searchParams.set('code_challenge', challenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+
+    send(response, 302, '', 'text/plain', {
+      location: authUrl.toString(),
+      'set-cookie': [
+        oauthCookie('helmion_user_openai_state', state),
+        oauthCookie('helmion_user_openai_verifier', verifier),
+      ],
+    });
+    return true;
+  }
+
+  // OpenAI "Sign in with ChatGPT" - Callback
+  if (request?.method === 'GET' && pathname === USER_OPENAI_OAUTH_CALLBACK) {
+    const state = requestUrl.searchParams.get('state');
+    const code = requestUrl.searchParams.get('code');
+    const savedState = getCookie(request, 'helmion_user_openai_state');
+    const verifier = getCookie(request, 'helmion_user_openai_verifier');
+
+    if (!state || !code || state !== savedState || !verifier) {
+      send(response, 400, 'OAuth state invalid. <a href="/app">Back to app</a>', 'text/html');
+      return true;
+    }
+
+    const origin = `${requestUrl.protocol}//${requestUrl.host}`;
+    const redirectUri = `${origin}${USER_OPENAI_OAUTH_CALLBACK}`;
+    const clientId = process.env.HELMION_OPENAI_OAUTH_CLIENT_ID;
+
+    try {
+      const tokenRes = await fetch('https://auth.openai.com/api/accounts/oauth/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          code,
+          code_verifier: verifier,
+          grant_type: 'authorization_code',
+          redirect_uri: redirectUri,
+        }),
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData.access_token) {
+        throw new Error(tokenData.error_description || 'Token exchange failed');
+      }
+
+      const html = `<!DOCTYPE html>
+<html><head><title>ChatGPT Connected</title>
+<style>body{font-family:system-ui;max-width:600px;margin:40px auto;padding:20px;background:#0B1120;color:#e2e8f0}
+code{background:#1e293b;padding:12px;display:block;word-break:break-all;border-radius:8px;margin:12px 0}
+button{background:#3b82f6;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:16px}
+a{color:#60a5fa}</style></head>
+<body>
+<h2>ChatGPT Connected</h2>
+<p>Your access token (copy this):</p>
+<code id="token">${tokenData.access_token}</code>
+<button onclick="navigator.clipboard.writeText(document.getElementById('token').textContent).then(()=>this.textContent='Copied!')">Copy Token</button>
+<h3>Store it on your runner:</h3>
+<code>echo "PASTE_TOKEN_HERE" | node bin/runner-vault.mjs store openai --stdin</code>
+<p>Then restart the bridge.</p>
+<p><a href="/app">Back to Helmian</a></p>
+<p style="color:#64748b;font-size:12px">This token was not stored on our servers.</p>
+</body></html>`;
+      send(response, 200, html, 'text/html; charset=utf-8');
       return true;
     } catch (err) {
       send(response, 500, `OAuth failed: ${err.message}. <a href="/app">Back to app</a>`, 'text/html');
