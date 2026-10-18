@@ -22,31 +22,35 @@ function startDownload(url) { const a = el('a', { href: url, download: '' }); do
 
 async function deliver(email) {
   $('#gs-clerk').replaceChildren();
-  $('#gs-title').textContent = `You're signed up. Here's ${product.name}.`;
+  $('#gs-title').textContent = 'Setting up your workspace...';
   $('#gs-lede').textContent = email ? `Signed in as ${email}.` : 'Signed in.';
-  const box = $('#gs-downloads'); box.hidden = false; box.replaceChildren();
-  let auto = null;
-  for (const item of product.items) {
-    const card = el('article', { className: 'feature-card' });
-    if (item === 'guard') {
-      card.append(el('h3', {}, 'Helmian Guard (browser extension)'), el('p', {}, 'Unzip it, then load it in Chrome or Edge via Extensions → Developer mode → Load unpacked. Store listings are not live yet.'));
-      card.append(el('a', { className: 'button button-primary', href: GUARD.url, download: '' }, `Download ${GUARD.name}`));
-      auto ??= GUARD.url;
-    } else {
-      const rel = await exeRelease();
-      card.append(el('h3', {}, 'Helmian for Windows'));
-      if (rel.available) {
-        card.append(el('p', {}, `Version ${rel.version ?? ''}. Windows may show a SmartScreen notice for new apps: choose More info, then Run anyway.`));
-        card.append(el('a', { className: 'button button-primary', href: rel.url }, `Download ${rel.name}`));
-        auto ??= rel.url;
-      } else {
-        card.append(el('p', {}, `The Windows installer is coming soon. You're on the list${email ? ` and we'll email ${email}` : " and we'll email you"} as soon as it's ready.`));
-      }
+  status('Creating your trial workspace. This takes a moment.');
+
+  try {
+    // Get Clerk session token for the signup API call
+    const token = await clerk.session?.getToken?.();
+    const headers = { 'content-type': 'application/json' };
+    if (token) headers['authorization'] = `Bearer ${token}`;
+
+    const res = await fetch('/api/signup', { method: 'POST', headers });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Signup failed');
     }
-    box.append(card);
+
+    // Success: redirect to /app
+    $('#gs-title').textContent = 'You are all set.';
+    $('#gs-lede').textContent = data.created
+      ? 'Your trial workspace is ready.'
+      : 'Welcome back.';
+    status('Taking you to Helmian...');
+    setTimeout(() => { location.href = '/app'; }, 1500);
+  } catch (err) {
+    $('#gs-title').textContent = 'Something went wrong';
+    $('#gs-lede').textContent = err.message || 'Could not create your workspace.';
+    status('Please try refreshing the page.');
   }
-  status(auto ? 'Your download should start automatically. If it doesn’t, use the button below.' : 'Thanks for signing up!');
-  if (auto) startDownload(auto);
 }
 
 async function main() {
