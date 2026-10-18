@@ -1256,7 +1256,9 @@ async function loadAgentSessions() {
   try {
     const res = await api('/api/admin/envoy/agents/sessions');
     const sessions = res.sessions ?? [];
+    state.agentSessions = sessions;
     renderAgentSessions(sess, sessions);
+    renderMemberList();
   } catch (e) {
     sess.replaceChildren(el('p', 'muted sm', 'Could not load sessions.'));
   }
@@ -1681,6 +1683,36 @@ async function loadDesktop() {
     };
   }
   await Promise.all([loadAgentSessions(), loadLog(), loadFeedData()]);
+  renderMemberList();
+}
+
+function renderMemberList() {
+  // Discord-style member list: friends, agents, bots
+  try {
+    const list = document.getElementById('members-list');
+    const count = document.getElementById('members-count');
+    if (!list) return;
+    const members = [];
+    // The user (Troy)
+    if (state.actor?.name || state.actor?.subject) {
+      members.push({ name: state.actor.name || 'Troy', role: 'Owner', status: 'online', kind: 'human' });
+    }
+    // Maestro (bridge agent)
+    members.push({ name: 'Maestro', role: 'Agent', status: 'online', kind: 'agent' });
+    // Agent sessions
+    const sessions = state.agentSessions || [];
+    for (const s of sessions) {
+      members.push({ name: s.name, role: s.provider || 'Agent', status: s.status === 'active' ? 'online' : 'idle', kind: 'agent' });
+    }
+    if (count) count.textContent = members.length;
+    list.replaceChildren(...members.map((m) => {
+      const item = el('div', 'member-item');
+      item.append(el('span', `member-status ${m.status}`));
+      item.append(el('span', null, m.name));
+      item.append(el('span', 'member-role', m.role));
+      return item;
+    }));
+  } catch {}
 }
 const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
