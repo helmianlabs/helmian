@@ -953,11 +953,40 @@ function renderFeed() {
   try {
     const dpFindings = document.getElementById('guard-findings');
     const dpSummary = document.getElementById('guard-summary');
+    const dpFilters = document.getElementById('guard-filters');
     if (dpFindings) {
       const crit = merged.filter((c) => c.severity === 'critical').length;
       const warn = merged.filter((c) => c.severity === 'warning').length;
       if (dpSummary) dpSummary.textContent = `${crit} crit · ${warn} warn · ${merged.length} total`;
-      dpFindings.replaceChildren(...merged.slice(0, 30).map((c) => {
+      // EXE-style source filter chips: All, Browser, Console, Local (from actual finding sources)
+      if (dpFilters && !dpFilters.dataset.wired) {
+        dpFilters.dataset.wired = '1';
+        dpFilters.onclick = (e) => {
+          const btn = e.target.closest('[data-gsource]');
+          if (!btn) return;
+          state.guardSourceFilter = btn.dataset.gsource;
+          for (const b of dpFilters.querySelectorAll('[data-gsource]')) b.classList.toggle('active', b === btn);
+          renderFeed();
+        };
+      }
+      if (dpFilters) {
+        const sources = ['all', ...new Set((state.findings ?? []).map((f) => String(f.source || 'local').toLowerCase()))];
+        const active = state.guardSourceFilter || 'all';
+        const counts = { all: (state.findings ?? []).length };
+        for (const f of state.findings ?? []) {
+          const s = String(f.source || 'local').toLowerCase();
+          counts[s] = (counts[s] || 0) + 1;
+        }
+        dpFilters.replaceChildren(...sources.map((s) => {
+          const label = s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1);
+          const b = el('button', `chip sm${s === active ? ' active' : ''}`, `${label} (${counts[s] || 0})`);
+          b.dataset.gsource = s;
+          return b;
+        }));
+      }
+      const srcFilter = state.guardSourceFilter || 'all';
+      const visible = merged.filter((c) => srcFilter === 'all' || String(c.finding?.source || 'local').toLowerCase() === srcFilter);
+      dpFindings.replaceChildren(...visible.slice(0, 30).map((c) => {
         const card = el('div', `guard-card ${c.severity}`);
         const head = el('div', 'guard-card-head');
         head.append(el('span', `severity ${c.severity}`, c.severity.toUpperCase()));
@@ -1345,7 +1374,10 @@ function renderAgentSessions(container, sessions) {
         const head = el('div', 'agent-card-head');
         const avatar = el('span', 'room-avatar', (s.name || '?').slice(0, 1).toUpperCase());
         const name = el('strong', null, s.name);
-        const status = el('span', 'muted sm', `${s.provider} - ${(s.status || 'idle').toUpperCase()}`);
+        // EXE status colors: GREY idle, GREEN live, YELLOW trouble, RED error
+        const statusMap = { idle: 'GREY', active: 'GREEN', warning: 'YELLOW', error: 'RED' };
+        const exeStatus = statusMap[String(s.status || 'idle').toLowerCase()] || 'GREY';
+        const status = el('span', `muted sm status-${exeStatus.toLowerCase()}`, `${s.provider} - ${exeStatus}`);
         const close = el('button', 'icon-btn sm', '×');
         close.onclick = (e) => { e.stopPropagation(); closeAgentSession(s.id, s.name); };
         head.append(avatar, name, status, close);
@@ -1832,6 +1864,21 @@ function wireDesktopComposers() {
   }
   // Maestro panel: voice chips (EXE parity) — same voice engine, targets the maestro composer
   wireMaestroVoiceChips();
+  // Maestro panel: slash command button (EXE parity) — focuses input with "/" typed
+  const slashBtn = document.getElementById('maestro-slash');
+  if (slashBtn && !slashBtn.dataset.wired) {
+    slashBtn.dataset.wired = '1';
+    slashBtn.onclick = () => {
+      const input = document.getElementById('maestro-input');
+      if (!input) return;
+      if (!input.value.startsWith('/')) input.value = '/' + input.value;
+      input.focus();
+      toast('Slash commands live in the desktop app for now');
+    };
+  }
+  // Maestro panel: workspace indicator (EXE parity) — shows the active project
+  const wsLabel = document.getElementById('maestro-workspace');
+  if (wsLabel && state.activeProjectKey) wsLabel.textContent = state.activeProjectKey;
 }
 
 function insertMaestroDictation(text) {
