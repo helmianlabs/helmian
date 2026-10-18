@@ -379,7 +379,8 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   padding: 10px 12px;
   border-top: 1px solid var(--border);
 }
-.dpanel-composer input {
+.dpanel-composer input,
+.dpanel-composer textarea {
   flex: 1;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -387,6 +388,11 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   padding: 8px 12px;
   color: var(--text);
   font-size: 13px;
+}
+.dpanel-composer textarea {
+  resize: vertical;
+  min-height: 40px;
+  font-family: inherit;
 }
 .dpanel-foot { padding: 8px 12px; border-top: 1px solid var(--border); }
 .badge-warn {
@@ -486,6 +492,13 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .dpanel-workspace {
   padding: 4px 12px 8px;
   font-size: 12px;
+}
+/* ---- Guard action grid (EXE clone: 2x2) ---- */
+.dpanel-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 8px 12px 12px;
 }
 /* ---- Agent status colors (EXE clone) ---- */
 .status-grey { color: var(--muted); }
