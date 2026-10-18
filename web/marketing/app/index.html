@@ -101,7 +101,7 @@
       <div class="desktop-grid">
         <!-- Panel 1: ROOM -->
         <div class="dpanel room" id="dp-room">
-          <div class="dpanel-head"><span class="eyebrow">ROOM</span><strong>Local room</strong><span class="badge-warn" id="room-setup-badge">SETUP NEEDED</span></div>
+          <div class="dpanel-head"><span class="eyebrow">ROOM</span><strong>Local room</strong><span class="badge-warn" id="room-setup-badge">SETUP NEEDED</span><button class="dpanel-toggle" data-panel="dp-room" aria-label="Collapse panel">‹</button></div>
           <div class="dpanel-tabs" id="room-sources">
             <button class="chip sm active" data-source="all">All</button>
             <button class="chip sm" data-source="discord">Discord</button>
@@ -121,7 +121,7 @@
         </div>
         <!-- Panel 2: MAESTRO -->
         <div class="dpanel maestro" id="dp-maestro">
-          <div class="dpanel-head"><span class="eyebrow accent">MAESTRO</span><strong>Conversation</strong></div>
+          <div class="dpanel-head"><span class="eyebrow accent">MAESTRO</span><strong>Conversation</strong><button class="dpanel-toggle" data-panel="dp-maestro" aria-label="Collapse panel">‹</button></div>
           <div class="dpanel-meta"><span class="chip sm">Full</span><span class="muted sm">SCOPED FOLDER · <span id="maestro-scope">E:\Helmion\.helmion</span></span><span class="muted sm">model: <span id="maestro-model">gemini</span></span></div>
           <div class="dpanel-scroll" id="maestro-messages"></div>
           <form class="dpanel-composer" id="maestro-form">
@@ -138,7 +138,7 @@
         </div>
         <!-- Panel 3: AGENTS -->
         <div class="dpanel agents" id="dp-agents">
-          <div class="dpanel-head"><span class="eyebrow">AGENTS</span><strong><span id="agents-count">0</span> agents running</strong></div>
+          <div class="dpanel-head"><span class="eyebrow">AGENTS</span><strong><span id="agents-count">0</span> agents running</strong><button class="dpanel-toggle" data-panel="dp-agents" aria-label="Collapse panel">‹</button></div>
           <div class="dpanel-tabs" id="agents-providers">
             <button class="chip sm" data-provider="maestro">Maestro</button>
             <button class="chip sm" data-provider="claude">Claude</button>
@@ -159,7 +159,7 @@
             <button class="chip sm" data-gtab="preview">Preview</button>
             <button class="chip sm" data-gtab="create">Create</button>
           </div>
-          <div class="dpanel-head"><span class="eyebrow">GUARD</span><strong id="guard-summary">0 crit · 0 warn · 0 total</strong></div>
+          <div class="dpanel-head"><span class="eyebrow">GUARD</span><strong id="guard-summary">0 crit · 0 warn · 0 total</strong><button class="dpanel-toggle" data-panel="dp-guard" aria-label="Collapse panel">›</button></div>
           <div class="dpanel-tabs" id="guard-filters"></div>
           <div class="dpanel-scroll" id="guard-findings"></div>
           <div class="dpanel-tabs bottom">
