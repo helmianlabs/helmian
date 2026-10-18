@@ -1888,7 +1888,11 @@ function wireDesktopComposers() {
       const input = document.getElementById('room-input');
       const body = input.value.trim();
       if (!body) return;
-      if (!state.channelId) { toast('No team channel yet — ask the owner to set one up'); return; }
+      if (!state.channelId) {
+        console.warn('[maestro-send] no channelId, state:', { channelId: state.channelId, actor: state.actor?.role });
+        toast('No team channel yet — ask the owner to set one up');
+        return;
+      }
       const btn = roomForm.querySelector('button[type="submit"]');
       if (btn) btn.disabled = true;
       try {
@@ -1908,14 +1912,21 @@ function wireDesktopComposers() {
       const input = document.getElementById('maestro-input');
       const body = input.value.trim();
       if (!body) return;
-      if (!state.channelId) { toast('No team channel yet — ask the owner to set one up'); return; }
+      if (!state.channelId) {
+        console.warn('[maestro-send] no channelId, state:', { channelId: state.channelId, actor: state.actor?.role });
+        toast('No team channel yet — ask the owner to set one up');
+        return;
+      }
       const btn = maestroForm.querySelector('button[type="submit"]');
       if (btn) btn.disabled = true;
       try {
         await post('/api/admin/envoy/messages', { channelId: state.channelId, body, idempotencyKey: crypto.randomUUID() });
         input.value = '';
         await loadLog();
-      } catch { toast('Not sent — your message is still in the box'); }
+      } catch (err) {
+        console.error('[maestro-send] failed:', err);
+        toast('Not sent — your message is still in the box');
+      }
       finally { if (btn) btn.disabled = false; }
     };
   }
