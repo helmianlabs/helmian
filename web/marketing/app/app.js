@@ -1736,21 +1736,55 @@ async function loadDesktop() {
     btn.onclick = () => {
       const panel = document.getElementById(btn.dataset.panel);
       if (!panel) return;
-      panel.classList.toggle('collapsed');
-      btn.textContent = panel.classList.contains('collapsed') ? (btn.dataset.panel === 'dp-guard' ? '‹' : '›') : (btn.dataset.panel === 'dp-guard' ? '›' : '‹');
-      // Update grid columns based on visible panels
+      const isCollapsed = panel.classList.toggle('collapsed');
+      panel.classList.toggle('collapsed-panel', isCollapsed);
+      // EXE-style: animate the grid column to zero via collapse classes
       const grid = document.querySelector('.desktop-grid');
       if (grid) {
-        const visible = ['dp-room', 'dp-maestro', 'dp-agents', 'dp-guard'].filter(id => {
-          const p = document.getElementById(id);
-          return p && !p.classList.contains('collapsed');
-        }).length;
-        grid.classList.remove('panels-1', 'panels-2', 'panels-3');
-        if (visible === 3) grid.classList.add('panels-3');
-        else if (visible === 2) grid.classList.add('panels-2');
-        else if (visible === 1) grid.classList.add('panels-1');
+        const collapseMap = { 'dp-room': 'room-collapsed', 'dp-agents': 'agents-collapsed', 'dp-guard': 'guard-collapsed' };
+        const cls = collapseMap[btn.dataset.panel];
+        if (cls) grid.classList.toggle(cls, isCollapsed);
       }
+      btn.textContent = isCollapsed ? '›' : '‹';
+      btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
     };
+  }
+  // EXE-style drag splitters: drag to resize adjacent panels
+  for (const split of document.querySelectorAll('.dsplit')) {
+    if (split.dataset.wired) continue;
+    split.dataset.wired = '1';
+    split.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      split.classList.add('dragging');
+      split.setPointerCapture(e.pointerId);
+      const grid = document.querySelector('.desktop-grid');
+      const startX = e.clientX;
+      const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').map(v => parseFloat(v));
+      // cols: [room, split, maestro, split, agents, split, guard]
+      const idx = { 'room': 0, 'maestro': 2, 'agents': 4 }[split.dataset.split];
+      if (idx === undefined) return;
+      const startLeft = cols[idx];
+      const startRight = cols[idx + 2];
+      const onMove = (ev) => {
+        const dx = ev.clientX - startX;
+        const newLeft = Math.max(0, Math.min(600, startLeft + dx));
+        const newRight = Math.max(0, Math.min(600, startRight - dx));
+        // Update via inline style for smooth drag
+        const template = [...cols];
+        template[idx] = newLeft;
+        template[idx + 2] = newRight;
+        grid.style.gridTemplateColumns = template.map((v, i) => i % 2 === 1 ? '6px' : (i === 2 ? `minmax(0,${v}px)` : `${v}px`)).join(' ');
+      };
+      const onUp = () => {
+        split.classList.remove('dragging');
+        split.removeEventListener('pointermove', onMove);
+        split.removeEventListener('pointerup', onUp);
+        // Clear inline style so collapse classes work again
+        grid.style.gridTemplateColumns = '';
+      };
+      split.addEventListener('pointermove', onMove);
+      split.addEventListener('pointerup', onUp);
+    });
   }
   await Promise.all([loadAgentSessions(), loadLog(), loadFeedData()]);
   renderMemberList();
