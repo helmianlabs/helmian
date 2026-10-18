@@ -149,7 +149,15 @@ export async function handleEnvoyAblyRoute({
   TenantAuthorizationError,
   readJson,
   ablyKey = process.env.ABLY_API_KEY,
+  sessionIdentity,
 } = {}) {
+  // Signup: must run before tenant checks (new users have no tenant yet)
+  if (requestUrl?.pathname === '/api/signup') {
+    const { createSignupHandler } = await import('./signup.mjs');
+    const handler = createSignupHandler();
+    await handler(request, response);
+    return true;
+  }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleAgentSessionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (request?.method !== 'POST' || requestUrl?.pathname !== ENVOY_ABLY_TOKEN_PATH) return false;
