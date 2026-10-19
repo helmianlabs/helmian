@@ -625,6 +625,7 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   padding: 4px 8px;
 }
 .dpanel-toggle:hover { color: var(--text); }
+.dpanel-toggle.left { margin-left: 0; margin-right: 4px; }
 /* Legacy panel count classes (unused, kept for safety) */
 .desktop-grid.panels-3 { grid-template-columns: 280px 6px minmax(0,1fr) 6px 0px 6px 340px; }
 .desktop-grid.panels-2 { grid-template-columns: 280px 6px minmax(0,1fr) 6px 0px 6px 0px; }
