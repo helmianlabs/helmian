@@ -188,6 +188,10 @@ function show(view) {
   const adv = $('#advanced-nav');
   if (adv) adv.open = ADVANCED_VIEWS.includes(view);
   if (narrow()) drawer('sidebar', false);
+  // Wire desktop composers directly (not via loader) so Send works even if loadDesktop fails
+  if (view === 'desktop') {
+    try { wireDesktopComposers(); } catch (e) { console.error('[desktop] wiring failed:', e); }
+  }
   loaders[view]?.().catch(() => {});
 }
 
