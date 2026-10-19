@@ -158,6 +158,13 @@ export async function handleEnvoyAblyRoute({
     await handler(request, response);
     return true;
   }
+  // User profile (nickname, avatar): authenticated, before tenant checks
+  if (requestUrl?.pathname === '/api/profile') {
+    const { createProfileHandler } = await import('./user-profile.mjs');
+    const handler = createProfileHandler({ getIdentity: () => sessionIdentity });
+    await handler(request, response);
+    return true;
+  }
   // User-level OAuth (Gemini/Google): token goes to browser, not cloud storage
   if (requestUrl?.pathname?.startsWith('/api/provider-oauth/')) {
     const { handleUserOAuthRoute } = await import('./user-oauth.mjs');
