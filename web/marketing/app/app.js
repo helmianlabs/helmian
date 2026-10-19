@@ -1786,6 +1786,18 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 async function loadDesktop() {
   // Wire composers FIRST so Send works even if data loads fail below.
   wireDesktopComposers();
+  // Load channel ID (loadConsole does this for the console view, but desktop needs it too)
+  if (!state.channelId) {
+    try {
+      const body = await api('/api/admin/envoy/channels');
+      const chans = Array.isArray(body.channels) ? body.channels : [];
+      state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
+      if (!state.channelId && isAdminRole(state.actor?.role)) {
+        const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' });
+        state.channelId = made.channel?.id ?? null;
+      }
+    } catch {}
+  }
   // Wire up panel collapse buttons (EXE style)
   for (const btn of document.querySelectorAll('.dpanel-toggle')) {
     if (btn.dataset.wired) continue;
