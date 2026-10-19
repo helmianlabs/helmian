@@ -1308,9 +1308,66 @@ async function loadOnboarding() {
 }
 $('#onboarding-dismiss').onclick = () => { store.set('onboardingDismissed', true); $('#onboarding').hidden = true; };
 
+
+// ---- Envoy Profile (nickname + avatar) ----
+const AVATAR_EMOJIS = ['😀','😎','🤖','👾','🐶','🐱','🦊','🐼','🦁','🐯','🦄','🐝','🌟','⚡','🔥','💎','🎯','🚀','🌈','🍕','🎮','🎸','📚','⚽','🎨','🌊','🏔️','🌙','☀️','⭐'];
+
+let selectedAvatar = null;
+
+async function loadProfile() {
+  try {
+    const profile = await api('/api/profile');
+    if (profile.nickname) $('#profile-nickname').value = profile.nickname;
+    if (profile.avatarEmoji) {
+      selectedAvatar = profile.avatarEmoji;
+    }
+  } catch (e) {
+    // Profile not set yet, that's fine
+  }
+  renderAvatarPicker();
+}
+
+function renderAvatarPicker() {
+  const container = $('#profile-avatars');
+  if (!container) return;
+  container.replaceChildren(...AVATAR_EMOJIS.map(emoji => {
+    const btn = el('button', 'avatar-option' + (selectedAvatar === emoji ? ' selected' : ''), emoji);
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'Avatar ' + emoji);
+    btn.onclick = () => {
+      selectedAvatar = emoji;
+      renderAvatarPicker();
+    };
+    return btn;
+  }));
+}
+
+async function saveProfile() {
+  const nickname = $('#profile-nickname').value.trim();
+  if (!nickname) {
+    toast('Enter a nickname', 'error');
+    return;
+  }
+  try {
+    await api('/api/profile', {
+      method: 'POST',
+      body: JSON.stringify({ nickname, avatarEmoji: selectedAvatar })
+    });
+    toast('Profile saved', 'ok');
+  } catch (e) {
+    toast('Could not save profile', 'error');
+  }
+}
+
 async function loadSettings() {
   loadInvites();
   loadProviders();
+  loadProfile();
+  const saveBtn = $('#profile-save');
+  if (saveBtn && !saveBtn.dataset.wired) {
+    saveBtn.dataset.wired = '1';
+    saveBtn.onclick = saveProfile;
+  }
   const prov = await api('/api/admin/provider-connections').catch(() => ({}));
   const conns = Array.isArray(prov.connections) ? prov.connections : [];
   $('#api-keys').replaceChildren(...(conns.length ? conns.map((c) => row(c.displayName || c.provider || 'Provider', maskSecret(c.secretHint || c.keyHint), 'mask')) : [el('p', 'muted sm', 'No API keys saved yet.')]));
