@@ -1935,11 +1935,9 @@ function wireDesktopComposers() {
       const body = input.value.trim();
       if (!body) return;
       if (!state.envoyChannelId) {
-        if (debugEl) debugEl.textContent = 'debug: NO ENVOY CHANNELID at ' + new Date().toTimeString().slice(0, 8);
         toast('No Envoy channel yet — ask the owner to set one up');
         return;
       }
-      if (debugEl) debugEl.textContent = 'debug: posting to envoy at ' + new Date().toTimeString().slice(0, 8);
       const btn = roomForm.querySelector('button[type="submit"]');
       if (btn) btn.disabled = true;
       try {
@@ -1952,22 +1950,16 @@ function wireDesktopComposers() {
   }
   // Wire Maestro panel composer (EXE parity): sends to the team channel where the Maestro/bridge responds
   const maestroForm = document.getElementById('maestro-form');
-  const debugEl = document.getElementById('send-debug');
-  if (maestroForm) {
-    if (debugEl) debugEl.textContent = 'debug: form found, wiring at ' + new Date().toTimeString().slice(0, 8);
+    if (maestroForm) {
     maestroForm.onsubmit = async (e) => {
       e.preventDefault();
-      if (debugEl) debugEl.textContent = 'debug: HANDLER FIRED at ' + new Date().toTimeString().slice(0, 8);
       const input = document.getElementById('maestro-input');
       const body = input.value.trim();
-      if (!body) { if (debugEl) debugEl.textContent = 'debug: empty input, returning'; return; }
       if (!state.channelId) {
-        if (debugEl) debugEl.textContent = 'debug: MAESTRO NO CHANNELID at ' + new Date().toTimeString().slice(0, 8);
         console.warn('[maestro-send] no channelId, state:', { channelId: state.channelId, actor: state.actor?.role });
         toast('No team channel yet — ask the owner to set one up');
         return;
       }
-      if (debugEl) debugEl.textContent = 'debug: MAESTRO posting at ' + new Date().toTimeString().slice(0, 8);
       const btn = maestroForm.querySelector('button[type="submit"]');
       if (btn) btn.disabled = true;
       try {
@@ -1980,9 +1972,7 @@ function wireDesktopComposers() {
       }
       finally { if (btn) btn.disabled = false; }
     };
-    if (debugEl) debugEl.textContent = 'debug: onsubmit assigned at ' + new Date().toTimeString().slice(0, 8);
   } else {
-    if (debugEl) debugEl.textContent = 'debug: FORM NOT FOUND';
   }
   // Wire provider tab switching (visual only for now, EXE parity)
   for (const tabs of document.querySelectorAll('#maestro-providers, #agents-providers')) {
