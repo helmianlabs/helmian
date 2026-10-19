@@ -3,7 +3,7 @@ import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS,
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
 const store = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(`helmian.app.${k}`)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(`helmian.app.${k}`, JSON.stringify(v)); } catch {} } };
-const state = { serverSessions: false, actor: null, projects: [], channelId: null, sessions: store.get('sessions', []), activeSession: store.get('activeSession', null), events: [], approvals: [], ack: new Set(store.get('ack', [])), cleared: new Set(store.get('cleared', [])), pendingProvider: null, steps: null, usage: null, overview: null, emojiMode: store.get('emojiMode', 'playful'), agentIcons: {} };
+const state = { serverSessions: false, actor: null, projects: [], channelId: null, envoyChannelId: null, sessions: store.get('sessions', []), activeSession: store.get('activeSession', null), events: [], approvals: [], ack: new Set(store.get('ack', [])), cleared: new Set(store.get('cleared', [])), pendingProvider: null, steps: null, usage: null, overview: null, emojiMode: store.get('emojiMode', 'playful'), agentIcons: {} };
 const narrow = () => window.matchMedia('(max-width: 900px)').matches;
 // es(): empty-state string picker — playful emoji vs plain text. Sober
 // surfaces (Guard, audit, approvals, evidence) never go through here.
@@ -793,23 +793,8 @@ async function loadLog() {
       if (!l.mine && voice.voiceMode) voice.speak(l.text);
     }
     if (atBottom) log.scrollTop = log.scrollHeight;
-    // Sync to desktop Room panel (EXE clone)
+    // Sync to desktop Maestro panel (EXE clone) - same conversation, Maestro-styled cards
     try {
-      const roomMsg = document.getElementById('room-messages');
-      if (roomMsg) {
-        roomMsg.replaceChildren(...lines.map((l) => {
-          const card = el('div', 'room-card');
-          const head = el('div', 'room-card-head');
-          head.append(el('span', 'room-avatar', (l.who || '?').slice(0, 1).toUpperCase()));
-          head.append(el('strong', null, l.who || 'Unknown'));
-          if (l.ts) head.append(el('span', 'muted sm', ' ' + l.ts));
-          head.append(el('span', 'helmian-badge', 'HELMIAN'));
-          card.append(head, el('div', 'room-card-body', l.text));
-          return card;
-        }));
-        roomMsg.scrollTop = roomMsg.scrollHeight;
-      }
-      // Sync to desktop Maestro panel (EXE clone) - same conversation, Maestro-styled cards
       const maestroMsg = document.getElementById('maestro-messages');
       if (maestroMsg) {
         maestroMsg.replaceChildren(...lines.map((l) => {
@@ -827,6 +812,35 @@ async function loadLog() {
       }
     } catch {}
   } catch { log.replaceChildren(sys('console is reconnecting…')); }
+}
+// Envoy channel log (separate from Console team channel - no bleeding)
+async function loadEnvoyLog() {
+  const roomMsg = document.getElementById('room-messages');
+  if (!roomMsg) return;
+  if (!state.envoyChannelId) {
+    roomMsg.replaceChildren(el('div', 'muted sm', 'No Envoy channel yet — messages will appear here once set up'));
+    return;
+  }
+  try {
+    const lines = logLines(await api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(state.envoyChannelId)}`), state.actor?.subject);
+    if (!lines.length) {
+      roomMsg.replaceChildren(el('div', 'muted sm', 'Envoy channel connected · say hello below'));
+      return;
+    }
+    roomMsg.replaceChildren(...lines.map((l) => {
+      const card = el('div', 'room-card');
+      const head = el('div', 'room-card-head');
+      head.append(el('span', 'room-avatar', (l.who || '?').slice(0, 1).toUpperCase()));
+      head.append(el('strong', null, l.who || 'Unknown'));
+      if (l.ts) head.append(el('span', 'muted sm', ' ' + l.ts));
+      head.append(el('span', 'helmian-badge', 'HELMIAN'));
+      card.append(head, el('div', 'room-card-body', l.text));
+      return card;
+    }));
+    roomMsg.scrollTop = roomMsg.scrollHeight;
+  } catch {
+    roomMsg.replaceChildren(el('div', 'muted sm', 'Envoy is reconnecting…'));
+  }
 }
 $('#channel').onchange = (e) => { state.channelId = e.target.value; loadLog(); };
 $('#new-channel').onclick = () => {
@@ -1798,6 +1812,19 @@ async function loadDesktop() {
       }
     } catch {}
   }
+  // Load Envoy channel (separate from Console team channel - no bleeding)
+  if (!state.envoyChannelId) {
+    try {
+      const body = await api('/api/admin/envoy/channels');
+      const chans = Array.isArray(body.channels) ? body.channels : [];
+      const envoy = chans.find(c => c.slug === 'envoy' || c.title === 'Envoy');
+      state.envoyChannelId = envoy ? (envoy.id ?? envoy.channelId) : null;
+      if (!state.envoyChannelId && isAdminRole(state.actor?.role)) {
+        const made = await post('/api/admin/envoy/channels', { slug: 'envoy', title: 'Envoy', kind: 'team' });
+        state.envoyChannelId = made.channel?.id ?? null;
+      }
+    } catch {}
+  }
   // Wire up panel collapse buttons (EXE style)
   for (const btn of document.querySelectorAll('.dpanel-toggle')) {
     if (btn.dataset.wired) continue;
@@ -1856,7 +1883,7 @@ async function loadDesktop() {
       split.addEventListener('pointerup', onUp);
     });
   }
-  await Promise.all([loadAgentSessions(), loadLog(), loadFeedData()]);
+  await Promise.all([loadAgentSessions(), loadLog(), loadFeedData(), loadEnvoyLog()]);
   renderMemberList();
 }
 
@@ -1907,19 +1934,18 @@ function wireDesktopComposers() {
       const input = document.getElementById('room-input');
       const body = input.value.trim();
       if (!body) return;
-      if (!state.channelId) {
-        if (debugEl) debugEl.textContent = 'debug: NO CHANNELID at ' + new Date().toTimeString().slice(0, 8);
-        console.warn('[maestro-send] no channelId, state:', { channelId: state.channelId, actor: state.actor?.role });
-        toast('No team channel yet — ask the owner to set one up');
+      if (!state.envoyChannelId) {
+        if (debugEl) debugEl.textContent = 'debug: NO ENVOY CHANNELID at ' + new Date().toTimeString().slice(0, 8);
+        toast('No Envoy channel yet — ask the owner to set one up');
         return;
       }
-      if (debugEl) debugEl.textContent = 'debug: posting at ' + new Date().toTimeString().slice(0, 8);
+      if (debugEl) debugEl.textContent = 'debug: posting to envoy at ' + new Date().toTimeString().slice(0, 8);
       const btn = roomForm.querySelector('button[type="submit"]');
       if (btn) btn.disabled = true;
       try {
-        await post('/api/admin/envoy/messages', { channelId: state.channelId, body, idempotencyKey: crypto.randomUUID() });
+        await post('/api/admin/envoy/messages', { channelId: state.envoyChannelId, body, idempotencyKey: crypto.randomUUID() });
         input.value = '';
-        await loadLog();
+        await loadEnvoyLog();
       } catch { toast('Not sent — your message is still in the box'); }
       finally { if (btn) btn.disabled = false; }
     };
