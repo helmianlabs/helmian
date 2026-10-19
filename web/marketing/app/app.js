@@ -1780,6 +1780,8 @@ async function loadPreview() {
 $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 
 async function loadDesktop() {
+  // Wire composers FIRST so Send works even if data loads fail below.
+  wireDesktopComposers();
   // Wire up panel collapse buttons (EXE style)
   for (const btn of document.querySelectorAll('.dpanel-toggle')) {
     if (btn.dataset.wired) continue;
@@ -1840,7 +1842,6 @@ async function loadDesktop() {
   }
   await Promise.all([loadAgentSessions(), loadLog(), loadFeedData()]);
   renderMemberList();
-  wireDesktopComposers();
 }
 
 function wireDesktopComposers() {
