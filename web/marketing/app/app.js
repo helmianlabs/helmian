@@ -1907,8 +1907,7 @@ function wireDesktopComposers() {
   }
   // Wire Maestro panel composer (EXE parity): sends to the team channel where the Maestro/bridge responds
   const maestroForm = document.getElementById('maestro-form');
-  if (maestroForm && !maestroForm.dataset.wired) {
-    maestroForm.dataset.wired = '1';
+  if (maestroForm) {
     maestroForm.onsubmit = async (e) => {
       e.preventDefault();
       const input = document.getElementById('maestro-input');
