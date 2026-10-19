@@ -4,6 +4,14 @@
   "trailingSlash": false,
   "rewrites": [
     {
+      "source": "/api/signup",
+      "destination": "/api/helmian-admin?__p=/api/signup"
+    },
+    {
+      "source": "/api/profile",
+      "destination": "/api/helmian-admin?__p=/api/profile"
+    },
+    {
       "source": "/admin",
       "destination": "/api/helmian-admin?__p=/admin"
     },
