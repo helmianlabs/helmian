@@ -1912,7 +1912,9 @@ function wireDesktopComposers() {
   }
   // Wire Maestro panel composer (EXE parity): sends to the team channel where the Maestro/bridge responds
   const maestroForm = document.getElementById('maestro-form');
+  const debugEl = document.getElementById('send-debug');
   if (maestroForm) {
+    if (debugEl) debugEl.textContent = 'debug: form found, wiring at ' + new Date().toTimeString().slice(0, 8);
     maestroForm.onsubmit = async (e) => {
       e.preventDefault();
       const input = document.getElementById('maestro-input');
@@ -1935,6 +1937,9 @@ function wireDesktopComposers() {
       }
       finally { if (btn) btn.disabled = false; }
     };
+    if (debugEl) debugEl.textContent = 'debug: onsubmit assigned at ' + new Date().toTimeString().slice(0, 8);
+  } else {
+    if (debugEl) debugEl.textContent = 'debug: FORM NOT FOUND';
   }
   // Wire provider tab switching (visual only for now, EXE parity)
   for (const tabs of document.querySelectorAll('#maestro-providers, #agents-providers')) {
