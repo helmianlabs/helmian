@@ -672,3 +672,30 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 #shell[data-view="desktop"] #guard {
   display: none;
 }
+
+/* Envoy profile avatar picker */
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+.avatar-option {
+  font-size: 24px;
+  padding: 6px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--bg-secondary, #1a1d24);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.avatar-option:hover {
+  border-color: var(--accent, #4a9eff);
+}
+.avatar-option.selected {
+  border-color: var(--accent, #4a9eff);
+  background: var(--bg-hover, #252a35);
+}
+@media (max-width: 600px) {
+  .avatar-grid { grid-template-columns: repeat(6, 1fr); }
+}

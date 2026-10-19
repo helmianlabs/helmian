@@ -328,6 +328,13 @@
         <label class="row"><span>Theme</span><select id="theme"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
         <label class="row"><span>Emoji style</span><select id="emoji-mode"><option value="playful">Playful</option><option value="plain">Plain</option></select></label>
       </div>
+      <div class="panel" id="profile-panel"><div class="eyebrow">ENVOY PROFILE</div>
+        <p class="muted sm">Your nickname and avatar show in Envoy team chat.</p>
+        <label class="row"><span>Nickname</span><input id="profile-nickname" type="text" maxlength="50" placeholder="Pick a nickname" aria-label="Nickname"></label>
+        <div class="eyebrow" style="margin-top:12px">AVATAR</div>
+        <div id="profile-avatars" class="avatar-grid"></div>
+        <div class="row-btns left" style="margin-top:12px"><button id="profile-save" class="btn primary sm" type="button">Save profile</button></div>
+      </div>
       <div class="panel" id="invite-panel" hidden><div class="eyebrow">INVITE PEOPLE</div>
         <p class="muted sm">Share a link. Anyone who opens it can create an account and join as a member.</p>
         <div class="row-btns left"><button id="invite-create" class="btn primary sm" type="button">Create invite link</button></div>
