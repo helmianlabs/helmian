@@ -354,3 +354,8 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: 0.01ms !important; }
 }
+
+/* Mobile pass (2026-10-21): page-level horizontal overflow guard, matching the
+   guard added across Troy's other sites. `clip` (unlike `hidden`) keeps
+   position: sticky working. No layout or design change. */
+html, body { overflow-x: clip; }
