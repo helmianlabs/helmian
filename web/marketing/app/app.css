@@ -699,3 +699,18 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 @media (max-width: 600px) {
   .avatar-grid { grid-template-columns: repeat(6, 1fr); }
 }
+
+/* Mobile pass (2026-10-21): iOS Safari zooms the page when a focused form
+   control renders under 16px. Every control here inherits the 13-14px UI font
+   (and a few set 12-13px directly), so floor them all at 16px on phones.
+   Also guard page-level horizontal overflow and give the small icon button a
+   slightly larger target. Desktop unchanged. */
+@media (max-width: 900px) {
+  input, select, textarea,
+  .composer textarea,
+  .browser-form input, .invite-new input,
+  .guard-head select,
+  .dpanel-composer input, .dpanel-composer textarea { font-size: 16px; }
+  html, body { overflow-x: clip; }
+  .icon-btn.sm { width: 32px; height: 32px; }
+}
