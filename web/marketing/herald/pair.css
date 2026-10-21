@@ -19,3 +19,8 @@
 .pair-toast { display: none; position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 10px 14px; border-radius: 8px; background: #0f172a; border: 1px solid #0ea5e9; max-width: 90vw; }
 /* /app/pair home link */
 .pair-home{color:inherit;text-decoration:none}
+/* Mobile fit pass (2026-10-21): pairing code / name / instruction fields at 16px on
+   phone widths so iOS Safari does not auto-zoom on focus. */
+@media (max-width: 820px) {
+  .pair-page input, .pair-page textarea { font-size: 16px; }
+}

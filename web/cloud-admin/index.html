@@ -95,6 +95,13 @@
   #section-overview #overview-cards .config-item .config-item { margin: 0; padding: 8px 10px; }
 }
 
+/* Mobile fit pass (2026-10-21): form fields inherit no size today, so phones render
+   them at the ~13px browser default and iOS zooms on focus. Match the page's 16px
+   base on phone widths; desktop is untouched. */
+@media (max-width: 960px) {
+  input, select, textarea { font-size: 16px; }
+}
+
   </style>
 </head>
 <body>
