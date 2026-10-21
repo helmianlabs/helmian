@@ -535,3 +535,12 @@ kbd { padding: 1px 5px; border: 1px solid var(--line-strong); border-radius: 4px
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; animation-duration: .001ms !important; }
 }
+
+/* Mobile fit pass (2026-10-21): text fields at 16px on phone widths so iOS Safari
+   does not auto-zoom on focus; the composer send button gets a larger thumb target.
+   Desktop widths are untouched. */
+@media (max-width: 820px) {
+  input, select, textarea { font-size: 16px; }
+  .composer textarea { font-size: 16px; }
+  .send-button { width: 34px; height: 34px; }
+}
