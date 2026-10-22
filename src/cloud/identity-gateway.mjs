@@ -62,6 +62,24 @@ function requiredHttpsUrl(value, name, { callback = false } = {}) {
   return url.toString().replace(/\/$/u, '');
 }
 
+// Interactive identity pages (sign-up, sign-in) are served from the provider's
+// Account Portal host, never from the issuer host, which is an API surface and
+// 404s page paths. Clerk maps its Frontend API host to the portal host:
+// production clerk.<domain> -> accounts.<domain>, development
+// <slug>.clerk.accounts.dev -> <slug>.accounts.dev. Any other issuer keeps its
+// own host. HELMION_ADMIN_ACCOUNT_PORTAL_URL overrides the derivation when set.
+export function accountPortalOriginFor(issuer, env = process.env) {
+  const configured = String(env.HELMION_ADMIN_ACCOUNT_PORTAL_URL ?? '').trim();
+  if (configured) return new URL(requiredHttpsUrl(configured, 'HELMION_ADMIN_ACCOUNT_PORTAL_URL')).origin;
+  const url = new URL(issuer);
+  if (url.hostname.startsWith('clerk.')) {
+    url.hostname = `accounts.${url.hostname.slice('clerk.'.length)}`;
+  } else if (url.hostname.endsWith('.clerk.accounts.dev')) {
+    url.hostname = `${url.hostname.slice(0, -'.clerk.accounts.dev'.length)}.accounts.dev`;
+  }
+  return url.origin;
+}
+
 async function boundedJson(response, label) {
   const declared = response.headers?.get?.('content-length');
   if (declared && (!Number.isSafeInteger(Number(declared)) || Number(declared) > OIDC_MAX_JSON_BYTES)) {
@@ -140,6 +158,7 @@ async function stage(name, run) {
 
 export function createIdentityGateway({ env = process.env, fetchImpl = fetch } = {}) {
   const issuer = requiredHttpsUrl(env.HELMION_ADMIN_ISSUER, 'HELMION_ADMIN_ISSUER');
+  const accountPortal = accountPortalOriginFor(issuer, env);
   const clientId = required(env.HELMION_ADMIN_CLIENT_ID, 'HELMION_ADMIN_CLIENT_ID');
   const redirectUri = requiredHttpsUrl(env.HELMION_ADMIN_REDIRECT_URI, 'HELMION_ADMIN_REDIRECT_URI', { callback: true });
   const sessions = new Map();
@@ -210,6 +229,7 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
 
   return Object.freeze({
     issuer,
+    accountPortal,
     clientId,
     redirectUri,
     beginLogin,

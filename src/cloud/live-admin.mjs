@@ -646,8 +646,9 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SIGNUP_PATH) {
       try {
-        // Clerk registration via OIDC.
-        const signup = new URL('/sign-up', identity.issuer);
+        // Clerk registration lives on the Account Portal host; the issuer
+        // (Frontend API) host 404s /sign-up.
+        const signup = new URL('/sign-up', identity.accountPortal ?? identity.issuer);
         signup.searchParams.set('redirect_url', new URL(LIVE_ADMIN_LOGIN_PATH, requestOrigin(request, env)).toString());
         // Fixed post-signup target.
         const extra = requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH ? { 'set-cookie': `helmion_admin_return=app; Max-Age=3600; ${cookieOptions('/admin')}` } : {};
