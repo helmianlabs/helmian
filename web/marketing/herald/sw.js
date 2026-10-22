@@ -1,4 +1,4 @@
-const CACHE_NAME = 'helmian-pwa-shell-v16';
+const CACHE_NAME = 'helmian-pwa-shell-v17';
 const SHELL = Object.freeze([
   '/herald/',
   '/herald/index.html',
@@ -8,6 +8,7 @@ const SHELL = Object.freeze([
   '/herald/account-runtime.js',
   '/herald/runtime.js',
   '/herald/pairing-link.js',
+  '/herald/pc-approvals.js',
   '/herald/icons.svg',
   '/herald/manifest.webmanifest',
   '/assets/helmian-logo.png',

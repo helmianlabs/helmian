@@ -12,6 +12,7 @@ import {
 } from './account-runtime.js?v=14';
 import { createDeliveryTracker } from './runtime.js';
 import { ENROLL_FRAGMENT_KEY, takePairingCodeFromLocation } from './pairing-link.js';
+import { mountPcApprovals } from './pc-approvals.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -362,6 +363,10 @@ async function initializeAccountRemoteControl() {
     });
     clerk.addListener?.(() => void applyAccountState(config));
     await applyAccountState(config);
+    // PC actions waiting in Executive Guard (owner-only; hidden otherwise).
+    const pcApprovals = mountPcApprovals({ container: document.querySelector('[data-drawer-panel="guard"]'), token: async () => (clerk?.isSignedIn ? clerk?.session?.getToken?.() ?? null : null) });
+    void pcApprovals.refresh();
+    setInterval(() => { if (clerk?.isSignedIn && !document.hidden) void pcApprovals.refresh(); }, 15000);
   } catch (error) {
     setRemoteStatus(`Remote Control is unavailable: ${error.message}`, false);
   }
