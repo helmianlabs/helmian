@@ -27,36 +27,17 @@
     <div class="logo"><div class="logo-mark">H</div><div><strong>HELMIAN</strong><span>Personal Pilot</span></div>
       <button id="sidebar-close" class="icon-btn only-mobile" type="button" aria-label="Close sidebar">×</button></div>
 
-    <section class="side-group">
-      <div class="side-head"><span>PROJECTS</span><button id="new-project" class="link-btn" type="button">+ New</button></div>
-      <form id="new-project-form" class="inline-form" hidden>
-        <input id="new-project-name" placeholder="Project name" aria-label="Project name" required maxlength="80">
-        <select id="new-project-source" aria-label="Project source"><option value="cloud">Cloud</option><option value="desktop_mirror">Desktop mirror</option><option value="external">External</option></select>
-        <div class="row-btns"><button type="button" id="new-project-cancel" class="btn ghost sm">Cancel</button><button type="submit" class="btn primary sm">Create</button></div>
-      </form>
-      <input id="project-filter" class="search" type="search" placeholder="Search projects" aria-label="Search projects">
-      <ul id="project-shelf" class="shelf"></ul>
-      <p id="project-shelf-empty" class="faint sm pad">🗂️ Nothing here yet — start your first project.</p>
-    </section>
-
-    <details class="side-group accordion" id="appearance">
-      <summary class="side-head"><span>APPEARANCE</span><span class="chev">▾</span></summary>
-      <label class="field">Theme<select id="theme-quick"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
-    </details>
-
-    <section class="side-group">
-      <div class="side-head"><span>SESSIONS</span></div>
-      <ul id="sessions" class="sessions"></ul>
+    <section class="side-group side-nav">
       <nav id="nav" class="submenu" aria-label="Primary">
+        <button class="nav-item active" type="button" data-view="desktop">🖥️ <span class="label">Workspace</span></button>
         <button class="nav-item" type="button" data-view="home">🏠 <span class="label">Home</span></button>
-        <button class="nav-item active" type="button" data-view="desktop">🖥️ <span class="label">Desktop</span></button>
-        <button class="nav-item" type="button" data-view="console">💬 <span class="label">Chat</span></button>
         <button class="nav-item" type="button" data-view="workspace">🗂️ <span class="label">Projects</span></button>
         <button class="nav-item" type="button" data-view="approvals">✅ <span class="label">Approvals</span><span id="approvals-badge" class="badge" hidden></span></button>
       </nav>
       <details class="side-group accordion advanced-nav" id="advanced-nav">
         <summary class="side-head"><span>ADVANCED</span><span class="chev">▾</span></summary>
         <nav class="submenu advanced-menu" aria-label="Advanced">
+          <button class="nav-item" type="button" data-view="console">💬 <span class="label">Session console</span></button>
           <button class="nav-item" type="button" data-view="devices">📱 <span class="label">Devices</span></button>
           <button class="nav-item" type="button" data-view="overview">📊 <span class="label">Overview</span></button>
           <button class="nav-item" type="button" data-view="settings">⚙️ <span class="label">Settings</span></button>
@@ -68,6 +49,30 @@
         </nav>
       </details>
     </section>
+
+    <section class="side-group">
+      <div class="side-head"><span>PROJECTS</span><button id="new-project" class="link-btn" type="button">+ New</button></div>
+      <form id="new-project-form" class="inline-form" hidden>
+        <input id="new-project-name" placeholder="Project name" aria-label="Project name" required maxlength="80">
+        <select id="new-project-source" aria-label="Project source"><option value="cloud">Cloud</option><option value="desktop_mirror">Desktop mirror</option><option value="external">External</option></select>
+        <div class="row-btns"><button type="button" id="new-project-cancel" class="btn ghost sm">Cancel</button><button type="submit" class="btn primary sm">Create</button></div>
+      </form>
+      <input id="project-filter" class="search" type="search" placeholder="Search projects" aria-label="Search projects">
+      <ul id="project-shelf" class="shelf"></ul>
+      <p id="project-shelf-empty" class="faint sm pad">No projects yet.</p>
+    </section>
+
+
+    <section class="side-group side-sessions">
+      <div class="side-head"><span>SESSIONS</span><button id="sessions-clear" class="link-btn" type="button" hidden title="Close sessions older than 7 days">Clear old</button></div>
+      <ul id="sessions" class="sessions"></ul>
+      <button id="sessions-more" class="link-btn sessions-more" type="button" hidden></button>
+    </section>
+
+    <details class="side-group accordion" id="appearance">
+      <summary class="side-head"><span>APPEARANCE</span><span class="chev">▾</span></summary>
+      <label class="field">Theme<select id="theme-quick"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
+    </details>
 
     <footer class="side-foot">
       <div class="svc"><span id="svc-dot" class="dot"></span><span id="svc-text">Cloud service · Connecting…</span></div>
@@ -103,17 +108,17 @@
       <div class="ew" id="ew">
         <aside class="ew-pane ew-channels" id="ew-channels" data-pane="channels" aria-label="Channels">
           <header class="ew-head">
-            <span class="eyebrow accent">ENVOY</span><strong>Channels</strong>
+            <strong>Channels</strong>
             <span class="ew-spacer"></span>
             <button class="ew-icon" type="button" data-collapse="channels" aria-label="Hide channels" title="Hide channels">‹</button>
           </header>
           <nav id="ew-channel-list" class="ew-channel-list" aria-label="Envoy channels"></nav>
           <form id="ew-new-channel" class="ew-new-channel" hidden>
-            <input id="ew-new-channel-name" maxlength="60" placeholder="Channel name" aria-label="Channel name" autocomplete="off">
-            <label class="ew-check"><input type="checkbox" id="ew-new-channel-agents" checked> Add Maestro</label>
+            <input id="ew-new-channel-name" maxlength="60" placeholder="Session or channel name" aria-label="Session or channel name" autocomplete="off">
+            <label class="ew-field">Agent<select id="ew-new-channel-agent" aria-label="Agent for this session"><option value="maestro">Maestro (routes to the others)</option><option value="claude">Claude</option><option value="openai">ChatGPT</option><option value="grok">Grok</option><option value="gemini">Gemini</option><option value="">None, team channel</option></select></label>
             <div class="ew-row"><button type="button" class="ew-btn ghost sm" id="ew-new-channel-cancel">Cancel</button><button type="submit" class="ew-btn primary sm">Create</button></div>
           </form>
-          <button id="ew-add-channel" class="ew-btn ghost full" type="button">+ New channel</button>
+          <button id="ew-add-channel" class="ew-btn ghost full" type="button">+ New session</button>
           <footer class="ew-foot">
             <div class="ew-source"><img src="/assets/agents/maestro.png" alt="" width="14" height="14"> Helmian Envoy</div>
             <div class="ew-source" id="ew-discord-status"><span class="ew-discord-mark" aria-hidden="true"></span> Discord: <span id="ew-discord-status-text">checking…</span></div>
@@ -127,9 +132,10 @@
             <span class="ew-hash">#</span><strong id="ew-channel-title">…</strong>
             <span id="ew-discord-badge" class="ew-badge discord" hidden></span>
             <span class="ew-spacer"></span>
-            <button id="ew-link-discord" class="ew-btn sm" type="button">Link Discord</button>
-            <button class="ew-btn sm ew-toggle" type="button" data-toggle="agents" aria-pressed="false" title="Agents in this channel">Agents <b id="ew-agent-count">0</b></button>
-            <button class="ew-btn sm ew-toggle" type="button" data-toggle="bench" aria-pressed="true" title="Guard, Browser, Canvas, Preview">Workbench</button>
+            <button id="ew-link-discord" class="ew-btn sm" type="button" title="Mirror this channel with a Discord channel"><span class="ew-discord-mark" aria-hidden="true"></span><span class="lbl">Link Discord</span></button>
+            <button class="ew-btn sm ew-toggle" type="button" data-toggle="agents" aria-pressed="false" title="Agents in this channel" aria-label="Agents"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM9 13c-3.3 0-7 1.6-7 4.5V20h14v-2.5C16 14.6 12.3 13 9 13Zm7.5.2c1.6.8 2.5 2.1 2.5 4.3V20h3v-2.4c0-2.3-2.6-3.9-5.5-4.4Z"/></svg><span class="lbl">Agents</span> <b id="ew-agent-count">0</b></button>
+            <button class="ew-btn sm ew-toggle" type="button" data-toggle="guard" aria-pressed="true" title="Guard: warnings, findings and approvals" aria-label="Guard"><span class="ew-shield" aria-hidden="true"></span><span class="lbl">Guard</span> <b id="ew-guard-count" class="ew-count" hidden></b></button>
+            <button class="ew-btn sm ew-toggle" type="button" data-toggle="bench" aria-pressed="true" title="Workbench: Browser, Create, Canvas, Preview" aria-label="Workbench"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm9 2v12h7V6h-7Z"/></svg><span class="lbl">Workbench</span></button>
           </header>
           <div id="ew-messages" class="ew-messages" role="log" aria-live="polite"></div>
           <form id="maestro-form" class="ew-composer" autocomplete="off">
@@ -159,25 +165,37 @@
           <p class="ew-note">@mention an agent to ask it. Maestro takes messages nobody is named in and hands out slices. Agents run on your own PC bridge with your own keys; replies show up here and in the linked Discord channel.</p>
         </aside>
 
+        <div class="ew-split" data-split="guard" role="separator" aria-orientation="vertical" aria-label="Resize Guard" tabindex="0"></div>
+        <aside class="ew-pane ew-guard" id="ew-guard" data-pane="guard" aria-label="Guard">
+          <header class="ew-head">
+            <span class="ew-shield" aria-hidden="true"></span><strong>Guard</strong>
+            <span id="guard-summary" class="ew-guard-sum">0 crit · 0 warn</span>
+            <span class="ew-spacer"></span>
+            <button class="ew-icon" type="button" data-collapse="guard" aria-label="Hide Guard" title="Hide Guard">›</button>
+          </header>
+          <section class="ew-approvals" aria-label="Approvals">
+            <div class="ew-subhead">APPROVALS <span id="ew-approvals-count" class="ew-count"></span></div>
+            <div id="ew-approvals-list" class="ew-approvals-list"><p class="ew-note">Nothing waiting for a decision.</p></div>
+            <a class="ew-btn ghost sm ew-approvals-open" href="#approvals">Open approvals</a>
+          </section>
+          <div class="ew-subhead">GUARD FEED</div>
+          <div class="ew-chips" id="guard-filters"></div>
+          <div class="ew-scroll" id="guard-findings"></div>
+          <div class="ew-row ew-actions"><button class="ew-btn ghost sm" id="guard-ackall" type="button">Ack all</button><button class="ew-btn ghost sm" id="ew-guard-refresh" type="button">Refresh</button></div>
+        </aside>
+
         <div class="ew-split" data-split="bench" role="separator" aria-orientation="vertical" aria-label="Resize workbench" tabindex="0"></div>
         <aside class="ew-pane ew-bench" id="ew-bench" data-pane="bench" aria-label="Workbench">
           <div class="ew-tabs" role="tablist" aria-label="Workbench">
-            <button class="ew-tab active" type="button" role="tab" data-tab="guard" aria-selected="true">Guard</button>
-            <button class="ew-tab" type="button" role="tab" data-tab="browser" aria-selected="false">Browser</button>
+            <button class="ew-tab active" type="button" role="tab" data-tab="browser" aria-selected="true">Browser</button>
+            <button class="ew-tab" type="button" role="tab" data-tab="create" aria-selected="false">Create</button>
             <button class="ew-tab" type="button" role="tab" data-tab="canvas" aria-selected="false">Canvas</button>
             <button class="ew-tab" type="button" role="tab" data-tab="preview" aria-selected="false">Preview</button>
-            <button class="ew-tab" type="button" role="tab" data-tab="create" aria-selected="false">Create</button>
             <span class="ew-spacer"></span>
             <button class="ew-icon" type="button" id="ew-bench-max" aria-label="Expand workbench" title="Expand">⤢</button>
             <button class="ew-icon" type="button" data-collapse="bench" aria-label="Hide workbench" title="Hide workbench">›</button>
           </div>
-          <div class="ew-tabpane active" data-tabpane="guard" role="tabpanel">
-            <div class="ew-subhead">GUARD FEED · <span id="guard-summary">0 crit · 0 warn · 0 total</span></div>
-            <div class="ew-chips" id="guard-filters"></div>
-            <div class="ew-scroll" id="guard-findings"></div>
-            <div class="ew-row ew-actions"><button class="ew-btn ghost sm" id="guard-ackall" type="button">Ack all</button><button class="ew-btn ghost sm" id="ew-guard-refresh" type="button">Refresh</button></div>
-          </div>
-          <div class="ew-tabpane" data-tabpane="browser" role="tabpanel" hidden>
+          <div class="ew-tabpane active" data-tabpane="browser" role="tabpanel">
             <div class="ew-browser" id="ew-browser">
               <form class="ew-browser-bar" id="ew-browser-form">
                 <button class="ew-icon" type="button" id="ew-browser-back" aria-label="Back" title="Back" disabled>←</button>
@@ -214,15 +232,16 @@
           </div>
           <div class="ew-tabpane" data-tabpane="preview" role="tabpanel" hidden>
             <div class="ew-subhead">PREVIEW · finished work reported by the desktop</div>
-            <div class="muted sm" id="guard-preview-status">Loading…</div>
+            <div class="ew-status" id="guard-preview-status">Loading…</div>
             <div class="ew-scroll" id="guard-preview-list"></div>
           </div>
           <div class="ew-tabpane" data-tabpane="create" role="tabpanel" hidden>
-            <form class="ew-row" id="guard-create-form">
+            <div class="ew-subhead">CREATE · ask the desktop to build something</div>
+            <form class="ew-row ew-pad" id="guard-create-form">
               <input id="guard-create-prompt" placeholder="Describe what to create…" aria-label="Create request">
               <button type="submit" class="ew-btn primary sm">Add</button>
             </form>
-            <div class="muted sm" id="guard-create-status"></div>
+            <div class="ew-status" id="guard-create-status"></div>
             <div class="ew-scroll" id="guard-create-list"></div>
           </div>
         </aside>
@@ -440,9 +459,9 @@
       <div class="guard-head guard-panel-head">
         <span class="title">GUARD FEED</span><span id="guard-panel-count" class="tab-badge" hidden></span>
         <select id="feed-filter" aria-label="Filter feed"><option value="all">All</option><option value="critical">Critical</option><option value="warning">Warnings</option><option value="info">Info</option></select>
-        <button id="feed-clear" class="icon-btn sm" type="button" aria-label="Clear acknowledged" title="Clear acknowledged">⌫</button>
-        <button id="feed-ack-all" class="icon-btn sm" type="button" aria-label="Acknowledge all findings" title="Acknowledge all findings">✓</button>
-        <button id="guard-collapse" class="icon-btn sm" type="button" aria-label="Collapse Guard panel" aria-expanded="true" aria-controls="guard-panel-body">–</button>
+        <button id="feed-clear" class="gbtn" type="button" aria-label="Clear acknowledged" title="Hide acknowledged items">Clear</button>
+        <button id="feed-ack-all" class="gbtn" type="button" aria-label="Acknowledge all findings" title="Acknowledge all findings">Ack all</button>
+        <button id="guard-collapse" class="gbtn icon" type="button" aria-label="Collapse Guard panel" title="Hide Guard" aria-expanded="true" aria-controls="guard-panel-body">Hide</button>
         <button id="guard-close" class="icon-btn sm only-mobile" type="button" aria-label="Close panels">×</button>
       </div>
       <div id="guard-panel-body">

@@ -38,7 +38,7 @@ test('only known admin + remote APIs are used', () => {
 });
 
 test('models', () => {
-  assert.equal(viewFromHash('#evidence'), 'evidence'); assert.equal(viewFromHash('#nope'), 'console');
+  assert.equal(viewFromHash('#evidence'), 'evidence'); assert.equal(viewFromHash('#nope'), 'desktop');
   assert.equal(sessionModel(200, { actor: { role: 'owner' } }).member, true);
   assert.deepEqual(sessionModel(403, { signedIn: true }), { signedIn: true, member: false, actor: null });
   const { projects } = projectsModel({ projects: [{ projectKey: 'helm', displayName: 'Helmian' }, { projectKey: 'web', displayName: 'Site' }] });
@@ -92,25 +92,27 @@ test('desktopsModel empty and rows', () => {
 });
 
 test('phone primary nav + Advanced + Show details (Troy polish)', () => {
-  assert.deepEqual([...PRIMARY_VIEWS], ['home', 'console', 'workspace', 'approvals']);
+  assert.deepEqual([...PRIMARY_VIEWS], ['desktop', 'home', 'workspace', 'approvals']);
   assert.ok(ADVANCED_VIEWS.includes('devices'));
-  assert.equal(VIEW_TITLES.console, '💬 Chat');
+  assert.equal(VIEW_TITLES.console, '💬 Session console');
+  assert.equal(VIEW_TITLES.desktop, '🖥️ Workspace');
   assert.equal(VIEW_TITLES.workspace, '🗂️ Projects');
   assert.match(html, /id="advanced-nav"/);
   assert.match(html, /class="[^"]*show-details/);
   assert.doesNotMatch(html, /id="mcp-toggle"/);
   // Primary nav lists Chat/Projects/Approvals; Advanced holds Devices etc.
   const primary = html.match(/aria-label="Primary"[\s\S]*?<\/nav>/)[0];
-  for (const v of ['home', 'console', 'workspace', 'approvals']) assert.match(primary, new RegExp(`data-view="${v}"`));
+  for (const v of ['desktop', 'home', 'workspace', 'approvals']) assert.match(primary, new RegExp(`data-view="${v}"`));
   assert.doesNotMatch(primary, /data-view="devices"/);
   const advanced = html.match(/id="advanced-nav"[\s\S]*?<\/details>/)[0];
   for (const v of ADVANCED_VIEWS) assert.match(advanced, new RegExp(`data-view="${v}"`));
 });
 
 test('viewTitles selects playful vs plain titles (emoji mode)', () => {
-  assert.equal(VIEW_TITLES.console, '💬 Chat'); // playful alias preserved
-  assert.equal(viewTitles('playful').console, '💬 Chat');
-  assert.equal(viewTitles('plain').console, 'Chat');
+  assert.equal(VIEW_TITLES.console, '💬 Session console');
+  assert.equal(VIEW_TITLES.desktop, '🖥️ Workspace'); // playful alias preserved
+  assert.equal(viewTitles('playful').console, '💬 Session console');
+  assert.equal(viewTitles('plain').console, 'Session console');
   assert.equal(viewTitles('plain').workspace, 'Projects');
   assert.equal(viewTitles(undefined).agents, '🤖 Agents');
   assert.equal(viewTitles('wild').agents, '🤖 Agents');
@@ -206,9 +208,10 @@ test('forgetDesktopPayload matches the server revoke contract (confirmed: true)'
   assert.throws(() => forgetDesktopPayload(''));
 });
 
-test('phones keep chat inline (the sliding chat panel would leave #console blank and "+" off-screen)', () => {
+test('the session console always stays inline (the Workspace is the one chat; no sliding chat panel)', () => {
   const place = js.slice(js.indexOf('function placeChat()'), js.indexOf('function placeChat()') + 1600);
-  assert.match(place, /if \(narrow\(\)\) \{[\s\S]*consoleHome\.after\(consoleView\)[\s\S]*panel\.hidden = true[\s\S]*toggle\.hidden = true/);
+  assert.doesNotMatch(place, /panelBody\.appendChild\(consoleView\)/);
+  assert.match(place, /\{[\s\S]*consoleHome\.after\(consoleView\)[\s\S]*panel\.hidden = true[\s\S]*toggle\.hidden = true/);
   assert.match(js, /if \(!consolePollTimer\) consolePollTimer = setInterval/, 'one chat poll timer, not one per visit');
   assert.match(js, /p\.hidden = p\.dataset\.viewPanel !== view && !p\.closest\('#chat-panel'\)/);
 });

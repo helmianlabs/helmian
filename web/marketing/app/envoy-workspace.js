@@ -121,9 +121,10 @@ function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.she
 function applyLayout() {
   const root = document.documentElement;
   for (const [k, v] of Object.entries(ls.get('widths', {}))) if (v > 120 && v < 1400) root.style.setProperty(`--ew-${k}`, `${v}px`);
-  if (narrow()) { for (const p of ['channels', 'agents', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
+  if (narrow()) { for (const p of ['channels', 'agents', 'guard', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
   setPane('channels', ls.get('open.channels', true));
-  setPane('bench', ls.get('open.bench', window.innerWidth > 1100));
+  setPane('guard', ls.get('open.guard', true));
+  setPane('bench', ls.get('open.bench', window.innerWidth >= 1680));
   syncAgentsPane();
 }
 function syncAgentsPane() {
@@ -131,7 +132,7 @@ function syncAgentsPane() {
   const count = ws.config?.agents?.length ?? 0;
   const pinned = ws.agentsPinned[ws.channelId];
   // Agents pane opens in agent chats and folds away elsewhere, unless the user chose.
-  setPane('agents', pinned === undefined ? count > 0 : pinned);
+  setPane('agents', pinned === undefined ? false : pinned);
 }
 
 function wireSplitters() {
@@ -169,16 +170,32 @@ async function loadChannels() {
     const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' });
     if (made.channel) ws.channels = [made.channel];
   }
+  const meta = ls.get('chanMeta', {});
+  for (const c of ws.channels) if (meta[c.id]) { c._agents = meta[c.id].a; c._discord = meta[c.id].d; }
   const saved = ls.get('channel', null);
   if (!ws.channels.some((c) => c.id === ws.channelId)) ws.channelId = ws.channels.some((c) => c.id === saved) ? saved : ws.channels[0]?.id ?? null;
   renderChannels();
 }
+function currentTitle() { const c = ws.channels.find((x) => x.id === ws.channelId); return c?.title || c?.slug || 'channel'; }
+function openNewSession() {
+  setPane('channels', true);
+  $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; $('ew-new-channel-name').focus();
+}
 function renderChannels() {
   const list = $('ew-channel-list');
-  list.replaceChildren(...ws.channels.map((c) => h('button', { type: 'button', class: `ew-channel${c.id === ws.channelId ? ' active' : ''}`, 'data-id': c.id, onclick: () => selectChannel(c.id) },
+  const row = (c) => h('button', { type: 'button', class: `ew-channel${c.id === ws.channelId ? ' active' : ''}`, 'data-id': c.id, onclick: () => selectChannel(c.id) },
     h('span', { class: 'hash' }, '#'), h('span', { class: 'name' }, c.title || c.slug),
-    h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null))));
-  if (!ws.channels.length) list.append(h('p', { class: 'ew-note' }, 'No channels yet.'));
+    h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null));
+  const linked = ws.channels.filter((c) => c._discord);
+  const bot = ws.discordBot;
+  list.replaceChildren(
+    h('div', { class: 'ew-src-head' }, h('img', { src: '/assets/agents/maestro.png', alt: '', width: 14, height: 14 }), 'ENVOY'),
+    ...(ws.channels.length ? ws.channels.map(row) : [h('p', { class: 'ew-note' }, 'No channels yet.')]),
+    h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
+    ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Use Link Discord in a chat.' : 'Bot not connected yet. Linked channels mirror here.')]),
+    h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-gh-mark', 'aria-hidden': 'true' }), 'GITHUB'),
+    h('p', { class: 'ew-note' }, 'Repo activity is not wired in yet. ', h('a', { href: '#integrations' }, 'Integrations'))
+  );
 }
 async function selectChannel(id) {
   if (!id) return;
@@ -200,14 +217,14 @@ async function loadConfig() {
     ws.config = body.config ?? { agents: [] }; ws.configured = Boolean(body.configured); ws.discordBot = body.discordBot ?? null;
   } catch { ws.config = { agents: [], discord: null }; ws.configured = false; }
   const ch = ws.channels.find((c) => c.id === id);
-  if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); }
+  if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord }; ls.set('chanMeta', seen); }
   renderHeader(); renderAgents(); renderChannels(); syncAgentsPane();
 }
 function renderHeader() {
   const ch = ws.channels.find((c) => c.id === ws.channelId);
   const title = ch?.title || ch?.slug || 'channel';
   $('ew-channel-title').textContent = title;
-  $('maestro-input').placeholder = ws.config?.agents?.length ? `Message #${title}. @ an agent, or let Maestro route it` : `Message #${title}`;
+  $('maestro-input').placeholder = ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent or let Maestro route it` : `Message #${title}`;
   const badge = $('ew-discord-badge');
   const d = ws.config?.discord;
   badge.hidden = !(d || ws.config?.pendingLink);
@@ -215,7 +232,7 @@ function renderHeader() {
   badge.textContent = d ? `Discord #${d.channelName || d.channelId}` : 'Discord link pending';
   const admin = ['owner', 'admin'].includes(ws.ctx.state.actor?.role);
   const link = $('ew-link-discord');
-  link.textContent = d ? 'Discord linked' : 'Link Discord';
+  link.querySelector('.lbl').textContent = d ? 'Discord linked' : 'Link Discord';
   link.hidden = !admin && !d;
   $('ew-agent-count').textContent = String(ws.config?.agents?.length ?? 0);
   $('ew-discord-status-text').textContent = ws.discordBot?.configured ? (d ? `linked to #${d.channelName || d.channelId}` : 'ready to link') : 'bot not set up yet';
@@ -231,13 +248,16 @@ function renderAgents() {
       avatarImg(p), h('strong', {}, NAMES[p]),
       h('button', { type: 'button', class: 'ew-icon remove', title: `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×'),
       h('span', { class: `ew-state ${s.state}` }, label),
-      h('span', { class: 'last' }, s.state === 'offline' ? 'No runner online for this agent. Start the Helmian bridge on your PC.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
+      h('span', { class: 'last' }, s.state === 'offline' ? 'Offline. Start the Helmian bridge on your PC to bring it online.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
   }));
   if (!roster.length) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, 'No agents in this channel. Add one below to make it an agent chat.'));
   $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill', onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
+  // Agent picker in the CLI: agents here are @mention pills; the rest add in one click.
   $('ew-mention-pills').replaceChildren(...(roster.length > 1 ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
-    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])));
-  $('ew-mention-pills').hidden = !roster.length;
+    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
+    ...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)),
+    h('button', { type: 'button', class: 'ew-pill session', title: 'Start a new agent session', onclick: openNewSession }, '+ New session'));
+  $('ew-mention-pills').hidden = false;
 }
 async function changeAgent(action, provider) {
   try {
@@ -353,13 +373,14 @@ function openBench(tab) {
   if (!paneOpen('bench')) setPane('bench', true, { user: true });
   selectTab(tab);
 }
+const BENCH_TABS = ['browser', 'create', 'canvas', 'preview'];
 function selectTab(name) {
+  if (!BENCH_TABS.includes(name)) name = 'browser';
   for (const t of document.querySelectorAll('#ew-bench .ew-tab')) { const on = t.dataset.tab === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', String(on)); }
   for (const p of document.querySelectorAll('#ew-bench .ew-tabpane')) { const on = p.dataset.tabpane === name; p.hidden = !on; p.classList.toggle('active', on); }
   ls.set('tab', name);
   if (name === 'preview') ws.ctx.loadGuardPreview?.();
   if (name === 'create') ws.ctx.loadGuardCreateList?.();
-  if (name === 'guard') { ws.ctx.renderFeed?.(); }
   if (name === 'canvas') renderCanvas();
 }
 
@@ -448,10 +469,10 @@ function wire() {
     const title = $('ew-new-channel-name').value.trim(); if (!title) return;
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'channel';
     try {
-      const made = await ws.ctx.post('/api/admin/envoy/channels', { slug, title, kind: $('ew-new-channel-agents').checked ? 'agent' : 'team' });
+      const made = await ws.ctx.post('/api/admin/envoy/channels', { slug, title, kind: $('ew-new-channel-agent').value ? 'agent' : 'team' });
       $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; $('ew-new-channel-name').value = '';
       await loadChannels(); ws.channelId = made.channel?.id ?? ws.channelId;
-      if ($('ew-new-channel-agents').checked && made.inserted !== false) await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'add-agent', channelId: ws.channelId, provider: 'maestro' }).catch(() => {});
+      const agent = $('ew-new-channel-agent').value; if (agent && made.inserted !== false) await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'add-agent', channelId: ws.channelId, provider: agent }).catch(() => {});
       await selectChannel(ws.channelId);
     } catch { ws.ctx.toast('Channel not created.'); }
   });
@@ -493,7 +514,9 @@ export async function mountWorkspace(ctx) {
   ws.ctx = ctx;
   if (!ws.wired) wire();
   applyLayout();
-  selectTab(ls.get('tab', 'guard'));
+  selectTab(ls.get('tab', 'browser'));
+  if (ctx.benchTab) { openBench(ctx.benchTab); ctx.benchTab = null; }
+  ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
   await Promise.allSettled([loadPresence(), loadConfig(), loadMessages()]);
   clearInterval(ws.timer); clearInterval(ws.slowTimer);
