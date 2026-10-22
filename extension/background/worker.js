@@ -31,6 +31,21 @@ import {
   uploadNewFindings,
 } from './upload.js';
 import {
+  getExecutiveSettings,
+  pairExecutive,
+  pollApproval,
+  requestDecision,
+  setExecutiveSettings,
+} from './executive.js';
+import {
+  getFlagsSettings,
+  markAlertsSeen,
+  pollAlerts,
+  reportFlag,
+  scanText,
+  setFlagsSettings,
+} from './flags-client.js';
+import {
   appendEntry,
   chromeStorage,
   clearLedger,
@@ -42,6 +57,52 @@ import {
 
 // The one place the storage permission is used.
 const ledger = chromeStorage();
+
+// Approvals this browser session asked Executive Guard for: approvalId ->
+// { nonce, actionHash }. Kept in memory on purpose; the content script asks
+// again if the worker was evicted. Only approvals in here are ever polled.
+const pendingApprovals = new Map();
+
+function extensionVersion() {
+  try { return chrome.runtime.getManifest().version; } catch { return '0.0.0'; }
+}
+
+// Sent with Flags reports as context.browser. Only the family, never the full UA.
+function browserFamily() {
+  const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+  if (/Firefox\//.test(ua)) return 'firefox';
+  if (/Edg\//.test(ua)) return 'edge';
+  if (/Chrome\//.test(ua)) return 'chrome';
+  return 'unknown';
+}
+
+// A message from one of this extension's own content scripts (in a tab).
+function isFromOwnContentScript(sender) {
+  if (!sender || !sender.tab || sender.id !== chrome.runtime.id) return false;
+  // An extension page opened in a tab also has sender.tab; a content script's
+  // sender.url is the web page's.
+  try {
+    return !String(sender.url || '').startsWith(chrome.runtime.getURL(''));
+  } catch {
+    return false;
+  }
+}
+
+// What a content script may send for a decision. Raw page text never reaches
+// the worker for this: the content script sends a redacted summary and a hash.
+const DECIDE_KINDS = new Set(['prompt.send', 'prompt.paste', 'code.reveal']);
+function cleanAction(input) {
+  const a = input && typeof input === 'object' ? input : {};
+  if (!DECIDE_KINDS.has(a.kind)) throw new Error(`unsupported action kind: ${String(a.kind)}`);
+  if (!/^[0-9a-f]{64}$/.test(String(a.contentHash))) throw new Error('action needs a sha256 contentHash');
+  return {
+    kind: a.kind,
+    site: String(a.site || 'unknown-site').toLowerCase().slice(0, 253),
+    contentHash: String(a.contentHash),
+    riskSignals: Array.isArray(a.riskSignals) ? a.riskSignals.map(String).slice(0, 32) : [],
+    summary: String(a.summary || '').slice(0, 500),
+  };
+}
 
 const RED = '#b3261e';
 const AMBER = '#c77700';
@@ -101,6 +162,10 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:ledger-clear',
   'helmion:guard-upload',
   'helmion:guard-upload-settings',
+  'helmion:executive-settings',
+  'helmion:executive-pair',
+  'helmion:flags-settings',
+  'helmion:flags-alerts',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -204,6 +269,101 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if (!settings.enabled) { sendResponse({ ok: true, skipped: 'not-enabled' }); return; }
           return uploadNewFindings(ledger).then((result) => sendResponse({ ok: true, ...result }));
         })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // ─── EXECUTIVE GUARD VERIFICATION LOOP ─────────────────────────────────
+    // See background/executive.js. Without a paired server these answer from
+    // the local policy and say so (source:'local', verified:false).
+    if (type === 'helmion:decide') {
+      let action;
+      try { action = cleanAction(message.action); }
+      catch (error) { sendResponse({ ok: false, error: error.message }); return false; }
+      requestDecision(ledger, action, { pendingApprovals })
+        .then((decision) => sendResponse({ ok: true, decision }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approval-status') {
+      pollApproval(ledger, String(message.approvalId || ''), { pendingApprovals })
+        .then((status) => sendResponse({ ok: true, status }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:executive-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'serverUrl', 'deviceToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setExecutiveSettings(ledger, payload) : getExecutiveSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:executive-pair') {
+      pairExecutive(ledger)
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // ─── FLAGS ──────────────────────────────────────────────────────────────
+    // Every flag is logged locally. It is reported to the Flags API only when
+    // the user opted in (background/flags-client.js).
+    if (type === 'helmion:flag') {
+      const flag = message.flag || {};
+      const entry = makeEntry({
+        kind: 'ai-flag',
+        site: flag.site,
+        matched: `${flag.kind}: ${flag.rule}`,
+        text: flag.excerpt,
+        outcome: 'flagged',
+      });
+      appendEntry(ledger, entry)
+        .then(() => reportFlag(ledger, {
+          ...flag,
+          id: flag.id || entry.id,
+          // The page the content script runs in; flags-client keeps only the
+          // origin and path, and only on the four chat sites.
+          url: (sender && (sender.url || (sender.tab && sender.tab.url))) || undefined,
+        }, { version: extensionVersion(), browser: browserFamily() }))
+        .then((report) => sendResponse({ ok: true, report }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // Content script: may it cross-check a message with the Flags scanner?
+    // Answers a yes/no only; the key and URL never go to a page.
+    if (type === 'helmion:flags-config') {
+      getFlagsSettings(ledger)
+        .then((s) => sendResponse({ ok: true, scanBeforeSend: s.enabled && s.scanBeforeSend && s.hasKey && Boolean(s.baseUrl) && !s.keyRejected }))
+        .catch(() => sendResponse({ ok: true, scanBeforeSend: false }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-scan') {
+      if (!isFromOwnContentScript(sender)) { sendResponse({ ok: false, error: 'not allowed' }); return false; }
+      scanText(ledger, typeof message.text === 'string' ? message.text : '')
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-alerts') {
+      const opts = message.options || {};
+      (opts.markSeen ? markAlertsSeen(ledger).then(() => pollAlerts(ledger, { force: false })) : pollAlerts(ledger, { force: opts.force === true }))
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'baseUrl', 'apiKey', 'scanBeforeSend', 'dailyBudget'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setFlagsSettings(ledger, payload) : getFlagsSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }

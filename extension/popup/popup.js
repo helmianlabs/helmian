@@ -106,6 +106,7 @@ async function refresh() {
   $('statTotal').textContent = stats.stats.total;
   $('statDestructive').textContent = stats.stats.destructive;
   $('statUnsourced').textContent = stats.stats.unsourced;
+  $('statFlags').textContent = stats.stats.flags ?? 0;
   $('range').textContent = stats.stats.total
     ? `${fmt(stats.stats.oldest)} → ${fmt(stats.stats.newest)} · ${stats.stats.sites.length} site(s) · cap ${stats.stats.limit}`
     : '';
@@ -192,3 +193,151 @@ $('uploadNow').addEventListener('click', async () => {
 
 refresh();
 refreshUploadSettings();
+
+// ─── Executive Guard and Flags settings (opt-in, off by default) ────────────
+//
+// Both need a host permission for the URL the user typed. It is requested
+// here, inside the click, because Chrome and Firefox only grant optional
+// permissions from a user gesture. Nothing is requested at install.
+// NEEDS A REAL-BROWSER CHECK: the permission prompt and pairing flow are
+// tested only through the worker in Node, not clicked in Chrome/Firefox/Edge.
+
+function originFor(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.hostname}/*`;
+  } catch {
+    return null;
+  }
+}
+
+function requestOrigin(value) {
+  const origin = originFor(value);
+  if (!origin) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.request !== 'function') { resolve(false); return; }
+      const result = chrome.permissions.request({ origins: [origin] }, (granted) => {
+        void chrome.runtime.lastError;
+        resolve(Boolean(granted));
+      });
+      if (result && typeof result.then === 'function') result.then((g) => resolve(Boolean(g)), () => resolve(false));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function refreshExecutiveSettings() {
+  const result = await askWithPayload('helmion:executive-settings', { settings: {} });
+  if (!result.ok || !result.settings) return;
+  const s = result.settings;
+  $('execEnabled').checked = s.enabled === true;
+  $('execUrl').value = s.serverUrl || '';
+  $('execStatus').textContent = !s.enabled
+    ? 'Off. Guard decides on this computer.'
+    : !s.paired
+      ? 'On, but not paired yet. Decisions stay local until pairing succeeds.'
+      : `On and paired. Server key id ${s.keyId} (compare it with the id your server printed).`;
+}
+
+$('execSave').addEventListener('click', async () => {
+  const url = $('execUrl').value.trim();
+  if ($('execEnabled').checked && url) {
+    const granted = await requestOrigin(url);
+    if (!granted) { $('execStatus').textContent = 'Permission to reach that server was not granted, so nothing was saved.'; return; }
+  }
+  const saved = await askWithPayload('helmion:executive-settings', {
+    settings: { enabled: $('execEnabled').checked, serverUrl: url, deviceToken: $('execToken').value || undefined },
+  });
+  if (!saved.ok) { $('execStatus').textContent = `Not saved: ${saved.error}`; return; }
+  $('execToken').value = '';
+  if ($('execEnabled').checked && url) {
+    const pair = await ask('helmion:executive-pair');
+    if (!pair.ok) { $('execStatus').textContent = `Saved, but pairing failed: ${pair.error}`; return; }
+  }
+  await refreshExecutiveSettings();
+});
+
+async function refreshFlagsSettings() {
+  const result = await askWithPayload('helmion:flags-settings', { settings: {} });
+  if (!result.ok || !result.settings) return null;
+  const s = result.settings;
+  $('flagsEnabled').checked = s.enabled === true;
+  $('flagsUrl').value = s.baseUrl || '';
+  $('flagsScan').checked = s.scanBeforeSend === true;
+  $('flagsBudget').value = String(s.dailyBudget || 100);
+  $('flagsKey').placeholder = s.hasKey ? 'Key saved (paste a new one to replace it)' : 'smk_… (shown once on your dashboard)';
+  let text;
+  if (!s.enabled) text = 'Off. Flags are shown and logged on this computer only.';
+  else if (!s.baseUrl || !s.hasKey) text = 'On, but the server URL or API key is missing, so nothing is sent.';
+  else if (s.keyRejected) text = 'The Flags server refused the API key (wrong, revoked, or missing a scope). Paste a new key.';
+  else if (s.pausedUntil) text = `The Flags account hit its daily call limit. Paused until ${new Date(s.pausedUntil).toLocaleString()}.`;
+  else text = `On. ${s.callsToday} of ${s.dailyBudget} calls used today.`;
+  if (s.queued) text += ` ${s.queued} waiting to be sent.`;
+  if (s.lastError && s.enabled && !s.keyRejected && !s.pausedUntil) text += ` Last problem: ${s.lastError}`;
+  $('flagsStatus').textContent = text;
+  return s;
+}
+
+function renderAlerts(result) {
+  const list = $('flagsAlerts');
+  list.replaceChildren();
+  if (!result || !result.ok && !result.alerts) { $('flagsAlertsStatus').textContent = 'Could not check.'; return; }
+  const alerts = result.alerts || [];
+  for (const a of alerts) {
+    // textContent only: alert text comes from the server.
+    const li = document.createElement('li');
+    li.className = `alert sev-${a.severity}`;
+    const head = document.createElement('strong');
+    head.textContent = `${a.severity.toUpperCase()} · ${a.category}${a.source_ai ? ` · ${a.source_ai}` : ''}`;
+    const reason = document.createElement('div');
+    reason.textContent = a.reason;
+    li.append(head, reason);
+    if (a.excerpt) { const ex = document.createElement('div'); ex.className = 'muted'; ex.textContent = a.excerpt; li.append(ex); }
+    const when = document.createElement('div'); when.className = 'muted';
+    when.textContent = a.created_at ? new Date(a.created_at).toLocaleString() : '';
+    li.append(when);
+    list.append(li);
+  }
+  const skipped = {
+    'not-enabled': 'Reporting is off.', 'no-url': 'No server URL set.', 'no-key': 'No API key set.',
+    'key-rejected': 'The API key was refused.', 'daily-limit': 'Paused: daily call limit.', budget: 'Daily call budget used up.',
+  }[result.skipped];
+  $('flagsAlertsStatus').textContent = skipped
+    || (alerts.length ? `${result.unseen || 0} new. Last checked ${result.polledAt ? new Date(result.polledAt).toLocaleTimeString() : 'never'}.` : 'No high or critical flags.');
+}
+
+async function refreshAlerts(force) {
+  const result = await askWithPayload('helmion:flags-alerts', { options: { force } });
+  renderAlerts(result);
+  // Opening the popup counts as seeing them.
+  if (result && result.ok && result.unseen) askWithPayload('helmion:flags-alerts', { options: { markSeen: true } });
+}
+
+$('flagsSave').addEventListener('click', async () => {
+  const url = $('flagsUrl').value.trim();
+  if ($('flagsEnabled').checked && url) {
+    const granted = await requestOrigin(url);
+    if (!granted) { $('flagsStatus').textContent = 'Permission to reach that URL was not granted, so nothing was saved.'; return; }
+  }
+  const budget = $('flagsBudget').value.trim();
+  const saved = await askWithPayload('helmion:flags-settings', {
+    settings: {
+      enabled: $('flagsEnabled').checked,
+      baseUrl: url,
+      apiKey: $('flagsKey').value || undefined,
+      scanBeforeSend: $('flagsScan').checked,
+      dailyBudget: budget ? Number(budget) : undefined,
+    },
+  });
+  // The key field is cleared whatever happened; it is never shown again.
+  $('flagsKey').value = '';
+  if (!saved.ok) { $('flagsStatus').textContent = `Not saved: ${saved.error}`; return; }
+  await refreshFlagsSettings();
+});
+
+$('flagsRefresh').addEventListener('click', () => refreshAlerts(true));
+
+refreshExecutiveSettings();
+refreshFlagsSettings().then((s) => { if (s && s.enabled) refreshAlerts(false); });

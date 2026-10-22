@@ -16,6 +16,19 @@
 //   explicit requests to erase an entire machine, drive or data set before the
 //   host page can submit them.
 //
+//   THE PRIVACY LANE (active interceptor). At send time and on paste, finds
+//   keys, passwords, tokens, card numbers and personal details headed for the
+//   AI (content/sanitize.js). Secrets pasted in are redacted before they land
+//   in the composer. At send, the decision comes from Executive Guard when the
+//   user paired one (signed, verified in background/executive.js) and from the
+//   same policy run locally when not: deny (redact first), or ask (the person,
+//   or an Executive Guard approver, decides).
+//
+//   THE FLAGS LANE. Reads the reply once streaming stops and raises a small
+//   corner card for evasion, a privacy leak, or harmful code
+//   (content/flags.js). It never hides anything. Each flag is logged and, if
+//   the user opted in, reported to the Flags API by the worker.
+//
 // The two share a page and a worker and nothing else: separate state, separate
 // self-tests, separate health state, separate failure counters. Either can be
 // broken while the other keeps working, and the toolbar reports each honestly.
@@ -91,6 +104,20 @@
     promptRiskActive: false,
     lastPromptFingerprint: '',
     lastPromptBlockedAt: 0,
+    // Privacy lane / Executive Guard loop. allowOnce is the fingerprint of the
+    // ONE exact text the person (or an approver) said may go out; it is used up
+    // by the next send of that text and by nothing else.
+    allowOnce: null,
+    privacyActiveFp: null,
+    privacyShownAt: 0,
+    approvalTimer: null,
+    // Optional cross-check with the Flags scanner (POST /api/flags/scan), off
+    // unless the person turned it on in the popup. Cached from the worker.
+    flagsScan: false,
+    scanActiveFp: null,
+    scanShownAt: 0,
+    // Flags lane: fingerprints already shown and reported on this page.
+    flagsShown: new Set(),
     // Block-ledger tally for this tab. Counted separately from dangerousIds
     // because "we warned about it" and "it reached the ledger" are two different
     // facts, and a browser-layer event only reaches an in-worker QUEUE today —
@@ -277,11 +304,14 @@
   // lane marking an element seen stops the other from ever looking at it.
   const seenCode = new WeakMap();
   const seenProse = new WeakMap();
+  const seenFlags = new WeakMap();
 
   const SEEN_ATTR = 'code';
   const PROSE_SEEN_ATTR = 'prose';
+  const FLAGS_SEEN_ATTR = 'flags';
 
   function seenMapFor(lane) {
+    if (lane === FLAGS_SEEN_ATTR) return seenFlags;
     return lane === PROSE_SEEN_ATTR ? seenProse : seenCode;
   }
 
@@ -540,8 +570,448 @@
     if (!isSendEvent(event)) return;
     const composer = eventComposer(event);
     if (!composer) return;
-    const verdict = HelmionPromptRisk.scan(composerText(composer));
-    if (verdict.blocked) stopPrompt(event, composer, verdict);
+    const text = composerText(composer);
+    const fp = fingerprint(text);
+
+    // An explicit "send it as written" (or a verified Executive Guard approval)
+    // for exactly this text. Every event of the one send gesture
+    // (pointerdown, mousedown, click) passes; the window closes shortly after.
+    if (state.allowOnce && state.allowOnce.fp === fp) {
+      if (Date.now() - state.allowOnce.usedAt < 1500 || !state.allowOnce.usedAt) {
+        if (!state.allowOnce.usedAt) {
+          state.allowOnce.usedAt = Date.now();
+          if (!state.allowOnce.quiet) logToLedger({
+            kind: 'ai-flag',
+            site: SOURCE,
+            matched: `send-approved: ${state.allowOnce.by}`,
+            text: HelmionSanitize.scan(text).redacted,
+            outcome: 'sent-after-approval',
+          });
+          HelmionUI.hideAskAlert();
+        }
+        return;
+      }
+      state.allowOnce = null;
+    }
+
+    const verdict = HelmionPromptRisk.scan(text);
+    if (verdict.blocked) {
+      stopPrompt(event, composer, verdict);
+      askExecutiveAboutDestructive(text, fp);
+      return;
+    }
+
+    const privacy = HelmionSanitize.scan(text);
+    if (privacy.found) { stopForPrivacy(event, composer, text, fp, privacy); return; }
+    if (state.flagsScan && text.trim()) crossCheckWithFlags(event, composer, text, fp);
+    refreshFlagsConfig();
+  }
+
+  function refreshFlagsConfig() {
+    askWorker({ type: 'helmion:flags-config' })
+      .then((response) => { state.flagsScan = Boolean(response && response.scanBeforeSend === true); })
+      .catch(() => { /* keep the last answer */ });
+  }
+
+  // Guard's own scan found nothing. The person asked for a second opinion from
+  // their Flags scanner, so hold this one send until it answers. The scanner
+  // stores nothing. If it cannot answer, Guard's own result stands and the card
+  // says so; the message is never sent without the person pressing Send again.
+  function crossCheckWithFlags(event, composer, text, fp) {
+    stopEvent(event);
+    const now = Date.now();
+    if (state.scanActiveFp === fp && now - state.scanShownAt < 1500) return;
+    state.scanActiveFp = fp;
+    state.scanShownAt = now;
+    const cancel = { id: 'cancel', label: 'Cancel', onClick: () => { state.scanActiveFp = null; HelmionUI.hideAskAlert(); } };
+    HelmionUI.showAskAlert({
+      tone: 'warn',
+      title: 'Checking with your Flags scanner',
+      message: 'Guard found nothing. Your Flags scanner is double-checking before this is sent.',
+      status: 'Checking…',
+      actions: [cancel],
+    });
+    askWorker({ type: 'helmion:flags-scan', text })
+      .then((response) => {
+        if (state.scanActiveFp !== fp) return;
+        const result = response && response.result;
+        if (!result || !result.ok) {
+          grantOnce(fp, 'local-check-only', { quiet: true });
+          const why = {
+            'too-long': 'the message is too long for the scanner',
+            budget: "today's call budget is used up",
+            'daily-limit': 'the Flags account is over its daily limit',
+            'key-rejected': 'the API key was refused',
+          }[result && result.skipped] || 'it could not be reached';
+          HelmionUI.showAskAlert({
+            tone: 'warn',
+            title: 'Flags scanner did not check this',
+            message: `Not checked because ${why}. Guard's own check found nothing. Press Send again to send it.`,
+            actions: [cancel],
+          });
+          return;
+        }
+        const leaks = Array.isArray(result.leaks) ? result.leaks : [];
+        if (!leaks.length) {
+          state.scanActiveFp = null;
+          grantOnce(fp, 'flags-scan-clean', { quiet: true });
+          HelmionUI.showAskAlert({
+            tone: 'ok',
+            title: 'Flags scanner found nothing',
+            message: 'Press Send again to send it.',
+            actions: [cancel],
+          });
+          return;
+        }
+        const what = Array.from(new Set(leaks.map((l) => l.reason || l.rule))).slice(0, 3).join('; ');
+        logToLedger({
+          kind: 'ai-flag',
+          site: SOURCE,
+          matched: `flags-scan: ${leaks.map((l) => l.rule).join(',')}`,
+          // The scanner's redacted copy: never the raw text.
+          text: String(result.redacted || ''),
+          outcome: 'paused-before-send',
+        });
+        HelmionUI.showAskAlert({
+          tone: 'danger',
+          title: 'Your Flags scanner found something Guard missed',
+          message: `${what}. Nothing has been sent.`,
+          actions: [
+            {
+              id: 'redact',
+              label: 'Redact and keep editing',
+              primary: true,
+              onClick: () => {
+                replaceComposerText(composer, String(result.redacted || ''));
+                state.scanActiveFp = null;
+                HelmionUI.hideAskAlert();
+                if (typeof composer.focus === 'function') composer.focus();
+              },
+            },
+            {
+              id: 'send-anyway',
+              label: 'Send as written',
+              onClick: () => {
+                grantOnce(fp, 'person-after-flags-scan');
+                HelmionUI.showAskAlert({ tone: 'ok', title: 'Allowed once', message: 'Press Send again to send it as written.', actions: [cancel] });
+              },
+            },
+            cancel,
+          ],
+        });
+      }, () => {
+        if (state.scanActiveFp !== fp) return;
+        grantOnce(fp, 'local-check-only', { quiet: true });
+        HelmionUI.showAskAlert({
+          tone: 'warn',
+          title: 'Flags scanner did not check this',
+          message: "Guard's own check found nothing. Press Send again to send it.",
+          actions: [cancel],
+        });
+      });
+  }
+
+  // ----------------------------------------------------------- privacy lane
+
+  function stopEvent(event) {
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    else if (typeof event.stopPropagation === 'function') event.stopPropagation();
+  }
+
+  async function contentHash(text) {
+    const subtle = typeof crypto !== 'undefined' && crypto && crypto.subtle;
+    if (!subtle || typeof TextEncoder !== 'function') throw new Error('WebCrypto is not available on this page');
+    const digest = await subtle.digest('SHA-256', new TextEncoder().encode(String(text)));
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function askDecision(action) {
+    return askWorker({ type: 'helmion:decide', action }).then((response) => response.decision);
+  }
+
+  function setNativeValue(element, value) {
+    try {
+      const proto = Object.getPrototypeOf(element);
+      const descriptor = proto && Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor && typeof descriptor.set === 'function') descriptor.set.call(element, value);
+      else element.value = value;
+    } catch {
+      element.value = value;
+    }
+  }
+
+  function fireInput(element) {
+    try {
+      if (typeof InputEvent === 'function') element.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      else if (typeof Event === 'function' && typeof element.dispatchEvent === 'function') element.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch { /* the page re-reads the composer on its next keystroke */ }
+  }
+
+  // Replaces the whole composer text. Textareas get the native value setter so
+  // React-controlled inputs see the change; rich editors get a select-all and
+  // insertText so their own model updates, with a plain text fallback.
+  function replaceComposerText(composer, value) {
+    if (typeof composer.value === 'string') {
+      setNativeValue(composer, value);
+      fireInput(composer);
+      return;
+    }
+    let done = false;
+    try {
+      if (typeof composer.focus === 'function') composer.focus();
+      const selection = typeof document.getSelection === 'function' ? document.getSelection() : null;
+      if (selection && typeof selection.selectAllChildren === 'function' && typeof document.execCommand === 'function') {
+        selection.selectAllChildren(composer);
+        done = document.execCommand('insertText', false, value);
+      }
+    } catch { done = false; }
+    if (!done) composer.textContent = value;
+  }
+
+  // Inserts text at the caret (paste replacement).
+  function insertIntoComposer(composer, value) {
+    if (typeof composer.value === 'string') {
+      const current = composer.value;
+      const start = typeof composer.selectionStart === 'number' ? composer.selectionStart : current.length;
+      const end = typeof composer.selectionEnd === 'number' ? composer.selectionEnd : current.length;
+      setNativeValue(composer, current.slice(0, start) + value + current.slice(end));
+      fireInput(composer);
+      return;
+    }
+    let done = false;
+    try {
+      if (typeof document.execCommand === 'function') done = document.execCommand('insertText', false, value);
+    } catch { done = false; }
+    if (!done) composer.appendChild(document.createTextNode(value));
+  }
+
+  function grantOnce(fp, by, options) {
+    state.allowOnce = { fp, by, usedAt: 0, quiet: Boolean(options && options.quiet) };
+  }
+
+  function stopApprovalPolling() {
+    if (state.approvalTimer) clearTimeout(state.approvalTimer);
+    state.approvalTimer = null;
+  }
+
+  // Polls the worker (which polls Executive Guard and verifies the signature)
+  // every 3 s for up to 15 minutes.
+  function pollApproval(approvalId, fp, labels) {
+    stopApprovalPolling();
+    const deadline = Date.now() + 15 * 60 * 1000;
+    const tick = () => {
+      askWorker({ type: 'helmion:approval-status', approvalId }).then((response) => {
+        const status = response.status || {};
+        if (status.status === 'approved' && status.verdict === 'allow' && status.verified) {
+          stopApprovalPolling();
+          grantOnce(fp, `executive-guard:${status.decidedBy || 'approver'}`);
+          HelmionUI.showAskAlert({
+            tone: 'ok',
+            title: 'Approved in Executive Guard',
+            message: `${status.decidedBy ? `Approved by ${status.decidedBy}.` : 'Approved.'} Press Send again to send it.`,
+            actions: [{ id: 'dismiss', label: 'OK', onClick: () => HelmionUI.hideAskAlert() }],
+          });
+          return;
+        }
+        if (status.status === 'denied' || status.status === 'expired' || (status.status === 'approved' && !status.verified)) {
+          stopApprovalPolling();
+          HelmionUI.showAskAlert({
+            tone: 'danger',
+            title: status.status === 'expired' ? 'Approval expired' : 'Denied in Executive Guard',
+            message: status.reason || labels.denied,
+            actions: labels.actions,
+          });
+          return;
+        }
+        if (Date.now() < deadline) state.approvalTimer = setTimeout(tick, 3000);
+      }, () => {
+        if (Date.now() < deadline) state.approvalTimer = setTimeout(tick, 3000);
+      });
+    };
+    state.approvalTimer = setTimeout(tick, 3000);
+  }
+
+  function stopForPrivacy(event, composer, text, fp, privacy) {
+    stopEvent(event);
+    // One send gesture fires several events; answer the first, swallow the rest.
+    const now = Date.now();
+    if (state.privacyActiveFp === fp && now - state.privacyShownAt < 1500) return;
+    state.privacyActiveFp = fp;
+    state.privacyShownAt = now;
+
+    const what = HelmionSanitize.describe(privacy);
+    const redactAction = {
+      id: 'redact',
+      label: 'Redact and keep editing',
+      primary: true,
+      onClick: () => {
+        replaceComposerText(composer, privacy.redacted);
+        state.privacyActiveFp = null;
+        stopApprovalPolling();
+        HelmionUI.hideAskAlert();
+        if (typeof composer.focus === 'function') composer.focus();
+      },
+    };
+    const cancelAction = {
+      id: 'cancel',
+      label: 'Cancel',
+      onClick: () => { state.privacyActiveFp = null; stopApprovalPolling(); HelmionUI.hideAskAlert(); },
+    };
+
+    HelmionUI.showAskAlert({
+      tone: privacy.hasSecrets ? 'danger' : 'warn',
+      title: 'Helmion Guard paused this message',
+      message: `It contains ${what}. Nothing has been sent.`,
+      status: 'Checking policy…',
+      actions: [redactAction, cancelAction],
+    });
+
+    logToLedger({
+      kind: 'ai-flag',
+      site: SOURCE,
+      matched: `privacy-prompt: ${privacy.signals.join(',')}`,
+      // Never the raw text: the ledger must not become a second copy of the secret.
+      text: privacy.redacted,
+      outcome: 'paused-before-send',
+    });
+
+    contentHash(text)
+      .then((hash) => askDecision({
+        kind: 'prompt.send',
+        site: SOURCE,
+        contentHash: hash,
+        riskSignals: privacy.signals,
+        summary: privacy.redacted.slice(0, 500),
+      }))
+      .then((decision) => {
+        if (state.privacyActiveFp !== fp) return; // the person already moved on
+        const where = decision.source === 'executive-guard' ? 'Executive Guard' : 'Guard policy on this computer';
+        if (decision.verdict === 'allow') {
+          grantOnce(fp, decision.source);
+          HelmionUI.showAskAlert({
+            tone: 'ok',
+            title: `${where} allowed this message`,
+            message: 'Press Send again to send it as written.',
+            actions: [redactAction, cancelAction],
+          });
+          return;
+        }
+        if (decision.verdict === 'deny') {
+          HelmionUI.showAskAlert({
+            tone: 'danger',
+            title: 'Helmion Guard stopped this message',
+            message: `It contains ${what}. ${decision.reason || ''}`.trim(),
+            status: `Decided by ${where}${decision.serverUnavailable ? ' (Executive Guard could not be reached)' : ''}.`,
+            actions: [redactAction, cancelAction],
+          });
+          return;
+        }
+        // ask
+        if (decision.source === 'executive-guard' && decision.pending && decision.approvalId) {
+          HelmionUI.showAskAlert({
+            tone: 'warn',
+            title: 'Waiting for approval',
+            message: `It contains ${what}. An approver must allow it in Executive Guard.`,
+            status: 'Waiting for an approver…',
+            actions: [redactAction, cancelAction],
+          });
+          pollApproval(decision.approvalId, fp, { denied: 'The approver did not allow this message.', actions: [redactAction, cancelAction] });
+          return;
+        }
+        HelmionUI.showAskAlert({
+          tone: 'warn',
+          title: 'Send this to the AI?',
+          message: `It contains ${what}. ${decision.reason || ''}`.trim(),
+          status: decision.serverUnavailable ? 'Executive Guard could not be reached; you decide.' : '',
+          actions: [
+            redactAction,
+            {
+              id: 'send-anyway',
+              label: 'Send as written',
+              onClick: () => {
+                grantOnce(fp, 'person-at-keyboard');
+                HelmionUI.showAskAlert({
+                  tone: 'ok',
+                  title: 'Allowed once',
+                  message: 'Press Send again to send it as written.',
+                  actions: [cancelAction],
+                });
+              },
+            },
+            cancelAction,
+          ],
+        });
+      })
+      .catch((error) => {
+        // Fail closed: no decision means the message stays unsent.
+        console.warn('[Helmion Guard] privacy decision failed:', error && error.message);
+        if (state.privacyActiveFp !== fp) return;
+        HelmionUI.showAskAlert({
+          tone: 'danger',
+          title: 'Helmion Guard paused this message',
+          message: `It contains ${what}. The policy check did not answer, so it was not sent.`,
+          actions: [redactAction, cancelAction],
+        });
+      });
+  }
+
+  // Destructive prompts stay blocked locally exactly as before. If an
+  // Executive Guard server is paired, it is also asked, and a VERIFIED approval
+  // from a human approver lets this one exact text through once.
+  function askExecutiveAboutDestructive(text, fp) {
+    contentHash(text)
+      .then((hash) => askDecision({
+        kind: 'prompt.send',
+        site: SOURCE,
+        contentHash: hash,
+        riskSignals: ['destructive-intent'],
+        summary: HelmionSanitize.scan(text).redacted.slice(0, 500),
+      }))
+      .then((decision) => {
+        if (!decision || decision.source !== 'executive-guard' || !decision.verified) return;
+        if (decision.verdict === 'ask' && decision.pending && decision.approvalId) {
+          HelmionUI.showAskAlert({
+            tone: 'danger',
+            title: 'Sent to Executive Guard for approval',
+            message: 'This request could permanently erase files, data or a device. It stays blocked unless an approver allows it.',
+            status: 'Waiting for an approver…',
+            actions: [{ id: 'cancel', label: 'Cancel', onClick: () => { stopApprovalPolling(); HelmionUI.hideAskAlert(); } }],
+          });
+          pollApproval(decision.approvalId, fp, {
+            denied: 'The approver did not allow this request.',
+            actions: [{ id: 'dismiss', label: 'OK', onClick: () => HelmionUI.hideAskAlert() }],
+          });
+        }
+      })
+      .catch(() => { /* local block already in place */ });
+  }
+
+  // Paste: a secret pasted into the composer is redacted before it lands.
+  // Personal details are left for the send-time check, which asks.
+  function inspectPaste(event) {
+    const composer = eventComposer(event);
+    if (!composer) return;
+    const data = event && event.clipboardData;
+    const pasted = data && typeof data.getData === 'function' ? String(data.getData('text/plain') || '') : '';
+    if (!pasted) return;
+    const privacy = HelmionSanitize.scan(pasted);
+    if (!privacy.hasSecrets) return;
+    stopEvent(event);
+    insertIntoComposer(composer, privacy.redacted);
+    HelmionUI.showAskAlert({
+      tone: 'warn',
+      title: 'Helmion Guard redacted your paste',
+      message: `It removed ${HelmionSanitize.describe(privacy)} before it reached the AI.`,
+      actions: [{ id: 'dismiss', label: 'OK', onClick: () => HelmionUI.hideAskAlert() }],
+    });
+    logToLedger({
+      kind: 'ai-flag',
+      site: SOURCE,
+      matched: `privacy-paste: ${privacy.signals.join(',')}`,
+      text: privacy.redacted,
+      outcome: 'redacted-on-paste',
+    });
   }
 
   function clearPromptWarningWhenSafe(event) {
@@ -576,6 +1046,12 @@
     if (!destructive.blocked || protective.blocked) {
       throw new Error('the destructive-prompt detector failed its own test');
     }
+    // The privacy lane's positive and negative control.
+    const secret = HelmionSanitize.scan('key sk-helmionselftestprobe0001');
+    const plain = HelmionSanitize.scan('Order 1234 5678 9012 3456 shipped to the example address.');
+    if (!secret.hasSecrets || secret.redacted.indexOf('sk-helmion') !== -1 || plain.found) {
+      throw new Error('the privacy detector failed its own test');
+    }
     // Window capture runs before Gemini's document- or component-level event
     // handlers, even when Gemini registered those handlers before this script.
     // Document capture was too late on the live site.
@@ -586,6 +1062,8 @@
       window.addEventListener(type, inspectPromptEvent, true);
     }
     window.addEventListener('input', inspectPromptDraft, true);
+    window.addEventListener('paste', inspectPaste, true);
+    refreshFlagsConfig();
   }
 
   function noteAudit(result) {
@@ -828,6 +1306,52 @@
     }
   }
 
+  // -------------------------------------------------------------- flags lane
+
+  const COMPOSER_REGION = 'textarea, [contenteditable="true"], [role="textbox"]';
+
+  function inComposer(element) {
+    return Boolean(element && typeof element.closest === 'function' && element.closest(COMPOSER_REGION));
+  }
+
+  function raiseFlag(flag) {
+    const id = HelmionFlags.fingerprint(flag, SOURCE);
+    if (state.flagsShown.has(id)) return;
+    state.flagsShown.add(id);
+    HelmionUI.showFlagAlert(flag);
+    try {
+      chrome.runtime.sendMessage({ type: 'helmion:flag', flag: { ...flag, id, site: SOURCE } }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch (error) {
+      console.warn('[Helmion Guard] could not record a flag:', error.message);
+    }
+  }
+
+  function runFlagsPass() {
+    let prose;
+    let code;
+    try {
+      prose = HelmionExtract.collectProse(document).passages;
+      code = HelmionExtract.collectCodeBlocks(document).blocks;
+    } catch (error) {
+      console.warn('[Helmion Guard] flags lane could not read the page:', error.message);
+      return;
+    }
+    for (const passage of prose) {
+      if (inComposer(passage.element)) continue; // the person's own draft is the privacy lane's job
+      if (!hasChanged(passage.element, `p:${passage.text}`, FLAGS_SEEN_ATTR)) continue;
+      markSeen(passage.element, `p:${passage.text}`, FLAGS_SEEN_ATTR);
+      HelmionFlags.detectProse(passage.text).forEach(raiseFlag);
+    }
+    for (const block of code) {
+      if (inComposer(block.element)) continue;
+      if (!hasChanged(block.element, `c:${block.text}`, FLAGS_SEEN_ATTR)) continue;
+      markSeen(block.element, `c:${block.text}`, FLAGS_SEEN_ATTR);
+      HelmionFlags.detectCode(block.text).forEach(raiseFlag);
+    }
+  }
+
   // ------------------------------------------------------------------ health
 
   // Positive control. Do not ask "did the check find nothing?" — nothing is also
@@ -955,6 +1479,11 @@
       // behind the code lane. A slow or broken reading aid must not delay the
       // check that stops somebody pasting a destructive command.
       runClaimsPass({ force: finished });
+      // Flags read the reply once it has stopped streaming, so a half-typed
+      // sentence is not judged. Advisory: nothing waits on it.
+      if (!streaming) {
+        try { runFlagsPass(); } catch (error) { console.warn('[Helmion Guard] flags lane error:', error.message); }
+      }
     };
 
     const watch = HelmionStreamWatch.createStreamWatch({

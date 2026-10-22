@@ -32,6 +32,113 @@ retention behavior are documented in
 
 ---
 
+## 0.4.1: local redaction covers what the Flags scanner covers
+
+Guard now catches, and redacts in place, every secret pattern that Paul's Flags scanner (`server.src/app/src/flags/scanner.ts`) has. Before 0.4.1 it missed these:
+
+| New | Type / signal | Shape |
+|---|---|---|
+| Stripe webhook secrets, `whsec_…` | `api_key` | `whsec_` plus 20 or more letters and digits |
+| Resend keys, `re_…_…` | `api_key` | `re_` + 8 letters/digits + `_` + 16 or more |
+| Stripe test keys, `sk_test_` / `rk_test_` | `api_key` | `pk_test_` is publishable and stays allowed |
+| AWS temporary keys, `ASIA…` | `api_key` | `ASIA` + 16 capitals/digits |
+| `aws_secret_access_key = <40 chars>` | `api_key` | the label is kept; only the value is replaced |
+| Slack `xoxe-` tokens | `api_key` | |
+| JWTs, `eyJ….eyJ….sig` | `jwt` (new) | |
+| Password in a connection string | `connection_string` (new) | `postgres://app:[REDACTED:connection_string]@db:5432/main`; only the password is replaced |
+| "my password is X", "API key was X", "passphrase: X" | `secret_assignment` | X must look like a secret: a digit, a symbol, or a capital after the first letter |
+| A labelled SSN without dashes, "SSN 123 45 6789" | `ssn` (pii) | bare 9-digit numbers are left alone |
+
+`secret:jwt` and `secret:connection_string` are denied by the same `secrets-never-leave` rule, in the offline policy and in Executive Guard. Both twins (`content/sanitize.js` and `background/redact.js`) have the same rules.
+
+`test/redaction-gaps.test.mjs` also checks for false positives:
+- "password is required" and "the access token is expired";
+- `postgres://user:password@…`, `${DB_PASSWORD}`, `$MYSQL_PWD`, `****`;
+- `re_snake_case_identifiers`;
+- AWS's documented `…EXAMPLEKEY`;
+- bare prefixes (`whsec_`, `sk_test_`, `eyJ`).
+
+The live test runs every new pattern through Paul's real scanner, and it finds nothing left to redact. Secret-shaped test values are built at run time in `test-support/fake-secrets.mjs`, so GitHub push protection does not mistake a fixture for a leaked key.
+
+## 0.4.0: Flags account (Shared Memory Flags API)
+
+Off by default. In the popup under **Flags account**: tick "Report flags", enter
+the server URL (the Shared Memory `PUBLIC_URL`), paste an API key (`smk_…`, made
+on the Shared Memory dashboard with scopes `flags.write` and `flags.read`) and
+save. The browser asks for permission to reach that one server. The key is kept
+in extension storage like the Executive Guard token: it is never shown again,
+never sent to a page, and never logged.
+
+- **Report.** Each flag is one `POST /api/flags` with `source_ai` (`claude.ai`,
+  `chatgpt`, `gemini`, `grok`), the page URL without query or fragment, and the
+  already-redacted reason and excerpt. Failed reports wait in a capped queue.
+- **Alerts.** Opening the popup checks `GET /api/flags?min_severity=high` (at
+  most once a minute, or on "Check now") and lists high and critical flags from
+  every AI on the account.
+- **Double-check before sending** (a second, separate opt-in). When Guard's own
+  scan finds nothing, the message (already redacted locally) is sent to
+  `POST /api/flags/scan`, which stores nothing. If the scanner finds a secret
+  Guard missed, the send is held with "Redact and keep editing". If it finds
+  nothing you press Send again; if it cannot answer, Guard's own result stands
+  and the card says so. This adds one press of Send to every message.
+- **Limits.** Every call counts toward the account's daily limit (300 a day on
+  the Free plan, shared with connected AIs). Guard keeps its own daily budget
+  (default 100 calls), stops on `402` until the next UTC day, and stops on `401`
+  until a new key is saved.
+
+Contract: `docs/FLAGS_API.md` on branch `saas` of `troy83352/shared-memory-mcp`.
+Tested against a mock with the same contract
+(`test-support/mock-flags-api.mjs`) and, locally, against that branch's real
+server code (`test/flags-live-saas.test.mjs`, skipped unless `SMM_SAAS_APP_DIR`
+is set).
+
+## 0.3.0: active interceptor, Executive Guard loop, Flags
+
+**Keeps secrets out of AI chats.** When you press Send, the message is checked
+for API keys, private keys, bearer tokens, passwords, card numbers (Luhn
+checked), social security numbers, email addresses and phone numbers
+(`content/sanitize.js`). If any are there, the send is cancelled and a small card
+appears top right:
+
+- a key, password, token or card number: **stopped**. "Redact and keep editing"
+  swaps each one for `[REDACTED:type]` in the composer; you then press Send.
+- personal details (email, phone, SSN): **ask**. Redact, or "Send as written",
+  which lets that one exact message through on the next Send.
+
+A secret **pasted** into the composer is redacted before it lands, and a card
+says what was removed.
+
+**Executive Guard (optional).** In the popup, enter an Executive Guard server
+URL and device token, then "Save and pair". The browser asks for permission to
+reach that one server. From then on the decision comes from the server, signed;
+the extension checks the signature against the key pinned at pairing, the
+action hash and the nonce before it believes it. A destructive request is sent
+for human approval; once an approver allows it, the card says who, and that one
+exact text may be sent once. If the server cannot be reached, the same policy
+runs on this computer and the card says so. A decision that does not verify is
+treated as a deny. Server: `executive-guard/README.md`.
+
+**Flags.** Once a reply stops streaming it is read for:
+
+- evasion: a refusal or deflection, or an answer buried in three or more
+  different hedges (slate card, advisory);
+- privacy leak: the reply shows a key, password, card number or personal
+  details (red card; the card and the log only ever hold the redacted text);
+- harmful code: reverse shells, download-and-run, credential theft,
+  keyloggers, miners, turning off security tools, fork bombs, persistence, log
+  wiping (red card). Destructive commands stay with the red code lane above.
+
+Cards sit bottom left, at most three. Nothing on the page is hidden by a flag
+and the toolbar badge does not move. Every flag is logged on this computer.
+
+**What is not verified yet:** the composers on the four live sites accepting the
+redacted text (rich editors differ; tested in a test DOM only), the popup's
+permission prompt and pairing click-through, and how the cards look. There is no
+network-request blocking: that needs the `declarativeNetRequest` permission and
+is a decision for Troy.
+
+---
+
 ## Install it
 
 Do these in order. It takes about a minute.

@@ -7,23 +7,34 @@
 
 const badgeCalls = [];
 const listeners = [];
+// chrome.storage.local, in memory. Added 2026-10-22 so end-to-end tests can see
+// ledger rows and drive the Executive Guard / Flags settings through the real
+// worker. Reset with fake.resetStorage().
+const storageBag = new Map();
 
 export const fake = {
   // 'normal'  answer messages the way Chrome does
   // 'silent'  never answer, so the content script's timeout fires
   // 'missing' answer with no listener, the way a dead service worker looks
   mode: 'normal',
+  pageUrl: 'https://chatgpt.com/c/test-conversation?model=x',
   badgeCalls,
   listeners,
+  storageBag,
   reset() {
     badgeCalls.length = 0;
     fake.mode = 'normal';
+  },
+  resetStorage() {
+    storageBag.clear();
   },
 };
 
 export const chrome = {
   runtime: {
+    id: 'helmion-guard-test-id',
     lastError: undefined,
+    getURL(path) { return `chrome-extension://helmion-guard-test-id/${String(path).replace(/^\//, '')}`; },
 
     onMessage: {
       addListener(listener) {
@@ -42,7 +53,10 @@ export const chrome = {
           return;
         }
 
-        const sender = { tab: { id: 7 } };
+        // What Chrome sets for a content script message: the extension id,
+        // the frame URL and the tab.
+        const pageUrl = fake.pageUrl;
+        const sender = { id: chrome.runtime.id, url: pageUrl, tab: { id: 7, url: pageUrl } };
         let answered = false;
         const sendResponse = (response) => {
           answered = true;
@@ -51,14 +65,34 @@ export const chrome = {
           callback(response);
         };
 
-        listeners.forEach((listener) => listener(message, sender, sendResponse));
+        // A listener that returns true keeps the channel open and answers
+        // later, exactly as Chrome allows (the async ledger, decide and flag
+        // handlers rely on it).
+        const keptOpen = listeners.map((listener) => listener(message, sender, sendResponse)).some((r) => r === true);
 
-        if (!answered && callback) {
+        if (!answered && !keptOpen && callback) {
           chrome.runtime.lastError = { message: 'no listener answered' };
           callback(undefined);
           chrome.runtime.lastError = undefined;
         }
       }, 0);
+    },
+  },
+
+  storage: {
+    local: {
+      async get(key) {
+        const keys = key == null ? [...storageBag.keys()] : (Array.isArray(key) ? key : [key]);
+        const out = {};
+        for (const k of keys) if (storageBag.has(k)) out[k] = structuredClone(storageBag.get(k));
+        return out;
+      },
+      async set(items) {
+        for (const [k, v] of Object.entries(items)) storageBag.set(k, structuredClone(v));
+      },
+      async remove(key) {
+        for (const k of Array.isArray(key) ? key : [key]) storageBag.delete(k);
+      },
     },
   },
 

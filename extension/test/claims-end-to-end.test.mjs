@@ -20,6 +20,8 @@ await installWorker();
 
 const CONTENT_SCRIPTS = [
   'content/prompt-risk.js',
+  'content/sanitize.js',
+  'content/flags.js',
   'content/extract.js',
   'content/stream-watch.js',
   'content/ui.js',
