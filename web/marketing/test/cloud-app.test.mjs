@@ -205,3 +205,10 @@ test('forgetDesktopPayload matches the server revoke contract (confirmed: true)'
   assert.deepEqual(forgetDesktopPayload(' d1 '), { action: 'revoke', desktopId: 'd1', confirmed: true });
   assert.throws(() => forgetDesktopPayload(''));
 });
+
+test('phones keep chat inline (the sliding chat panel would leave #console blank and "+" off-screen)', () => {
+  const place = js.slice(js.indexOf('function placeChat()'), js.indexOf('function placeChat()') + 1600);
+  assert.match(place, /if \(narrow\(\)\) \{[\s\S]*consoleHome\.after\(consoleView\)[\s\S]*panel\.hidden = true[\s\S]*toggle\.hidden = true/);
+  assert.match(js, /if \(!consolePollTimer\) consolePollTimer = setInterval/, 'one chat poll timer, not one per visit');
+  assert.match(js, /p\.hidden = p\.dataset\.viewPanel !== view && !p\.closest\('#chat-panel'\)/);
+});
