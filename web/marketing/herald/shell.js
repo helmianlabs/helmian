@@ -9,7 +9,7 @@ import {
   createAccountRemoteControlApi,
   loadAblyBrowser,
   loadClerkBrowser,
-} from './account-runtime.js?v=14';
+} from './account-runtime.js?v=15';
 import { createDeliveryTracker } from './runtime.js';
 import { ENROLL_FRAGMENT_KEY, takePairingCodeFromLocation } from './pairing-link.js';
 import { mountPcApprovals } from './pc-approvals.js';

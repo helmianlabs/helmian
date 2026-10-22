@@ -19,7 +19,8 @@ const vercel = JSON.parse(await readFile(resolve(root, 'vercel.json'), 'utf8'));
 const policy = vercel.headers?.flatMap((item) => item.headers ?? [])
   .find((header) => header.key === 'Content-Security-Policy')?.value ?? '';
 source.scopedRealtimeCsp = policy.includes('cdn.ably.com')
-  && policy.includes('ably-realtime.com') && policy.includes('clerk.accounts');
+  && policy.includes('ably-realtime.com') && policy.includes('clerk.accounts')
+  && policy.includes('clerk.helmian.cloud');
 
 const environment = Object.fromEntries([
   'CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY',
