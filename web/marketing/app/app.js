@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, friendlyWorkspace } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -1015,14 +1015,14 @@ function renderFeed() {
       }
       const srcFilter = state.guardSourceFilter || 'all';
       const visible = merged.filter((c) => srcFilter === 'all' || String(c.finding?.source || 'local').toLowerCase() === srcFilter);
-      dpFindings.replaceChildren(...visible.slice(0, 30).map((c) => {
+      dpFindings.replaceChildren(...collapseRepeats(visible).slice(0, 30).map(({ card: c, repeat }) => {
         const card = el('div', `guard-card ${c.severity}`);
         const head = el('div', 'guard-card-head');
         // EXE severity icons: ✕ critical, ? unknown, ✓ ok
         const icon = c.severity === 'critical' ? '✕' : c.severity === 'warning' ? '!' : c.severity === 'info' ? '✓' : '?';
         head.append(el('span', `severity ${c.severity}`, `${icon} ${c.severity.toUpperCase()}`));
         const sightings = Number(c.finding?.sightingCount || 0);
-        if (sightings > 0) head.append(el('span', 'muted sm', `×${sightings}`));
+        if (sightings > 0 || repeat > 1) head.append(el('span', 'muted sm', `×${sightings || repeat}`));
         if (c.at) head.append(el('span', 'muted sm', formatTime(c.at)));
         // EXE has an Ack button on each card
         if (!c.ack && c.finding?.fingerprint) {
@@ -1253,11 +1253,51 @@ async function loadEvidence() {
   const denied = (h.status === 'rejected' && h.reason?.status === 403) || (c.status === 'rejected' && c.reason?.status === 403);
   note.textContent = denied ? 'Handoffs and checkpoints are visible to owners and admins.' : '';
 }
+let integrationsMod = null; let qrMod = null;
 async function loadIntegrations() {
-  const [c, p] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections')]);
-  const list = integrationsModel(c.value ?? {}, p.value ?? {});
-  $('#integrations').replaceChildren(...list.map((i) => { const card = el('article', 'card'); card.append(el('div', 'title', i.name), el('div', 'meta', i.kind), el('div', 'meta')); card.lastChild.append(el('span', `status ${i.connected ? 'ok' : ''}`, i.connected ? 'Connected' : 'Not connected')); return card; }));
+  integrationsMod ??= await import('./integrations-view.mjs');
+  const [c, p, pr, u, o] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview')]);
+  const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.value?.presence ?? [], usage: u.value ?? null, overview: o.value ?? null });
+  const box = $('#integrations');
+  box.replaceChildren(...sections.map((sec) => {
+    const wrap = el('section', 'int-section'); wrap.append(el('h3', 'int-head', sec.title));
+    const grid = el('div', 'int-grid'); wrap.append(grid);
+    for (const card of sec.cards) grid.append(integrationCard(card));
+    return wrap;
+  }));
+  for (const q of box.querySelectorAll('[data-qr]')) drawQr(q, q.dataset.qr);
   return p.value;
+}
+function integrationCard(card) {
+  if (card.qr && matchMedia('(max-width: 900px) and (pointer: coarse)').matches) card = { ...card, blurb: 'Keep Helmian one tap away on this phone.', statusText: 'Add to Home Screen' };
+  const a = el('article', `int-card ${card.qr ? 'wide' : ''}`.trim()); a.dataset.key = card.key;
+  const icon = el('span', 'int-icon');
+  if (card.icon?.img) { const img = el('img'); img.src = card.icon.img; img.alt = ''; img.width = 26; img.height = 26; icon.append(img); }
+  else if (card.icon?.mark) icon.append(el('span', `ew-${card.icon.mark === 'github' ? 'gh' : card.icon.mark}-mark`));
+  else icon.textContent = card.icon?.glyph ?? '';
+  const text = el('div', 'int-text'); text.append(el('div', 'int-name', card.name), el('div', 'int-blurb', card.blurb));
+  const status = el('span', `int-status ${card.status}`, card.statusText);
+  const top = el('div', 'int-top'); top.append(icon, text, status); a.append(top);
+  if (card.qr) { const q = el('div', 'int-qr'); q.dataset.qr = card.qr; q.setAttribute('role', 'img'); q.setAttribute('aria-label', 'QR code that opens Helmian on your phone'); const steps = el('ol', 'int-steps'); const onPhone = matchMedia('(max-width: 900px) and (pointer: coarse)').matches; for (const t of onPhone ? ['You are on your phone already.', 'Tap Share, then Add to Home Screen to keep Helmian one tap away.'] : ['Point your phone camera at the code.', 'Sign in with this same account.', 'Tap Share, then Add to Home Screen.']) steps.append(el('li', '', t)); const row = el('div', 'int-qr-row'); row.append(q, steps); a.append(row); }
+  if (card.action) {
+    const row = el('div', 'int-actions');
+    if (card.action.href) { const link = el('a', `btn sm ${card.status === 'on' ? '' : 'primary'}`.trim(), card.action.label); link.href = card.action.href; row.append(link); }
+    else { const b = el('button', 'btn sm primary', card.action.label); b.type = 'button'; b.onclick = () => { const open = a.querySelector('.int-help'); if (open) { open.remove(); return; } const [title, lines] = integrationsMod.HELP[card.action.act] ?? ['', []]; const help = el('div', 'int-help'); help.append(el('strong', '', title), ...lines.map((t) => el('p', 'muted sm', t))); if (card.action.act === 'pc-help') { const g = el('a', 'btn sm', 'Get started'); g.href = '/get-started'; help.append(g); } a.append(help); }; row.append(b); }
+    a.append(row);
+  }
+  return a;
+}
+async function drawQr(node, text) {
+  try {
+    qrMod ??= (await import('./vendor/qrcode.mjs')).default;
+    const q = qrMod(0, 'M'); q.addData(text); q.make();
+    const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
+    const bg = document.createElementNS(svg.namespaceURI, 'rect'); bg.setAttribute('x', '-2'); bg.setAttribute('y', '-2'); bg.setAttribute('width', String(n + 4)); bg.setAttribute('height', String(n + 4)); bg.setAttribute('fill', '#fff'); svg.append(bg);
+    let d = ''; for (let r = 0; r < n; r += 1) for (let c = 0; c < n; c += 1) if (q.isDark(r, c)) d += `M${c} ${r}h1v1h-1z`;
+    const path = document.createElementNS(svg.namespaceURI, 'path'); path.setAttribute('d', d); path.setAttribute('fill', '#0b1018'); svg.append(path);
+    node.replaceChildren(svg);
+  } catch { node.replaceChildren(el('p', 'muted sm', text)); }
 }
 async function loadInvites() {
   if (!isAdminRole(state.actor?.role)) return;
@@ -2114,13 +2154,13 @@ async function boot() {
   }
   wireRail();
   state.actor = model.actor;
-  $('#svc-dot').classList.add('live'); $('#svc-text').textContent = es('🟢 Cloud service · Connected - live', 'Cloud service · Connected - live');
-  $('#account').textContent = `${model.actor.tenantId} · ${model.actor.role}`;
+  $('#svc-dot').classList.add('live'); $('#svc-text').textContent = 'Connected';
+  { const ws = friendlyWorkspace(model.actor.tenantId); $('#account').textContent = ws === 'your workspace' ? `Signed in · ${model.actor.role}` : `${ws} · ${model.actor.role}`; }
   $('#admin-link').hidden = !isAdminRole(model.actor.role); $('#signout').hidden = false;
   renderSessions(); loadSessions();
   loadEmojiMode().catch(() => {});
   loadAgentIcons().catch(() => {});
-  if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${model.actor.tenantId}!`, 'ok'); history.replaceState(null, '', location.pathname + location.hash); }
+  if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${friendlyWorkspace(model.actor.tenantId)}!`, 'ok'); history.replaceState(null, '', location.pathname + location.hash); }
   const initialView = viewFromHash(location.hash, { phone: narrow() });
   show(initialView);
   if (hashIsGuard()) openGuardPanel();
