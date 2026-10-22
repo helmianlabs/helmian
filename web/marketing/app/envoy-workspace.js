@@ -59,6 +59,8 @@ export function addressed(message, roster) {
   return roster.includes('maestro') ? ['maestro'] : roster;
 }
 
+const providerOnline = (p, online) => (p === 'maestro' ? online.size > 0 : online.has(p));
+
 export function agentStates(messages, roster, online, now = Date.now()) {
   const out = {};
   for (const p of roster) {
@@ -67,10 +69,47 @@ export function agentStates(messages, roster, online, now = Date.now()) {
     const lastAsk = [...messages].reverse().find((m) => addressed(m, roster).includes(p));
     const answered = lastAsk && messages.some((m) => m.authorSubject === `agent:${p}` && m.idempotencyKey === `reply:${lastAsk.id}`);
     const fresh = lastAsk && now - new Date(lastAsk.createdAt).getTime() < 10 * 60_000;
-    const isOnline = p === 'maestro' ? online.size > 0 : online.has(p);
+    const isOnline = providerOnline(p, online);
     out[p] = { state: !isOnline ? 'offline' : (fresh && !answered ? 'working' : 'idle'), last: last?.body ?? '' };
   }
   return out;
+}
+
+// The server's agent-work window (src/cloud/envoy-mesh.mjs agentWork): a
+// routed message stays waiting for its agent for 30 minutes, until the
+// reply lands. The roster light above is a 10-minute recency view; this is
+// the server's own definition of pending work, mirrored over the same
+// server-fed lists so the in-thread cue and the fast poll track pending
+// work itself — never a local timer's guess.
+export const AGENT_WORK_WINDOW_MS = 30 * 60_000;
+export const FAST_POLL_MS = 800;
+export const CALM_POLL_MS = 2500;
+
+// Providers (roster order) with a routed message still unanswered: posted
+// inside the work window, after the provider joined, with no reply:<id>
+// from that provider yet. Offline providers are excluded — nobody is
+// coming, so the channel must not claim an answer is on its way.
+export function pendingAgentWork(messages, roster, joined = {}, online = new Set(), now = Date.now()) {
+  const answered = new Set();
+  for (const m of messages) if (String(m.idempotencyKey ?? '').startsWith('reply:')) answered.add(`${m.authorSubject}|${String(m.idempotencyKey).slice(6)}`);
+  const due = new Set();
+  for (const m of messages) {
+    if (now - new Date(m.createdAt).getTime() > AGENT_WORK_WINDOW_MS) continue;
+    for (const p of addressed(m, roster)) {
+      if (answered.has(`agent:${p}|${m.id}`)) continue;
+      const j = joined[p];
+      if (j && new Date(m.createdAt).getTime() < Date.parse(j)) continue;
+      if (providerOnline(p, online)) due.add(p);
+    }
+  }
+  return roster.filter((p) => due.has(p));
+}
+
+// Pending work in the open channel, from the live server-fed state.
+function currentWorking() {
+  const agents = ws.config?.agents ?? [];
+  const joined = Object.fromEntries(agents.map((a) => [a.provider, a.joinedAt]));
+  return pendingAgentWork(ws.messages, agents.map((a) => a.provider), joined, ws.online);
 }
 
 // Message text -> DOM: code fences, links (open in the workbench browser), @mentions, Claim:.
@@ -100,7 +139,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, config: null, configured: false, discordBot: null, messages: [], sig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -280,6 +319,9 @@ async function loadConfig() {
   const ch = ws.channels.find((c) => c.id === id);
   if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord }; ls.set('chanMeta', seen); }
   renderHeader(); renderAgents(); renderChannels(); syncAgentsPane();
+  // A roster or join change can start (or end) pending work without any
+  // new message arriving; keep the in-thread cue honest.
+  if (ws.messages.length && currentWorking().join(',') !== ws.cueSig) renderMessages();
 }
 function renderHeader() {
   const ch = ws.channels.find((c) => c.id === ws.channelId);
@@ -343,7 +385,14 @@ async function loadMessages() {
   if (id !== ws.channelId) return;
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const sig = messages.map((m) => m.id).join(',');
-  if (sig === ws.sig) { renderAgents(); return; }
+  if (sig === ws.sig) {
+    renderAgents();
+    // No new messages, but pending work can still start or expire on
+    // server state alone (a reply window lapsing, an agent coming online):
+    // redraw the thread if the in-thread working cue changed.
+    if (currentWorking().join(',') !== ws.cueSig) renderMessages();
+    return;
+  }
   ws.sig = sig; ws.messages = messages;
   renderMessages(); renderAgents();
 }
@@ -373,6 +422,19 @@ function renderMessages() {
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
         h('div', { class: 'ew-body' }, renderBody(m.body, { onLink, onCanvas })))));
     prev = m;
+  }
+  // In-thread working cue: one row per agent with pending work in this
+  // channel, sitting where its reply will land. Driven entirely by the
+  // server-fed lists via currentWorking() — it appears when work becomes
+  // pending and clears when the reply posts or the work window lapses.
+  const working = currentWorking();
+  ws.cueSig = working.join(',');
+  for (const p of working) {
+    out.push(h('div', { class: 'ew-msg ew-answering', role: 'status' },
+      h('div', { class: 'ew-avatar' }, avatarImg(p)),
+      h('div', {}, h('div', { class: 'ew-body ew-answering-body' },
+        h('span', { class: 'ew-working-dot', 'aria-hidden': 'true' }),
+        `${NAMES[p]} is answering…`))));
   }
   if (!ws.messages.length) out.push(h('div', { class: 'ew-empty' }, ws.config?.agents?.length ? 'Say hello. Maestro answers messages nobody is named in.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.'));
   box.replaceChildren(...out);
@@ -583,8 +645,21 @@ export async function mountWorkspace(ctx) {
   ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
   await Promise.allSettled([loadPresence(), loadConfig(), loadMessages()]);
-  clearInterval(ws.timer); clearInterval(ws.slowTimer);
+  clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
   const visible = () => document.visibilityState === 'visible' && document.getElementById('shell')?.dataset.view === 'desktop';
-  ws.timer = setInterval(() => { if (visible()) loadMessages().catch(() => {}); }, 2500);
+  // Adaptive message poll: while any agent has pending work in the open
+  // channel (currentWorking, the server's agent-work rules mirrored
+  // client-side), poll fast so the reply lands the moment it posts; with
+  // nothing pending, fall back to the calm interval. The generation
+  // counter retires a chain whose mount has been superseded, so remounts
+  // never stack pollers.
+  const gen = (ws.pollGen = (ws.pollGen ?? 0) + 1);
+  const tick = async () => {
+    if (gen !== ws.pollGen) return;
+    if (visible()) await loadMessages().catch(() => {});
+    if (gen !== ws.pollGen) return;
+    ws.timer = setTimeout(tick, currentWorking().length ? FAST_POLL_MS : CALM_POLL_MS);
+  };
+  ws.timer = setTimeout(tick, CALM_POLL_MS);
   ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadConfig(); } }, 15000);
 }
