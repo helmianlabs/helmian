@@ -14,6 +14,16 @@ export const DECISION_AUDIENCE = 'helmian-executive-guard-decision-v1';
 export const GUARD_ACTION_SITE = 'hands.helmian';
 export const MAX_OUTPUT_BYTES = 64 * 1024;
 
+// The promote lever (cora-promote-lever-spec.md): an agent PREPARES work and
+// presents it; only a human whose role covers the target may approve the push
+// to live. promote_build is gated exactly like write_file, but at its own
+// Guard site so approvals for promotions are distinguishable in the audit
+// trail from ordinary PC file writes, and its Guard action binds a manifest
+// (repo + per-file SHA-256 of content), never a destination on the PC.
+export const PROMOTE_SITE = 'forge.promote';
+export const MAX_PROMOTE_FILES = 20;
+export const MAX_PROMOTE_TOTAL_BYTES = 256 * 1024;
+
 export function canonicalJson(value) {
   if (value === null || typeof value !== 'object') {
     if (typeof value === 'number' && !Number.isFinite(value)) throw new TypeError('canonicalJson: non-finite numbers are not allowed');
@@ -47,6 +57,10 @@ export const TOOLS = Object.freeze({
   run_powershell: { mutating: true, needs: ['powershell'], description: 'Run ONE allow-listed command by id (never free text). Needs a human Guard approval.' },
   open_url: { mutating: true, needs: ['pc-browser'], description: 'Open an https URL in the PC browser. Needs a human Guard approval.' },
   write_file: { mutating: true, needs: ['local-files'], description: 'Write a text file inside the PC workspace roots. Needs a human Guard approval.' },
+  // NOT dispatched to the PC spoke: the promote executor (src/promote/) runs
+  // the push itself after a Guard approval at PROMOTE_SITE. `site` overrides
+  // GUARD_ACTION_SITE in buildGuardAction for this tool only.
+  promote_build: { mutating: true, needs: [], site: PROMOTE_SITE, executor: 'promote', description: 'Promote a prepared manifest of files (path + content, hash-bound) to a registered live repo: branch + PR by default, direct-to-main only when the approved manifest says so. Needs a human Guard approval at forge.promote from an approver holding admin/owner for the target. The agent holds no push authority itself.' },
 });
 
 export class ArgError extends Error {}
@@ -56,6 +70,25 @@ function str(v, name, max) {
   if (v.length > max) throw new ArgError(`${name} is longer than ${max} characters`);
   if (/[\u0000]/.test(v)) throw new ArgError(`${name} contains a NUL byte`);
   return v;
+}
+
+const REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+function branchName(v, name) {
+  const s = str(v, name, 100);
+  if (!BRANCH_PATTERN.test(s) || s.includes('..') || s.includes('//') || s.endsWith('/') || s.endsWith('.')) {
+    throw new ArgError(`${name} is not a valid branch name`);
+  }
+  return s;
+}
+
+function repoPath(v, name) {
+  const s = str(v, name, 300);
+  if (s.includes('\\') || s.startsWith('/') || /^[A-Za-z]:/.test(s)) throw new ArgError(`${name} must be a relative path`);
+  if (s.split('/').some((part) => !part || part === '.' || part === '..')) throw new ArgError(`${name} must not contain empty, . or .. segments`);
+  return s;
 }
 
 /** Normalize and validate arguments. Returns a plain object with only known keys. */
@@ -103,6 +136,50 @@ export function validateArgs(tool, args = {}) {
       if (Buffer.byteLength(a.content, 'utf8') > MAX_OUTPUT_BYTES) throw new ArgError('content is larger than 64 KB');
       return { path: str(a.path, 'path', 1024), content: a.content };
     }
+    case 'promote_build': {
+      const repo = str(a.repo, 'repo', 100);
+      if (!REPO_PATTERN.test(repo)) throw new ArgError('repo must look like owner/name');
+      const baseBranch = branchName(a.baseBranch ?? 'main', 'baseBranch');
+      const mode = a.mode ?? 'branch-pr';
+      if (mode !== 'branch-pr' && mode !== 'direct-main') throw new ArgError("mode must be 'branch-pr' or 'direct-main'");
+      let branch;
+      if (mode === 'branch-pr') {
+        branch = branchName(a.branch, 'branch');
+        if (branch === baseBranch) throw new ArgError('branch must differ from baseBranch');
+      } else if (a.branch != null) {
+        // Direct-to-main is granted by the approval binding THIS manifest; a
+        // stray branch name would make what ships differ from what was read.
+        throw new ArgError('branch is only allowed with mode branch-pr');
+      }
+      const commitMessage = str(a.commitMessage, 'commitMessage', 200);
+      if (/[\r\n]/.test(commitMessage)) throw new ArgError('commitMessage must be one line');
+      if (!Array.isArray(a.files) || a.files.length < 1 || a.files.length > MAX_PROMOTE_FILES) {
+        throw new ArgError(`files must be an array of 1..${MAX_PROMOTE_FILES} entries`);
+      }
+      let total = 0;
+      const seen = new Set();
+      const files = a.files.map((f, i) => {
+        if (!f || typeof f !== 'object' || Array.isArray(f)) throw new ArgError(`files[${i}] must be an object`);
+        const path = repoPath(f.path, `files[${i}].path`);
+        if (seen.has(path)) throw new ArgError(`duplicate file path ${path}`);
+        seen.add(path);
+        if (typeof f.content !== 'string') throw new ArgError(`files[${i}].content is required`);
+        const bytes = Buffer.byteLength(f.content, 'utf8');
+        if (bytes > MAX_OUTPUT_BYTES) throw new ArgError(`files[${i}] is larger than 64 KB`);
+        total += bytes;
+        // The declared hash must equal the content's real hash. This is the
+        // integrity core of the lever: what a human approves (the hash in
+        // the manifest) is provably what the executor will push.
+        const sha256 = sha256Hex(f.content);
+        if (f.sha256 != null && String(f.sha256).toLowerCase() !== sha256) {
+          throw new ArgError(`files[${i}].sha256 does not match its content`);
+        }
+        return { path, sha256, content: f.content };
+      });
+      if (total > MAX_PROMOTE_TOTAL_BYTES) throw new ArgError(`files total more than ${MAX_PROMOTE_TOTAL_BYTES} bytes`);
+      files.sort((x, y) => (x.path < y.path ? -1 : 1));
+      return { repo, baseBranch, mode, ...(branch ? { branch } : {}), commitMessage, files };
+    }
     default:
       throw new ArgError(`unknown tool ${tool}`);
   }
@@ -114,16 +191,24 @@ export function validateArgs(tool, args = {}) {
 export function buildGuardAction(tool, args) {
   const summary = tool === 'run_powershell' ? `hands ${tool} ${args.commandId}`
     : tool === 'open_url' ? `hands ${tool} ${new URL(args.url).host}`
+    : tool === 'promote_build' ? `hands ${tool} ${args.repo} ${args.mode}`
     : `hands ${tool}`;
   return {
     kind: 'agent.tool',
-    site: GUARD_ACTION_SITE,
+    // A tool may pin its own Guard site (promote_build -> forge.promote);
+    // every other hands tool stays on hands.helmian.
+    site: TOOLS[tool]?.site || GUARD_ACTION_SITE,
     contentHash: sha256Hex(canonicalJson({ tool, args })),
     // 'destructive-intent' routes every mutating hands call to Guard's
     // human-approval rule; without it Guard's default is deny.
     riskSignals: ['destructive-intent', 'hands.act', `tool:${tool}`].sort(),
     summary,
   };
+}
+
+/** The manifest hash a human approves for a promotion: the Guard action's contentHash. */
+export function promoteManifestHash(args) {
+  return sha256Hex(canonicalJson({ tool: 'promote_build', args }));
 }
 
 export function guardActionHash(action) {
