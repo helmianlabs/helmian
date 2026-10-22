@@ -152,16 +152,16 @@ export async function handleEnvoyAblyRoute({
   sessionIdentity,
 } = {}) {
   // Signup: must run before tenant checks (new users have no tenant yet)
-  if (requestUrl?.pathname === '/api/signup') {
+  if (requestUrl?.pathname === '/api/signup' || requestUrl?.pathname === '/api/admin/signup') {
     const { createSignupHandler } = await import('./signup.mjs');
     const handler = createSignupHandler();
     await handler(request, response);
     return true;
   }
   // User profile (nickname, avatar): authenticated, before tenant checks
-  if (requestUrl?.pathname === '/api/profile') {
+  if (requestUrl?.pathname === '/api/profile' || requestUrl?.pathname === '/api/admin/profile') {
     const { createProfileHandler } = await import('./user-profile.mjs');
-    const handler = createProfileHandler({ getIdentity: () => sessionIdentity });
+    const handler = createProfileHandler(sessionIdentity ? { getIdentity: () => sessionIdentity } : {});
     await handler(request, response);
     return true;
   }

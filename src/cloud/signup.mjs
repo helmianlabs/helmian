@@ -14,8 +14,9 @@ let _identity = null;
 
 function getPool() {
   if (!_pool) {
-    const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) throw new Error('DATABASE_URL not set');
+    // Vercel sets HELMION_DATABASE_URL (same as live-admin); DATABASE_URL was never set there.
+    const connectionString = process.env.HELMION_DATABASE_URL || process.env.DATABASE_URL;
+    if (!connectionString) throw new Error('HELMION_DATABASE_URL not set');
     _pool = new Pool({ connectionString, max: 3 });
   }
   return _pool;
@@ -28,13 +29,25 @@ function getIdentity() {
   return _identity;
 }
 
+// Clerk browser session token (get-started page). Same instance and authorized
+// parties as Herald; subject is the Clerk user id, as in the OIDC session.
+export async function verifyClerkSessionBearer(token, env = process.env) {
+  const secretKey = String(env.CLERK_SECRET_KEY ?? '').trim();
+  if (!token || !secretKey) return null;
+  const { verifyToken } = await import('@clerk/backend');
+  const authorizedParties = String(env.HELMION_HERALD_CLERK_AUTHORIZED_PARTIES ?? '')
+    .split(',').map((v) => v.trim()).filter(Boolean);
+  const claims = await verifyToken(token, { secretKey, ...(authorizedParties.length ? { authorizedParties } : {}) });
+  return typeof claims?.sub === 'string' && /^user_[A-Za-z0-9_-]{4,120}$/.test(claims.sub) ? { subject: claims.sub } : null;
+}
+
 function cookieValue(request, name) {
   const header = request.headers?.cookie || '';
   const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-export function createSignupHandler() {
+export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBearer = verifyClerkSessionBearer, getPoolImpl = getPool } = {}) {
   return async function handleSignup(request, response) {
     if (request.method !== 'POST') {
       response.writeHead(405, { 'content-type': 'application/json' });
@@ -43,9 +56,9 @@ export function createSignupHandler() {
     }
 
     // Verify session: try cookie first, then Bearer token
-    const identity = getIdentity();
     let claimed = null;
     try {
+      const identity = getIdentityImpl();
       const cookieSession = cookieValue(request, 'helmion_admin_session');
       if (cookieSession) {
         claimed = identity.getSession(cookieSession);
@@ -54,7 +67,7 @@ export function createSignupHandler() {
         const auth = request.headers?.authorization || '';
         const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
         if (token) {
-          claimed = await identity.verifyBearer(token);
+          claimed = await verifyBearer(token);
         }
       }
     } catch {
@@ -68,8 +81,15 @@ export function createSignupHandler() {
       return;
     }
 
-    const pool = getPool();
-    const client = await pool.connect();
+    let client;
+    try {
+      client = await getPoolImpl().connect();
+    } catch (error) {
+      console.error('[signup] database unavailable:', error.message);
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Signup is temporarily unavailable, try again shortly' }));
+      return;
+    }
     try {
       // Check if user already has a tenant
       const existing = await client.query(

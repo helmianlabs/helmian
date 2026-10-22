@@ -107,6 +107,7 @@ public partial class MainWindow
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             var result = await LocalServiceHost.Connector.RequestRemoteControlEnrollmentAsync(
                 "My Helmian Desktop", timeout.Token);
+            ResetRemoteEnrollmentLabels();
             RemoteControlEnrollmentCodeText.Text = result.Challenge.UserCode;
             RemoteControlEnrollmentUriText.Text = result.Challenge.VerificationUri;
             RemoteControlEnrollmentPanel.Visibility = System.Windows.Visibility.Visible;
@@ -155,9 +156,12 @@ public partial class MainWindow
         if (state.Enrollment.AccountOwned)
         {
             StopRemoteEnrollmentQr();
-            RemoteControlEnrollmentPanel.Visibility = System.Windows.Visibility.Collapsed;
             RemoteControlRedeemButton.Visibility = System.Windows.Visibility.Collapsed;
             RemoteControlEnrollButton.Visibility = System.Windows.Visibility.Collapsed;
+            // An enrolled desktop used to hide the QR for good, so a new or reset
+            // phone had nothing to scan. Keep a plain Herald QR (no code, nothing
+            // secret): the phone signs in with the same account and sees this PC.
+            ShowConnectedHeraldQr();
         }
         else
         {
@@ -264,6 +268,25 @@ public partial class MainWindow
         _remoteEnrollmentTimer.Tick += async (_, _) => await RemoteEnrollmentTickAsync();
         _remoteEnrollmentTimer.Start();
         UpdateRemoteEnrollmentExpiryText();
+    }
+
+    private void ResetRemoteEnrollmentLabels()
+    {
+        RemoteControlEnrollmentHintText.Text = "Open your phone camera and point it at the code. Sign in on the phone and this desktop connects by itself.";
+        RemoteControlEnrollmentCodeLabel.Text = "OR ENTER THIS ONE-TIME CODE";
+    }
+
+    private void ShowConnectedHeraldQr()
+    {
+        var herald = new Uri(HeraldRemoteOrigin, "herald").AbsoluteUri;
+        try { RemoteControlEnrollmentQrImage.Source = RenderPairingQr(herald); }
+        catch { return; }
+        RemoteControlEnrollmentHintText.Text = "This PC is connected. To add a phone, scan the code and sign in with the same Helmian account.";
+        RemoteControlEnrollmentCodeLabel.Text = "STATUS";
+        RemoteControlEnrollmentCodeText.Text = "Connected";
+        RemoteControlEnrollmentUriText.Text = $"{herald} (sign in with the same Helmian account)";
+        RemoteControlEnrollmentQrPanel.Visibility = System.Windows.Visibility.Visible;
+        RemoteControlEnrollmentPanel.Visibility = System.Windows.Visibility.Visible;
     }
 
     private void StopRemoteEnrollmentQr()
