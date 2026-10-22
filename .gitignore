@@ -89,3 +89,6 @@ fuck-claude/
 # sweep would have published them.
 .team-oauth-provisioning/
 
+
+# Executive Guard local runner data (signing key + audit log)
+.executive-guard/
