@@ -12,6 +12,7 @@
 // whatever the hub says. Read-only jobs are confined to the configured workspace
 // roots and refuse secret-looking paths.
 
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdir, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, platform } from 'node:os';
@@ -151,7 +152,24 @@ function globToRegex(glob) {
 export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 'hands-mcp', spawnImpl = spawn, fetchImpl = fetch, now = Date.now, usedDecisionsPath = null, usedStore = null } = {}) {
   const usedDecisions = usedStore || createUsedDecisionStore({ path: usedDecisionsPath, now });
 
+  // Mutating jobs return an `execution` record the hub forwards to Executive Guard
+  // (POST /v1/audit/outcomes): refused | succeeded | failed, when it ran, and a SHA-256
+  // of the output. Never the output itself.
   async function execute(job) {
+    const spec = TOOLS[job?.tool];
+    if (!spec?.mutating) return executeInner(job);
+    const iso = () => new Date(now()).toISOString();
+    let startedAt = null;
+    const result = await executeInner(job, () => { startedAt = iso(); });
+    const finishedAt = iso();
+    if (!startedAt) return { ...result, execution: { status: 'refused', finishedAt, error: result.error || 'refused by the PC' } };
+    const execution = result.ok
+      ? { status: 'succeeded', startedAt, finishedAt, resultHash: createHash('sha256').update(typeof result.output === 'string' ? result.output : JSON.stringify(result.output ?? null)).digest('hex') }
+      : { status: 'failed', startedAt, finishedAt, error: result.error || 'failed' };
+    return { ...result, execution };
+  }
+
+  async function executeInner(job, markStarted = () => {}) {
     const spec = TOOLS[job?.tool];
     if (!spec) return { ok: false, error: `unknown tool ${job?.tool}` };
     let args;
@@ -164,6 +182,7 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
       try { claimed = await usedDecisions.claim(v.claims.decisionId, v.claims.exp * 1000); }
       catch (e) { return { ok: false, error: `refused by the PC: ${e.message}` }; }
       if (!claimed) return { ok: false, error: 'refused by the PC: that Guard approval was already used' };
+      markStarted();
     }
 
     try {

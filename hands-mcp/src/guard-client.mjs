@@ -5,6 +5,14 @@
 import { randomBytes } from 'node:crypto';
 import { buildGuardAction, verifyApproval } from './shared/protocol.mjs';
 
+/** decisionId from a signed decision envelope, WITHOUT trusting it (only used to report "refused"; Guard checks it). */
+export function decisionIdOf(envelope) {
+  try {
+    const claims = JSON.parse(Buffer.from(String(envelope?.payload ?? ''), 'base64url').toString('utf8'));
+    return typeof claims?.decisionId === 'string' && claims.verdict !== 'ask' ? claims.decisionId : null;
+  } catch { return null; }
+}
+
 export function createGuardClient({ url, deviceToken, publicKeyX, deviceId, timeoutMs = 5000, approvalWaitMs = 45000, pollMs = 2000, fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   const live = Boolean(url && deviceToken && publicKeyX);
 
@@ -25,7 +33,7 @@ export function createGuardClient({ url, deviceToken, publicKeyX, deviceId, time
 
   function check(envelope, tool, args, nonce) {
     const v = verifyApproval({ publicKeyX, envelope, tool, args, nonce, deviceId });
-    return v.ok ? { outcome: 'allow', envelope, claims: v.claims } : deny(`Guard decision rejected: ${v.error}.`);
+    return v.ok ? { outcome: 'allow', envelope, claims: v.claims } : deny(`Guard decision rejected: ${v.error}.`, { unusedDecisionId: decisionIdOf(envelope) });
   }
 
   /** Wait for a pending approval; returns allow | deny | pending. */
@@ -39,7 +47,7 @@ export function createGuardClient({ url, deviceToken, publicKeyX, deviceId, time
       if (r.status !== 200 || !r.body) return deny(`Executive Guard answered ${r.status}; denied.`);
       const status = r.body.status;
       if (status === 'approved') return check(r.body.decision, tool, args, nonce);
-      if (status === 'denied') return deny(`A human denied this in Guard${r.body.decidedBy ? ` (${r.body.decidedBy})` : ''}.`);
+      if (status === 'denied') return deny(`A human denied this in Guard${r.body.decidedBy ? ` (${r.body.decidedBy})` : ''}.`, { unusedDecisionId: decisionIdOf(r.body.decision) });
       if (status === 'expired') return deny('The Guard approval expired; ask again.');
       if (status !== 'pending') return deny(`Unknown Guard approval state "${status}"; denied.`);
       if (Date.now() + pollMs > deadline) return { outcome: 'pending', approvalId, reason: r.body.reason || 'Waiting for a human to approve in Guard.' };
@@ -64,10 +72,31 @@ export function createGuardClient({ url, deviceToken, publicKeyX, deviceId, time
     }
     if (r.body.verdict === 'allow') {
       // An automatic allow is not enough for a mutating hands call: it must be a human approval.
-      return { ...deny('Guard allowed this without a human approval; hands requires one for every mutating action.'), nonce };
+      return { ...deny('Guard allowed this without a human approval; hands requires one for every mutating action.', { unusedDecisionId: decisionIdOf(r.body.decision) }), nonce };
     }
-    return { ...deny(`Guard denied: ${r.body.reason || 'policy'}.`), nonce };
+    return { ...deny(`Guard denied: ${r.body.reason || 'policy'}.`, { unusedDecisionId: r.body.verdict === 'deny' ? decisionIdOf(r.body.decision) : null }), nonce };
   }
 
-  return { live, authorize, awaitApproval };
+  /**
+   * POST /v1/audit/outcomes (executive-guard/docs/OUTCOMES.md): what happened after a decision.
+   * Best effort and never throws: an outcome that can't be recorded must not change the tool's answer.
+   * Sends exactly the documented fields (Guard rejects unknown ones). Never the result itself.
+   */
+  async function reportOutcome({ decisionId, nonce, status, startedAt, finishedAt, resultHash, error }) {
+    if (!live) return { recorded: false, error: 'guard-not-live' };
+    if (!decisionId || !nonce) return { recorded: false, error: 'no-decision' };
+    const body = { decisionId, nonce, status, finishedAt: finishedAt || new Date().toISOString() };
+    if (status !== 'refused' || startedAt) body.startedAt = startedAt || body.finishedAt;
+    if (resultHash && /^[0-9a-f]{64}$/.test(resultHash)) body.resultHash = resultHash;
+    if (error && status !== 'succeeded') body.error = String(error).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
+    try {
+      const r = await call('/v1/audit/outcomes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      if (r.status === 201) return { recorded: true, auditSeq: r.body?.auditSeq ?? null };
+      return { recorded: false, status: r.status, error: r.body?.error || `http-${r.status}` };
+    } catch (e) {
+      return { recorded: false, error: e.name === 'AbortError' ? 'timeout' : 'unreachable' };
+    }
+  }
+
+  return { live, authorize, awaitApproval, reportOutcome };
 }
