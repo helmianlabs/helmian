@@ -111,6 +111,11 @@
     privacyActiveFp: null,
     privacyShownAt: 0,
     approvalTimer: null,
+    // Optional cross-check with the Flags scanner (POST /api/flags/scan), off
+    // unless the person turned it on in the popup. Cached from the worker.
+    flagsScan: false,
+    scanActiveFp: null,
+    scanShownAt: 0,
     // Flags lane: fingerprints already shown and reported on this page.
     flagsShown: new Set(),
     // Block-ledger tally for this tab. Counted separately from dangerousIds
@@ -575,7 +580,7 @@
       if (Date.now() - state.allowOnce.usedAt < 1500 || !state.allowOnce.usedAt) {
         if (!state.allowOnce.usedAt) {
           state.allowOnce.usedAt = Date.now();
-          logToLedger({
+          if (!state.allowOnce.quiet) logToLedger({
             kind: 'ai-flag',
             site: SOURCE,
             matched: `send-approved: ${state.allowOnce.by}`,
@@ -597,7 +602,113 @@
     }
 
     const privacy = HelmionSanitize.scan(text);
-    if (privacy.found) stopForPrivacy(event, composer, text, fp, privacy);
+    if (privacy.found) { stopForPrivacy(event, composer, text, fp, privacy); return; }
+    if (state.flagsScan && text.trim()) crossCheckWithFlags(event, composer, text, fp);
+    refreshFlagsConfig();
+  }
+
+  function refreshFlagsConfig() {
+    askWorker({ type: 'helmion:flags-config' })
+      .then((response) => { state.flagsScan = Boolean(response && response.scanBeforeSend === true); })
+      .catch(() => { /* keep the last answer */ });
+  }
+
+  // Guard's own scan found nothing. The person asked for a second opinion from
+  // their Flags scanner, so hold this one send until it answers. The scanner
+  // stores nothing. If it cannot answer, Guard's own result stands and the card
+  // says so; the message is never sent without the person pressing Send again.
+  function crossCheckWithFlags(event, composer, text, fp) {
+    stopEvent(event);
+    const now = Date.now();
+    if (state.scanActiveFp === fp && now - state.scanShownAt < 1500) return;
+    state.scanActiveFp = fp;
+    state.scanShownAt = now;
+    const cancel = { id: 'cancel', label: 'Cancel', onClick: () => { state.scanActiveFp = null; HelmionUI.hideAskAlert(); } };
+    HelmionUI.showAskAlert({
+      tone: 'warn',
+      title: 'Checking with your Flags scanner',
+      message: 'Guard found nothing. Your Flags scanner is double-checking before this is sent.',
+      status: 'Checking…',
+      actions: [cancel],
+    });
+    askWorker({ type: 'helmion:flags-scan', text })
+      .then((response) => {
+        if (state.scanActiveFp !== fp) return;
+        const result = response && response.result;
+        if (!result || !result.ok) {
+          grantOnce(fp, 'local-check-only', { quiet: true });
+          const why = {
+            'too-long': 'the message is too long for the scanner',
+            budget: "today's call budget is used up",
+            'daily-limit': 'the Flags account is over its daily limit',
+            'key-rejected': 'the API key was refused',
+          }[result && result.skipped] || 'it could not be reached';
+          HelmionUI.showAskAlert({
+            tone: 'warn',
+            title: 'Flags scanner did not check this',
+            message: `Not checked because ${why}. Guard's own check found nothing. Press Send again to send it.`,
+            actions: [cancel],
+          });
+          return;
+        }
+        const leaks = Array.isArray(result.leaks) ? result.leaks : [];
+        if (!leaks.length) {
+          state.scanActiveFp = null;
+          grantOnce(fp, 'flags-scan-clean', { quiet: true });
+          HelmionUI.showAskAlert({
+            tone: 'ok',
+            title: 'Flags scanner found nothing',
+            message: 'Press Send again to send it.',
+            actions: [cancel],
+          });
+          return;
+        }
+        const what = Array.from(new Set(leaks.map((l) => l.reason || l.rule))).slice(0, 3).join('; ');
+        logToLedger({
+          kind: 'ai-flag',
+          site: SOURCE,
+          matched: `flags-scan: ${leaks.map((l) => l.rule).join(',')}`,
+          // The scanner's redacted copy: never the raw text.
+          text: String(result.redacted || ''),
+          outcome: 'paused-before-send',
+        });
+        HelmionUI.showAskAlert({
+          tone: 'danger',
+          title: 'Your Flags scanner found something Guard missed',
+          message: `${what}. Nothing has been sent.`,
+          actions: [
+            {
+              id: 'redact',
+              label: 'Redact and keep editing',
+              primary: true,
+              onClick: () => {
+                replaceComposerText(composer, String(result.redacted || ''));
+                state.scanActiveFp = null;
+                HelmionUI.hideAskAlert();
+                if (typeof composer.focus === 'function') composer.focus();
+              },
+            },
+            {
+              id: 'send-anyway',
+              label: 'Send as written',
+              onClick: () => {
+                grantOnce(fp, 'person-after-flags-scan');
+                HelmionUI.showAskAlert({ tone: 'ok', title: 'Allowed once', message: 'Press Send again to send it as written.', actions: [cancel] });
+              },
+            },
+            cancel,
+          ],
+        });
+      }, () => {
+        if (state.scanActiveFp !== fp) return;
+        grantOnce(fp, 'local-check-only', { quiet: true });
+        HelmionUI.showAskAlert({
+          tone: 'warn',
+          title: 'Flags scanner did not check this',
+          message: "Guard's own check found nothing. Press Send again to send it.",
+          actions: [cancel],
+        });
+      });
   }
 
   // ----------------------------------------------------------- privacy lane
@@ -675,8 +786,8 @@
     if (!done) composer.appendChild(document.createTextNode(value));
   }
 
-  function grantOnce(fp, by) {
-    state.allowOnce = { fp, by, usedAt: 0 };
+  function grantOnce(fp, by, options) {
+    state.allowOnce = { fp, by, usedAt: 0, quiet: Boolean(options && options.quiet) };
   }
 
   function stopApprovalPolling() {
@@ -952,6 +1063,7 @@
     }
     window.addEventListener('input', inspectPromptDraft, true);
     window.addEventListener('paste', inspectPaste, true);
+    refreshFlagsConfig();
   }
 
   function noteAudit(result) {

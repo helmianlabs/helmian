@@ -261,13 +261,58 @@ $('execSave').addEventListener('click', async () => {
 
 async function refreshFlagsSettings() {
   const result = await askWithPayload('helmion:flags-settings', { settings: {} });
-  if (!result.ok || !result.settings) return;
+  if (!result.ok || !result.settings) return null;
   const s = result.settings;
   $('flagsEnabled').checked = s.enabled === true;
-  $('flagsUrl').value = s.flagsUrl || '';
-  $('flagsStatus').textContent = !s.enabled
-    ? 'Off. Flags are shown and logged on this computer only.'
-    : `${s.hasToken ? 'On.' : 'On, but no token is set, so nothing is sent.'}${s.queued ? ` ${s.queued} waiting to be sent.` : ''}`;
+  $('flagsUrl').value = s.baseUrl || '';
+  $('flagsScan').checked = s.scanBeforeSend === true;
+  $('flagsBudget').value = String(s.dailyBudget || 100);
+  $('flagsKey').placeholder = s.hasKey ? 'Key saved (paste a new one to replace it)' : 'smk_… (shown once on your dashboard)';
+  let text;
+  if (!s.enabled) text = 'Off. Flags are shown and logged on this computer only.';
+  else if (!s.baseUrl || !s.hasKey) text = 'On, but the server URL or API key is missing, so nothing is sent.';
+  else if (s.keyRejected) text = 'The Flags server refused the API key (wrong, revoked, or missing a scope). Paste a new key.';
+  else if (s.pausedUntil) text = `The Flags account hit its daily call limit. Paused until ${new Date(s.pausedUntil).toLocaleString()}.`;
+  else text = `On. ${s.callsToday} of ${s.dailyBudget} calls used today.`;
+  if (s.queued) text += ` ${s.queued} waiting to be sent.`;
+  if (s.lastError && s.enabled && !s.keyRejected && !s.pausedUntil) text += ` Last problem: ${s.lastError}`;
+  $('flagsStatus').textContent = text;
+  return s;
+}
+
+function renderAlerts(result) {
+  const list = $('flagsAlerts');
+  list.replaceChildren();
+  if (!result || !result.ok && !result.alerts) { $('flagsAlertsStatus').textContent = 'Could not check.'; return; }
+  const alerts = result.alerts || [];
+  for (const a of alerts) {
+    // textContent only: alert text comes from the server.
+    const li = document.createElement('li');
+    li.className = `alert sev-${a.severity}`;
+    const head = document.createElement('strong');
+    head.textContent = `${a.severity.toUpperCase()} · ${a.category}${a.source_ai ? ` · ${a.source_ai}` : ''}`;
+    const reason = document.createElement('div');
+    reason.textContent = a.reason;
+    li.append(head, reason);
+    if (a.excerpt) { const ex = document.createElement('div'); ex.className = 'muted'; ex.textContent = a.excerpt; li.append(ex); }
+    const when = document.createElement('div'); when.className = 'muted';
+    when.textContent = a.created_at ? new Date(a.created_at).toLocaleString() : '';
+    li.append(when);
+    list.append(li);
+  }
+  const skipped = {
+    'not-enabled': 'Reporting is off.', 'no-url': 'No server URL set.', 'no-key': 'No API key set.',
+    'key-rejected': 'The API key was refused.', 'daily-limit': 'Paused: daily call limit.', budget: 'Daily call budget used up.',
+  }[result.skipped];
+  $('flagsAlertsStatus').textContent = skipped
+    || (alerts.length ? `${result.unseen || 0} new. Last checked ${result.polledAt ? new Date(result.polledAt).toLocaleTimeString() : 'never'}.` : 'No high or critical flags.');
+}
+
+async function refreshAlerts(force) {
+  const result = await askWithPayload('helmion:flags-alerts', { options: { force } });
+  renderAlerts(result);
+  // Opening the popup counts as seeing them.
+  if (result && result.ok && result.unseen) askWithPayload('helmion:flags-alerts', { options: { markSeen: true } });
 }
 
 $('flagsSave').addEventListener('click', async () => {
@@ -276,13 +321,23 @@ $('flagsSave').addEventListener('click', async () => {
     const granted = await requestOrigin(url);
     if (!granted) { $('flagsStatus').textContent = 'Permission to reach that URL was not granted, so nothing was saved.'; return; }
   }
+  const budget = $('flagsBudget').value.trim();
   const saved = await askWithPayload('helmion:flags-settings', {
-    settings: { enabled: $('flagsEnabled').checked, flagsUrl: url, token: $('flagsToken').value || undefined },
+    settings: {
+      enabled: $('flagsEnabled').checked,
+      baseUrl: url,
+      apiKey: $('flagsKey').value || undefined,
+      scanBeforeSend: $('flagsScan').checked,
+      dailyBudget: budget ? Number(budget) : undefined,
+    },
   });
+  // The key field is cleared whatever happened; it is never shown again.
+  $('flagsKey').value = '';
   if (!saved.ok) { $('flagsStatus').textContent = `Not saved: ${saved.error}`; return; }
-  $('flagsToken').value = '';
   await refreshFlagsSettings();
 });
 
+$('flagsRefresh').addEventListener('click', () => refreshAlerts(true));
+
 refreshExecutiveSettings();
-refreshFlagsSettings();
+refreshFlagsSettings().then((s) => { if (s && s.enabled) refreshAlerts(false); });

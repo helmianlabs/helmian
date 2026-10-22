@@ -17,6 +17,7 @@ export const fake = {
   // 'silent'  never answer, so the content script's timeout fires
   // 'missing' answer with no listener, the way a dead service worker looks
   mode: 'normal',
+  pageUrl: 'https://chatgpt.com/c/test-conversation?model=x',
   badgeCalls,
   listeners,
   storageBag,
@@ -31,7 +32,9 @@ export const fake = {
 
 export const chrome = {
   runtime: {
+    id: 'helmion-guard-test-id',
     lastError: undefined,
+    getURL(path) { return `chrome-extension://helmion-guard-test-id/${String(path).replace(/^\//, '')}`; },
 
     onMessage: {
       addListener(listener) {
@@ -50,7 +53,10 @@ export const chrome = {
           return;
         }
 
-        const sender = { tab: { id: 7 } };
+        // What Chrome sets for a content script message: the extension id,
+        // the frame URL and the tab.
+        const pageUrl = fake.pageUrl;
+        const sender = { id: chrome.runtime.id, url: pageUrl, tab: { id: 7, url: pageUrl } };
         let answered = false;
         const sendResponse = (response) => {
           answered = true;

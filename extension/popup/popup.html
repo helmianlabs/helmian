@@ -64,15 +64,24 @@
   </section>
 
   <section id="flags" aria-live="polite">
-    <h2>Flags reporting (opt-in)</h2>
-    <p class="muted">Flags (evasive answers, leaked secrets, harmful code) are always shown and logged here. Turn this on to also report them, redacted, to a Flags API.</p>
-    <label class="row"><input id="flagsEnabled" type="checkbox"> Report flags</label>
-    <label class="row">Flags API URL <input id="flagsUrl" type="url" autocomplete="off" placeholder="https://flags.example"></label>
-    <label class="row">Flags token <input id="flagsToken" type="password" autocomplete="off" placeholder="Paste Flags API token"></label>
+    <h2>Flags account (opt-in)</h2>
+    <p class="muted">Flags (evasive answers, leaked secrets, harmful code) are always shown and logged here. Turn this on to also report them, redacted, to your Flags account (Shared Memory). Off by default.</p>
+    <label class="row"><input id="flagsEnabled" type="checkbox"> Report flags to my Flags account</label>
+    <label class="row">Server URL <input id="flagsUrl" type="url" autocomplete="off" placeholder="https://memory.example.com"></label>
+    <label class="row">API key <input id="flagsKey" type="password" autocomplete="off" spellcheck="false" placeholder="smk_… (shown once on your dashboard)"></label>
+    <label class="row"><input id="flagsScan" type="checkbox"> Also double-check each message with the Flags scanner before it is sent (sends the message text, after Guard's own redaction, to your Flags server; nothing is stored)</label>
+    <label class="row">Daily call budget <input id="flagsBudget" type="number" min="1" max="100000" step="1" placeholder="100"></label>
     <div class="actions">
       <button id="flagsSave" type="button">Save flags settings</button>
     </div>
     <p id="flagsStatus" class="muted" role="status"></p>
+    <h3>Alerts from your Flags account</h3>
+    <p class="muted">High and critical flags from every AI connected to the account.</p>
+    <div class="actions">
+      <button id="flagsRefresh" type="button">Check now</button>
+    </div>
+    <p id="flagsAlertsStatus" class="muted" role="status"></p>
+    <ul id="flagsAlerts" class="alerts"></ul>
   </section>
 
   <p id="confirm" class="confirm" hidden>
