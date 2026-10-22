@@ -44,6 +44,14 @@ canonical JSON claims `{ aud, decisionId, verdict, ruleId, actionHash, deviceId,
 nonce, iat, exp, approvalId?, decidedBy? }`, signed with Ed25519. Decisions live
 5 minutes; approvals expire after 15 minutes; nonces cannot be replayed.
 
+## Reporting outcomes
+
+`POST /v1/audit/outcomes`, using the device bearer token, records what happened after a decision: `succeeded`, `failed` or `refused`, with times and an optional result hash. The report becomes a `decision.outcome` entry in the hash-chained audit. Unknown decisions, other devices' decisions, a wrong nonce, and duplicates are refused. The exact request, responses and error codes are in [docs/OUTCOMES.md](docs/OUTCOMES.md).
+
+## Self-hosting
+
+[deploy/DEPLOY.md](deploy/DEPLOY.md) explains how to run it on a Hetzner box behind Caddy. It covers the Dockerfile, an example env file, a Caddy snippet, and volumes for the signing key and the audit log.
+
 ## Used by the hands connector
 
 `hands-mcp/` (merged in #56) calls this server as a device: `POST /v1/decisions`

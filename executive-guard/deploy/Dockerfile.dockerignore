@@ -1,0 +1,6 @@
+# Build context filter for executive-guard/deploy/Dockerfile (BuildKit reads
+# <Dockerfile>.dockerignore). Only what the image copies is sent.
+*
+!executive-guard/bin/**
+!executive-guard/src/**
+!extension/background/redact.js
