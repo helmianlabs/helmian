@@ -31,10 +31,10 @@ public sealed class BridgeWorker : BackgroundService
         await Task.WhenAll(
             SuperviseAsync("Bridge", () =>
             {
-                var (launch, reason) = BridgeLocator.Resolve(AppContext.BaseDirectory, Environment.GetEnvironmentVariable("HELMIAN_ROOT"), FindNode(), File.Exists);
+                var (launch, reason) = BridgeLocator.Resolve(AppContext.BaseDirectory, HelmianRoot(), FindNode(), File.Exists);
                 return (launch, reason, false);
             }, Array.Empty<string>(), appData, stoppingToken),
-            SuperviseAsync("Hands spoke", () => SpokeLocator.Resolve(AppContext.BaseDirectory, Environment.GetEnvironmentVariable("HELMIAN_ROOT"), FindNode(), appData, File.Exists),
+            SuperviseAsync("Hands spoke", () => SpokeLocator.Resolve(AppContext.BaseDirectory, HelmianRoot(), FindNode(), appData, File.Exists),
                 StrippedForSpoke, appData, stoppingToken)).ConfigureAwait(false);
     }
 
@@ -78,6 +78,7 @@ public sealed class BridgeWorker : BackgroundService
                 if (!string.IsNullOrWhiteSpace(appData) && string.IsNullOrWhiteSpace(info.Environment.TryGetValue("APPDATA", out var cur) ? cur : null))
                     info.Environment["APPDATA"] = appData;
                 using var process = Process.Start(info) ?? throw new InvalidOperationException("Process.Start returned null.");
+                ChildJob.Track(process); // if this exe is killed (sign-out, task stop), its children go with it
                 process.StandardInput.Close(); // never wait on a prompt: no console, no passphrase
                 process.OutputDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.LogInformation("[{Name}] {Line}", name, e.Data); };
                 process.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.LogWarning("[{Name}] {Line}", name, e.Data); };
@@ -95,6 +96,9 @@ public sealed class BridgeWorker : BackgroundService
             try { await Task.Delay(RestartBackoff.Next(failures), stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
         }
     }
+
+    private static string? HelmianRoot() => InstallConfig.HelmianRoot(AppContext.BaseDirectory,
+        Environment.GetEnvironmentVariable("HELMIAN_ROOT"), p => File.Exists(p) ? File.ReadAllText(p) : null);
 
     private static string? FindNode()
     {
