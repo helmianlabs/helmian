@@ -182,7 +182,7 @@ function show(view) {
     view = 'console';
   }
   shell.dataset.view = view;
-  for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view;
+  for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view && !p.closest('#chat-panel');
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
   $('#view-title').textContent = viewTitles(state.emojiMode)[view];
   const adv = $('#advanced-nav');
@@ -743,36 +743,48 @@ async function loadConsole() {
     } catch {}
   }
   await loadLog();
-  // Poll for new messages every 3 seconds when the page is visible.
+  // Poll for new messages every 3 seconds when the page is visible (one timer, not one per visit).
   // The bridge posts replies via the API; without polling the user must
   // manually refresh or switch tabs to see them.
-  setInterval(() => {
+  if (!consolePollTimer) consolePollTimer = setInterval(() => {
     if (document.visibilityState !== 'visible') return;
     if (!state.channelId) return;
     loadLog().catch(() => {});
   }, 3000);
-  // Move chat into the sliding panel ("wall of sliding glass doors").
-  // The middle becomes the Maestro console; chat slides in from the right.
+  placeChat();
+}
+// Wide screens: chat lives in the sliding panel ("wall of sliding glass doors") and is
+// reachable from every view. Phones (<= 768px): the panel would sit off-screen, leaving the
+// Chat view blank with the composer (and its "+") unreachable, so chat stays inline in the view.
+let consolePollTimer = null;
+let consoleHome = null;
+function placeChat() {
   try {
     const consoleView = document.getElementById('view-console');
     const panelBody = document.getElementById('chat-panel-body');
     const panel = document.getElementById('chat-panel');
     const toggle = document.getElementById('chat-panel-toggle');
     const closeBtn = document.getElementById('chat-panel-close');
-    if (consoleView && panelBody && panel && toggle) {
-      panelBody.appendChild(consoleView);
-      consoleView.hidden = false;
-      panel.hidden = false;
-      toggle.hidden = false;
-      const openPanel = () => panel.classList.add('open');
-      const closePanel = () => panel.classList.remove('open');
-      toggle.onclick = openPanel;
-      if (closeBtn) closeBtn.onclick = closePanel;
-      // Open by default on desktop, closed on mobile
-      if (window.innerWidth > 768) openPanel();
+    if (!consoleView || !panelBody || !panel || !toggle) return;
+    if (!consoleHome) { consoleHome = document.createComment('view-console'); consoleView.before(consoleHome); }
+    if (narrow()) {
+      if (consoleView.parentNode !== consoleHome.parentNode) consoleHome.after(consoleView);
+      panel.classList.remove('open');
+      panel.hidden = true;
+      toggle.hidden = true;
+      consoleView.hidden = shell.dataset.view !== 'console';
+      return;
     }
+    if (consoleView.parentNode !== panelBody) panelBody.appendChild(consoleView);
+    consoleView.hidden = false;
+    panel.hidden = false;
+    toggle.hidden = false;
+    toggle.onclick = () => panel.classList.add('open');
+    if (closeBtn) closeBtn.onclick = () => panel.classList.remove('open');
+    if (shell.dataset.view === 'console') panel.classList.add('open');
   } catch {}
 }
+window.matchMedia('(max-width: 900px)').addEventListener?.('change', () => { if (consoleHome) placeChat(); });
 async function loadLog() {
   const log = $('#log');
   const sys = (t) => { const d = el('div', 'line sys'); d.append(el('span', 'ts', `[${new Date().toTimeString().slice(0, 8)}] `), document.createTextNode(t)); return d; };
