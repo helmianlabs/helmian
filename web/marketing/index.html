@@ -62,7 +62,7 @@
             <a class="button button-secondary" href="/herald">Open Herald</a>
             <a class="button button-secondary" href="/admin/">Open Helmian Cloud</a>
             <a class="button button-secondary" href="/herald">Sign in</a>
-            <a class="button button-primary" href="/api/billing/checkout?product=helmian_individual">Download Helmian for Windows · Free</a>
+            <a class="button button-primary" href="/app">Open the web app · Free</a>
             <a class="button button-secondary" href="/api/billing/checkout?product=helmian_guard">Get Guard · Free</a>
           </div>
           <ul class="posture-list" aria-label="Product posture">
@@ -143,7 +143,7 @@
           <p>Both downloads are free. Create a free account, then your download starts. No card required.</p>
         </div>
         <div class="feature-grid">
-          <article class="feature-card"><h3>Helmian Individual · Free</h3><p>Personal workspace for one operator. Windows 10 and 11 (64-bit) installer.</p><a class="button button-primary" href="/api/billing/checkout?product=helmian_individual" data-download="helmian">Download for Windows (.exe) · Free</a><p class="download-note">Windows may show a SmartScreen notice for new apps. Choose More info, then Run anyway.</p></article>
+          <article class="feature-card"><h3>Helmian Individual · Free</h3><p>Personal workspace for one operator, in your browser today.</p><a class="button button-primary" href="/app" data-download="helmian">Windows app coming soon · Use the web app</a><p class="download-note">The Windows 10 and 11 installer is not released yet. The web app is free and needs no card.</p></article>
           <article class="feature-card"><h3>Helmian Guard · Free</h3><p>Browser posture and evidence review package.</p><a class="button button-primary" href="/api/billing/checkout?product=helmian_guard" data-download="guard">Get Guard · Free</a></article>
         </div>
         <p data-guard-checkout-status>Free account required so we can send updates. No payment is taken.</p>
@@ -206,30 +206,24 @@
             <p class="eyebrow"><span></span> Video demos</p>
             <h2 id="demos-title">See the boundaries in the product.</h2>
           </div>
-          <p>Watch the approved desktop and Guard recordings. Future workflow demos remain clearly labeled until they are ready.</p>
+          <p>Real screen recordings of the desktop, Guard, and a multi-agent project.</p>
         </div>
         <div class="demo-grid">
-          <article class="demo-card" data-video-key="desktop-overview" data-video-state="placeholder">
-            <div class="video-frame video-placeholder" data-video-frame>
-              <span class="play-mark" aria-hidden="true"></span>
-              <p>Demo video slot</p>
-              <small>16:9 · Desktop overview</small>
+          <article class="demo-card" data-video-key="desktop-overview" data-video-state="ready">
+            <div class="video-frame" data-video-frame>
+              <video controls preload="metadata" playsinline src="/media/helmian-desktop-overview.mp4" poster="/media/helmian-desktop-overview.jpg" aria-label="Helmian demo: Desktop overview"></video>
             </div>
             <div class="demo-copy"><p>01 / DESKTOP</p><h3>Helmian overview</h3><span data-video-caption>Projects, Console, navigation, and visible operating posture.</span></div>
           </article>
-          <article class="demo-card" data-video-key="guard-review" data-video-state="placeholder">
-            <div class="video-frame video-placeholder" data-video-frame>
-              <span class="play-mark" aria-hidden="true"></span>
-              <p>Demo video slot</p>
-              <small>16:9 · Guard workflow</small>
+          <article class="demo-card" data-video-key="guard-review" data-video-state="ready">
+            <div class="video-frame" data-video-frame>
+              <video controls preload="metadata" playsinline src="/media/helmian-guard-review.mp4" poster="/media/helmian-guard-review.jpg" aria-label="Helmian demo: Guard workflow"></video>
             </div>
             <div class="demo-copy"><p>02 / REVIEW</p><h3>Guard and safety review</h3><span data-video-caption>Evidence, stale or unknown state, and review-before-install posture.</span></div>
           </article>
-          <article class="demo-card" data-video-key="project-flow" data-video-state="placeholder">
-            <div class="video-frame video-placeholder" data-video-frame>
-              <span class="play-mark" aria-hidden="true"></span>
-              <p>Demo video slot</p>
-              <small>16:9 · Project workflow</small>
+          <article class="demo-card" data-video-key="project-flow" data-video-state="ready">
+            <div class="video-frame" data-video-frame>
+              <video controls preload="metadata" playsinline src="/media/helmian-project-flow.mp4" poster="/media/helmian-project-flow.jpg" aria-label="Helmian demo: Project workflow"></video>
             </div>
             <div class="demo-copy"><p>03 / WORKFLOW</p><h3>From project to Console</h3><span data-video-caption>Create or select a project, then continue with the workspace in view.</span></div>
           </article>
@@ -239,11 +233,11 @@
       <section class="contact-band shell" id="contact" aria-labelledby="contact-title">
         <div>
           <p class="eyebrow"><span></span> Follow the work</p>
-          <h2 id="contact-title">Approved demos and product material will live here.</h2>
+          <h2 id="contact-title">Read the code, or get in touch.</h2>
         </div>
         <div class="contact-actions">
-          <a class="button button-primary" href="#" data-link-key="product-material" aria-disabled="true" title="Link will be added after approval">Product material</a>
-          <a class="button button-secondary" href="#" data-link-key="contact" aria-disabled="true" title="Link will be added after approval">Contact</a>
+          <a class="button button-primary" href="https://github.com/helmianlabs/helmian" data-link-key="product-material">View on GitHub</a>
+          <a class="button button-secondary" href="#" data-link-key="contact" aria-disabled="true" title="Contact link loads with the page">Contact</a>
         </div>
       </section>
     </main>
