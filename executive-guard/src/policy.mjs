@@ -8,7 +8,7 @@ export const VERDICTS = Object.freeze(['allow', 'deny', 'ask']);
 
 export const SECRET_SIGNALS = Object.freeze([
   'secret:private_key', 'secret:api_key', 'secret:bearer_token', 'secret:secret_assignment',
-  'secret:credit_card',
+  'secret:credit_card', 'secret:jwt', 'secret:connection_string',
 ]);
 export const PII_SIGNALS = Object.freeze(['pii:ssn', 'pii:email', 'pii:phone', 'pii:ipv4']);
 

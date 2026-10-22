@@ -2,7 +2,7 @@
 // shared-memory-mcp saas branch). See test-support/mock-flags-api.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MOCK_KEY, READ_ONLY_KEY, memoryStorage, startMockFlagsApi } from '../test-support/mock-flags-api.mjs';
+import { MOCK_KEY, READ_ONLY_KEY, memoryStorage, startMockFlagsApi, SERVER_ONLY_SAMPLE } from '../test-support/mock-flags-api.mjs';
 import {
   FLAGS_QUEUE_KEY, FLAGS_SETTINGS_KEY, LEGACY_QUEUE_KEY, MAX_QUEUE, SCAN_MAX_CHARS,
   classify, flushQueue, getFlagsSettings, isValidApiKey, markAlertsSeen, pollAlerts,
@@ -126,13 +126,20 @@ test('NEVER A RAW SECRET: excerpt and reason are redacted again before they leav
   assert.match(sent, /\[REDACTED:api_key\]/);
 }));
 
+test('whsec_ is now redacted locally, before the server ever sees it', async () => withApi(async (api) => {
+  const storage = await enabled(api);
+  await reportFlag(storage, { ...FLAG, excerpt: 'secret whsec_' + 'B'.repeat(24) });
+  assert.doesNotMatch(api.requests.at(-1).raw, /whsec_B/);
+  assert.match(api.flags[0].excerpt, /\[REDACTED:api_key\]/);
+}));
+
 test('the server scan of the excerpt can add flags; the client reports them back', async () => withApi(async (api) => {
   const storage = await enabled(api);
-  // Guard's local redaction has no rule for Stripe webhook secrets; the server does.
-  const result = await reportFlag(storage, { ...FLAG, excerpt: 'secret whsec_' + 'B'.repeat(24) });
+  // A token format only the (mock) server knows: Guard cannot redact it, the server does.
+  const result = await reportFlag(storage, { ...FLAG, excerpt: `secret ${SERVER_ONLY_SAMPLE}` });
   assert.equal(result.ok, true);
-  assert.deepEqual(result.serverFlags, [{ category: 'secret', rule: 'secret.stripe_webhook_secret', severity: 'high' }]);
-  assert.match(api.flags[0].excerpt, /\[REDACTED:stripe_webhook_secret\]/);
+  assert.deepEqual(result.serverFlags, [{ category: 'secret', rule: 'secret.server_only_test_token', severity: 'high' }]);
+  assert.match(api.flags[0].excerpt, /\[REDACTED:server_only_test_token\]/);
 }));
 
 test('401: key marked rejected, queue kept, nothing more sent until a new key is saved', async () => withApi(async (api) => {
@@ -218,14 +225,14 @@ test('scan: POST /api/flags/scan {text}, stores nothing, returns leaks; off unle
   const off = await enabled(api);
   assert.equal((await scanText(off, 'x')).skipped, 'not-enabled');
   const storage = await enabled(api, { scanBeforeSend: true });
-  const r = await scanText(storage, 'use whsec_' + 'B'.repeat(24) + ' then rm -rf / now');
+  const r = await scanText(storage, `use ${SERVER_ONLY_SAMPLE} then rm -rf / now`);
   const req = api.requests.at(-1);
   assert.equal(req.path, '/api/flags/scan');
   assert.deepEqual(Object.keys(req.body), ['text']);
   assert.equal(r.ok, true);
   assert.equal(r.redactions, 1);
-  assert.match(r.redacted, /\[REDACTED:stripe_webhook_secret\]/);
-  assert.deepEqual(r.leaks.map((l) => l.rule), ['secret.stripe_webhook_secret']);
+  assert.match(r.redacted, /\[REDACTED:server_only_test_token\]/);
+  assert.deepEqual(r.leaks.map((l) => l.rule), ['secret.server_only_test_token']);
   assert.ok(r.findings.some((f) => f.category === 'harmful_code'));
   assert.equal(api.flags.length, 0, 'scan stored nothing');
 }));
@@ -246,7 +253,7 @@ test('scan: text is redacted locally before it is sent; too long and slow answer
 test('alerts: GET /api/flags?min_severity=high, then since=<newest created_at>; merged by id; throttled', async () => withApi(async (api) => {
   const storage = await enabled(api);
   const t0 = Date.parse('2026-10-22T10:00:00Z');
-  await reportFlag(storage, { ...FLAG, excerpt: 'secret whsec_' + 'B'.repeat(24) }, { now: t0 });
+  await reportFlag(storage, { ...FLAG, excerpt: `secret ${SERVER_ONLY_SAMPLE}` }, { now: t0 });
   await reportFlag(storage, { kind: 'evasion', rule: 'hedging', label: 'Hedges', site: 'grok.com', id: 'low-1' }, { now: t0 });
   const first = await pollAlerts(storage, { now: t0 });
   const q1 = api.requests.at(-1);

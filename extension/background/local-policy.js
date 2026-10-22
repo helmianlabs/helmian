@@ -6,7 +6,7 @@
 // 'ask' offline means: ask the person at the keyboard. It is not a signed
 // approval and is never reported as one.
 
-const SECRET_SIGNALS = ['secret:private_key', 'secret:api_key', 'secret:bearer_token', 'secret:secret_assignment', 'secret:credit_card'];
+const SECRET_SIGNALS = ['secret:private_key', 'secret:api_key', 'secret:bearer_token', 'secret:secret_assignment', 'secret:credit_card', 'secret:jwt', 'secret:connection_string'];
 
 export const LOCAL_RULES = Object.freeze([
   { id: 'secrets-never-leave', kinds: ['prompt.send', 'prompt.paste'], anySignal: SECRET_SIGNALS, verdict: 'deny',

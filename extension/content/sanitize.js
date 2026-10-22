@@ -18,13 +18,24 @@
 (function attachHelmionSanitize(root) {
   'use strict';
 
+  var CONNECTION_STRING = /(\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?):\/\/[^\s:@\/]+:)()([^\s@\/]+)(?=@)/gi;
+  var SAID_IS = /(\b(?:pass(?:word|wd|phrase|code)?|pwd|api[_ -]?key|access[_ -]?token|auth[_ -]?token|client[_ -]?secret)\s+(?:is|was)\s*:?\s+)(["'`]?)([^\s,;"'`)]{5,}[^\s,;"'`).!?:])\2/gi;
+
   var RULES = [
     { type: 'private_key', category: 'secret', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
     { type: 'bearer_token', category: 'secret', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/g },
-    { type: 'api_key', category: 'secret', pattern: /\b(?:sk-ant-[A-Za-z0-9_-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{12,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16}|(?:sk|rk|pk)_live_[0-9A-Za-z]{16,}|glpat-[0-9A-Za-z_-]{20}|xai-[A-Za-z0-9]{20,})\b/g },
-    { type: 'secret_assignment', category: 'secret', pattern: /((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|passcode|secret|token)\s*[:=]\s*)(["']?)([^\s,;"']{4,})\2/gi, keepPrefix: true },
+    { type: 'api_key', category: 'secret', pattern: /\b(?:sk-ant-[A-Za-z0-9_-]{12,}|sk-(?:proj-)?[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprse]-[A-Za-z0-9-]{12,}|AIza[0-9A-Za-z_-]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:sk|rk|pk)_live_[0-9A-Za-z]{16,}|(?:sk|rk)_test_[0-9A-Za-z]{16,}|whsec_[A-Za-z0-9]{20,}|re_[A-Za-z0-9]{8,}_[A-Za-z0-9]{16,}|glpat-[0-9A-Za-z_-]{20}|xai-[A-Za-z0-9]{20,})\b/g },
+    { type: 'api_key', category: 'secret', pattern: /(\baws_secret_access_key["']?\s*[:=]\s*)(["']?)([A-Za-z0-9\/+=]{40})(?![A-Za-z0-9\/+=])\2/gi, keepPrefix: true },
+    { type: 'jwt', category: 'secret', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{10,}/g },
+    // user:PASSWORD@ inside a database or queue URL. Only the password is replaced.
+    { type: 'connection_string', category: 'secret', pattern: CONNECTION_STRING, keepPrefix: true },
+    { type: 'secret_assignment', category: 'secret', pattern: /((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|passcode|passphrase|secret|token)\s*[:=]\s*)(["']?)([^\s,;"']{4,})\2/gi, keepPrefix: true },
+    // "my password is hunter2": prose, so the value must look like a secret (see looksSecret).
+    { type: 'secret_assignment', category: 'secret', pattern: SAID_IS, keepPrefix: true, prose: true },
     { type: 'email', category: 'pii', pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi },
     { type: 'ssn', category: 'pii', pattern: /\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b/g },
+    // "SSN 123 45 6789" / "SSN#123456789": only with the label, since bare 9 digits are everywhere.
+    { type: 'ssn', category: 'pii', pattern: /(\b(?:SSN|social security(?: number| no\.?)?)\s*[:#]?\s*)()((?!000|666|9\d\d)\d{3}\s?(?!00)\d{2}\s?(?!0000)\d{4})\b/gi, keepPrefix: true },
     { type: 'credit_card', category: 'secret', pattern: /(?<![\d-])(?:\d[ -]?){12,18}\d(?![\d-])/g, luhn: true },
     { type: 'phone', category: 'pii', pattern: /(?<![\d\w])(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?![\d\w])/g },
     { type: 'ipv4', category: 'pii', pattern: /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g },
@@ -45,8 +56,21 @@
     return sum % 10 === 0;
   }
 
+  // Values that stand in for a secret in docs and config templates.
+  var STAND_IN = /^(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|%[A-Za-z_]+%|\*+|\.{3,}|pass(?:word)?|pwd|secret|test|null|none|undefined|true|false|process\.env\.[\w.]+)$/i;
+
+  // For prose ("password is X"): a real secret has a digit, a symbol, or a capital
+  // after the first letter. "password is required" / "is incorrect" are not secrets.
+  function looksSecret(value) {
+    return /[0-9]/.test(value) || /[^A-Za-z]/.test(value) || /[A-Z]/.test(value.slice(1));
+  }
+
   function isPlaceholder(rule, value) {
     if (rule.type === 'private_key') return false;
+    if (rule.keepPrefix && STAND_IN.test(value)) return true;
+    if (rule.prose && !looksSecret(value)) return true;
+    // re_lower_snake_case_identifier is code, not a Resend key (those carry digits or capitals).
+    if (rule.type === 'api_key' && /^re_[a-z_]+$/.test(value)) return true;
     if (PLACEHOLDER.test(value)) return true;
     if (rule.type === 'email' && /@(?:example\.(?:com|org|net)|test\.com|domain\.com)$/i.test(value)) return true;
     if (rule.type === 'phone' && /\(?555\)?[ .-]\d{3}/.test(value)) return true;
@@ -73,6 +97,7 @@
         var args = arguments;
         var value = rule.keepPrefix ? args[3] : match;
         if (rule.keepPrefix && /^\[REDACTED:/.test(value)) return match;
+        if (rule.keepPrefix && /\[REDACTED:/.test(match)) return match;
         if (isPlaceholder(rule, value)) return match;
         findings.push({ type: rule.type, category: rule.category });
         if (rule.keepPrefix) return args[1] + args[2] + '[REDACTED:' + rule.type + ']' + args[2];
@@ -104,7 +129,8 @@
   function describe(result) {
     var names = {
       private_key: 'a private key', bearer_token: 'a bearer token', api_key: 'an API key',
-      secret_assignment: 'a password or secret', credit_card: 'a card number', email: 'an email address',
+      secret_assignment: 'a password or secret', jwt: 'a signed token (JWT)',
+      connection_string: 'a password in a connection string', credit_card: 'a card number', email: 'an email address',
       ssn: 'a social security number', phone: 'a phone number', ipv4: 'an IP address',
     };
     return Object.keys(result.counts).map(function n(type) {
@@ -116,6 +142,6 @@
   root.HelmionSanitize = {
     scan: scan,
     describe: describe,
-    TYPES: RULES.map(function t(rule) { return rule.type; }),
+    TYPES: RULES.map(function t(rule) { return rule.type; }).filter(function u(t, i, a) { return a.indexOf(t) === i; }),
   };
 }(typeof globalThis !== 'undefined' ? globalThis : this));

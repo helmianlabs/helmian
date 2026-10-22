@@ -16,10 +16,27 @@ function luhn(d) {
   return sum % 10 === 0;
 }
 
-export function mockScan(text) {
+// Guard's local rules now cover every secret pattern Paul's scanner has, so a test
+// that needs "the server finds something Guard missed" uses this stand-in: a made-up
+// token format only the mock server knows. It is a test knob (state.extraRules), not
+// part of the API contract; the real server has its own rules.
+export const SERVER_ONLY_RULE = Object.freeze({
+  re: /\bSRVONLY_[A-Z0-9]{16}\b/g, category: 'secret', rule: 'secret.server_only_test_token', severity: 'high',
+  reason: 'A server-only test token was found.', label: 'server_only_test_token',
+});
+export const SERVER_ONLY_SAMPLE = 'SRVONLY_ABCDEFGH12345678';
+
+export function mockScan(text, extraRules = []) {
   const findings = [];
   let redactions = 0;
-  let redacted = String(text)
+  let redacted = String(text);
+  for (const r of extraRules) {
+    redacted = redacted.replace(r.re, () => {
+      redactions += 1; findings.push({ category: r.category, rule: r.rule, severity: r.severity, reason: r.reason });
+      return `[REDACTED:${r.label}]`;
+    });
+  }
+  redacted = redacted
     .replace(/\b(?:\d[ -]?){12,18}\d\b/g, (m) => {
       if (!luhn(m.replace(/\D/g, ''))) return m;
       redactions += 1; findings.push({ category: 'pii', rule: 'pii.card_number', severity: 'high', reason: 'A payment card number was found.' });
@@ -44,7 +61,7 @@ export function mockScan(text) {
 export async function startMockFlagsApi({ keys = { [MOCK_KEY]: ['flags.write', 'flags.read'], [READ_ONLY_KEY]: ['flags.read'] }, callsPerDay = 300 } = {}) {
   const requests = [];
   const flags = [];
-  const state = { failWith: null, calls: 0, callsPerDay, revoked: new Set(), delayMs: 0 };
+  const state = { failWith: null, calls: 0, callsPerDay, revoked: new Set(), delayMs: 0, extraRules: [SERVER_ONLY_RULE] };
   let nextId = 1;
   let clock = Date.parse('2026-10-22T09:30:00.000Z');
 
@@ -80,7 +97,7 @@ export async function startMockFlagsApi({ keys = { [MOCK_KEY]: ['flags.write', '
         if (!SEVERITIES.includes(b.severity) || !CATEGORIES.includes(b.category) || typeof b.reason !== 'string' || b.reason.length < 3 || b.reason.length > 1000) {
           send(res, 400, { error: `Need severity (low|medium|high|critical), category (${CATEGORIES.join('|')}) and reason (3-1000 chars).` }); return;
         }
-        const scan = typeof b.excerpt === 'string' ? mockScan(b.excerpt.slice(0, 5000)) : null;
+        const scan = typeof b.excerpt === 'string' ? mockScan(b.excerpt.slice(0, 5000), state.extraRules) : null;
         const created = () => { clock += 1000; return new Date(clock).toISOString(); };
         const ctx = {};
         if (typeof b.url === 'string') ctx.url = b.url.slice(0, 500);
@@ -113,7 +130,7 @@ export async function startMockFlagsApi({ keys = { [MOCK_KEY]: ['flags.write', '
         return;
       }
       const text = typeof body?.text === 'string' ? body.text.slice(0, 50000) : '';
-      const s = mockScan(text);
+      const s = mockScan(text, state.extraRules);
       send(res, 200, { redacted: s.redacted, redactions: s.redactions, findings: s.findings });
     });
   });
