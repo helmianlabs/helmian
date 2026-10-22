@@ -54,7 +54,18 @@ export function desktopsModel(body = {}) {
   const rows = desktops.flatMap((d) => d.sessions.map((s) => ({
     desktopId: d.desktopId, displayName: d.displayName, ...s,
   })));
-  return { desktops, rows, empty: rows.length === 0 };
+  // `empty` = nothing to drive (no sessions). `noDesktops` = nothing paired at all;
+  // a paired Desktop with no open session still shows so it can be forgotten.
+  return { desktops, rows, empty: rows.length === 0, noDesktops: desktops.length === 0 };
+}
+
+// "Forget this pairing" (POST /api/remote/v1/desktops action revoke). The server
+// revokes the registration and every control grant; the Desktop sees desktop_denied
+// on its next status check, wipes its local credential and can be paired again.
+export function forgetDesktopPayload(desktopId) {
+  const id = String(desktopId ?? '').trim();
+  if (!id) throw new Error('desktopId is required');
+  return { action: 'revoke', desktopId: id, confirmed: true };
 }
 
 export function approvalsModel(body = {}, role = null) {
