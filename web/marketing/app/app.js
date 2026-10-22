@@ -1192,7 +1192,45 @@ function renderApprovals() {
     return c;
   }));
 }
-async function loadApprovals() { await loadFeedData(); renderApprovals(); }
+async function loadApprovals() { await loadFeedData(); renderApprovals(); loadPcApprovals(); }
+// PC actions waiting in Executive Guard (hands connector). Owner-only; hidden when not set up.
+async function loadPcApprovals() {
+  const panel = $('#pc-approvals-panel');
+  if (!panel) return;
+  let body;
+  try {
+    const res = await fetch('/api/admin/guard/pc-approvals', { credentials: 'same-origin' });
+    if (res.status === 503 || res.status === 403 || res.status === 401) { panel.hidden = true; return; }
+    body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  } catch (error) { panel.hidden = false; $('#pc-approvals-status').textContent = `Guard is unreachable (${error.message}). Nothing will run until it answers.`; $('#pc-approvals').replaceChildren(); return; }
+  panel.hidden = false;
+  const items = Array.isArray(body.approvals) ? body.approvals : [];
+  $('#pc-approvals-status').textContent = items.length ? 'An AI asked to run these on your PC. Nothing runs until you approve.' : 'No PC actions waiting.';
+  $('#pc-approvals').replaceChildren(...items.map((a) => {
+    const card = el('div', 'card');
+    card.append(el('strong', null, a.summary || a.tool || 'PC action'), el('p', 'muted sm', `${a.reason || ''}${a.expiresAt ? ` · expires ${formatTime(a.expiresAt)}` : ''}`));
+    const row = el('div', 'row-btns left');
+    for (const approve of [true, false]) {
+      const b = el('button', approve ? 'btn primary sm' : 'btn ghost sm', approve ? 'Approve' : 'Deny');
+      b.type = 'button';
+      b.onclick = async () => {
+        if (approve && !confirm(`Approve on your PC: ${a.summary || a.tool}?`)) return;
+        b.disabled = true;
+        try {
+          const r = await fetch('/api/admin/guard/pc-approvals/decide', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalId: a.approvalId, approve }) });
+          const out = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(out.error || `HTTP ${r.status}`);
+          toast(approve ? 'Approved. The AI can run it once.' : 'Denied. Nothing ran.', 'ok');
+        } catch (error) { toast(error.message || 'Could not record the decision'); }
+        loadPcApprovals();
+      };
+      row.append(b);
+    }
+    card.append(row);
+    return card;
+  }));
+}
 async function loadActivity() {
   await loadFeedData();
   const box = $('#timeline');

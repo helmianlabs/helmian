@@ -165,6 +165,12 @@ export async function handleEnvoyAblyRoute({
     await handler(request, response);
     return true;
   }
+  // PC action approvals (hands -> Executive Guard): approver allowlist, before tenant checks
+  if (requestUrl?.pathname === '/api/admin/guard/pc-approvals' || requestUrl?.pathname === '/api/admin/guard/pc-approvals/decide') {
+    const { createPcApprovalsHandler } = await import('./guard-pc-approvals.mjs');
+    await createPcApprovalsHandler(sessionIdentity ? { identity: () => sessionIdentity } : {})(request, response, requestUrl.pathname);
+    return true;
+  }
   // User-level OAuth (Gemini/Google): token goes to browser, not cloud storage
   if (requestUrl?.pathname?.startsWith('/api/provider-oauth/')) {
     const { handleUserOAuthRoute } = await import('./user-oauth.mjs');

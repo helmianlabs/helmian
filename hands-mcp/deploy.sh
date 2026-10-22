@@ -7,7 +7,8 @@ TAG="helmian-hands-mcp:$(date +%Y%m%d-%H%M%S)"
 docker build -f hands-mcp/Dockerfile -t "$TAG" .
 mkdir -p /opt/helmian-hands-mcp/data && chown 1000:1000 /opt/helmian-hands-mcp/data && chmod 700 /opt/helmian-hands-mcp/data
 docker rm -f helmian-hands-mcp >/dev/null 2>&1 || true
-docker run -d --name helmian-hands-mcp --restart unless-stopped \
+docker network inspect helmian-net >/dev/null 2>&1 || docker network create helmian-net >/dev/null
+docker run -d --name helmian-hands-mcp --restart unless-stopped --network helmian-net \
   --env-file /opt/helmian-hands-mcp/app.env \
   -v /opt/helmian-hands-mcp/data:/data \
   -p 127.0.0.1:8090:8090 \
