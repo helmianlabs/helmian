@@ -39,7 +39,7 @@ test('publishEnvoyMessage posts the right shape with Basic auth', async () => {
   assert.equal(calls[0].opts.method, 'POST');
   const body = JSON.parse(calls[0].opts.body);
   assert.equal(body.name, 'message');
-  assert.deepEqual(body.data, { id: 'm1', authorKind: 'human', authorSubject: 'user-1', body: 'hi', createdAt: '2026-01-01T00:00:00Z' });
+  assert.deepEqual(body.data, { id: 'm1', channelId: 'ch-1', authorKind: 'human', authorSubject: 'user-1', body: 'hi', createdAt: '2026-01-01T00:00:00Z' });
 });
 
 test('publishEnvoyMessage no-ops gracefully when the key is unset', async () => {
