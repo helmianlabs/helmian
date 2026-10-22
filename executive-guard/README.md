@@ -48,6 +48,10 @@ nonce, iat, exp, approvalId?, decidedBy? }`, signed with Ed25519. Decisions live
 
 `POST /v1/audit/outcomes`, using the device bearer token, records what happened after a decision: `succeeded`, `failed` or `refused`, with times and an optional result hash. The report becomes a `decision.outcome` entry in the hash-chained audit. Unknown decisions, other devices' decisions, a wrong nonce, and duplicates are refused. The exact request, responses and error codes are in [docs/OUTCOMES.md](docs/OUTCOMES.md).
 
+## Restarts
+
+Pending approvals, the signed decision issued for each approval, and used nonces are kept in `state.jsonl` next to the audit file, and rebuilt from it on start. Approvals that expire while the server is down are audited as expired on start. The audit trail decides an approval's status: a state change the audit doesn't confirm is rolled back to pending. The details are in `deploy/DEPLOY.md`, and the tests are in `test/restart.test.mjs`.
+
 ## Self-hosting
 
 [deploy/DEPLOY.md](deploy/DEPLOY.md) explains how to run it on a Hetzner box behind Caddy. It covers the Dockerfile, an example env file, a Caddy snippet, and volumes for the signing key and the audit log.

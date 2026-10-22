@@ -8,8 +8,20 @@ This is a recipe. Nothing in this repository deploys anything. It assumes a fres
 - **The container** listens on `127.0.0.1:8787` only. It runs as uid 10001, not root.
 - **Two named volumes:**
   - `eg-keys` holds `/var/lib/executive-guard/keys/signing-key.pem`. The Ed25519 key is created on first start with mode 0600. Losing it means every client has to pin a new key from `/v1/keys`.
-  - `eg-audit` holds `/var/lib/executive-guard/audit/audit.jsonl`, the hash-chained audit. The server refuses to start if the chain doesn't verify.
-- **Kept in memory only:** pending approvals and the nonce replay cache. A restart forgets them, so a client polling an approval during a restart gets `404` and has to ask again (hands fails closed). Issued decisions and recorded outcomes are rebuilt from the audit file.
+  - `eg-audit` holds two files:
+    - `/var/lib/executive-guard/audit/audit.jsonl`, the hash-chained audit. The server refuses to start if the chain doesn't verify.
+    - `/var/lib/executive-guard/audit/state.jsonl`, the restart state (mode 0600). It holds pending approvals, the one signed decision issued for each approval, and used nonces (stored as SHA-256). Its location can be overridden with `EXEC_GUARD_STATE_PATH`.
+- **What survives a restart:**
+  - A pending approval can still be listed, polled and approved, and its decision binds the original nonce.
+  - A decision already issued for an approval is returned unchanged.
+  - Used nonces and recorded outcomes stay used.
+  - Approvals that expired while the server was down are marked expired and audited on start.
+- **How it's kept consistent:**
+  - Every change is written to the state file first, with fsync, and then to the audit. The audit is the source of truth for an approval's status.
+  - If a crash leaves an approval approved in the state file but the audit doesn't confirm it, it stays pending. If a decision was signed but its audit line is missing, the audit line is written again and marked `recovered`.
+  - If the state file is lost, approvals the audit still shows as pending are closed (`approval.expired`, reason `state-unavailable-after-restart`). The device asks again; nothing becomes approvable by accident.
+  - On start the state file is compacted: expired nonces and finished approvals older than 24 h are dropped.
+- **Back up `state.jsonl` together with `audit.jsonl`.** It contains the device nonces and the redacted action summaries of pending approvals.
 
 ## 1. Host
 
@@ -76,4 +88,4 @@ curl -s https://guard.example.com/healthz     # {"ok":true,"service":"executive-
 
 ## Upgrade
 
-Build the new tag, then `docker stop executive-guard && docker rm executive-guard`, then repeat the `docker run` from step 4 with the new tag. The volumes carry the key and audit across. Pending approvals are lost; see above.
+Build the new tag, then `docker stop executive-guard && docker rm executive-guard`, then repeat the `docker run` from step 4 with the new tag. The volumes carry the key, the audit and the restart state across, so pending approvals stay approvable. Docker sends SIGTERM and the server closes cleanly. A client polling during the gap sees connection errors for a few seconds; hands fails closed for that call and the approval is still there when it polls again.
