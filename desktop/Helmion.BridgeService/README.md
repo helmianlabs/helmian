@@ -1,20 +1,42 @@
-# Helmian PC Bridge service (optional, spec 3.6)
+# Helmian PC Bridge (optional, spec 3.6)
 
-A Windows service that keeps `bin/pc-bridge.mjs` (or a packaged `pc-bridge.exe`) running from boot with no
-console window, restarting it with backoff (2s doubling to 5 min). Separate from the Helmian EXE.
+Keeps `bin/pc-bridge.mjs` (or a packaged `pc-bridge.exe`) and, once paired, the hands spoke (`bin/hands-spoke.mjs`)
+running in the background with no window, restarting each with backoff (2s doubling to 5 min). Separate from the Helmian EXE.
 
-- **Opt-in:** `scripts/Install-HelmianBridge.ps1` shows a plain-language disclosure and installs nothing unless the
-  user types `I AGREE`. It records consent in `%ProgramData%\Helmian\bridge-consent.json`; the service refuses to start
-  the bridge without that record.
-- **Runs as the user** (not LocalSystem) because the bridge's device token and vault live in the user's profile.
+## Two ways to run (same exe)
+
+- **Default: sign-in task, no password.** A hidden Task Scheduler task starts the exe when you sign in, as you,
+  with normal rights. No Windows password is asked for or stored, and no admin rights are needed unless you
+  install under Program Files. Default folder: `%LOCALAPPDATA%\Programs\Helmian\Bridge`.
+- **Optional: Windows service (`-Mode Service`).** Starts at boot. Needs an elevated PowerShell and your Windows password.
+
+The exe is a windowless app (WinExe), so it runs fine as a plain process; outside the service manager
+`AddWindowsService` does nothing. Child node processes start with `CreateNoWindow`, stdin closed, and inside a
+kill-on-close job, so stopping or killing the exe never leaves them behind. Only one copy runs per PC.
+
+## Install
+
+From the publish folder (no admin needed for the default):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Install-HelmianBridge.ps1 -HelmianRoot E:\Helmion
+```
+
+- Checks free space first. If the target drive is too full, it names a fixed drive with room
+  (for example `E:\HelmianService`) and asks before using it. `-Yes` accepts without asking; `-InstallDir` picks a folder.
+- Writes `helmian-bridge.json` next to the exe with the Helmian folder, and sets `HELMIAN_ROOT` for your account.
+- **Opt-in:** shows a plain-language disclosure and installs nothing unless you type `I AGREE`. Consent is recorded in
+  `%ProgramData%\Helmian\bridge-consent.json`; the bridge will not start without it.
 - **Outbound only;** provider keys stay in the PC vault (019 contract).
-- **Off:** `scripts/Uninstall-HelmianBridge.ps1` or stop `HelmianBridge` in services.msc.
 
-Build: `dotnet publish desktop/Helmion.BridgeService -c Release -r win-x64 --self-contained`.
-It also keeps the hands spoke (`bin/hands-spoke.mjs`, no arguments) running as you with no window, once you have paired it with `node bin/hands-spoke.mjs pair`. Not paired means it is skipped and checked again each minute. Both children restart with backoff (2s doubling to 5 min).
+Logs: `%LOCALAPPDATA%\Helmian\logs\bridge-service.log` (also Event Viewer, source "Helmian Bridge", when installed elevated).
 
-Install (elevated PowerShell, from the repo root): `dotnet publish desktop\Helmion.BridgeService -c Release -r win-x64 --self-contained -o $env:TEMP\HelmianBridge; powershell -ExecutionPolicy Bypass -File $env:TEMP\HelmianBridge\scripts\Install-HelmianBridge.ps1 -HelmianRoot $PWD.Path`
+Off: `scripts\Uninstall-HelmianBridge.ps1` removes the sign-in task (and the service, when run elevated).
 
-Tests (any OS): `dotnet run --project desktop/Helmion.BridgeService.Tests`.
+## Build and test
 
-Status: publishes for win-x64; launch planning tested; not yet installed on a Windows PC. Remote PC control stays off until Troy gives a direct OK.
+- Publish: `dotnet publish desktop/Helmion.BridgeService -c Release -r win-x64 --self-contained -o <folder>`
+- Tests (any OS): `dotnet run --project desktop/Helmion.BridgeService.Tests` and
+  `pwsh -NoProfile -File desktop/Helmion.BridgeService.Tests/Installer.Tests.ps1`
+
+Remote PC control stays off until Troy gives a direct OK.

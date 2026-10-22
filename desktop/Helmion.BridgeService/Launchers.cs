@@ -69,3 +69,47 @@ public static class RestartBackoff
     public static bool CountsAsHealthy(TimeSpan uptime) => uptime >= TimeSpan.FromMinutes(10);
 }
 
+
+/// <summary>
+/// The installer writes helmian-bridge.json next to the exe with the Helmian folder, so the bridge finds it
+/// in both run modes (sign-in task or service) without a reboot or a machine-wide variable.
+/// HELMIAN_ROOT, when set, still wins. Pure: the file read is injected.
+/// </summary>
+public static class InstallConfig
+{
+    public const string FileName = "helmian-bridge.json";
+
+    public static string? HelmianRoot(string serviceDirectory, string? envRoot, Func<string, string?> readText)
+    {
+        if (!string.IsNullOrWhiteSpace(envRoot)) return envRoot;
+        string? json;
+        try { json = readText(Path.Combine(serviceDirectory, FileName)); } catch { return null; }
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("helmianRoot", out var v)
+                && v.ValueKind == System.Text.Json.JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(v.GetString()) ? v.GetString() : null;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+}
+
+/// <summary>How the exe was started. The default install is a hidden sign-in task (a plain process, no password).</summary>
+public enum RunMode { SignInTask, WindowsService }
+
+public static class RunModeInfo
+{
+    /// <summary>One copy per PC across both modes, so a leftover service and a sign-in task never both run.</summary>
+    public const string SingleInstanceName = @"Global\HelmianBridgeService";
+
+    public static RunMode From(bool isWindowsService) => isWindowsService ? RunMode.WindowsService : RunMode.SignInTask;
+
+    /// <summary>Log file for the plain-process mode, where there is no console and maybe no event source.</summary>
+    public static string LogPath(string localAppData) => Path.Combine(localAppData, "Helmian", "logs", "bridge-service.log");
+
+    public const long MaxLogBytes = 5 * 1024 * 1024;
+    public static bool ShouldRotate(long currentBytes) => currentBytes >= MaxLogBytes;
+}
