@@ -4,11 +4,17 @@
 // Uses its own pg Pool (live-admin.mjs is frozen).
 
 import pg from 'pg';
+import { createIdentityGateway } from './identity-gateway.mjs';
 
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 5,
-});
+let _pool = null;
+const pool = {
+  query: (...args) => {
+    if (!_pool) _pool = new pg.Pool({ connectionString: process.env.HELMION_DATABASE_URL || process.env.DATABASE_URL, max: 3 });
+    return _pool.query(...args);
+  },
+};
+let _identity = null;
+const defaultIdentity = () => (_identity ??= createIdentityGateway({ env: process.env, fetchImpl: fetch }));
 
 function json(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -21,12 +27,12 @@ function cookieValue(req, name) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-export function createProfileHandler({ getIdentity }) {
+export function createProfileHandler({ getIdentity = defaultIdentity } = {}) {
   return async (req, res) => {
     // Verify session (same pattern as signup.mjs)
-    const identity = getIdentity();
     let claimed = null;
     try {
+      const identity = getIdentity();
       const cookieSession = cookieValue(req, 'helmion_admin_session');
       if (cookieSession) {
         claimed = identity.getSession(cookieSession);
