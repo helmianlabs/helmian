@@ -134,14 +134,23 @@ async function main() {
   if (command === 'execute') {
     const state = loadState();
     if (state.status !== 'allow' || !state.envelope) throw new Error('no approved decision in state; nothing to execute');
-    const guard = guardFromEnv();
+    // Execution verifies the signed decision with the PUBLIC key only — no
+    // device token belongs on the operator's machine. If Guard is reachable
+    // with a token the outcome is reported inline; otherwise it is deferred
+    // and the `report` command (run where the token lives) closes the loop.
+    if (!process.env.GUARD_PUBLIC_KEY_X) throw new Error('GUARD_PUBLIC_KEY_X is required to verify the decision (the public key from GET /v1/keys).');
+    const guard = createGuardClient({
+      url: process.env.GUARD_URL, deviceToken: process.env.GUARD_DEVICE_TOKEN,
+      publicKeyX: process.env.GUARD_PUBLIC_KEY_X, deviceId: process.env.GUARD_DEVICE_ID || 'hands-mcp',
+    });
     const executor = makeExecutor(guard);
     const r = await executor.execute({ args: state.args, envelope: state.envelope, nonce: state.nonce });
     state.status = 'executed';
     state.commit = r.commit.sha;
     state.pr = r.pr ? r.pr.url : null;
+    state.outcomeReported = guard.live;
     saveState(state);
-    console.log(JSON.stringify({ ok: true, commit: r.commit.sha, pr: state.pr, ref: r.ref, decidedBy: r.claims.decidedBy, approvalId: r.claims.approvalId }, null, 2));
+    console.log(JSON.stringify({ ok: true, commit: r.commit.sha, pr: state.pr, ref: r.ref, decidedBy: r.claims.decidedBy, approvalId: r.claims.approvalId, outcomeReportedToGuard: guard.live }, null, 2));
     return 0;
   }
 
