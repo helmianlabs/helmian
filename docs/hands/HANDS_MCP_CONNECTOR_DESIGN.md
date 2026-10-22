@@ -1,7 +1,17 @@
-# Hands MCP connector: design + Executive Guard interface (DRAFT, not deployed)
+# Hands MCP connector: design + Executive Guard interface
 
-Status: design only (2026-10-22). **Do not deploy on Hetzner and do not enable remote PC control until Troy gives a
-direct OK** — this connector lets a remote AI act on his PC.
+Status (2026-10-22): **implemented and deployed** after Troy's "Go yes" (bridge service + remote PC control).
+Code: `hands-mcp/` (server) and `src/hands/pc-spoke.mjs` + `bin/hands-spoke.mjs` (PC). Live at
+`https://hands.5-78-222-178.sslip.io/mcp`. Executive Guard is not live yet, so every mutating tool is denied; read-only
+tools work once the PC is paired.
+
+Implementation differences from the draft below:
+- Guard API: the hands server talks to the real Executive Guard from PR #53 (`POST /v1/decisions`, `GET /v1/approvals/:id`,
+  envelope `{payload, signature, keyId}`), not the `/guard/v1/*` sketch in section 5. Mutating calls are sent as
+  `kind: agent.tool` with the `destructive-intent` signal so Guard asks a human; an automatic allow is rejected.
+- PC channel: the PC spoke long-polls the hands server over HTTPS (`/spoke/v1/poll`, `/spoke/v1/result`) instead of Ably.
+  Still outbound-only. The PC pairs by typing the hands passphrase locally (`hands-spoke pair`); no token goes through chat.
+- Runner spoke: not built yet; all v1 tools are PC tools.
 
 ## 1. What it is
 An MCP server ("hands") that lets an approved AI client (Claude.ai, Grok, ChatGPT, Helmian's own Maestro) ask for
