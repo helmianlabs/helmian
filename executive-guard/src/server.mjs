@@ -8,6 +8,8 @@
 //   POST /v1/approvals/:id/decide approver approve or deny a pending approval
 //   GET  /v1/audit              approver  the hash-chained audit trail
 //   GET  /v1/audit/verify       approver  re-verify the chain end to end
+//   POST /v1/audit/outcomes     device    report what happened after a decision
+//                                         (docs/OUTCOMES.md has the exact contract)
 //
 // Every decision, approval request, approval and denial is written to the
 // audit trail before the response goes out. Tokens are compared as SHA-256
@@ -23,12 +25,22 @@ import { DECISION_TTL_SECONDS, signDecision } from './signing.mjs';
 
 export const MAX_BODY_BYTES = 32 * 1024;
 export const APPROVAL_TTL_SECONDS = 15 * 60;
+// An outcome may be reported until this long after the decision expires
+// (a long-running tool can finish after its decision's 300 s lifetime).
+export const OUTCOME_WINDOW_SECONDS = 24 * 60 * 60;
+export const OUTCOME_STATUSES = Object.freeze(['succeeded', 'failed', 'refused']);
+const OUTCOME_FIELDS = new Set(['decisionId', 'nonce', 'status', 'startedAt', 'finishedAt', 'resultHash', 'error']);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 const ID_PATTERN = /^[a-z0-9-]{1,64}$/;
 
 function digest(token) {
   return createHash('sha256').update(String(token)).digest();
 }
+
+const nonceHashOf = (nonce) => createHash('sha256').update(String(nonce)).digest('hex');
 
 // tokens: { [principalId]: token } -> lookup(bearer) -> principalId | null
 export function tokenTable(tokens = {}) {
@@ -117,6 +129,24 @@ export function createExecutiveGuard({
   const findApprover = tokenTable(approverTokens);
   const approvals = new Map();
   const seenNonces = new Map(); // nonce -> expiry ms
+  // decisionId -> { deviceId, verdict, actionHash, nonceHash, exp, approvalId, outcome }
+  // for every allow/deny decision this server signed. Rebuilt from the audit
+  // trail on start, so a restart neither forgets decisions nor accepts a second
+  // outcome for one. ('ask' decisions are not executable and are not indexed.)
+  const issuedDecisions = new Map();
+  for (const entry of audit.all ? audit.all() : []) {
+    if (entry.event === 'decision.issued' && entry.decisionId && entry.nonceHash) {
+      issuedDecisions.set(entry.decisionId, { deviceId: entry.deviceId, verdict: entry.verdict, actionHash: entry.actionHash, nonceHash: entry.nonceHash, exp: entry.exp, approvalId: entry.approvalId, outcome: null });
+    } else if (entry.event === 'decision.outcome' && issuedDecisions.has(entry.decisionId)) {
+      issuedDecisions.get(entry.decisionId).outcome = entry.seq;
+    }
+  }
+
+  function remember(claims) {
+    issuedDecisions.set(claims.decisionId, { deviceId: claims.deviceId, verdict: claims.verdict, actionHash: claims.actionHash, nonceHash: nonceHashOf(claims.nonce), exp: claims.exp, approvalId: claims.approvalId, outcome: null });
+    const cutoff = nowSeconds() - OUTCOME_WINDOW_SECONDS;
+    for (const [id, d] of issuedDecisions) if (d.exp < cutoff) issuedDecisions.delete(id);
+  }
 
   const nowSeconds = () => Math.floor(now() / 1000);
 
@@ -196,7 +226,8 @@ export function createExecutiveGuard({
     }
 
     const issued = issue({ verdict: result.verdict, ruleId: result.ruleId, reason: result.reason, hash, deviceId, nonce });
-    audit.append({ event: 'decision.issued', decisionId: issued.claims.decisionId, deviceId, verdict: result.verdict, ruleId: result.ruleId, actionHash: hash, kind: action.kind, site: action.site, riskSignals: action.riskSignals, summary: action.summary });
+    audit.append({ event: 'decision.issued', decisionId: issued.claims.decisionId, deviceId, verdict: result.verdict, ruleId: result.ruleId, actionHash: hash, kind: action.kind, site: action.site, riskSignals: action.riskSignals, summary: action.summary, nonceHash: nonceHashOf(nonce), exp: issued.claims.exp });
+    remember(issued.claims);
     return { status: 200, body: { verdict: result.verdict, reason: result.reason, decision: issued.envelope } };
   }
 
@@ -223,12 +254,78 @@ export function createExecutiveGuard({
           decidedBy: approval.decidedBy,
         });
         approval.issued = { decisionId: issued.claims.decisionId, envelope: issued.envelope };
-        audit.append({ event: 'decision.issued', decisionId: issued.claims.decisionId, approvalId: id, deviceId, verdict: issued.claims.verdict, ruleId: approval.ruleId, actionHash: approval.actionHash, decidedBy: approval.decidedBy });
+        audit.append({ event: 'decision.issued', decisionId: issued.claims.decisionId, approvalId: id, deviceId, verdict: issued.claims.verdict, ruleId: approval.ruleId, actionHash: approval.actionHash, decidedBy: approval.decidedBy, nonceHash: nonceHashOf(approval.nonce), exp: issued.claims.exp });
+        remember(issued.claims);
       }
       body.decision = approval.issued.envelope;
       body.decidedBy = approval.decidedBy;
     }
     return body;
+  }
+
+  function parseTime(value, field, required) {
+    if (value === undefined || value === null) {
+      if (required) throw new HttpError(400, 'invalid-time', `${field} is required (ISO 8601 UTC, e.g. 2026-10-22T10:00:00.000Z)`);
+      return null;
+    }
+    if (typeof value !== 'string' || !ISO_PATTERN.test(value) || Number.isNaN(Date.parse(value))) {
+      throw new HttpError(400, 'invalid-time', `${field} must be ISO 8601 UTC, e.g. 2026-10-22T10:00:00.000Z`);
+    }
+    const ms = Date.parse(value);
+    if (ms > now() + CLOCK_SKEW_MS) throw new HttpError(400, 'invalid-time', `${field} is in the future`);
+    return ms;
+  }
+
+  async function recordOutcome(req, deviceId) {
+    const body = await readJson(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'invalid-body');
+    const extra = Object.keys(body).filter((k) => !OUTCOME_FIELDS.has(k));
+    if (extra.length) throw new HttpError(400, 'unknown-field', `unknown field: ${extra.sort().join(', ')}`);
+    const decisionId = String(body.decisionId ?? '');
+    if (!UUID_PATTERN.test(decisionId)) throw new HttpError(400, 'invalid-decision-id', 'decisionId must be the UUID from the signed decision');
+    const nonce = String(body.nonce ?? '');
+    if (!NONCE_PATTERN.test(nonce)) throw new HttpError(400, 'invalid-nonce', 'nonce must be 16-128 url-safe characters');
+    if (!OUTCOME_STATUSES.includes(body.status)) throw new HttpError(400, 'invalid-status', `status must be one of ${OUTCOME_STATUSES.join(', ')}`);
+    const status = body.status;
+    const startedMs = parseTime(body.startedAt, 'startedAt', status !== 'refused');
+    const finishedMs = parseTime(body.finishedAt, 'finishedAt', true);
+    if (startedMs !== null && finishedMs < startedMs) throw new HttpError(400, 'invalid-time', 'finishedAt is before startedAt');
+    if (body.resultHash !== undefined && (typeof body.resultHash !== 'string' || !/^[a-f0-9]{64}$/.test(body.resultHash))) {
+      throw new HttpError(400, 'invalid-result-hash', 'resultHash must be 64 lowercase hex characters (SHA-256)');
+    }
+    if (body.error !== undefined) {
+      if (status === 'succeeded') throw new HttpError(400, 'invalid-error', 'error is only allowed when status is failed or refused');
+      if (typeof body.error !== 'string' || body.error.length > 500) throw new HttpError(400, 'invalid-error', 'error must be a string of at most 500 characters');
+    }
+
+    // Unknown and another device's decisionId get the same answer, so a device
+    // cannot probe for decisions it was not given.
+    const decision = issuedDecisions.get(decisionId);
+    if (!decision || decision.deviceId !== deviceId) throw new HttpError(404, 'unknown-decision');
+    const presented = Buffer.from(nonceHashOf(nonce), 'hex');
+    if (!timingSafeEqual(presented, Buffer.from(decision.nonceHash, 'hex'))) throw new HttpError(403, 'nonce-mismatch', 'nonce does not match the decision');
+    if (decision.outcome) throw new HttpError(409, 'duplicate-outcome', 'an outcome was already recorded for this decision');
+    if (decision.verdict !== 'allow' && status !== 'refused') {
+      throw new HttpError(409, 'verdict-mismatch', `the decision was ${decision.verdict}; only status refused can be reported for it`);
+    }
+    if (nowSeconds() > decision.exp + OUTCOME_WINDOW_SECONDS) throw new HttpError(410, 'outcome-window-closed');
+
+    const entry = audit.append({
+      event: 'decision.outcome',
+      decisionId,
+      deviceId,
+      ...(decision.approvalId ? { approvalId: decision.approvalId } : {}),
+      verdict: decision.verdict,
+      actionHash: decision.actionHash,
+      status,
+      ...(startedMs !== null ? { startedAt: new Date(startedMs).toISOString(), durationMs: finishedMs - startedMs } : {}),
+      finishedAt: new Date(finishedMs).toISOString(),
+      ...(body.resultHash ? { resultHash: body.resultHash } : {}),
+      // Control characters stripped; clients must not put secrets in error.
+      ...(body.error !== undefined ? { error: body.error.replace(/[\u0000-\u001f\u007f]/g, ' ') } : {}),
+    });
+    decision.outcome = entry.seq;
+    return { status: 201, body: { recorded: true, decisionId, status, auditSeq: entry.seq, auditHash: entry.hash } };
   }
 
   async function resolveApproval(req, id, approverId) {
@@ -256,6 +353,13 @@ export function createExecutiveGuard({
       }
 
       const token = bearer(req);
+      if (path === '/v1/audit/outcomes') {
+        const deviceId = findDevice(token);
+        if (!deviceId) throw new HttpError(401, 'unauthorized');
+        if (req.method !== 'POST') throw new HttpError(405, 'method-not-allowed');
+        const out = await recordOutcome(req, deviceId);
+        return send(res, out.status, out.body);
+      }
       if (path === '/v1/decisions' || /^\/v1\/approvals\/[^/]+$/.test(path) && req.method === 'GET') {
         const deviceId = findDevice(token);
         if (!deviceId) throw new HttpError(401, 'unauthorized');
@@ -294,5 +398,5 @@ export function createExecutiveGuard({
   }
 
   const server = http.createServer((req, res) => { handle(req, res); });
-  return { server, approvals, handle };
+  return { server, approvals, handle, issuedDecisions };
 }

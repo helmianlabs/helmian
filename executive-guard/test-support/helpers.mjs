@@ -16,7 +16,7 @@ export function nonce() {
 }
 
 export async function startGuard(options = {}) {
-  const key = loadSigningKey(generateSigningKey());
+  const key = options.key || loadSigningKey(generateSigningKey());
   const audit = options.audit || memoryAudit({ now: options.now });
   const guard = createExecutiveGuard({
     key,
