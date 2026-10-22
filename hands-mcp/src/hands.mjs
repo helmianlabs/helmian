@@ -85,6 +85,14 @@ export function createHands({ config, guard, hub, audit }) {
     const hasScope = scopes.includes(needScope) || (needScope === 'hands.read' && scopes.includes('hands.act'));
     if (!hasScope) return refuse('refused.scope', `This connection was not granted ${needScope}. Reconnect and approve ${needScope} on the consent page.`);
 
+    // promote_build never dispatches to the PC spoke: the promote executor
+    // (src/promote/, bin/promote.mjs) performs the push itself once Guard
+    // approves at forge.promote. Refuse here — before Guard is even asked —
+    // so an MCP call cannot mint an approval this hub cannot execute.
+    if (tool === 'promote_build') {
+      return refuse('refused.executor', 'promote_build runs through the promote executor (hands-mcp/bin/promote.mjs), not the PC spoke. Nothing ran.');
+    }
+
     const route = decideComputeRoute({ job: { needs: spec.needs, toolsMode: spec.mutating ? 'write' : 'read-only', pinned: 'pc' }, presence: hub.presence() });
     if (route.outcome !== 'route' || route.target !== 'pc') {
       return refuse('refused.route', `${route.reason} Nothing ran and nothing was queued (hands calls are live-only).`);
