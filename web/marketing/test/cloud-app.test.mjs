@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, VIEW_TITLES_PLAYFUL, VIEW_TITLES_PLAIN, viewTitles, isPlainEmojiMode, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, VIEW_TITLES_PLAYFUL, VIEW_TITLES_PLAIN, viewTitles, isPlainEmojiMode, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel, forgetDesktopPayload } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -34,7 +34,7 @@ test('no technical disclaimers and no framework', () => {
 
 test('only known admin + remote APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/agents/sessions', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/envoy/runner/presence', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/workspace/active-project', '/api/admin/workspace/agent-icons', '/api/admin/workspace/canvas', '/api/admin/workspace/canvas/decisions', '/api/admin/workspace/layout-preferences', '/api/admin/workspace/projects', '/api/herald-config', '/api/provider-oauth/gemini/start', '/api/provider-oauth/grok/start', '/api/provider-oauth/openai/start', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/agents/sessions', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/envoy/runner/presence', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/profile', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/signup', '/api/admin/workspace/active-project', '/api/admin/workspace/agent-icons', '/api/admin/workspace/canvas', '/api/admin/workspace/canvas/decisions', '/api/admin/workspace/layout-preferences', '/api/admin/workspace/projects', '/api/herald-config', '/api/provider-oauth/gemini/start', '/api/provider-oauth/grok/start', '/api/provider-oauth/openai/start', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
 });
 
 test('models', () => {
@@ -192,4 +192,16 @@ test('independent Guard panel + workbench tabs (BROWSE-001 layout correction)', 
   assert.match(css, /\.panel-tabs \{ position:sticky/);
   assert.match(css, /\.guard-panel\.collapsed #guard-panel-body/);
   assert.match(css, /\.workbench\.collapsed #workbench-body/);
+});
+
+test('a paired Desktop with no session still lists so it can be forgotten', () => {
+  const m = desktopsModel({ desktops: [{ desktopId: 'd1', displayName: 'Troy PC', sessions: [] }] });
+  assert.equal(m.empty, true);
+  assert.equal(m.noDesktops, false);
+  assert.equal(desktopsModel({}).noDesktops, true);
+});
+
+test('forgetDesktopPayload matches the server revoke contract (confirmed: true)', () => {
+  assert.deepEqual(forgetDesktopPayload(' d1 '), { action: 'revoke', desktopId: 'd1', confirmed: true });
+  assert.throws(() => forgetDesktopPayload(''));
 });

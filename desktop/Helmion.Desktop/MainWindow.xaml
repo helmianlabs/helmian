@@ -4917,6 +4917,10 @@
                   <Button x:Name="RemoteControlRedeemButton" Content="I confirmed it"
                           MinWidth="120" Padding="14,8" Margin="8,0,0,0" Click="RemoteControlRedeemButton_Click"
                           Visibility="Collapsed" Style="{StaticResource ConsoleNeutralButtonStyle}" />
+                  <Button x:Name="RemoteControlForgetButton" Content="Forget pairing…"
+                          MinWidth="120" Padding="14,8" Margin="8,0,0,0" Click="RemoteControlForgetButton_Click"
+                          ToolTip="Unpair this PC so you can pair it again. Clears the local phone pairing and opens Devices on helmian.cloud, where you tap Forget."
+                          Style="{StaticResource ConsoleNeutralButtonStyle}" />
                 </StackPanel>
                 <Border x:Name="RemoteControlEnrollmentPanel" Visibility="Collapsed"
                         Background="{DynamicResource PanelInsetBrush}"
