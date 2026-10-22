@@ -44,6 +44,16 @@ canonical JSON claims `{ aud, decisionId, verdict, ruleId, actionHash, deviceId,
 nonce, iat, exp, approvalId?, decidedBy? }`, signed with Ed25519. Decisions live
 5 minutes; approvals expire after 15 minutes; nonces cannot be replayed.
 
+## Used by the hands connector
+
+`hands-mcp/` (merged in #56) calls this server as a device: `POST /v1/decisions`
+with `kind: "agent.tool"`, `site: "hands.helmian"` and the `destructive-intent`
+signal, then polls `GET /v1/approvals/:id`. An approved or denied approval gets
+**one** signed decision, created on first fetch and returned unchanged on every
+later poll (same `decisionId`), because the PC spoke refuses a `decisionId` it
+has already used. `test/hands-compat.test.mjs` runs the hub's real
+`guard-client.mjs` and the PC's real `createExecutor` against this server.
+
 ## Policy
 
 `src/policy.mjs` `DEFAULT_POLICY`, first match wins, unknown = deny:
