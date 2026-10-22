@@ -13,7 +13,7 @@
 // roots and refuse secret-looking paths.
 
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, platform } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { MAX_OUTPUT_BYTES, TOOLS, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
@@ -23,6 +23,50 @@ export const DEFAULT_HANDS_URL = 'https://hands.5-78-222-178.sslip.io';
 export function defaultConfigPath() {
   const base = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
   return join(base, 'Helmian', 'hands-spoke.json');
+}
+
+export function defaultUsedDecisionsPath() {
+  return join(dirname(defaultConfigPath()), 'hands-used-decisions.json');
+}
+
+/**
+ * Single-use Guard decisions, file-backed so a restart inside the 300 s decision
+ * window cannot replay one. Recorded (and flushed to disk) BEFORE the action runs;
+ * if the record cannot be written the action is refused (fail closed).
+ */
+export function createUsedDecisionStore({ path = null, now = Date.now } = {}) {
+  const used = new Map(); // decisionId -> exp ms
+  let loaded = !path;
+  const prune = () => { for (const [id, exp] of used) if (exp < now()) used.delete(id); };
+  async function load() {
+    if (loaded) return;
+    try {
+      const rows = JSON.parse(await readFile(path, 'utf8'));
+      for (const r of Array.isArray(rows) ? rows : []) if (r?.id && Number.isFinite(r.exp)) used.set(String(r.id), Number(r.exp));
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw new Error(`used-decision record unreadable (${e.message})`);
+    }
+    loaded = true;
+  }
+  async function flush() {
+    if (!path) return;
+    await mkdir(dirname(path), { recursive: true });
+    const tmp = `${path}.${process.pid}.tmp`;
+    await writeFile(tmp, JSON.stringify([...used].map(([id, exp]) => ({ id, exp }))), { mode: 0o600 });
+    await rename(tmp, path);
+  }
+  return {
+    /** true = claimed now (persisted); false = already used. Throws if it cannot persist. */
+    async claim(id, expMs) {
+      await load();
+      prune();
+      if (used.has(id)) return false;
+      used.set(id, expMs);
+      try { await flush(); } catch (e) { used.delete(id); throw new Error(`could not record the Guard approval as used (${e.message})`); }
+      return true;
+    },
+    async has(id) { await load(); prune(); return used.has(id); },
+  };
 }
 
 export async function readSpokeConfig(path = defaultConfigPath()) {
@@ -104,8 +148,8 @@ function globToRegex(glob) {
   return new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i');
 }
 
-export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 'hands-mcp', spawnImpl = spawn, fetchImpl = fetch, now = Date.now } = {}) {
-  const usedDecisions = new Map(); // decisionId -> exp ms (single use)
+export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 'hands-mcp', spawnImpl = spawn, fetchImpl = fetch, now = Date.now, usedDecisionsPath = null, usedStore = null } = {}) {
+  const usedDecisions = usedStore || createUsedDecisionStore({ path: usedDecisionsPath, now });
 
   async function execute(job) {
     const spec = TOOLS[job?.tool];
@@ -116,9 +160,10 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
     if (spec.mutating) {
       const v = verifyApproval({ publicKeyX: guardPublicKeyX, envelope: job.guardDecision, tool: job.tool, args, nonce: job.nonce, deviceId: guardDeviceId, now: now() });
       if (!v.ok) return { ok: false, error: `refused by the PC: ${v.error === 'no pinned Guard key' ? 'no Executive Guard key is pinned on this PC, so mutating actions are refused' : `Guard decision did not verify (${v.error})`}` };
-      for (const [id, exp] of usedDecisions) if (exp < now()) usedDecisions.delete(id);
-      if (usedDecisions.has(v.claims.decisionId)) return { ok: false, error: 'refused by the PC: that Guard approval was already used' };
-      usedDecisions.set(v.claims.decisionId, v.claims.exp * 1000);
+      let claimed;
+      try { claimed = await usedDecisions.claim(v.claims.decisionId, v.claims.exp * 1000); }
+      catch (e) { return { ok: false, error: `refused by the PC: ${e.message}` }; }
+      if (!claimed) return { ok: false, error: 'refused by the PC: that Guard approval was already used' };
     }
 
     try {
@@ -195,7 +240,7 @@ async function detectCapabilities(fetchImpl) {
 /** Long-poll loop. Returns { stop }. */
 export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor } = {}) {
   const roots = config.roots?.length ? config.roots : [process.env.HELMIAN_ROOT || process.cwd()];
-  const exec = executor || createExecutor({ roots, guardPublicKeyX: config.guardPublicKeyX || null, guardDeviceId: config.guardDeviceId || 'hands-mcp', fetchImpl });
+  const exec = executor || createExecutor({ roots, guardPublicKeyX: config.guardPublicKeyX || null, guardDeviceId: config.guardDeviceId || 'hands-mcp', fetchImpl, usedDecisionsPath: config.usedDecisionsPath || defaultUsedDecisionsPath() });
   let stopped = false;
   let ctrl = null;
   let caps = null;

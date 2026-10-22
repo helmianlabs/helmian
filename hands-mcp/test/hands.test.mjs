@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { loadConfig } from '../src/config.mjs';
 import { createOAuth } from '../src/oauth.mjs';
 import { createGuardClient } from '../src/guard-client.mjs';
@@ -74,7 +74,7 @@ async function workspace() {
 async function pairAndRun(base, root, extra = {}) {
   const configPath = join(await mkdtemp(join(tmpdir(), 'hands-cfg-')), 'hands-spoke.json');
   await pairSpoke({ url: base, passphrase: PASS, roots: [root], configPath, deviceId: 'pc-test' });
-  const config = { ...(await readSpokeConfig(configPath)), ...extra };
+  const config = { ...(await readSpokeConfig(configPath)), usedDecisionsPath: join(dirname(configPath), 'used.json'), ...extra };
   const spoke = startSpoke({ config, log: () => {} });
   await new Promise((r) => setTimeout(r, 150));
   return spoke;
@@ -261,4 +261,22 @@ test('pairing needs the passphrase and locks after repeated misses', async () =>
   const poll = await fetch(`${app.base}/spoke/v1/poll`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer forged' }, body: '{}' });
   assert.equal(poll.status, 401);
   await app.close();
+});
+
+test('used Guard approvals survive a PC restart (file-backed, single use)', async () => {
+  const guard = mockGuard();
+  const root = await workspace();
+  const usedPath = join(await mkdtemp(join(tmpdir(), 'hands-used-')), 'used.json');
+  const args = { path: join(root, 'once.txt'), content: 'one' };
+  const iat = Math.floor(Date.now() / 1000);
+  const env = guard.forge({ decisionId: 'persist-1', verdict: 'allow', actionHash: guardActionHash(buildGuardAction('write_file', args)), deviceId: 'hands-mcp', nonce: 'p'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' });
+  const job = { tool: 'write_file', args, nonce: 'p'.repeat(20), guardDecision: env };
+  assert.equal((await createExecutor({ roots: [root], guardPublicKeyX: guard.x, usedDecisionsPath: usedPath }).execute(job)).ok, true);
+  // A fresh executor = the PC restarted.
+  const restarted = createExecutor({ roots: [root], guardPublicKeyX: guard.x, usedDecisionsPath: usedPath });
+  assert.match((await restarted.execute(job)).error, /already used/);
+  // Expired entries are pruned, and an unwritable record refuses the action.
+  const blocked = createExecutor({ roots: [root], guardPublicKeyX: guard.x, usedDecisionsPath: join(root, 'notes.txt', 'x.json') });
+  const env2 = guard.forge({ decisionId: 'persist-2', verdict: 'allow', actionHash: guardActionHash(buildGuardAction('write_file', args)), deviceId: 'hands-mcp', nonce: 'p'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' });
+  assert.match((await blocked.execute({ ...job, guardDecision: env2 })).error, /could not record|unreadable/);
 });
