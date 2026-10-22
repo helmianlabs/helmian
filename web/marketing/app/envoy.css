@@ -1,7 +1,7 @@
 /* Envoy workspace (Desktop view) + app-wide motion polish. Palette from Troy's
    v0.0.1/v0.0.2 demo videos: ~#1A202C background, #2D3748 panels. */
 html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; --border:#364152; --muted:#A0AEC0; --faint:#718096; }
-:root { --ease:cubic-bezier(.2,.8,.2,1); --dur:.24s; --ew-channels:232px; --ew-agents:280px; --ew-bench:420px; }
+:root { --ease:cubic-bezier(.2,.8,.2,1); --dur:.24s; --ew-channels:232px; --ew-agents:280px; --ew-bench:420px; --ew-guard:300px; }
 @media (prefers-reduced-motion: reduce) { :root { --dur:0s; } }
 
 /* Sidebar: explicit collapse to an icon rail, smooth width. */
@@ -14,9 +14,9 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .shell.sidebar-rail #rail-toggle { transform:rotate(180deg); }
 
 /* The Desktop view is the chat: no floating chat drawer on top of it. */
-@media (min-width: 901px) { #shell[data-view="desktop"] { grid-template-columns:var(--side-w) minmax(0,1fr) 0; } }
+@media (min-width: 901px) { #shell { grid-template-columns:var(--side-w) minmax(0,1fr) 0; } #shell > #guard, #guard-toggle { display:none !important; } }
 #shell[data-view="desktop"] > #guard, #shell[data-view="desktop"] #guard-toggle { display:none !important; }
-#shell[data-view="desktop"] ~ #chat-panel, #shell[data-view="desktop"] ~ #chat-panel-toggle { display:none !important; }
+#chat-panel, #chat-panel-toggle { display:none !important; } /* one CLI: the Workspace */
 #shell[data-view="desktop"] .topbar { border-bottom:1px solid var(--border); }
 .view.desktop { position:relative; height:calc(100dvh - 52px); padding:0; overflow:hidden; }
 
@@ -27,8 +27,9 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .ew-channels { flex:0 1 var(--ew-channels); min-width:180px; }
 .ew-agents { flex:0 1 var(--ew-agents); min-width:220px; }
 .ew-bench { flex:0 1 var(--ew-bench); min-width:320px; }
+.ew-guard { flex:0 1 var(--ew-guard); min-width:250px; }
 /* Side panes give up width before the conversation does. */
-.ew-chat { flex:1 1 0; min-width:420px; background:var(--bg); }
+.ew-chat { flex:1 1 0; min-width:380px; background:var(--bg); }
 .ew-pane.collapsed { flex-basis:0 !important; min-width:0 !important; opacity:0; pointer-events:none; }
 .ew.dragging .ew-pane { transition:none; }
 .ew.bench-max .ew-chat, .ew.bench-max .ew-agents, .ew.bench-max .ew-channels { flex:0 0 0 !important; opacity:0; pointer-events:none; }
@@ -198,21 +199,21 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-scrim.open { opacity:1; visibility:visible; transition:opacity var(--dur) var(--ease); }
 
 /* Medium screens: workbench starts narrower. */
-@media (max-width: 1280px) { :root { --ew-bench:360px; --ew-agents:250px; --ew-channels:210px; } }
+@media (max-width: 1280px) { :root { --ew-bench:360px; --ew-agents:250px; --ew-channels:210px; --ew-guard:270px; } }
 
 /* Phones and small tablets: chat full width; the other panes slide in as sheets. */
 @media (max-width: 900px) {
   #ew-bench-max { display:none; }
   .ew-tabs .ew-tab { padding-left:8px; padding-right:8px; }
   .ew-tabs [data-collapse="bench"] { font-size:20px; }
-  .ew-chat, .ew-channels, .ew-agents, .ew-bench { min-width:0; }
+  .ew-chat, .ew-channels, .ew-agents, .ew-bench, .ew-guard { min-width:0; }
   .view.desktop { height:calc(100dvh - 52px); }
   .ew-split { display:none; }
   .ew-reveal { display:inline-grid; }
-  .ew-pane.ew-channels, .ew-pane.ew-agents, .ew-pane.ew-bench { position:fixed; top:0; bottom:0; z-index:50; width:min(86vw, 360px); flex:none; opacity:1; pointer-events:auto; box-shadow:0 0 40px rgba(0,0,0,.5); }
+  .ew-pane.ew-channels, .ew-pane.ew-agents, .ew-pane.ew-bench, .ew-pane.ew-guard { position:fixed; top:0; bottom:0; z-index:50; width:min(86vw, 360px); flex:none; opacity:1; pointer-events:auto; box-shadow:0 0 40px rgba(0,0,0,.5); }
   .ew-pane.ew-bench { width:100vw; }
   .ew-pane.ew-channels { left:0; transform:translateX(-100%); }
-  .ew-pane.ew-agents, .ew-pane.ew-bench { right:0; transform:translateX(100%); }
+  .ew-pane.ew-agents, .ew-pane.ew-bench, .ew-pane.ew-guard { right:0; transform:translateX(100%); }
   .ew-pane.sheet-open { transform:none; }
   .ew-pane.collapsed { flex-basis:auto !important; opacity:1; pointer-events:auto; }
   .ew-chat-head { gap:4px; padding:6px 8px; }
@@ -233,3 +234,107 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .sidebar.rail .nav-item { font-size:17px; position:relative; }
 .sidebar.rail .nav-item .badge { position:absolute; top:2px; right:2px; }
 .sidebar { overflow-x:hidden; }
+
+/* ---- Shell consistency on every /app page ---- */
+/* Nav is its own section, not a child of Sessions. */
+.side-nav #nav.submenu { margin:0; border-left:0; padding-left:0; gap:1px; }
+.side-nav .advanced-nav { margin-top:6px; }
+.side-nav .advanced-nav .submenu { margin-left:0; border-left:0; padding-left:0; }
+.nav-item { width:100%; gap:8px; padding:7px 10px; font-size:13.5px; transition:background .15s, color .15s; }
+.nav-item .label { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; }
+.nav-item:focus-visible, .ew-btn:focus-visible, .ew-icon:focus-visible, .ew-tab:focus-visible, .gbtn:focus-visible, .ew-pill:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.sessions li .name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.sessions li .x { opacity:0; transition:opacity .15s; } .sessions li:hover .x, .sessions li.active .x, .sessions li .x:focus-visible { opacity:1; }
+.sessions-more { display:block; margin:4px 10px 0; font-size:12px; }
+#project-shelf-empty { white-space:normal; }
+.side-head .link-btn { font-size:11px; }
+
+/* Rail tooltips */
+.sidebar.rail { overflow:visible; z-index:35; }
+.sidebar.rail .nav-item[data-tip]:hover::after, .sidebar.rail .nav-item[data-tip]:focus-visible::after {
+  content:attr(data-tip); position:absolute; left:calc(100% + 10px); top:50%; transform:translateY(-50%);
+  background:#0B1220; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; pointer-events:none; z-index:80; box-shadow:0 6px 18px rgba(0,0,0,.4); }
+.sidebar.rail .advanced-nav, .sidebar.rail .side-sessions, .sidebar.rail #appearance { display:none; }
+
+/* Right Guard column on non-Desktop pages: labelled actions, tidy tabs, no sideways scroll. */
+.guard-head { flex-wrap:nowrap; }
+.guard-head .title { white-space:nowrap; font-size:11px; color:var(--muted); }
+.gbtn { border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:6px; padding:3px 8px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap; transition:color .15s, border-color .15s; }
+.gbtn:hover { color:var(--text); border-color:var(--accent); }
+.gbtn.icon { padding:3px 7px; }
+.panel-tabs { overflow:hidden; gap:0; }
+.panel-tab { flex:1 1 0; min-width:0; padding:8px 4px; font-size:12px; letter-spacing:0; overflow:hidden; text-overflow:ellipsis; text-align:center; }
+.panel-tabs #workbench-collapse { flex:none; }
+.panel-pane > .pane-head > .eyebrow:only-child { display:none; }
+.panel-pane > .pane-head:has(> .eyebrow:only-child) { display:none; }
+#browser-url { font-family:inherit; }
+.feed .card, .feed > div { transition:border-color .15s; }
+
+/* ---- Pass 1: chat header, composer, agent cards, empty panes ---- */
+.ew-chat { container-type:inline-size; container-name:ewchat; }
+.ew-chat-head strong { min-width:3ch; flex:0 1 auto; }
+.ew-chat-head .ew-btn { display:inline-flex; align-items:center; gap:6px; flex:none; }
+.ew-chat-head .ew-btn svg { flex:none; }
+.ew-chat-head .ew-badge { flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; }
+@container ewchat (max-width: 640px) {
+  .ew-chat-head .ew-btn .lbl { display:none; }
+  .ew-chat-head .ew-btn { padding:4px 7px; }
+  .ew-hint { display:none; }
+}
+@container ewchat (max-width: 480px) {
+  .ew-chat-head .ew-badge { font-size:0; width:8px; height:8px; padding:0; border-radius:50%; }
+}
+.ew-agent .last { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; line-height:1.35; }
+.ew-status { padding:6px 12px; color:var(--muted); font-size:12px; }
+.ew-status:empty { display:none; }
+.ew-pad { padding:8px 12px; }
+.ew-empty { line-height:1.5; max-width:34ch; }
+
+/* Onboarding checklist */
+.check { display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%; border:1.5px solid var(--faint); flex:none; font-size:11px; color:transparent; }
+.check.on { background:var(--accent); border-color:var(--accent); color:#06121f; }
+.check.on::before { content:'✓'; }
+
+@media (max-width: 900px) {
+  .panel > .eyebrow:not(summary) { display:block; }
+  input, select, textarea { max-width:100%; box-sizing:border-box; }
+}
+
+/* ---- One shell: Channels | CLI | Guard | Workbench ---- */
+.ew-shield { width:14px; height:14px; flex:none; display:inline-block; background:currentColor; color:var(--accent);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3z'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3z'/%3E%3C/svg%3E") center/contain no-repeat; }
+.ew-gh-mark { width:13px; height:13px; display:inline-block; background:currentColor;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 0a8 8 0 0 0-2.5 15.6c.4 0 .5-.2.5-.4v-1.5c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.3 1.9.9 2.3.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.6 7.6 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.9.1 2.1.5.6.8 1.3.8 2.1 0 3.1-1.9 3.8-3.6 4 .3.3.6.8.6 1.5v2.2c0 .2.1.5.6.4A8 8 0 0 0 8 0z'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 0a8 8 0 0 0-2.5 15.6c.4 0 .5-.2.5-.4v-1.5c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.3 1.9.9 2.3.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.6 7.6 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.9.1 2.1.5.6.8 1.3.8 2.1 0 3.1-1.9 3.8-3.6 4 .3.3.6.8.6 1.5v2.2c0 .2.1.5.6.4A8 8 0 0 0 8 0z'/%3E%3C/svg%3E") center/contain no-repeat; }
+.ew-src-head { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:10.5px; font-weight:700; letter-spacing:.09em; padding:12px 12px 4px; }
+.ew-src-head:first-child { padding-top:6px; }
+.ew-src-head .ew-discord-mark { color:#8B95FF; }
+.ew-channel-list .ew-note { padding:2px 12px 6px 32px; font-size:11.5px; }
+.ew-channel-list .ew-note a { color:var(--accent); }
+.ew-guard-sum { color:var(--muted); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ew-guard { background:var(--panel); }
+.ew-guard .ew-scroll { flex:1 1 auto; }
+.ew-approvals { border-bottom:1px solid var(--border); padding-bottom:8px; }
+.ew-count { display:inline-grid; place-items:center; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--amber, #F59E0B); color:#1A1205; font-size:10px; font-weight:800; margin-left:4px; vertical-align:middle; }
+.ew-count:empty { display:none; }
+.ew-approvals-list { display:flex; flex-direction:column; gap:4px; padding:0 10px; }
+.ew-approvals-list .ew-note { padding:2px 2px 4px; }
+.ew-approval { display:flex; justify-content:space-between; gap:8px; padding:7px 9px; border-radius:8px; border:1px solid rgba(245,158,11,.35); background:rgba(245,158,11,.07); color:var(--text); text-decoration:none; font-size:12.5px; }
+.ew-approval:hover { border-color:var(--amber, #F59E0B); }
+.ew-approval-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-approval-time { color:var(--muted); font-size:11px; flex:none; }
+.ew-approvals-open { display:inline-block; margin:8px 10px 0; text-decoration:none; }
+.ew-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); }
+.ew-field select { width:100%; }
+/* CLI agent picker */
+.ew-pills { display:flex; gap:6px; flex-wrap:wrap; }
+.ew-pill.add { opacity:.7; border-style:dashed; }
+.ew-pill.add:hover { opacity:1; }
+.ew-pill.session { margin-left:auto; color:var(--accent); border-color:rgba(56,189,248,.45); }
+@media (max-width: 900px) {
+  .ew-pills { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; -webkit-mask:linear-gradient(90deg,#000 88%,transparent); mask:linear-gradient(90deg,#000 88%,transparent); }
+  .ew-pills::-webkit-scrollbar { display:none; }
+  .ew-pill { flex:none; }
+  .ew-pill.session { margin-left:0; }
+}
