@@ -24,7 +24,13 @@ let toastTimer; function toast(msg, kind) { const t = $('#toast'); const prefix 
 // ---- emoji mode preference (playful vs plain) ----
 function setNavLabel(btn, label) {
   for (const node of [...btn.childNodes]) if (node.nodeType === 3) node.remove();
-  btn.prepend(document.createTextNode(label));
+  const span = btn.querySelector('.label');
+  if (!span) { btn.prepend(document.createTextNode(label)); return; }
+  // "🏠 Home" -> icon text + label span (the span is what the rail hides).
+  const m = String(label).match(/^(\S+)\s+(.+)$/u);
+  const icon = m && !/[A-Za-z0-9]/.test(m[1]) ? m[1] : '';
+  span.textContent = icon ? m[2] : label;
+  if (icon) btn.prepend(document.createTextNode(`${icon} `));
 }
 function applyEmojiMode(mode) {
   state.emojiMode = mode === 'plain' ? 'plain' : 'playful';
@@ -188,10 +194,6 @@ function show(view) {
   const adv = $('#advanced-nav');
   if (adv) adv.open = ADVANCED_VIEWS.includes(view);
   if (narrow()) drawer('sidebar', false);
-  // Wire desktop composers directly (not via loader) so Send works even if loadDesktop fails
-  if (view === 'desktop') {
-    try { wireDesktopComposers(); } catch (e) { console.error('[desktop] wiring failed:', e); }
-  }
   loaders[view]?.().catch(() => {});
 }
 
@@ -807,54 +809,7 @@ async function loadLog() {
       if (!l.mine && voice.voiceMode) voice.speak(l.text);
     }
     if (atBottom) log.scrollTop = log.scrollHeight;
-    // Sync to desktop Maestro panel (EXE clone) - same conversation, Maestro-styled cards
-    try {
-      const maestroMsg = document.getElementById('maestro-messages');
-      if (maestroMsg) {
-        maestroMsg.replaceChildren(...lines.map((l) => {
-          const card = el('div', 'maestro-card');
-          const head = el('div', 'maestro-card-head');
-          const icon = l.bridge ? agentIconFor(BRIDGE_DISPLAY_NAME) : null;
-          head.append(el('span', 'maestro-avatar', icon || (l.who || '?').slice(0, 1).toUpperCase()));
-          head.append(el('strong', null, l.who || 'Unknown'));
-          if (l.ts) head.append(el('span', 'muted sm', ' ' + l.ts));
-          head.append(el('span', 'helmian-badge', 'HELMIAN'));
-          card.append(head, el('div', 'maestro-card-body', l.text));
-          return card;
-        }));
-        maestroMsg.scrollTop = maestroMsg.scrollHeight;
-      }
-    } catch {}
   } catch { log.replaceChildren(sys('console is reconnecting…')); }
-}
-// Envoy channel log (separate from Console team channel - no bleeding)
-async function loadEnvoyLog() {
-  const roomMsg = document.getElementById('room-messages');
-  if (!roomMsg) return;
-  if (!state.envoyChannelId) {
-    roomMsg.replaceChildren(el('div', 'muted sm', 'No Envoy channel yet — messages will appear here once set up'));
-    return;
-  }
-  try {
-    const lines = logLines(await api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(state.envoyChannelId)}`), state.actor?.subject);
-    if (!lines.length) {
-      roomMsg.replaceChildren(el('div', 'muted sm', 'Envoy channel connected · say hello below'));
-      return;
-    }
-    roomMsg.replaceChildren(...lines.map((l) => {
-      const card = el('div', 'room-card');
-      const head = el('div', 'room-card-head');
-      head.append(el('span', 'room-avatar', (l.who || '?').slice(0, 1).toUpperCase()));
-      head.append(el('strong', null, l.who || 'Unknown'));
-      if (l.ts) head.append(el('span', 'muted sm', ' ' + l.ts));
-      head.append(el('span', 'helmian-badge', 'HELMIAN'));
-      card.append(head, el('div', 'room-card-body', l.text));
-      return card;
-    }));
-    roomMsg.scrollTop = roomMsg.scrollHeight;
-  } catch {
-    roomMsg.replaceChildren(el('div', 'muted sm', 'Envoy is reconnecting…'));
-  }
 }
 $('#channel').onchange = (e) => { state.channelId = e.target.value; loadLog(); };
 $('#new-channel').onclick = () => {
@@ -1503,7 +1458,6 @@ async function loadAgentSessions() {
     const sessions = res.sessions ?? [];
     state.agentSessions = sessions;
     renderAgentSessions(sess, sessions);
-    renderMemberList();
   } catch (e) {
     sess.replaceChildren(el('p', 'muted sm', 'Could not load sessions.'));
   }
@@ -1932,310 +1886,65 @@ async function loadPreview() {
 }
 $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 
+// Desktop view = the Envoy workspace (channels | chat | agents | workbench).
+// The module owns its own DOM wiring; app.js hands it the shared helpers.
+let workspaceModule = null;
 async function loadDesktop() {
-  // Wire composers FIRST so Send works even if data loads fail below.
-  wireDesktopComposers();
-  // Load channel ID (loadConsole does this for the console view, but desktop needs it too)
-  if (!state.channelId) {
-    try {
-      const body = await api('/api/admin/envoy/channels');
-      const chans = Array.isArray(body.channels) ? body.channels : [];
-      state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
-      if (!state.channelId && isAdminRole(state.actor?.role)) {
-        const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' });
-        state.channelId = made.channel?.id ?? null;
-      }
-    } catch {}
-  }
-  // Load Envoy channel (separate from Console team channel - no bleeding)
-  if (!state.envoyChannelId) {
-    try {
-      const body = await api('/api/admin/envoy/channels');
-      const chans = Array.isArray(body.channels) ? body.channels : [];
-      const envoy = chans.find(c => c.slug === 'envoy' || c.title === 'Envoy');
-      state.envoyChannelId = envoy ? (envoy.id ?? envoy.channelId) : null;
-      if (!state.envoyChannelId && isAdminRole(state.actor?.role)) {
-        const made = await post('/api/admin/envoy/channels', { slug: 'envoy', title: 'Envoy', kind: 'team' });
-        state.envoyChannelId = made.channel?.id ?? null;
-      }
-    } catch {}
-  }
-  // Wire up panel collapse buttons (EXE style)
-  for (const btn of document.querySelectorAll('.dpanel-toggle')) {
-    if (btn.dataset.wired) continue;
-    btn.dataset.wired = '1';
-    btn.onclick = () => {
-      const panel = document.getElementById(btn.dataset.panel);
-      if (!panel) return;
-      const isCollapsed = panel.classList.toggle('collapsed');
-      panel.classList.toggle('collapsed-panel', isCollapsed);
-      // EXE-style: animate the grid column to zero via collapse classes
-      const grid = document.querySelector('.desktop-grid');
-      if (grid) {
-        grid.style.gridTemplateColumns = '';
-        const collapseMap = { 'dp-room': 'room-collapsed', 'dp-agents': 'agents-collapsed', 'dp-guard': 'guard-collapsed' };
-        const cls = collapseMap[btn.dataset.panel];
-        if (cls) grid.classList.toggle(cls, isCollapsed);
-      }
-      btn.textContent = isCollapsed ? '›' : '‹';
-      btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
-    };
-  }
-  // EXE-style drag splitters: drag to resize adjacent panels
-  for (const split of document.querySelectorAll('.dsplit')) {
-    if (split.dataset.wired) continue;
-    split.dataset.wired = '1';
-    split.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      split.classList.add('dragging');
-      split.setPointerCapture(e.pointerId);
-      const grid = document.querySelector('.desktop-grid');
-      const startX = e.clientX;
-      const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').map(v => parseFloat(v));
-      // cols: [room, split, maestro, split, agents, split, guard]
-      const idx = { 'room': 0, 'maestro': 2, 'agents': 4 }[split.dataset.split];
-      if (idx === undefined) return;
-      const startLeft = cols[idx];
-      const startRight = cols[idx + 2];
-      const onMove = (ev) => {
-        const dx = ev.clientX - startX;
-        const newLeft = Math.max(0, Math.min(600, startLeft + dx));
-        const newRight = Math.max(0, Math.min(600, startRight - dx));
-        // Update via inline style for smooth drag
-        const template = [...cols];
-        template[idx] = newLeft;
-        template[idx + 2] = newRight;
-        grid.style.gridTemplateColumns = template.map((v, i) => i % 2 === 1 ? '6px' : (i === 2 ? `minmax(0,${v}px)` : `${v}px`)).join(' ');
-      };
-      const onUp = () => {
-        split.classList.remove('dragging');
-        split.removeEventListener('pointermove', onMove);
-        split.removeEventListener('pointerup', onUp);
-        // Keep the inline sizes so panels stay where the user put them.
-        // Collapse toggles clear this when they run.
-      };
-      split.addEventListener('pointermove', onMove);
-      split.addEventListener('pointerup', onUp);
-    });
-  }
-  await Promise.all([loadAgentSessions(), loadLog(), loadFeedData(), loadEnvoyLog()]);
-  renderMemberList();
+  wireRail();
+  workspaceModule ??= await import('./envoy-workspace.js');
+  await loadFeedData().catch(() => {});
+  await workspaceModule.mountWorkspace({
+    api, post, toast, state,
+    openTools,
+    wireVoice: wireMaestroVoiceChips,
+    renderFeed,
+    loadFeedData,
+    ackAll: () => document.getElementById('feed-ack-all')?.click(),
+    loadGuardPreview,
+    loadGuardCreateList,
+  });
+  wireGuardCreate();
 }
 
-function wireDesktopComposers() {
-  // EXE-style sidebar: hover to expand, auto-collapse after delay (unless pinned)
+// Left nav: the topbar button folds it to an icon rail; the choice is remembered.
+function wireRail() {
   const sidebar = document.getElementById('sidebar');
-  if (sidebar && !sidebar.dataset.railWired) {
-    sidebar.dataset.railWired = '1';
-    sidebar.classList.add('rail');
-    document.querySelector('.shell')?.classList.add('sidebar-rail');
-    let collapseTimer = null;
-    const expand = () => {
-      if (collapseTimer) { clearTimeout(collapseTimer); collapseTimer = null; }
-      sidebar.classList.remove('rail');
-      document.querySelector('.shell')?.classList.remove('sidebar-rail');
-    };
-    const scheduleCollapse = () => {
-      if (sidebar.dataset.pinned === '1') return;
-      if (collapseTimer) clearTimeout(collapseTimer);
-      collapseTimer = setTimeout(() => {
-        if (!sidebar.matches(':hover')) {
-          sidebar.classList.add('rail');
-          document.querySelector('.shell')?.classList.add('sidebar-rail');
-        }
-      }, 280);
-    };
-    sidebar.addEventListener('mouseenter', expand);
-    sidebar.addEventListener('mouseleave', scheduleCollapse);
-    // Double-click to pin/unpin
-    sidebar.addEventListener('dblclick', () => {
-      const pinned = sidebar.dataset.pinned === '1';
-      sidebar.dataset.pinned = pinned ? '0' : '1';
-      if (!pinned) {
-        sidebar.classList.remove('rail');
-        document.querySelector('.shell')?.classList.remove('sidebar-rail');
-      }
-      toast(pinned ? 'Sidebar unpinned' : 'Sidebar pinned open');
-    });
-  }
-  // Wire Room panel composer (EXE parity): sends to the team channel like the main console
-  const roomForm = document.getElementById('room-form');
-  if (roomForm && !roomForm.dataset.wired) {
-    roomForm.dataset.wired = '1';
-    const roomInput = document.getElementById('room-input');
-    if (roomInput) roomInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); roomForm.requestSubmit(); } };
-    roomForm.onsubmit = async (e) => {
-      e.preventDefault();
-      const input = document.getElementById('room-input');
-      const body = input.value.trim();
-      if (!body) return;
-      if (!state.envoyChannelId) {
-        toast('No Envoy channel yet — ask the owner to set one up');
-        return;
-      }
-      const btn = roomForm.querySelector('button[type="submit"]');
-      if (btn) btn.disabled = true;
-      try {
-        await post('/api/admin/envoy/messages', { channelId: state.envoyChannelId, body, idempotencyKey: crypto.randomUUID() });
-        input.value = '';
-        await loadEnvoyLog();
-      } catch { toast('Not sent — your message is still in the box'); }
-      finally { if (btn) btn.disabled = false; }
-    };
-  }
-  // Wire Maestro panel composer (EXE parity): sends to the team channel where the Maestro/bridge responds
-  const maestroForm = document.getElementById('maestro-form');
-    if (maestroForm) {
-    maestroForm.onsubmit = async (e) => {
-      e.preventDefault();
-      const input = document.getElementById('maestro-input');
-      const body = input.value.trim();
-      if (!state.channelId) {
-        console.warn('[maestro-send] no channelId, state:', { channelId: state.channelId, actor: state.actor?.role });
-        toast('No team channel yet — ask the owner to set one up');
-        return;
-      }
-      const btn = maestroForm.querySelector('button[type="submit"]');
-      if (btn) btn.disabled = true;
-      try {
-        await post('/api/admin/envoy/messages', { channelId: state.channelId, body, idempotencyKey: crypto.randomUUID() });
-        input.value = '';
-        await loadLog();
-      } catch (err) {
-        console.error('[maestro-send] failed:', err);
-        toast('Not sent — your message is still in the box');
-      }
-      finally { if (btn) btn.disabled = false; }
-    };
-  } else {
-  }
-  // Wire provider tab switching (visual only for now, EXE parity)
-  for (const tabs of document.querySelectorAll('#maestro-providers, #agents-providers')) {
-    if (tabs.dataset.wired) continue;
-    tabs.dataset.wired = '1';
-    tabs.onclick = (e) => {
-      const btn = e.target.closest('[data-provider]');
-      if (!btn) return;
-      for (const b of tabs.querySelectorAll('[data-provider]')) b.classList.toggle('active', b === btn);
-    };
-  }
-  // Wire Room sources tabs (EXE parity): All/Discord/GitHub filter
-  const roomSources = document.getElementById('room-sources');
-  if (roomSources && !roomSources.dataset.wired) {
-    roomSources.dataset.wired = '1';
-    roomSources.onclick = (e) => {
-      const btn = e.target.closest('[data-source]');
-      if (!btn) return;
-      for (const b of roomSources.querySelectorAll('[data-source]')) b.classList.toggle('active', b === btn);
-      // TODO: filter messages by source when Discord/GitHub integrations land
-      // For now, all messages show (EXE parity: tab switches visually)
-    };
-  }
-  // Room bottom provider tabs: Discord/GitHub/Slack connections (integrations not built yet)
-  const roomProviders = document.querySelector('#dp-room .dpanel-tabs.bottom');
-  if (roomProviders && !roomProviders.dataset.wired) {
-    roomProviders.dataset.wired = '1';
-    roomProviders.onclick = (e) => {
-      const btn = e.target.closest('[data-provider]');
-      if (!btn) return;
-      for (const b of roomProviders.querySelectorAll('[data-provider]')) b.classList.toggle('active', b === btn);
-      const provider = btn.dataset.provider;
-      toast(`${provider.charAt(0).toUpperCase() + provider.slice(1)} integration is not built yet. See Integrations in Settings.`);
-    };
-  }
-  // Console pills: explain what they are (EXE parity)
-  const pillInfo = {
-    full: 'Full context mode: Maestro sees the entire conversation history.',
-    polaris: 'Polaris: the routing policy that picks which model handles each task.',
-    evaluation: 'Evaluation mode: runs quality checks on agent outputs.',
-    agent: 'Agent configured: an AI provider is connected and ready.',
+  const shellEl = document.querySelector('.shell');
+  const btn = document.getElementById('rail-toggle');
+  if (!sidebar || !shellEl || sidebar.dataset.railWired) return;
+  sidebar.dataset.railWired = '1';
+  const setRail = (on) => {
+    sidebar.classList.toggle('rail', on); shellEl.classList.toggle('sidebar-rail', on);
+    if (btn) { btn.textContent = on ? '»' : '«'; btn.title = on ? 'Expand navigation' : 'Collapse navigation'; btn.setAttribute('aria-pressed', String(on)); }
   };
-  for (const pill of document.querySelectorAll('#dp-maestro [data-pill]')) {
-    if (pill.dataset.wired) continue;
-    pill.dataset.wired = '1';
-    pill.onclick = () => toast(pillInfo[pill.dataset.pill] || pill.dataset.pill);
-  }
-  const guardPanel = document.getElementById('dp-guard');
-  if (guardPanel) {
-    const gtabs = guardPanel.querySelector('[data-gtab]');
-    if (gtabs && !gtabs.parentElement.dataset.wired) {
-      const tabContainer = gtabs.parentElement;
-      tabContainer.dataset.wired = '1';
-      tabContainer.onclick = (e) => {
-        const btn = e.target.closest('[data-gtab]');
-        if (!btn) return;
-        for (const b of tabContainer.querySelectorAll('[data-gtab]')) b.classList.toggle('active', b === btn);
-        switchGuardTab(btn.dataset.gtab);
-      };
-    }
-  }
-  // Guard panel: browser tab (validated embed, same policy as the workbench browser)
-  const gBrowserForm = document.getElementById('guard-browser-form');
-  if (gBrowserForm && !gBrowserForm.dataset.wired) {
-    gBrowserForm.dataset.wired = '1';
-    gBrowserForm.onsubmit = async (e) => {
-      e.preventDefault();
-      const status = document.getElementById('guard-browser-status');
-      const wrap = document.getElementById('guard-browser-wrap');
-      const frame = document.getElementById('guard-browser-frame');
-      const clientError = clientValidBrowserUrl(document.getElementById('guard-browser-url').value);
-      if (clientError) { status.textContent = clientError; return; }
-      status.textContent = 'Checking…';
-      try {
-        const result = await post('/api/admin/browser/navigate', { url: document.getElementById('guard-browser-url').value.trim() });
-        frame.src = toEmbeddableUrl(result.url);
-        frame.dataset.externalUrl = result.url;
-        wrap.hidden = false;
-        status.textContent = 'Loaded inside Helmian. Recorded in the audit trail.';
-      } catch (error) {
-        status.textContent = error.body?.message || error.message || 'That address was not accepted.';
-      }
-    };
-    document.getElementById('guard-browser-external').onclick = () => {
-      const url = document.getElementById('guard-browser-frame').dataset.externalUrl;
-      if (url) window.open(url, '_blank', 'noopener');
-    };
-  }
-  // Guard panel: create tab (record a request, same API as the workbench create)
+  // First visit on a laptop-sized screen starts on the rail so the chat gets the room.
+  let pinnedRail = store.get('navRail', window.innerWidth < 1600);
+  setRail(pinnedRail);
+  if (btn) btn.onclick = () => { pinnedRail = !pinnedRail; store.set('navRail', pinnedRail); setRail(pinnedRail); };
+}
+
+function wireGuardCreate() {
   const gCreateForm = document.getElementById('guard-create-form');
-  if (gCreateForm && !gCreateForm.dataset.wired) {
-    gCreateForm.dataset.wired = '1';
-    gCreateForm.onsubmit = async (e) => {
-      e.preventDefault();
-      const input = document.getElementById('guard-create-prompt');
-      const prompt = input.value.trim();
-      if (!prompt) { toast('Describe what you want to create'); return; }
-      const status = document.getElementById('guard-create-status');
-      status.textContent = 'Recording…';
-      try {
-        const payload = createIntentPayload({ title: prompt.split(/\n/)[0].slice(0, 240), objective: prompt, type: 'other', department: '', sourcesText: '', stage: 'draft' });
-        const result = await post('/api/admin/cora/artifacts', payload);
-        input.value = '';
-        status.textContent = result.replayed ? 'That request was already on file.' : 'Review recorded.';
-        toast('Review recorded', 'ok');
-        loadGuardCreateList();
-      } catch (error) {
-        status.textContent = error.message || 'Could not record review';
-      }
-    };
-  }
-  // Maestro panel: voice chips (EXE parity) — same voice engine, targets the maestro composer
-  wireMaestroVoiceChips();
-  // Maestro panel: + button (EXE parity) — tools and skills
-  const plusBtn = document.getElementById('maestro-plus');
-  if (plusBtn && !plusBtn.dataset.wired) {
-    plusBtn.dataset.wired = '1';
-    plusBtn.onclick = () => openTools();
-  }
-  // Maestro panel: mic button (EXE parity) — toggles dictate mode
-  const micBtn = document.getElementById('maestro-mic');
-  if (micBtn && !micBtn.dataset.wired) {
-    micBtn.dataset.wired = '1';
-    micBtn.onclick = () => toggleMaestroVoice('dictate');
-  }
-  // Maestro panel: workspace indicator (EXE parity) — shows the active project
-  const wsLabel = document.getElementById('maestro-workspace');
-  if (wsLabel && state.activeProjectKey) wsLabel.textContent = state.activeProjectKey;
+  if (!gCreateForm || gCreateForm.dataset.wired) return;
+  gCreateForm.dataset.wired = '1';
+  gCreateForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('guard-create-prompt');
+    const prompt = input.value.trim();
+    if (!prompt) { toast('Describe what you want to create'); return; }
+    const status = document.getElementById('guard-create-status');
+    status.textContent = 'Recording…';
+    try {
+      const payload = createIntentPayload({ title: prompt.split(/\n/)[0].slice(0, 240), objective: prompt, type: 'other', department: '', sourcesText: '', stage: 'draft' });
+      const result = await post('/api/admin/cora/artifacts', payload);
+      input.value = '';
+      status.textContent = result.replayed ? 'That request was already on file.' : 'Review recorded.';
+      toast('Review recorded', 'ok');
+      loadGuardCreateList();
+    } catch (error) {
+      status.textContent = error.message || 'Could not record review';
+    }
+  };
 }
 
 function insertMaestroDictation(text) {
@@ -2310,72 +2019,6 @@ function wireMaestroVoiceChips() {
       input.focus();
     };
   }
-  // Guard action buttons (EXE parity)
-  const gAckAll = document.getElementById('guard-ackall');
-  if (gAckAll && !gAckAll.dataset.wired) {
-    gAckAll.dataset.wired = '1';
-    gAckAll.onclick = () => document.getElementById('feed-ack-all')?.click();
-  }
-  const gSettings = document.getElementById('guard-settings');
-  if (gSettings && !gSettings.dataset.wired) {
-    gSettings.dataset.wired = '1';
-    gSettings.onclick = () => {
-      const findings = state.findings ?? [];
-      const crit = findings.filter(f => f.severity === 'critical').length;
-      const warn = findings.filter(f => f.severity === 'warning').length;
-      toast(`Guard: ${findings.length} total, ${crit} critical, ${warn} warning. Acked criticals stay visible.`, 'info');
-    };
-  }
-  const gQuarantine = document.getElementById('guard-quarantine');
-  if (gQuarantine && !gQuarantine.dataset.wired) {
-    gQuarantine.dataset.wired = '1';
-    gQuarantine.onclick = () => toast('Quarantine log lives in the desktop app');
-  }
-  const gTests = document.getElementById('guard-tests');
-  if (gTests && !gTests.dataset.wired) {
-    gTests.dataset.wired = '1';
-    gTests.onclick = async () => {
-      toast('Running cloud test suite...');
-      try {
-        // The web test suite is the cloud-app tests
-        toast('Test suite runs from the desktop app (node --test). Cloud tests: 14/15 passing.', 'info');
-      } catch {
-        toast('Could not run tests');
-      }
-    };
-  }
-}
-
-async function switchGuardTab(name) {
-  // Show the selected tab panel, hide the others; lazy-load content on first open
-  for (const panel of document.querySelectorAll('#dp-guard [data-gtab-panel]')) {
-    panel.hidden = panel.dataset.gtabPanel !== name;
-  }
-  // The filters row and bottom buttons only apply to the Guard findings tab
-  const filters = document.getElementById('guard-filters');
-  if (filters) filters.style.display = name === 'guard' ? '' : 'none';
-  if (name === 'canvas') loadGuardCanvas();
-  else if (name === 'preview') loadGuardPreview();
-  else if (name === 'create') loadGuardCreateList();
-}
-
-async function loadGuardCanvas() {
-  const status = document.getElementById('guard-canvas-status');
-  const body = document.getElementById('guard-canvas-body');
-  const projectKey = state.activeProjectKey;
-  if (!projectKey) { status.textContent = 'Pick a project first — the canvas is saved per project.'; body.hidden = true; return; }
-  status.textContent = 'Loading…';
-  try {
-    const data = await api(`/api/admin/workspace/canvas?projectKey=${encodeURIComponent(projectKey)}`);
-    if (state.activeProjectKey !== projectKey) return;
-    document.getElementById('guard-canvas-note').textContent = (data.noteText || 'Empty canvas.').slice(0, 500);
-    const decisions = data.decisions ?? [];
-    document.getElementById('guard-canvas-count').textContent = decisions.length;
-    document.getElementById('guard-canvas-decisions').replaceChildren(...decisions.slice(0, 10).map((d) =>
-      el('div', 'guard-card', typeof d === 'string' ? d.slice(0, 200) : String(d.decisionText ?? d.text ?? '').slice(0, 200))));
-    status.textContent = '';
-    body.hidden = false;
-  } catch { status.textContent = 'Could not load the canvas.'; body.hidden = true; }
 }
 
 async function loadGuardPreview() {
@@ -2409,34 +2052,6 @@ async function loadGuardCreateList() {
   } catch { if (!list.children.length) status.textContent = 'Could not load.'; }
 }
 
-function renderMemberList() {
-  // Discord-style member list: friends, agents, bots
-  try {
-    const list = document.getElementById('members-list');
-    const count = document.getElementById('members-count');
-    if (!list) return;
-    const members = [];
-    // The user (Troy)
-    if (state.actor?.name || state.actor?.subject) {
-      members.push({ name: state.actor.name || 'Troy', role: 'Owner', status: 'online', kind: 'human' });
-    }
-    // Maestro (bridge agent)
-    members.push({ name: 'Maestro', role: 'Agent', status: 'online', kind: 'agent' });
-    // Agent sessions
-    const sessions = state.agentSessions || [];
-    for (const s of sessions) {
-      members.push({ name: s.name, role: s.provider || 'Agent', status: s.status === 'active' ? 'online' : 'idle', kind: 'agent' });
-    }
-    if (count) count.textContent = members.length;
-    list.replaceChildren(...members.map((m) => {
-      const item = el('div', 'member-item');
-      item.append(el('span', `member-status ${m.status}`));
-      item.append(el('span', null, m.name));
-      item.append(el('span', 'member-role', m.role));
-      return item;
-    }));
-  } catch {}
-}
 const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 

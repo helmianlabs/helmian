@@ -57,7 +57,8 @@ function contextFor(actor) {
 }
 
 function rowMessage(row) {
-  return Object.freeze({ id: String(row.id), channelId: String(row.channel_id), authorSubject: String(row.author_subject), authorKind: String(row.author_kind), body: String(row.body), idempotencyKey: String(row.idempotency_key), createdAt: row.created_at });
+  const who = describeAuthor(row.author_subject, row.author_kind);
+  return Object.freeze({ id: String(row.id), channelId: String(row.channel_id), authorSubject: String(row.author_subject), authorKind: String(row.author_kind), ...(who.name ? { authorName: who.name } : {}), source: who.source, ...(who.provider ? { agentProvider: who.provider } : {}), body: String(row.body), idempotencyKey: String(row.idempotency_key), createdAt: row.created_at });
 }
 
 export function createEnvoyStore(pool) {
@@ -100,13 +101,13 @@ export function createEnvoyStore(pool) {
         const result = normalizedCursor
           ? await client.query(
             `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
-             from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and id > $3
+             from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and id > $3 and author_subject <> 'system:envoy-config'
              order by id asc limit $4`,
             [context.tenantId, normalizedChannelId, normalizedCursor, boundedLimit],
           )
           : await client.query(
             `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
-             from helmion.envoy_messages where tenant_id=$1 and channel_id=$2
+             from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject <> 'system:envoy-config'
              order by created_at desc, id desc limit $3`,
             [context.tenantId, normalizedChannelId, boundedLimit],
           );
@@ -165,3 +166,4 @@ export function createEnvoyStore(pool) {
 }
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
 import { appendAuditEvent } from './audit-event-repository.mjs';
+import { describeAuthor } from './envoy-agents.mjs';

@@ -11,6 +11,7 @@
 // cloud reads the Ably key from the ABLY_API_KEY env var (same var Herald
 // uses). Everything no-ops gracefully when the key is unset.
 
+import { handleEnvoyMeshRoute } from './envoy-mesh.mjs';
 import { createHmac, randomBytes } from 'node:crypto';
 import { handleRunnerPresenceRoute } from './runner-presence.mjs';
 import { handleAgentSessionsRoute } from './agent-sessions.mjs';
@@ -178,6 +179,7 @@ export async function handleEnvoyAblyRoute({
   }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleAgentSessionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
+  if (await handleEnvoyMeshRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (request?.method !== 'POST' || requestUrl?.pathname !== ENVOY_ABLY_TOKEN_PATH) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
   try {

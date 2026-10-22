@@ -22,6 +22,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openVault, readDeviceToken, defaultVaultPath, PROVIDER_KEY_ENV } from '../src/runner/vault.mjs';
 import { parseApprovalReply } from '../src/mcp/local-exec-server.mjs';
+import { agentPrompt, normalizeProvider } from '../src/cloud/envoy-agents.mjs';
 
 const CLOUD = 'https://helmian.cloud';
 const POLL_MS = 5000;
@@ -36,6 +37,10 @@ function defaultDeps() {
     cursorPath: join(BRIDGE_DIR, 'pc-bridge-cursor.json'),
     channelSlugs: process.env.HELMION_BRIDGE_CHANNEL_SLUGS || '*', // '*' = all channels, or comma-separated slugs
     provider: process.env.HELMION_BRIDGE_PROVIDER || 'claude',
+    // Agent members this PC answers for in Envoy (and linked Discord) channels.
+    // Default: the bridge provider plus Maestro, plus every provider in the vault.
+    agents: process.env.HELMION_BRIDGE_AGENTS || null,
+    maestroProvider: process.env.HELMION_BRIDGE_MAESTRO_PROVIDER || null,
     workspace: process.env.HELMION_BRIDGE_WORKSPACE || join(homedir(), 'workspace'),
     toolsMode: process.env.HELMION_BRIDGE_TOOLS || 'read-only', // read-only | ask | full
     helmionBin: resolve(dirname(fileURLToPath(import.meta.url)), 'helmion.mjs'),
@@ -172,6 +177,22 @@ async function reportPresence(deps, token) {
   }
 }
 
+async function vaultProviders(deps) {
+  try {
+    const token = await readDeviceToken(deps.tokenPath);
+    if (!token) return [];
+    const vault = await openVault({ vaultPath: deps.vaultPath || defaultVaultPath(homedir()), deviceToken: token });
+    return (await vault.status()).map((r) => String(r.provider).toLowerCase());
+  } catch { return []; }
+}
+
+// Keys for every provider this PC serves as an agent (vault wins over env).
+async function loadVaultKeys(deps, providers) {
+  const out = {};
+  for (const provider of providers) Object.assign(out, await loadVaultKey({ ...deps, provider }));
+  return out;
+}
+
 async function loadVaultKey(deps) {
   const envName = PROVIDER_KEY_ENV[String(deps.provider || '').toLowerCase()];
   if (!envName) return {};
@@ -227,6 +248,26 @@ function runTurn(child, text, { onPermissionRequest = null } = {}) {
   });
 }
 
+// Send one command and wait for the child's matching event (or time out).
+function sendAndWait(child, payload, eventName, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    let buffer = '';
+    const finish = (value) => { clearTimeout(timer); child.stdout.off('data', onData); resolve(value); };
+    const onData = (data) => {
+      buffer += String(data);
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const raw of lines) {
+        try { const event = JSON.parse(raw.trim()); if (event?.event === eventName) return finish(event); } catch { /* not JSON */ }
+      }
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    child.stdout.on('data', onData);
+    child.stdin.write(`${JSON.stringify(payload)}\n`);
+  });
+}
+
 // Wait for the agent child's first `hello` event (provider resolved).
 function waitForHello(child) {
   return new Promise((resolve) => {
@@ -276,7 +317,14 @@ export async function runBridge(overrides = {}) {
     if (!creds) return { ok: false, reason: 'pairing failed' };
   }
 
-  const child = startAgent(deps, await loadVaultKey(deps));
+  // Agent members this PC serves (Envoy channel agents and linked Discord).
+  const servedAgents = [...new Set(String(deps.agents ?? '').split(',').map(normalizeProvider).filter(Boolean))];
+  if (!servedAgents.length) {
+    for (const p of [deps.provider, 'maestro', ...await vaultProviders(deps)]) { const n = normalizeProvider(p); if (n && !servedAgents.includes(n)) servedAgents.push(n); }
+  }
+  const maestroProvider = normalizeProvider(deps.maestroProvider) && normalizeProvider(deps.maestroProvider) !== 'maestro' ? normalizeProvider(deps.maestroProvider) : (normalizeProvider(deps.provider) || 'claude');
+  const keyProviders = [...new Set([deps.provider, maestroProvider, ...servedAgents.filter((p) => p !== 'maestro')])];
+  const child = startAgent(deps, await loadVaultKeys(deps, keyProviders));
   void reportPresence(deps, creds.token);
   const hello = await waitForHello(child);
   if (hello?.ok === false) logError('agent bridge warning:', hello.message);
@@ -298,6 +346,20 @@ export async function runBridge(overrides = {}) {
     return { ok: false, reason: 'channel not found' };
   }
   log(`watching ${watched.map((c) => `#${c.slug}`).join(', ')}`);
+  log(`agent member for: ${servedAgents.join(', ')} (Maestro runs on ${maestroProvider})`);
+
+  // Channels with an agent roster are answered by agent members only (below);
+  // the legacy "reply to everything" path stays for channels never configured.
+  const configuredChannels = new Set();
+  const refreshConfigured = async () => {
+    for (const ch of watched) {
+      try {
+        const c = await api(deps, `/api/admin/envoy/channel-config?channel_id=${encodeURIComponent(ch.id)}`, { token: creds.token });
+        if (c?.configured) configuredChannels.add(ch.id); else configuredChannels.delete(ch.id);
+      } catch { /* older cloud: no config route, keep legacy */ }
+    }
+  };
+  await refreshConfigured();
 
   let seen = await loadSeen(deps);
   if (seen === null) {
@@ -319,8 +381,61 @@ export async function runBridge(overrides = {}) {
   const turnQueue = [];
   let shuttingDown = false;
 
-  const processOne = async (message) => {
+  const agentJobs = new Set();
+  const runAgentJob = async ({ item, provider }) => {
+    const runProvider = provider === 'maestro' ? maestroProvider : provider;
+    const key = `${provider}|${item.message.id}`;
+    try {
+      log(`agent ${provider} (${runProvider}) answering ${item.message.id} in #${item.channel.slug}`);
+      await sendAndWait(child, { cmd: 'configure', provider: runProvider, workspace: deps.workspace, permission: deps.toolsMode }, 'ready');
+      await sendAndWait(child, { cmd: 'reset' }, 'ready');
+      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message: item.message, source: item.message.source });
+      const reply = await runTurn(child, text);
+      if (!reply || !reply.trim()) { log(`agent ${provider}: no text for ${item.message.id}`); return; }
+      const body = reply.length > 4000 ? `${reply.slice(0, 3997)}...` : reply;
+      await api(deps, '/api/admin/envoy/agent-messages', { method: 'POST', token: creds.token, body: { channelId: item.channel.id, provider, replyTo: item.message.id, body } });
+      log(`agent ${provider} replied in #${item.channel.slug} (${body.length} chars)`);
+    } catch (err) {
+      logError(`agent ${provider} failed on ${item.message.id}:`, err?.message ?? err);
+    } finally {
+      agentJobs.delete(key);
+      // Back to the bridge's own provider for legacy turns.
+      await sendAndWait(child, { cmd: 'configure', provider: deps.provider, workspace: deps.workspace, permission: deps.toolsMode }, 'ready', 5000);
+    }
+  };
+
+  const enqueue = (job) => { if (turnInFlight) turnQueue.push(job); else void processOne(job); };
+
+  const pollAgentWork = async () => {
+    if (shuttingDown) return;
+    try {
+      const res = await api(deps, `/api/admin/envoy/agent-work?providers=${encodeURIComponent(servedAgents.join(','))}`, { token: creds.token });
+      for (const item of res?.work ?? []) {
+        configuredChannels.add(item.channel.id);
+        for (const provider of item.agents ?? []) {
+          const key = `${provider}|${item.message.id}`;
+          if (agentJobs.has(key)) continue;
+          agentJobs.add(key);
+          enqueue({ kind: 'agent', item, provider });
+        }
+      }
+    } catch (err) {
+      if (!/ROUTE|404|405/.test(String(err?.message))) logError('agent work poll failed:', err?.message ?? err);
+    }
+  };
+
+  const processOne = async (job) => {
     turnInFlight = true;
+    if (job?.kind === 'agent') {
+      try { await runAgentJob(job); }
+      finally {
+        turnInFlight = false;
+        const next = turnQueue.shift();
+        if (next && !shuttingDown) void processOne(next);
+      }
+      return;
+    }
+    const message = job;
     try {
       log(`turn for message ${message.id} from ${message.authorSubject}`);
       const reply = await runTurn(child, String(message.body ?? ''), {
@@ -375,12 +490,16 @@ export async function runBridge(overrides = {}) {
       child.stdin.write(`${JSON.stringify({ cmd: 'permission_response', id: approval.id, decision: approval.decision === 'approve' ? 'allow-once' : 'deny' })}\n`);
       return;
     }
-    if (turnInFlight) turnQueue.push(message);
-    else void processOne(message);
+    if (configuredChannels.has(message.channelId)) { void pollAgentWork(); return; }
+    enqueue(message);
   };
 
+  let pollCount = 0;
   const poll = async () => {
     if (shuttingDown) return;
+    pollCount += 1;
+    if (pollCount % 12 === 0) await refreshConfigured();
+    await pollAgentWork();
     try {
       for (const ch of watched) {
         const res = await api(deps,
@@ -515,6 +634,8 @@ export async function runBridge(overrides = {}) {
     });
     // Catch anything posted between the seen-init fetch and the subscribe.
     await poll();
+    const agentTimer = setInterval(() => void pollAgentWork(), Math.max(deps.pollMs, 5000) * 3);
+    if (typeof agentTimer.unref === 'function') agentTimer.unref();
   } else {
     startPolling();
     await poll();

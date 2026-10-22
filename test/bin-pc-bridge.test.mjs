@@ -21,6 +21,9 @@ function makeFakeChild() {
       setImmediate(() => {
         let cmd;
         try { cmd = JSON.parse(String(chunk)); } catch { return; }
+        if (cmd.cmd === 'configure' || cmd.cmd === 'reset') {
+          stdout.emit('data', `${JSON.stringify({ event: 'ready', provider: cmd.provider ?? null })}\n`);
+        }
         if (cmd.cmd === 'turn') {
           stdout.emit('data', `${JSON.stringify({ event: 'assistant', text: `fake reply to: ${cmd.text}` })}\n`);
           stdout.emit('data', `${JSON.stringify({ event: 'done' })}\n`);
@@ -44,7 +47,7 @@ function makeFakeCloud() {
   const messages = [
     { id: '4', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', body: 'old news', createdAt: 't' },
   ];
-  const json = (obj, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => obj });
+  const json = (obj, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => obj, text: async () => JSON.stringify(obj) });
   const fetchImpl = async (url, opts = {}) => {
     const method = opts.method ?? 'GET';
     calls.push({ url, method, body: opts.body });
@@ -208,7 +211,7 @@ function makeFakeAbly() {
 
 function withAblyToken(cloud, { ok = true } = {}) {
   const orig = cloud.fetchImpl;
-  const json = (obj, good = true) => ({ ok: good, status: good ? 200 : 503, json: async () => obj });
+  const json = (obj, good = true) => ({ ok: good, status: good ? 200 : 503, json: async () => obj, text: async () => JSON.stringify(obj) });
   cloud.fetchImpl = async (url, opts = {}) => {
     const u = new URL(url);
     if (u.pathname === '/api/admin/envoy/ably-token') {
@@ -424,7 +427,7 @@ test('bridge watches all channels by default and replies in the message channel'
     'ch-team': [{ id: 'm1', channelId: 'ch-team', authorSubject: 'user-1', authorKind: 'human', body: 'hello team', createdAt: 't' }],
     'ch-dm': [{ id: 'm2', channelId: 'ch-dm', authorSubject: 'user-1', authorKind: 'human', body: 'hello dm', createdAt: 't' }],
   };
-  const json = (obj, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => obj });
+  const json = (obj, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => obj, text: async () => JSON.stringify(obj) });
   const fetchImpl = async (url, opts = {}) => {
     const u = new URL(url);
     if (u.pathname === '/api/admin/envoy/channels') {
@@ -470,7 +473,7 @@ test('bridge watches all channels by default and replies in the message channel'
 test('bridge honors HELMION_BRIDGE_CHANNEL_SLUGS filter', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-filter-'));
   const seenChannels = [];
-  const json = (obj, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => obj });
+  const json = (obj, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => obj, text: async () => JSON.stringify(obj) });
   const fetchImpl = async (url, opts = {}) => {
     const u = new URL(url);
     if (u.pathname === '/api/admin/envoy/channels') {
@@ -498,4 +501,43 @@ test('bridge honors HELMION_BRIDGE_CHANNEL_SLUGS filter', async (t) => {
   await new Promise((r) => setTimeout(r, 80));
   assert.ok(seenChannels.length > 0);
   assert.ok(seenChannels.every((id) => id === 'ch-dm'), 'only the filtered channel is polled');
+});
+
+test('agent members: configured channel is answered per agent via agent-messages, not by the legacy path', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-agents-'));
+  const cloud = makeFakeCloud();
+  const orig = cloud.fetchImpl;
+  const posted = [];
+  let served = 0;
+  const human = { id: '11111111-1111-4111-8111-111111111111', channelId: 'ch-1', authorSubject: 'discord:333333:Paul', authorKind: 'human', authorName: 'Paul', source: 'discord', body: '@all status?', createdAt: 't' };
+  cloud.fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    const json = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
+    if (u.pathname === '/api/admin/envoy/channel-config') return json({ valid: true, configured: true, config: { agents: [] } });
+    if (u.pathname === '/api/admin/envoy/agent-work') {
+      assert.deepEqual(u.searchParams.get('providers').split(',').sort(), ['claude', 'maestro']);
+      served += 1;
+      const work = posted.length ? [] : [{ channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['maestro', 'claude'], message: human, agents: ['maestro', 'claude'], context: [human] }];
+      return json({ valid: true, work });
+    }
+    if (u.pathname === '/api/admin/envoy/agent-messages') { posted.push(JSON.parse(opts.body)); return json({ valid: true, receipt: { replayed: false } }); }
+    return orig(url, opts);
+  };
+  const kids = [];
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'claude,maestro', spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
+  t.after(() => handle.stop());
+  cloud.messages.push({ id: '9', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', body: 'legacy should not answer', createdAt: 't' });
+  for (let i = 0; i < 50 && posted.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(posted.length, 2);
+  assert.deepEqual(posted.map((p) => p.provider).sort(), ['claude', 'maestro']);
+  assert.ok(posted.every((p) => p.replyTo === human.id && p.channelId === 'ch-1'));
+  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
+  assert.ok(turns.some((c) => /You are Maestro/.test(c.text)) && turns.some((c) => /You are Claude/.test(c.text)));
+  assert.ok(turns.every((c) => !/legacy should not answer/.test(c.text) || /Recent conversation/.test(c.text)), 'no legacy turn in a configured channel');
+  const legacyPosts = cloud.calls.filter((c) => c.method === 'POST' && c.url.endsWith('/api/admin/envoy/messages'));
+  assert.equal(legacyPosts.length, 0);
+  // Maestro ran on the bridge provider.
+  const configures = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'configure').map((c) => c.provider);
+  assert.ok(configures.includes('claude'));
+  assert.ok(served >= 1);
 });
