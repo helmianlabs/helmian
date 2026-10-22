@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Helmian Bridge Service</AssemblyName>
+    <RootNamespace>Helmion.BridgeService</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <!-- Opt-in, separate from the EXE (Troy 2026-10-19). Runs as a Windows service: no console window. -->
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
+  </ItemGroup>
+</Project>
