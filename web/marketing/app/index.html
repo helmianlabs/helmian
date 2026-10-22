@@ -116,6 +116,7 @@
           <form id="ew-new-channel" class="ew-new-channel" hidden>
             <input id="ew-new-channel-name" maxlength="60" placeholder="Session or channel name" aria-label="Session or channel name" autocomplete="off">
             <label class="ew-field">Agent<select id="ew-new-channel-agent" aria-label="Agent for this session"><option value="maestro">Maestro (routes to the others)</option><option value="claude">Claude</option><option value="openai">ChatGPT</option><option value="grok">Grok</option><option value="gemini">Gemini</option><option value="">None, team channel</option></select></label>
+            <div class="ew-field">Look<div id="ew-new-avatar"></div></div>
             <div class="ew-row"><button type="button" class="ew-btn ghost sm" id="ew-new-channel-cancel">Cancel</button><button type="submit" class="ew-btn primary sm">Create</button></div>
           </form>
           <button id="ew-add-channel" class="ew-btn ghost full" type="button">+ New session</button>
@@ -129,7 +130,7 @@
         <main class="ew-pane ew-chat" id="ew-chat" aria-label="Chat">
           <header class="ew-head ew-chat-head">
             <button class="ew-icon ew-reveal" type="button" data-open="channels" aria-label="Show channels" title="Channels">☰</button>
-            <span class="ew-hash">#</span><strong id="ew-channel-title">…</strong>
+            <button id="ew-chat-ava" class="ew-ava-btn" type="button" title="Change this chat's look" aria-label="Change this chat's look"><span class="ew-hash">#</span></button><strong id="ew-channel-title">…</strong>
             <span id="ew-discord-badge" class="ew-badge discord" hidden></span>
             <span class="ew-spacer"></span>
             <button id="ew-link-discord" class="ew-btn sm" type="button" title="Mirror this channel with a Discord channel"><span class="ew-discord-mark" aria-hidden="true"></span><span class="lbl">Link Discord</span></button>
@@ -418,7 +419,9 @@
     </section>
 
     <section id="view-integrations" class="view" data-view-panel="integrations" hidden>
-      <h2>Integrations</h2><div id="integrations" class="grid"></div>
+      <h2>Integrations</h2>
+      <p class="muted sm">Connect the things Helmian works with. Passwords and keys are never shown here.</p>
+      <div id="integrations" class="int-page"></div>
     </section>
 
     

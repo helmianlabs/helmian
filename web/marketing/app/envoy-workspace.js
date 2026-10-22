@@ -1,6 +1,8 @@
 // Envoy workspace for the Desktop view: channels | chat | agents | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
+
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' };
 const AVATAR = { maestro: 'maestro', claude: 'claude', openai: 'chatgpt', grok: 'grok', gemini: 'gemini' };
@@ -98,7 +100,66 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { wired: false, ctx: null, channels: [], channelId: null, config: null, configured: false, discordBot: null, messages: [], sig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, config: null, configured: false, discordBot: null, messages: [], sig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null };
+
+// ---------- avatars (saved on this device) ----------
+const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
+function chatAvatar(c, cls = '') {
+  const a = avatarFor(sanitizeChoice(ws.avatars[c?.id]), c?.title || c?.slug);
+  return h('span', { class: `ew-ava ${a.kind} ${cls}`.trim(), style: a.kind === 'plain' ? `--ava:${a.color}` : null, 'aria-hidden': 'true' }, a.glyph);
+}
+function saveAvatar(id, choice) { const v = sanitizeChoice(choice); if (!id || !v) return; ws.avatars[id] = v; ls.set('avatars', ws.avatars); }
+// Characters or simple letter icons; the switch remembers the person's preference.
+function avatarPicker(choice, title, onPick) {
+  let look = choice?.k === 'plain' ? 'plain' : 'char';
+  const wrap = h('div', { class: 'ew-ava-pick' });
+  const draw = () => {
+    const seg = h('div', { class: 'ew-seg', role: 'radiogroup', 'aria-label': 'Avatar style' },
+      ...[['char', 'Characters'], ['plain', 'Simple']].map(([k, label]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(look === k), class: look === k ? 'on' : '', onclick: () => { look = k; if ((choice?.k ?? 'char') !== k) { choice = defaultChoice(title(), k === 'plain' ? 'plain' : 'playful'); onPick(choice); } draw(); } }, label)));
+    const grid = h('div', { class: look === 'char' ? 'ew-ava-grid' : 'ew-ava-grid plain', role: 'radiogroup', 'aria-label': look === 'char' ? 'Pick a character' : 'Pick a colour' },
+      ...(look === 'char'
+        ? CHARACTERS.map(([id, glyph, label]) => h('button', { type: 'button', role: 'radio', class: `ew-ava char${choice?.id === id ? ' on' : ''}`, 'aria-checked': String(choice?.id === id), 'aria-label': label, title: label, onclick: () => { choice = { k: 'char', id }; onPick(choice); draw(); } }, glyph))
+        : COLORS.map((color, i) => h('button', { type: 'button', role: 'radio', class: `ew-ava plain${choice?.c === i ? ' on' : ''}`, style: `--ava:${color}`, 'aria-checked': String(choice?.c === i), 'aria-label': `Colour ${i + 1}`, onclick: () => { choice = { k: 'plain', c: i }; onPick(choice); draw(); } }, avatarFor({ k: 'plain', c: i }, title()).glyph))));
+    wrap.replaceChildren(seg, grid);
+  };
+  draw();
+  return wrap;
+}
+function openAvatarModal() {
+  const c = ws.channels.find((x) => x.id === ws.channelId); if (!c) return;
+  let pick = sanitizeChoice(ws.avatars[c.id]) ?? defaultChoice(c.title || c.slug, 'plain'); // matches what the list shows today
+  openModal(`Look for #${c.title || c.slug}`, [
+    h('p', { class: 'muted sm' }, 'Pick a character, or switch to Simple for a plain letter icon. Saved on this device.'),
+    avatarPicker(pick, () => c.title || c.slug, (v) => { pick = v; }),
+    h('div', { class: 'ew-row' }, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn primary sm', onclick: () => { saveAvatar(c.id, pick); renderChannels(); renderHeadAvatar(); closeModal(); } }, 'Save')),
+  ]);
+}
+function renderHeadAvatar() {
+  const b = $('ew-chat-ava'); if (!b) return;
+  const c = ws.channels.find((x) => x.id === ws.channelId);
+  b.replaceChildren(c ? chatAvatar(c) : h('span', { class: 'ew-hash' }, '#'));
+}
+function renderNewSessionAvatar() {
+  const box = $('ew-new-avatar'); if (!box) return;
+  const name = () => $('ew-new-channel-name').value.trim() || 'New chat';
+  ws.pendingAvatar = defaultChoice(name(), isPlain() ? 'plain' : 'playful');
+  box.replaceChildren(avatarPicker(ws.pendingAvatar, name, (v) => { ws.pendingAvatar = v; }));
+}
+
+// ---------- swipe (phones): edge swipes open sheets, swipes close them ----------
+function wireSwipe() {
+  const root = $('ew'); let t0 = null;
+  root.addEventListener('touchstart', (e) => { if (!narrow() || e.touches.length !== 1) { t0 = null; return; } const p = e.touches[0]; t0 = { x: p.clientX, y: p.clientY, at: Date.now() }; }, { passive: true });
+  root.addEventListener('touchend', (e) => {
+    if (!t0 || !narrow()) return; const p = e.changedTouches[0]; const dx = p.clientX - t0.x; const dy = p.clientY - t0.y; const start = t0; t0 = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5 || Date.now() - start.at > 800) return;
+    const open = document.querySelector('.ew-pane.sheet-open');
+    if (open) { const left = open.id === 'ew-channels'; if ((left && dx < 0) || (!left && dx > 0)) closeSheets(); return; }
+    if ($('ew-modal').classList.contains('open')) return;
+    if (start.x < 32 && dx > 0) setPane('channels', true);
+    else if (start.x > window.innerWidth - 32 && dx < 0) setPane('guard', true);
+  }, { passive: true });
+}
 
 function setPane(name, open, { user = false } = {}) {
   const pane = $(`ew-${name}`); if (!pane) return;
@@ -179,12 +240,12 @@ async function loadChannels() {
 function currentTitle() { const c = ws.channels.find((x) => x.id === ws.channelId); return c?.title || c?.slug || 'channel'; }
 function openNewSession() {
   setPane('channels', true);
-  $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; $('ew-new-channel-name').focus();
+  $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; renderNewSessionAvatar(); $('ew-new-channel-name').focus();
 }
 function renderChannels() {
   const list = $('ew-channel-list');
   const row = (c) => h('button', { type: 'button', class: `ew-channel${c.id === ws.channelId ? ' active' : ''}`, 'data-id': c.id, onclick: () => selectChannel(c.id) },
-    h('span', { class: 'hash' }, '#'), h('span', { class: 'name' }, c.title || c.slug),
+    chatAvatar(c, 'sm'), h('span', { class: 'name' }, c.title || c.slug),
     h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null));
   const linked = ws.channels.filter((c) => c._discord);
   const bot = ws.discordBot;
@@ -223,7 +284,7 @@ async function loadConfig() {
 function renderHeader() {
   const ch = ws.channels.find((c) => c.id === ws.channelId);
   const title = ch?.title || ch?.slug || 'channel';
-  $('ew-channel-title').textContent = title;
+  $('ew-channel-title').textContent = title; renderHeadAvatar();
   $('maestro-input').placeholder = ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent or let Maestro route it` : `Message #${title}`;
   const badge = $('ew-discord-badge');
   const d = ws.config?.discord;
@@ -462,7 +523,9 @@ function wire() {
   $('ew-scrim').addEventListener('click', closeSheets);
   $('ew-bench-max').addEventListener('click', () => { const on = $('ew').classList.toggle('bench-max'); $('ew-bench-max').textContent = on ? '⤡' : '⤢'; $('ew-bench-max').title = on ? 'Restore' : 'Expand'; });
   for (const t of document.querySelectorAll('#ew-bench .ew-tab')) t.addEventListener('click', () => selectTab(t.dataset.tab));
-  $('ew-add-channel').addEventListener('click', () => { $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; $('ew-new-channel-name').focus(); });
+  $('ew-add-channel').addEventListener('click', openNewSession);
+  $('ew-chat-ava').addEventListener('click', openAvatarModal);
+  wireSwipe();
   $('ew-new-channel-cancel').addEventListener('click', () => { $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; });
   $('ew-new-channel').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -471,6 +534,7 @@ function wire() {
     try {
       const made = await ws.ctx.post('/api/admin/envoy/channels', { slug, title, kind: $('ew-new-channel-agent').value ? 'agent' : 'team' });
       $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; $('ew-new-channel-name').value = '';
+      if (made.channel?.id && made.inserted !== false) saveAvatar(made.channel.id, ws.pendingAvatar);
       await loadChannels(); ws.channelId = made.channel?.id ?? ws.channelId;
       const agent = $('ew-new-channel-agent').value; if (agent && made.inserted !== false) await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'add-agent', channelId: ws.channelId, provider: agent }).catch(() => {});
       await selectChannel(ws.channelId);

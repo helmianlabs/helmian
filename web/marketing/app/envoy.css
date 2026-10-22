@@ -272,10 +272,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 
 /* ---- Pass 1: chat header, composer, agent cards, empty panes ---- */
 .ew-chat { container-type:inline-size; container-name:ewchat; }
-.ew-chat-head strong { min-width:3ch; flex:0 1 auto; }
+.ew-chat-head strong { min-width:min(10ch, 40%); flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ew-chat-head .ew-btn { display:inline-flex; align-items:center; gap:6px; flex:none; }
 .ew-chat-head .ew-btn svg { flex:none; }
-.ew-chat-head .ew-badge { flex:none; max-width:40%; overflow:hidden; text-overflow:ellipsis; }
+.ew-chat-head .ew-badge { flex:0 1 auto; min-width:0; max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @container ewchat (max-width: 640px) {
   .ew-chat-head .ew-btn .lbl { display:none; }
   .ew-chat-head .ew-btn { padding:4px 7px; }
@@ -337,4 +337,62 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   .ew-pills::-webkit-scrollbar { display:none; }
   .ew-pill { flex:none; }
   .ew-pill.session { margin-left:0; }
+}
+
+/* ---- Chat avatars: characters or simple letter icons ---- */
+.ew-ava { display:inline-grid; place-items:center; width:28px; height:28px; border-radius:9px; flex:none; font-size:17px; line-height:1; user-select:none; }
+.ew-ava.sm { width:22px; height:22px; border-radius:7px; font-size:13px; }
+.ew-ava.char { background:var(--panel-2); border:1px solid var(--border); }
+.ew-ava.plain { background:color-mix(in srgb, var(--ava) 22%, transparent); color:var(--ava); border:1px solid color-mix(in srgb, var(--ava) 45%, transparent); font-weight:800; font-size:13px; }
+.ew-ava.plain.sm { font-size:11px; }
+.ew-ava-btn { border:0; background:transparent; padding:0; cursor:pointer; display:inline-grid; place-items:center; border-radius:10px; transition:transform .12s var(--ease); }
+.ew-ava-btn:hover { transform:scale(1.08); }
+.ew-ava-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.ew-ava-pick { display:flex; flex-direction:column; gap:8px; margin-top:4px; }
+.ew-seg { display:inline-flex; align-self:flex-start; border:1px solid var(--border); border-radius:999px; padding:2px; background:var(--panel-2); }
+.ew-seg button { border:0; background:transparent; color:var(--muted); font-weight:600; font-size:12px; padding:4px 12px; border-radius:999px; cursor:pointer; transition:background .15s, color .15s; }
+.ew-seg button.on { background:var(--accent); color:#04121c; }
+.ew-ava-grid { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:6px; max-width:300px; }
+.ew-ava-grid.plain { grid-template-columns:repeat(4, minmax(0, 1fr)); max-width:200px; }
+.ew-ava-grid .ew-ava { width:100%; aspect-ratio:1; height:auto; cursor:pointer; font-size:19px; transition:transform .12s var(--ease), border-color .15s, box-shadow .15s; }
+.ew-ava-grid .ew-ava:hover { transform:translateY(-2px) scale(1.06); }
+.ew-ava-grid .ew-ava.on { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.ew-ava-grid .ew-ava:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.ew-new-channel .ew-field { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+@media (prefers-reduced-motion: reduce) { .ew-ava-btn, .ew-ava-grid .ew-ava { transition:none; } }
+
+/* ---- Integrations: small friendly cards ---- */
+.int-page { display:flex; flex-direction:column; gap:18px; max-width:1100px; }
+.int-head { margin:0 0 8px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); font-weight:700; }
+.int-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:10px; }
+.int-card { border:1px solid var(--border); background:var(--panel); border-radius:14px; padding:12px; display:flex; flex-direction:column; gap:10px; transition:border-color .15s, transform .15s var(--ease); animation:ew-in .22s var(--ease); }
+.int-card:hover { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); transform:translateY(-1px); }
+.int-card.wide { grid-column:span 2; }
+.int-top { display:grid; grid-template-columns:36px minmax(0,1fr) auto; gap:10px; align-items:start; }
+.int-icon { width:36px; height:36px; border-radius:10px; background:var(--panel-2); border:1px solid var(--border); display:grid; place-items:center; font-size:19px; }
+.int-icon img { border-radius:7px; }
+.int-icon .ew-discord-mark, .int-icon .ew-gh-mark { width:18px; height:18px; }
+.int-name { font-weight:700; font-size:14px; }
+.int-blurb { color:var(--muted); font-size:12.5px; line-height:1.35; margin-top:2px; }
+.int-status { font-size:11px; font-weight:700; border-radius:999px; padding:3px 9px; white-space:nowrap; border:1px solid var(--border); color:var(--muted); }
+.int-status.on { color:#4ade80; border-color:rgba(74,222,128,.35); background:rgba(74,222,128,.08); }
+.int-status.off { color:#fbbf24; border-color:rgba(251,191,36,.35); background:rgba(251,191,36,.08); }
+.int-status.soon { color:var(--faint); }
+.int-status.qr, .int-status.info { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 40%, transparent); }
+.int-actions { display:flex; gap:8px; margin-top:auto; }
+.int-help { border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:4px; animation:ew-in .2s var(--ease); }
+.int-help p { margin:0; }
+.int-qr-row { display:flex; gap:16px; align-items:center; }
+.int-qr { width:148px; height:148px; flex:none; border-radius:12px; overflow:hidden; background:#fff; }
+.int-qr svg { width:100%; height:100%; display:block; }
+.int-steps { margin:0; padding-left:18px; color:var(--muted); font-size:13px; display:flex; flex-direction:column; gap:6px; }
+@media (max-width: 900px) {
+  .int-grid { grid-template-columns:1fr; }
+  .int-card.wide { grid-column:auto; }
+  .int-qr { width:120px; height:120px; }
+}
+
+/* On the phone itself the QR is pointless; keep the steps. */
+@media (max-width: 900px) and (pointer: coarse) {
+  .int-qr { display:none; }
 }

@@ -276,3 +276,20 @@ export function smsInviteHref(url) {
   const body = `Join me on Helmian. Tap to create your account: ${String(url ?? '')}`;
   return `sms:?&body=${encodeURIComponent(body)}`;
 }
+
+// Fold back-to-back Guard cards that say the same thing into one, with a count.
+export function collapseRepeats(cards = []) {
+  const out = [];
+  for (const c of cards) {
+    const prev = out[out.length - 1];
+    if (prev && !c.finding?.fingerprint && !prev.card.finding?.fingerprint && prev.card.severity === c.severity && prev.card.title === c.title && (prev.card.body || '') === (c.body || '')) prev.repeat += 1;
+    else out.push({ card: c, repeat: 1 });
+  }
+  return out;
+}
+
+// A workspace id that is a raw UUID is not something to show a person.
+export function friendlyWorkspace(id) {
+  const s = String(id || '');
+  return !s || /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s) ? 'your workspace' : s;
+}
