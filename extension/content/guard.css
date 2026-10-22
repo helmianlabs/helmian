@@ -435,3 +435,98 @@
     max-height: calc(50vh - 12px) !important;
   }
 }
+
+
+/* ---------------------------------------------------------------- ask alert */
+/* Block-or-ask card: secrets/personal details about to be sent, and the
+   Executive Guard approval loop. Bounded exactly like the prompt alert. */
+.helmion-guard-ask-alert {
+  all: initial !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  position: fixed !important;
+  top: 16px !important;
+  right: 16px !important;
+  z-index: 2147483646 !important;
+  width: min(340px, calc(100vw - 32px)) !important;
+  max-width: calc(100vw - 32px) !important;
+  max-height: min(300px, calc(100vh - 32px)) !important;
+  overflow: auto !important;
+  padding: 12px 14px !important;
+  border-radius: 8px !important;
+  border: 1px solid #8a5a00 !important;
+  background: #fff8e6 !important;
+  color: #3d2a00 !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25) !important;
+  font: 13px/1.4 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+.helmion-guard-ask-alert.helmion-guard-tone-danger { border-color: #7a1109 !important; background: #fff4f2 !important; color: #3a0904 !important; }
+.helmion-guard-ask-alert.helmion-guard-tone-ok { border-color: #1d6b35 !important; background: #effaf2 !important; color: #0d3319 !important; }
+.helmion-guard-ask-alert-title,
+.helmion-guard-ask-alert-message,
+.helmion-guard-ask-alert-status { display: block !important; font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important; }
+.helmion-guard-ask-alert-title { font-weight: 800 !important; }
+.helmion-guard-ask-alert-message { margin-top: 4px !important; }
+.helmion-guard-ask-alert-status { margin-top: 6px !important; font-size: 12px !important; font-style: italic !important; }
+.helmion-guard-ask-alert-action {
+  all: initial !important;
+  display: inline-block !important;
+  margin: 9px 6px 0 0 !important;
+  padding: 5px 8px !important;
+  border: 1px solid currentColor !important;
+  border-radius: 5px !important;
+  color: inherit !important;
+  background: #ffffff !important;
+  font: 12px ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  cursor: pointer !important;
+}
+.helmion-guard-ask-alert-primary { font-weight: 700 !important; }
+
+/* -------------------------------------------------------------- flag alerts */
+.helmion-guard-flag-stack {
+  all: initial !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  position: fixed !important;
+  left: 16px !important;
+  bottom: 16px !important;
+  z-index: 2147483645 !important;
+  width: min(320px, calc(100vw - 32px)) !important;
+  max-height: min(520px, calc(100vh - 32px)) !important;
+  overflow: hidden !important;
+}
+.helmion-guard-flag-alert {
+  all: initial !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: calc(100vw - 32px) !important;
+  max-height: min(160px, calc(33vh - 16px)) !important;
+  overflow: auto !important;
+  padding: 10px 12px !important;
+  border-radius: 8px !important;
+  border: 1px solid #4a5b7a !important;
+  background: #f3f5fa !important;
+  color: #1f2a3d !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+  font: 12px/1.4 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+.helmion-guard-flag-privacy-leak,
+.helmion-guard-flag-harmful-code { border-color: #7a1109 !important; background: #fff4f2 !important; color: #3a0904 !important; }
+.helmion-guard-flag-alert-title,
+.helmion-guard-flag-alert-message,
+.helmion-guard-flag-alert-excerpt { display: block !important; font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important; }
+.helmion-guard-flag-alert-title { font-weight: 800 !important; letter-spacing: 0.02em !important; }
+.helmion-guard-flag-alert-excerpt { margin-top: 4px !important; font-family: ui-monospace, Consolas, monospace !important; opacity: 0.85 !important; word-break: break-word !important; }
+.helmion-guard-flag-alert-close {
+  all: initial !important;
+  display: inline-block !important;
+  margin-top: 6px !important;
+  padding: 3px 7px !important;
+  border: 1px solid currentColor !important;
+  border-radius: 4px !important;
+  color: inherit !important;
+  font: 11px ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  cursor: pointer !important;
+}

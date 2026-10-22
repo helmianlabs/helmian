@@ -29,6 +29,8 @@ const CONTENT_SCRIPTS = [
   'content/stream-watch.js',
   'content/ui.js',
   'content/prompt-risk.js',
+  'content/sanitize.js',
+  'content/flags.js',
   'content/guard.js',
 ];
 

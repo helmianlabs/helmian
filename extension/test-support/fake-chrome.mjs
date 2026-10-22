@@ -7,6 +7,10 @@
 
 const badgeCalls = [];
 const listeners = [];
+// chrome.storage.local, in memory. Added 2026-10-22 so end-to-end tests can see
+// ledger rows and drive the Executive Guard / Flags settings through the real
+// worker. Reset with fake.resetStorage().
+const storageBag = new Map();
 
 export const fake = {
   // 'normal'  answer messages the way Chrome does
@@ -15,9 +19,13 @@ export const fake = {
   mode: 'normal',
   badgeCalls,
   listeners,
+  storageBag,
   reset() {
     badgeCalls.length = 0;
     fake.mode = 'normal';
+  },
+  resetStorage() {
+    storageBag.clear();
   },
 };
 
@@ -51,14 +59,34 @@ export const chrome = {
           callback(response);
         };
 
-        listeners.forEach((listener) => listener(message, sender, sendResponse));
+        // A listener that returns true keeps the channel open and answers
+        // later, exactly as Chrome allows (the async ledger, decide and flag
+        // handlers rely on it).
+        const keptOpen = listeners.map((listener) => listener(message, sender, sendResponse)).some((r) => r === true);
 
-        if (!answered && callback) {
+        if (!answered && !keptOpen && callback) {
           chrome.runtime.lastError = { message: 'no listener answered' };
           callback(undefined);
           chrome.runtime.lastError = undefined;
         }
       }, 0);
+    },
+  },
+
+  storage: {
+    local: {
+      async get(key) {
+        const keys = key == null ? [...storageBag.keys()] : (Array.isArray(key) ? key : [key]);
+        const out = {};
+        for (const k of keys) if (storageBag.has(k)) out[k] = structuredClone(storageBag.get(k));
+        return out;
+      },
+      async set(items) {
+        for (const [k, v] of Object.entries(items)) storageBag.set(k, structuredClone(v));
+      },
+      async remove(key) {
+        for (const k of Array.isArray(key) ? key : [key]) storageBag.delete(k);
+      },
     },
   },
 

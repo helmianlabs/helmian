@@ -52,6 +52,8 @@ export const MAX_EXCERPT = 2000;
 /** The two things this extension catches. Spelled out so a row says which. */
 export const KIND_DESTRUCTIVE = 'destructive-command';
 export const KIND_UNSOURCED = 'unsourced-claim';
+/** Flags (content/flags.js): evasion, privacy leaks, harmful code in a reply. */
+export const KIND_FLAG = 'ai-flag';
 
 function clip(value, limit) {
   const text = String(value ?? '');
@@ -86,7 +88,7 @@ export function makeEntry({
     id: `${new Date(now).getTime().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
     timestamp: new Date(now).toISOString(),
     layer: 'browser',
-    kind: kind === KIND_UNSOURCED ? KIND_UNSOURCED : KIND_DESTRUCTIVE,
+    kind: kind === KIND_UNSOURCED || kind === KIND_FLAG ? kind : KIND_DESTRUCTIVE,
     site: String(site ?? ''),
     query: clip(query, MAX_EXCERPT),
     conversation: clip(conversation, MAX_EXCERPT),
@@ -94,7 +96,7 @@ export function makeEntry({
     matched: String(matched ?? ''),
     text: clip(text, MAX_EXCERPT),
     lineNumber,
-    outcome: String(outcome ?? (kind === KIND_UNSOURCED ? 'flagged' : 'blocked')),
+    outcome: String(outcome ?? (kind === KIND_UNSOURCED || kind === KIND_FLAG ? 'flagged' : 'blocked')),
   };
 }
 
@@ -185,11 +187,13 @@ export async function ledgerStats(storage) {
   const entries = await readRaw(storage);
   const destructive = entries.filter((e) => e.kind === KIND_DESTRUCTIVE).length;
   const unsourced = entries.filter((e) => e.kind === KIND_UNSOURCED).length;
+  const flags = entries.filter((e) => e.kind === KIND_FLAG).length;
   const sites = [...new Set(entries.map((e) => e.site).filter(Boolean))];
   return {
     total: entries.length,
     destructive,
     unsourced,
+    flags,
     sites,
     oldest: entries[0]?.timestamp ?? null,
     newest: entries[entries.length - 1]?.timestamp ?? null,

@@ -28,6 +28,7 @@
     <div class="stat"><span class="n" id="statTotal">–</span><span class="l">flags logged</span></div>
     <div class="stat"><span class="n danger" id="statDestructive">–</span><span class="l">destructive commands</span></div>
     <div class="stat"><span class="n note" id="statUnsourced">–</span><span class="l">unsourced claims</span></div>
+    <div class="stat"><span class="n note" id="statFlags">–</span><span class="l">AI flags</span></div>
   </section>
 
   <p id="range" class="muted"></p>
@@ -47,6 +48,31 @@
       <button id="uploadNow" type="button">Upload now</button>
     </div>
     <p id="uploadStatus" class="muted" role="status"></p>
+  </section>
+
+
+  <section id="executive" aria-live="polite">
+    <h2>Executive Guard (opt-in)</h2>
+    <p class="muted">Ask your Executive Guard server before risky sends. Decisions are signed and checked here against the key you pair with. Off by default; without it, Guard decides on this computer.</p>
+    <label class="row"><input id="execEnabled" type="checkbox"> Use Executive Guard</label>
+    <label class="row">Server URL <input id="execUrl" type="url" autocomplete="off" placeholder="https://guard.example or http://127.0.0.1:8787"></label>
+    <label class="row">Device token <input id="execToken" type="password" autocomplete="off" placeholder="Paste device token"></label>
+    <div class="actions">
+      <button id="execSave" type="button">Save and pair</button>
+    </div>
+    <p id="execStatus" class="muted" role="status"></p>
+  </section>
+
+  <section id="flags" aria-live="polite">
+    <h2>Flags reporting (opt-in)</h2>
+    <p class="muted">Flags (evasive answers, leaked secrets, harmful code) are always shown and logged here. Turn this on to also report them, redacted, to a Flags API.</p>
+    <label class="row"><input id="flagsEnabled" type="checkbox"> Report flags</label>
+    <label class="row">Flags API URL <input id="flagsUrl" type="url" autocomplete="off" placeholder="https://flags.example"></label>
+    <label class="row">Flags token <input id="flagsToken" type="password" autocomplete="off" placeholder="Paste Flags API token"></label>
+    <div class="actions">
+      <button id="flagsSave" type="button">Save flags settings</button>
+    </div>
+    <p id="flagsStatus" class="muted" role="status"></p>
   </section>
 
   <p id="confirm" class="confirm" hidden>

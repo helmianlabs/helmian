@@ -98,7 +98,14 @@ export async function uploadNewFindings(storage) {
   const cursor = Number(settings[UPLOAD_CURSOR_KEY] || 0);
   const pending = entries.slice(cursor, cursor + BATCH_SIZE);
   if (!pending.length) return { ok: true, uploaded: 0 };
-  const result = await postBatch(pending.map(toFinding), deviceToken.trim());
+  // Flags (kind 'ai-flag') go to the Flags API through background/flags-client.js,
+  // never to the Helmian cloud findings ledger, whose contract this file does not own.
+  const findings = pending.filter((entry) => entry.kind !== 'ai-flag').map(toFinding);
+  if (!findings.length) {
+    await storage.set({ [UPLOAD_CURSOR_KEY]: cursor + pending.length });
+    return { ok: true, uploaded: 0, remaining: entries.length - cursor - pending.length };
+  }
+  const result = await postBatch(findings, deviceToken.trim());
   if (!result.ok) return result;
   await storage.set({ [UPLOAD_CURSOR_KEY]: cursor + pending.length });
   return { ok: true, uploaded: pending.length, remaining: entries.length - cursor - pending.length };
