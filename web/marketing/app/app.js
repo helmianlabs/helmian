@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload } from './app-model.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -592,6 +592,8 @@ function chunkForSpeech(text, maxLen = 180) {
   }
   return chunks;
 }
+// Spec 3.8: "+" opens Integrations (tools and connectors live there).
+function openTools() { if (location.hash !== '#integrations') location.hash = 'integrations'; else show('integrations'); }
 const dictateChip = document.querySelector('.tool[data-tool="dictate"]');
 const voiceChatChip = document.querySelector('.tool[data-tool="voice"]');
 const voice = createVoiceController();
@@ -670,7 +672,7 @@ wireVoiceChip(dictateChip, 'dictate');
 wireVoiceChip(voiceChatChip, 'voice');
 for (const t of document.querySelectorAll('.tool')) {
   if (t.dataset.tool === 'dictate' || t.dataset.tool === 'voice') continue;
-  t.onclick = () => toast(t.dataset.tool === 'tools' ? 'Tools and connectors open from Integrations' : `${t.textContent} is available in the desktop app`);
+  t.onclick = () => { if (t.dataset.tool === 'tools') openTools(); else toast(`${t.textContent} is available in the desktop app`); };
 }
 $('#run-suite').onclick = () => toast('Tool suite runs from the desktop app');
 
@@ -1093,30 +1095,56 @@ function renderDevices(model, statusText) {
   const empty = $('#devices-empty');
   const status = $('#devices-status');
   status.textContent = statusText || '';
-  if (!model || model.empty) {
+  if (!model || model.noDesktops !== false) {
     list.replaceChildren();
     empty.hidden = false;
     return;
   }
   empty.hidden = true;
-  list.replaceChildren(...model.rows.map((row) => {
-    const b = el('button', 'device-row');
-    b.type = 'button';
-    b.dataset.desktopId = row.desktopId;
-    b.dataset.sessionId = row.sessionId;
-    b.append(el('strong', null, row.displayName), el('small', null, `${row.projectName} · ${row.name} · ${row.state || 'unknown'}`));
-    b.onclick = () => { location.href = '/herald/'; toast('Open Remote Control to drive this Desktop'); };
-    return b;
+  list.replaceChildren(...model.desktops.map((d) => {
+    const card = el('div', 'device-card');
+    card.dataset.desktopId = d.desktopId;
+    const head = el('div', 'device-head');
+    const forget = el('button', 'btn ghost sm', 'Forget');
+    forget.type = 'button';
+    forget.title = 'Forget this pairing so this Desktop can be paired again';
+    forget.onclick = () => forgetDesktop(d, forget);
+    head.append(el('strong', null, d.displayName), forget);
+    card.append(head);
+    if (!d.sessions.length) card.append(el('small', 'muted', 'Paired · no open session'));
+    for (const s of d.sessions) {
+      const b = el('button', 'device-row');
+      b.type = 'button';
+      b.dataset.desktopId = d.desktopId;
+      b.dataset.sessionId = s.sessionId;
+      b.append(el('strong', null, s.name), el('small', null, `${s.projectName} · ${s.state || 'unknown'}`));
+      b.onclick = () => { location.href = '/herald/'; toast('Open Remote Control to drive this Desktop'); };
+      card.append(b);
+    }
+    return card;
   }));
+}
+async function forgetDesktop(desktop, button) {
+  if (!confirm(`Forget "${desktop.displayName}"? Remote Control stops for it now. To use it again, pair it from the Desktop app.`)) return;
+  button.disabled = true;
+  try {
+    await remoteApi('/api/remote/v1/desktops', { method: 'POST', body: JSON.stringify(forgetDesktopPayload(desktop.desktopId)) });
+    toast('Pairing forgotten. Pair again from the Desktop app.', 'ok');
+  } catch (error) {
+    toast(error.message || 'Could not forget this Desktop');
+  } finally {
+    button.disabled = false;
+    await loadDevices();
+  }
 }
 async function loadDevices() {
   const empty = $('#devices-empty');
   try {
     const body = await remoteApi('/api/remote/v1/desktops');
     const model = desktopsModel(body);
-    renderDevices(model, model.empty
+    renderDevices(model, model.noDesktops
       ? 'No live Desktop on this account yet — Connect phone or enroll below.'
-      : 'Tap a Desktop to open Remote Control.');
+      : 'Tap a session to open Remote Control. Forget unpairs a Desktop so you can pair it again.');
   } catch (error) {
     renderDevices({ empty: true, rows: [] }, error.status === 401 || error.status === 403
       ? 'Desktop list needs Clerk unify (owner checklist). You can still Connect phone or enroll below.'
@@ -2147,7 +2175,7 @@ function wireDesktopComposers() {
   const plusBtn = document.getElementById('maestro-plus');
   if (plusBtn && !plusBtn.dataset.wired) {
     plusBtn.dataset.wired = '1';
-    plusBtn.onclick = () => toast('Tools and connectors open from Integrations');
+    plusBtn.onclick = () => openTools();
   }
   // Maestro panel: mic button (EXE parity) — toggles dictate mode
   const micBtn = document.getElementById('maestro-mic');
