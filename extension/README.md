@@ -32,6 +32,34 @@ retention behavior are documented in
 
 ---
 
+## 0.4.1: local redaction covers what the Flags scanner covers
+
+Guard now catches, and redacts in place, every secret pattern that Paul's Flags scanner (`server.src/app/src/flags/scanner.ts`) has. Before 0.4.1 it missed these:
+
+| New | Type / signal | Shape |
+|---|---|---|
+| Stripe webhook secrets, `whsec_…` | `api_key` | `whsec_` plus 20 or more letters and digits |
+| Resend keys, `re_…_…` | `api_key` | `re_` + 8 letters/digits + `_` + 16 or more |
+| Stripe test keys, `sk_test_` / `rk_test_` | `api_key` | `pk_test_` is publishable and stays allowed |
+| AWS temporary keys, `ASIA…` | `api_key` | `ASIA` + 16 capitals/digits |
+| `aws_secret_access_key = <40 chars>` | `api_key` | the label is kept; only the value is replaced |
+| Slack `xoxe-` tokens | `api_key` | |
+| JWTs, `eyJ….eyJ….sig` | `jwt` (new) | |
+| Password in a connection string | `connection_string` (new) | `postgres://app:[REDACTED:connection_string]@db:5432/main`; only the password is replaced |
+| "my password is X", "API key was X", "passphrase: X" | `secret_assignment` | X must look like a secret: a digit, a symbol, or a capital after the first letter |
+| A labelled SSN without dashes, "SSN 123 45 6789" | `ssn` (pii) | bare 9-digit numbers are left alone |
+
+`secret:jwt` and `secret:connection_string` are denied by the same `secrets-never-leave` rule, in the offline policy and in Executive Guard. Both twins (`content/sanitize.js` and `background/redact.js`) have the same rules.
+
+`test/redaction-gaps.test.mjs` also checks for false positives:
+- "password is required" and "the access token is expired";
+- `postgres://user:password@…`, `${DB_PASSWORD}`, `$MYSQL_PWD`, `****`;
+- `re_snake_case_identifiers`;
+- AWS's documented `…EXAMPLEKEY`;
+- bare prefixes (`whsec_`, `sk_test_`, `eyJ`).
+
+The live test runs every new pattern through Paul's real scanner, and it finds nothing left to redact. Secret-shaped test values are built at run time in `test-support/fake-secrets.mjs`, so GitHub push protection does not mistake a fixture for a leaked key.
+
 ## 0.4.0: Flags account (Shared Memory Flags API)
 
 Off by default. In the popup under **Flags account**: tick "Report flags", enter

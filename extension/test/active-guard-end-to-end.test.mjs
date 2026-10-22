@@ -13,7 +13,7 @@ import { loadContentScripts } from '../test-support/load-content-script.mjs';
 import { element, createDocument } from '../test-support/mini-dom.mjs';
 import { chrome, fake, installWorker } from '../test-support/fake-chrome.mjs';
 import { startGuard, APPROVER_TOKEN, DEVICE_TOKEN } from '../../executive-guard/test-support/helpers.mjs';
-import { MOCK_KEY, startMockFlagsApi } from '../test-support/mock-flags-api.mjs';
+import { MOCK_KEY, startMockFlagsApi, SERVER_ONLY_SAMPLE } from '../test-support/mock-flags-api.mjs';
 
 await installWorker();
 
@@ -393,17 +393,17 @@ test('FLAGS SCAN: the scanner finds a secret Guard missed; the send is held and 
   const api = await startMockFlagsApi();
   try {
     enableFlags(api, { scanBeforeSend: true });
-    const secret = `whsec_${'C'.repeat(24)}`;
+    const secret = SERVER_ONLY_SAMPLE;
     const composer = textarea(`webhook secret is ${secret} ok`);
     const { doc, fakeWindow } = await runExtension([composer]);
     await wait(60);
     assert.equal(sendEnter(fakeWindow, composer).prevented, true, 'the message went out before the scanner answered');
     assert.ok(await waitFor(() => /found something Guard missed/.test(askAlerts(doc)[0]?.textContent || '')), 'no scanner card');
-    assert.match(askAlerts(doc)[0].textContent, /Stripe webhook signing secret/);
+    assert.match(askAlerts(doc)[0].textContent, /server-only test token/);
     assert.equal(api.flags.length, 0, 'the scan stored nothing');
     assert.doesNotMatch(JSON.stringify(ledgerRows()), new RegExp(secret));
     button(doc, 'redact').dispatch('click', {});
-    assert.equal(composer.value, 'webhook secret is [REDACTED:stripe_webhook_secret] ok');
+    assert.equal(composer.value, 'webhook secret is [REDACTED:server_only_test_token] ok');
   } finally { await api.close(); }
 });
 
