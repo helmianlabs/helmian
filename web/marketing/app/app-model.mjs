@@ -1,13 +1,13 @@
 // Pure helpers for the Helmian Cloud app (no DOM) so they can be unit tested.
 export const VIEWS = Object.freeze(['home', 'console', 'desktop', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'integrations', 'agents', 'create', 'browser', 'canvas', 'preview', 'release']);
-export const VIEW_TITLES_PLAYFUL = Object.freeze({ home: '🏠 Home', console: '💬 Chat', desktop: '🖥️ Desktop', overview: '📊 Overview', settings: '⚙️ Settings', workspace: '🗂️ Projects', devices: '📱 Devices', activity: '📡 Live activity', evidence: '📦 Evidence', approvals: '✅ Approvals', integrations: '🔌 Integrations', agents: '🤖 Agents', create: '✨ Create', browser: '🌐 Browser', canvas: '🎨 Canvas', preview: '👁 Preview', release: '🚀 Release roadmap' });
-export const VIEW_TITLES_PLAIN = Object.freeze({ home: 'Home', console: 'Chat', desktop: 'Desktop', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', agents: 'Agents', create: 'Create', browser: 'Browser', canvas: 'Canvas', preview: 'Preview', release: 'Release roadmap' });
+export const VIEW_TITLES_PLAYFUL = Object.freeze({ home: '🏠 Home', console: '💬 Session console', desktop: '🖥️ Workspace', overview: '📊 Overview', settings: '⚙️ Settings', workspace: '🗂️ Projects', devices: '📱 Devices', activity: '📡 Live activity', evidence: '📦 Evidence', approvals: '✅ Approvals', integrations: '🔌 Integrations', agents: '🤖 Agents', create: '✨ Create', browser: '🌐 Browser', canvas: '🎨 Canvas', preview: '👁 Preview', release: '🚀 Release roadmap' });
+export const VIEW_TITLES_PLAIN = Object.freeze({ home: 'Home', console: 'Session console', desktop: 'Workspace', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', integrations: 'Integrations', agents: 'Agents', create: 'Create', browser: 'Browser', canvas: 'Canvas', preview: 'Preview', release: 'Release roadmap' });
 // VIEW_TITLES stays as the playful alias for existing importers; viewTitles() picks per preference.
 export const VIEW_TITLES = VIEW_TITLES_PLAYFUL;
 export function viewTitles(emojiMode) { return emojiMode === 'plain' ? VIEW_TITLES_PLAIN : VIEW_TITLES_PLAYFUL; }
 export function isPlainEmojiMode(emojiMode) { return emojiMode === 'plain'; }
-export const PRIMARY_VIEWS = Object.freeze(['home', 'console', 'workspace', 'approvals']);
-export const ADVANCED_VIEWS = Object.freeze(['devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'agents', 'release']);
+export const PRIMARY_VIEWS = Object.freeze(['desktop', 'home', 'workspace', 'approvals']);
+export const ADVANCED_VIEWS = Object.freeze(['console', 'devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'agents', 'release']);
 // Browser, Canvas, Preview, Create live in the right workbench panel now
 // (BROWSE-001), not the Advanced accordion. They stay in VIEWS/VIEW_TITLES so
 // old #hash links resolve, and show() redirects them to the panel tab.
@@ -20,7 +20,7 @@ export const PROVIDER_REGISTRY = Object.freeze([
 ]);
 
 // Phones open on Home; wider screens keep the desktop-style Console default.
-export function viewFromHash(hash = '', { phone = false } = {}) { const v = String(hash).replace(/^#\/?/, '').toLowerCase(); return VIEWS.includes(v) ? v : (phone ? 'home' : 'console'); }
+export function viewFromHash(hash = '', { phone = false } = {}) { const v = String(hash).replace(/^#\/?/, '').toLowerCase(); return VIEWS.includes(v) ? v : 'desktop'; }
 export function isAdminRole(role) { return ['owner', 'admin'].includes(String(role ?? '').toLowerCase()); }
 
 export function sessionModel(status, body = {}) {

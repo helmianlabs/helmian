@@ -31,6 +31,7 @@ function setNavLabel(btn, label) {
   const icon = m && !/[A-Za-z0-9]/.test(m[1]) ? m[1] : '';
   span.textContent = icon ? m[2] : label;
   if (icon) btn.prepend(document.createTextNode(`${icon} `));
+  btn.dataset.tip = span.textContent; btn.setAttribute('aria-label', span.textContent);
 }
 function applyEmojiMode(mode) {
   state.emojiMode = mode === 'plain' ? 'plain' : 'playful';
@@ -45,7 +46,7 @@ function applyEmojiMode(mode) {
     if (label) b.textContent = label;
   }
   const shelfEmpty = $('#project-shelf-empty');
-  if (shelfEmpty) shelfEmpty.textContent = es('🗂️ Nothing here yet — start your first project.', 'Nothing here yet — start your first project.');
+  if (shelfEmpty) shelfEmpty.textContent = es('No projects yet.', 'No projects yet.');
   renderAgentIcons();
   const current = document.querySelector('.nav-item.active')?.dataset.view;
   if (current) $('#view-title').textContent = titles[current] ?? '';
@@ -153,24 +154,13 @@ function setPanelCollapsed(which, collapsed) {
   const label = which === 'guard' ? 'Guard' : 'workbench';
   btn.setAttribute('aria-expanded', String(!collapsed));
   btn.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} ${label} panel`);
-  btn.textContent = collapsed ? '+' : '–';
+  btn.textContent = which === 'guard' ? (collapsed ? 'Show' : 'Hide') : (collapsed ? '+' : '–');
+  btn.title = `${collapsed ? 'Show' : 'Hide'} ${label}`;
   store.set(which === 'guard' ? 'guardCollapsed' : 'workbenchCollapsed', collapsed);
 }
-$('#guard-collapse').onclick = () => {
-  const grid = document.querySelector('.desktop-grid');
-  const isCollapsed = grid?.classList.toggle('guard-collapsed');
-  const btn = $('#guard-collapse');
-  btn.textContent = isCollapsed ? '+' : '–';
-  btn.setAttribute('aria-expanded', String(!isCollapsed));
-  btn.setAttribute('aria-label', `${isCollapsed ? 'Expand' : 'Collapse'} Guard panel`);
-  store.set('guardCollapsed', !!isCollapsed);
-};
+$('#guard-collapse').onclick = () => setPanelCollapsed('guard', !$('#guard-panel').classList.contains('collapsed'));
 $('#workbench-collapse').onclick = () => setPanelCollapsed('workbench', !$('#workbench').classList.contains('collapsed'));
-if (store.get('guardCollapsed', false)) {
-  document.querySelector('.desktop-grid')?.classList.add('guard-collapsed');
-  const btn = $('#guard-collapse');
-  if (btn) { btn.textContent = '+'; btn.setAttribute('aria-expanded', 'false'); }
-}
+setPanelCollapsed('guard', store.get('guardCollapsed', false));
 setPanelCollapsed('workbench', store.get('workbenchCollapsed', false));
 
 // #guard deep links open the Guard panel itself (it is a panel, not a tab).
@@ -178,14 +168,31 @@ function hashIsGuard() { return String(location.hash).replace(/^#\/?/, '').toLow
 function openGuardPanel() { setPanelCollapsed('guard', false); if (narrow()) drawer('guard', true); }
 $('#mcp-find-btn').onclick = () => { $('#mcp-result').textContent = $('#mcp-find').value.trim() ? `No matches for “${$('#mcp-find').value.trim()}” — no audit has been run yet.` : 'No audit yet. Run one from the desktop app to see results here.'; };
 
+// Guard pane (Workspace): approvals waiting for a decision, newest first.
+function renderGuardApprovals() {
+  const list = document.getElementById('ew-approvals-list'); if (!list) return;
+  const pending = (state.approvals ?? []).filter((i) => !i.decision);
+  const count = document.getElementById('ew-approvals-count'); if (count) count.textContent = pending.length ? String(pending.length) : '';
+  const badge = document.getElementById('ew-guard-count');
+  const crit = (state.findings ?? []).filter((f) => f.severity === 'critical' && !f.acked).length;
+  if (badge) { const n = pending.length + crit; badge.hidden = n === 0; badge.textContent = String(n); }
+  if (!pending.length) { list.replaceChildren(el('p', 'ew-note', 'Nothing waiting for a decision.')); return; }
+  list.replaceChildren(...pending.slice(0, 4).map((i) => {
+    const a = el('a', 'ew-approval'); a.href = '#approvals';
+    a.append(el('span', 'ew-approval-title', i.summary || humanAction(i.requestKind) || 'Approval needed'), el('span', 'ew-approval-time', formatTime(i.createdAt)));
+    return a;
+  }));
+}
+
 // ---- views ----
 function show(view) {
   if (!state.actor) return;
   if (PANEL_VIEWS.includes(view)) {
     // Browser, Canvas, Preview, Create live in the right workbench panel now
     // (BROWSE-001); keep chat visible and select the tab instead.
-    selectPanelTab(view, { openDrawer: true });
-    view = 'console';
+    // Browser, Canvas, Preview, Create are Workbench tabs in the Workspace.
+    state.pendingBenchTab = view;
+    view = 'desktop';
   }
   shell.dataset.view = view;
   for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view && !p.closest('#chat-panel');
@@ -251,10 +258,39 @@ $('#new-project-form').onsubmit = async (e) => {
 };
 
 // ---- sessions (local) ----
+const SESSIONS_SHOWN = 4;
+const PROVIDER_LABEL = { gemini: 'Gemini', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', xai: 'Grok' };
+// Default names ("Gemini session") say nothing; show provider + when it started instead.
+function sessionTitle(s) {
+  const prov = PROVIDER_LABEL[String(s.provider).toLowerCase()] ?? s.provider;
+  const generic = !s.name || s.name.trim().toLowerCase() === `${String(s.provider).toLowerCase()} session`;
+  if (!generic) return s.name;
+  const d = s.createdAt ? new Date(s.createdAt) : null;
+  const when = d && !Number.isNaN(d.getTime()) ? d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'session';
+  return `${prov} · ${when}`;
+}
 function renderSessions() {
   const ul = $('#sessions');
-  if (!state.sessions.length) { ul.replaceChildren(el('li', 'faint sm', 'No sessions yet')); ul.firstChild.style.cursor = 'default'; }
-  else ul.replaceChildren(...state.sessions.map((s) => { const li = el('li', s.id === state.activeSession ? 'active' : null); li.append(el('span', 'dot'), el('span', null, s.name), el('span', 'prov', s.provider)); if (state.serverSessions) { const x = el('button', 'x', '×'); x.type = 'button'; x.title = 'Close session'; x.onclick = async (ev) => { ev.stopPropagation(); try { await post('/api/admin/app/sessions/archive', { id: s.id }); } catch {} loadSessions(); }; li.append(x); } li.onclick = () => { state.activeSession = s.id; store.set('activeSession', s.id); state.steps = null; renderSessions(); loadSteps(); location.hash = 'console'; }; return li; }));
+  const sorted = [...state.sessions].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  const showAll = store.get('sessionsAll', false);
+  // Always keep the active session visible, even when it is past the cap.
+  const shown = showAll ? sorted : sorted.filter((s, i) => i < SESSIONS_SHOWN || s.id === state.activeSession);
+  const more = $('#sessions-more');
+  more.hidden = sorted.length <= SESSIONS_SHOWN;
+  more.textContent = showAll ? 'Show fewer' : `Show ${sorted.length - shown.length} more`;
+  more.onclick = () => { store.set('sessionsAll', !showAll); renderSessions(); };
+  const weekAgo = Date.now() - 7 * 86400000;
+  const old = sorted.filter((s) => s.id !== state.activeSession && s.createdAt && new Date(s.createdAt).getTime() < weekAgo);
+  const clear = $('#sessions-clear');
+  clear.hidden = !state.serverSessions || old.length === 0;
+  clear.textContent = `Clear old (${old.length})`;
+  clear.onclick = async () => {
+    if (!confirm(`Close ${old.length} session${old.length === 1 ? '' : 's'} older than 7 days?`)) return;
+    for (const s of old) { try { await post('/api/admin/app/sessions/archive', { id: s.id }); } catch {} }
+    toast('Old sessions closed', 'ok'); loadSessions();
+  };
+  if (!sorted.length) { ul.replaceChildren(el('li', 'faint sm', 'No sessions yet')); ul.firstChild.style.cursor = 'default'; }
+  else ul.replaceChildren(...shown.map((s) => { const li = el('li', s.id === state.activeSession ? 'active' : null); const title = sessionTitle(s); li.title = `${title} (${s.provider})`; li.append(el('span', 'dot'), el('span', 'name', title)); if (state.serverSessions) { const x = el('button', 'x', '×'); x.type = 'button'; x.title = 'Close session'; x.setAttribute('aria-label', `Close ${title}`); x.onclick = async (ev) => { ev.stopPropagation(); try { await post('/api/admin/app/sessions/archive', { id: s.id }); } catch {} loadSessions(); }; li.append(x); } li.onclick = () => { state.activeSession = s.id; store.set('activeSession', s.id); state.steps = null; renderSessions(); loadSteps(); location.hash = 'console'; }; return li; }));
   const active = state.sessions.find((s) => s.id === state.activeSession);
   const sessionLabel = $('#session-label'); if (sessionLabel) sessionLabel.textContent = active ? `CONSOLE · ${active.name.toUpperCase()} · ${active.provider.toUpperCase()}` : 'CONSOLE';
   $('#active-agent').textContent = active ? `${active.provider} · ${active.name}` : 'No active agent';
@@ -740,7 +776,7 @@ async function loadHome() {
 async function loadConsole() {
   loadOnboarding();
   if (!state.channelId) {
-    try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; const sel = $('#channel'); const kindTag = (k) => k && k !== 'team' ? ` · ${k}` : ''; sel.replaceChildren(...chans.map((c) => { const o = el('option', null, `${c.title || c.slug || 'Channel'}${kindTag(c.kind)}`); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
+    try { const body = await api('/api/admin/envoy/channels'); const chans = Array.isArray(body.channels) ? body.channels : []; state.channelsLoaded = true; const sel = $('#channel'); const kindTag = (k) => k && k !== 'team' ? ` · ${k}` : ''; sel.replaceChildren(...chans.map((c) => { const o = el('option', null, `${c.title || c.slug || 'Channel'}${kindTag(c.kind)}`); o.value = c.id ?? c.channelId; return o; })); sel.hidden = chans.length < 2; state.channelId = chans[0] ? (chans[0].id ?? chans[0].channelId) : null;
       if (!state.channelId && isAdminRole(state.actor?.role)) { const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' }); state.channelId = made.channel?.id ?? null; if (state.channelId) toast('Team channel created', 'ok'); }
     } catch {}
   }
@@ -769,28 +805,21 @@ function placeChat() {
     const closeBtn = document.getElementById('chat-panel-close');
     if (!consoleView || !panelBody || !panel || !toggle) return;
     if (!consoleHome) { consoleHome = document.createComment('view-console'); consoleView.before(consoleHome); }
-    if (narrow()) {
+    // The Workspace is the one chat; the session console is an ordinary page now.
+    {
       if (consoleView.parentNode !== consoleHome.parentNode) consoleHome.after(consoleView);
       panel.classList.remove('open');
       panel.hidden = true;
       toggle.hidden = true;
       consoleView.hidden = shell.dataset.view !== 'console';
-      return;
     }
-    if (consoleView.parentNode !== panelBody) panelBody.appendChild(consoleView);
-    consoleView.hidden = false;
-    panel.hidden = false;
-    toggle.hidden = false;
-    toggle.onclick = () => panel.classList.add('open');
-    if (closeBtn) closeBtn.onclick = () => panel.classList.remove('open');
-    if (shell.dataset.view === 'console') panel.classList.add('open');
   } catch {}
 }
 window.matchMedia('(max-width: 900px)').addEventListener?.('change', () => { if (consoleHome) placeChat(); });
 async function loadLog() {
   const log = $('#log');
   const sys = (t) => { const d = el('div', 'line sys'); d.append(el('span', 'ts', `[${new Date().toTimeString().slice(0, 8)}] `), document.createTextNode(t)); return d; };
-  if (!state.channelId) { log.replaceChildren(sys('helmian cloud console ready'), sys(`signed in · ${state.actor.tenantId}`), sys('no team channel yet — messages will stream here once one is set up')); return; }
+  if (!state.channelId) { log.replaceChildren(sys('helmian cloud console ready'), sys(state.channelsLoaded ? 'no team channel yet — messages will stream here once one is set up' : 'connecting to your team channel…')); return; }
   try {
     const lines = logLines(await api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(state.channelId)}`), state.actor?.subject);
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
@@ -915,6 +944,7 @@ async function ackFinding(fingerprint) {
   await loadFeedData(); renderFeed();
 }
 function renderFeed() {
+  renderGuardApprovals();
   const filter = $('#feed-filter').value;
   const cards = feedModel({ events: state.events, approvals: state.approvals }, { filter: 'all', showInfo: $('#opt-info').checked, showApprovals: $('#opt-approvals').checked, acknowledged: state.ack, cleared: state.cleared });
   const merged = [...findingCards(), ...cards]
@@ -927,8 +957,8 @@ function renderFeed() {
   const tabBadge = $('#guard-panel-count');
   if (tabBadge) { tabBadge.hidden = unacked === 0; tabBadge.textContent = String(unacked); }
   const feed = $('#feed');
-  if (!merged.length) { feed.replaceChildren(empty('All clear', 'Alerts from your agents show up here.')); return; }
-  feed.replaceChildren(...merged.slice(0, 60).map((c) => {
+  if (!merged.length) feed.replaceChildren(empty('All clear', 'Alerts from your agents show up here.'));
+  else feed.replaceChildren(...merged.slice(0, 60).map((c) => {
     const motion = c.finding ? guardMotionState(c.finding) : null;
     const a = el('article', `alert ${c.severity}${c.ack ? ' ack' : ''}${motion ? ` tone-${motion.tone}${motion.pulse ? ' pulse' : ''}` : ''}`);
     const h = el('div', 'h'); h.append(el('span', null, c.title), el('span', 't', c.at ? formatTime(c.at) : '')); a.append(h);
@@ -971,13 +1001,11 @@ function renderFeed() {
         };
       }
       if (dpFilters) {
-        const sources = ['all', ...new Set((state.findings ?? []).map((f) => String(f.source || 'local').toLowerCase()))];
+        const srcOf = (c) => String(c.finding?.source || 'local').toLowerCase();
+        const sources = ['all', ...new Set(merged.map(srcOf))];
         const active = state.guardSourceFilter || 'all';
-        const counts = { all: (state.findings ?? []).length };
-        for (const f of state.findings ?? []) {
-          const s = String(f.source || 'local').toLowerCase();
-          counts[s] = (counts[s] || 0) + 1;
-        }
+        const counts = { all: merged.length };
+        for (const c of merged) { const s = srcOf(c); counts[s] = (counts[s] || 0) + 1; }
         dpFilters.replaceChildren(...sources.map((s) => {
           const label = s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1);
           const b = el('button', `chip sm${s === active ? ' active' : ''}`, `${label} (${counts[s] || 0})`);
@@ -1006,6 +1034,7 @@ function renderFeed() {
         if (c.body) card.append(el('div', 'muted sm', String(c.body).slice(0, 200)));
         return card;
       }));
+      if (!visible.length) dpFindings.replaceChildren(el('p', 'ew-note', 'All clear. Warnings from your agents and browser land here.'));
     }
   } catch {}
 }
@@ -1335,7 +1364,8 @@ async function loadOnboarding() {
   box.hidden = false;
   $('#onboarding-list').replaceChildren(...steps.map((s) => {
     const li = el('li', s.done ? 'done' : '');
-    li.append(el('strong', null, s.done ? '✓ ' : '', s.label), el('div', 'muted sm', s.hint));
+    const text = el('div', 'grow'); text.append(el('span', 'l', s.label), el('div', 'muted sm', s.hint));
+    li.append(el('span', `check${s.done ? ' on' : ''}`, s.done ? '✓' : ''), text);
     return li;
   }));
 }
@@ -1902,7 +1932,9 @@ async function loadDesktop() {
     ackAll: () => document.getElementById('feed-ack-all')?.click(),
     loadGuardPreview,
     loadGuardCreateList,
+    benchTab: state.pendingBenchTab ?? null,
   });
+  state.pendingBenchTab = null;
   wireGuardCreate();
 }
 
@@ -2080,6 +2112,7 @@ async function boot() {
     }
     return;
   }
+  wireRail();
   state.actor = model.actor;
   $('#svc-dot').classList.add('live'); $('#svc-text').textContent = es('🟢 Cloud service · Connected - live', 'Cloud service · Connected - live');
   $('#account').textContent = `${model.actor.tenantId} · ${model.actor.role}`;
@@ -2098,4 +2131,22 @@ async function boot() {
 boot();
 
 // Installable PWA (scope /app/). Herald keeps its own /herald/ worker until the merge lands.
+// Long-open tabs: notice a new deploy (the shell ETags change) and pick it up.
+// Reload silently when nothing is being typed; otherwise offer a reload.
+(() => {
+  let known = null; let offered = false;
+  const one = async (u) => { const r = await fetch(u, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' }); return r.ok ? r.headers.get('etag') : null; };
+  const etag = async () => { try { const tags = await Promise.all(['/app', '/app/app.js', '/app/envoy.css'].map(one)); return tags.every(Boolean) ? tags.join('|') : null; } catch { return null; } };
+  const check = async () => {
+    const now = await etag(); if (!now) return;
+    if (!known) { known = now; return; }
+    if (now === known || offered) return;
+    const typing = [...document.querySelectorAll('textarea, input[type="text"], input:not([type])')].some((f) => f.value && f.value.trim() && f.offsetParent);
+    if (!typing && document.visibilityState === 'visible') { location.reload(); return; }
+    offered = true; toast('A new version of Helmian is ready. Reload when you are done typing.', 'ok');
+  };
+  check();
+  setInterval(check, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+})();
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {}));

@@ -3,11 +3,11 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { progressModel, planFromText, usageModel, homeModel, viewFromHash, VIEWS, plainEvent } from '../app/app-model.mjs';
 
-test('phones open on Home, wide screens on Console; explicit hashes win', () => {
+test('every screen opens on the Workspace; explicit hashes win', () => {
   assert.ok(VIEWS.includes('home'));
   assert.ok(VIEWS.includes('devices'));
-  assert.equal(viewFromHash('', { phone: true }), 'home');
-  assert.equal(viewFromHash(''), 'console');
+  assert.equal(viewFromHash('', { phone: true }), 'desktop');
+  assert.equal(viewFromHash(''), 'desktop');
   assert.equal(viewFromHash('#console', { phone: true }), 'console');
 });
 
