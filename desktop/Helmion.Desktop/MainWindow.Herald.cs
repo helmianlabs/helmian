@@ -78,6 +78,17 @@ public partial class MainWindow
         var root = AgentBridge.FindHelmionRoot();
         var node = AgentBridge.FindNodeExecutable();
         var workspace = string.IsNullOrWhiteSpace(_registeredWorkspacePath) ? root : _registeredWorkspacePath;
+        // Cloud sharing has two transports. The legacy relay needs Node, the
+        // bin\helmion.mjs files and a per-PC owner secret (herald-owner-enroll);
+        // when any of those is missing it used to exit with no QR at all. The
+        // account path (Local Service + Helmian sign-in) needs none of them, so
+        // fall back to it and always put a scannable QR on screen.
+        if (!localNetwork && HeraldPairingFallback.ShouldUseAccountPairing(
+                root, node, File.Exists(HeraldOwnerSecretPath)))
+        {
+            await StartAccountPhonePairingAsync();
+            return;
+        }
         if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(node)
             || string.IsNullOrWhiteSpace(workspace))
         {
@@ -172,6 +183,13 @@ public partial class MainWindow
                     string[] tail;
                     lock (_heraldErrorTail) tail = _heraldErrorTail.ToArray();
                     AppendHeraldLog($"exit: {exitCode?.ToString() ?? "unknown"}");
+                    if (!localNetwork && HeraldPairingFallback.IsMissingOwnerEnrollmentExit(exitCode))
+                    {
+                        // Exit 3 = no owner enrollment on this PC. Pair through the account instead.
+                        await StopHeraldSharingAsync(null);
+                        await StartAccountPhonePairingAsync();
+                        return;
+                    }
                     await StopHeraldSharingAsync(HeraldExitMessage(exitCode, tail));
                 }
             });
@@ -194,6 +212,66 @@ public partial class MainWindow
         {
             AppendHeraldLog($"start failed: {error.Message}");
             await StopHeraldSharingAsync($"Phone sharing did not start: {error.Message}\nDetails: {HeraldCompanionLogPath}");
+        }
+    }
+
+    /// <summary>%LOCALAPPDATA%\Helmion\Herald\owner-enrollment.dpapi.json (mirrors src/herald/remote-owner-store.mjs).</summary>
+    internal static string HeraldOwnerSecretPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Helmion", "Herald", "owner-enrollment.dpapi.json");
+
+    /// <summary>
+    /// Account pairing (the same flow as Settings, Phone connection, Connect phone),
+    /// rendered into the Herald QR panel. If this PC is already connected to an
+    /// account, show a plain QR to the Herald page so another phone can sign in to
+    /// the same account and see it. Never leaves the panel without a QR or a reason.
+    /// </summary>
+    private async Task StartAccountPhonePairingAsync()
+    {
+        SetHeraldSharingUi("STARTING", "Creating a one-time pairing code with your Helmian account…", running: false);
+        try
+        {
+            EnsureRemoteControlDesktopGatewayStarted();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var status = await LocalServiceHost.Connector.GetRemoteControlStatusAsync(timeout.Token);
+            var herald = new Uri(HeraldRemoteOrigin, "herald").AbsoluteUri;
+            if (status.Enrollment.AccountOwned)
+            {
+                ApplyRemoteControlStatus(status);
+                TryShowHeraldPairingQr(herald);
+                SetHeraldSharingUi("CONNECTED",
+                    "This PC is already connected to your Helmian account. Scan the QR, sign in with the same account, and this PC appears on your phone.",
+                    running: false);
+                return;
+            }
+
+            var result = await LocalServiceHost.Connector.RequestRemoteControlEnrollmentAsync(
+                "My Helmian Desktop", timeout.Token);
+            ResetRemoteEnrollmentLabels();
+            RemoteControlEnrollmentCodeText.Text = result.Challenge.UserCode;
+            RemoteControlEnrollmentUriText.Text = result.Challenge.VerificationUri;
+            RemoteControlEnrollmentPanel.Visibility = Visibility.Visible;
+            RemoteControlRedeemButton.Visibility = Visibility.Visible;
+            ShowRemoteEnrollmentQr(result.Challenge);
+            ApplyRemoteControlStatus(result.Status);
+            var link = Uri.TryCreate(result.Challenge.VerificationUri, UriKind.Absolute, out var verification)
+                ? HeraldPairingLink.TryBuild(result.Challenge.VerificationUri, result.Challenge.UserCode,
+                    HeraldPairingLink.EnrollKey, verification.Host)
+                : null;
+            if (link is not null) TryShowHeraldPairingQr(link);
+            SetHeraldFriendlyStatus("PAIRING AVAILABLE");
+            if (HeraldSharingDetailText is not null)
+            {
+                HeraldSharingDetailText.Text = link is null
+                    ? $"Open {result.Challenge.VerificationUri} on your phone, sign in, and enter {result.Challenge.UserCode}."
+                    : "Scan the QR with your phone camera and sign in to Helmian. This PC connects by itself within a few seconds. The code works once and expires in a few minutes.";
+            }
+        }
+        catch (Exception error)
+        {
+            AppendHeraldLog($"account pairing failed: {error.GetType().Name}: {error.Message}");
+            SetHeraldSharingUi("COULD NOT START",
+                DescribeEnrollmentFailure(error) + $"\nDetails: {HeraldCompanionLogPath}",
+                running: false);
         }
     }
 
