@@ -8,17 +8,19 @@ enterprise certification, VPN-control claim, or proof of a live installation.
 | Target | Package | Current status | Signing/distribution boundary |
 | --- | --- | --- | --- |
 | Chrome | Chromium MV3 `extension/manifest.json` | Supported source shape; test with Chrome's unpacked loader first | Chrome Web Store submission is a separate approved action |
-| Microsoft Edge | Chromium MV3 | Expected compatible with the Chromium package | Edge Add-ons submission is separate; no submission performed |
+| Microsoft Edge | Chromium MV3, staged as its own `edge` target | Expected compatible with the Chromium package; not yet loaded in Edge | Edge Add-ons submission is separate; no submission performed |
 | Brave | Chromium MV3 | Expected compatible with the Chromium package | Unpacked install or Brave-compatible store policy; no store claim |
 | Opera | Chromium MV3 | Expected compatible with the Chromium package | Opera add-on policy may differ; no submission performed |
 | Vivaldi | Chromium MV3 | Expected compatible with the Chromium package | Unpacked install or Vivaldi distribution policy; no submission performed |
 | Firefox | Separate `extension/manifest.firefox.json` | Scaffolded separately because Firefox uses `background.scripts` rather than Chromium's service-worker manifest shape | AMO signing/web-ext build required; the placeholder Gecko ID must be replaced by the owned add-on ID before submission |
 
-The Chromium package is staged with `npm run guard:package:chromium`; the
-Firefox package is staged with `npm run guard:package:firefox`. Both commands
-write only to ignored local `artifacts/` directories and print the selected
-manifest, permissions, host matches, and signing boundary. They do not upload,
-sign, or contact a browser store.
+The Chromium package is staged with `npm run guard:package:chromium` (or
+`guard:package:chrome`), Edge with `npm run guard:package:edge`, and Firefox
+with `npm run guard:package:firefox`. Each command writes a staging directory
+and an unsigned zip (`artifacts/helmion-guard-<target>-<version>.zip`) to the
+ignored local `artifacts/` directory and prints the selected manifest,
+permissions, host matches, and signing boundary. They do not upload, sign, or
+contact a browser store.
 
 ### Firefox signing handoff (not performed)
 
@@ -41,9 +43,16 @@ in this source-only pass.
 ## Permission and compatibility boundary
 
 Both manifests request only `storage` and match the four supported AI hosts.
-Neither package requests `<all_urls>`, host permissions, tabs, scripting,
-downloads, identity, native messaging, or unlimited storage. The extension's
-local scanner and redaction path have no outbound provider dependency.
+The Chromium manifest carries one host permission, `https://helmian.cloud/*`,
+for the opt-in findings upload (`background/upload.js`). Since 0.3.0 both
+manifests also declare OPTIONAL host origins (`https://*/*`,
+`http://localhost/*`, `http://127.0.0.1/*`; Chromium `optional_host_permissions`,
+Firefox `optional_permissions`). None is granted at install: the popup asks for
+the ONE origin the user typed for an Executive Guard server or a Flags API, in a
+click, and nothing reaches the network until then. Neither package requests
+`<all_urls>`, tabs, scripting, downloads, identity, native messaging, or
+unlimited storage. The extension's local scanner and redaction path have no
+outbound provider dependency.
 
 ## VPN integrations are separate
 
