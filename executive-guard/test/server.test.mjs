@@ -150,7 +150,7 @@ test('THE FULL LOOP: destructive prompt -> ask -> approver approves -> signed al
       'an approval cannot be decided twice');
 
     const audit = await guard.call('GET', '/v1/audit', { token: APPROVER_TOKEN });
-    assert.deepEqual(audit.body.entries.map((e) => e.event), ['approval.requested', 'approval.approved']);
+    assert.deepEqual(audit.body.entries.map((e) => e.event), ['approval.requested', 'approval.approved', 'decision.issued']);
     const verify = await guard.call('GET', '/v1/audit/verify', { token: APPROVER_TOKEN });
     assert.equal(verify.body.ok, true);
   } finally { await guard.close(); }

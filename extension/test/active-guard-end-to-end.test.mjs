@@ -238,7 +238,7 @@ test('LOOP: a destructive prompt goes to Executive Guard, an approver approves, 
 
     assert.equal(sendEnter(fakeWindow, composer).prevented, false, 'the approved text was still blocked');
     const events = guard.audit.all().map((e) => e.event);
-    assert.deepEqual(events, ['approval.requested', 'approval.approved']);
+    assert.deepEqual(events, ['approval.requested', 'approval.approved', 'decision.issued']);
   } finally { await guard.close(); }
 });
 

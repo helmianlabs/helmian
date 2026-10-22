@@ -153,8 +153,8 @@ export function createExecutiveGuard({
   }
 
   function publicApproval(approval) {
-    const { nonce, ...rest } = approval;
-    return rest;
+    const { nonce, issued, ...rest } = approval;
+    return issued ? { ...rest, decisionId: issued.decisionId } : rest;
   }
 
   async function decide(req, deviceId) {
@@ -206,19 +206,26 @@ export function createExecutiveGuard({
     if (!approval || approval.deviceId !== deviceId) throw new HttpError(404, 'not-found');
     const body = { approvalId: id, status: approval.status, reason: approval.reason };
     if (approval.status === 'approved' || approval.status === 'denied') {
-      // A fresh signature each poll, bound to the ORIGINAL nonce and action hash,
-      // so the client checks it against what it actually asked.
-      const issued = issue({
-        verdict: approval.status === 'approved' ? 'allow' : 'deny',
-        ruleId: approval.ruleId,
-        reason: approval.decisionReason || approval.reason,
-        hash: approval.actionHash,
-        deviceId,
-        nonce: approval.nonce,
-        approvalId: id,
-        decidedBy: approval.decidedBy,
-      });
-      body.decision = issued.envelope;
+      // ONE decision per approval, signed the first time it is fetched and
+      // returned unchanged on every later poll: same decisionId, same exp, bound
+      // to the ORIGINAL nonce and action hash. A client that executes (the hands
+      // PC spoke) refuses a decisionId it has already used, so a re-poll must
+      // not mint a new one. It expires DECISION_TTL_SECONDS after first fetch.
+      if (!approval.issued) {
+        const issued = issue({
+          verdict: approval.status === 'approved' ? 'allow' : 'deny',
+          ruleId: approval.ruleId,
+          reason: approval.decisionReason || approval.reason,
+          hash: approval.actionHash,
+          deviceId,
+          nonce: approval.nonce,
+          approvalId: id,
+          decidedBy: approval.decidedBy,
+        });
+        approval.issued = { decisionId: issued.claims.decisionId, envelope: issued.envelope };
+        audit.append({ event: 'decision.issued', decisionId: issued.claims.decisionId, approvalId: id, deviceId, verdict: issued.claims.verdict, ruleId: approval.ruleId, actionHash: approval.actionHash, decidedBy: approval.decidedBy });
+      }
+      body.decision = approval.issued.envelope;
       body.decidedBy = approval.decidedBy;
     }
     return body;
