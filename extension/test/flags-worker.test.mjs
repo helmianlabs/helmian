@@ -44,6 +44,7 @@ test('flags scan: only from this extension\'s content scripts', async () => {
   try {
     fake.storageBag.set('helmion.flags.settings', { enabled: true, baseUrl: api.url, apiKey: MOCK_KEY, scanBeforeSend: true });
     assert.equal((await send({ type: 'helmion:flags-scan', text: 'hi' }, POPUP)).ok, false);
+    assert.equal((await send({ type: 'helmion:flags-scan', text: 'hi' }, { ...POPUP, tab: { id: 9 } })).ok, false, 'the popup opened as a tab is not a content script');
     assert.equal((await send({ type: 'helmion:flags-scan', text: 'hi' }, { ...OTHER_EXTENSION, tab: { id: 1 } })).ok, false);
     const ok = await send({ type: 'helmion:flags-scan', text: 'hi' }, CONTENT);
     assert.equal(ok.ok, true);
