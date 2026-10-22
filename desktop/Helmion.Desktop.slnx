@@ -7,5 +7,6 @@
   <Project Path="Helmion.Desktop/Helmion.Desktop.csproj" />
   <Project Path="Helmion.Voice.Host/Helmion.Voice.Host.csproj" />
   <Project Path="Helmion.BridgeService/Helmion.BridgeService.csproj" />
+  <Project Path="Helmion.BridgeService.Tests/Helmion.BridgeService.Tests.csproj" />
   <Project Path="Helmion.Desktop.SmokeTests/Helmion.Desktop.SmokeTests.csproj" />
 </Solution>

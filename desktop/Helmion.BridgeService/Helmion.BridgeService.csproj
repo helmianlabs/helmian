@@ -11,4 +11,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The installer copies from the parent of its own folder, so it must ship inside the publish output. -->
+    <None Include="scripts\**\*.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
