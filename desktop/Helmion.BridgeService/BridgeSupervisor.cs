@@ -2,45 +2,6 @@ using System.Diagnostics;
 
 namespace Helmion.BridgeService;
 
-/// <summary>Where the bridge lives and how to launch it. Pure: no I/O beyond file probes.</summary>
-public sealed record BridgeLaunch(string FileName, IReadOnlyList<string> Arguments, string WorkingDirectory);
-
-public static class BridgeLocator
-{
-    /// <summary>
-    /// Prefer a compiled pc-bridge.exe next to the service (pkg build, no Node needed);
-    /// else node + bin\pc-bridge.mjs from HELMIAN_ROOT or the install folder.
-    /// Returns null with a reason when nothing runnable is found (never guesses).
-    /// </summary>
-    public static (BridgeLaunch? Launch, string? Reason) Resolve(
-        string serviceDirectory, string? helmianRoot, string? nodeExecutable, Func<string, bool> exists)
-    {
-        var exe = Path.Combine(serviceDirectory, "pc-bridge.exe");
-        if (exists(exe)) return (new BridgeLaunch(exe, Array.Empty<string>(), serviceDirectory), null);
-        foreach (var root in new[] { helmianRoot, serviceDirectory })
-        {
-            if (string.IsNullOrWhiteSpace(root)) continue;
-            var script = Path.Combine(root, "bin", "pc-bridge.mjs");
-            if (!exists(script)) continue;
-            if (string.IsNullOrWhiteSpace(nodeExecutable) || !exists(nodeExecutable))
-                return (null, "Node.js 20+ was not found and no pc-bridge.exe is installed.");
-            return (new BridgeLaunch(nodeExecutable, new[] { script }, root), null);
-        }
-        return (null, "Neither pc-bridge.exe nor bin\\pc-bridge.mjs was found. Set HELMIAN_ROOT or reinstall.");
-    }
-}
-
-/// <summary>Restart backoff: 2s, 4s, 8s ... capped at 5 minutes; resets after 10 healthy minutes.</summary>
-public static class RestartBackoff
-{
-    public static TimeSpan Next(int consecutiveFailures)
-    {
-        var seconds = Math.Min(300, 2 * Math.Pow(2, Math.Max(0, consecutiveFailures)));
-        return TimeSpan.FromSeconds(seconds);
-    }
-    public static bool CountsAsHealthy(TimeSpan uptime) => uptime >= TimeSpan.FromMinutes(10);
-}
-
 public sealed class BridgeWorker : BackgroundService
 {
     private readonly ILogger<BridgeWorker> _log;
@@ -52,6 +13,13 @@ public sealed class BridgeWorker : BackgroundService
         "HELMION_DATABASE_URL", "DATABASE_URL", "GITHUB_TOKEN",
     };
 
+    // Names that must never reach a child process: provider keys live in the PC vault,
+    // and the hands spoke runs from its saved pairing, never from a passphrase.
+    private static readonly string[] StrippedForSpoke = { "HELMIAN_HANDS_PASSPHRASE" };
+
+    /// <summary>How long to wait before looking for a hands pairing again.</summary>
+    public static readonly TimeSpan NotPairedRecheck = TimeSpan.FromMinutes(1);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!ConsentRecord.Exists())
@@ -59,20 +27,38 @@ public sealed class BridgeWorker : BackgroundService
             _log.LogError("Helmian Bridge has no recorded opt-in consent ({Path}). Run the installer; the service will not start the bridge without it.", ConsentRecord.Path);
             return;
         }
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        await Task.WhenAll(
+            SuperviseAsync("Bridge", () =>
+            {
+                var (launch, reason) = BridgeLocator.Resolve(AppContext.BaseDirectory, Environment.GetEnvironmentVariable("HELMIAN_ROOT"), FindNode(), File.Exists);
+                return (launch, reason, false);
+            }, Array.Empty<string>(), appData, stoppingToken),
+            SuperviseAsync("Hands spoke", () => SpokeLocator.Resolve(AppContext.BaseDirectory, Environment.GetEnvironmentVariable("HELMIAN_ROOT"), FindNode(), appData, File.Exists),
+                StrippedForSpoke, appData, stoppingToken)).ConfigureAwait(false);
+    }
+
+    private async Task SuperviseAsync(string name, Func<(BridgeLaunch? Launch, string? Reason, bool NotPaired)> resolve,
+        IReadOnlyList<string> extraStripped, string appData, CancellationToken stoppingToken)
+    {
         var failures = 0;
+        var notPairedLogged = false;
         while (!stoppingToken.IsCancellationRequested)
         {
-            var (launch, reason) = BridgeLocator.Resolve(
-                AppContext.BaseDirectory,
-                Environment.GetEnvironmentVariable("HELMIAN_ROOT"),
-                FindNode(),
-                File.Exists);
+            var (launch, reason, notPaired) = resolve();
             if (launch is null)
             {
-                _log.LogError("Bridge not started: {Reason}", reason);
-                await Task.Delay(RestartBackoff.Next(failures++), stoppingToken).ConfigureAwait(false);
+                if (notPaired)
+                {
+                    if (!notPairedLogged) { _log.LogInformation("{Reason}", reason); notPairedLogged = true; }
+                    try { await Task.Delay(NotPairedRecheck, stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
+                    continue;
+                }
+                _log.LogError("{Name} not started: {Reason}", name, reason);
+                try { await Task.Delay(RestartBackoff.Next(failures++), stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
                 continue;
             }
+            notPairedLogged = false;
             var started = DateTimeOffset.UtcNow;
             try
             {
@@ -81,26 +67,32 @@ public sealed class BridgeWorker : BackgroundService
                     WorkingDirectory = launch.WorkingDirectory,
                     UseShellExecute = false,
                     CreateNoWindow = true,
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                 };
                 foreach (var a in launch.Arguments) info.ArgumentList.Add(a);
-                foreach (var name in StrippedSecrets) info.Environment.Remove(name);
+                foreach (var secret in StrippedSecrets) info.Environment.Remove(secret);
+                foreach (var secret in extraStripped) info.Environment.Remove(secret);
+                // Services run as the user still need APPDATA for the saved pairing and vault.
+                if (!string.IsNullOrWhiteSpace(appData) && string.IsNullOrWhiteSpace(info.Environment.TryGetValue("APPDATA", out var cur) ? cur : null))
+                    info.Environment["APPDATA"] = appData;
                 using var process = Process.Start(info) ?? throw new InvalidOperationException("Process.Start returned null.");
-                process.OutputDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.LogInformation("{Line}", e.Data); };
-                process.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.LogWarning("{Line}", e.Data); };
+                process.StandardInput.Close(); // never wait on a prompt: no console, no passphrase
+                process.OutputDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.LogInformation("[{Name}] {Line}", name, e.Data); };
+                process.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.LogWarning("[{Name}] {Line}", name, e.Data); };
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
                 using (stoppingToken.Register(() => { try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { } }))
                 {
                     await process.WaitForExitAsync(stoppingToken).ConfigureAwait(false);
                 }
-                _log.LogWarning("Bridge exited with code {Code}.", process.ExitCode);
+                _log.LogWarning("{Name} exited with code {Code}.", name, process.ExitCode);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (Exception error) { _log.LogError(error, "Bridge failed to start."); }
+            catch (Exception error) { _log.LogError(error, "{Name} failed to start.", name); }
             failures = RestartBackoff.CountsAsHealthy(DateTimeOffset.UtcNow - started) ? 0 : failures + 1;
-            await Task.Delay(RestartBackoff.Next(failures), stoppingToken).ConfigureAwait(false);
+            try { await Task.Delay(RestartBackoff.Next(failures), stoppingToken).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
         }
     }
 
