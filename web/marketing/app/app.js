@@ -1316,7 +1316,7 @@ let selectedAvatar = null;
 
 async function loadProfile() {
   try {
-    const profile = await api('/api/profile');
+    const profile = await api('/api/admin/profile');
     if (profile.nickname) $('#profile-nickname').value = profile.nickname;
     if (profile.avatarEmoji) {
       selectedAvatar = profile.avatarEmoji;
@@ -1349,7 +1349,7 @@ async function saveProfile() {
     return;
   }
   try {
-    await api('/api/profile', {
+    await api('/api/admin/profile', {
       method: 'POST',
       body: JSON.stringify({ nickname, avatarEmoji: selectedAvatar })
     });
@@ -2369,7 +2369,22 @@ async function boot() {
   catch { model = sessionModel(0); }
   if (!model.member) {
     shell.classList.add('signed-out'); $('#signed-out').hidden = false; $('#view-title').textContent = 'Helmian';
-    if (model.signedIn) { const n = $('#membership-note'); n.hidden = false; n.textContent = 'You are signed in, but this account has not been added to an Organization yet. Ask the owner to invite you.'; }
+    if (model.signedIn) {
+      const n = $('#membership-note'); n.hidden = false;
+      // Fresh self-serve accounts (Create account) have no workspace yet: create the
+      // free trial workspace once, then reload into the app. Invited users never get
+      // here because the join link adds them to the inviting team first.
+      if (!sessionStorage.getItem('helmian-signup-tried')) {
+        sessionStorage.setItem('helmian-signup-tried', '1');
+        n.textContent = 'Setting up your free workspace…';
+        try {
+          const res = await fetch('/api/admin/signup', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: '{}' });
+          if (res.ok) { location.reload(); return; }
+        } catch {}
+      }
+      n.textContent = 'You are signed in, but your workspace could not be set up yet. Refresh to try again, or open an invite link from your team.';
+      sessionStorage.removeItem('helmian-signup-tried');
+    }
     return;
   }
   state.actor = model.actor;
