@@ -128,7 +128,13 @@ export async function loadClerkBrowser(publishableKey, {
   }
   const encoded = publishableKey.split('_')[2];
   const domain = windowImpl.atob(encoded).slice(0, -1);
-  if (!/^[A-Za-z0-9.-]+\.clerk\.accounts\.(?:dev|com)$/.test(domain)) {
+  // Hosted instances serve ClerkJS from <instance>.clerk.accounts.dev|com.
+  // A production instance on a custom domain serves it from the Frontend API
+  // host on that domain, which Clerk requires to be the `clerk` subdomain
+  // (e.g. clerk.helmian.cloud). Both shapes are legitimate script origins.
+  const isHostedClerkDomain = /^[A-Za-z0-9.-]+\.clerk\.accounts\.(?:dev|com)$/.test(domain);
+  const isCustomClerkDomain = /^clerk\.(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}$/.test(domain);
+  if (!isHostedClerkDomain && !isCustomClerkDomain) {
     throw new Error('Helmian account frontend domain is invalid.');
   }
   await loadScript(documentImpl, `https://${domain}/npm/@clerk/ui@1/dist/ui.browser.js`);
