@@ -11,4 +11,10 @@ console window, restarting it with backoff (2s doubling to 5 min). Separate from
 - **Off:** `scripts/Uninstall-HelmianBridge.ps1` or stop `HelmianBridge` in services.msc.
 
 Build: `dotnet publish desktop/Helmion.BridgeService -c Release -r win-x64 --self-contained`.
-Status: compiles; not yet installed or tested on a Windows PC. Remote PC control stays off until Troy gives a direct OK.
+It also keeps the hands spoke (`bin/hands-spoke.mjs`, no arguments) running as you with no window, once you have paired it with `node bin/hands-spoke.mjs pair`. Not paired means it is skipped and checked again each minute. Both children restart with backoff (2s doubling to 5 min).
+
+Install (elevated PowerShell, from the repo root): `dotnet publish desktop\Helmion.BridgeService -c Release -r win-x64 --self-contained -o $env:TEMP\HelmianBridge; powershell -ExecutionPolicy Bypass -File $env:TEMP\HelmianBridge\scripts\Install-HelmianBridge.ps1 -HelmianRoot $PWD.Path`
+
+Tests (any OS): `dotnet run --project desktop/Helmion.BridgeService.Tests`.
+
+Status: publishes for win-x64; launch planning tested; not yet installed on a Windows PC. Remote PC control stays off until Troy gives a direct OK.
