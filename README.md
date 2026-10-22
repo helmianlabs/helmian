@@ -4,9 +4,12 @@
 
 # Helmian
 
-**Guard rails for the AI agents you already use.** One agent holds write
-access to a project at a time, a human signs off on risky steps, and every
-action lands in an audit trail. Works with Claude, ChatGPT, Grok, and Gemini.
+**Run Claude, ChatGPT, Grok and Gemini on one project without them stepping on each other.**
+
+One agent holds write access to a project at a time, a human signs off on
+risky steps, and every action lands in an audit trail. Supporting pieces:
+**Guard** flags destructive commands and unsourced claims, **Maestro**
+coordinates the agents, and **Herald** puts approvals on your phone.
 
 ![Helmian desktop: Room, Console, Agents, and Guard panels](docs/assets/desktop-4panel.jpg)
 
