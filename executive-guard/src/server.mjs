@@ -9,10 +9,6 @@
 //   GET  /v1/audit              approver  the hash-chained audit trail
 //   GET  /v1/audit/verify       approver  re-verify the chain end to end
 //
-// The hands MCP connector (PR #52) uses /guard/v1/* with service tokens; see
-// src/hands.mjs. Its approvals show up in, and are decided through, the same
-// approver endpoints above.
-//
 // Every decision, approval request, approval and denial is written to the
 // audit trail before the response goes out. Tokens are compared as SHA-256
 // digests with timingSafeEqual. No CORS headers are sent, so an ordinary web
@@ -24,7 +20,6 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { ActionError, actionHash, normalizeAction } from './action.mjs';
 import { DEFAULT_POLICY, evaluatePolicy, validatePolicy } from './policy.mjs';
 import { DECISION_TTL_SECONDS, signDecision } from './signing.mjs';
-import { createHandsApi } from './hands.mjs';
 
 export const MAX_BODY_BYTES = 32 * 1024;
 export const APPROVAL_TTL_SECONDS = 15 * 60;
@@ -112,8 +107,6 @@ export function createExecutiveGuard({
   audit,
   deviceTokens = {},
   approverTokens = {},
-  serviceTokens = {},
-  hands: handsConfig = {},
   policy = DEFAULT_POLICY,
   now = Date.now,
 } = {}) {
@@ -122,7 +115,6 @@ export function createExecutiveGuard({
   validatePolicy(policy);
   const findDevice = tokenTable(deviceTokens);
   const findApprover = tokenTable(approverTokens);
-  const findService = tokenTable(serviceTokens);
   const approvals = new Map();
   const seenNonces = new Map(); // nonce -> expiry ms
 
@@ -247,8 +239,6 @@ export function createExecutiveGuard({
     return publicApproval(approval);
   }
 
-  const hands = createHandsApi({ key, audit, approvals, findService, config: handsConfig, now });
-
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -259,10 +249,6 @@ export function createExecutiveGuard({
       }
 
       const token = bearer(req);
-      if (path.startsWith('/guard/v1/')) {
-        const handled = await hands.handle({ req, path, url, token, readJson, send: (status, body) => send(res, status, body) });
-        if (handled) return undefined;
-      }
       if (path === '/v1/decisions' || /^\/v1\/approvals\/[^/]+$/.test(path) && req.method === 'GET') {
         const deviceId = findDevice(token);
         if (!deviceId) throw new HttpError(401, 'unauthorized');
@@ -301,5 +287,5 @@ export function createExecutiveGuard({
   }
 
   const server = http.createServer((req, res) => { handle(req, res); });
-  return { server, approvals, handle, hands };
+  return { server, approvals, handle };
 }

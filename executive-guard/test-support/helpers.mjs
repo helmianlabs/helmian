@@ -6,8 +6,6 @@ import { generateSigningKey, loadSigningKey } from '../src/signing.mjs';
 export const DEVICE_TOKEN = 'device-token-aaaaaaaaaaaaaaaaaaaaaaaa';
 export const OTHER_DEVICE_TOKEN = 'device-token-bbbbbbbbbbbbbbbbbbbbbbbb';
 export const APPROVER_TOKEN = 'approver-token-cccccccccccccccccccccc';
-export const SERVICE_TOKEN = 'service-token-hands-dddddddddddddddddd';
-export const OTHER_SERVICE_TOKEN = 'service-token-other-eeeeeeeeeeeeeeeeee';
 
 export function sha256(text) {
   return createHash('sha256').update(text).digest('hex');
@@ -25,12 +23,6 @@ export async function startGuard(options = {}) {
     audit,
     deviceTokens: { 'troy-laptop': DEVICE_TOKEN, 'other-device': OTHER_DEVICE_TOKEN },
     approverTokens: { troy: APPROVER_TOKEN },
-    serviceTokens: { 'hands-mcp': SERVICE_TOKEN, 'other-service': OTHER_SERVICE_TOKEN },
-    hands: {
-      roots: { pc: ['E:\\Helmion'], runner: ['/srv/helmian/work'] },
-      commands: ['git-status'],
-      allowHosts: ['docs.helmian.cloud'],
-    },
     ...options,
   });
   await new Promise((resolve) => guard.server.listen(0, '127.0.0.1', resolve));
