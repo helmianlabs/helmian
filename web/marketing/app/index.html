@@ -10,6 +10,7 @@
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="/app/app.css">
+  <link rel="stylesheet" href="/app/envoy.css">
   <script type="importmap">
   {
     "imports": {
@@ -51,7 +52,7 @@
         <button class="nav-item active" type="button" data-view="desktop">🖥️ <span class="label">Desktop</span></button>
         <button class="nav-item" type="button" data-view="console">💬 <span class="label">Chat</span></button>
         <button class="nav-item" type="button" data-view="workspace">🗂️ <span class="label">Projects</span></button>
-        <button class="nav-item" type="button" data-view="approvals">✅ Approvals<span id="approvals-badge" class="badge" hidden></span></button>
+        <button class="nav-item" type="button" data-view="approvals">✅ <span class="label">Approvals</span><span id="approvals-badge" class="badge" hidden></span></button>
       </nav>
       <details class="side-group accordion advanced-nav" id="advanced-nav">
         <summary class="side-head"><span>ADVANCED</span><span class="chev">▾</span></summary>
@@ -78,6 +79,7 @@
   <!-- CENTER -->
   <main id="main" class="center">
     <header class="topbar">
+      <button id="rail-toggle" class="icon-btn hide-mobile" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-pressed="false">«</button>
       <button id="sidebar-toggle" class="icon-btn only-mobile" type="button" aria-label="Open sidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
       <div id="view-title" class="view-title">Console</div>
       <button id="fullscreen" class="btn ghost sm hide-mobile" type="button">Full screen</button>
@@ -96,130 +98,140 @@
       </div>
     </section>
 
-    <!-- Desktop (EXE clone): 4-panel layout -->
+    <!-- Desktop: Envoy workspace (channels | chat | agents | workbench). envoy-workspace.js drives it. -->
     <section id="view-desktop" class="view desktop" data-view-panel="desktop" hidden>
-      <div class="desktop-grid">
-        <!-- Panel 1: ENVOY -->
-        <div class="dpanel room" id="dp-room">
-          <div class="dpanel-head"><button class="dpanel-toggle left" data-panel="dp-room" aria-label="Collapse panel">‹</button><span class="eyebrow">ENVOY</span><strong>Envoy</strong><span class="badge-warn" id="room-setup-badge">SETUP NEEDED</span><button class="dpanel-toggle" data-panel="dp-room" aria-label="Collapse panel">‹</button></div>
-          <div class="dpanel-tabs" id="room-sources">
-            <button class="chip sm active" data-source="all">All</button>
-            <button class="chip sm" data-source="discord">Discord</button>
-            <button class="chip sm" data-source="github">GitHub</button>
-          </div>
-          <div class="dpanel-subhead">SOURCES</div>
-          <div class="dpanel-scroll" id="room-messages"></div>
-          <div class="dpanel-subhead">CHANNELS / ISSUES</div>
-          <details class="dpanel-members" id="room-members">
-            <summary class="dpanel-subhead">MEMBERS · <span id="members-count">0</span></summary>
-            <div class="dpanel-scroll" id="members-list" style="max-height: 200px;"></div>
-          </details>
-          <form class="dpanel-composer" id="room-form">
-            <textarea id="room-input" placeholder="Message Envoy..." aria-label="Message Envoy" rows="3"></textarea>
-            <button type="submit" class="btn primary sm">Send</button>
+      <div class="ew" id="ew">
+        <aside class="ew-pane ew-channels" id="ew-channels" data-pane="channels" aria-label="Channels">
+          <header class="ew-head">
+            <span class="eyebrow accent">ENVOY</span><strong>Channels</strong>
+            <span class="ew-spacer"></span>
+            <button class="ew-icon" type="button" data-collapse="channels" aria-label="Hide channels" title="Hide channels">‹</button>
+          </header>
+          <nav id="ew-channel-list" class="ew-channel-list" aria-label="Envoy channels"></nav>
+          <form id="ew-new-channel" class="ew-new-channel" hidden>
+            <input id="ew-new-channel-name" maxlength="60" placeholder="Channel name" aria-label="Channel name" autocomplete="off">
+            <label class="ew-check"><input type="checkbox" id="ew-new-channel-agents" checked> Add Maestro</label>
+            <div class="ew-row"><button type="button" class="ew-btn ghost sm" id="ew-new-channel-cancel">Cancel</button><button type="submit" class="ew-btn primary sm">Create</button></div>
           </form>
-          <div class="dpanel-tabs bottom">
-            <button class="chip sm active" data-provider="discord">Discord</button>
-            <button class="chip sm" data-provider="github">GitHub</button>
-            <button class="chip sm" data-provider="slack">Slack</button>
-          </div>
-        </div>
-        <div class="dsplit" data-split="room" title="Drag to resize"></div>
-        <!-- Panel 2: CONSOLE (center chat) -->
-        <div class="dpanel maestro" id="dp-maestro">
-          <div class="dpanel-head"><span class="eyebrow accent">CONSOLE</span><strong>Team chat</strong></div>
-          <div class="dpanel-meta"><button class="chip sm" data-pill="full" title="Full context mode">Full</button><button class="chip sm ghost" data-pill="polaris" title="Polaris routing">Polaris</button><button class="chip sm ghost" data-pill="evaluation" title="Evaluation mode">Evaluation</button><button class="chip sm ghost" data-pill="agent" title="Agent configuration">Agent configured</button><span class="muted sm">SCOPED FOLDER · <span id="maestro-scope">E:\Helmion\.helmion</span></span><span class="muted sm">APPLIES NEXT TURN</span><span class="muted sm">model: <span id="maestro-model">gemini</span></span></div>
-          <div class="dpanel-scroll" id="maestro-messages"></div>
-          <div class="dpanel-composer-opts muted sm">
-            <label class="chip sm"><input type="checkbox" id="maestro-autoaccept" checked> auto-accept edits</label>
-            <span>Shift+Tab to plan</span>
-            <button class="icon-btn sm" id="maestro-dictate" type="button" aria-pressed="false" aria-label="Dictate"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
-            <button class="voice-orb sm" id="maestro-voice" type="button" aria-pressed="false" aria-label="Voice chat"><span class="orb-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="orb-label">Voice chat</span></button>
-            <button class="chip sm ghost" id="maestro-voicetoggle" type="button" aria-pressed="false">voice: off</button>
-            <button class="chip sm" id="maestro-slash2" type="button" title="Slash commands">/</button>
-          </div>
-          <form class="dpanel-composer" id="maestro-form">
-            <button class="icon-btn sm" id="maestro-plus" type="button" title="Tools: open Integrations" aria-label="Tools: open Integrations">+</button>
-            <span class="muted" aria-hidden="true">&gt;</span>
-            <input id="maestro-input" placeholder="Type your message or @path/to/file" aria-label="Maestro message">
-            <button class="btn primary sm" id="maestro-send" type="submit">Send</button>
+          <button id="ew-add-channel" class="ew-btn ghost full" type="button">+ New channel</button>
+          <footer class="ew-foot">
+            <div class="ew-source"><img src="/assets/agents/maestro.png" alt="" width="14" height="14"> Helmian Envoy</div>
+            <div class="ew-source" id="ew-discord-status"><span class="ew-discord-mark" aria-hidden="true"></span> Discord: <span id="ew-discord-status-text">checking…</span></div>
+          </footer>
+        </aside>
+        <div class="ew-split" data-split="channels" role="separator" aria-orientation="vertical" aria-label="Resize channels" tabindex="0"></div>
+
+        <main class="ew-pane ew-chat" id="ew-chat" aria-label="Chat">
+          <header class="ew-head ew-chat-head">
+            <button class="ew-icon ew-reveal" type="button" data-open="channels" aria-label="Show channels" title="Channels">☰</button>
+            <span class="ew-hash">#</span><strong id="ew-channel-title">…</strong>
+            <span id="ew-discord-badge" class="ew-badge discord" hidden></span>
+            <span class="ew-spacer"></span>
+            <button id="ew-link-discord" class="ew-btn sm" type="button">Link Discord</button>
+            <button class="ew-btn sm ew-toggle" type="button" data-toggle="agents" aria-pressed="false" title="Agents in this channel">Agents <b id="ew-agent-count">0</b></button>
+            <button class="ew-btn sm ew-toggle" type="button" data-toggle="bench" aria-pressed="true" title="Guard, Browser, Canvas, Preview">Workbench</button>
+          </header>
+          <div id="ew-messages" class="ew-messages" role="log" aria-live="polite"></div>
+          <form id="maestro-form" class="ew-composer" autocomplete="off">
+            <div class="ew-pills" id="ew-mention-pills" aria-label="Mention an agent"></div>
+            <textarea id="maestro-input" rows="1" placeholder="Message #channel" aria-label="Message"></textarea>
+            <div class="ew-composer-row">
+              <button class="ew-icon" id="maestro-plus" type="button" title="Tools: open Integrations" aria-label="Tools: open Integrations">+</button>
+              <button class="ew-icon" id="maestro-dictate" type="button" aria-pressed="false" aria-label="Dictate" title="Dictate"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
+              <button class="voice-orb sm" id="maestro-voice" type="button" aria-pressed="false" aria-label="Voice chat"><span class="orb-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="orb-label">Voice</span></button>
+              <span class="ew-hint" id="ew-composer-hint">Enter to send · Shift+Enter for a new line</span>
+              <span class="ew-spacer"></span>
+              <button class="ew-btn primary" id="maestro-send" type="submit">Send</button>
+            </div>
           </form>
-          <div class="dpanel-workspace muted sm">workspace: (<span id="maestro-workspace">E:\Helmian</span>)</div>
-          <div class="dpanel-tabs bottom" id="maestro-providers">
-            <button class="chip sm active" data-provider="maestro">Maestro</button>
-            <button class="chip sm" data-provider="agents">AGENTS</button>
-            <button class="chip sm" data-provider="claude">Claude</button>
-            <button class="chip sm" data-provider="chatgpt">ChatGPT</button>
-            <button class="chip sm" data-provider="grok">Grok</button>
-            <button class="chip sm" data-provider="gemini">Gemini</button>
+        </main>
+
+        <div class="ew-split" data-split="agents" role="separator" aria-orientation="vertical" aria-label="Resize agents" tabindex="0"></div>
+        <aside class="ew-pane ew-agents" id="ew-agents" data-pane="agents" aria-label="Agents">
+          <header class="ew-head">
+            <span class="eyebrow">AGENTS</span><strong id="ew-agents-summary">none here</strong>
+            <span class="ew-spacer"></span>
+            <button class="ew-icon" type="button" data-collapse="agents" aria-label="Hide agents" title="Hide agents">›</button>
+          </header>
+          <div id="ew-agent-cards" class="ew-agent-cards"></div>
+          <div class="ew-subhead">ADD TO THIS CHANNEL</div>
+          <div id="ew-agent-add" class="ew-agent-add"></div>
+          <p class="ew-note">@mention an agent to ask it. Maestro takes messages nobody is named in and hands out slices. Agents run on your own PC bridge with your own keys; replies show up here and in the linked Discord channel.</p>
+        </aside>
+
+        <div class="ew-split" data-split="bench" role="separator" aria-orientation="vertical" aria-label="Resize workbench" tabindex="0"></div>
+        <aside class="ew-pane ew-bench" id="ew-bench" data-pane="bench" aria-label="Workbench">
+          <div class="ew-tabs" role="tablist" aria-label="Workbench">
+            <button class="ew-tab active" type="button" role="tab" data-tab="guard" aria-selected="true">Guard</button>
+            <button class="ew-tab" type="button" role="tab" data-tab="browser" aria-selected="false">Browser</button>
+            <button class="ew-tab" type="button" role="tab" data-tab="canvas" aria-selected="false">Canvas</button>
+            <button class="ew-tab" type="button" role="tab" data-tab="preview" aria-selected="false">Preview</button>
+            <button class="ew-tab" type="button" role="tab" data-tab="create" aria-selected="false">Create</button>
+            <span class="ew-spacer"></span>
+            <button class="ew-icon" type="button" id="ew-bench-max" aria-label="Expand workbench" title="Expand">⤢</button>
+            <button class="ew-icon" type="button" data-collapse="bench" aria-label="Hide workbench" title="Hide workbench">›</button>
           </div>
-        </div>
-        <div class="dsplit" data-split="maestro" title="Drag to resize"></div>
-        <!-- Panel 3: AGENTS -->
-        <div class="dpanel agents" id="dp-agents">
-          <div class="dpanel-head"><button class="dpanel-toggle left" data-panel="dp-agents" aria-label="Collapse panel">‹</button><span class="eyebrow">AGENTS</span><strong><span id="agents-count">0</span> agents running</strong><button class="dpanel-toggle" data-panel="dp-agents" aria-label="Collapse panel">‹</button></div>
-          <div class="dpanel-tabs" id="agents-providers">
-            <button class="chip sm" data-provider="maestro">Maestro</button>
-            <button class="chip sm" data-provider="claude">Claude</button>
-            <button class="chip sm" data-provider="chatgpt">ChatGPT</button>
-            <button class="chip sm" data-provider="grok">Grok</button>
-            <button class="chip sm" data-provider="gemini">Gemini</button>
+          <div class="ew-tabpane active" data-tabpane="guard" role="tabpanel">
+            <div class="ew-subhead">GUARD FEED · <span id="guard-summary">0 crit · 0 warn · 0 total</span></div>
+            <div class="ew-chips" id="guard-filters"></div>
+            <div class="ew-scroll" id="guard-findings"></div>
+            <div class="ew-row ew-actions"><button class="ew-btn ghost sm" id="guard-ackall" type="button">Ack all</button><button class="ew-btn ghost sm" id="ew-guard-refresh" type="button">Refresh</button></div>
           </div>
-          <div class="dpanel-subhead">@name or @all from Maestro · workers claim distinct slices</div>
-          <div class="dpanel-scroll" id="agents-list"></div>
-          <div class="dpanel-foot muted sm">Select a card → Maestro talks to that agent. Chat lines update live.</div>
-        </div>
-        <div class="dsplit" data-split="agents" title="Drag to resize"></div>
-        <!-- Panel 4: GUARD -->
-        <div class="dpanel guard" id="dp-guard">
-          <div class="dpanel-tabs">
-            <button class="chip sm active" data-gtab="guard">Guard</button>
-            <button class="chip sm" data-gtab="browser">Browser</button>
-            <button class="chip sm" data-gtab="canvas">Canvas</button>
-            <button class="chip sm" data-gtab="preview">Preview</button>
-            <button class="chip sm" data-gtab="create">Create</button>
-          </div>
-          <div class="dpanel-head"><span class="eyebrow">GUARD</span><strong id="guard-summary">0 crit · 0 warn · 0 total</strong><button class="dpanel-toggle" data-panel="dp-guard" aria-label="Collapse panel">›</button></div>
-          <div class="dpanel-tabs" id="guard-filters"></div>
-          <div class="dpanel-scroll" id="guard-findings" data-gtab-panel="guard"></div>
-          <div class="dpanel-scroll" id="guard-browser" data-gtab-panel="browser" hidden>
-            <form class="dpanel-composer" id="guard-browser-form">
-              <input id="guard-browser-url" placeholder="https://…" aria-label="Website address">
-              <button type="submit" class="btn primary sm">Go</button>
-            </form>
-            <div class="muted sm" id="guard-browser-status"></div>
-            <div id="guard-browser-wrap" hidden>
-              <iframe id="guard-browser-frame" title="Embedded website" sandbox="allow-scripts allow-same-origin" style="width:100%;height:320px;border:1px solid var(--border);border-radius:var(--radius);"></iframe>
-              <div class="muted sm"><button class="link-btn" id="guard-browser-external" type="button">Open outside Helmian</button></div>
+          <div class="ew-tabpane" data-tabpane="browser" role="tabpanel" hidden>
+            <div class="ew-browser" id="ew-browser">
+              <form class="ew-browser-bar" id="ew-browser-form">
+                <button class="ew-icon" type="button" id="ew-browser-back" aria-label="Back" title="Back" disabled>←</button>
+                <button class="ew-icon" type="button" id="ew-browser-fwd" aria-label="Forward" title="Forward" disabled>→</button>
+                <button class="ew-icon" type="button" id="ew-browser-reload" aria-label="Reload" title="Reload" disabled>⟳</button>
+                <input id="ew-browser-url" type="text" inputmode="url" placeholder="Search or enter address" aria-label="Address" maxlength="4096" autocomplete="off" spellcheck="false">
+                <button class="ew-btn primary sm" type="submit">Go</button>
+                <button class="ew-icon" type="button" id="ew-browser-external" aria-label="Open in a new tab" title="Open in a new tab" disabled>↗</button>
+                <button class="ew-icon" type="button" id="ew-browser-close" aria-label="Close page" title="Close page" disabled>✕</button>
+              </form>
+              <div class="ew-browser-status" id="ew-browser-status" role="status" aria-live="polite"></div>
+              <div class="ew-browser-view">
+                <div class="ew-browser-start" id="ew-browser-start">
+                  <p class="muted sm">Public HTTPS sites open here. Every visit goes in the audit trail. Some sites refuse to be shown inside other apps; use ↗ for those.</p>
+                  <div class="ew-quick" id="ew-browser-quick"></div>
+                </div>
+                <iframe id="ew-browser-frame" title="Browser" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" allow="fullscreen; picture-in-picture; encrypted-media" referrerpolicy="strict-origin-when-cross-origin" hidden></iframe>
+              </div>
             </div>
           </div>
-          <div class="dpanel-scroll" id="guard-canvas" data-gtab-panel="canvas" hidden>
-            <div class="muted sm" id="guard-canvas-status">Loading…</div>
-            <div id="guard-canvas-body" hidden>
-              <div class="dpanel-subhead">NOTE</div>
-              <p class="sm" id="guard-canvas-note"></p>
-              <div class="dpanel-subhead">DECISIONS · <span id="guard-canvas-count">0</span></div>
-              <div id="guard-canvas-decisions"></div>
+          <div class="ew-tabpane" data-tabpane="canvas" role="tabpanel" hidden>
+            <div class="ew-canvas">
+              <div class="ew-canvas-bar">
+                <div class="ew-seg" role="group" aria-label="Canvas layout"><button type="button" data-cmode="code">Code</button><button type="button" data-cmode="split" class="active">Split</button><button type="button" data-cmode="live">Live</button></div>
+                <span class="ew-spacer"></span>
+                <span class="muted sm" id="ew-canvas-saved"></span>
+                <button class="ew-btn ghost sm" type="button" id="ew-canvas-share">Send to chat</button>
+              </div>
+              <div class="ew-canvas-body split" id="ew-canvas-body">
+                <textarea id="ew-canvas-code" spellcheck="false" aria-label="Canvas code"></textarea>
+                <iframe id="ew-canvas-live" title="Live render" sandbox=""></iframe>
+              </div>
             </div>
           </div>
-          <div class="dpanel-scroll" id="guard-preview" data-gtab-panel="preview" hidden>
+          <div class="ew-tabpane" data-tabpane="preview" role="tabpanel" hidden>
+            <div class="ew-subhead">PREVIEW · finished work reported by the desktop</div>
             <div class="muted sm" id="guard-preview-status">Loading…</div>
-            <div id="guard-preview-list"></div>
+            <div class="ew-scroll" id="guard-preview-list"></div>
           </div>
-          <div class="dpanel-scroll" id="guard-create" data-gtab-panel="create" hidden>
-            <form class="dpanel-composer" id="guard-create-form">
+          <div class="ew-tabpane" data-tabpane="create" role="tabpanel" hidden>
+            <form class="ew-row" id="guard-create-form">
               <input id="guard-create-prompt" placeholder="Describe what to create…" aria-label="Create request">
-              <button type="submit" class="btn primary sm">Add</button>
+              <button type="submit" class="ew-btn primary sm">Add</button>
             </form>
             <div class="muted sm" id="guard-create-status"></div>
-            <div id="guard-create-list"></div>
+            <div class="ew-scroll" id="guard-create-list"></div>
           </div>
-          <div class="dpanel-actions">
-            <button class="btn ghost sm" id="guard-ackall">Ack all</button>
-            <button class="btn ghost sm" id="guard-settings">Settings</button>
-            <button class="btn ghost sm" id="guard-quarantine">Quarantine</button>
-            <button class="btn ghost sm" id="guard-tests">Tests</button>
-          </div>
+        </aside>
+      </div>
+      <div class="ew-scrim" id="ew-scrim"></div>
+      <div class="ew-modal" id="ew-modal" role="dialog" aria-modal="true" aria-labelledby="ew-modal-title">
+        <div class="ew-modal-card">
+          <header class="ew-head"><strong id="ew-modal-title">Link Discord</strong><span class="ew-spacer"></span><button class="ew-icon" type="button" id="ew-modal-close" aria-label="Close">✕</button></header>
+          <div class="ew-modal-body" id="ew-modal-body"></div>
         </div>
       </div>
     </section>
