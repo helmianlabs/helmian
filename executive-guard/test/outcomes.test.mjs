@@ -150,7 +150,8 @@ test('validation: every bad field is a 400 with a specific code', async () => {
 });
 
 test('the reporting window closes OUTCOME_WINDOW_SECONDS after the decision expires (410)', async () => {
-  let t = Date.parse('2026-10-22T10:00:00Z');
+  // Start at the real clock: verifyDecision checks exp against Date.now().
+  let t = Date.now();
   const guard = await startGuard({ now: () => t });
   try {
     const { claims, nonce: n } = await allowDecision(guard);
