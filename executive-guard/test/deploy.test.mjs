@@ -56,4 +56,5 @@ test('the files the image copies are enough to start the server', async () => {
   child.kill('SIGTERM');
   assert.equal(await exited, 0, 'SIGTERM should shut down cleanly');
   assert.ok(readFileSync(join(root, 'keys', 'signing-key.pem'), 'utf8').includes('PRIVATE KEY'));
+  assert.equal(readFileSync(join(root, 'audit', 'state.jsonl'), 'utf8'), '', 'restart state lives next to the audit (same volume)');
 });

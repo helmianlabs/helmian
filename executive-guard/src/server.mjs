@@ -7,9 +7,13 @@
 //   GET  /v1/approvals          approver  list approvals (?status=pending)
 //   POST /v1/approvals/:id/decide approver approve or deny a pending approval
 //   GET  /v1/audit              approver  the hash-chained audit trail
+//   (pending approvals + used nonces persist via src/state.mjs)
 //   GET  /v1/audit/verify       approver  re-verify the chain end to end
 //   POST /v1/audit/outcomes     device    report what happened after a decision
 //                                         (docs/OUTCOMES.md has the exact contract)
+//
+// Pending approvals, the decision issued for each approval and used nonces are
+// persisted through a state store (src/state.mjs) and rebuilt on start.
 //
 // Every decision, approval request, approval and denial is written to the
 // audit trail before the response goes out. Tokens are compared as SHA-256
@@ -22,6 +26,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { ActionError, actionHash, normalizeAction } from './action.mjs';
 import { DEFAULT_POLICY, evaluatePolicy, validatePolicy } from './policy.mjs';
 import { DECISION_TTL_SECONDS, signDecision } from './signing.mjs';
+import { memoryState } from './state.mjs';
 
 export const MAX_BODY_BYTES = 32 * 1024;
 export const APPROVAL_TTL_SECONDS = 15 * 60;
@@ -121,6 +126,7 @@ export function createExecutiveGuard({
   approverTokens = {},
   policy = DEFAULT_POLICY,
   now = Date.now,
+  state = memoryState(),
 } = {}) {
   if (!key) throw new Error('createExecutiveGuard needs a signing key');
   if (!audit) throw new Error('createExecutiveGuard needs an audit store');
@@ -128,7 +134,7 @@ export function createExecutiveGuard({
   const findDevice = tokenTable(deviceTokens);
   const findApprover = tokenTable(approverTokens);
   const approvals = new Map();
-  const seenNonces = new Map(); // nonce -> expiry ms
+  const seenNonces = new Map(); // sha256(nonce) -> expiry ms
   // decisionId -> { deviceId, verdict, actionHash, nonceHash, exp, approvalId, outcome }
   // for every allow/deny decision this server signed. Rebuilt from the audit
   // trail on start, so a restart neither forgets decisions nor accepts a second
@@ -149,6 +155,16 @@ export function createExecutiveGuard({
   }
 
   const nowSeconds = () => Math.floor(now() / 1000);
+
+  // Persist first, audit second: a crash in between leaves state the audit
+  // does not confirm, and restore() below treats the audit as the truth.
+  function saveApproval(approval) { state.append({ t: 'approval', approval }); }
+
+  function keepApproval(approval) {
+    if (approval.status === 'pending') return true;
+    const finished = approval.decidedAt || approval.expiresAt;
+    return finished + OUTCOME_WINDOW_SECONDS > nowSeconds();
+  }
 
   function pruneNonces() {
     const t = now();
@@ -177,22 +193,81 @@ export function createExecutiveGuard({
     for (const approval of approvals.values()) {
       if (approval.status === 'pending' && approval.expiresAt <= t) {
         approval.status = 'expired';
+        saveApproval(approval);
         audit.append({ event: 'approval.expired', approvalId: approval.id, actionHash: approval.actionHash, deviceId: approval.deviceId });
       }
     }
   }
 
   function publicApproval(approval) {
-    const { nonce, issued, ...rest } = approval;
+    const { nonce, issued, decisionLost, ...rest } = approval;
     return issued ? { ...rest, decisionId: issued.decisionId } : rest;
   }
+
+  // Rebuild pending approvals and the nonce replay cache after a restart.
+  function restore() {
+    const t = now();
+    const latest = new Map();
+    for (const record of state.load()) {
+      if (record.t === 'nonce' && record.exp > t) seenNonces.set(record.h, Math.max(seenNonces.get(record.h) || 0, record.exp));
+      if (record.t === 'approval' && record.approval?.id) latest.set(record.approval.id, record.approval);
+    }
+    // What the audit trail says about each approval.
+    const requested = new Map();
+    const settled = new Map();
+    const issuedFor = new Set();
+    for (const e of audit.all ? audit.all() : []) {
+      if (e.event === 'approval.requested') requested.set(e.approvalId, e);
+      else if (e.event === 'approval.approved' || e.event === 'approval.denied' || e.event === 'approval.expired') {
+        if (!settled.has(e.approvalId)) settled.set(e.approvalId, e);
+      } else if (e.event === 'decision.issued' && e.approvalId) issuedFor.add(e.approvalId);
+    }
+    for (const approval of latest.values()) {
+      if (!requested.has(approval.id)) continue; // never acknowledged to the device
+      const s = settled.get(approval.id);
+      if (s) {
+        approval.status = { 'approval.approved': 'approved', 'approval.denied': 'denied', 'approval.expired': 'expired' }[s.event];
+        if (s.event !== 'approval.expired') {
+          approval.decidedBy = s.approverId;
+          approval.decidedAt = approval.decidedAt || Math.floor(Date.parse(s.at) / 1000);
+          approval.decisionReason = s.reason;
+        }
+      } else {
+        // Not confirmed by the audit: still pending, whatever the state file said.
+        approval.status = 'pending';
+        delete approval.decidedBy; delete approval.decidedAt; delete approval.decisionReason; delete approval.issued;
+      }
+      if (approval.issued && !issuedFor.has(approval.id) && approval.status !== 'pending') {
+        audit.append({ event: 'decision.issued', decisionId: approval.issued.decisionId, approvalId: approval.id, deviceId: approval.deviceId, verdict: approval.status === 'approved' ? 'allow' : 'deny', ruleId: approval.ruleId, actionHash: approval.actionHash, decidedBy: approval.decidedBy, nonceHash: nonceHashOf(approval.nonce), exp: approval.issued.exp, recovered: true });
+      }
+      if (!approval.issued && issuedFor.has(approval.id)) approval.decisionLost = true;
+      if (approval.issued) {
+        const prior = issuedDecisions.get(approval.issued.decisionId);
+        if (!prior) issuedDecisions.set(approval.issued.decisionId, { deviceId: approval.deviceId, verdict: approval.status === 'approved' ? 'allow' : 'deny', actionHash: approval.actionHash, nonceHash: nonceHashOf(approval.nonce), exp: approval.issued.exp, approvalId: approval.id, outcome: null });
+      }
+      if (keepApproval(approval)) approvals.set(approval.id, approval);
+    }
+    // Approvals the audit shows as still pending but whose state is gone cannot
+    // be completed (their nonce is not in the audit). Close them in the record.
+    for (const [id, e] of requested) {
+      if (settled.has(id) || approvals.has(id)) continue;
+      audit.append({ event: 'approval.expired', approvalId: id, actionHash: e.actionHash, deviceId: e.deviceId, reason: 'state-unavailable-after-restart' });
+    }
+    expireApprovals();
+    state.compact([
+      ...[...seenNonces].map(([h, exp]) => ({ t: 'nonce', h, exp })),
+      ...[...approvals.values()].map((approval) => ({ t: 'approval', approval })),
+    ]);
+  }
+  restore();
 
   async function decide(req, deviceId) {
     const body = await readJson(req);
     const nonce = String(body.nonce ?? '');
     if (!NONCE_PATTERN.test(nonce)) throw new HttpError(400, 'invalid-nonce', 'nonce must be 16-128 url-safe characters');
     pruneNonces();
-    if (seenNonces.has(nonce)) throw new HttpError(409, 'replayed-nonce');
+    const nonceHash = nonceHashOf(nonce);
+    if (seenNonces.has(nonceHash)) throw new HttpError(409, 'replayed-nonce');
     let action;
     try { action = normalizeAction(body.action); }
     catch (error) {
@@ -202,7 +277,9 @@ export function createExecutiveGuard({
       }
       throw error;
     }
-    seenNonces.set(nonce, now() + DECISION_TTL_SECONDS * 1000 * 2);
+    const nonceExp = now() + Math.max(DECISION_TTL_SECONDS * 2, APPROVAL_TTL_SECONDS) * 1000;
+    state.append({ t: 'nonce', h: nonceHash, exp: nonceExp });
+    seenNonces.set(nonceHash, nonceExp);
     const hash = actionHash(action);
     const result = evaluatePolicy(action, policy);
 
@@ -220,6 +297,7 @@ export function createExecutiveGuard({
         reason: result.reason,
       };
       approvals.set(approval.id, approval);
+      saveApproval(approval);
       audit.append({ event: 'approval.requested', approvalId: approval.id, deviceId, actionHash: hash, kind: action.kind, site: action.site, riskSignals: action.riskSignals, summary: action.summary, ruleId: result.ruleId });
       const issued = issue({ verdict: 'ask', ruleId: result.ruleId, reason: result.reason, hash, deviceId, nonce, approvalId: approval.id });
       return { status: 202, body: { verdict: 'ask', reason: result.reason, approvalId: approval.id, decision: issued.envelope } };
@@ -242,6 +320,12 @@ export function createExecutiveGuard({
       // to the ORIGINAL nonce and action hash. A client that executes (the hands
       // PC spoke) refuses a decisionId it has already used, so a re-poll must
       // not mint a new one. It expires DECISION_TTL_SECONDS after first fetch.
+      if (!approval.issued && approval.decisionLost) {
+        // The audit shows a decision was signed but the state file that held it
+        // is gone. Minting a second one would defeat single use, so fail closed.
+        body.error = 'decision-unavailable';
+        return body;
+      }
       if (!approval.issued) {
         const issued = issue({
           verdict: approval.status === 'approved' ? 'allow' : 'deny',
@@ -253,7 +337,8 @@ export function createExecutiveGuard({
           approvalId: id,
           decidedBy: approval.decidedBy,
         });
-        approval.issued = { decisionId: issued.claims.decisionId, envelope: issued.envelope };
+        approval.issued = { decisionId: issued.claims.decisionId, envelope: issued.envelope, exp: issued.claims.exp };
+        saveApproval(approval);
         audit.append({ event: 'decision.issued', decisionId: issued.claims.decisionId, approvalId: id, deviceId, verdict: issued.claims.verdict, ruleId: approval.ruleId, actionHash: approval.actionHash, decidedBy: approval.decidedBy, nonceHash: nonceHashOf(approval.nonce), exp: issued.claims.exp });
         remember(issued.claims);
       }
@@ -339,6 +424,7 @@ export function createExecutiveGuard({
     approval.decidedBy = approverId;
     approval.decidedAt = nowSeconds();
     approval.decisionReason = String(body.reason ?? '').slice(0, 300) || undefined;
+    saveApproval(approval);
     audit.append({ event: body.approve ? 'approval.approved' : 'approval.denied', approvalId: id, approverId, deviceId: approval.deviceId, actionHash: approval.actionHash, reason: approval.decisionReason });
     return publicApproval(approval);
   }
