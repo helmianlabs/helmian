@@ -15,6 +15,16 @@ internal static class HeraldPairingLinkChecks
         Assert(HeraldPairingLink.ParseCliPairingCode("Phone: https://x") is null, "non-code lines are ignored");
         Assert(HeraldPairingLink.IsPrivateLanHttp(new Uri("http://192.168.1.20:7420/#pair=12345678")), "LAN fallback accepts private Wi-Fi addresses");
         Assert(!HeraldPairingLink.IsPrivateLanHttp(new Uri("http://8.8.8.8:7420/")), "LAN fallback refuses public addresses");
+        Assert(HeraldPairingFallback.ShouldUseAccountPairing(@"C:\Helmian", @"C:\node.exe", ownerSecretPresent: false),
+            "no owner secret falls back to account pairing (QR still shown)");
+        Assert(HeraldPairingFallback.ShouldUseAccountPairing(null, @"C:\node.exe", ownerSecretPresent: true),
+            "missing bin\\helmion.mjs falls back to account pairing");
+        Assert(HeraldPairingFallback.ShouldUseAccountPairing(@"C:\Helmian", null, ownerSecretPresent: true),
+            "missing Node falls back to account pairing");
+        Assert(!HeraldPairingFallback.ShouldUseAccountPairing(@"C:\Helmian", @"C:\node.exe", ownerSecretPresent: true),
+            "fully set-up legacy relay keeps the relay path");
+        Assert(HeraldPairingFallback.IsMissingOwnerEnrollmentExit(3) && !HeraldPairingFallback.IsMissingOwnerEnrollmentExit(4)
+            && !HeraldPairingFallback.IsMissingOwnerEnrollmentExit(null), "only exit 3 means no owner enrollment");
         Console.WriteLine("Herald pairing link checks passed.");
     }
 
