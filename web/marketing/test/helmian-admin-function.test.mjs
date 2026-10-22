@@ -9,3 +9,9 @@ test('restores the original admin path and query from the rewrite', () => {
   assert.equal(restorePath('/api/helmian-admin'), null);
   assert.equal(restorePath('/api/helmian-admin?__p=/api/herald-control'), null);
 });
+
+test('public account routes reach the admin function (self-serve signup + profile)', () => {
+  assert.equal(restorePath('/api/helmian-admin?__p=/api/signup'), '/api/signup');
+  assert.equal(restorePath('/api/helmian-admin?__p=/api/profile'), '/api/profile');
+  assert.equal(restorePath('/api/helmian-admin?__p=/api/signup/x'), null);
+});
