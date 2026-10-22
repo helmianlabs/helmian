@@ -2,7 +2,7 @@
   <img src="docs/assets/logo.png" alt="Helmian logo" width="120">
 </p>
 
-# Helmion
+# Helmian
 
 **Governed multi-agent chat.** Agents as members inside your team chat,
 coordinated by a Maestro, with Guard watching every move. Multiple agents
@@ -247,7 +247,7 @@ after key revocation, or a second time.
 
 Trusted-key enrollment is deliberately not an agent or MCP tool. An
 authenticated owner/admin control path must establish the public-key-to-person
-mapping out of band. Private keys never belong in Helmion or the database.
+mapping out of band. Private keys never belong in Helmian or the database.
 Tier B advisor reviews remain advisory, and rule promotion remains disabled.
 
 The Windows pilot tooling is an explicit interactive setup, not an install
