@@ -40,18 +40,15 @@ Manage Webhooks (`536939520`).
 
 ## Deploy
 
-```sh
-rsync -a --exclude node_modules discord-bridge/ root@HOST:/opt/helmian-discord-bridge/src/
-ssh root@HOST 'cd /opt/helmian-discord-bridge/src && docker build -t helmian-discord-bridge:$(git rev-parse --short HEAD 2>/dev/null || date +%s) -t helmian-discord-bridge:latest . &&
-  docker rm -f helmian-discord-bridge; docker run -d --name helmian-discord-bridge --restart unless-stopped \
-  --env-file /opt/helmian-discord-bridge/app.env -v /opt/helmian-discord-bridge/data:/data \
-  -p 127.0.0.1:8095:8095 helmian-discord-bridge:latest'
-curl -s http://127.0.0.1:8095/healthz   # on the box
-```
+Live on the Hetzner box at `/opt/helmian-discord-bridge/`:
 
-After changing `app.env`, restart with `docker restart helmian-discord-bridge`
-(an env file is read at container start; use `docker rm -f` + `docker run` if
-the token was added for the first time and the container predates the file).
+- `src/` holds this folder (copy with `tar -C discord-bridge --exclude node_modules -czf - . | ssh root@HOST 'tar -C /opt/helmian-discord-bridge/src -xzf -'`).
+- `app.env` holds the env above, mode 600.
+- `data/` holds the state file (webhook ids, poll cursor).
+- `run.sh` builds the image and recreates the container (`helmian-discord-bridge`,
+  `127.0.0.1:8095`, restart unless-stopped), then prints `/healthz`.
+
+Run `run.sh` again after any change to `app.env`; `docker restart` does not re-read an env file.
 
 ## Tests
 
