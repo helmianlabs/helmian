@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -279,4 +280,101 @@ test('used Guard approvals survive a PC restart (file-backed, single use)', asyn
   const blocked = createExecutor({ roots: [root], guardPublicKeyX: guard.x, usedDecisionsPath: join(root, 'notes.txt', 'x.json') });
   const env2 = guard.forge({ decisionId: 'persist-2', verdict: 'allow', actionHash: guardActionHash(buildGuardAction('write_file', args)), deviceId: 'hands-mcp', nonce: 'p'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' });
   assert.match((await blocked.execute({ ...job, guardDecision: env2 })).error, /could not record|unreadable/);
+});
+
+// ---- execution outcomes -> Executive Guard POST /v1/audit/outcomes (executive-guard/docs/OUTCOMES.md) ----
+
+const sha256 = (s) => createHash('sha256').update(s).digest('hex');
+const FIELDS = ['decisionId', 'nonce', 'status', 'startedAt', 'finishedAt', 'resultHash', 'error', 'verdict'];
+
+test('approved run: the hub reports "succeeded" once, with the PC timing and a hash of the output (never the output)', async () => {
+  const guard = mockGuard({ mode: 'ask' });
+  const g = await listen(guard.handler);
+  const app = await boot({ guard, guardUrl: g.url });
+  const token = await connect(app.base, 'hands.act');
+  const root = await workspace();
+  const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+  const first = await callTool(app.base, token, 'write_file', { path: join(root, 'o.txt'), content: 'outcome' });
+  const requestId = /requestId "([^"]+)"/.exec(first.text)[1];
+  assert.equal(guard.outcomes.length, 0, 'an ask is not reportable');
+  guard.decide([...guard.approvals.keys()][0], true);
+  const done = await callTool(app.base, token, 'resume_action', { requestId });
+  assert.equal(done.isError, false, done.text);
+  assert.equal(guard.outcomes.length, 1);
+  const o = guard.outcomes[0];
+  assert.equal(o.status, 'succeeded');
+  assert.equal(o.verdict, 'allow');
+  assert.equal(o.resultHash, sha256(done.text));
+  assert.ok(Date.parse(o.startedAt) <= Date.parse(o.finishedAt));
+  assert.equal(o.error, undefined);
+  for (const k of Object.keys(o)) assert.ok(FIELDS.includes(k), k);
+  spoke.stop();
+  await app.close(); await g.close();
+});
+
+test('every Guard decision the hub will not act on is reported "refused": policy deny, auto-allow, human denial', async () => {
+  for (const [mode, deny] of [['deny', null], ['allow', null], ['ask', true]]) {
+    const guard = mockGuard({ mode });
+    const g = await listen(guard.handler);
+    const app = await boot({ guard, guardUrl: g.url });
+    const token = await connect(app.base, 'hands.act');
+    const root = await workspace();
+    const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+    const r = await callTool(app.base, token, 'write_file', { path: join(root, 'r.txt'), content: 'x' });
+    if (deny) {
+      const requestId = /requestId "([^"]+)"/.exec(r.text)[1];
+      guard.decide([...guard.approvals.keys()][0], false);
+      assert.match((await callTool(app.base, token, 'resume_action', { requestId })).text, /human denied/);
+    }
+    await assert.rejects(readFile(join(root, 'r.txt')));
+    assert.equal(guard.outcomes.length, 1, mode);
+    assert.equal(guard.outcomes[0].status, 'refused', mode);
+    assert.equal(guard.outcomes[0].startedAt, undefined, mode);
+    spoke.stop();
+    await app.close(); await g.close();
+  }
+});
+
+test('approved but the PC refuses (key not pinned): reported "refused" with the PC reason', async () => {
+  const guard = mockGuard({ mode: 'ask' });
+  const g = await listen(guard.handler);
+  const app = await boot({ guard, guardUrl: g.url });
+  const token = await connect(app.base, 'hands.act');
+  const root = await workspace();
+  const spoke = await pairAndRun(app.base, root); // no pinned key
+  const first = await callTool(app.base, token, 'write_file', { path: join(root, 'p.txt'), content: 'x' });
+  const requestId = /requestId "([^"]+)"/.exec(first.text)[1];
+  guard.decide([...guard.approvals.keys()][0], true);
+  const r = await callTool(app.base, token, 'resume_action', { requestId });
+  assert.match(r.text, /no Executive Guard key is pinned/);
+  assert.equal(guard.outcomes.length, 1);
+  assert.equal(guard.outcomes[0].status, 'refused');
+  assert.match(guard.outcomes[0].error, /refused by the PC/);
+  spoke.stop();
+  await app.close(); await g.close();
+});
+
+test('PC executor execution records: refused before running, failed with timing, succeeded with output hash', async () => {
+  const guard = mockGuard();
+  const root = await workspace();
+  const iat = Math.floor(Date.now() / 1000);
+  const mk = (args, id) => ({ tool: 'write_file', args, nonce: 'n'.repeat(20), guardDecision: guard.forge({ decisionId: id, verdict: 'allow', actionHash: guardActionHash(buildGuardAction('write_file', args)), deviceId: 'hands-mcp', nonce: 'n'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' }) });
+  const ok = mk({ path: join(root, 'ok.txt'), content: 'hi' }, 'e1');
+  const refused = (await createExecutor({ roots: [root] }).execute(ok)).execution;
+  assert.equal(refused.status, 'refused'); assert.equal(refused.startedAt, undefined); assert.ok(refused.finishedAt);
+  const exec = createExecutor({ roots: [root], guardPublicKeyX: guard.x });
+  const good = await exec.execute(ok);
+  assert.equal(good.execution.status, 'succeeded');
+  assert.equal(good.execution.resultHash, sha256(good.output));
+  const bad = await exec.execute(mk({ path: join(root, 'no-such-dir', 'f.txt'), content: 'x' }, 'e2'));
+  assert.equal(bad.execution.status, 'failed'); assert.ok(bad.execution.startedAt); assert.ok(bad.execution.error);
+  // Read-only tools carry no execution record (no Guard decision behind them).
+  assert.equal((await exec.execute({ tool: 'list_files', args: { path: root } })).execution, undefined);
+});
+
+test('an outcome Guard cannot record never changes the tool answer', async () => {
+  const down = createGuardClient({ url: 'http://127.0.0.1:9', deviceToken: 't'.repeat(32), publicKeyX: 'x', fetchImpl: async () => { throw new Error('ECONNREFUSED'); } });
+  assert.deepEqual(await down.reportOutcome({ decisionId: randomUUID(), nonce: 'n'.repeat(20), status: 'succeeded', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }), { recorded: false, error: 'unreachable' });
+  const off = createGuardClient({});
+  assert.equal((await off.reportOutcome({ decisionId: randomUUID(), nonce: 'n'.repeat(20), status: 'refused' })).recorded, false);
 });

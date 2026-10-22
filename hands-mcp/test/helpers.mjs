@@ -16,10 +16,31 @@ export function mockGuard({ deviceToken = 'guard-device-token-0123456789abcdef',
     const payload = Buffer.from(canonicalJson({ aud: DECISION_AUDIENCE, ...claims }), 'utf8').toString('base64url');
     return { payload, signature: sign(null, Buffer.from(payload, 'utf8'), privateKey).toString('base64url'), keyId: 'test' };
   };
+  const issued = new Map(); // decisionId -> { verdict, nonce }
+  const outcomes = [];
   const issue = (verdict, hash, nonce, extra = {}) => {
     const iat = Math.floor(Date.now() / 1000);
-    return signClaims({ decisionId: randomUUID(), verdict, ruleId: 'r', actionHash: hash, deviceId: 'hands-mcp', nonce, iat, exp: iat + 300, ...extra });
+    const decisionId = randomUUID();
+    if (verdict !== 'ask') issued.set(decisionId, { verdict, nonce });
+    return signClaims({ decisionId, verdict, ruleId: 'r', actionHash: hash, deviceId: 'hands-mcp', nonce, iat, exp: iat + 300, ...extra });
   };
+  // POST /v1/audit/outcomes, validated like executive-guard/docs/OUTCOMES.md.
+  const OUTCOME_FIELDS = new Set(['decisionId', 'nonce', 'status', 'startedAt', 'finishedAt', 'resultHash', 'error']);
+  const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+  function outcome(b) {
+    if (Object.keys(b).some((k) => !OUTCOME_FIELDS.has(k))) return [400, { error: 'unknown-field' }];
+    if (!['succeeded', 'failed', 'refused'].includes(b.status)) return [400, { error: 'invalid-status' }];
+    if (!ISO.test(b.finishedAt || '') || (b.status !== 'refused' && !ISO.test(b.startedAt || ''))) return [400, { error: 'invalid-time' }];
+    if (b.resultHash !== undefined && !/^[0-9a-f]{64}$/.test(b.resultHash)) return [400, { error: 'invalid-result-hash' }];
+    if (b.error !== undefined && b.status === 'succeeded') return [400, { error: 'invalid-error' }];
+    const d = issued.get(b.decisionId);
+    if (!d) return [404, { error: 'unknown-decision' }];
+    if (d.nonce !== b.nonce) return [403, { error: 'nonce-mismatch' }];
+    if (d.verdict === 'deny' && b.status !== 'refused') return [409, { error: 'verdict-mismatch' }];
+    if (outcomes.some((o) => o.decisionId === b.decisionId)) return [409, { error: 'duplicate-outcome' }];
+    outcomes.push({ ...b, verdict: d.verdict });
+    return [201, { recorded: true, decisionId: b.decisionId, status: b.status, auditSeq: outcomes.length }];
+  }
   const calls = [];
   const handler = (req, res) => {
     let body = '';
@@ -43,16 +64,19 @@ export function mockGuard({ deviceToken = 'guard-device-token-0123456789abcdef',
         if (!a) return send(404, { error: 'not-found' });
         const out = { approvalId: m[1], status: a.status, reason: 'needs a human' };
         if (a.status === 'approved' || a.status === 'denied') {
-          out.decision = issue(a.status === 'approved' ? 'allow' : 'deny', a.hash, a.nonce, { approvalId: m[1], decidedBy: 'troy' });
+          // One decision per approval, returned unchanged on every poll (like the real Guard).
+          a.decision ??= issue(a.status === 'approved' ? 'allow' : 'deny', a.hash, a.nonce, { approvalId: m[1], decidedBy: 'troy' });
+          out.decision = a.decision;
           out.decidedBy = 'troy';
         }
         return send(200, out);
       }
+      if (req.method === 'POST' && req.url === '/v1/audit/outcomes') { const [st, b] = outcome(JSON.parse(body)); return send(st, b); }
       return send(404, { error: 'not-found' });
     });
   };
   return {
-    handler, x, deviceToken, approvals, calls,
+    handler, x, deviceToken, approvals, calls, outcomes,
     decide(id, approve) { approvals.get(id).status = approve ? 'approved' : 'denied'; },
     forge(claims) { return signClaims(claims); },
   };

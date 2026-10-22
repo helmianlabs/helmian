@@ -114,7 +114,7 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
     res.json({ job });
   });
   app.post('/spoke/v1/result', spokeAuth, express.json({ limit: '256kb' }), (req, res) => {
-    const ok = hub.complete(String(req.body?.jobId || ''), { ok: req.body?.ok === true, output: req.body?.output, error: req.body?.error });
+    const ok = hub.complete(String(req.body?.jobId || ''), { ok: req.body?.ok === true, output: req.body?.output, error: req.body?.error, execution: req.body?.execution });
     res.status(ok ? 200 : 404).json({ accepted: ok });
   });
 
