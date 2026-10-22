@@ -78,7 +78,14 @@ function browserFamily() {
 
 // A message from one of this extension's own content scripts (in a tab).
 function isFromOwnContentScript(sender) {
-  return Boolean(sender && sender.tab && sender.id === chrome.runtime.id);
+  if (!sender || !sender.tab || sender.id !== chrome.runtime.id) return false;
+  // An extension page opened in a tab also has sender.tab; a content script's
+  // sender.url is the web page's.
+  try {
+    return !String(sender.url || '').startsWith(chrome.runtime.getURL(''));
+  } catch {
+    return false;
+  }
 }
 
 // What a content script may send for a decision. Raw page text never reaches
