@@ -106,6 +106,7 @@ async function refresh() {
   $('statTotal').textContent = stats.stats.total;
   $('statDestructive').textContent = stats.stats.destructive;
   $('statUnsourced').textContent = stats.stats.unsourced;
+  $('statFlags').textContent = stats.stats.flags ?? 0;
   $('range').textContent = stats.stats.total
     ? `${fmt(stats.stats.oldest)} → ${fmt(stats.stats.newest)} · ${stats.stats.sites.length} site(s) · cap ${stats.stats.limit}`
     : '';
@@ -192,3 +193,96 @@ $('uploadNow').addEventListener('click', async () => {
 
 refresh();
 refreshUploadSettings();
+
+// ─── Executive Guard and Flags settings (opt-in, off by default) ────────────
+//
+// Both need a host permission for the URL the user typed. It is requested
+// here, inside the click, because Chrome and Firefox only grant optional
+// permissions from a user gesture. Nothing is requested at install.
+// NEEDS A REAL-BROWSER CHECK: the permission prompt and pairing flow are
+// tested only through the worker in Node, not clicked in Chrome/Firefox/Edge.
+
+function originFor(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.hostname}/*`;
+  } catch {
+    return null;
+  }
+}
+
+function requestOrigin(value) {
+  const origin = originFor(value);
+  if (!origin) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.request !== 'function') { resolve(false); return; }
+      const result = chrome.permissions.request({ origins: [origin] }, (granted) => {
+        void chrome.runtime.lastError;
+        resolve(Boolean(granted));
+      });
+      if (result && typeof result.then === 'function') result.then((g) => resolve(Boolean(g)), () => resolve(false));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function refreshExecutiveSettings() {
+  const result = await askWithPayload('helmion:executive-settings', { settings: {} });
+  if (!result.ok || !result.settings) return;
+  const s = result.settings;
+  $('execEnabled').checked = s.enabled === true;
+  $('execUrl').value = s.serverUrl || '';
+  $('execStatus').textContent = !s.enabled
+    ? 'Off. Guard decides on this computer.'
+    : !s.paired
+      ? 'On, but not paired yet. Decisions stay local until pairing succeeds.'
+      : `On and paired. Server key id ${s.keyId} (compare it with the id your server printed).`;
+}
+
+$('execSave').addEventListener('click', async () => {
+  const url = $('execUrl').value.trim();
+  if ($('execEnabled').checked && url) {
+    const granted = await requestOrigin(url);
+    if (!granted) { $('execStatus').textContent = 'Permission to reach that server was not granted, so nothing was saved.'; return; }
+  }
+  const saved = await askWithPayload('helmion:executive-settings', {
+    settings: { enabled: $('execEnabled').checked, serverUrl: url, deviceToken: $('execToken').value || undefined },
+  });
+  if (!saved.ok) { $('execStatus').textContent = `Not saved: ${saved.error}`; return; }
+  $('execToken').value = '';
+  if ($('execEnabled').checked && url) {
+    const pair = await ask('helmion:executive-pair');
+    if (!pair.ok) { $('execStatus').textContent = `Saved, but pairing failed: ${pair.error}`; return; }
+  }
+  await refreshExecutiveSettings();
+});
+
+async function refreshFlagsSettings() {
+  const result = await askWithPayload('helmion:flags-settings', { settings: {} });
+  if (!result.ok || !result.settings) return;
+  const s = result.settings;
+  $('flagsEnabled').checked = s.enabled === true;
+  $('flagsUrl').value = s.flagsUrl || '';
+  $('flagsStatus').textContent = !s.enabled
+    ? 'Off. Flags are shown and logged on this computer only.'
+    : `${s.hasToken ? 'On.' : 'On, but no token is set, so nothing is sent.'}${s.queued ? ` ${s.queued} waiting to be sent.` : ''}`;
+}
+
+$('flagsSave').addEventListener('click', async () => {
+  const url = $('flagsUrl').value.trim();
+  if ($('flagsEnabled').checked && url) {
+    const granted = await requestOrigin(url);
+    if (!granted) { $('flagsStatus').textContent = 'Permission to reach that URL was not granted, so nothing was saved.'; return; }
+  }
+  const saved = await askWithPayload('helmion:flags-settings', {
+    settings: { enabled: $('flagsEnabled').checked, flagsUrl: url, token: $('flagsToken').value || undefined },
+  });
+  if (!saved.ok) { $('flagsStatus').textContent = `Not saved: ${saved.error}`; return; }
+  $('flagsToken').value = '';
+  await refreshFlagsSettings();
+});
+
+refreshExecutiveSettings();
+refreshFlagsSettings();

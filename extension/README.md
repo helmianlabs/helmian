@@ -32,6 +32,55 @@ retention behavior are documented in
 
 ---
 
+## 0.3.0: active interceptor, Executive Guard loop, Flags
+
+**Keeps secrets out of AI chats.** When you press Send, the message is checked
+for API keys, private keys, bearer tokens, passwords, card numbers (Luhn
+checked), social security numbers, email addresses and phone numbers
+(`content/sanitize.js`). If any are there, the send is cancelled and a small card
+appears top right:
+
+- a key, password, token or card number: **stopped**. "Redact and keep editing"
+  swaps each one for `[REDACTED:type]` in the composer; you then press Send.
+- personal details (email, phone, SSN): **ask**. Redact, or "Send as written",
+  which lets that one exact message through on the next Send.
+
+A secret **pasted** into the composer is redacted before it lands, and a card
+says what was removed.
+
+**Executive Guard (optional).** In the popup, enter an Executive Guard server
+URL and device token, then "Save and pair". The browser asks for permission to
+reach that one server. From then on the decision comes from the server, signed;
+the extension checks the signature against the key pinned at pairing, the
+action hash and the nonce before it believes it. A destructive request is sent
+for human approval; once an approver allows it, the card says who, and that one
+exact text may be sent once. If the server cannot be reached, the same policy
+runs on this computer and the card says so. A decision that does not verify is
+treated as a deny. Server: `executive-guard/README.md`.
+
+**Flags.** Once a reply stops streaming it is read for:
+
+- evasion: a refusal or deflection, or an answer buried in three or more
+  different hedges (slate card, advisory);
+- privacy leak: the reply shows a key, password, card number or personal
+  details (red card; the card and the log only ever hold the redacted text);
+- harmful code: reverse shells, download-and-run, credential theft,
+  keyloggers, miners, turning off security tools, fork bombs, persistence, log
+  wiping (red card). Destructive commands stay with the red code lane above.
+
+Cards sit bottom left, at most three. Nothing on the page is hidden by a flag
+and the toolbar badge does not move. Every flag is logged; with "Report flags"
+on in the popup it is also sent, redacted, to a Flags API.
+
+**What is not verified yet:** the composers on the four live sites accepting the
+redacted text (rich editors differ; tested in a test DOM only), the popup's
+permission prompt and pairing click-through, and how the cards look. The Flags
+API contract is provisional (see `background/flags-client.js`). There is no
+network-request blocking: that needs the `declarativeNetRequest` permission and
+is a decision for Troy.
+
+---
+
 ## Install it
 
 Do these in order. It takes about a minute.

@@ -8,7 +8,7 @@
 const RULES = Object.freeze([
   ['private_key', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu],
   ['bearer_token', /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gu],
-  ['api_key', /\b(?:sk-[A-Za-z0-9_-]{12,}|sk-ant-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{12,}|AIza[0-9A-Za-z_-]{20,})\b/gu],
+  ['api_key', /\b(?:sk-[A-Za-z0-9_-]{12,}|sk-ant-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{12,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16}|(?:sk|rk|pk)_live_[0-9A-Za-z]{16,}|glpat-[0-9A-Za-z_-]{20}|xai-[A-Za-z0-9]{20,})\b/gu],
   ['secret_assignment', /((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password|passcode|secret|token)\s*[:=]\s*)[^\s,;]+/giu],
   ['email', /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu],
   ['ssn', /\b\d{3}-\d{2}-\d{4}\b/gu],

@@ -69,6 +69,8 @@ test('the content scripts load in the order guard.js depends on', () => {
   // If it loads first, those are undefined and nothing runs.
   assert.deepEqual(manifest.content_scripts[0].js, [
     'content/prompt-risk.js',
+    'content/sanitize.js',
+    'content/flags.js',
     'content/extract.js',
     'content/stream-watch.js',
     'content/ui.js',
@@ -100,6 +102,10 @@ test('it asks for exactly ONE permission, and that one is storage', () => {
   // test is what stops the list quietly growing.
   assert.deepEqual(manifest.permissions, ['storage']);
   assert.equal(manifest.optional_permissions, undefined);
+  // Optional host permissions (2026-10-22): requested from the popup, in a user
+  // gesture, only for the Executive Guard / Flags URL the user typed. Nothing is
+  // granted at install. Pinned so the list cannot quietly grow.
+  assert.deepEqual(manifest.optional_host_permissions, ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*']);
   // Host permissions: exactly one deliberate exception, added per explicit
   // instruction for the OPT-IN Guard findings upload (background/upload.js).
   // It is disabled by default and does nothing without the user's explicit
@@ -197,7 +203,14 @@ function isShippedFile(file) {
 // is treated as verified. Everything else in the extension must stay
 // network-free, and this allowlist must never grow without the same level of
 // deliberate review.
-const NETWORK_ALLOWLIST = ['background/upload.js'];
+//
+// 2026-10-22: two more, both opt-in and off by default, both only reaching a
+// URL the user typed into the popup and granted a host permission for:
+//   background/executive.js     the Executive Guard verification loop
+//   background/flags-client.js  Flags reports to the Flags API
+// Each has its own tests (executive-loop.test.mjs, flags-client.test.mjs) that
+// prove it does nothing on the network until configured.
+const NETWORK_ALLOWLIST = ['background/upload.js', 'background/executive.js', 'background/flags-client.js'];
 
 function isAllowlisted(file) {
   const relative = path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/');
@@ -223,8 +236,8 @@ test('nothing in the extension calls out to the network', async () => {
   }
 });
 
-test('the network allowlist holds exactly the opt-in upload module', async () => {
-  assert.deepEqual(NETWORK_ALLOWLIST, ['background/upload.js']);
+test('the network allowlist holds exactly the three opt-in modules', async () => {
+  assert.deepEqual(NETWORK_ALLOWLIST, ['background/upload.js', 'background/executive.js', 'background/flags-client.js']);
   const files = await listJsFiles(EXTENSION_ROOT);
   const shipped = files.filter(isShippedFile).map((file) => path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/'));
   for (const allowed of NETWORK_ALLOWLIST) {
