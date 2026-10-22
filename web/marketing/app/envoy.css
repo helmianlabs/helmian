@@ -31,7 +31,8 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .ew-chat { flex:1 1 0; min-width:420px; background:var(--bg); }
 .ew-pane.collapsed { flex-basis:0 !important; min-width:0 !important; opacity:0; pointer-events:none; }
 .ew.dragging .ew-pane { transition:none; }
-.ew.bench-max .ew-chat, .ew.bench-max .ew-agents, .ew.bench-max .ew-channels { flex-basis:0 !important; opacity:0; pointer-events:none; }
+.ew.bench-max .ew-chat, .ew.bench-max .ew-agents, .ew.bench-max .ew-channels { flex:0 0 0 !important; opacity:0; pointer-events:none; }
+.ew.bench-max .ew-split { display:none; }
 .ew.bench-max .ew-chat, .ew.bench-max .ew-agents, .ew.bench-max .ew-channels { min-width:0 !important; }
 .ew.bench-max .ew-bench { flex:1 1 auto !important; }
 .ew.no-channels .ew-reveal { display:inline-grid; }
