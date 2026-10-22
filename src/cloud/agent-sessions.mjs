@@ -58,7 +58,7 @@ function createSessionsStore(dbPool) {
     async list(tenantId) {
       return withTenant(tenantId, async (client) => {
         const { rows } = await client.query(
-          `select * from helmion.workspace_agent_sessions order by created_at asc`
+          `select * from helmion.workspace_agent_sessions where tenant_id = current_setting('helmion.tenant_id', true) order by created_at asc`
         );
         return rows.map(row);
       });
@@ -98,7 +98,7 @@ function createSessionsStore(dbPool) {
         vals.push(id);
         sets.push(`updated_at = clock_timestamp()`);
         const { rows } = await client.query(
-          `update helmion.workspace_agent_sessions set ${sets.join(', ')} where id = $${vals.length} returning *`,
+          `update helmion.workspace_agent_sessions set ${sets.join(', ')} where id = $${vals.length} and tenant_id = current_setting('helmion.tenant_id', true) returning *`,
           vals
         );
         if (rows.length === 0) throw Object.assign(new Error('session not found'), { status: 404 });
@@ -108,7 +108,7 @@ function createSessionsStore(dbPool) {
     async close(tenantId, id) {
       return withTenant(tenantId, async (client) => {
         const { rowCount } = await client.query(
-          `delete from helmion.workspace_agent_sessions where id = $1`,
+          `delete from helmion.workspace_agent_sessions where id = $1 and tenant_id = current_setting('helmion.tenant_id', true)`,
           [id]
         );
         if (rowCount === 0) throw Object.assign(new Error('session not found'), { status: 404 });
