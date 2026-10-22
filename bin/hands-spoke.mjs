@@ -6,8 +6,8 @@
 //   node bin/hands-spoke.mjs pin-guard <ed25519 x>
 //       pins the Executive Guard public key. Until this is done every mutating job is refused.
 //   node bin/hands-spoke.mjs            run in the foreground (the HelmianBridge service runs it for you)
-import { createInterface } from 'node:readline/promises';
 import { writeFile } from 'node:fs/promises';
+import { readHidden } from '../src/hands/hidden-input.mjs';
 import { DEFAULT_HANDS_URL, defaultConfigPath, pairSpoke, readSpokeConfig, startSpoke } from '../src/hands/pc-spoke.mjs';
 
 function flag(name) {
@@ -15,20 +15,12 @@ function flag(name) {
   return i > 0 ? process.argv[i + 1] : undefined;
 }
 
-async function askHidden(question) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-  rl._writeToOutput = function write(s) { if (s.includes(question)) process.stdout.write(s); };
-  const answer = await rl.question(question);
-  rl.close();
-  process.stdout.write('\n');
-  return answer.trim();
-}
 
 const cmd = process.argv[2];
 if (cmd === 'pair') {
   const url = (flag('url') || DEFAULT_HANDS_URL).replace(/\/+$/, '');
   const roots = (flag('roots') || process.env.HELMIAN_ROOT || process.cwd()).split(';').map((s) => s.trim()).filter(Boolean);
-  const passphrase = process.env.HELMIAN_HANDS_PASSPHRASE || await askHidden('Hands passphrase: ');
+  const passphrase = process.env.HELMIAN_HANDS_PASSPHRASE || (await readHidden('Hands passphrase: ')).trim();
   const r = await pairSpoke({ url, passphrase, roots });
   console.log(`Paired as ${r.deviceId}. Workspace roots: ${r.roots.join(', ')}. Saved ${r.configPath}. Restart the HelmianBridge service (or run this without "pair").`);
 } else if (cmd === 'pin-guard') {
