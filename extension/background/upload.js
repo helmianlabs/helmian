@@ -32,6 +32,23 @@ export const UPLOAD_ENDPOINT = 'https://helmian.cloud/api/guard/browser-events';
 const BATCH_SIZE = 25;
 const MAX_ATTEMPTS = 3;
 
+// STORAGE SHAPE. The worker passes the ledger's storage wrapper
+// (ledger.js chromeStorage()/memoryStorage()): get(key) returns the VALUE for one
+// key, set(key, value) writes one key. It is NOT the raw browser storage area, so
+// get([keys]) and set({ ...patch }) do not work on it. Before 0.2.4 this file
+// used the raw-chrome shape, so every opt-in read came back undefined and the
+// upload threw "Cannot read properties of undefined". These two helpers are the
+// only way this file touches storage.
+async function readKeys(storage, keys) {
+  const out = {};
+  for (const key of keys) out[key] = await storage.get(key);
+  return out;
+}
+
+async function writeKeys(storage, patch) {
+  for (const [key, value] of Object.entries(patch)) await storage.set(key, value);
+}
+
 function fingerprintFor(entry) {
   // Stable dedup key: kind + site + a hash of the normalized excerpt.
   const seed = `${entry.kind || 'unknown'}|${entry.site || ''}|${String(entry.excerpt || '').slice(0, 200)}`;
@@ -88,7 +105,7 @@ async function postBatch(findings, deviceToken) {
  * Does NOTHING unless the user opted in and set a device token.
  */
 export async function uploadNewFindings(storage) {
-  const settings = await storage.get([UPLOAD_ENABLED_KEY, UPLOAD_TOKEN_KEY, UPLOAD_CURSOR_KEY]);
+  const settings = await readKeys(storage, [UPLOAD_ENABLED_KEY, UPLOAD_TOKEN_KEY, UPLOAD_CURSOR_KEY]);
   if (settings[UPLOAD_ENABLED_KEY] !== true) return { ok: true, skipped: 'not-enabled' };
   const deviceToken = settings[UPLOAD_TOKEN_KEY];
   if (!deviceToken || typeof deviceToken !== 'string' || !deviceToken.trim()) {
@@ -100,12 +117,12 @@ export async function uploadNewFindings(storage) {
   if (!pending.length) return { ok: true, uploaded: 0 };
   const result = await postBatch(pending.map(toFinding), deviceToken.trim());
   if (!result.ok) return result;
-  await storage.set({ [UPLOAD_CURSOR_KEY]: cursor + pending.length });
+  await writeKeys(storage, { [UPLOAD_CURSOR_KEY]: cursor + pending.length });
   return { ok: true, uploaded: pending.length, remaining: entries.length - cursor - pending.length };
 }
 
 export async function getUploadSettings(storage) {
-  const settings = await storage.get([UPLOAD_ENABLED_KEY, UPLOAD_TOKEN_KEY]);
+  const settings = await readKeys(storage, [UPLOAD_ENABLED_KEY, UPLOAD_TOKEN_KEY]);
   return {
     enabled: settings[UPLOAD_ENABLED_KEY] === true,
     hasToken: !!(settings[UPLOAD_TOKEN_KEY] && String(settings[UPLOAD_TOKEN_KEY]).trim()),
@@ -119,6 +136,6 @@ export async function setUploadSettings(storage, { enabled, deviceToken }) {
     // A new token means re-upload from the start; the server dedups by fingerprint.
     if (deviceToken.trim()) patch[UPLOAD_CURSOR_KEY] = 0;
   }
-  await storage.set(patch);
+  await writeKeys(storage, patch);
   return getUploadSettings(storage);
 }
