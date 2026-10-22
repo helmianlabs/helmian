@@ -522,10 +522,27 @@ export async function runBridge(overrides = {}) {
   return { ok: true, stop, get seenCount() { return seen.size; }, get transport() { return ablyHandle ? 'ably' : 'polling'; } };
 }
 
+// Helmian hands (src/hands/pc-spoke.mjs): if this PC was paired with
+// `node bin/hands-spoke.mjs pair`, the bridge also runs the hands spoke, so the
+// HelmianBridge Windows service keeps both alive. Not paired = not started.
+async function startHandsSpokeIfPaired() {
+  if (process.env.HELMIAN_HANDS_DISABLED === '1') return null;
+  try {
+    const { readSpokeConfig, startSpoke } = await import('../src/hands/pc-spoke.mjs');
+    const config = await readSpokeConfig();
+    if (!config) return null;
+    return startSpoke({ config });
+  } catch (err) {
+    console.error('[pc-bridge] hands spoke not started:', err?.message ?? err);
+    return null;
+  }
+}
+
 async function main() {
   const handle = await runBridge();
   if (!handle?.ok) process.exit(1);
-  const shutdown = async () => { await handle.stop(); process.exit(0); };
+  const hands = await startHandsSpokeIfPaired();
+  const shutdown = async () => { hands?.stop(); await handle.stop(); process.exit(0); };
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
 }
