@@ -99,7 +99,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-msg:hover { background:rgba(255,255,255,.025); }
 .ew-msg.cont { padding-top:0; }
 .ew-msg.cont .ew-avatar, .ew-msg.cont .ew-meta { display:none; }
-.ew-msg.cont .ew-body { grid-column:2; }
+.ew-msg.cont > div { grid-column:2; }
 .ew-avatar { width:36px; height:36px; border-radius:50%; background:var(--panel-2); display:grid; place-items:center; font-weight:700; color:var(--text); overflow:hidden; margin-top:2px; }
 .ew-avatar img { width:100%; height:100%; }
 .ew-avatar.discord { background:#5865F2; }
