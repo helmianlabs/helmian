@@ -13,6 +13,7 @@ import { loadContentScripts } from '../test-support/load-content-script.mjs';
 import { element, createDocument } from '../test-support/mini-dom.mjs';
 import { chrome, fake, installWorker } from '../test-support/fake-chrome.mjs';
 import { startGuard, APPROVER_TOKEN, DEVICE_TOKEN } from '../../executive-guard/test-support/helpers.mjs';
+import { MOCK_KEY, startMockFlagsApi } from '../test-support/mock-flags-api.mjs';
 
 await installWorker();
 
@@ -334,4 +335,96 @@ test('FLAGS: at most three cards at once', async () => {
   ]);
   await wait(150);
   assert.equal(flagAlerts(doc).length, 3);
+});
+
+// ─── Flags account (mock of the real Flags API) through the real worker ─────
+
+function enableFlags(api, extra = {}) {
+  fake.storageBag.set('helmion.flags.settings', { enabled: true, baseUrl: api.url, apiKey: MOCK_KEY, ...extra });
+}
+
+test('FLAGS ACCOUNT: a flag on the page becomes one POST /api/flags with source_ai, url and a redacted excerpt', async () => {
+  fake.resetStorage();
+  const api = await startMockFlagsApi();
+  try {
+    enableFlags(api);
+    await runExtension([element('div', { 'data-message-author-role': 'assistant' }, [
+      element('p', {}, ['Use this key: sk-proj-abcdefghijklmnop1234']),
+    ])]);
+    assert.ok(await waitFor(() => api.requests.length >= 1), 'nothing reached the Flags API');
+    const req = api.requests[0];
+    assert.equal(req.path, '/api/flags');
+    assert.equal(req.headers.authorization, `Bearer ${MOCK_KEY}`);
+    assert.equal(req.body.source_ai, 'chatgpt');
+    assert.equal(req.body.url, 'https://chatgpt.com/c/test-conversation');
+    assert.equal(req.body.category, 'secret');
+    assert.doesNotMatch(req.raw, /abcdefghijklmnop1234/);
+    assert.match(req.body.reporter, /^guard-extension\//);
+  } finally { await api.close(); }
+});
+
+test('FLAGS ACCOUNT: off by default, a flag on the page sends nothing', async () => {
+  fake.resetStorage();
+  const api = await startMockFlagsApi();
+  try {
+    const { doc } = await runExtension([element('p', {}, ["I can't help with that."])]);
+    assert.ok(await waitFor(() => flagAlerts(doc).length === 1));
+    await wait(100);
+    assert.equal(api.requests.length, 0);
+  } finally { await api.close(); }
+});
+
+test('FLAGS SCAN: off by default, a clean message sends with no scanner call', async () => {
+  fake.resetStorage();
+  const api = await startMockFlagsApi();
+  try {
+    enableFlags(api);
+    const composer = textarea('How do I center a div?');
+    const { fakeWindow } = await runExtension([composer]);
+    await wait(60);
+    assert.equal(sendEnter(fakeWindow, composer).prevented, false);
+    await wait(60);
+    assert.equal(api.requests.filter((r) => r.path === '/api/flags/scan').length, 0);
+  } finally { await api.close(); }
+});
+
+test('FLAGS SCAN: the scanner finds a secret Guard missed; the send is held and Redact uses the scanner copy', async () => {
+  fake.resetStorage();
+  const api = await startMockFlagsApi();
+  try {
+    enableFlags(api, { scanBeforeSend: true });
+    const secret = `whsec_${'C'.repeat(24)}`;
+    const composer = textarea(`webhook secret is ${secret} ok`);
+    const { doc, fakeWindow } = await runExtension([composer]);
+    await wait(60);
+    assert.equal(sendEnter(fakeWindow, composer).prevented, true, 'the message went out before the scanner answered');
+    assert.ok(await waitFor(() => /found something Guard missed/.test(askAlerts(doc)[0]?.textContent || '')), 'no scanner card');
+    assert.match(askAlerts(doc)[0].textContent, /Stripe webhook signing secret/);
+    assert.equal(api.flags.length, 0, 'the scan stored nothing');
+    assert.doesNotMatch(JSON.stringify(ledgerRows()), new RegExp(secret));
+    button(doc, 'redact').dispatch('click', {});
+    assert.equal(composer.value, 'webhook secret is [REDACTED:stripe_webhook_secret] ok');
+  } finally { await api.close(); }
+});
+
+test('FLAGS SCAN: clean -> press Send again; scanner down -> Guard\'s own check stands and the card says so', async () => {
+  fake.resetStorage();
+  const api = await startMockFlagsApi();
+  try {
+    enableFlags(api, { scanBeforeSend: true });
+    const composer = textarea('How do I center a div?');
+    const { doc, fakeWindow } = await runExtension([composer]);
+    await wait(60);
+    assert.equal(sendEnter(fakeWindow, composer).prevented, true);
+    assert.ok(await waitFor(() => /Flags scanner found nothing/.test(askAlerts(doc)[0]?.textContent || '')));
+    assert.equal(sendEnter(fakeWindow, composer).prevented, false, 'a clean, checked message was still blocked');
+    assert.equal(ledgerRows().filter((r) => r.kind === 'ai-flag').length, 0, 'a clean check must not log a flag');
+
+    await wait(1600);
+    api.state.failWith = 503;
+    composer.value = 'And vertically?';
+    assert.equal(sendEnter(fakeWindow, composer).prevented, true);
+    assert.ok(await waitFor(() => /did not check this/.test(askAlerts(doc)[0]?.textContent || '')));
+    assert.equal(sendEnter(fakeWindow, composer).prevented, false);
+  } finally { await api.close(); }
 });

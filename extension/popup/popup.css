@@ -118,3 +118,7 @@ button:hover { border-color: var(--ok); color: var(--ok); }
 .ctx { margin-top: 3px; font-style: italic; }
 
 footer { margin-top: 14px; border-top: 1px solid var(--stroke); padding-top: 10px; }
+
+.alerts { list-style: none; padding: 0; margin: 6px 0 0; max-height: 180px; overflow-y: auto; }
+.alerts .alert { border-left: 3px solid var(--faint); padding: 4px 6px; margin-bottom: 6px; font-size: 11px; overflow-wrap: anywhere; }
+.alerts .sev-critical, .alerts .sev-high { border-left-color: #d64545; }

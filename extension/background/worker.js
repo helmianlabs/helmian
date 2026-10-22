@@ -37,7 +37,14 @@ import {
   requestDecision,
   setExecutiveSettings,
 } from './executive.js';
-import { getFlagsSettings, reportFlag, setFlagsSettings } from './flags-client.js';
+import {
+  getFlagsSettings,
+  markAlertsSeen,
+  pollAlerts,
+  reportFlag,
+  scanText,
+  setFlagsSettings,
+} from './flags-client.js';
 import {
   appendEntry,
   chromeStorage,
@@ -58,6 +65,20 @@ const pendingApprovals = new Map();
 
 function extensionVersion() {
   try { return chrome.runtime.getManifest().version; } catch { return '0.0.0'; }
+}
+
+// Sent with Flags reports as context.browser. Only the family, never the full UA.
+function browserFamily() {
+  const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+  if (/Firefox\//.test(ua)) return 'firefox';
+  if (/Edg\//.test(ua)) return 'edge';
+  if (/Chrome\//.test(ua)) return 'chrome';
+  return 'unknown';
+}
+
+// A message from one of this extension's own content scripts (in a tab).
+function isFromOwnContentScript(sender) {
+  return Boolean(sender && sender.tab && sender.id === chrome.runtime.id);
 }
 
 // What a content script may send for a decision. Raw page text never reaches
@@ -137,6 +158,7 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:executive-settings',
   'helmion:executive-pair',
   'helmion:flags-settings',
+  'helmion:flags-alerts',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -293,15 +315,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         outcome: 'flagged',
       });
       appendEntry(ledger, entry)
-        .then(() => reportFlag(ledger, { ...flag, id: flag.id || entry.id, detectedAt: entry.timestamp }, { version: extensionVersion() }))
+        .then(() => reportFlag(ledger, {
+          ...flag,
+          id: flag.id || entry.id,
+          // The page the content script runs in; flags-client keeps only the
+          // origin and path, and only on the four chat sites.
+          url: (sender && (sender.url || (sender.tab && sender.tab.url))) || undefined,
+        }, { version: extensionVersion(), browser: browserFamily() }))
         .then((report) => sendResponse({ ok: true, report }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // Content script: may it cross-check a message with the Flags scanner?
+    // Answers a yes/no only; the key and URL never go to a page.
+    if (type === 'helmion:flags-config') {
+      getFlagsSettings(ledger)
+        .then((s) => sendResponse({ ok: true, scanBeforeSend: s.enabled && s.scanBeforeSend && s.hasKey && Boolean(s.baseUrl) && !s.keyRejected }))
+        .catch(() => sendResponse({ ok: true, scanBeforeSend: false }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-scan') {
+      if (!isFromOwnContentScript(sender)) { sendResponse({ ok: false, error: 'not allowed' }); return false; }
+      scanText(ledger, typeof message.text === 'string' ? message.text : '')
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-alerts') {
+      const opts = message.options || {};
+      (opts.markSeen ? markAlertsSeen(ledger).then(() => pollAlerts(ledger, { force: false })) : pollAlerts(ledger, { force: opts.force === true }))
+        .then((result) => sendResponse({ ok: true, ...result }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }
 
     if (type === 'helmion:flags-settings') {
       const payload = message.settings || {};
-      const isWrite = ['enabled', 'flagsUrl', 'token'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      const isWrite = ['enabled', 'baseUrl', 'apiKey', 'scanBeforeSend', 'dailyBudget'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
       (isWrite ? setFlagsSettings(ledger, payload) : getFlagsSettings(ledger))
         .then((settings) => sendResponse({ ok: true, settings }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
