@@ -1,0 +1,35 @@
+# Executive Guard behind Caddy. Add to /etc/caddy/Caddyfile and replace the
+# hostname. Caddy gets the TLS certificate itself. The container listens on
+# 127.0.0.1:8787 only (see DEPLOY.md), so Caddy is the only way in.
+guard.example.com {
+	# Decisions are small; the server caps bodies at 32 KB as well.
+	request_body {
+		max_size 64KB
+	}
+
+	# Optional: allow the approver endpoints only from your own addresses.
+	# Device endpoints (/v1/decisions, /v1/approvals/<id>, /v1/audit/outcomes)
+	# stay public; they need a device token anyway.
+	# @approver {
+	# 	path_regexp ^/v1/(approvals|approvals/[^/]+/decide|audit|audit/verify)/?$
+	# 	not remote_ip 203.0.113.10/32
+	# }
+	# respond @approver 403
+
+	reverse_proxy 127.0.0.1:8787 {
+		health_uri /healthz
+		health_interval 30s
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# Log requests but not the Authorization header (Caddy redacts it by default).
+	log {
+		output file /var/log/caddy/executive-guard.log
+	}
+}
