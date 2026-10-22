@@ -66,7 +66,7 @@ export function createEnvoyStore(pool) {
       const context = contextFor(actor);
       return withTenantTransaction(pool, context, async (client) => {
         await requireActiveTenantMembership(client, context);
-        const result = await client.query('select id, slug, title, kind, created_by_subject, created_at from helmion.envoy_channels order by created_at, id');
+        const result = await client.query('select id, slug, title, kind, created_by_subject, created_at from helmion.envoy_channels where tenant_id=$1 order by created_at, id', [context.tenantId]);
         return { channels: result.rows.map((row) => Object.freeze({ id: String(row.id), slug: String(row.slug), title: String(row.title), kind: String(row.kind), createdBySubject: String(row.created_by_subject), createdAt: row.created_at })) };
       });
     },
