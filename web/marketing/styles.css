@@ -350,6 +350,53 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   .footer-inner { padding-block: 34px; align-items: flex-start; flex-direction: column; }
   .footer-inner p { text-align: left; }
 }
+/* Envoy front door (/envoy): a glass mock of the room, built only from the
+   shared palette. Scoped under .envoy- so nothing else on the site moves. */
+.envoy-fineprint { max-width: 560px; margin: 18px 0 0; color: var(--muted); font-size: 13px; }
+.envoy-panel {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: linear-gradient(160deg, rgba(20, 41, 59, 0.92), rgba(9, 23, 37, 0.94));
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+.envoy-panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+  font: 700 10px ui-monospace, monospace; letter-spacing: 0.12em;
+}
+.envoy-panel-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--accent); }
+.envoy-panel-brand i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px rgba(101, 213, 245, 0.7); }
+.envoy-panel-state { color: var(--muted); }
+.envoy-panel-state em { font-style: normal; color: #f2c879; }
+.envoy-cols { display: grid; grid-template-columns: 128px 1fr; min-height: 300px; }
+.envoy-channels {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 16px 10px; border-right: 1px solid var(--line);
+}
+.envoy-chan { padding: 7px 9px; border-radius: 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.envoy-chan.active { background: var(--accent-panel); color: var(--ink); }
+.envoy-msgs { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
+.envoy-msg { margin: 0; color: var(--soft); font-size: 13.5px; line-height: 1.55; }
+.envoy-msg strong { color: var(--ink); }
+.envoy-tag {
+  display: inline-block; margin: 0 4px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--line-strong); color: var(--accent);
+  font: 700 8.5px ui-monospace, monospace; letter-spacing: 0.1em; vertical-align: 2px;
+}
+.envoy-guard-card {
+  margin-top: auto; padding: 13px 14px;
+  border: 1px solid rgba(242, 200, 121, 0.45); border-radius: 12px;
+  background: rgba(242, 200, 121, 0.07);
+}
+.envoy-guard-label { color: #f2c879; font: 700 9px ui-monospace, monospace; letter-spacing: 0.12em; }
+.envoy-guard-card p { margin: 6px 0 0; color: var(--soft); font-size: 12.5px; line-height: 1.5; }
+@media (max-width: 680px) {
+  .envoy-cols { grid-template-columns: 1fr; }
+  .envoy-channels { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: 0.01ms !important; }
