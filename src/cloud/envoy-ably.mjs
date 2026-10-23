@@ -167,7 +167,7 @@ export async function handleEnvoyAblyRoute({
     return true;
   }
   // PC action approvals (hands -> Executive Guard): approver allowlist, before tenant checks
-  if (requestUrl?.pathname === '/api/admin/guard/pc-approvals' || requestUrl?.pathname === '/api/admin/guard/pc-approvals/decide') {
+  if (requestUrl?.pathname === '/api/admin/guard/pc-approvals' || requestUrl?.pathname === '/api/admin/guard/pc-approvals/decide' || requestUrl?.pathname === '/api/admin/guard/pc-upcoming') {
     const { createPcApprovalsHandler } = await import('./guard-pc-approvals.mjs');
     await createPcApprovalsHandler(sessionIdentity ? { identity: () => sessionIdentity } : {})(request, response, requestUrl.pathname);
     return true;
