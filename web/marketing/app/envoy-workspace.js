@@ -263,6 +263,45 @@ function syncAgentsPane() {
 const PANE_MIN = { channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 };
 const PANE_MAX = 900;
 const SNAP = 76;
+// Sized panes in DOM order (the chat sits between channels and cli but is
+// not sized — it is the flexible pane every drag trades space with).
+const PANE_ORDER = ['channels', 'cli', 'agents', 'guard', 'bench'];
+
+// Pure drag geometry, exported for tests. A drag must move the pane edge
+// 1:1 with the pointer, so the dragged pane's growth is bounded by what
+// the REST OF THE ROW can yield — the flexible chat down to its floor,
+// then each other sized pane down to its own floor — never by the
+// container's already-free space. The old clamp measured exactly that
+// free space, and in a full row it is ~0: a +300px drag on channels
+// landed +76px. widths/floors cover every open sized pane (rendered
+// widths; floors from PANE_MIN); splitsW is the visible separators'
+// total width. Returns the full width map for the row at the clamped
+// target: growth is taken from the other panes farthest from the dragged
+// one first, so the panes next to the pointer stay put longest.
+// Shrinking changes only the dragged pane — the freed space falls to
+// the chat on its own.
+export function dragLayout({ widths, floors, chatFloor = 380, containerW, splitsW = 0, name, target, maxCap = PANE_MAX }) {
+  const out = { ...widths };
+  const others = Object.keys(widths).filter((n) => n !== name);
+  const floorSum = others.reduce((sum, n) => sum + floors[n], 0);
+  const maxAbs = containerW - splitsW - chatFloor - floorSum;
+  const width = Math.max(floors[name], Math.min(maxCap, maxAbs, target));
+  out[name] = width;
+  let need = width - widths[name];
+  if (need > 0) {
+    // The flexible chat absorbs first, down to its floor; only the
+    // remainder is taken from the sized panes.
+    const chatNow = containerW - splitsW - Object.values(widths).reduce((sum, w) => sum + w, 0);
+    need -= Math.max(0, chatNow - chatFloor);
+    const byDistance = others.sort((a, b) => Math.abs(PANE_ORDER.indexOf(b) - PANE_ORDER.indexOf(name)) - Math.abs(PANE_ORDER.indexOf(a) - PANE_ORDER.indexOf(name)));
+    for (const n of byDistance) {
+      if (need <= 0) break;
+      const give = Math.min(Math.max(0, out[n] - floors[n]), need);
+      out[n] -= give; need -= give;
+    }
+  }
+  return { widths: out, width };
+}
 
 function wireSplitters() {
   const ew = $('ew');
@@ -284,11 +323,32 @@ function wireSplitters() {
     for (const [n, w] of Object.entries(widths)) setVar(n, w);
     return widths;
   };
-  const maxFor = (name, pane) => {
-    let used = parseFloat(getComputedStyle($('ew-chat')).minWidth) || 380;
-    for (const p of document.querySelectorAll('.ew-pane')) if (p !== pane && p.id !== 'ew-chat' && !p.classList.contains('collapsed')) used += p.getBoundingClientRect().width;
-    for (const s of document.querySelectorAll('.ew-split:not(.hidden)')) used += 5;
-    return Math.max(PANE_MIN[name], Math.min(PANE_MAX, ew.clientWidth - used));
+  // A drag trades space with the whole row (see dragLayout): snapshot
+  // every open sized pane's rendered width (read-only — unlike freeze,
+  // nothing is written here), which panes already carry an inline var
+  // (so an aborted drag restores the exact prior state), the chat's CSS
+  // floor and the visible separators' total width.
+  const snapshot = () => {
+    const widths = {}; const floors = {}; const inline = {};
+    for (const p of document.querySelectorAll('.ew-pane')) {
+      const n = p.id.replace('ew-', '');
+      if (!PANE_MIN[n] || p.classList.contains('collapsed')) continue;
+      const w = Math.round(p.getBoundingClientRect().width);
+      if (w <= 0) continue; // bench-max zeroes panes with !important — outside the row right now
+      widths[n] = w; floors[n] = PANE_MIN[n];
+      inline[n] = document.documentElement.style.getPropertyValue(`--ew-${n}`);
+    }
+    let splitsW = 0;
+    for (const s of document.querySelectorAll('.ew-split:not(.hidden)')) splitsW += 5;
+    const chatFloor = parseFloat(getComputedStyle($('ew-chat')).minWidth) || 380;
+    return { widths, floors, inline, splitsW, chatFloor, containerW: ew.clientWidth };
+  };
+  const restore = (snap, except = null) => {
+    for (const n of Object.keys(snap.widths)) {
+      if (n === except) continue;
+      if (snap.inline[n]) setVar(n, snap.widths[n]);
+      else document.documentElement.style.removeProperty(`--ew-${n}`);
+    }
   };
   const persist = (name, w) => { const widths = ls.get('widths', {}); widths[name] = Math.round(w); ls.set('widths', widths); const s = document.querySelector(`.ew-split[data-split="${name}"]`); if (s) s.setAttribute('aria-valuenow', String(Math.round(w))); };
   for (const split of document.querySelectorAll('.ew-split')) {
@@ -304,13 +364,17 @@ function wireSplitters() {
       if (narrow()) return;
       e.preventDefault(); split.setPointerCapture(e.pointerId);
       const start = e.clientX; const startW = freeze(name)[name] ?? Math.round(pane.getBoundingClientRect().width);
-      const max = maxFor(name, pane); const min = PANE_MIN[name];
+      if (!startW) return; // the pane is zeroed out (bench-max) — nothing to drag
+      const snap = snapshot(); const min = PANE_MIN[name];
       split.classList.add('dragging'); ew.classList.add('dragging');
-      let raw = startW; let done = false;
+      let raw = startW; let done = false; let applied = { ...snap.widths };
       const move = (ev) => {
         raw = startW + sign * (ev.clientX - start);
-        const w = Math.max(min, Math.min(max, raw));
-        setVar(name, w); split.setAttribute('aria-valuenow', String(Math.round(w)));
+        const lay = dragLayout({ ...snap, name, target: raw });
+        // Only panes whose width actually changes get their var written:
+        // on a roomy screen a drag still touches nobody else (S2).
+        for (const [n, w] of Object.entries(lay.widths)) if (w !== applied[n]) { setVar(n, w); applied[n] = w; }
+        split.setAttribute('aria-valuenow', String(Math.round(lay.width)));
         // The collapse hint arms as soon as the pointer passes the pane's
         // floor, not only in the last stretch of dead travel below SNAP.
         pane.classList.toggle('will-collapse', raw < min);
@@ -319,16 +383,23 @@ function wireSplitters() {
         if (done) return; done = true;
         split.classList.remove('dragging'); ew.classList.remove('dragging'); pane.classList.remove('will-collapse');
         split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); split.removeEventListener('pointercancel', cancel);
-        if (!commit) { setVar(name, startW); return; }
+        if (!commit) { restore(snap); return; }
         if (raw < SNAP) {
           // Slide-to-collapse: the pre-drag width stays in the var (and in
-          // storage) as the remembered width reopening restores.
+          // storage) as the remembered width reopening restores; any
+          // neighbour that yielded during the drag gets its width back.
+          restore(snap, name);
           setVar(name, startW);
           if (name === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); }
           setPane(name, false, { user: true });
           return;
         }
-        persist(name, Math.max(min, Math.min(max, raw)));
+        persist(name, applied[name]);
+        // A neighbour that actually yielded keeps its new width — the
+        // user's own drag took that space. Untouched neighbours are
+        // neither written nor persisted, so their responsive defaults
+        // and remembered widths survive (S2).
+        for (const n of Object.keys(applied)) if (n !== name && applied[n] !== snap.widths[n]) persist(n, applied[n]);
       };
       const up = () => finish(true);
       const cancel = () => finish(false);
@@ -349,9 +420,14 @@ function wireSplitters() {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
       const startW = freeze(name)[name] ?? Math.round(pane.getBoundingClientRect().width);
+      if (!startW) return; // zeroed out (bench-max), same as the pointer path
+      const snap = snapshot();
       ew.classList.add('dragging');
-      const w = Math.max(PANE_MIN[name], Math.min(maxFor(name, pane), startW + sign * (e.key === 'ArrowRight' ? 24 : -24)));
-      setVar(name, w); persist(name, pane.getBoundingClientRect().width); split.setAttribute('aria-valuenow', String(Math.round(w)));
+      const lay = dragLayout({ ...snap, name, target: startW + sign * (e.key === 'ArrowRight' ? 24 : -24) });
+      for (const [n, w] of Object.entries(lay.widths)) if (w !== snap.widths[n]) setVar(n, w);
+      persist(name, lay.width);
+      for (const n of Object.keys(lay.widths)) if (n !== name && lay.widths[n] !== snap.widths[n]) persist(n, lay.widths[n]);
+      split.setAttribute('aria-valuenow', String(Math.round(lay.width)));
       ew.classList.remove('dragging');
     });
   }
