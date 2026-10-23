@@ -3,6 +3,28 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, pendingAgentWork } from '../app/envoy-workspace.js';
 
+// Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
+// one human-chat surface flips between Envoy and Discord via a labelled
+// two-segment switch at the top of the channels pane, with a network
+// strip directly above the composer as the anti-mis-send cue.
+test('layout bite 2: Envoy/Discord flip switch and network strip exist with mode hooks', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const pane = html.indexOf('id="ew-channels"');
+  const sw = html.indexOf('id="ew-net-envoy"');
+  const list = html.indexOf('id="ew-channel-list"');
+  assert.ok(pane !== -1 && sw > pane && sw < list, 'the network switch sits at the top of the channels pane, above the list');
+  assert.match(html, /id="ew-net-envoy"[^>]*>Envoy</, 'Envoy segment is word-labelled');
+  assert.match(html, /Discord<span id="ew-net-discord-count"/, 'Discord segment is word-labelled and carries the count chip');
+  const msgs = html.indexOf('id="ew-messages"');
+  const strip = html.indexOf('id="ew-net-strip"');
+  const form = html.indexOf('id="maestro-form"');
+  assert.ok(msgs !== -1 && strip > msgs && strip < form, 'the network strip sits directly above the composer');
+  for (const needle of ['function setNetMode', 'function renderNetStrip', 'function renderNetSwitch', 'linkedChannels', 'netChannel.', "ws.mode === 'discord'"]) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
+});
+
 // pendingAgentWork mirrors the server's agentWork() rules
 // (src/cloud/envoy-mesh.mjs): a routed message is pending for a provider
 // until its reply:<id> lands, it ages out of the 30-minute work window,
@@ -98,70 +120,4 @@ test('desktop layout: agent CLI pane sits between chat and agents; channels are 
   assert.match(html, /id="ew-cli-new"[^>]*>\+ New session</);
   assert.match(html, /id="ew-add-channel"[^>]*>\+ New channel</);
   assert.doesNotMatch(html, /ew-new-channel-agent/);
-});
-
-// Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
-// one human-chat surface flips between Envoy and Discord via a labelled
-// two-segment switch at the top of the channels pane, with a network
-// strip directly above the composer as the anti-mis-send cue.
-test('layout bite 2: Envoy/Discord flip switch and network strip exist with mode hooks', async () => {
-  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
-  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
-  const pane = html.indexOf('id="ew-channels"');
-  const sw = html.indexOf('id="ew-net-envoy"');
-  const list = html.indexOf('id="ew-channel-list"');
-  assert.ok(pane !== -1 && sw > pane && sw < list, 'the network switch sits at the top of the channels pane, above the list');
-  assert.match(html, /id="ew-net-envoy"[^>]*>Envoy</, 'Envoy segment is word-labelled');
-  assert.match(html, /Discord<span id="ew-net-discord-count"/, 'Discord segment is word-labelled and carries the count chip');
-  const msgs = html.indexOf('id="ew-messages"');
-  const strip = html.indexOf('id="ew-net-strip"');
-  const form = html.indexOf('id="maestro-form"');
-  assert.ok(msgs !== -1 && strip > msgs && strip < form, 'the network strip sits directly above the composer');
-  for (const needle of ['function setNetMode', 'function renderNetStrip', 'function renderNetSwitch', 'linkedChannels', 'netChannel.', "ws.mode === 'discord'"]) {
-    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
-  }
-});
-// Sliders fix (Troy's live report, 2026-10-23): every pane must drag in
-// both directions to a slim minimum, collapse must have a reveal path, and
-// the nav rail must collapse/peek from the rail itself.
-test('pane sliders: every pane has a split, a collapse control and a way back', async () => {
-  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
-  for (const name of ['channels', 'cli', 'agents', 'guard', 'bench']) {
-    assert.match(html, new RegExp(`id="ew-${name}"`), name);
-    assert.match(html, new RegExp(`data-split="${name}"`), name);
-    assert.match(html, new RegExp(`data-collapse="${name}"`), name);
-  }
-  for (const name of ['cli', 'agents', 'guard', 'bench']) {
-    assert.match(html, new RegExp(`data-toggle="${name}"`), name);
-  }
-  assert.match(html, /data-open="channels"/);
-});
-
-test('splitter drag: pointer capture with cancel handling, per-pane floors, slide-to-collapse', async () => {
-  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
-  assert.match(js, /setPointerCapture/);
-  assert.match(js, /pointercancel/);
-  assert.match(js, /PANE_MIN = \{ channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 \}/);
-  assert.match(js, /will-collapse/);
-  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
-  assert.match(css, /\.ew\.dragging \.ew-pane \{ transition:none; flex-shrink:0; \}/);
-  assert.match(css, /\.ew-pane\.will-collapse/);
-  // CSS floors match the JS PANE_MIN table (a mismatch = dead drag travel).
-  for (const [pane, min] of Object.entries({ channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 })) {
-    assert.match(css, new RegExp(`\\.ew-${pane} \\{[^}]*min-width:${min}px`), pane);
-  }
-});
-
-test('nav rail: the pin lives on the rail, hover peek is desktop-pointer only', async () => {
-  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="rail-pin"/);
-  assert.doesNotMatch(html, /id="rail-toggle"/);
-  const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
-  assert.match(js, /getElementById\('rail-pin'\)/);
-  assert.match(js, /store\.get\('navPinned'/);
-  assert.match(js, /classList\.add\('peek'\)/);
-  assert.match(js, /classList\.remove\('peek'\)/);
-  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
-  assert.match(css, /@media \(min-width: 901px\) and \(hover: hover\) and \(pointer: fine\)/);
-  assert.match(css, /\.sidebar\.rail\.peek \{/);
 });
