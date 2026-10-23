@@ -11,6 +11,10 @@
 //                     the PC pairs with `node bin/hands-spoke.mjs pair` (passphrase)
 //                     and gets its own token, stored hashed in STATE_DIR.
 //   HANDS_ENABLED     'true' to answer tool calls at all (kill switch; default false)
+//   HANDS_HOLD_OPEN_WAIT_MS  how long a mutating call that is waiting on a human
+//                     Guard decision stays open before it degrades to the
+//                     pending + resume_action answer (default 840000 = 14 min,
+//                     inside the 15-minute approval TTL)
 //   GUARD_URL         Executive Guard base URL. Unset = Guard not live = every
 //                     mutating tool is denied (fail closed).
 //   GUARD_DEVICE_TOKEN  this server's device token at Guard
@@ -34,6 +38,7 @@ export function loadConfig(env = process.env) {
     passphrase: required(env, 'AUTH_PASSPHRASE'),
     spokeToken,
     handsEnabled: String(env.HANDS_ENABLED || '').toLowerCase() === 'true',
+    holdOpenWaitMs: Number(env.HANDS_HOLD_OPEN_WAIT_MS || 840000) || 840000,
     guard: Object.freeze({
       url: guardUrl,
       deviceToken: (env.GUARD_DEVICE_TOKEN || '').trim() || null,
