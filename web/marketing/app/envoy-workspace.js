@@ -237,28 +237,82 @@ function syncAgentsPane() {
   setPane('agents', pinned === undefined ? false : pinned);
 }
 
+// Splitter floors per pane. The CSS min-widths in envoy.css match these
+// exactly — when the two disagreed (JS clamped at 180, CSS floored the
+// workbench at 320) the drag had dead travel in both directions. Releasing
+// a drag below SNAP collapses the pane instead of parking it at the floor;
+// the pre-drag width stays in the var, so reopening restores it.
+const PANE_MIN = { channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 };
+const PANE_MAX = 900;
+const SNAP = 76;
+
 function wireSplitters() {
+  const ew = $('ew');
+  const setVar = (name, w) => document.documentElement.style.setProperty(`--ew-${name}`, `${Math.round(w)}px`);
+  // Flex-shrink decouples a pane's rendered width from its --ew-* var
+  // whenever the row is over-full (the default layout already is at laptop
+  // widths), which made drags move the var while the eye tracked a shrunken
+  // width, and made pointer-up persist a third number. Freezing writes every
+  // open pane's rendered width into its var first; while .ew.dragging pins
+  // flex-shrink to 0, var == rendered width for the whole drag.
+  const freeze = () => {
+    const widths = {};
+    for (const p of document.querySelectorAll('.ew-pane')) { const n = p.id.replace('ew-', ''); if (PANE_MIN[n] && !p.classList.contains('collapsed')) widths[n] = Math.round(p.getBoundingClientRect().width); }
+    for (const [n, w] of Object.entries(widths)) setVar(n, w);
+    return widths;
+  };
+  const maxFor = (name, pane) => {
+    let used = parseFloat(getComputedStyle($('ew-chat')).minWidth) || 380;
+    for (const p of document.querySelectorAll('.ew-pane')) if (p !== pane && p.id !== 'ew-chat' && !p.classList.contains('collapsed')) used += p.getBoundingClientRect().width;
+    for (const s of document.querySelectorAll('.ew-split:not(.hidden)')) used += 5;
+    return Math.max(PANE_MIN[name], Math.min(PANE_MAX, ew.clientWidth - used));
+  };
+  const persist = (name, w) => { const widths = ls.get('widths', {}); widths[name] = Math.round(w); ls.set('widths', widths); };
   for (const split of document.querySelectorAll('.ew-split')) {
     const name = split.dataset.split;
     const pane = $(`ew-${name}`);
     const sign = name === 'channels' ? 1 : -1;
     split.addEventListener('pointerdown', (e) => {
       if (narrow()) return;
-      e.preventDefault(); split.setPointerCapture(e.pointerId); split.classList.add('dragging'); $('ew').classList.add('dragging');
-      const start = e.clientX; const startW = pane.getBoundingClientRect().width;
-      const move = (ev) => { const w = Math.max(180, Math.min(900, startW + sign * (ev.clientX - start))); document.documentElement.style.setProperty(`--ew-${name}`, `${w}px`); };
-      const up = () => {
-        split.classList.remove('dragging'); $('ew').classList.remove('dragging');
-        split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up);
-        const widths = ls.get('widths', {}); widths[name] = Math.round(pane.getBoundingClientRect().width); ls.set('widths', widths);
+      e.preventDefault(); split.setPointerCapture(e.pointerId);
+      const start = e.clientX; const startW = freeze()[name] ?? Math.round(pane.getBoundingClientRect().width);
+      const max = maxFor(name, pane); const min = PANE_MIN[name];
+      split.classList.add('dragging'); ew.classList.add('dragging');
+      let raw = startW; let done = false;
+      const move = (ev) => {
+        raw = startW + sign * (ev.clientX - start);
+        const w = Math.max(min, Math.min(max, raw));
+        setVar(name, w); split.setAttribute('aria-valuenow', String(Math.round(w)));
+        pane.classList.toggle('will-collapse', raw < SNAP);
       };
-      split.addEventListener('pointermove', move); split.addEventListener('pointerup', up);
+      const finish = (commit) => {
+        if (done) return; done = true;
+        split.classList.remove('dragging'); ew.classList.remove('dragging'); pane.classList.remove('will-collapse');
+        split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); split.removeEventListener('pointercancel', cancel);
+        if (!commit) { setVar(name, startW); return; }
+        if (raw < SNAP) {
+          // Slide-to-collapse: the pre-drag width stays in the var (and in
+          // storage) as the remembered width reopening restores.
+          setVar(name, startW);
+          if (name === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); }
+          setPane(name, false, { user: true });
+          return;
+        }
+        persist(name, Math.max(min, Math.min(max, raw)));
+      };
+      const up = () => finish(true);
+      const cancel = () => finish(false);
+      split.addEventListener('pointermove', move); split.addEventListener('pointerup', up); split.addEventListener('pointercancel', cancel);
     });
     split.addEventListener('dblclick', () => { document.documentElement.style.removeProperty(`--ew-${name}`); const w = ls.get('widths', {}); delete w[name]; ls.set('widths', w); });
     split.addEventListener('keydown', (e) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      const w = pane.getBoundingClientRect().width + sign * (e.key === 'ArrowRight' ? 24 : -24);
-      document.documentElement.style.setProperty(`--ew-${name}`, `${Math.max(180, Math.min(900, w))}px`);
+      e.preventDefault();
+      const startW = freeze()[name] ?? Math.round(pane.getBoundingClientRect().width);
+      ew.classList.add('dragging');
+      const w = Math.max(PANE_MIN[name], Math.min(maxFor(name, pane), startW + sign * (e.key === 'ArrowRight' ? 24 : -24)));
+      setVar(name, w); persist(name, pane.getBoundingClientRect().width); split.setAttribute('aria-valuenow', String(Math.round(w)));
+      ew.classList.remove('dragging');
     });
   }
 }
