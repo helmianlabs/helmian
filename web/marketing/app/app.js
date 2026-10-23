@@ -1967,6 +1967,7 @@ async function loadDesktop() {
     api, post, toast, state,
     openTools,
     wireVoice: wireMaestroVoiceChips,
+    wireCliVoice: wireCliVoiceChips,
     renderFeed,
     loadFeedData,
     ackAll: () => document.getElementById('feed-ack-all')?.click(),
@@ -2090,6 +2091,67 @@ function wireMaestroVoiceChips() {
       if (!input.value.startsWith('/')) input.value = '/' + input.value;
       input.focus();
     };
+  }
+}
+
+// Voice for the Workspace agent CLI pane (#ew-cli-*): the same voice
+// engine as the chat composer, dictation lands in the CLI prompt box.
+function insertCliDictation(text) {
+  const box = document.getElementById('ew-cli-input');
+  if (!box) return;
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? box.value.length;
+  const before = box.value.slice(0, start);
+  const after = box.value.slice(end);
+  const sep = before && !/[\s\n]$/.test(before) ? ' ' : '';
+  box.value = before + sep + text + after;
+  const pos = before.length + sep.length + text.length;
+  box.setSelectionRange(pos, pos);
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+  box.focus();
+}
+
+function updateCliVoiceChips() {
+  for (const [id, mode] of [['ew-cli-dictate', 'dictate'], ['ew-cli-voice', 'voice']]) {
+    const chip = document.getElementById(id);
+    if (!chip) continue;
+    const active = voice.voiceMode && voice.mode === mode;
+    chip.classList.toggle('recording', active);
+    chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+}
+
+function toggleCliVoice(mode) {
+  const onState = () => { updateCliVoiceChips(); updateMaestroVoiceChips(); };
+  if (voice.voiceMode && voice.mode === mode) {
+    voice.setVoiceMode(false, { onState });
+  } else {
+    if (voice.voiceMode) voice.setVoiceMode(false, {});
+    if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy(mode)); store.set('voicePrivacySeen', true); }
+    voice.setVoiceMode(true, {
+      mode,
+      onTranscript: (text) => { insertCliDictation(text); },
+      onSubmit: (text) => { if (text) insertCliDictation(text); const f = document.getElementById('ew-cli-form'); if (document.getElementById('ew-cli-input')?.value.trim() && f) f.requestSubmit(); },
+      onState,
+      onError: (msg) => { toast(msg); updateCliVoiceChips(); },
+    });
+  }
+  updateCliVoiceChips();
+  updateMaestroVoiceChips();
+}
+
+function wireCliVoiceChips() {
+  for (const [id, mode] of [['ew-cli-dictate', 'dictate'], ['ew-cli-voice', 'voice']]) {
+    const chip = document.getElementById(id);
+    if (!chip || chip.dataset.wired) continue;
+    chip.dataset.wired = '1';
+    chip.title = voicePrivacy(mode);
+    if (!voice.supported) {
+      chip.disabled = true;
+      chip.title = 'Voice is not supported by this browser — you can still type.';
+    } else {
+      chip.onclick = () => toggleCliVoice(mode);
+    }
   }
 }
 

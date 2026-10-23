@@ -1,7 +1,7 @@
 /* Envoy workspace (Desktop view) + app-wide motion polish. Palette from Troy's
    v0.0.1/v0.0.2 demo videos: ~#1A202C background, #2D3748 panels. */
 html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; --border:#364152; --muted:#A0AEC0; --faint:#718096; }
-:root { --ease:cubic-bezier(.2,.8,.2,1); --dur:.24s; --ew-channels:232px; --ew-agents:280px; --ew-bench:420px; --ew-guard:300px; }
+:root { --ease:cubic-bezier(.2,.8,.2,1); --dur:.24s; --ew-channels:232px; --ew-agents:280px; --ew-bench:420px; --ew-guard:300px; --ew-cli:300px; }
 @media (prefers-reduced-motion: reduce) { :root { --dur:0s; } }
 
 /* Sidebar: explicit collapse to an icon rail, smooth width. */
@@ -28,6 +28,7 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .ew-agents { flex:0 1 var(--ew-agents); min-width:220px; }
 .ew-bench { flex:0 1 var(--ew-bench); min-width:320px; }
 .ew-guard { flex:0 1 var(--ew-guard); min-width:250px; }
+.ew-cli { flex:0 1 var(--ew-cli); min-width:240px; }
 /* Side panes give up width before the conversation does. */
 .ew-chat { flex:1 1 0; min-width:380px; background:var(--bg); }
 .ew-pane.collapsed { flex-basis:0 !important; min-width:0 !important; opacity:0; pointer-events:none; }
@@ -203,21 +204,21 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-scrim.open { opacity:1; visibility:visible; transition:opacity var(--dur) var(--ease); }
 
 /* Medium screens: workbench starts narrower. */
-@media (max-width: 1280px) { :root { --ew-bench:360px; --ew-agents:250px; --ew-channels:210px; --ew-guard:270px; } }
+@media (max-width: 1280px) { :root { --ew-bench:360px; --ew-agents:250px; --ew-channels:210px; --ew-guard:270px; --ew-cli:260px; } }
 
 /* Phones and small tablets: chat full width; the other panes slide in as sheets. */
 @media (max-width: 900px) {
   #ew-bench-max { display:none; }
   .ew-tabs .ew-tab { padding-left:8px; padding-right:8px; }
   .ew-tabs [data-collapse="bench"] { font-size:20px; }
-  .ew-chat, .ew-channels, .ew-agents, .ew-bench, .ew-guard { min-width:0; }
+  .ew-chat, .ew-channels, .ew-cli, .ew-agents, .ew-bench, .ew-guard { min-width:0; }
   .view.desktop { height:calc(100dvh - 52px); }
   .ew-split { display:none; }
   .ew-reveal { display:inline-grid; }
-  .ew-pane.ew-channels, .ew-pane.ew-agents, .ew-pane.ew-bench, .ew-pane.ew-guard { position:fixed; top:0; bottom:0; z-index:50; width:min(86vw, 360px); flex:none; opacity:1; pointer-events:auto; box-shadow:0 0 40px rgba(0,0,0,.5); }
+  .ew-pane.ew-channels, .ew-pane.ew-cli, .ew-pane.ew-agents, .ew-pane.ew-bench, .ew-pane.ew-guard { position:fixed; top:0; bottom:0; z-index:50; width:min(86vw, 360px); flex:none; opacity:1; pointer-events:auto; box-shadow:0 0 40px rgba(0,0,0,.5); }
   .ew-pane.ew-bench { width:100vw; }
   .ew-pane.ew-channels { left:0; transform:translateX(-100%); }
-  .ew-pane.ew-agents, .ew-pane.ew-bench, .ew-pane.ew-guard { right:0; transform:translateX(100%); }
+  .ew-pane.ew-cli, .ew-pane.ew-agents, .ew-pane.ew-bench, .ew-pane.ew-guard { right:0; transform:translateX(100%); }
   .ew-pane.sheet-open { transform:none; }
   .ew-pane.collapsed { flex-basis:auto !important; opacity:1; pointer-events:auto; }
   .ew-chat-head { gap:4px; padding:6px 8px; }
@@ -342,6 +343,20 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   .ew-pill { flex:none; }
   .ew-pill.session { margin-left:0; }
 }
+
+/* Agent CLI pane: your command chat with the agents (sessions + prompt). */
+.ew-cli-chips { padding:2px 12px 4px; }
+.ew-pill.on { border-color:var(--accent); color:var(--accent); }
+.ew-cli-form { display:flex; flex-direction:column; gap:8px; padding:8px 12px; border-top:1px solid var(--border); }
+.ew-cli-sessions { flex:1 1 auto; overflow:auto; display:flex; flex-direction:column; gap:6px; padding:6px 10px 10px; }
+.ew-cli-session { display:grid; grid-template-columns:30px minmax(0,1fr); gap:2px 10px; align-items:center; text-align:left; border:1px solid var(--border); border-radius:10px; background:var(--panel-2); color:var(--text); padding:8px 10px; cursor:pointer; transition:border-color .15s; animation:ew-in .22s var(--ease); }
+.ew-cli-session:hover { border-color:var(--accent); }
+.ew-cli-session.active { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
+.ew-cli-session img { width:30px; height:30px; border-radius:50%; grid-row:span 2; }
+.ew-cli-session strong { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-cli-session .meta { grid-column:2; color:var(--muted); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-cli-to { color:var(--muted); font-size:11.5px; font-weight:600; }
+.ew-cli .ew-composer { flex:none; }
 
 /* ---- Chat avatars: characters or simple letter icons ---- */
 .ew-ava { display:inline-grid; place-items:center; width:28px; height:28px; border-radius:9px; flex:none; font-size:17px; line-height:1; user-select:none; }
