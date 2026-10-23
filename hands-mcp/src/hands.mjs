@@ -14,15 +14,63 @@ import { decideComputeRoute } from '../../src/core/compute-routing.mjs';
 import { ArgError, TOOLS, validateArgs } from './shared/protocol.mjs';
 
 const PENDING_TTL_MS = 15 * 60 * 1000;
+// Hold-open: after Guard answers "ask", the SAME tool call waits for the human
+// decision instead of returning immediately and making the caller relay a
+// resume_action. Slices keep disconnect/deadline checks responsive; the
+// guard client polls Guard every pollMs inside each slice.
+const HOLD_OPEN_SLICE_MS = 30 * 1000;
+const HOLD_OPEN_DEFAULT_MS = PENDING_TTL_MS - 60 * 1000;
 
-export function createHands({ config, guard, hub, audit }) {
-  const pending = new Map(); // requestId -> { tool, args, nonce, approvalId, clientId, createdAt }
+export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = {}) {
+  // requestId -> { tool, args, nonce, approvalId, clientId, createdAt, state }
+  // state: 'waiting' (undecided) -> 'claimed' (one completion path won) -> 'done' (tombstone)
+  const pending = new Map();
+  const holdOpenMs = holdOpenWaitMs ?? config.holdOpenWaitMs ?? HOLD_OPEN_DEFAULT_MS;
 
   const text = (t, isError = false) => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) });
 
   function sweep() {
     const t = Date.now();
     for (const [k, v] of pending) if (t - v.createdAt > PENDING_TTL_MS) pending.delete(k);
+  }
+
+  // Single-winner claim on a pending entry. Synchronous check-and-set, so exactly
+  // one completion path (the held-open call, or resume_action) ever dispatches:
+  // a Guard decision consumed by one path can never be consumed by the other.
+  function claim(entry) {
+    if (entry.state !== 'waiting') return false;
+    entry.state = 'claimed';
+    return true;
+  }
+
+  /**
+   * Wait for the human decision on an already-pending approval, from inside the
+   * original tool call. Returns a guard decision ({ outcome: allow|deny, ... }),
+   * { outcome: 'pending' } when the hold-open budget lapses undecided (the entry
+   * stays pending; resume_action remains the fallback), or 'aborted' when the
+   * caller went away (the entry also stays pending and resumable).
+   */
+  async function holdOpen(entry, signal) {
+    const deadline = Math.min(entry.createdAt + PENDING_TTL_MS, Date.now() + holdOpenMs);
+    for (;;) {
+      if (signal?.aborted) return 'aborted';
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return { outcome: 'pending', approvalId: entry.approvalId };
+      const wait = guard.awaitApproval({ approvalId: entry.approvalId, tool: entry.tool, args: entry.args, nonce: entry.nonce, waitMs: Math.min(remaining, HOLD_OPEN_SLICE_MS) });
+      let decision;
+      if (signal) {
+        let onAbort;
+        const aborted = new Promise((r) => { onAbort = () => r('aborted'); signal.addEventListener('abort', onAbort, { once: true }); });
+        decision = await Promise.race([wait, aborted]);
+        signal.removeEventListener('abort', onAbort);
+        // The abandoned poll is discarded unread: it mutates nothing, and the
+        // claim in call()/resume() is the only gate to dispatch.
+        if (decision === 'aborted') return 'aborted';
+      } else {
+        decision = await wait;
+      }
+      if (decision.outcome !== 'pending') return decision;
+    }
   }
 
   // Tell Guard what happened to a decision (executive-guard/docs/OUTCOMES.md). Best effort, audited here too.
@@ -68,7 +116,7 @@ export function createHands({ config, guard, hub, audit }) {
     return text(out);
   }
 
-  async function call(tool, rawArgs, auth = {}) {
+  async function call(tool, rawArgs, auth = {}, { signal } = {}) {
     const requestId = `hreq_${randomUUID()}`;
     const clientId = auth.clientId || 'unknown';
     const scopes = Array.isArray(auth.scopes) ? auth.scopes : [];
@@ -97,9 +145,29 @@ export function createHands({ config, guard, hub, audit }) {
 
     const decision = await guard.authorize({ tool, args });
     if (decision.outcome === 'pending') {
-      pending.set(requestId, { tool, args, nonce: decision.nonce, approvalId: decision.approvalId, clientId, createdAt: Date.now() });
+      const entry = { tool, args, nonce: decision.nonce, approvalId: decision.approvalId, clientId, createdAt: Date.now(), state: 'waiting' };
+      pending.set(requestId, entry);
       audit.append({ event: 'pending.guard', requestId, tool, clientId, approvalId: decision.approvalId });
-      return text(`Waiting for a human approval in Executive Guard (approval ${decision.approvalId}). Nothing has run. After it is approved, call resume_action with requestId "${requestId}" (valid 15 minutes).`);
+      // Hold the call open for the human's decision. Losing the hold (budget
+      // lapsed, caller disconnected) degrades to exactly the old behaviour:
+      // the pending text + requestId, with the entry kept for resume_action.
+      const settled = await holdOpen(entry, signal);
+      if (settled === 'aborted' || settled.outcome === 'pending') {
+        return text(`Waiting for a human approval in Executive Guard (approval ${decision.approvalId}). Nothing has run. After it is approved, call resume_action with requestId "${requestId}" (valid 15 minutes).`);
+      }
+      if (settled.outcome !== 'allow') {
+        pending.delete(requestId);
+        audit.append({ event: 'denied.guard', requestId, tool, clientId, reason: settled.reason });
+        await reportRefused({ requestId, tool, decisionId: settled.unusedDecisionId, nonce: decision.nonce, reason: settled.reason });
+        return text(`Denied: ${settled.reason} Nothing ran.`, true);
+      }
+      if (!claim(entry)) return text('A resume_action call picked this action up while this call was waiting; it runs exactly once, there.');
+      audit.append({ event: 'allowed.guard', requestId, tool, clientId, approvalId: settled.claims?.approvalId, decidedBy: settled.claims?.decidedBy });
+      try {
+        return await runOnPc({ requestId, tool, args, nonce: decision.nonce, envelope: settled.envelope, claims: settled.claims, clientId });
+      } finally {
+        entry.state = 'done';
+      }
     }
     if (decision.outcome !== 'allow') {
       await reportRefused({ requestId, tool, decisionId: decision.unusedDecisionId, nonce: decision.nonce, reason: decision.reason });
@@ -117,18 +185,26 @@ export function createHands({ config, guard, hub, audit }) {
     if (!p) return text('No pending action with that requestId (it may have expired or already run).', true);
     if (p.clientId !== clientId) return text('That pending action belongs to a different connection.', true);
     if (!(auth.scopes || []).includes('hands.act')) return text('This connection was not granted hands.act.', true);
+    if (p.state === 'done') return text('No pending action with that requestId: it already ran. Nothing ran twice.', true);
+    if (p.state === 'claimed') return text('That action is already being completed; nothing ran twice.', true);
     const decision = await guard.awaitApproval({ approvalId: p.approvalId, tool: p.tool, args: p.args, nonce: p.nonce, waitMs: 20000 });
     if (decision.outcome === 'pending') return text(`Still waiting for approval ${p.approvalId}. Nothing has run.`);
-    pending.delete(requestId);
+    // Terminal decision: exactly one completion path may consume it.
+    if (!claim(p)) return text('That action was already picked up by the original call; it runs exactly once, there.', true);
     if (decision.outcome !== 'allow') {
+      pending.delete(requestId);
       audit.append({ event: 'denied.guard', requestId, tool: p.tool, clientId, reason: decision.reason });
       await reportRefused({ requestId, tool: p.tool, decisionId: decision.unusedDecisionId, nonce: p.nonce, reason: decision.reason });
       return text(`Denied: ${decision.reason} Nothing ran.`, true);
     }
     const route = decideComputeRoute({ job: { needs: TOOLS[p.tool].needs, toolsMode: 'write', pinned: 'pc' }, presence: hub.presence() });
-    if (route.outcome !== 'route') return text(`${route.reason} Approved, but nothing ran.`, true);
+    if (route.outcome !== 'route') { pending.delete(requestId); return text(`${route.reason} Approved, but nothing ran.`, true); }
     audit.append({ event: 'allowed.guard', requestId, tool: p.tool, clientId, approvalId: decision.claims?.approvalId, decidedBy: decision.claims?.decidedBy });
-    return runOnPc({ requestId, tool: p.tool, args: p.args, nonce: p.nonce, envelope: decision.envelope, claims: decision.claims, clientId });
+    try {
+      return await runOnPc({ requestId, tool: p.tool, args: p.args, nonce: p.nonce, envelope: decision.envelope, claims: decision.claims, clientId });
+    } finally {
+      p.state = 'done';
+    }
   }
 
   function status() {

@@ -303,6 +303,7 @@ test('hold-open: a human approval during the wait completes the SAME call, and r
   const target = join(root, 'held.txt');
   const callPromise = callTool(app.base, token, 'write_file', { path: target, content: 'held open' });
   const approvalId = await untilApproval(guard);
+  await sleep(600); // past authorize's own short wait: the decision must land in the hold-open window
   await assert.rejects(readFile(target), 'nothing may run before the human decides');
   guard.decide(approvalId, true);
   const r = await callPromise; // the original call itself returns the real result
@@ -335,6 +336,7 @@ test('hold-open: a human denial during the wait returns the denial in the same c
   const target = join(root, 'denied-held.txt');
   const callPromise = callTool(app.base, token, 'write_file', { path: target, content: 'no' });
   const approvalId = await untilApproval(guard);
+  await sleep(600); // land the denial in the hold-open window, not authorize's own wait
   guard.decide(approvalId, false);
   const r = await callPromise;
   assert.ok(r.isError);
