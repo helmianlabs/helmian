@@ -1979,21 +1979,28 @@ async function loadDesktop() {
   wireGuardCreate();
 }
 
-// Left nav: the topbar button folds it to an icon rail; the choice is remembered.
+// Left nav: unpinned it rests as an icon rail that peeks open on hover or
+// keyboard focus (the .peek styles live in envoy.css, desktop pointers
+// only); the pin button on the rail itself keeps it expanded. The pin
+// choice is remembered. Touch uses the pin — there is no hover to catch.
 function wireRail() {
   const sidebar = document.getElementById('sidebar');
   const shellEl = document.querySelector('.shell');
-  const btn = document.getElementById('rail-toggle');
+  const btn = document.getElementById('rail-pin');
   if (!sidebar || !shellEl || sidebar.dataset.railWired) return;
   sidebar.dataset.railWired = '1';
   const setRail = (on) => {
     sidebar.classList.toggle('rail', on); shellEl.classList.toggle('sidebar-rail', on);
-    if (btn) { btn.textContent = on ? '»' : '«'; btn.title = on ? 'Expand navigation' : 'Collapse navigation'; btn.setAttribute('aria-pressed', String(on)); }
+    if (btn) { btn.setAttribute('aria-pressed', String(!on)); btn.title = on ? 'Pin navigation open' : 'Unpin navigation (folds to the icon rail)'; }
   };
-  // First visit on a laptop-sized screen starts on the rail so the chat gets the room.
-  let pinnedRail = store.get('navRail', window.innerWidth < 1600);
-  setRail(pinnedRail);
-  if (btn) btn.onclick = () => { pinnedRail = !pinnedRail; store.set('navRail', pinnedRail); setRail(pinnedRail); };
+  // First visit on a laptop-sized screen starts unpinned so the chat gets the room.
+  let pinned = store.get('navPinned', window.innerWidth >= 1600);
+  setRail(!pinned);
+  if (btn) btn.onclick = () => { pinned = !pinned; store.set('navPinned', pinned); setRail(!pinned); };
+  sidebar.addEventListener('mouseenter', () => sidebar.classList.add('peek'));
+  sidebar.addEventListener('mouseleave', () => sidebar.classList.remove('peek'));
+  sidebar.addEventListener('focusin', () => sidebar.classList.add('peek'));
+  sidebar.addEventListener('focusout', (e) => { if (!sidebar.contains(e.relatedTarget)) sidebar.classList.remove('peek'); });
 }
 
 function wireGuardCreate() {

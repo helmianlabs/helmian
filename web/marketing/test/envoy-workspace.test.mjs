@@ -99,3 +99,48 @@ test('desktop layout: agent CLI pane sits between chat and agents; channels are 
   assert.match(html, /id="ew-add-channel"[^>]*>\+ New channel</);
   assert.doesNotMatch(html, /ew-new-channel-agent/);
 });
+
+// Sliders fix (Troy's live report, 2026-10-23): every pane must drag in
+// both directions to a slim minimum, collapse must have a reveal path, and
+// the nav rail must collapse/peek from the rail itself.
+test('pane sliders: every pane has a split, a collapse control and a way back', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  for (const name of ['channels', 'cli', 'agents', 'guard', 'bench']) {
+    assert.match(html, new RegExp(`id="ew-${name}"`), name);
+    assert.match(html, new RegExp(`data-split="${name}"`), name);
+    assert.match(html, new RegExp(`data-collapse="${name}"`), name);
+  }
+  for (const name of ['cli', 'agents', 'guard', 'bench']) {
+    assert.match(html, new RegExp(`data-toggle="${name}"`), name);
+  }
+  assert.match(html, /data-open="channels"/);
+});
+
+test('splitter drag: pointer capture with cancel handling, per-pane floors, slide-to-collapse', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /setPointerCapture/);
+  assert.match(js, /pointercancel/);
+  assert.match(js, /PANE_MIN = \{ channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 \}/);
+  assert.match(js, /will-collapse/);
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.match(css, /\.ew\.dragging \.ew-pane \{ transition:none; flex-shrink:0; \}/);
+  assert.match(css, /\.ew-pane\.will-collapse/);
+  // CSS floors match the JS PANE_MIN table (a mismatch = dead drag travel).
+  for (const [pane, min] of Object.entries({ channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 })) {
+    assert.match(css, new RegExp(`\\.ew-${pane} \\{[^}]*min-width:${min}px`), pane);
+  }
+});
+
+test('nav rail: the pin lives on the rail, hover peek is desktop-pointer only', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="rail-pin"/);
+  assert.doesNotMatch(html, /id="rail-toggle"/);
+  const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  assert.match(js, /getElementById\('rail-pin'\)/);
+  assert.match(js, /store\.get\('navPinned'/);
+  assert.match(js, /classList\.add\('peek'\)/);
+  assert.match(js, /classList\.remove\('peek'\)/);
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(min-width: 901px\) and \(hover: hover\) and \(pointer: fine\)/);
+  assert.match(css, /\.sidebar\.rail\.peek \{/);
+});
