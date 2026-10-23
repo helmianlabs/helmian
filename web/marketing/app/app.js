@@ -901,6 +901,7 @@ async function loadFeedData() {
   state.findings = gf.status === 'fulfilled' && Array.isArray(gf.value.findings) ? gf.value.findings : [];
   const pending = state.approvals.filter((a) => !a.decision).length;
   $('#approvals-badge').hidden = pending === 0; $('#approvals-badge').textContent = String(pending);
+  refreshUpcomingBadge();
   renderFeed();
 }
 async function decide(item, decision) {
@@ -1189,6 +1190,28 @@ function renderApprovals() {
   }));
 }
 async function loadApprovals() { await loadFeedData(); renderApprovals(); loadPcApprovals(); }
+// Approve/Deny buttons for one Guard PC approval, wired to the shared decide
+// route. Used by both the Approvals panel and the Upcoming queue.
+function pcDecideButtons(a, refresh) {
+  const row = el('div', 'row-btns left');
+  for (const approve of [true, false]) {
+    const b = el('button', approve ? 'btn primary sm' : 'btn ghost sm', approve ? 'Approve' : 'Deny');
+    b.type = 'button';
+    b.onclick = async () => {
+      if (approve && !confirm(`Approve on your PC: ${a.summary || a.tool}?`)) return;
+      b.disabled = true;
+      try {
+        const r = await fetch('/api/admin/guard/pc-approvals/decide', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalId: a.approvalId, approve }) });
+        const out = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(out.error || `HTTP ${r.status}`);
+        toast(approve ? 'Approved. The AI can run it once.' : 'Denied. Nothing ran.', 'ok');
+      } catch (error) { toast(error.message || 'Could not record the decision'); }
+      refresh();
+    };
+    row.append(b);
+  }
+  return row;
+}
 // PC actions waiting in Executive Guard (hands connector). Owner-only; hidden when not set up.
 async function loadPcApprovals() {
   const panel = $('#pc-approvals-panel');
@@ -1206,26 +1229,69 @@ async function loadPcApprovals() {
   $('#pc-approvals').replaceChildren(...items.map((a) => {
     const card = el('div', 'card');
     card.append(el('strong', null, a.summary || a.tool || 'PC action'), el('p', 'muted sm', `${a.reason || ''}${a.expiresAt ? ` · expires ${formatTime(a.expiresAt)}` : ''}`));
-    const row = el('div', 'row-btns left');
-    for (const approve of [true, false]) {
-      const b = el('button', approve ? 'btn primary sm' : 'btn ghost sm', approve ? 'Approve' : 'Deny');
-      b.type = 'button';
-      b.onclick = async () => {
-        if (approve && !confirm(`Approve on your PC: ${a.summary || a.tool}?`)) return;
-        b.disabled = true;
-        try {
-          const r = await fetch('/api/admin/guard/pc-approvals/decide', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalId: a.approvalId, approve }) });
-          const out = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(out.error || `HTTP ${r.status}`);
-          toast(approve ? 'Approved. The AI can run it once.' : 'Denied. Nothing ran.', 'ok');
-        } catch (error) { toast(error.message || 'Could not record the decision'); }
-        loadPcApprovals();
-      };
-      row.append(b);
-    }
-    card.append(row);
+    card.append(pcDecideButtons(a, loadPcApprovals));
     return card;
   }));
+}
+// ---- upcoming: the whole Guard queue in one place ----
+// Pending approvals are waiting on the human; approved ones are waiting on the
+// PC to pick them up before their window closes. Sorted soonest expiry first
+// by the proxy, so nothing waits invisibly.
+function countdownLabel(iso) {
+  const ms = Date.parse(iso) - Date.now();
+  if (Number.isNaN(ms)) return '';
+  if (ms <= 0) return 'expired';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `expires in ${mins}m`;
+  return `expires in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+let upcomingTimer = null;
+function setUpcomingBadge(total) {
+  const badge = $('#upcoming-badge');
+  if (!badge) return;
+  badge.hidden = !total;
+  badge.textContent = String(total || '');
+}
+async function fetchUpcoming() {
+  const res = await fetch('/api/admin/guard/pc-upcoming', { credentials: 'same-origin' });
+  if (res.status === 503 || res.status === 403 || res.status === 401) return null;
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+}
+async function refreshUpcomingBadge() {
+  try { const body = await fetchUpcoming(); setUpcomingBadge(body ? (body.counts?.total || 0) : 0); }
+  catch { /* the badge is best-effort; the Upcoming view itself reports Guard problems */ }
+}
+async function loadUpcoming() {
+  const box = $('#upcoming'); const status = $('#upcoming-status'); const expired = $('#upcoming-expired');
+  if (!box) return;
+  let body;
+  try { body = await fetchUpcoming(); }
+  catch (error) { status.textContent = `Guard is unreachable (${error.message}). Nothing will run until it answers.`; box.replaceChildren(); expired.hidden = true; return; }
+  if (!body) { status.textContent = 'PC approvals are not set up for your account. Only the PC owner sees this queue.'; box.replaceChildren(); expired.hidden = true; setUpcomingBadge(0); return; }
+  const queue = Array.isArray(body.queue) ? body.queue : [];
+  setUpcomingBadge(body.counts?.total ?? queue.length);
+  status.textContent = queue.length ? 'Soonest expiry first. Pending items wait on you; approved items are waiting for your PC to run them.' : 'Nothing is waiting. When an AI asks to act on your PC, it shows up here.';
+  box.replaceChildren(...queue.map((a) => {
+    const card = el('div', 'card');
+    const who = [a.tool, a.site, a.deviceId ? `asked by ${a.deviceId}` : ''].filter(Boolean).join(' · ');
+    const cd = el('span', null, a.expiresAt ? countdownLabel(a.expiresAt) : '');
+    if (a.expiresAt) cd.dataset.expires = a.expiresAt;
+    const meta = el('p', 'muted sm');
+    meta.append(`${a.status === 'approved' ? 'Approved · waiting for your PC to run it' : 'Waiting on you'}${who ? ` · ${who}` : ''}${a.reason ? ` · ${a.reason}` : ''}${a.expiresAt ? ' · ' : ''}`, cd);
+    card.append(el('strong', null, a.summary || a.tool || 'PC action'), meta);
+    if (a.status === 'pending') card.append(pcDecideButtons(a, loadUpcoming));
+    return card;
+  }));
+  const n = body.counts?.expiredRecent || 0;
+  expired.hidden = !n;
+  if (n) expired.textContent = `${n} approval${n === 1 ? '' : 's'} expired in the last 24 hours before anyone decided.`;
+  if (upcomingTimer) clearInterval(upcomingTimer);
+  upcomingTimer = setInterval(() => {
+    if (shell.dataset.view !== 'upcoming') return;
+    for (const s of document.querySelectorAll('#upcoming [data-expires]')) s.textContent = countdownLabel(s.dataset.expires);
+  }, 30000);
 }
 async function loadActivity() {
   await loadFeedData();
@@ -2124,7 +2190,7 @@ async function loadGuardCreateList() {
   } catch { if (!list.children.length) status.textContent = 'Could not load.'; }
 }
 
-const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
+const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, upcoming: loadUpcoming, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- boot ----
