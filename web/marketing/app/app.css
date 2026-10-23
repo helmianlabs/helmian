@@ -16,7 +16,7 @@ a { color:var(--accent); } [hidden] { display:none !important; }
 h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; font-weight:600; }
 
 .shell { display:grid; height:100dvh; grid-template-columns:var(--side-w) minmax(0,1fr) var(--guard-w); transition:grid-template-columns 0.25s ease; }
-.shell.sidebar-rail { --side-w: 56px; }
+/* Rail width is single-sourced in envoy.css (--rail-w); do not redeclare. */
 .shell.full .sidebar, .shell.full .guard { display:none; } .shell.full { grid-template-columns:1fr; }
 
 /* left - EXE-style: collapses to icon rail, hover to expand */
@@ -34,7 +34,7 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
   white-space: nowrap;
 }
 .sidebar.rail {
-  width: 56px;
+  /* width comes from the grid track (envoy.css --rail-w); no width here. */
   padding: 16px 8px;
 }
 .sidebar.rail .logo strong,
