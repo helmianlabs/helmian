@@ -228,3 +228,36 @@ test('nav rail: the pin lives on the rail, hover peek is desktop-pointer only', 
   assert.match(css, /@media \(min-width: 901px\) and \(hover: hover\) and \(pointer: fine\)/);
   assert.match(css, /\.sidebar\.rail\.peek \{/);
 });
+
+// Polish Bites C/D (audit 2026-10-23): F2's leftover double animation, the
+// rail tooltips (I1) and the I2 interim — the composer "+" becomes a
+// labelled Tools button until real file attach lands (Bite I).
+test('I1: every nav item carries a rail tooltip (data-tip) matching its label', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const items = [...html.matchAll(/<button class="nav-item[^"]*"([^>]*)>([\s\S]*?)<\/button>/g)]
+    .filter((m) => m[1].includes('data-view='));
+  assert.equal(items.length, 13, 'all 13 view nav items are present');
+  for (const [, attrs, inner] of items) {
+    const tip = attrs.match(/data-tip="([^"]+)"/)?.[1];
+    const label = inner.match(/<span class="label">([^<]+)<\/span>/)?.[1];
+    assert.ok(tip, `nav item "${label}" carries data-tip for rail mode`);
+    assert.equal(tip, label, 'the rail tooltip text is the nav label');
+  }
+});
+
+test('I2 interim: both composer "+" buttons are labelled Tools buttons; openers unchanged', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const maestro = html.match(/<button[^>]*id="maestro-plus"[^>]*>([\s\S]*?)<\/button>/);
+  assert.ok(maestro, '#maestro-plus exists');
+  assert.match(maestro[1], /🔧/, 'maestro composer button shows the wrench glyph');
+  assert.match(maestro[1], /Tools/, 'maestro composer button shows the word Tools');
+  const consoleBtn = html.match(/<button[^>]*data-tool="tools"[^>]*>([\s\S]*?)<\/button>/);
+  assert.ok(consoleBtn, 'console composer tools button exists');
+  assert.match(consoleBtn[1], /🔧/, 'console composer button shows the wrench glyph');
+  assert.match(consoleBtn[1], /Tools/, 'console composer button shows the word Tools');
+  // Click behavior is untouched: both still open Tools / Integrations.
+  const ejs = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(ejs, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => ws\.ctx\.openTools\?\.\(\)\)/);
+  const ajs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  assert.match(ajs, /t\.dataset\.tool === 'tools'\) openTools\(\)/);
+});
