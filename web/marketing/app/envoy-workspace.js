@@ -1,7 +1,8 @@
-// Envoy workspace for the Desktop view: channels | chat | agents | workbench.
+// Envoy workspace for the Desktop view: channels | chat | agent CLI | agents | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
+import { addSession, sessionsFromServer } from './app-model.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' };
@@ -139,7 +140,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null) } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -178,7 +179,7 @@ function renderHeadAvatar() {
   const c = ws.channels.find((x) => x.id === ws.channelId);
   b.replaceChildren(c ? chatAvatar(c) : h('span', { class: 'ew-hash' }, '#'));
 }
-function renderNewSessionAvatar() {
+function renderNewChannelAvatar() {
   const box = $('ew-new-avatar'); if (!box) return;
   const name = () => $('ew-new-channel-name').value.trim() || 'New chat';
   ws.pendingAvatar = defaultChoice(name(), isPlain() ? 'plain' : 'playful');
@@ -221,8 +222,9 @@ function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.she
 function applyLayout() {
   const root = document.documentElement;
   for (const [k, v] of Object.entries(ls.get('widths', {}))) if (v > 120 && v < 1400) root.style.setProperty(`--ew-${k}`, `${v}px`);
-  if (narrow()) { for (const p of ['channels', 'agents', 'guard', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
+  if (narrow()) { for (const p of ['channels', 'cli', 'agents', 'guard', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
   setPane('channels', ls.get('open.channels', true));
+  setPane('cli', ls.get('open.cli', true));
   setPane('guard', ls.get('open.guard', true));
   setPane('bench', ls.get('open.bench', window.innerWidth >= 1680));
   syncAgentsPane();
@@ -277,9 +279,9 @@ async function loadChannels() {
   renderChannels();
 }
 function currentTitle() { const c = ws.channels.find((x) => x.id === ws.channelId); return c?.title || c?.slug || 'channel'; }
-function openNewSession() {
+function openNewChannel() {
   setPane('channels', true);
-  $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; renderNewSessionAvatar(); $('ew-new-channel-name').focus();
+  $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; renderNewChannelAvatar(); $('ew-new-channel-name').focus();
 }
 function renderChannels() {
   const list = $('ew-channel-list');
@@ -358,8 +360,7 @@ function renderAgents() {
   // Agent picker in the CLI: agents here are @mention pills; the rest add in one click.
   $('ew-mention-pills').replaceChildren(...(roster.length > 1 ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
     ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
-    ...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)),
-    h('button', { type: 'button', class: 'ew-pill session', title: 'Start a new agent session', onclick: openNewSession }, '+ New session'));
+    ...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
   $('ew-mention-pills').hidden = false;
 }
 async function changeAgent(action, provider) {
@@ -452,6 +453,101 @@ async function send(e) {
   box.value = ''; grow();
   try { await ws.ctx.post('/api/admin/envoy/messages', { channelId: ws.channelId, body, idempotencyKey: key }); ws.sig = null; await loadMessages(); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
+  finally { btn.disabled = false; }
+}
+
+// ---------- agent CLI pane: sessions + prompt composer ----------
+// The agent command chat: just the human and the agents, separate from
+// the human channel chat. Sessions reuse the Session console's plumbing
+// (/api/admin/app/sessions — the same create/list payloads as app.js's
+// #session-form, with the same local fallback); prompts post through the
+// same envoy messages endpoint the console composer uses, into the open
+// channel, addressed with the @mention routing the chat already honours.
+// Maestro is the router, not a session provider (the server offers
+// Claude/ChatGPT/Grok/Gemini), so picking Maestro sends unaddressed and
+// lets Maestro route it — the rule the chat already runs on.
+const CLI_KEY_BY_PROVIDER = { Claude: 'claude', ChatGPT: 'openai', Grok: 'grok', Gemini: 'gemini' };
+function cliTarget() {
+  const s = ws.cli.sessions.find((x) => x.id === ws.cli.activeId);
+  if (s) return { key: CLI_KEY_BY_PROVIDER[s.provider] ?? 'maestro', session: s };
+  return { key: ws.cli.provider, session: null };
+}
+function renderCliChips() {
+  const active = cliTarget().key;
+  $('ew-cli-chips').replaceChildren(...AGENTS.map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: p === 'maestro' ? 'Maestro routes to the others' : `Start a ${NAMES[p]} session`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
+}
+function renderCliTo() {
+  const { key, session } = cliTarget();
+  $('ew-cli-to').textContent = session ? `To: ${session.provider} · session "${session.name}"` : key === 'maestro' ? 'To: Maestro · routes to the others' : `To: ${NAMES[key]}`;
+  $('ew-cli-input').placeholder = session ? `Prompt ${session.provider}...` : 'Prompt...';
+}
+function renderCliSessions() {
+  const box = $('ew-cli-sessions');
+  if (!ws.cli.sessions.length) { box.replaceChildren(h('p', { class: 'ew-note' }, 'No sessions yet. Pick an agent above to start one.')); return; }
+  box.replaceChildren(...ws.cli.sessions.map((s) => {
+    const key = CLI_KEY_BY_PROVIDER[s.provider] ?? 'maestro';
+    const prog = s.progress && s.progress.total ? `${s.progress.done}/${s.progress.total} steps${s.progress.current ? ` · now: ${s.progress.current}` : ''}` : clock(s.createdAt);
+    return h('button', { type: 'button', class: `ew-cli-session${s.id === ws.cli.activeId ? ' active' : ''}`, title: `${s.name} (${s.provider})`, onclick: () => selectCliSession(s.id) },
+      avatarImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
+  }));
+}
+function selectCliSession(id) {
+  const s = ws.cli.sessions.find((x) => x.id === id); if (!s) return;
+  ws.cli.activeId = id; ls.set('cliSession', id);
+  ws.cli.provider = CLI_KEY_BY_PROVIDER[s.provider] ?? ws.cli.provider;
+  if (ws.ctx.state) ws.ctx.state.activeSession = id;
+  renderCliChips(); renderCliSessions(); renderCliTo();
+  $('ew-cli-input').focus({ preventScroll: true });
+}
+function pickCliProvider(p) {
+  ws.cli.provider = p; ws.cli.activeId = null; ls.set('cliSession', null);
+  renderCliChips(); renderCliSessions(); renderCliTo();
+  if (p === 'maestro') { $('ew-cli-session-form').hidden = true; $('ew-cli-input').focus({ preventScroll: true }); return; }
+  ws.cli.pending = p;
+  const input = $('ew-cli-session-name');
+  $('ew-cli-session-form').hidden = false;
+  input.value = `${NAMES[p]} session`; input.select(); input.focus();
+}
+async function loadCliSessions() {
+  try {
+    const body = await ws.ctx.api('/api/admin/app/sessions');
+    ws.cli.sessions = sessionsFromServer(body); ws.cli.server = true;
+  } catch { ws.cli.server = false; ws.cli.sessions = ls.get('cliSessions', []); }
+  // Adopt the shared active session (sidebar / Session console) when listed.
+  const shared = ws.ctx.state?.activeSession;
+  if (shared && ws.cli.sessions.some((s) => s.id === shared)) ws.cli.activeId = shared;
+  if (!ws.cli.sessions.some((s) => s.id === ws.cli.activeId)) ws.cli.activeId = null;
+  renderCliChips(); renderCliSessions(); renderCliTo();
+}
+async function createCliSession(name) {
+  const provider = NAMES[ws.cli.pending] ?? 'Claude';
+  try {
+    const r = await ws.ctx.post('/api/admin/app/sessions', { name, provider, idempotencyKey: crypto.randomUUID() });
+    await loadCliSessions();
+    if (r.session?.id) selectCliSession(r.session.id);
+  } catch {
+    // Same offline fallback as the Session console: keep the session locally.
+    ws.cli.sessions = addSession(ws.cli.sessions, { name, provider });
+    ls.set('cliSessions', ws.cli.sessions);
+    ws.cli.activeId = ws.cli.sessions[0]?.id ?? null; ls.set('cliSession', ws.cli.activeId);
+    renderCliChips(); renderCliSessions(); renderCliTo();
+  }
+  ws.ctx.toast('Session started', 'ok');
+}
+const growCli = () => { const t = $('ew-cli-input'); t.style.height = 'auto'; t.style.height = `${Math.min(t.scrollHeight, 200)}px`; };
+async function sendCli(e) {
+  e?.preventDefault?.();
+  const box = $('ew-cli-input'); const raw = box.value.trim();
+  if (!raw) return;
+  if (!ws.channelId) { ws.ctx.toast('No channel open yet — the prompt needs a channel to land in.'); return; }
+  const { key } = cliTarget();
+  const tag = key === 'maestro' ? '' : `@${NAMES[key]} `;
+  const body = tag && !raw.toLowerCase().startsWith(tag.trim().toLowerCase()) ? tag + raw : raw;
+  const btn = $('ew-cli-send'); btn.disabled = true;
+  try {
+    await ws.ctx.post('/api/admin/envoy/messages', { channelId: ws.channelId, body, idempotencyKey: crypto.randomUUID() });
+    box.value = ''; growCli(); ws.sig = null; await loadMessages();
+  } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
   finally { btn.disabled = false; }
 }
 
@@ -585,7 +681,7 @@ function wire() {
   $('ew-scrim').addEventListener('click', closeSheets);
   $('ew-bench-max').addEventListener('click', () => { const on = $('ew').classList.toggle('bench-max'); $('ew-bench-max').textContent = on ? '⤡' : '⤢'; $('ew-bench-max').title = on ? 'Restore' : 'Expand'; });
   for (const t of document.querySelectorAll('#ew-bench .ew-tab')) t.addEventListener('click', () => selectTab(t.dataset.tab));
-  $('ew-add-channel').addEventListener('click', openNewSession);
+  $('ew-add-channel').addEventListener('click', openNewChannel);
   $('ew-chat-ava').addEventListener('click', openAvatarModal);
   wireSwipe();
   $('ew-new-channel-cancel').addEventListener('click', () => { $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; });
@@ -594,11 +690,10 @@ function wire() {
     const title = $('ew-new-channel-name').value.trim(); if (!title) return;
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'channel';
     try {
-      const made = await ws.ctx.post('/api/admin/envoy/channels', { slug, title, kind: $('ew-new-channel-agent').value ? 'agent' : 'team' });
+      const made = await ws.ctx.post('/api/admin/envoy/channels', { slug, title, kind: 'team' });
       $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; $('ew-new-channel-name').value = '';
       if (made.channel?.id && made.inserted !== false) saveAvatar(made.channel.id, ws.pendingAvatar);
       await loadChannels(); ws.channelId = made.channel?.id ?? ws.channelId;
-      const agent = $('ew-new-channel-agent').value; if (agent && made.inserted !== false) await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'add-agent', channelId: ws.channelId, provider: agent }).catch(() => {});
       await selectChannel(ws.channelId);
     } catch { ws.ctx.toast('Channel not created.'); }
   });
@@ -607,6 +702,22 @@ function wire() {
   box.addEventListener('input', grow);
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
   $('maestro-plus').addEventListener('click', () => ws.ctx.openTools?.());
+  // Agent CLI pane
+  renderCliChips(); renderCliSessions(); renderCliTo();
+  $('ew-cli-new').addEventListener('click', () => pickCliProvider(ws.cli.provider === 'maestro' ? 'claude' : ws.cli.provider));
+  $('ew-cli-session-cancel').addEventListener('click', () => { $('ew-cli-session-form').hidden = true; });
+  $('ew-cli-session-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('ew-cli-session-name').value.trim(); if (!name) return;
+    $('ew-cli-session-form').hidden = true;
+    await createCliSession(name);
+    $('ew-cli-input').focus({ preventScroll: true });
+  });
+  $('ew-cli-form').addEventListener('submit', sendCli);
+  const cliBox = $('ew-cli-input');
+  cliBox.addEventListener('input', growCli);
+  cliBox.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); sendCli(); } });
+  ws.ctx.wireCliVoice?.();
   $('ew-link-discord').addEventListener('click', linkDiscord);
   $('ew-modal-close').addEventListener('click', closeModal);
   $('ew-modal').addEventListener('click', (e) => { if (e.target === $('ew-modal')) closeModal(); });
@@ -644,7 +755,7 @@ export async function mountWorkspace(ctx) {
   if (ctx.benchTab) { openBench(ctx.benchTab); ctx.benchTab = null; }
   ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
-  await Promise.allSettled([loadPresence(), loadConfig(), loadMessages()]);
+  await Promise.allSettled([loadPresence(), loadConfig(), loadMessages(), loadCliSessions()]);
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
   const visible = () => document.visibilityState === 'visible' && document.getElementById('shell')?.dataset.view === 'desktop';
   // Adaptive message poll: while any agent has pending work in the open

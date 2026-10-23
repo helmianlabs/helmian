@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, pendingAgentWork } from '../app/envoy-workspace.js';
 
 // pendingAgentWork mirrors the server's agentWork() rules
@@ -75,4 +76,26 @@ test('poll cadence: fast while work is pending, calm otherwise', () => {
   assert.equal(FAST_POLL_MS, 800);
   assert.equal(CALM_POLL_MS, 2500);
   assert.equal(AGENT_WORK_WINDOW_MS, 30 * 60_000);
+});
+
+// Layout bite 1 (Troy's ruling, 2026-10-23): the agent CLI is its own
+// center pane between the human chat and the agents roster; the channels
+// pane creates plain channels (no agent select), and "+ New session"
+// lives in the CLI pane.
+test('desktop layout: agent CLI pane sits between chat and agents; channels are plain', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const chat = html.indexOf('id="ew-chat"');
+  const cli = html.indexOf('id="ew-cli"');
+  const agents = html.indexOf('id="ew-agents"');
+  assert.ok(chat !== -1 && cli !== -1 && agents !== -1, 'chat, CLI and agents panes all exist');
+  assert.ok(chat < cli && cli < agents, 'CLI pane is between the chat and the agents roster');
+  assert.match(html, /data-pane="cli"/);
+  assert.match(html, /data-toggle="cli"/);
+  assert.match(html, /data-split="cli"/);
+  for (const id of ['ew-cli-chips', 'ew-cli-new', 'ew-cli-session-form', 'ew-cli-session-name', 'ew-cli-sessions', 'ew-cli-form', 'ew-cli-input', 'ew-cli-dictate', 'ew-cli-voice', 'ew-cli-send']) {
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  }
+  assert.match(html, /id="ew-cli-new"[^>]*>\+ New session</);
+  assert.match(html, /id="ew-add-channel"[^>]*>\+ New channel</);
+  assert.doesNotMatch(html, /ew-new-channel-agent/);
 });
