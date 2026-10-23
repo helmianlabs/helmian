@@ -14,7 +14,8 @@
 
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { copyFile, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, platform } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { MAX_OUTPUT_BYTES, TOOLS, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
@@ -231,6 +232,84 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
           const file = await confinePath(args.path, roots, { mustExist: false });
           await writeFile(file, args.content, 'utf8');
           return { ok: true, output: `Wrote ${Buffer.byteLength(args.content, 'utf8')} bytes to ${file}` };
+        }
+        case 'search_files': {
+          const dir = await confinePath(args.path, roots);
+          if (!(await stat(dir)).isDirectory()) return { ok: false, error: 'not a folder' };
+          const re = args.glob ? globToRegex(args.glob) : null;
+          const needle = args.query ? args.query.toLowerCase() : null;
+          const hits = [];
+          const deadline = Date.now() + 30000;
+          let visited = 0;
+          const walk = async (d) => {
+            if (hits.length >= args.maxResults || visited > 5000 || Date.now() > deadline) return;
+            const entries = await readdir(d, { withFileTypes: true }).catch(() => []);
+            for (const e of entries) {
+              if (hits.length >= args.maxResults || visited > 5000 || Date.now() > deadline) return;
+              visited += 1;
+              const full = join(d, e.name);
+              if (isSecretPath(full)) continue;
+              if (e.isDirectory()) { await walk(full); continue; }
+              if (!e.isFile()) continue;
+              if (re && !re.test(e.name)) continue;
+              if (!needle) { hits.push(full); continue; }
+              const st = await stat(full).catch(() => null);
+              if (!st || st.size > MAX_OUTPUT_BYTES) continue;
+              const buf = await readFile(full).catch(() => null);
+              if (!buf || buf.includes(0)) continue;
+              const lines = buf.toString('utf8').split('\n');
+              for (let i = 0; i < lines.length && hits.length < args.maxResults; i++) {
+                if (lines[i].toLowerCase().includes(needle)) hits.push(`${full}:${i + 1}: ${lines[i].trim().slice(0, 200)}`);
+              }
+            }
+          };
+          await walk(dir);
+          return { ok: true, output: cap(hits.length ? hits.join('\n') : `No matches under ${dir}`) };
+        }
+        case 'move_file': {
+          const from = await confinePath(args.path, roots);
+          const to = await confinePath(args.destination, roots, { mustExist: false });
+          if (await lstat(to).catch(() => null)) return { ok: false, error: `Destination already exists: ${args.destination}` };
+          await rename(from, to);
+          return { ok: true, output: `Moved ${from} to ${to}` };
+        }
+        case 'copy_file': {
+          const from = await confinePath(args.path, roots);
+          const to = await confinePath(args.destination, roots, { mustExist: false });
+          if (await lstat(to).catch(() => null)) return { ok: false, error: `Destination already exists: ${args.destination}` };
+          if ((await stat(from)).isDirectory()) await cp(from, to, { recursive: true, errorOnExist: true, force: false });
+          else await copyFile(from, to, fsConstants.COPYFILE_EXCL);
+          return { ok: true, output: `Copied ${from} to ${to}` };
+        }
+        case 'delete_file': {
+          const target = await confinePath(args.path, roots);
+          const st = await stat(target);
+          if (st.isDirectory() && !args.recursive) return { ok: false, error: 'That is a folder; pass recursive: true to delete it and everything inside.' };
+          await rm(target, { recursive: !!args.recursive });
+          return { ok: true, output: `Deleted ${target}` };
+        }
+        case 'make_dir': {
+          // Like write_file, the parent folder must already exist: one level only.
+          const dir = await confinePath(args.path, roots, { mustExist: false });
+          if (await lstat(dir).catch(() => null)) return { ok: false, error: `Already exists: ${args.path}` };
+          await mkdir(dir);
+          return { ok: true, output: `Created folder ${dir}` };
+        }
+        case 'edit_file': {
+          const file = await confinePath(args.path, roots);
+          const st = await stat(file);
+          if (!st.isFile()) return { ok: false, error: 'not a file' };
+          if (st.size > MAX_OUTPUT_BYTES) return { ok: false, error: 'file is larger than 64 KB; refused' };
+          const buf = await readFile(file);
+          if (buf.includes(0)) return { ok: false, error: 'binary file; refused' };
+          const text = buf.toString('utf8');
+          const count = text.split(args.find).length - 1;
+          if (count === 0) return { ok: false, error: 'find text not present in the file; nothing changed' };
+          if (count > 1 && !args.all) return { ok: false, error: `find text appears ${count} times; pass all: true to replace every occurrence, or nothing was changed` };
+          const next = args.all ? text.split(args.find).join(args.replace) : text.slice(0, text.indexOf(args.find)) + args.replace + text.slice(text.indexOf(args.find) + args.find.length);
+          if (Buffer.byteLength(next, 'utf8') > MAX_OUTPUT_BYTES) return { ok: false, error: 'the edit would make the file larger than 64 KB; nothing changed' };
+          await writeFile(file, next, 'utf8');
+          return { ok: true, output: `Replaced ${args.all ? count : 1} occurrence(s) in ${file}` };
         }
         default:
           return { ok: false, error: 'not implemented' };
