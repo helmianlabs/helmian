@@ -104,8 +104,12 @@ export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = 
     const hubStartedAt = new Date().toISOString();
     const decisionId = claims?.decisionId || null;
     const onLate = decisionId ? (late) => { void reportOutcome({ requestId, tool, decisionId, nonce, outcome: outcomeFromPc(late, hubStartedAt) }); } : null;
-    const result = await hub.dispatch({ requestId, tool, args, nonce: nonce ?? null, guardDecision: envelope ?? null, guardDeviceId: config.guard.deviceId }, { onLate });
-    audit.append({ event: result.ok ? 'executed' : 'failed', requestId, tool, clientId, error: result.error || undefined });
+    // Device binding (bite 2): the job is bound at creation to the device behind
+    // the hub's legacy "pc" presence slot — the device the routing step just
+    // approved. Only that device can claim the job or report its result.
+    const targetDeviceId = hub.presence().pc?.deviceId || null;
+    const result = await hub.dispatch({ requestId, tool, args, nonce: nonce ?? null, guardDecision: envelope ?? null, guardDeviceId: config.guard.deviceId, targetDeviceId }, { onLate });
+    audit.append({ event: result.ok ? 'executed' : 'failed', requestId, tool, clientId, deviceId: result.targetDeviceId || undefined, error: result.error || undefined });
     if (decisionId) {
       if (result.timedOut && !result.pickedUp) await reportRefused({ requestId, tool, decisionId, nonce, reason: 'the PC did not pick the job up in time' });
       else if (!result.timedOut) await reportOutcome({ requestId, tool, decisionId, nonce, outcome: outcomeFromPc(result, hubStartedAt) });
@@ -209,11 +213,16 @@ export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = 
 
   function status() {
     const pres = hub.presence();
+    // `pc` keeps its exact legacy shape for existing consumers (door, /app);
+    // `devices` is the additive per-device view: every connected spoke, by id.
+    const devices = {};
+    for (const [id, d] of Object.entries(pres.devices || {})) devices[id] = { online: true, lastSeenAt: d.lastSeenAt, capabilities: d.capabilities };
     return {
       handsEnabled: config.handsEnabled,
       guardLive: guard.live,
       mutatingTools: guard.live ? 'need a human Guard approval' : 'denied (Executive Guard not live)',
       pc: pres.pc ? { online: true, lastSeenAt: pres.pc.lastSeenAt, capabilities: pres.pc.capabilities } : { online: false },
+      devices,
     };
   }
 
