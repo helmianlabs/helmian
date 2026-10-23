@@ -10,8 +10,6 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .sidebar { width:auto; transition:padding var(--dur) var(--ease); }
 .sidebar .label, .sidebar .logo strong, .sidebar .logo span, .sidebar .side-head { transition:opacity var(--dur) var(--ease); }
 .sidebar.rail .nav-item { font-size:17px; }
-#rail-toggle { margin-right:4px; transition:transform var(--dur) var(--ease); }
-.shell.sidebar-rail #rail-toggle { transform:rotate(180deg); }
 
 /* The Desktop view is the chat: no floating chat drawer on top of it. */
 @media (min-width: 901px) { #shell { grid-template-columns:var(--side-w) minmax(0,1fr) 0; } #shell > #guard, #guard-toggle { display:none !important; } }
@@ -24,15 +22,20 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .ew { display:flex; height:100%; width:100%; overflow:hidden; background:var(--bg); }
 .ew-pane { display:flex; flex-direction:column; min-width:0; background:var(--panel); overflow:hidden;
   transition:flex-basis var(--dur) var(--ease), opacity var(--dur) var(--ease), transform var(--dur) var(--ease); }
-.ew-channels { flex:0 1 var(--ew-channels); min-width:180px; }
-.ew-agents { flex:0 1 var(--ew-agents); min-width:220px; }
-.ew-bench { flex:0 1 var(--ew-bench); min-width:320px; }
-.ew-guard { flex:0 1 var(--ew-guard); min-width:250px; }
-.ew-cli { flex:0 1 var(--ew-cli); min-width:240px; }
+/* Min-widths match PANE_MIN in envoy-workspace.js exactly; when the CSS
+   floor sat above the JS drag clamp the splitter had dead travel. */
+.ew-channels { flex:0 1 var(--ew-channels); min-width:132px; }
+.ew-agents { flex:0 1 var(--ew-agents); min-width:150px; }
+.ew-bench { flex:0 1 var(--ew-bench); min-width:200px; }
+.ew-guard { flex:0 1 var(--ew-guard); min-width:150px; }
+.ew-cli { flex:0 1 var(--ew-cli); min-width:150px; }
 /* Side panes give up width before the conversation does. */
 .ew-chat { flex:1 1 0; min-width:380px; background:var(--bg); }
 .ew-pane.collapsed { flex-basis:0 !important; min-width:0 !important; opacity:0; pointer-events:none; }
-.ew.dragging .ew-pane { transition:none; }
+.ew-pane.will-collapse { opacity:.45; }
+/* While a splitter drags, widths are frozen (envoy-workspace.js freeze()):
+   shrink off, so the dragged pane tracks the pointer 1:1. */
+.ew.dragging .ew-pane { transition:none; flex-shrink:0; }
 .ew.bench-max .ew-chat, .ew.bench-max .ew-agents, .ew.bench-max .ew-channels { flex:0 0 0 !important; opacity:0; pointer-events:none; }
 .ew.bench-max .ew-split { display:none; }
 .ew.bench-max .ew-chat, .ew.bench-max .ew-agents, .ew.bench-max .ew-channels { min-width:0 !important; }
@@ -260,6 +263,32 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   content:attr(data-tip); position:absolute; left:calc(100% + 10px); top:50%; transform:translateY(-50%);
   background:#0B1220; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; pointer-events:none; z-index:80; box-shadow:0 6px 18px rgba(0,0,0,.4); }
 .sidebar.rail .advanced-nav, .sidebar.rail .side-sessions, .sidebar.rail #appearance { display:none; }
+
+/* Rail peek: an unpinned rail expands over the content while the pointer is
+   on it or it holds keyboard focus (app.js toggles .peek from hover/focus),
+   and folds back to the icon strip when the pointer leaves. Desktop
+   pointers only — touch uses the pin button on the rail as its toggle,
+   and phones keep the drawer. The restores below undo every rail-mode
+   hiding rule above (envoy.css) and in app.css, !important for !important. */
+@media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+  .sidebar.rail.peek { position:fixed; left:0; top:0; bottom:0; width:228px; padding:16px 12px; z-index:55; overflow-y:auto; overflow-x:hidden; box-shadow:24px 0 48px rgba(0,0,0,.45); transition:width var(--dur) var(--ease), padding var(--dur) var(--ease); }
+  .sidebar.rail.peek .logo { justify-content:flex-start; padding:0 4px; }
+  .sidebar.rail.peek .logo strong { display:block; }
+  .sidebar.rail.peek .logo span, .sidebar.rail.peek .nav-item span.label { display:inline; }
+  .sidebar.rail.peek .side-head { display:flex; }
+  .sidebar.rail.peek .accordion { display:block; }
+  .sidebar.rail.peek .nav-item { justify-content:flex-start; padding:7px 10px; font-size:13.5px; }
+  .sidebar.rail.peek .nav-item[data-tip]:hover::after, .sidebar.rail.peek .nav-item[data-tip]:focus-visible::after { content:none; }
+  .sidebar.rail.peek .nav-item .badge { position:static; }
+  .sidebar.rail.peek .side-foot .svc { justify-content:flex-start; }
+  .sidebar.rail.peek .advanced-nav, .sidebar.rail.peek .side-sessions, .sidebar.rail.peek #appearance { display:block; }
+  .sidebar.rail.peek #project-filter { display:block !important; }
+  .sidebar.rail.peek #project-shelf, .sidebar.rail.peek #sessions, .sidebar.rail.peek #account { display:block !important; }
+  .sidebar.rail.peek #project-shelf-empty:not([hidden]) { display:block !important; }
+  .sidebar.rail.peek #new-project-form:not([hidden]) { display:flex !important; }
+  .sidebar.rail.peek #svc-text { display:inline !important; }
+  .sidebar.rail.peek .foot-links { display:flex !important; }
+}
 
 /* Right Guard column on non-Desktop pages: labelled actions, tidy tabs, no sideways scroll. */
 .guard-head { flex-wrap:nowrap; }
