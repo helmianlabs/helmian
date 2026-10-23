@@ -5839,11 +5839,8 @@
                        FontSize="22"
                        FontWeight="SemiBold"
                        FontFamily="{StaticResource AppFont}"
-                       Foreground="{DynamicResource TextBrush}" />
-            <TextBlock Text="Appearance, keys, and local preferences. Same glass density as Console and Room — no dense admin chrome."
-                       Style="{StaticResource MutedStyle}"
-                       Margin="0,6,0,18" />
-
+                       Foreground="{DynamicResource TextBrush}"
+                       Margin="0,0,0,18" />
             <Border Style="{StaticResource SettingsGlassCardStyle}">
               <!-- Keep theme explanation and picker in one responsive column.
                    The former fixed 340px picker column reduced the explanation
@@ -5899,12 +5896,6 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Margin="0,0,24,0">
                   <TextBlock Text="Text size" Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="Scales the whole window together — guard feed, nav, and console. Nothing overlaps."
-                             Style="{StaticResource MutedStyle}"
-                             Margin="0,6,0,0" />
-                  <TextBlock Text="Ctrl+  ·  Ctrl−  ·  Ctrl+0 reset"
-                             Style="{StaticResource MutedStyle}"
-                             Margin="0,6,0,0" />
                   <TextBlock x:Name="TextScalePersistenceLabel"
                              Text="Saved locally for this Windows user"
                              Foreground="{DynamicResource FaintTextBrush}"
@@ -5966,25 +5957,12 @@
             <!-- API Keys & Database Credentials -->
             <Border Style="{StaticResource SettingsGlassCardStyle}">
               <StackPanel>
-                <Grid Margin="0,0,0,12">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <StackPanel>
-                    <TextBlock Text="Keys &amp; database" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Text="Saved to local .env on this machine. Applied to live runtime processes."
-                               Style="{StaticResource MutedStyle}"
-                               Margin="0,6,0,0" />
-                  </StackPanel>
-                  <Border Grid.Column="1" Style="{StaticResource PillStyle}" VerticalAlignment="Top">
-                    <TextBlock Text="LOCAL ONLY" Foreground="{DynamicResource AccentBrush}" FontSize="9" FontWeight="Bold" />
-                  </Border>
-                </Grid>
-
-                <TextBlock Text="OpenAI · Anthropic · Gemini · Grok  ·  Secrets stay masked"
-                           Style="{StaticResource MutedStyle}"
-                           Margin="0,0,0,12" />
+                <StackPanel Margin="0,0,0,12">
+                  <TextBlock Text="Keys &amp; database" Style="{StaticResource SectionTitleStyle}" />
+                  <TextBlock Text="Saved to local .env on this machine. Applied to live runtime processes."
+                             Style="{StaticResource MutedStyle}"
+                             Margin="0,6,0,0" />
+                </StackPanel>
 
                 <!-- ============ OpenAI: sign in with ChatGPT subscription (preferred) ============ -->
                 <Border Background="{DynamicResource SurfaceRaisedBrush}"
@@ -5998,10 +5976,6 @@
                                FontSize="10"
                                FontWeight="Bold"
                                Margin="0,0,0,6" />
-                    <TextBlock Text="Signing in uses your ChatGPT Plus/Pro/Team plan instead of paying per API call. Helmion never sees your password — OpenAI opens your browser, you approve it there. The API key below stays as a fallback."
-                               Style="{StaticResource MutedStyle}"
-                               TextWrapping="Wrap"
-                               Margin="0,0,0,10" />
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                       <Button x:Name="ChatGptLoginButton"
                               Content="Login with ChatGPT"
@@ -6051,7 +6025,7 @@
                                FontSize="10"
                                FontWeight="Bold"
                                Margin="0,0,0,6" />
-                    <TextBlock Text="Anthropic does not allow a browser sign-in flow for third-party apps like Helmion. Instead: open a terminal, run &quot;claude setup-token&quot; (requires the Claude Code CLI and a Pro/Max/Team/Enterprise plan), and paste what it prints below. That token runs on your subscription instead of a metered API key. The API key below stays as a fallback."
+                    <TextBlock Text="Open a terminal, run &quot;claude setup-token&quot; (requires the Claude Code CLI and a Pro/Max/Team/Enterprise plan), and paste what it prints below. The API key below stays as a fallback."
                                Style="{StaticResource MutedStyle}"
                                TextWrapping="Wrap"
                                Margin="0,0,0,10" />
@@ -6102,10 +6076,6 @@
                                FontSize="10"
                                FontWeight="Bold"
                                Margin="0,0,0,6" />
-                    <TextBlock Text="Signing in uses your Google One AI Premium / Gemini Code Assist access instead of paying per API call. Helmion launches the Gemini CLI to sign in — it opens your browser, you approve it there. The API key below stays as a fallback."
-                               Style="{StaticResource MutedStyle}"
-                               TextWrapping="Wrap"
-                               Margin="0,0,0,10" />
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                       <Button x:Name="GeminiLoginButton"
                               Content="Login with Google"
@@ -6156,7 +6126,7 @@
                                FontSize="10"
                                FontWeight="Bold"
                                Margin="0,0,0,6" />
-                    <TextBlock Text="Antigravity's CLI shares the sign-in from the Antigravity desktop app — there is no separate login here. Helmion only READS that sign-in status and never changes it. This panel reports status; it does not by itself route your chat turns through Antigravity."
+                    <TextBlock Text="This panel reports the sign-in status shared from the Antigravity app; it does not by itself route your chat turns through Antigravity."
                                Style="{StaticResource MutedStyle}"
                                TextWrapping="Wrap"
                                Margin="0,0,0,10" />
@@ -6202,7 +6172,7 @@
                                FontSize="10"
                                FontWeight="Bold"
                                Margin="0,0,0,6" />
-                    <TextBlock Text="Signs in the official Grok app (Grok Build) in the background, so Grok uses your plan instead of paying per API call. Helmian never sees your password: xAI shows a code, you approve it in your browser. Your plan must include Grok Build. The API key below stays as a fallback."
+                    <TextBlock Text="Uses your SuperGrok plan instead of paying per API call. Your plan must include Grok Build. The API key below stays as a fallback."
                                Style="{StaticResource MutedStyle}"
                                TextWrapping="Wrap"
                                Margin="0,0,0,10" />
@@ -6449,26 +6419,6 @@
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
                   <StackPanel>
-                    <TextBlock Text="Mode" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
-                    <TextBlock Text="Presentation policy" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
-                  </StackPanel>
-                  <TextBlock Grid.Column="1"
-                             Text="Helmian"
-                             Foreground="{DynamicResource AccentBrush}"
-                             FontWeight="SemiBold"
-                             VerticalAlignment="Center" />
-                  <Border Grid.Column="2" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
-                    <TextBlock Text="ACTIVE" Foreground="{DynamicResource AccentBrush}" FontSize="10" FontWeight="Bold" />
-                  </Border>
-                </Grid>
-                <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,18,0,0" />
-                <Grid Margin="0,18,0,0">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="190" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <StackPanel>
                     <TextBlock Text="Data source" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
                     <TextBlock Text="Operational state" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
                   </StackPanel>
@@ -6477,26 +6427,6 @@
                              Foreground="{DynamicResource SoftTextBrush}"
                              FontWeight="SemiBold"
                              VerticalAlignment="Center" />
-                </Grid>
-                <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,18,0,0" />
-                <Grid Margin="0,18,0,0">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="190" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <StackPanel>
-                    <TextBlock Text="Advanced owner signing" Foreground="{DynamicResource SoftTextBrush}" FontWeight="SemiBold" />
-                    <TextBlock Text="Optional high-risk ceremony" Style="{StaticResource MutedStyle}" Margin="0,4,0,0" />
-                  </StackPanel>
-                  <TextBlock Grid.Column="1"
-                             Text="Not configured"
-                             Foreground="{DynamicResource SoftTextBrush}"
-                             FontWeight="SemiBold"
-                             VerticalAlignment="Center" />
-                  <Border Grid.Column="2" Style="{StaticResource PillStyle}" VerticalAlignment="Center">
-                    <TextBlock Text="OPTIONAL · OFF" Foreground="{DynamicResource MutedTextBrush}" FontSize="10" FontWeight="Bold" />
-                  </Border>
                 </Grid>
                 <Border BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="0,1,0,0" Margin="0,18,0,0" />
                 <Grid Margin="0,18,0,0">
@@ -6527,37 +6457,6 @@
               </StackPanel>
             </Border>
 
-            <Grid Margin="0,0,0,0">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="*" />
-              </Grid.ColumnDefinitions>
-              <Border Grid.Column="0" Style="{StaticResource SettingsGlassCardStyle}" Margin="0,0,7,0">
-                <StackPanel>
-                  <TextBlock Text="Safety defaults" Style="{StaticResource SectionTitleStyle}" />
-                  <!-- Honest: keys load from .env; Sync Profile writes agent config. -->
-                  <TextBlock Text="• Keys load from .env and stay on this machine"
-                             Foreground="{DynamicResource SoftTextBrush}" FontSize="12" Margin="0,12,0,0" TextWrapping="Wrap" />
-                  <TextBlock Text="• Agent config writes only when you Sync Profile"
-                             Foreground="{DynamicResource SoftTextBrush}" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap" />
-                  <TextBlock Text="• Deploy / high-risk ops need human confirm (not auto)"
-                             Foreground="{DynamicResource SoftTextBrush}" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap" />
-                  <TextBlock Text="• Advisor output stays low-trust until you promote"
-                             Foreground="{DynamicResource SoftTextBrush}" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap" />
-                </StackPanel>
-              </Border>
-              <Border Grid.Column="1" Style="{StaticResource SettingsGlassCardStyle}" Margin="7,0,0,0">
-                <StackPanel>
-                  <TextBlock Text="Build identity" Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="Version" Style="{StaticResource SettingsFieldLabelStyle}" Margin="0,12,0,0" />
-                  <TextBlock Text="0.1.0 · pilot shell" Foreground="{DynamicResource SoftTextBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" />
-                  <TextBlock Text="Runtime" Style="{StaticResource SettingsFieldLabelStyle}" Margin="0,12,0,0" />
-                  <TextBlock Text=".NET 10 · WPF · Windows x64" Foreground="{DynamicResource SoftTextBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" />
-                  <TextBlock Text="Readiness" Style="{StaticResource SettingsFieldLabelStyle}" Margin="0,12,0,0" />
-                  <TextBlock Text="Local desktop shell" Foreground="{DynamicResource AccentBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,2,0,0" />
-                </StackPanel>
-              </Border>
-            </Grid>
           </StackPanel>
         </ScrollViewer>
       </Grid>
