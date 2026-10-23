@@ -10,7 +10,10 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 :root { --rail-w:60px; --side-full-w:228px; }
 .shell { --side-w:var(--side-full-w); }
 .shell.sidebar-rail { --side-w:var(--rail-w); }
-.sidebar { width:auto; transition:padding var(--dur) var(--ease); }
+/* F2: the sidebar itself never transitions width or padding — the .shell
+   grid track (app.css) is the only animated width, so pin/unpin moves one
+   thing at one rate and the right edge can't wobble. */
+.sidebar { width:auto; }
 .sidebar.rail { width:auto; }
 .sidebar .label, .sidebar .logo strong, .sidebar .logo span, .sidebar .side-head { transition:opacity var(--dur) var(--ease); }
 .sidebar.rail .nav-item { font-size:17px; }

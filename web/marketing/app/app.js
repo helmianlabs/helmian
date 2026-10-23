@@ -1560,6 +1560,7 @@ function renderAgentSessions(container, sessions) {
     const closeBtn = el('button', 'btn sm icon-btn', '✕');
     closeBtn.type = 'button';
     closeBtn.title = 'Close session';
+    closeBtn.setAttribute('aria-label', 'Close session');
     closeBtn.onclick = (e) => { e.stopPropagation(); closeAgentSession(s.id, s.name); };
     header.append(title, closeBtn);
 
