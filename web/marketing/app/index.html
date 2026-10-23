@@ -103,7 +103,7 @@
       </div>
     </section>
 
-    <!-- Desktop: Envoy workspace (channels | chat | agents | workbench). envoy-workspace.js drives it. -->
+    <!-- Desktop: Envoy workspace (channels | chat | agent CLI | agents | workbench). envoy-workspace.js drives it. -->
     <section id="view-desktop" class="view desktop" data-view-panel="desktop" hidden>
       <div class="ew" id="ew">
         <aside class="ew-pane ew-channels" id="ew-channels" data-pane="channels" aria-label="Channels">
@@ -114,12 +114,11 @@
           </header>
           <nav id="ew-channel-list" class="ew-channel-list" aria-label="Envoy channels"></nav>
           <form id="ew-new-channel" class="ew-new-channel" hidden>
-            <input id="ew-new-channel-name" maxlength="60" placeholder="Session or channel name" aria-label="Session or channel name" autocomplete="off">
-            <label class="ew-field">Agent<select id="ew-new-channel-agent" aria-label="Agent for this session"><option value="maestro">Maestro (routes to the others)</option><option value="claude">Claude</option><option value="openai">ChatGPT</option><option value="grok">Grok</option><option value="gemini">Gemini</option><option value="">None, team channel</option></select></label>
+            <input id="ew-new-channel-name" maxlength="60" placeholder="Channel name" aria-label="Channel name" autocomplete="off">
             <div class="ew-field">Look<div id="ew-new-avatar"></div></div>
             <div class="ew-row"><button type="button" class="ew-btn ghost sm" id="ew-new-channel-cancel">Cancel</button><button type="submit" class="ew-btn primary sm">Create</button></div>
           </form>
-          <button id="ew-add-channel" class="ew-btn ghost full" type="button">+ New session</button>
+          <button id="ew-add-channel" class="ew-btn ghost full" type="button">+ New channel</button>
           <footer class="ew-foot">
             <div class="ew-source"><img src="/assets/agents/maestro.png" alt="" width="14" height="14"> Helmian Envoy</div>
             <div class="ew-source" id="ew-discord-status"><span class="ew-discord-mark" aria-hidden="true"></span> Discord: <span id="ew-discord-status-text">checking…</span></div>
@@ -134,6 +133,7 @@
             <span id="ew-discord-badge" class="ew-badge discord" hidden></span>
             <span class="ew-spacer"></span>
             <button id="ew-link-discord" class="ew-btn sm" type="button" title="Mirror this channel with a Discord channel"><span class="ew-discord-mark" aria-hidden="true"></span><span class="lbl">Link Discord</span></button>
+            <button class="ew-btn sm ew-toggle" type="button" data-toggle="cli" aria-pressed="true" title="Agent chat: your CLI with the agents" aria-label="Agent chat"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3.4 4.1a1 1 0 0 0 0 1.4l2.5 2.5-2.5 2.5a1 1 0 1 0 1.4 1.4l3.2-3.2a1 1 0 0 0 0-1.4L8.8 8.1a1 1 0 0 0-1.4 0ZM13 15.5a1 1 0 1 0 0 2h4a1 1 0 1 0 0-2h-4Z"/></svg><span class="lbl">Agent chat</span></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="agents" aria-pressed="false" title="Agents in this channel" aria-label="Agents"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM9 13c-3.3 0-7 1.6-7 4.5V20h14v-2.5C16 14.6 12.3 13 9 13Zm7.5.2c1.6.8 2.5 2.1 2.5 4.3V20h3v-2.4c0-2.3-2.6-3.9-5.5-4.4Z"/></svg><span class="lbl">Agents</span> <b id="ew-agent-count">0</b></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="guard" aria-pressed="true" title="Guard: warnings, findings and approvals" aria-label="Guard"><span class="ew-shield" aria-hidden="true"></span><span class="lbl">Guard</span> <b id="ew-guard-count" class="ew-count" hidden></b></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="bench" aria-pressed="true" title="Workbench: Browser, Create, Canvas, Preview" aria-label="Workbench"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm9 2v12h7V6h-7Z"/></svg><span class="lbl">Workbench</span></button>
@@ -152,6 +152,36 @@
             </div>
           </form>
         </main>
+
+        <div class="ew-split" data-split="cli" role="separator" aria-orientation="vertical" aria-label="Resize agent chat" tabindex="0"></div>
+        <aside class="ew-pane ew-cli" id="ew-cli" data-pane="cli" aria-label="Agent chat">
+          <header class="ew-head">
+            <span class="eyebrow">AGENT CHAT</span><strong>Your CLI</strong>
+            <span class="ew-spacer"></span>
+            <button class="ew-icon" type="button" data-collapse="cli" aria-label="Hide agent chat" title="Hide agent chat">›</button>
+          </header>
+          <div class="ew-subhead">TALK TO</div>
+          <div class="ew-pills ew-cli-chips" id="ew-cli-chips" aria-label="Pick an agent"></div>
+          <form id="ew-cli-session-form" class="ew-cli-form" hidden>
+            <input id="ew-cli-session-name" maxlength="60" placeholder="Session name" aria-label="Session name" autocomplete="off">
+            <div class="ew-row"><button type="button" class="ew-btn ghost sm" id="ew-cli-session-cancel">Cancel</button><button type="submit" class="ew-btn primary sm">Start session</button></div>
+          </form>
+          <button id="ew-cli-new" class="ew-btn ghost full" type="button">+ New session</button>
+          <div class="ew-subhead">SESSIONS</div>
+          <div id="ew-cli-sessions" class="ew-cli-sessions" aria-label="Agent sessions"></div>
+          <p class="ew-note">A session is your running thread with one agent. Type below to talk: your prompt lands in the open channel, addressed to the agent you picked, and its answer shows up in the chat.</p>
+          <form id="ew-cli-form" class="ew-composer" autocomplete="off">
+            <div class="ew-cli-to" id="ew-cli-to">To: Maestro</div>
+            <textarea id="ew-cli-input" rows="1" placeholder="Prompt..." aria-label="Prompt"></textarea>
+            <div class="ew-composer-row">
+              <button class="ew-icon" id="ew-cli-dictate" type="button" aria-pressed="false" aria-label="Dictate" title="Dictate"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
+              <button class="voice-orb sm" id="ew-cli-voice" type="button" aria-pressed="false" aria-label="Voice chat"><span class="orb-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="orb-label">Voice</span></button>
+              <span class="ew-hint">Enter to send · Shift+Enter for a new line</span>
+              <span class="ew-spacer"></span>
+              <button class="ew-btn primary" id="ew-cli-send" type="submit">Send</button>
+            </div>
+          </form>
+        </aside>
 
         <div class="ew-split" data-split="agents" role="separator" aria-orientation="vertical" aria-label="Resize agents" tabindex="0"></div>
         <aside class="ew-pane ew-agents" id="ew-agents" data-pane="agents" aria-label="Agents">
