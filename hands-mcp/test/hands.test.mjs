@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { loadConfig } from '../src/config.mjs';
@@ -17,18 +17,19 @@ import { createHands } from '../src/hands.mjs';
 import { createApp } from '../src/server.mjs';
 import { createSpokeTokens } from '../src/spoke-tokens.mjs';
 import { confinePath, createExecutor, pairSpoke, readSpokeConfig, startSpoke } from '../../src/hands/pc-spoke.mjs';
-import { buildGuardAction, guardActionHash } from '../src/shared/protocol.mjs';
+import { buildGuardAction, guardActionHash, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
 import { listen, mockGuard, pkce } from './helpers.mjs';
 
 const PASS = 'correct horse battery staple';
 
-async function boot({ handsEnabled = true, guard = null, guardUrl = null } = {}) {
+async function boot({ handsEnabled = true, guard = null, guardUrl = null, holdOpenWaitMs = 400 } = {}) {
   const server = http.createServer();
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const state = await mkdtemp(join(tmpdir(), 'hands-state-'));
   const config = loadConfig({
     PUBLIC_URL: base, AUTH_PASSPHRASE: PASS, HANDS_ENABLED: handsEnabled ? 'true' : 'false', STATE_DIR: state,
+    HANDS_HOLD_OPEN_WAIT_MS: String(holdOpenWaitMs),
     ...(guardUrl ? { GUARD_URL: guardUrl, GUARD_DEVICE_TOKEN: guard.deviceToken, GUARD_PUBLIC_KEY_X: guard.x, GUARD_APPROVAL_WAIT_MS: '300' } : {}),
   });
   const oauth = createOAuth({ resourceId: `${base}/mcp`, stateFile: join(state, 'oauth.json') });
@@ -282,6 +283,123 @@ test('used Guard approvals survive a PC restart (file-backed, single use)', asyn
   assert.match((await blocked.execute({ ...job, guardDecision: env2 })).error, /could not record|unreadable/);
 });
 
+// ---- hold-open: the SAME call waits for the human decision (no resume relay) ----
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function untilApproval(guard, what = 'an approval') {
+  for (let i = 0; i < 100 && guard.approvals.size === 0; i++) await sleep(50);
+  assert.equal(guard.approvals.size, 1, `expected ${what} to reach Guard`);
+  return [...guard.approvals.keys()][0];
+}
+
+test('hold-open: a human approval during the wait completes the SAME call, and resume afterwards is refused as already run', async () => {
+  const guard = mockGuard({ mode: 'ask' });
+  const g = await listen(guard.handler);
+  const app = await boot({ guard, guardUrl: g.url, holdOpenWaitMs: 10000 });
+  const token = await connect(app.base, 'hands.act');
+  const root = await workspace();
+  const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+  const target = join(root, 'held.txt');
+  const callPromise = callTool(app.base, token, 'write_file', { path: target, content: 'held open' });
+  const approvalId = await untilApproval(guard);
+  await assert.rejects(readFile(target), 'nothing may run before the human decides');
+  guard.decide(approvalId, true);
+  const r = await callPromise; // the original call itself returns the real result
+  assert.equal(r.isError, false, r.text);
+  assert.equal(await readFile(target, 'utf8'), 'held open');
+  // Audited exactly like a resumed run: allowed.guard -> executed -> outcome.reported.
+  const rows = app.audit.rows();
+  const pend = rows.find((row) => row.event === 'pending.guard');
+  assert.ok(pend?.requestId);
+  assert.equal(rows.filter((row) => row.requestId === pend.requestId && row.event === 'executed').length, 1);
+  assert.ok(rows.some((row) => row.requestId === pend.requestId && row.event === 'allowed.guard'));
+  assert.equal(guard.outcomes.length, 1);
+  assert.equal(guard.outcomes[0].status, 'succeeded');
+  // The decision is consumed: resume_action can never run it a second time.
+  const again = await callTool(app.base, token, 'resume_action', { requestId: pend.requestId });
+  assert.ok(again.isError);
+  assert.match(again.text, /already ran/);
+  assert.equal(rows.filter((row) => row.requestId === pend.requestId && row.event === 'executed').length, 1);
+  spoke.stop();
+  await app.close(); await g.close();
+});
+
+test('hold-open: a human denial during the wait returns the denial in the same call', async () => {
+  const guard = mockGuard({ mode: 'ask' });
+  const g = await listen(guard.handler);
+  const app = await boot({ guard, guardUrl: g.url, holdOpenWaitMs: 10000 });
+  const token = await connect(app.base, 'hands.act');
+  const root = await workspace();
+  const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+  const target = join(root, 'denied-held.txt');
+  const callPromise = callTool(app.base, token, 'write_file', { path: target, content: 'no' });
+  const approvalId = await untilApproval(guard);
+  guard.decide(approvalId, false);
+  const r = await callPromise;
+  assert.ok(r.isError);
+  assert.match(r.text, /Denied: A human denied/);
+  await assert.rejects(readFile(target));
+  assert.ok(app.audit.rows().some((row) => row.event === 'denied.guard'));
+  assert.equal(guard.outcomes.length, 1);
+  assert.equal(guard.outcomes[0].status, 'refused');
+  spoke.stop();
+  await app.close(); await g.close();
+});
+
+test('hold-open: when the hold window lapses undecided, the call returns pending + requestId and resume_action still completes it', async () => {
+  const guard = mockGuard({ mode: 'ask' });
+  const g = await listen(guard.handler);
+  const app = await boot({ guard, guardUrl: g.url, holdOpenWaitMs: 500 });
+  const token = await connect(app.base, 'hands.act');
+  const root = await workspace();
+  const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+  const target = join(root, 'lapsed.txt');
+  const first = await callTool(app.base, token, 'write_file', { path: target, content: 'after lapse' });
+  assert.match(first.text, /Waiting for a human approval/);
+  const requestId = /requestId "([^"]+)"/.exec(first.text)[1];
+  await assert.rejects(readFile(target));
+  guard.decide([...guard.approvals.keys()][0], true);
+  const done = await callTool(app.base, token, 'resume_action', { requestId });
+  assert.equal(done.isError, false, done.text);
+  assert.equal(await readFile(target, 'utf8'), 'after lapse');
+  spoke.stop();
+  await app.close(); await g.close();
+});
+
+test('hold-open: a client that disconnects mid-wait leaves the action pending; resume_action completes it exactly once', async () => {
+  const guard = mockGuard({ mode: 'ask' });
+  const g = await listen(guard.handler);
+  const app = await boot({ guard, guardUrl: g.url, holdOpenWaitMs: 10000 });
+  const token = await connect(app.base, 'hands.act');
+  const root = await workspace();
+  const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+  const target = join(root, 'disconnect.txt');
+  const ctrl = new AbortController();
+  const gone = fetch(`${app.base}/mcp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 4242, method: 'tools/call', params: { name: 'write_file', arguments: { path: target, content: 'after disconnect' } } }),
+    signal: ctrl.signal,
+  });
+  const approvalId = await untilApproval(guard);
+  ctrl.abort();
+  await assert.rejects(gone);
+  await sleep(300); // let the hub notice the disconnect and stop waiting
+  // The pending action survived the disconnect: nothing ran, nothing was consumed.
+  await assert.rejects(readFile(target));
+  const pend = app.audit.rows().find((row) => row.event === 'pending.guard');
+  assert.ok(pend?.requestId);
+  assert.equal(app.audit.rows().filter((row) => row.event === 'executed').length, 0);
+  guard.decide(approvalId, true);
+  const done = await callTool(app.base, token, 'resume_action', { requestId: pend.requestId });
+  assert.equal(done.isError, false, done.text);
+  assert.equal(await readFile(target, 'utf8'), 'after disconnect');
+  assert.equal(app.audit.rows().filter((row) => row.requestId === pend.requestId && row.event === 'executed').length, 1);
+  spoke.stop();
+  await app.close(); await g.close();
+});
+
 // ---- execution outcomes -> Executive Guard POST /v1/audit/outcomes (executive-guard/docs/OUTCOMES.md) ----
 
 const sha256 = (s) => createHash('sha256').update(s).digest('hex');
@@ -377,4 +495,156 @@ test('an outcome Guard cannot record never changes the tool answer', async () =>
   assert.deepEqual(await down.reportOutcome({ decisionId: randomUUID(), nonce: 'n'.repeat(20), status: 'succeeded', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }), { recorded: false, error: 'unreachable' });
   const off = createGuardClient({});
   assert.equal((await off.reportOutcome({ decisionId: randomUUID(), nonce: 'n'.repeat(20), status: 'refused' })).recorded, false);
+});
+
+// ---- the widened hands set: search_files (read) + move/copy/delete/make_dir/edit (Guard-gated) ----
+
+test('catalog: the six new tools carry the right gating flags and argument rules', () => {
+  for (const t of ['move_file', 'copy_file', 'delete_file', 'make_dir', 'edit_file']) assert.equal(TOOLS[t].mutating, true, t);
+  assert.equal(TOOLS.search_files.mutating, false);
+  assert.deepEqual(validateArgs('move_file', { path: '/a', destination: '/b' }), { path: '/a', destination: '/b' });
+  assert.throws(() => validateArgs('move_file', { path: '/a' }), /destination is required/);
+  assert.throws(() => validateArgs('search_files', { path: '/a' }), /query or glob is required/);
+  assert.throws(() => validateArgs('search_files', { path: '/a', query: 'x', maxResults: 0 }), /maxResults must be 1\.\.200/);
+  assert.throws(() => validateArgs('delete_file', { path: '/a', recursive: 'yes' }), /recursive must be a boolean/);
+  assert.throws(() => validateArgs('edit_file', { path: '/a', find: '', replace: 'x' }), /find is required/);
+});
+
+test('search_files runs with hands.read and no Guard; secrets stay hidden and escapes are refused', async () => {
+  const app = await boot(); // no Guard configured at all: read tools must still work
+  const token = await connect(app.base, 'hands.read');
+  const root = await workspace();
+  await mkdir(join(root, 'docs'));
+  await writeFile(join(root, 'docs', 'guide.txt'), 'first line\nthe Secret Sauce recipe\nlast line');
+  const spoke = await pairAndRun(app.base, root);
+  const byText = await callTool(app.base, token, 'search_files', { path: root, query: 'secret sauce' });
+  assert.equal(byText.isError, false, byText.text);
+  assert.match(byText.text, /guide\.txt:2: the Secret Sauce recipe/);
+  const byName = await callTool(app.base, token, 'search_files', { path: root, glob: '*.txt' });
+  assert.match(byName.text, /notes\.txt/);
+  assert.match(byName.text, /guide\.txt/);
+  // The .env file's contents are never searched and its name never surfaces.
+  const secret = await callTool(app.base, token, 'search_files', { path: root, query: 'SECRET=1' });
+  assert.doesNotMatch(secret.text, /\.env/);
+  assert.match((await callTool(app.base, token, 'search_files', { path: '/etc', query: 'x' })).text, /Outside the workspace roots/);
+  // A read-only token cannot reach the mutating newcomers.
+  assert.match((await callTool(app.base, token, 'delete_file', { path: join(root, 'notes.txt') })).text, /not granted hands\.act/);
+  spoke.stop();
+  await app.close();
+});
+
+async function approveAndResume(app, token, guard, name, args) {
+  const first = await callTool(app.base, token, name, args);
+  assert.match(first.text, /Waiting for a human approval/, `${name} should wait for a human`);
+  const requestId = /requestId "([^"]+)"/.exec(first.text)[1];
+  const pendingId = [...guard.approvals.entries()].find(([, a]) => a.status === 'pending')[0];
+  guard.decide(pendingId, true);
+  return callTool(app.base, token, 'resume_action', { requestId });
+}
+
+test('make_dir, copy_file, move_file, edit_file, delete_file run only after a human Guard approval', async () => {
+  const guard = mockGuard({ mode: 'ask' });
+  const g = await listen(guard.handler);
+  const app = await boot({ guard, guardUrl: g.url });
+  const token = await connect(app.base, 'hands.act');
+  const root = await workspace();
+  const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+
+  // make_dir: nothing exists until the human approves.
+  const held = await callTool(app.base, token, 'make_dir', { path: join(root, 'sorted') });
+  assert.match(held.text, /Waiting for a human approval/);
+  await assert.rejects(readdir(join(root, 'sorted')));
+  const requestId = /requestId "([^"]+)"/.exec(held.text)[1];
+  guard.decide([...guard.approvals.entries()].find(([, a]) => a.status === 'pending')[0], true);
+  const made = await callTool(app.base, token, 'resume_action', { requestId });
+  assert.equal(made.isError, false, made.text);
+  assert.deepEqual(await readdir(join(root, 'sorted')), []);
+
+  await writeFile(join(root, 'a.txt'), 'one two one');
+  const copied = await approveAndResume(app, token, guard, 'copy_file', { path: join(root, 'a.txt'), destination: join(root, 'sorted', 'b.txt') });
+  assert.equal(copied.isError, false, copied.text);
+  assert.equal(await readFile(join(root, 'sorted', 'b.txt'), 'utf8'), 'one two one');
+  // Overwriting an existing destination is refused even with an approval.
+  const clobber = await approveAndResume(app, token, guard, 'copy_file', { path: join(root, 'a.txt'), destination: join(root, 'sorted', 'b.txt') });
+  assert.match(clobber.text, /Destination already exists/);
+  assert.equal(await readFile(join(root, 'sorted', 'b.txt'), 'utf8'), 'one two one');
+
+  const moved = await approveAndResume(app, token, guard, 'move_file', { path: join(root, 'a.txt'), destination: join(root, 'c.txt') });
+  assert.equal(moved.isError, false, moved.text);
+  await assert.rejects(readFile(join(root, 'a.txt')));
+  assert.equal(await readFile(join(root, 'c.txt'), 'utf8'), 'one two one');
+
+  const edited = await approveAndResume(app, token, guard, 'edit_file', { path: join(root, 'c.txt'), find: 'two', replace: '2' });
+  assert.equal(edited.isError, false, edited.text);
+  assert.equal(await readFile(join(root, 'c.txt'), 'utf8'), 'one 2 one');
+  const ambiguous = await approveAndResume(app, token, guard, 'edit_file', { path: join(root, 'c.txt'), find: 'one', replace: '1' });
+  assert.match(ambiguous.text, /appears 2 times/);
+  assert.equal(await readFile(join(root, 'c.txt'), 'utf8'), 'one 2 one');
+  const editedAll = await approveAndResume(app, token, guard, 'edit_file', { path: join(root, 'c.txt'), find: 'one', replace: '1', all: true });
+  assert.equal(editedAll.isError, false, editedAll.text);
+  assert.equal(await readFile(join(root, 'c.txt'), 'utf8'), '1 2 1');
+
+  // A folder delete without recursive is refused; with it, the folder goes.
+  const dirHeld = await approveAndResume(app, token, guard, 'delete_file', { path: join(root, 'sorted') });
+  assert.match(dirHeld.text, /recursive: true/);
+  assert.deepEqual(await readdir(join(root, 'sorted')), ['b.txt']);
+  const delFile = await approveAndResume(app, token, guard, 'delete_file', { path: join(root, 'c.txt') });
+  assert.equal(delFile.isError, false, delFile.text);
+  await assert.rejects(readFile(join(root, 'c.txt')));
+  const delDir = await approveAndResume(app, token, guard, 'delete_file', { path: join(root, 'sorted'), recursive: true });
+  assert.equal(delDir.isError, false, delDir.text);
+  await assert.rejects(readdir(join(root, 'sorted')));
+  spoke.stop();
+  await app.close(); await g.close();
+});
+
+test('the PC refuses the new mutating tools without a verifiable human approval, exactly like write_file', async () => {
+  const guard = mockGuard();
+  const root = await workspace();
+  const jobs = [
+    ['move_file', { path: join(root, 'notes.txt'), destination: join(root, 'm.txt') }],
+    ['copy_file', { path: join(root, 'notes.txt'), destination: join(root, 'c.txt') }],
+    ['delete_file', { path: join(root, 'notes.txt') }],
+    ['make_dir', { path: join(root, 'newdir') }],
+    ['edit_file', { path: join(root, 'notes.txt'), find: 'hello', replace: 'bye' }],
+  ];
+  // No pinned Guard key on the PC: every one refused, nothing touched.
+  const unpinned = createExecutor({ roots: [root] });
+  for (const [tool, args] of jobs) {
+    assert.match((await unpinned.execute({ tool, args, guardDecision: null })).error, /no Executive Guard key is pinned/, tool);
+  }
+  assert.equal(await readFile(join(root, 'notes.txt'), 'utf8'), 'hello from the PC');
+  // Pinned key but no decision at all, then an approval forged for different arguments.
+  const pinned = createExecutor({ roots: [root], guardPublicKeyX: guard.x });
+  for (const [tool, args] of jobs) {
+    assert.match((await pinned.execute({ tool, args, guardDecision: null })).error, /malformed/, tool);
+  }
+  const moveArgs = { path: join(root, 'notes.txt'), destination: join(root, 'm.txt') };
+  const iat = Math.floor(Date.now() / 1000);
+  const forged = guard.forge({ decisionId: 'mv1', verdict: 'allow', actionHash: guardActionHash(buildGuardAction('move_file', moveArgs)), deviceId: 'hands-mcp', nonce: 'm'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' });
+  assert.match((await pinned.execute({ tool: 'move_file', args: { ...moveArgs, destination: join(root, 'other.txt') }, nonce: 'm'.repeat(20), guardDecision: forged })).error, /different arguments/);
+  // The genuine, exact-arguments approval runs exactly once.
+  assert.equal((await pinned.execute({ tool: 'move_file', args: moveArgs, nonce: 'm'.repeat(20), guardDecision: forged })).ok, true);
+  assert.equal(await readFile(join(root, 'm.txt'), 'utf8'), 'hello from the PC');
+  assert.match((await pinned.execute({ tool: 'move_file', args: moveArgs, nonce: 'm'.repeat(20), guardDecision: forged })).error, /already used/);
+});
+
+test('the new tools refuse secret paths and escapes at the executor', async () => {
+  const guard = mockGuard();
+  const root = await workspace();
+  const exec = createExecutor({ roots: [root], guardPublicKeyX: guard.x });
+  const iat = Math.floor(Date.now() / 1000);
+  let n = 0;
+  const jobFor = (tool, args) => {
+    n += 1;
+    const nonce = `s${n}`.padEnd(20, 'x');
+    return { tool, args, nonce, guardDecision: guard.forge({ decisionId: `sec-${n}`, verdict: 'allow', actionHash: guardActionHash(buildGuardAction(tool, args)), deviceId: 'hands-mcp', nonce, iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' }) };
+  };
+  // Even a properly approved action cannot touch a secrets path or leave the roots.
+  assert.match((await exec.execute(jobFor('delete_file', { path: join(root, '.env') }))).error, /secrets path/);
+  assert.equal(await readFile(join(root, '.env'), 'utf8'), 'SECRET=1');
+  assert.match((await exec.execute(jobFor('copy_file', { path: join(root, 'notes.txt'), destination: '/tmp/hands-escape.txt' }))).error, /Outside the workspace roots/);
+  await mkdir(join(root, '.ssh'));
+  assert.match((await exec.execute(jobFor('make_dir', { path: join(root, '.ssh', 'x') }))).error, /secrets path/);
+  assert.match((await exec.execute(jobFor('edit_file', { path: join(root, 'missing.txt'), find: 'a', replace: 'b' }))).error, /Not found/);
 });
