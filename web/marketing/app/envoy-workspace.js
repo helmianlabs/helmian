@@ -140,7 +140,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null) } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null) } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -274,8 +274,12 @@ async function loadChannels() {
   }
   const meta = ls.get('chanMeta', {});
   for (const c of ws.channels) if (meta[c.id]) { c._agents = meta[c.id].a; c._discord = meta[c.id].d; }
-  const saved = ls.get('channel', null);
-  if (!ws.channels.some((c) => c.id === ws.channelId)) ws.channelId = ws.channels.some((c) => c.id === saved) ? saved : ws.channels[0]?.id ?? null;
+  // The open channel is remembered per network mode: Envoy restores its
+  // own last channel (the legacy 'channel' key is its fallback), Discord
+  // mode restores its last linked channel.
+  const saved = ls.get(`netChannel.${ws.mode}`, null) ?? (ws.mode === 'envoy' ? ls.get('channel', null) : null);
+  const pool = modeChannels();
+  if (!pool.some((c) => c.id === ws.channelId)) ws.channelId = pool.some((c) => c.id === saved) ? saved : pool[0]?.id ?? null;
   renderChannels();
 }
 function currentTitle() { const c = ws.channels.find((x) => x.id === ws.channelId); return c?.title || c?.slug || 'channel'; }
@@ -283,13 +287,92 @@ function openNewChannel() {
   setPane('channels', true);
   $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; renderNewChannelAvatar(); $('ew-new-channel-name').focus();
 }
+// ---------- network flip: Envoy ⇄ Discord ----------
+// One chat surface, two networks (Troy's ruling + the Slack/Discord UX
+// research): a labelled two-segment switch at the top of the channels
+// pane — both names always visible, never icon-only — swaps the channel
+// list and the chat context with identical geometry. Linked channels
+// are distinguishable only through the per-channel config the client
+// already loads (the channels API carries no Discord field): _discord
+// is set from that config and cached in chanMeta, the same source the
+// old DISCORD section below the Envoy list always used.
+const linkedChannels = () => ws.channels.filter((c) => c._discord);
+const modeChannels = () => (ws.mode === 'discord' ? linkedChannels() : ws.channels);
+function renderNetSwitch() {
+  const envoy = $('ew-net-envoy'); const discord = $('ew-net-discord'); if (!envoy || !discord) return;
+  const dOn = ws.mode === 'discord';
+  envoy.classList.toggle('on', !dOn); envoy.setAttribute('aria-selected', String(!dOn));
+  discord.classList.toggle('on', dOn); discord.setAttribute('aria-selected', String(dOn));
+  // Inactive-side badge: the one count the data model honestly has is
+  // the linked-channel count (no unread/mention counts exist client-
+  // side), so it rides the Discord segment while Envoy is active, in a
+  // neutral chip — never the red mention style it does not mean.
+  const n = linkedChannels().length;
+  const chip = $('ew-net-discord-count');
+  chip.hidden = dOn || n === 0;
+  chip.textContent = String(n);
+  discord.title = n ? `Discord — ${n} linked channel${n === 1 ? '' : 's'}` : 'Discord';
+}
+// Anti-mis-send strip directly above the composer: names the network
+// and channel a message will land in, in both modes.
+function renderNetStrip() {
+  const strip = $('ew-net-strip'); if (!strip) return;
+  const ch = ws.channels.find((c) => c.id === ws.channelId);
+  const title = ch?.title || ch?.slug || 'channel';
+  const dOn = ws.mode === 'discord';
+  strip.classList.toggle('discord', dOn);
+  $('ew-chat').classList.toggle('net-discord', dOn);
+  strip.textContent = dOn
+    ? (ch ? `You're posting to Discord · #${ws.config?.discord?.channelName || title}` : "You're in Discord · no channel linked yet")
+    : `You're posting to Envoy · #${title}`;
+}
+function setComposer(on) {
+  const box = $('maestro-input'); const btn = $('maestro-send');
+  if (box) box.disabled = !on;
+  if (btn) btn.disabled = !on;
+}
+const discordEmptyText = () => ws.discordBot?.configured
+  ? 'No channels are linked to Discord yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.'
+  : 'The Helmian Discord bot is not connected yet. Once it is, linked channels mirror here.';
+async function setNetMode(mode) {
+  if (mode !== 'envoy' && mode !== 'discord') return;
+  if (ws.mode === mode) { renderNetSwitch(); return; }
+  if (ws.channelId) ls.set(`netChannel.${ws.mode}`, ws.channelId);
+  ws.mode = mode; ls.set('netMode', mode);
+  // Channel creation is an Envoy-side act; hide its affordances here.
+  $('ew-new-channel').hidden = true;
+  $('ew-add-channel').hidden = mode === 'discord';
+  const pool = modeChannels();
+  const saved = ls.get(`netChannel.${mode}`, null);
+  const target = pool.some((c) => c.id === saved) ? saved : pool[0]?.id ?? null;
+  renderNetSwitch(); renderChannels(); renderNetStrip();
+  if (target) { await selectChannel(target); return; }
+  // Discord mode with nothing linked: honest empty state, no fake chat.
+  ws.channelId = null; ws.config = null; ws.messages = []; ws.sig = null;
+  renderChannels(); renderHeader(); renderNetStrip();
+  $('ew-channel-title').textContent = 'Discord';
+  $('ew-link-discord').hidden = true;
+  $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, discordEmptyText()));
+  setComposer(false);
+}
+
 function renderChannels() {
   const list = $('ew-channel-list');
   const row = (c) => h('button', { type: 'button', class: `ew-channel${c.id === ws.channelId ? ' active' : ''}`, 'data-id': c.id, onclick: () => selectChannel(c.id) },
     chatAvatar(c, 'sm'), h('span', { class: 'name' }, c.title || c.slug),
     h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null));
-  const linked = ws.channels.filter((c) => c._discord);
+  renderNetSwitch();
+  list.setAttribute('aria-label', ws.mode === 'discord' ? 'Discord channels' : 'Envoy channels');
+  $('ew-add-channel').hidden = ws.mode === 'discord' || !$('ew-new-channel').hidden;
+  const linked = linkedChannels();
   const bot = ws.discordBot;
+  if (ws.mode === 'discord') {
+    list.replaceChildren(
+      h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
+      ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.' : 'Bot not connected yet. Linked channels mirror here.')])
+    );
+    return;
+  }
   list.replaceChildren(
     h('div', { class: 'ew-src-head' }, h('img', { src: '/assets/agents/maestro.png', alt: '', width: 14, height: 14 }), 'ENVOY'),
     ...(ws.channels.length ? ws.channels.map(row) : [h('p', { class: 'ew-note' }, 'No channels yet.')]),
@@ -301,7 +384,8 @@ function renderChannels() {
 }
 async function selectChannel(id) {
   if (!id) return;
-  ws.channelId = id; ls.set('channel', id); ws.sig = null; ws.messages = [];
+  ws.channelId = id; ls.set('channel', id); ls.set(`netChannel.${ws.mode}`, id); ws.sig = null; ws.messages = [];
+  setComposer(true);
   renderChannels();
   $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Loading…'));
   if (narrow()) closeSheets();
@@ -329,7 +413,9 @@ function renderHeader() {
   const ch = ws.channels.find((c) => c.id === ws.channelId);
   const title = ch?.title || ch?.slug || 'channel';
   $('ew-channel-title').textContent = title; renderHeadAvatar();
-  $('maestro-input').placeholder = ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent or let Maestro route it` : `Message #${title}`;
+  // The placeholder names the destination channel in both modes; the
+  // long @agent hint is an Envoy-side extra and stays there.
+  $('maestro-input').placeholder = ws.mode === 'discord' ? `Message #${title}` : (ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent or let Maestro route it` : `Message #${title}`);
   const badge = $('ew-discord-badge');
   const d = ws.config?.discord;
   badge.hidden = !(d || ws.config?.pendingLink);
@@ -341,6 +427,7 @@ function renderHeader() {
   link.hidden = !admin && !d;
   $('ew-agent-count').textContent = String(ws.config?.agents?.length ?? 0);
   $('ew-discord-status-text').textContent = ws.discordBot?.configured ? (d ? `linked to #${d.channelName || d.channelId}` : 'ready to link') : 'bot not set up yet';
+  renderNetStrip();
 }
 function renderAgents() {
   const roster = (ws.config?.agents ?? []).map((a) => a.provider);
@@ -381,7 +468,7 @@ function insertMention(name) {
 
 // ---------- messages ----------
 async function loadMessages() {
-  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'No channel yet. Ask the workspace owner to create one.')); return; }
+  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); return; }
   const body = await ws.ctx.api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(id)}&limit=100`);
   if (id !== ws.channelId) return;
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -682,6 +769,9 @@ function wire() {
   $('ew-bench-max').addEventListener('click', () => { const on = $('ew').classList.toggle('bench-max'); $('ew-bench-max').textContent = on ? '⤡' : '⤢'; $('ew-bench-max').title = on ? 'Restore' : 'Expand'; });
   for (const t of document.querySelectorAll('#ew-bench .ew-tab')) t.addEventListener('click', () => selectTab(t.dataset.tab));
   $('ew-add-channel').addEventListener('click', openNewChannel);
+  $('ew-net-envoy').addEventListener('click', () => setNetMode('envoy'));
+  $('ew-net-discord').addEventListener('click', () => setNetMode('discord'));
+  renderNetSwitch(); renderNetStrip();
   $('ew-chat-ava').addEventListener('click', openAvatarModal);
   wireSwipe();
   $('ew-new-channel-cancel').addEventListener('click', () => { $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; });
