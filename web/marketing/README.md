@@ -5,12 +5,16 @@ from the private `helmion-hub` build-sharing prototype and from the desktop app.
 
 ## Verify locally
 
+Run from this directory:
+
 ```powershell
 npm run check
 ```
 
-Serve this directory with any static HTTP server for browser review. There is no
-framework, install step, database, analytics, form handler, or runtime secret.
+Serve this directory with any static HTTP server to review the static pages.
+That preview does not exercise the API-backed app, Herald, billing, or admin
+routes in this tree; use the Vercel deployment for those. The static pages
+themselves have no framework or install step.
 
 ## Add approved videos
 
@@ -31,6 +35,13 @@ Edit the `links` object in `site-config.js`:
 - `contact` is the approved email or contact page.
 
 Empty values keep the controls disabled rather than publishing a guessed route.
+
+## Downloads and billing
+
+Edit `downloads` and `billing` in `site-config.js`. Leave a download `href`
+empty until that artifact is approved; the page keeps the control disabled.
+Billing stays `server_config_required` until the server configuration is
+approved.
 
 ## Deploy
 

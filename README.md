@@ -10,10 +10,13 @@ One agent holds write access to a project at a time, a human signs off on
 risky steps, and every action lands in an audit trail. Supporting pieces:
 **Guard** flags destructive commands and unsourced claims, **Maestro**
 coordinates the agents, and **Herald** puts approvals on your phone.
+**Scribe** is the separate shared-memory companion: connected assistants can
+leave and retrieve full messages for each other instead of starting from zero.
 
 ![Helmian desktop: Room, Console, Agents, and Guard panels](docs/assets/desktop-4panel.jpg)
 
-**Judge it in two minutes** (Node.js 20+, no database, no API key, no network):
+**Judge it in two minutes** (Node.js 20+; the verify step needs no database,
+API key, or network):
 
 ```bash
 git clone https://github.com/helmianlabs/helmian && cd helmian
@@ -25,7 +28,9 @@ npm run verify
 If it passes, the kernel is sound on your machine.
 
 **Try the web app:** [helmian.cloud](https://helmian.cloud) (free account, no
-card). The Windows desktop app is not released yet.
+card). That is the start-here path today. The Windows desktop Pilot is a
+source/developer run for now (see Quick start); a one-download Windows
+installer has not been published yet.
 
 **Watch it:** [Guard review, 43 s](https://helmian.cloud/media/helmian-guard-review.mp4) ·
 [Desktop overview, 5 min](https://helmian.cloud/media/helmian-desktop-overview.mp4) ·
@@ -44,6 +49,9 @@ What it does **not** do yet is stated plainly in [Honest boundary](#honest-bound
 - **Guard**: watches AI output for destructive commands and unsourced claims.
   Severity-ranked findings with ack, quarantine, and per-finding actions.
   Acked criticals stay visible — a re-sighting clears the ack.
+- **Scribe (separate companion)**: shared memory and a post office for
+  connected AI assistants, so a handoff can carry the full message instead of
+  a short summary.
 - **Bring your own everything**: your AI subscriptions (OAuth or API key),
   your Neon database, your runner. The cloud never holds provider keys —
   presence-only. Your keys live in an AES-256-GCM vault on your runner.
@@ -103,14 +111,15 @@ Live in production at [helmian.cloud](https://helmian.cloud):
 
 - **Signup → trial → app**: new users sign up at `/get-started`, get a trial
   workspace auto-created, land in `/app`. No credit card, no manual setup.
-- **Provider connections**: each provider card offers OAuth ("Login with
-  Google" for Gemini) or API key (`node bin/runner-vault.mjs store <name>`).
-  Cloud shows presence only.
+- **Provider connections**: in the web app, Gemini offers OAuth ("Login with
+  Google"); Claude, ChatGPT, and Grok currently connect by API key
+  (`node bin/runner-vault.mjs store <name>`). Cloud shows presence only.
 - **Bridge live on Hetzner**: cloud publishes over Ably, runner answers
   through Gemini, replies in ~1 second. Works with the PC off.
 - **Cloud chat**: team/direct/agent channels, human approval gates, audit
   trail, leases, all tenant-scoped in Neon.
-- **Auth**: Clerk sign-in with GitHub social login (Clerk is still on a development instance; moving to production is on the launch list).
+- **Auth**: Clerk sign-in with GitHub social login (the production Clerk
+  instance is live on helmian.cloud).
 - **Desktop ↔ web parity**: the web app matches the desktop Pilot panel by
   panel (Room, Console, Agents, Guard). Sliding panels, drag splitters,
   hover-expand sidebar — built from the actual EXE source.
@@ -130,8 +139,10 @@ helmion init <path-to-workspace>
 with config, autonomy rules, and a PreToolUse hook). Database commands are
 opt-in and refuse to run without an explicitly named endpoint.
 
-The Windows desktop Pilot additionally needs the .NET SDK:
-`npm run desktop:verify`, then `npm run desktop:run`.
+The Windows desktop Pilot additionally needs the .NET 10 SDK:
+`npm run desktop:verify`, then `npm run desktop:run`. See
+[`desktop/README.md`](desktop/README.md) for the desktop layout and finish
+lists.
 
 Everything else (what is in the box, what writes outside the repo, Maestro
 phases, signed confirmations, Herald, the cloud runner, Agent OS, database

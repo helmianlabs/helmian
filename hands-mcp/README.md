@@ -1,7 +1,7 @@
 # helmian-hands-mcp
 
-Remote MCP connector that lets an approved AI client (Claude.ai, ChatGPT, Grok, Maestro) act on Troy's PC
-through the Helmian bridge. Design: `docs/hands/HANDS_MCP_CONNECTOR_DESIGN.md`.
+Remote MCP connector that lets an approved AI client (Claude.ai, ChatGPT, Grok, Maestro) act on the owner's PC
+through the Helmian bridge. Design: `../docs/hands/HANDS_MCP_CONNECTOR_DESIGN.md`.
 
 **Live:** `https://hands.5-78-222-178.sslip.io/mcp` on the Hetzner box (5.78.222.178), container
 `helmian-hands-mcp` on `127.0.0.1:8090`, behind the same Caddy as `claude-memory-mcp`.
@@ -23,7 +23,7 @@ cd E:\Helmion   # your Helmian checkout
 node bin\hands-spoke.mjs pair --roots "E:\Helmion"      # type the hands passphrase
 # The HelmianBridge service starts the spoke automatically (restart the service), or run in the foreground:
 node bin\hands-spoke.mjs
-# When Executive Guard is live (until then mutating tools stay denied):
+# With Executive Guard configured (mutating tools stay denied until it is):
 node bin\hands-spoke.mjs pin-guard <x from Guard GET /v1/keys>
 ```
 
@@ -40,5 +40,5 @@ hands.5-78-222-178.sslip.io {
 ```
 
 ## Tests
-`npm --prefix hands-mcp ci && npm --prefix hands-mcp test` (13 end-to-end tests over real HTTP: OAuth, routing, Guard mock with
+`npm --prefix hands-mcp ci && npm --prefix hands-mcp test` (18 end-to-end tests over real HTTP: OAuth, routing, Guard mock with
 the real envelope, PC executor, fail-closed cases).
