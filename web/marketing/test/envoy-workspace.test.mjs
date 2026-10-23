@@ -153,6 +153,68 @@ test('splitter drag: pointer capture with cancel handling, per-pane floors, slid
   }
 });
 
+// Polish Bite A (sliders S1–S6, audit 2026-10-23): the blank-workspace trap
+// and its slider family. Structural, same style as the slider tests above.
+test('S1: hiding the workbench clears bench-max first — Hide always wins over Expand', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const body = js.slice(js.indexOf('function setPane'), js.indexOf('const paneOpen'));
+  assert.match(body, /name === 'bench' && !open/);
+  assert.match(body, /classList\.remove\('bench-max'\)/);
+  // The clear runs before the collapse toggle, so the chat is never left
+  // zeroed with its restore controls inside an invisible bench.
+  assert.ok(body.indexOf("classList.remove('bench-max')") < body.indexOf("classList.toggle('collapsed'"), 'bench-max clears before collapse applies');
+  // The chat header toggle (the way back) still reopens the bench.
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  assert.match(html, /data-toggle="bench"/);
+});
+
+test('S2: a drag freezes only the dragged pane var — responsive defaults survive', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /const freeze = \(only\) =>/);
+  assert.match(js, /if \(n !== only\) continue;/);
+  assert.match(js, /freeze\(name\)\[name\]/);
+  assert.doesNotMatch(js, /freeze\(\)\[name\]/);
+});
+
+test('S3: rail widths are single-sourced in envoy.css; peek width equals pinned width', async () => {
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.match(css, /--rail-w:60px; --side-full-w:228px;/);
+  assert.match(css, /\.shell \{ --side-w:var\(--side-full-w\); \}/);
+  assert.match(css, /\.shell\.sidebar-rail \{ --side-w:var\(--rail-w\); \}/);
+  assert.match(css, /\.sidebar\.rail \{ width:auto; \}/);
+  assert.match(css, /\.sidebar\.rail\.peek \{[^}]*width:var\(--side-full-w\)/);
+  const appCss = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(appCss, /--side-w: 56px/);
+  assert.doesNotMatch(appCss, /\.sidebar\.rail \{\s*width:/);
+});
+
+test('S4: the collapse hint arms at the pane floor, collapse itself still waits for SNAP', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /classList\.toggle\('will-collapse', raw < min\)/);
+  assert.match(js, /if \(raw < SNAP\)/);
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.match(css, /\.ew-pane\.will-collapse \{[^}]*box-shadow:/);
+});
+
+test('S5: separators carry a full ARIA range and a live value', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /setAttribute\('aria-valuemin', String\(PANE_MIN\[name\]\)\)/);
+  assert.match(js, /setAttribute\('aria-valuemax', String\(PANE_MAX\)\)/);
+  // Initialized in wireSplitters, kept current by persist and by setPane.
+  assert.match(js, /const persist = \(name, w\) => \{[\s\S]{0,320}aria-valuenow/);
+  assert.match(js, /function syncSplitterAria\(name\)/);
+  const body = js.slice(js.indexOf('function setPane'), js.indexOf('function syncSplitterAria'));
+  assert.match(body, /syncSplitterAria\(name\)/);
+});
+
+test('S6: keyboard users can collapse a pane and reset its width', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /e\.key === 'Home'/);
+  assert.match(js, /e\.key === 'End' \|\| e\.key === 'Enter'/);
+  assert.match(js, /const resetWidth = \(\) =>/);
+  assert.match(js, /addEventListener\('dblclick', resetWidth\)/);
+});
+
 test('nav rail: the pin lives on the rail, hover peek is desktop-pointer only', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="rail-pin"/);
