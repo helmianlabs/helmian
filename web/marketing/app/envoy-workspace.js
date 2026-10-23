@@ -203,6 +203,14 @@ function wireSwipe() {
 
 function setPane(name, open, { user = false } = {}) {
   const pane = $(`ew-${name}`); if (!pane) return;
+  // Hide always wins over Expand: leaving bench-max on while the bench
+  // collapses strands an invisible-but-full-width bench, a zeroed chat and
+  // every restore control inside the dead pane (only a reload recovered).
+  if (name === 'bench' && !open && $('ew').classList.contains('bench-max')) {
+    $('ew').classList.remove('bench-max');
+    const maxBtn = $('ew-bench-max');
+    if (maxBtn) { maxBtn.textContent = '⤢'; maxBtn.title = 'Expand'; }
+  }
   if (narrow()) {
     pane.classList.toggle('sheet-open', open);
     const anySheet = document.querySelector('.ew-pane.sheet-open');
@@ -215,6 +223,16 @@ function setPane(name, open, { user = false } = {}) {
     if (user && name !== 'agents') ls.set(`open.${name}`, open);
   }
   for (const b of document.querySelectorAll(`[data-toggle="${name}"]`)) b.setAttribute('aria-pressed', String(open));
+  syncSplitterAria(name);
+}
+// Keep a separator's aria-valuenow honest across collapse/restore: 0 while
+// the pane is collapsed, its remembered width when it comes back.
+function syncSplitterAria(name) {
+  const split = document.querySelector(`.ew-split[data-split="${name}"]`);
+  if (!split) return;
+  const open = paneOpen(name);
+  const w = open ? (ls.get('widths', {})[name] ?? Math.round($(`ew-${name}`)?.getBoundingClientRect().width ?? 0)) : 0;
+  split.setAttribute('aria-valuenow', String(Math.round(w)));
 }
 const paneOpen = (name) => { const p = $(`ew-${name}`); return narrow() ? p.classList.contains('sheet-open') : !p.classList.contains('collapsed'); };
 function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.sheet-open')) p.classList.remove('sheet-open'); $('ew-scrim').classList.remove('open'); for (const b of document.querySelectorAll('[data-toggle]')) b.setAttribute('aria-pressed', 'false'); }
@@ -255,9 +273,14 @@ function wireSplitters() {
   // width, and made pointer-up persist a third number. Freezing writes every
   // open pane's rendered width into its var first; while .ew.dragging pins
   // flex-shrink to 0, var == rendered width for the whole drag.
-  const freeze = () => {
+  // Freeze ONLY the dragged pane's var: writing every open pane's rendered
+  // width into its inline var permanently opts them all out of the
+  // responsive defaults (inline vars beat the <1280px media query), so one
+  // drag on a wide monitor crushed the chat on smaller windows forever.
+  // The .ew.dragging CSS already pins flex-shrink for the rest.
+  const freeze = (only) => {
     const widths = {};
-    for (const p of document.querySelectorAll('.ew-pane')) { const n = p.id.replace('ew-', ''); if (PANE_MIN[n] && !p.classList.contains('collapsed')) widths[n] = Math.round(p.getBoundingClientRect().width); }
+    for (const p of document.querySelectorAll('.ew-pane')) { const n = p.id.replace('ew-', ''); if (n !== only) continue; if (PANE_MIN[n] && !p.classList.contains('collapsed')) widths[n] = Math.round(p.getBoundingClientRect().width); }
     for (const [n, w] of Object.entries(widths)) setVar(n, w);
     return widths;
   };
@@ -267,15 +290,20 @@ function wireSplitters() {
     for (const s of document.querySelectorAll('.ew-split:not(.hidden)')) used += 5;
     return Math.max(PANE_MIN[name], Math.min(PANE_MAX, ew.clientWidth - used));
   };
-  const persist = (name, w) => { const widths = ls.get('widths', {}); widths[name] = Math.round(w); ls.set('widths', widths); };
+  const persist = (name, w) => { const widths = ls.get('widths', {}); widths[name] = Math.round(w); ls.set('widths', widths); const s = document.querySelector(`.ew-split[data-split="${name}"]`); if (s) s.setAttribute('aria-valuenow', String(Math.round(w))); };
   for (const split of document.querySelectorAll('.ew-split')) {
     const name = split.dataset.split;
     const pane = $(`ew-${name}`);
     const sign = name === 'channels' ? 1 : -1;
+    // Separator ARIA: range from the same tables the drag clamps to, and a
+    // starting value from the applied width — not silence until first drag.
+    split.setAttribute('aria-valuemin', String(PANE_MIN[name]));
+    split.setAttribute('aria-valuemax', String(PANE_MAX));
+    split.setAttribute('aria-valuenow', String(Math.round(ls.get('widths', {})[name] ?? pane.getBoundingClientRect().width)));
     split.addEventListener('pointerdown', (e) => {
       if (narrow()) return;
       e.preventDefault(); split.setPointerCapture(e.pointerId);
-      const start = e.clientX; const startW = freeze()[name] ?? Math.round(pane.getBoundingClientRect().width);
+      const start = e.clientX; const startW = freeze(name)[name] ?? Math.round(pane.getBoundingClientRect().width);
       const max = maxFor(name, pane); const min = PANE_MIN[name];
       split.classList.add('dragging'); ew.classList.add('dragging');
       let raw = startW; let done = false;
@@ -283,7 +311,9 @@ function wireSplitters() {
         raw = startW + sign * (ev.clientX - start);
         const w = Math.max(min, Math.min(max, raw));
         setVar(name, w); split.setAttribute('aria-valuenow', String(Math.round(w)));
-        pane.classList.toggle('will-collapse', raw < SNAP);
+        // The collapse hint arms as soon as the pointer passes the pane's
+        // floor, not only in the last stretch of dead travel below SNAP.
+        pane.classList.toggle('will-collapse', raw < min);
       };
       const finish = (commit) => {
         if (done) return; done = true;
@@ -304,11 +334,21 @@ function wireSplitters() {
       const cancel = () => finish(false);
       split.addEventListener('pointermove', move); split.addEventListener('pointerup', up); split.addEventListener('pointercancel', cancel);
     });
-    split.addEventListener('dblclick', () => { document.documentElement.style.removeProperty(`--ew-${name}`); const w = ls.get('widths', {}); delete w[name]; ls.set('widths', w); });
+    const resetWidth = () => { document.documentElement.style.removeProperty(`--ew-${name}`); const w = ls.get('widths', {}); delete w[name]; ls.set('widths', w); split.setAttribute('aria-valuenow', String(Math.round(pane.getBoundingClientRect().width))); };
+    split.addEventListener('dblclick', resetWidth);
     split.addEventListener('keydown', (e) => {
+      // Keyboard parity with the pointer: Home collapses (slide-under),
+      // End/Enter resets to the default width, like the dblclick reset.
+      if (e.key === 'Home') {
+        e.preventDefault();
+        if (name === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); }
+        setPane(name, false, { user: true });
+        return;
+      }
+      if (e.key === 'End' || e.key === 'Enter') { e.preventDefault(); resetWidth(); return; }
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
-      const startW = freeze()[name] ?? Math.round(pane.getBoundingClientRect().width);
+      const startW = freeze(name)[name] ?? Math.round(pane.getBoundingClientRect().width);
       ew.classList.add('dragging');
       const w = Math.max(PANE_MIN[name], Math.min(maxFor(name, pane), startW + sign * (e.key === 'ArrowRight' ? 24 : -24)));
       setVar(name, w); persist(name, pane.getBoundingClientRect().width); split.setAttribute('aria-valuenow', String(Math.round(w)));

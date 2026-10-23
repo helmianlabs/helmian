@@ -4,10 +4,14 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 :root { --ease:cubic-bezier(.2,.8,.2,1); --dur:.24s; --ew-channels:232px; --ew-agents:280px; --ew-bench:420px; --ew-guard:300px; --ew-cli:300px; }
 @media (prefers-reduced-motion: reduce) { :root { --dur:0s; } }
 
-/* Sidebar: explicit collapse to an icon rail, smooth width. */
-.shell { --side-w:228px; }
-.shell.sidebar-rail { --side-w:60px; }
+/* Sidebar widths live HERE only (app.css carries none): the rail track, the
+   rail element and the peek/pinned widths all read these two variables, so
+   they can never drift into a dead strip or a peek/pin reflow again. */
+:root { --rail-w:60px; --side-full-w:228px; }
+.shell { --side-w:var(--side-full-w); }
+.shell.sidebar-rail { --side-w:var(--rail-w); }
 .sidebar { width:auto; transition:padding var(--dur) var(--ease); }
+.sidebar.rail { width:auto; }
 .sidebar .label, .sidebar .logo strong, .sidebar .logo span, .sidebar .side-head { transition:opacity var(--dur) var(--ease); }
 .sidebar.rail .nav-item { font-size:17px; }
 
@@ -32,7 +36,7 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 /* Side panes give up width before the conversation does. */
 .ew-chat { flex:1 1 0; min-width:380px; background:var(--bg); }
 .ew-pane.collapsed { flex-basis:0 !important; min-width:0 !important; opacity:0; pointer-events:none; }
-.ew-pane.will-collapse { opacity:.45; }
+.ew-pane.will-collapse { opacity:.45; box-shadow:inset 3px 0 0 var(--accent); }
 /* While a splitter drags, widths are frozen (envoy-workspace.js freeze()):
    shrink off, so the dragged pane tracks the pointer 1:1. */
 .ew.dragging .ew-pane { transition:none; flex-shrink:0; }
@@ -271,7 +275,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
    and phones keep the drawer. The restores below undo every rail-mode
    hiding rule above (envoy.css) and in app.css, !important for !important. */
 @media (min-width: 901px) and (hover: hover) and (pointer: fine) {
-  .sidebar.rail.peek { position:fixed; left:0; top:0; bottom:0; width:228px; padding:16px 12px; z-index:55; overflow-y:auto; overflow-x:hidden; box-shadow:24px 0 48px rgba(0,0,0,.45); transition:width var(--dur) var(--ease), padding var(--dur) var(--ease); }
+  .sidebar.rail.peek { position:fixed; left:0; top:0; bottom:0; width:var(--side-full-w); padding:16px 12px; z-index:55; overflow-y:auto; overflow-x:hidden; box-shadow:24px 0 48px rgba(0,0,0,.45); transition:width var(--dur) var(--ease), padding var(--dur) var(--ease); }
   .sidebar.rail.peek .logo { justify-content:flex-start; padding:0 4px; }
   .sidebar.rail.peek .logo strong { display:block; }
   .sidebar.rail.peek .logo span, .sidebar.rail.peek .nav-item span.label { display:inline; }
