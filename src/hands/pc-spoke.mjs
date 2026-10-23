@@ -11,6 +11,14 @@
 // LOCAL config (guardPublicKeyX). No pinned key => every mutating job is refused,
 // whatever the hub says. Read-only jobs are confined to the configured workspace
 // roots and refuse secret-looking paths.
+//
+// WORKSPACE ROOTS ARE TWO TIERS. The roots in the local config are the built-in
+// default roots (read + Guard-approved write). Extra folders arrive only as
+// signed root grants in roots.grants.json (see root-grants.mjs): each grant is
+// re-verified against the same pinned Guard key on every load, names ONE
+// absolute folder, is bound to this spoke device, and is READ-ONLY — mutating
+// tools refuse under a granted root even with a valid Guard approval. Removing
+// a grant from the file revokes it; the executor reloads grants per operation.
 
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -19,8 +27,15 @@ import { copyFile, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, st
 import { homedir, hostname, platform } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { MAX_OUTPUT_BYTES, TOOLS, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
+import { defaultRootGrantsPath, loadRootGrants } from './root-grants.mjs';
+
+export { defaultRootGrantsPath } from './root-grants.mjs';
 
 export const DEFAULT_HANDS_URL = 'https://hands.5-78-222-178.sslip.io';
+
+export function defaultSpokeDeviceId() {
+  return `pc-${hostname()}`.toLowerCase().slice(0, 60);
+}
 
 export function defaultConfigPath() {
   const base = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
@@ -150,8 +165,24 @@ function globToRegex(glob) {
   return new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i');
 }
 
-export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 'hands-mcp', spawnImpl = spawn, fetchImpl = fetch, now = Date.now, usedDecisionsPath = null, usedStore = null } = {}) {
+export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null, rootGrantDeviceId = null, rootGrantProvider = null, guardPublicKeyX = null, guardDeviceId = 'hands-mcp', spawnImpl = spawn, fetchImpl = fetch, now = Date.now, usedDecisionsPath = null, usedStore = null } = {}) {
   const usedDecisions = usedStore || createUsedDecisionStore({ path: usedDecisionsPath, now });
+
+  // Granted roots are reloaded for every file operation, so revoking a grant
+  // (removing it from roots.grants.json) closes access immediately, and a
+  // corrupted or unverifiable grants file grants nothing (fail closed) while
+  // leaving the built-in default roots untouched.
+  const normalizeGranted = (rows) => (Array.isArray(rows) ? rows : [])
+    .map((r) => (typeof r === 'string' ? r : r?.rootPath || r?.path || null))
+    .filter(Boolean);
+  async function currentGrantedRoots() {
+    const granted = [...normalizeGranted(grantedRoots)];
+    try {
+      if (rootGrantProvider) granted.push(...normalizeGranted(await rootGrantProvider()));
+      else if (rootGrantsPath) granted.push(...(await loadRootGrants({ path: rootGrantsPath, publicKeyX: guardPublicKeyX, spokeDeviceId: rootGrantDeviceId, now: now() })).roots);
+    } catch { /* fail closed: no granted roots this operation */ }
+    return [...new Set(granted)];
+  }
 
   // Mutating jobs return an `execution` record the hub forwards to Executive Guard
   // (POST /v1/audit/outcomes): refused | succeeded | failed, when it ran, and a SHA-256
@@ -176,6 +207,50 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
     let args;
     try { args = validateArgs(job.tool, job.args); } catch (e) { return { ok: false, error: `bad arguments: ${e.message}` }; }
 
+    // Path confinement for THIS job. Default roots serve every tool; granted
+    // roots serve read-only tools only. A mutating path that fits only a
+    // granted root is a read-only refusal (checked again in the switch via
+    // confineFor, and preflighted below before any Guard decision is spent).
+    const confineFor = async (p, opts = {}) => {
+      try {
+        return await confinePath(p, roots, opts);
+      } catch (defaultError) {
+        const granted = await currentGrantedRoots();
+        if (granted.length) {
+          let grantedReal = null;
+          try { grantedReal = await confinePath(p, granted, opts); } catch { /* not (only) a granted path */ }
+          if (grantedReal) {
+            if (!spec.mutating) return grantedReal;
+            throw new Error(`Refused: ${p} is inside a read-only root grant; mutating tools may only run inside the original workspace roots.`);
+          }
+        }
+        throw defaultError;
+      }
+    };
+    const pathArgsOf = (tool, a) => {
+      switch (tool) {
+        case 'write_file': case 'edit_file': case 'delete_file': case 'make_dir': return [a.path];
+        case 'move_file': case 'copy_file': return [a.path, a.destination];
+        case 'run_powershell': return a.args?.repo ? [a.args.repo] : [];
+        default: return [];
+      }
+    };
+
+    if (spec.mutating) {
+      // Preflight BEFORE Guard verification: a job aimed only at a granted
+      // root can never run, so it must not consume the human's single-use
+      // Guard decision on the way to being refused.
+      for (const p of pathArgsOf(job.tool, args)) {
+        try { await confinePath(p, roots, { mustExist: false }); continue; } catch { /* not a default-root path */ }
+        const granted = await currentGrantedRoots();
+        if (!granted.length) break;
+        try {
+          await confinePath(p, granted, { mustExist: false });
+          return { ok: false, error: `refused by the PC: ${p} is inside a read-only root grant; mutating tools may only run inside the original workspace roots.` };
+        } catch { /* not a granted path either; the normal flow below reports it */ }
+      }
+    }
+
     if (spec.mutating) {
       const v = verifyApproval({ publicKeyX: guardPublicKeyX, envelope: job.guardDecision, tool: job.tool, args, nonce: job.nonce, deviceId: guardDeviceId, now: now() });
       if (!v.ok) return { ok: false, error: `refused by the PC: ${v.error === 'no pinned Guard key' ? 'no Executive Guard key is pinned on this PC, so mutating actions are refused' : `Guard decision did not verify (${v.error})`}` };
@@ -189,7 +264,7 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
     try {
       switch (job.tool) {
         case 'list_files': {
-          const dir = await confinePath(args.path, roots);
+          const dir = await confineFor(args.path);
           const re = args.glob ? globToRegex(args.glob) : null;
           const entries = (await readdir(dir, { withFileTypes: true }))
             .filter((e) => !re || re.test(e.name))
@@ -199,7 +274,7 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
           return { ok: true, output: cap(`${dir}\n${entries.join('\n') || '(empty)'}`) };
         }
         case 'read_file': {
-          const file = await confinePath(args.path, roots);
+          const file = await confineFor(args.path);
           const st = await stat(file);
           if (!st.isFile()) return { ok: false, error: 'not a file' };
           const buf = (await readFile(file)).subarray(0, args.maxBytes);
@@ -218,8 +293,8 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
         }
         case 'run_powershell': {
           const { commandId, args: a } = args;
-          if (commandId === 'git-status') return run('git', ['-C', await confinePath(a.repo, roots), 'status', '--short', '--branch'], { spawnImpl });
-          if (commandId === 'git-log') return run('git', ['-C', await confinePath(a.repo, roots), 'log', '--oneline', '-n', String(a.count)], { spawnImpl });
+          if (commandId === 'git-status') return run('git', ['-C', await confineFor(a.repo), 'status', '--short', '--branch'], { spawnImpl });
+          if (commandId === 'git-log') return run('git', ['-C', await confineFor(a.repo), 'log', '--oneline', '-n', String(a.count)], { spawnImpl });
           if (commandId === 'ollama-list') return run('ollama', ['list'], { spawnImpl });
           if (PS_SCRIPTS[commandId]) return run('powershell.exe', [...PS, PS_SCRIPTS[commandId]], { spawnImpl });
           return { ok: false, error: 'command not on the PC allow-list' };
@@ -229,12 +304,12 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
           return run('explorer.exe', [args.url], { spawnImpl }).then((r) => (r.ok || /exit 1/.test(r.error || '') ? { ok: true, output: `Opened ${args.url}` } : r));
         }
         case 'write_file': {
-          const file = await confinePath(args.path, roots, { mustExist: false });
+          const file = await confineFor(args.path, { mustExist: false });
           await writeFile(file, args.content, 'utf8');
           return { ok: true, output: `Wrote ${Buffer.byteLength(args.content, 'utf8')} bytes to ${file}` };
         }
         case 'search_files': {
-          const dir = await confinePath(args.path, roots);
+          const dir = await confineFor(args.path);
           if (!(await stat(dir)).isDirectory()) return { ok: false, error: 'not a folder' };
           const re = args.glob ? globToRegex(args.glob) : null;
           const needle = args.query ? args.query.toLowerCase() : null;
@@ -267,22 +342,22 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
           return { ok: true, output: cap(hits.length ? hits.join('\n') : `No matches under ${dir}`) };
         }
         case 'move_file': {
-          const from = await confinePath(args.path, roots);
-          const to = await confinePath(args.destination, roots, { mustExist: false });
+          const from = await confineFor(args.path);
+          const to = await confineFor(args.destination, { mustExist: false });
           if (await lstat(to).catch(() => null)) return { ok: false, error: `Destination already exists: ${args.destination}` };
           await rename(from, to);
           return { ok: true, output: `Moved ${from} to ${to}` };
         }
         case 'copy_file': {
-          const from = await confinePath(args.path, roots);
-          const to = await confinePath(args.destination, roots, { mustExist: false });
+          const from = await confineFor(args.path);
+          const to = await confineFor(args.destination, { mustExist: false });
           if (await lstat(to).catch(() => null)) return { ok: false, error: `Destination already exists: ${args.destination}` };
           if ((await stat(from)).isDirectory()) await cp(from, to, { recursive: true, errorOnExist: true, force: false });
           else await copyFile(from, to, fsConstants.COPYFILE_EXCL);
           return { ok: true, output: `Copied ${from} to ${to}` };
         }
         case 'delete_file': {
-          const target = await confinePath(args.path, roots);
+          const target = await confineFor(args.path);
           const st = await stat(target);
           if (st.isDirectory() && !args.recursive) return { ok: false, error: 'That is a folder; pass recursive: true to delete it and everything inside.' };
           await rm(target, { recursive: !!args.recursive });
@@ -290,13 +365,13 @@ export function createExecutor({ roots, guardPublicKeyX = null, guardDeviceId = 
         }
         case 'make_dir': {
           // Like write_file, the parent folder must already exist: one level only.
-          const dir = await confinePath(args.path, roots, { mustExist: false });
+          const dir = await confineFor(args.path, { mustExist: false });
           if (await lstat(dir).catch(() => null)) return { ok: false, error: `Already exists: ${args.path}` };
           await mkdir(dir);
           return { ok: true, output: `Created folder ${dir}` };
         }
         case 'edit_file': {
-          const file = await confinePath(args.path, roots);
+          const file = await confineFor(args.path);
           const st = await stat(file);
           if (!st.isFile()) return { ok: false, error: 'not a file' };
           if (st.size > MAX_OUTPUT_BYTES) return { ok: false, error: 'file is larger than 64 KB; refused' };
@@ -338,16 +413,22 @@ async function detectCapabilities(fetchImpl) {
 /** Long-poll loop. Returns { stop }. */
 export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor } = {}) {
   const roots = config.roots?.length ? config.roots : [process.env.HELMIAN_ROOT || process.cwd()];
-  const exec = executor || createExecutor({ roots, guardPublicKeyX: config.guardPublicKeyX || null, guardDeviceId: config.guardDeviceId || 'hands-mcp', fetchImpl, usedDecisionsPath: config.usedDecisionsPath || defaultUsedDecisionsPath() });
+  const deviceId = config.deviceId || defaultSpokeDeviceId();
+  const rootGrantsPath = config.rootGrantsPath || defaultRootGrantsPath();
+  const exec = executor || createExecutor({ roots, rootGrantsPath, rootGrantDeviceId: deviceId, guardPublicKeyX: config.guardPublicKeyX || null, guardDeviceId: config.guardDeviceId || 'hands-mcp', fetchImpl, usedDecisionsPath: config.usedDecisionsPath || defaultUsedDecisionsPath() });
   let stopped = false;
   let ctrl = null;
   let caps = null;
   let capsAt = 0;
-  const deviceId = config.deviceId || `pc-${hostname()}`.toLowerCase().slice(0, 60);
   const post = (path, body, signal) => fetchImpl(`${config.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.token}` }, body: JSON.stringify(body), signal });
 
   (async () => {
-    log(`connected to ${config.url} as ${deviceId}; roots: ${roots.join(', ')}; mutating: ${config.guardPublicKeyX ? 'Guard-verified' : 'refused (no Guard key pinned)'}`);
+    const grantState = await loadRootGrants({ path: rootGrantsPath, publicKeyX: config.guardPublicKeyX || null, spokeDeviceId: deviceId }).catch((e) => ({ grants: [], rejected: [{ error: e.message }] }));
+    const grantSummary = grantState.grants.length
+      ? `; granted read-only roots: ${grantState.grants.map((g) => g.rootPath).join(', ')}`
+      : '; no root grants';
+    const rejectedSummary = grantState.rejected.length ? `; ${grantState.rejected.length} grant(s) rejected (${grantState.rejected.map((r) => r.error).join('; ')})` : '';
+    log(`connected to ${config.url} as ${deviceId}; roots: ${roots.join(', ')}${grantSummary}${rejectedSummary}; mutating: ${config.guardPublicKeyX ? 'Guard-verified' : 'refused (no Guard key pinned)'}`);
     let backoff = 1000;
     while (!stopped) {
       try {
@@ -376,7 +457,7 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
 }
 
 /** Exchange the hands passphrase for a spoke token and save the local config. */
-export async function pairSpoke({ url = DEFAULT_HANDS_URL, passphrase, roots, configPath = defaultConfigPath(), fetchImpl = fetch, deviceId = `pc-${hostname()}`.toLowerCase().slice(0, 60) }) {
+export async function pairSpoke({ url = DEFAULT_HANDS_URL, passphrase, roots, configPath = defaultConfigPath(), fetchImpl = fetch, deviceId = defaultSpokeDeviceId() }) {
   const res = await fetchImpl(`${url}/spoke/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase, deviceId }) });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.token) throw new Error(body.error || `pairing failed (${res.status})`);
