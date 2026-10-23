@@ -29,8 +29,10 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
   overflow-x: hidden;
   padding: 16px 12px;
   gap: 16px;
-  width: 220px;
-  transition: width 0.25s ease, padding 0.25s ease;
+  /* No width and no width/padding transition here (F2): the .shell grid
+     track sizes the sidebar and is the one thing that animates. A width
+     or transition on the element itself re-creates the two-widths wobble
+     at the sidebar's right edge. Width is width:auto (envoy.css). */
   white-space: nowrap;
 }
 .sidebar.rail {
