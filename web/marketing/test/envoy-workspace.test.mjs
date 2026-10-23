@@ -99,3 +99,25 @@ test('desktop layout: agent CLI pane sits between chat and agents; channels are 
   assert.match(html, /id="ew-add-channel"[^>]*>\+ New channel</);
   assert.doesNotMatch(html, /ew-new-channel-agent/);
 });
+
+// Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
+// one human-chat surface flips between Envoy and Discord via a labelled
+// two-segment switch at the top of the channels pane, with a network
+// strip directly above the composer as the anti-mis-send cue.
+test('layout bite 2: Envoy/Discord flip switch and network strip exist with mode hooks', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const pane = html.indexOf('id="ew-channels"');
+  const sw = html.indexOf('id="ew-net-envoy"');
+  const list = html.indexOf('id="ew-channel-list"');
+  assert.ok(pane !== -1 && sw > pane && sw < list, 'the network switch sits at the top of the channels pane, above the list');
+  assert.match(html, /id="ew-net-envoy"[^>]*>Envoy</, 'Envoy segment is word-labelled');
+  assert.match(html, /Discord<span id="ew-net-discord-count"/, 'Discord segment is word-labelled and carries the count chip');
+  const msgs = html.indexOf('id="ew-messages"');
+  const strip = html.indexOf('id="ew-net-strip"');
+  const form = html.indexOf('id="maestro-form"');
+  assert.ok(msgs !== -1 && strip > msgs && strip < form, 'the network strip sits directly above the composer');
+  for (const needle of ['function setNetMode', 'function renderNetStrip', 'function renderNetSwitch', 'linkedChannels', 'netChannel.', "ws.mode === 'discord'"]) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
+});
