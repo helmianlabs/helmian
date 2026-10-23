@@ -134,13 +134,15 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
     res.on('close', () => ctrl.abort());
     const job = await hub.nextJob({ deviceId: req.spokeDevice, capabilities: req.body?.capabilities, signal: ctrl.signal });
     if (res.writableEnded || res.destroyed) {
-      if (job) hub._queue.unshift(job); // the spoke went away; give the job to the next poll
+      if (job) hub.requeue(job); // the spoke went away; the job returns to its own device's queue
       return;
     }
     res.json({ job });
   });
   app.post('/spoke/v1/result', spokeAuth, express.json({ limit: '256kb' }), (req, res) => {
-    const ok = hub.complete(String(req.body?.jobId || ''), { ok: req.body?.ok === true, output: req.body?.output, error: req.body?.error, execution: req.body?.execution });
+    // Device binding: only the device the job was created for may report its
+    // result; a result from any other device is refused (404, as if unknown).
+    const ok = hub.complete(String(req.body?.jobId || ''), { ok: req.body?.ok === true, output: req.body?.output, error: req.body?.error, execution: req.body?.execution }, { deviceId: req.spokeDevice });
     res.status(ok ? 200 : 404).json({ accepted: ok });
   });
 
