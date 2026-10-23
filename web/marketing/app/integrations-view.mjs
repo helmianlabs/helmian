@@ -25,7 +25,7 @@ export function integrationSections({ presence = [], connectors = {}, providers 
   const chat = [
     { key: 'discord', name: 'Discord', blurb: 'Mirror a team channel with Discord.', icon: { mark: 'discord' }, status: discord ? 'on' : 'off', statusText: discord ? 'Connected' : 'Not connected', action: { label: discord ? 'Manage' : 'Link a channel', href: '#desktop' } },
     { key: 'github', name: 'GitHub', blurb: 'See repo activity next to your chats.', icon: { mark: 'github' }, status: 'soon', statusText: 'Coming soon', action: null },
-    { key: 'slack', name: 'Slack', blurb: 'Bring Helmian into Slack.', icon: { glyph: '#' }, status: cloud.get('slack') ? 'on' : 'soon', statusText: cloud.get('slack') ? 'Connected' : 'Coming soon', action: null },
+    { key: 'slack', name: 'Slack', blurb: 'Bring Helmian into Slack.', icon: { mark: 'slack' }, status: cloud.get('slack') ? 'on' : 'soon', statusText: cloud.get('slack') ? 'Connected' : 'Coming soon', action: null },
   ];
   const pcOnline = online.size > 0;
   const devices = [
