@@ -43,10 +43,16 @@ export const POWERSHELL_COMMANDS = Object.freeze({
 export const TOOLS = Object.freeze({
   list_files: { mutating: false, needs: ['local-files'], description: 'List files under a folder inside the PC workspace roots.' },
   read_file: { mutating: false, needs: ['local-files'], description: 'Read a text file inside the PC workspace roots (secrets paths refused, 64 KB cap).' },
+  search_files: { mutating: false, needs: ['local-files'], description: 'Search inside the PC workspace roots: match file names by glob and/or file text by a plain-text query (secrets paths refused, results capped).' },
   ollama_generate: { mutating: false, needs: ['ollama'], description: 'Ask a local Ollama model on the PC. Free local compute; nothing leaves the PC except the answer.' },
   run_powershell: { mutating: true, needs: ['powershell'], description: 'Run ONE allow-listed command by id (never free text). Needs a human Guard approval.' },
   open_url: { mutating: true, needs: ['pc-browser'], description: 'Open an https URL in the PC browser. Needs a human Guard approval.' },
   write_file: { mutating: true, needs: ['local-files'], description: 'Write a text file inside the PC workspace roots. Needs a human Guard approval.' },
+  move_file: { mutating: true, needs: ['local-files'], description: 'Move or rename a file or folder inside the PC workspace roots. Refuses if the destination already exists. Needs a human Guard approval.' },
+  copy_file: { mutating: true, needs: ['local-files'], description: 'Copy a file or folder inside the PC workspace roots. Refuses if the destination already exists. Needs a human Guard approval.' },
+  delete_file: { mutating: true, needs: ['local-files'], description: 'Delete a file inside the PC workspace roots; a folder needs recursive: true. Needs a human Guard approval.' },
+  make_dir: { mutating: true, needs: ['local-files'], description: 'Create one folder inside the PC workspace roots (its parent folder must already exist). Needs a human Guard approval.' },
+  edit_file: { mutating: true, needs: ['local-files'], description: 'Replace exact text in a text file inside the PC workspace roots. Needs a human Guard approval.' },
 });
 
 export class ArgError extends Error {}
@@ -102,6 +108,32 @@ export function validateArgs(tool, args = {}) {
       if (typeof a.content !== 'string') throw new ArgError('content is required');
       if (Buffer.byteLength(a.content, 'utf8') > MAX_OUTPUT_BYTES) throw new ArgError('content is larger than 64 KB');
       return { path: str(a.path, 'path', 1024), content: a.content };
+    }
+    case 'search_files': {
+      const out = { path: str(a.path, 'path', 1024) };
+      if (a.query) out.query = str(a.query, 'query', 1000);
+      if (a.glob) out.glob = str(a.glob, 'glob', 200);
+      if (!out.query && !out.glob) throw new ArgError('query or glob is required');
+      const maxResults = a.maxResults == null ? 50 : Number(a.maxResults);
+      if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 200) throw new ArgError('maxResults must be 1..200');
+      return { ...out, maxResults };
+    }
+    case 'move_file':
+    case 'copy_file':
+      return { path: str(a.path, 'path', 1024), destination: str(a.destination, 'destination', 1024) };
+    case 'delete_file': {
+      if (a.recursive != null && typeof a.recursive !== 'boolean') throw new ArgError('recursive must be a boolean');
+      return { path: str(a.path, 'path', 1024), ...(a.recursive ? { recursive: true } : {}) };
+    }
+    case 'make_dir':
+      return { path: str(a.path, 'path', 1024) };
+    case 'edit_file': {
+      const find = str(a.find, 'find', 20000);
+      if (typeof a.replace !== 'string') throw new ArgError('replace is required');
+      if (a.replace.length > 20000) throw new ArgError('replace is longer than 20000 characters');
+      if (/[\u0000]/.test(a.replace)) throw new ArgError('replace contains a NUL byte');
+      if (a.all != null && typeof a.all !== 'boolean') throw new ArgError('all must be a boolean');
+      return { path: str(a.path, 'path', 1024), find, replace: a.replace, ...(a.all ? { all: true } : {}) };
     }
     default:
       throw new ArgError(`unknown tool ${tool}`);

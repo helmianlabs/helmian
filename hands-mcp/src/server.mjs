@@ -18,26 +18,49 @@ function safeEqual(a, b) {
   return timingSafeEqual(x, y);
 }
 
-export function buildMcpServer(hands, auth) {
+// Combine the HTTP-disconnect signal with the MCP request's own abort signal
+// (whichever fires first). Used only to stop a held-open call waiting on a
+// Guard decision whose caller has gone away; the pending action itself is
+// never cancelled by a disconnect and stays resumable via resume_action.
+function pickSignal(...signals) {
+  const live = signals.filter((s) => s && typeof s.addEventListener === 'function');
+  if (!live.length) return undefined;
+  if (live.length === 1) return live[0];
+  try { return AbortSignal.any(live); } catch { return live[0]; }
+}
+
+export function buildMcpServer(hands, auth, hooks = {}) {
   const server = new McpServer({ name: 'helmian-hands', version: '0.1.0' });
   const ro = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   const act = { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
   server.registerTool('hands_status', { description: 'Is the PC online, are hands on, and is Executive Guard live? Read-only.', inputSchema: {}, annotations: ro },
     async () => ({ content: [{ type: 'text', text: JSON.stringify(hands.status(), null, 2) }] }));
   server.registerTool('list_files', { description: TOOLS.list_files.description, inputSchema: { path: z.string(), glob: z.string().optional() }, annotations: ro },
-    (args) => hands.call('list_files', args, auth));
+    (args, extra) => hands.call('list_files', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('read_file', { description: TOOLS.read_file.description, inputSchema: { path: z.string(), maxBytes: z.number().int().optional() }, annotations: ro },
-    (args) => hands.call('read_file', args, auth));
+    (args, extra) => hands.call('read_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('search_files', { description: TOOLS.search_files.description, inputSchema: { path: z.string(), query: z.string().optional(), glob: z.string().optional(), maxResults: z.number().int().optional() }, annotations: ro },
+    (args, extra) => hands.call('search_files', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('ollama_generate', { description: TOOLS.ollama_generate.description, inputSchema: { model: z.string(), prompt: z.string() }, annotations: ro },
-    (args) => hands.call('ollama_generate', args, auth));
+    (args, extra) => hands.call('ollama_generate', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('run_powershell', {
     description: `${TOOLS.run_powershell.description} Commands: ${Object.entries(POWERSHELL_COMMANDS).map(([id, s]) => `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`).join('; ')}.`,
     inputSchema: { commandId: z.enum(Object.keys(POWERSHELL_COMMANDS)), args: z.record(z.any()).optional() }, annotations: act,
-  }, (args) => hands.call('run_powershell', args, auth));
+  }, (args, extra) => hands.call('run_powershell', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('open_url', { description: TOOLS.open_url.description, inputSchema: { url: z.string() }, annotations: act },
-    (args) => hands.call('open_url', args, auth));
+    (args, extra) => hands.call('open_url', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('write_file', { description: TOOLS.write_file.description, inputSchema: { path: z.string(), content: z.string() }, annotations: act },
-    (args) => hands.call('write_file', args, auth));
+    (args, extra) => hands.call('write_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('move_file', { description: TOOLS.move_file.description, inputSchema: { path: z.string(), destination: z.string() }, annotations: act },
+    (args, extra) => hands.call('move_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('copy_file', { description: TOOLS.copy_file.description, inputSchema: { path: z.string(), destination: z.string() }, annotations: act },
+    (args, extra) => hands.call('copy_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('delete_file', { description: TOOLS.delete_file.description, inputSchema: { path: z.string(), recursive: z.boolean().optional() }, annotations: act },
+    (args, extra) => hands.call('delete_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('make_dir', { description: TOOLS.make_dir.description, inputSchema: { path: z.string() }, annotations: act },
+    (args, extra) => hands.call('make_dir', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('edit_file', { description: TOOLS.edit_file.description, inputSchema: { path: z.string(), find: z.string(), replace: z.string(), all: z.boolean().optional() }, annotations: act },
+    (args, extra) => hands.call('edit_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('resume_action', { description: 'Run a mutating action that was waiting for a Guard approval, once a human approved it.', inputSchema: { requestId: z.string() }, annotations: act },
     ({ requestId }) => hands.resume(requestId, auth));
   return server;
@@ -78,13 +101,16 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
   const bearer = requireBearerAuth({ verifier: oauth.provider, resourceMetadataUrl });
   app.post(config.mcpPath, bearer, express.json({ limit: '256kb' }), async (req, res) => {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    const server = buildMcpServer(hands, req.auth || {});
-    res.on('close', () => { transport.close(); server.close(); });
+    const disconnect = new AbortController();
+    const server = buildMcpServer(hands, req.auth || {}, { signal: disconnect.signal });
+    res.on('close', () => { disconnect.abort(); transport.close(); server.close(); });
     try {
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch {
-      if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal server error' }, id: null });
+      // A caller that hung up mid-call (e.g. during a held-open Guard wait) must
+      // not turn into a write-after-destroy error here.
+      try { if (!res.headersSent && !res.writableEnded && !res.destroyed) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal server error' }, id: null }); } catch { /* socket already gone */ }
     }
   });
   app.get(config.mcpPath, bearer, (_req, res) => res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed. Use POST.' }, id: null }));

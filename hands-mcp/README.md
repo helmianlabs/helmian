@@ -12,8 +12,8 @@ through the Helmian bridge. Design: `docs/hands/HANDS_MCP_CONNECTOR_DESIGN.md`.
 | OAuth 2.1 + PKCE + DCR | Passphrase consent page (same passphrase as the memory connector). Scopes `hands.read`, `hands.act`. 5 wrong passphrases lock consent + pairing for 15 min. |
 | Kill switch | `HANDS_ENABLED=false` in `/opt/helmian-hands-mcp/app.env` refuses every call. |
 | Routing | `src/core/compute-routing.mjs`: PC-only work goes to the PC or nowhere. Hands calls are live-only; nothing is queued. |
-| Read-only tools | `list_files`, `read_file`, `ollama_generate`, `hands_status`: allowed with `hands.read`, confined to the PC's workspace roots, secret-looking paths refused, 64 KB cap. |
-| Mutating tools | `run_powershell` (allow-listed ids only), `open_url` (https), `write_file`: need `hands.act` **and** a human-approved, Ed25519-signed Executive Guard decision bound to the exact arguments. Guard not configured, unreachable, slow, auto-allow, denied, expired or unverifiable = **deny**. |
+| Read-only tools | `list_files`, `read_file`, `search_files`, `ollama_generate`, `hands_status`: allowed with `hands.read`, confined to the PC's workspace roots, secret-looking paths refused, 64 KB cap. |
+| Mutating tools | `run_powershell` (allow-listed ids only), `open_url` (https), `write_file`, `move_file`, `copy_file` (both refuse an existing destination), `delete_file` (folders need `recursive: true`), `make_dir`, `edit_file`: need `hands.act` **and** a human-approved, Ed25519-signed Executive Guard decision bound to the exact arguments. Guard not configured, unreachable, slow, auto-allow, denied, expired or unverifiable = **deny**. |
 | The PC | Re-verifies the Guard signature with a key pinned **on the PC** (`pin-guard`), single-use per decision. No pinned key = every mutating job refused even if the hub is compromised. Outbound-only long-poll; nothing listens on the PC. |
 | Secrets | No provider keys (rule 019). Server holds only its OAuth state, hashed spoke tokens and the passphrase. |
 
