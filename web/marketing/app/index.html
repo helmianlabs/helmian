@@ -76,6 +76,8 @@
       <label class="field">Theme<select id="theme-quick"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
     </details>
 
+    <button id="rail-more" class="nav-item rail-more" type="button" data-tip="More">⋯ <span class="label">More</span></button>
+
     <footer class="side-foot">
       <div class="svc"><span id="svc-dot" class="dot"></span><span id="svc-text">Cloud service · Connecting…</span></div>
       <div id="account" class="faint sm"></div>
@@ -138,7 +140,7 @@
             <span id="ew-discord-badge" class="ew-badge discord" hidden></span>
             <span class="ew-spacer"></span>
             <button id="ew-link-discord" class="ew-btn sm" type="button" title="Mirror this channel with a Discord channel"><span class="ew-discord-mark" aria-hidden="true"></span><span class="lbl">Link Discord</span></button>
-            <button class="ew-btn sm ew-toggle" type="button" data-toggle="cli" aria-pressed="true" title="Agent chat: your CLI with the agents" aria-label="Agent chat"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3.4 4.1a1 1 0 0 0 0 1.4l2.5 2.5-2.5 2.5a1 1 0 1 0 1.4 1.4l3.2-3.2a1 1 0 0 0 0-1.4L8.8 8.1a1 1 0 0 0-1.4 0ZM13 15.5a1 1 0 1 0 0 2h4a1 1 0 1 0 0-2h-4Z"/></svg><span class="lbl">Agent chat</span></button>
+            <button class="ew-btn sm ew-toggle" type="button" data-toggle="cli" aria-pressed="true" title="Agent chat: talk to one agent" aria-label="Agent chat"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3.4 4.1a1 1 0 0 0 0 1.4l2.5 2.5-2.5 2.5a1 1 0 1 0 1.4 1.4l3.2-3.2a1 1 0 0 0 0-1.4L8.8 8.1a1 1 0 0 0-1.4 0ZM13 15.5a1 1 0 1 0 0 2h4a1 1 0 1 0 0-2h-4Z"/></svg><span class="lbl">Agent chat</span></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="agents" aria-pressed="false" title="Agents in this channel" aria-label="Agents"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM9 13c-3.3 0-7 1.6-7 4.5V20h14v-2.5C16 14.6 12.3 13 9 13Zm7.5.2c1.6.8 2.5 2.1 2.5 4.3V20h3v-2.4c0-2.3-2.6-3.9-5.5-4.4Z"/></svg><span class="lbl">Agents</span> <b id="ew-agent-count">0</b></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="guard" aria-pressed="true" title="Guard: warnings, findings and approvals" aria-label="Guard"><span class="ew-shield" aria-hidden="true"></span><span class="lbl">Guard</span> <b id="ew-guard-count" class="ew-count" hidden></b></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="bench" aria-pressed="true" title="Workbench: Browser, Create, Canvas, Preview" aria-label="Workbench"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm9 2v12h7V6h-7Z"/></svg><span class="lbl">Workbench</span></button>
@@ -162,7 +164,7 @@
         <div class="ew-split" data-split="cli" role="separator" aria-orientation="vertical" aria-label="Resize agent chat" tabindex="0"></div>
         <aside class="ew-pane ew-cli" id="ew-cli" data-pane="cli" aria-label="Agent chat">
           <header class="ew-head">
-            <span class="eyebrow">AGENT CHAT</span><strong>Your CLI</strong>
+            <span class="eyebrow">AGENT CHAT</span><strong>Talk to an agent</strong>
             <span class="ew-spacer"></span>
             <button class="ew-icon" type="button" data-collapse="cli" aria-label="Hide agent chat" title="Hide agent chat">›</button>
           </header>
@@ -177,9 +179,9 @@
           <div id="ew-cli-sessions" class="ew-cli-sessions" aria-label="Agent sessions"></div>
           <div class="ew-subhead">CONVERSATION</div>
           <div id="ew-cli-thread" class="ew-cli-thread" aria-label="Conversation with the picked agent"></div>
-          <p class="ew-note">A session is your running thread with one agent. Type below to talk: your prompt goes to the agent you picked, and your conversation with it shows right here — it also posts in the open channel.</p>
+          <p class="ew-note">Pick an agent above. What you type below posts in the open channel, addressed to that agent — and your conversation with it shows right here.</p>
           <form id="ew-cli-form" class="ew-composer" autocomplete="off">
-            <div class="ew-cli-to" id="ew-cli-to">To: Maestro</div>
+            <div class="ew-cli-to" id="ew-cli-to">Maestro · posts in the channel and routes it</div>
             <textarea id="ew-cli-input" rows="1" placeholder="Prompt..." aria-label="Prompt"></textarea>
             <div class="ew-composer-row">
               <button class="ew-icon" id="ew-cli-dictate" type="button" aria-pressed="false" aria-label="Dictate" title="Dictate"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
@@ -327,7 +329,7 @@
         </div>
       </form>
       <details class="panel show-details" id="console-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <div id="mcp-panel" class="mcp">
           <div class="eyebrow">MCP SECURITY</div>
           <div class="steps"><span class="step"><b>1</b> Discover</span><span class="step"><b>2</b> Audit</span>
@@ -389,7 +391,7 @@
         </form>
       </div>
       <details class="panel show-details" id="devices-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <p class="muted sm">Until Clerk unify points Herald at the same keys as /app (see docs/CLERK_UNIFY.md in the repo), this list can stay empty or show a sign-in gap. Connect phone and enroll still work. After unify, reopen Devices to see live Desktops.</p>
       </details>
     </section>
@@ -423,7 +425,7 @@
         <div id="desktop-code" class="code" hidden></div>
       </div>
       <details class="panel show-details" id="settings-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <label class="row"><span>Text size</span><input id="text-size" type="range" min="85" max="130" step="5" value="100" aria-label="Text size"></label>
         <div class="eyebrow" style="margin-top:12px">API KEYS</div><div id="api-keys" class="kv"></div>
         <div class="eyebrow" style="margin-top:12px">CUSTOM LLM ENDPOINTS</div><p class="muted sm">No custom endpoints yet.</p>
@@ -482,7 +484,7 @@
         <div id="agents-sessions"></div>
       </div>
       <details class="panel show-details" id="agents-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <div id="agents-detail-list" class="kv"></div>
       </details>
     </section>
@@ -509,7 +511,7 @@
       <div class="agent"><span class="dot live"></span><span id="active-agent">No active agent</span></div>
       <div id="feed-progress" class="feed-progress" hidden></div>
       <div id="feed" class="feed"></div>
-      <details class="panel feed-settings show-details"><summary class="eyebrow">SHOW DETAILS</summary>
+      <details class="panel feed-settings show-details"><summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <button id="run-suite" class="btn ghost full" type="button">Run tool suite</button>
         <label class="toggle"><input type="checkbox" id="opt-info" checked> Show info events</label>
         <label class="toggle"><input type="checkbox" id="opt-approvals" checked> Show approval requests</label>
@@ -592,7 +594,7 @@
         <div id="create-history"></div>
       </div>
       <details class="panel show-details" id="create-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <label class="field-stack"><span class="muted sm">Department</span>
           <input id="create-department" maxlength="160" value="general" aria-label="Department"></label>
         <label class="field-stack" style="margin-top:8px"><span class="muted sm">Source citations (one per line)</span>
