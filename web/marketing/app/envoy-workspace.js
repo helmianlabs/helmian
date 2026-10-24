@@ -4,6 +4,7 @@
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
 import { addSession, sessionsFromServer } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' };
@@ -157,7 +158,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null }, attach: { channel: [], cli: [] }, pickerFor: null, pickerData: null };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null }, attach: { channel: [], cli: [] }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -723,6 +724,98 @@ async function renderPicker(which) {
     ...groups);
 }
 
+// ---------- composer "/" menu: the workspace's slash commands ----------
+// One menu for both composers (channel + agent chat); the pure model in
+// slash-menu.mjs decides when it opens and what it lists. The list is the
+// served workspace's real command registry (GET /api/admin/commands) —
+// the same set the bridge will expand — fetched lazily on the first "/"
+// and cached for the mount. Picking a row only inserts "/name " into
+// the input; sending is always the human's own Enter.
+const SLASH_IDS = {
+  channel: { input: 'maestro-input', menu: 'ew-slash-menu' },
+  cli: { input: 'ew-cli-input', menu: 'ew-cli-slash-menu' },
+};
+const SLASH_ORIGIN_LABEL = { workspace: 'workspace', personal: 'personal', plugin: 'plugin' };
+async function loadSlashCommands() {
+  if (ws.slash.loaded) return ws.slash.commands;
+  if (!ws.slash.loading) {
+    ws.slash.loading = ws.ctx.api('/api/admin/commands')
+      .then((body) => { ws.slash.commands = Array.isArray(body?.commands) ? body.commands : []; ws.slash.loaded = true; })
+      .catch(() => { ws.slash.commands = null; })
+      .finally(() => { ws.slash.loading = null; });
+  }
+  await ws.slash.loading;
+  return ws.slash.commands;
+}
+function currentSlashModel(which) {
+  const box = $(SLASH_IDS[which].input); if (!box) return null;
+  if (ws.slash.dismissedFor === box.value) return null;
+  return slashMenuModel({ commands: ws.slash.commands ?? [], loaded: ws.slash.loaded, value: box.value });
+}
+function closeSlashMenu() {
+  ws.slash.openFor = null; ws.slash.index = 0;
+  for (const { menu } of Object.values(SLASH_IDS)) { const m = $(menu); if (m) m.hidden = true; }
+}
+async function refreshSlashMenu(which) {
+  const box = $(SLASH_IDS[which].input); if (!box) return;
+  if (!ws.slash.loaded) {
+    if (!slashMenuModel({ commands: [], loaded: true, value: box.value })) { closeSlashMenu(); return; }
+    await loadSlashCommands();
+  }
+  if (ws.slash.dismissedFor !== null && ws.slash.dismissedFor !== box.value) ws.slash.dismissedFor = null;
+  renderSlashMenu(which);
+}
+function renderSlashMenu(which) {
+  const menu = $(SLASH_IDS[which].menu); if (!menu) return;
+  const model = currentSlashModel(which);
+  if (!model) { if (ws.slash.openFor === which) closeSlashMenu(); else menu.hidden = true; return; }
+  const opening = ws.slash.openFor !== which;
+  ws.slash.openFor = which;
+  if (opening || ws.slash.index >= model.rows.length) ws.slash.index = 0;
+  const rows = model.rows.map((c, i) => h('button', {
+    type: 'button', role: 'option', 'aria-selected': String(i === ws.slash.index),
+    class: `ew-picker-row ew-slash-row${i === ws.slash.index ? ' on' : ''}`,
+    onmousedown: (e) => { e.preventDefault(); pickSlashCommand(which, c.name); },
+  }, h('span', { class: 'ew-slash-name' }, `/${c.name}`), h('span', { class: 'ew-picker-kind' }, c.description ?? ''), h('span', { class: 'ew-picker-state off' }, SLASH_ORIGIN_LABEL[c.origin] ?? c.origin ?? '')));
+  menu.replaceChildren(...(rows.length ? rows : [h('p', { class: 'ew-note' }, model.empty === 'no-commands' ? 'No commands in this workspace yet. Add markdown files to .helmion/commands/ and they will show up here.' : 'No matching command.')]));
+  menu.hidden = false;
+}
+function pickSlashCommand(which, name) {
+  const box = $(SLASH_IDS[which].input); if (!box) return;
+  box.value = slashInsertValue(name);
+  ws.slash.dismissedFor = null;
+  closeSlashMenu();
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+  (which === 'channel' ? grow : growCli)();
+}
+// True when the key belonged to the open menu (and has been handled, so
+// the composer's own Enter-to-send must not also fire). Registered
+// before the send keydown handlers for that reason.
+function slashKeydown(which, e) {
+  if (ws.slash.openFor !== which) return false;
+  const model = currentSlashModel(which);
+  if (!model) { closeSlashMenu(); return false; }
+  if (e.key === 'Escape') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    ws.slash.dismissedFor = $(SLASH_IDS[which].input)?.value ?? null;
+    closeSlashMenu();
+    return true;
+  }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    ws.slash.index = moveSlashHighlight(ws.slash.index, e.key === 'ArrowDown' ? 1 : -1, model.rows.length);
+    renderSlashMenu(which);
+    return true;
+  }
+  if ((e.key === 'Enter' || e.key === 'Tab') && model.rows.length) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    pickSlashCommand(which, model.rows[ws.slash.index]?.name ?? model.rows[0].name);
+    return true;
+  }
+  return false;
+}
+
 // ---------- messages ----------
 async function loadMessages() {
   const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); renderCliThread(); return; }
@@ -795,7 +888,7 @@ async function send(e) {
   const btn = $('maestro-send'); btn.disabled = true;
   ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
-  box.value = ''; grow();
+  box.value = ''; grow(); closeSlashMenu();
   try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
   finally { btn.disabled = false; }
@@ -939,7 +1032,7 @@ async function sendCli(e) {
   const btn = $('ew-cli-send'); btn.disabled = true;
   try {
     await ws.ctx.post('/api/admin/envoy/messages', req.payload);
-    box.value = ''; growCli(); ws.attach.cli = []; renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
+    box.value = ''; growCli(); closeSlashMenu(); ws.attach.cli = []; renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
     ws.sig = null; await loadMessages();
   } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
   finally { btn.disabled = false; }
@@ -1096,7 +1189,8 @@ function wire() {
   });
   $('maestro-form').addEventListener('submit', send);
   const box = $('maestro-input');
-  box.addEventListener('input', grow);
+  box.addEventListener('input', () => { grow(); refreshSlashMenu('channel'); });
+  box.addEventListener('keydown', (e) => { slashKeydown('channel', e); });
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
   $('maestro-plus').addEventListener('click', () => togglePicker('channel'));
   $('ew-cli-plus').addEventListener('click', () => togglePicker('cli'));
@@ -1113,7 +1207,8 @@ function wire() {
   });
   $('ew-cli-form').addEventListener('submit', sendCli);
   const cliBox = $('ew-cli-input');
-  cliBox.addEventListener('input', growCli);
+  cliBox.addEventListener('input', () => { growCli(); refreshSlashMenu('cli'); });
+  cliBox.addEventListener('keydown', (e) => { slashKeydown('cli', e); });
   cliBox.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); sendCli(); } });
   ws.ctx.wireCliVoice?.();
   $('ew-link-discord').addEventListener('click', linkDiscord);
