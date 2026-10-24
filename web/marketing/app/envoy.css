@@ -278,6 +278,11 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   content:attr(data-tip); position:absolute; left:calc(100% + 10px); top:50%; transform:translateY(-50%);
   background:#0B1220; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; pointer-events:none; z-index:80; box-shadow:0 6px 18px rgba(0,0,0,.4); }
 .sidebar.rail .advanced-nav, .sidebar.rail .side-sessions, .sidebar.rail #appearance { display:none; }
+/* At rest the rail hides whole sections (above); "More" is the hint they
+   exist. It hides again while peeked, when the real sections are showing. */
+.rail-more { display:none; }
+.sidebar.rail .rail-more { display:flex; }
+.sidebar.rail.peek .rail-more { display:none; }
 
 /* Rail peek: an unpinned rail expands over the content while the pointer is
    on it or it holds keyboard focus (app.js toggles .peek from hover/focus),
@@ -404,11 +409,13 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   .ew-pill.session { margin-left:0; }
 }
 
-/* Agent CLI pane: your command chat with the agents (sessions + prompt). */
+/* Agent chat pane: your conversation with one picked agent (prompts post in the open channel). */
 .ew-cli-chips { padding:2px 12px 4px; }
 .ew-pill.on { border-color:var(--accent); color:var(--accent); }
 .ew-cli-form { display:flex; flex-direction:column; gap:8px; padding:8px 12px; border-top:1px solid var(--border); }
-.ew-cli-sessions { flex:1 1 auto; overflow:auto; display:flex; flex-direction:column; gap:6px; padding:6px 10px 10px; }
+.ew-cli-sessions { flex:0 1 auto; max-height:42%; overflow:auto; display:flex; flex-direction:column; gap:6px; padding:6px 10px 10px; }
+.ew-cli-thread { flex:1 1 auto; min-height:72px; overflow-y:auto; display:flex; flex-direction:column; padding:2px 8px 6px; }
+.ew-cli-thread .ew-note { padding:8px 4px; }
 .ew-cli-session { display:grid; grid-template-columns:30px minmax(0,1fr); gap:2px 10px; align-items:center; text-align:left; border:1px solid var(--border); border-radius:10px; background:var(--panel-2); color:var(--text); padding:8px 10px; cursor:pointer; transition:border-color .15s; animation:ew-in .22s var(--ease); }
 .ew-cli-session:hover { border-color:var(--accent); }
 .ew-cli-session.active { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }

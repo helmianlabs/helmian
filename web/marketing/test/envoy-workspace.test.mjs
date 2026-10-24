@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, pendingAgentWork } from '../app/envoy-workspace.js';
+import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, cliThreadFor, dragLayout, pendingAgentWork } from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -98,6 +98,57 @@ test('poll cadence: fast while work is pending, calm otherwise', () => {
   assert.equal(FAST_POLL_MS, 800);
   assert.equal(CALM_POLL_MS, 2500);
   assert.equal(AGENT_WORK_WINDOW_MS, 30 * 60_000);
+});
+
+// Agent-first increment 1 (Troy's chat direction, 2026-10-23): the Agent
+// Chat pane carries its own conversation — cliThreadFor picks, per picked
+// provider, the signed-in human's prompts that route to it (addressed())
+// plus that provider's replies, and nothing else.
+const ME = 'user:troy';
+const ids = (list) => list.map((m) => m.id);
+
+test('cli thread: an unaddressed prompt and the Maestro reply form the Maestro conversation', () => {
+  const msgs = [human('m1', 'hello'), reply('m2', 'm1', 'maestro')];
+  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'maestro', ME)), ['m1', 'm2']);
+  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'gemini', ME)), []);
+});
+
+test('cli thread: an @Gemini prompt pairs with the Gemini reply; other agents stay out', () => {
+  const msgs = [human('m1', '@Gemini build the page'), reply('m2', 'm1', 'gemini'), reply('m3', 'm1', 'claude')];
+  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'gemini', ME)), ['m1', 'm2']);
+  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'claude', ME)), ['m3']);
+  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'maestro', ME)), []);
+});
+
+test('cli thread: other people, their prompts and system notices stay in the channel', () => {
+  const other = { id: 'm1', authorKind: 'human', authorSubject: 'user:someone-else', body: '@Gemini hi', createdAt: iso(60_000) };
+  const notice = { id: 'm2', authorKind: 'system', authorSubject: 'system', body: 'Gemini joined', createdAt: iso(50_000) };
+  const mine = human('m3', '@Gemini mine');
+  assert.deepEqual(ids(cliThreadFor([other, notice, mine], ROSTER, 'gemini', ME)), ['m3']);
+});
+
+test('cli thread: an @all prompt shows in every roster thread; agentProvider field counts as authorship', () => {
+  const via = { id: 'm2', authorKind: 'agent', authorSubject: 'user:bridge-9', agentProvider: 'gemini', body: 'Done.', createdAt: iso(30_000) };
+  const msgs = [human('m1', '@all status?'), via];
+  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'maestro', ME)), ['m1']);
+  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'gemini', ME)), ['m1', 'm2']);
+});
+
+test('cli thread: no target, no thread', () => {
+  assert.deepEqual(cliThreadFor([human('m1', 'hello')], ROSTER, null, ME), []);
+});
+
+test('agent-first increment 1: the pane has a conversation region and the workspace renders into it', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  const sessions = html.indexOf('id="ew-cli-sessions"');
+  const thread = html.indexOf('id="ew-cli-thread"');
+  const form = html.indexOf('id="ew-cli-form"');
+  assert.ok(sessions !== -1 && thread > sessions && thread < form, 'the conversation region sits between the sessions and the composer, inside the Agent Chat pane');
+  assert.ok(js.includes('function renderCliThread'), 'envoy-workspace.js renders the pane conversation');
+  assert.ok((js.match(/renderCliThread\(\)/g) ?? []).length >= 4, 'the conversation re-renders on message loads and target changes');
+  assert.match(css, /\.ew-cli-thread \{/, 'envoy.css styles the conversation region');
 });
 
 // Layout bite 1 (Troy's ruling, 2026-10-23): the agent CLI is its own
@@ -236,7 +287,7 @@ test('I1: every nav item carries a rail tooltip (data-tip) matching its label', 
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const items = [...html.matchAll(/<button class="nav-item[^"]*"([^>]*)>([\s\S]*?)<\/button>/g)]
     .filter((m) => m[1].includes('data-view='));
-  assert.equal(items.length, 13, 'all 13 view nav items are present');
+  assert.equal(items.length, 14, 'all 14 view nav items are present');
   for (const [, attrs, inner] of items) {
     const tip = attrs.match(/data-tip="([^"]+)"/)?.[1];
     const label = inner.match(/<span class="label">([^<]+)<\/span>/)?.[1];
@@ -260,6 +311,70 @@ test('I2 interim: both composer "+" buttons are labelled Tools buttons; openers 
   assert.match(ejs, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => ws\.ctx\.openTools\?\.\(\)\)/);
   const ajs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
   assert.match(ajs, /t\.dataset\.tool === 'tools'\) openTools\(\)/);
+});
+
+// Slider drag travel fix (2026-10-23): the old clamp bounded a drag by
+// the container's already-free space, which is ~0 in a full row — a
+// +300px drag on channels landed +76px in the live app (measured with
+// real pointer events). dragLayout is the pure geometry the pointer and
+// keyboard paths now share: growth comes from the rest of the row (the
+// flexible chat to its floor, then the other panes to theirs).
+const FLOORS = { channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 };
+const FULL = { channels: 200, cli: 220, agents: 200, guard: 200, bench: 280 }; // sums to 1100; chat = 1500 − 20 − 1100 = 380, exactly its floor
+const fullRow = (name, target, containerW = 1500) => dragLayout({ widths: { ...FULL }, floors: FLOORS, chatFloor: 380, containerW, splitsW: 20, name, target });
+
+test('drag travel: a +300px drag in a full row grows the pane by the full pointer travel the row can yield', () => {
+  // Every other pane sits at its floor afterwards and the chat keeps its
+  // floor: 450 is all the row can give, and the drag takes all of it —
+  // the old free-space clamp gave 0 growth on this exact row.
+  const lay = fullRow('channels', 500);
+  assert.equal(lay.width, 450);
+  assert.deepEqual(lay.widths, { channels: 450, cli: 150, agents: 150, guard: 150, bench: 200 });
+});
+
+test('drag travel: with room in the chat, a +300px drag lands the full +300 and touches nobody', () => {
+  const lay = fullRow('channels', 500, 2000); // chat is 880 here — it absorbs the growth
+  assert.equal(lay.width, 500);
+  assert.deepEqual(lay.widths, { ...FULL, channels: 500 });
+});
+
+test('drag travel: growth is taken farthest-first, so the panes next to the pointer stay put longest', () => {
+  const lay = fullRow('channels', 300); // +100: bench (farthest) yields to its floor, guard yields the rest
+  assert.equal(lay.width, 300);
+  assert.deepEqual(lay.widths, { channels: 300, cli: 220, agents: 200, guard: 180, bench: 200 });
+  const fromRight = fullRow('bench', 480); // +200 from the right edge yields channels first
+  assert.equal(fromRight.width, 480);
+  assert.deepEqual(fromRight.widths, { channels: 132, cli: 150, agents: 150, guard: 188, bench: 480 });
+});
+
+test('drag travel: the chat yields before any sized pane does', () => {
+  // Chat is 100px above its floor (container 1600): a +150 drag takes
+  // 100 from the chat and only 50 from the farthest pane.
+  const lay = fullRow('channels', 350, 1600);
+  assert.equal(lay.width, 350);
+  assert.deepEqual(lay.widths, { ...FULL, channels: 350, bench: 230 });
+});
+
+test('drag travel: shrinking stops at the pane floor and frees space without touching neighbours', () => {
+  const lay = fullRow('channels', 40); // below SNAP at runtime; the geometry just floors it — collapse is the caller's job
+  assert.equal(lay.width, 132);
+  assert.deepEqual(lay.widths, { ...FULL, channels: 132 });
+  const cli = fullRow('cli', 100);
+  assert.equal(cli.width, 150);
+  assert.deepEqual(cli.widths, { ...FULL, cli: 150 });
+});
+
+test('drag travel: PANE_MAX still caps an oversized drag', () => {
+  const lay = dragLayout({ widths: { channels: 200, cli: 220 }, floors: FLOORS, chatFloor: 380, containerW: 4000, splitsW: 10, name: 'channels', target: 2000 });
+  assert.equal(lay.width, 900);
+  assert.equal(lay.widths.cli, 220); // the chat had room for all of it
+});
+
+test('drag travel: the pointer and keyboard paths clamp through dragLayout, not free space', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /export function dragLayout/);
+  assert.equal(js.split('dragLayout({ ...snap, name, target:').length - 1, 2, 'both the pointer move and the arrow-key step call dragLayout');
+  assert.doesNotMatch(js, /clientWidth - used/, 'the old already-free-space clamp is gone');
 });
 
 test('I3: brand marks are real SVG glyphs, not color blocks or a literal glyph', async () => {
