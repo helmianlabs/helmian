@@ -9,7 +9,7 @@ const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
 
 test('three columns: sidebar, center console, Guard Feed', () => {
   for (const id of ['sidebar', 'main', 'guard', 'project-filter', 'new-project-form', 'appearance', 'sessions', 'log', 'prompt', 'mcp-panel', 'session-chips', 'session-form', 'feed', 'feed-filter', 'feed-clear', 'run-suite', 'active-agent']) assert.match(html, new RegExp(`id="${id}"`), id);
-  for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'SESSIONS', 'GUARD FEED', 'MCP SECURITY', 'Full screen', 'Prompt...', '+ Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'SHOW DETAILS', 'ADVANCED', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap', 'Devices', 'Connect phone', 'No Desktop connected yet', 'Chat', 'Projects', 'Approvals']) assert.ok(html.includes(label), label);
+  for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'SESSIONS', 'GUARD FEED', 'MCP SECURITY', 'Full screen', 'Prompt...', 'Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'SHOW DETAILS', 'ADVANCED', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap', 'Devices', 'Connect phone', 'No Desktop connected yet', 'Chat', 'Projects', 'Approvals']) assert.ok(html.includes(label), label);
   for (const p of ['Claude', 'ChatGPT', 'Grok', 'Gemini']) assert.match(html, new RegExp(`data-provider="${p}"`));
   for (const view of VIEWS) {
     // Browser, Canvas, Preview, Create live in the right workbench panel now

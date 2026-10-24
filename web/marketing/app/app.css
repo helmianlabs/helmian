@@ -16,7 +16,7 @@ a { color:var(--accent); } [hidden] { display:none !important; }
 h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; font-weight:600; }
 
 .shell { display:grid; height:100dvh; grid-template-columns:var(--side-w) minmax(0,1fr) var(--guard-w); transition:grid-template-columns 0.25s ease; }
-.shell.sidebar-rail { --side-w: 56px; }
+/* Rail width is single-sourced in envoy.css (--rail-w); do not redeclare. */
 .shell.full .sidebar, .shell.full .guard { display:none; } .shell.full { grid-template-columns:1fr; }
 
 /* left - EXE-style: collapses to icon rail, hover to expand */
@@ -29,12 +29,14 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
   overflow-x: hidden;
   padding: 16px 12px;
   gap: 16px;
-  width: 220px;
-  transition: width 0.25s ease, padding 0.25s ease;
+  /* No width and no width/padding transition here (F2): the .shell grid
+     track sizes the sidebar and is the one thing that animates. A width
+     or transition on the element itself re-creates the two-widths wobble
+     at the sidebar's right edge. Width is width:auto (envoy.css). */
   white-space: nowrap;
 }
 .sidebar.rail {
-  width: 56px;
+  /* width comes from the grid track (envoy.css --rail-w); no width here. */
   padding: 16px 8px;
 }
 .sidebar.rail .logo strong,
@@ -289,6 +291,9 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .show-details > summary { cursor:pointer; list-style:none; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; padding:4px 0; }
 .show-details > summary::-webkit-details-marker { display:none; }
 .show-details[open] > summary { margin-bottom:8px; color:var(--text); }
+.show-details > summary { display:flex; align-items:center; gap:6px; }
+.show-details > summary .chev { font-size:9px; transition:transform .15s; }
+.show-details[open] > summary .chev { transform:rotate(180deg); }
 #mcp-panel.mcp { margin-top:0; border:0; background:transparent; padding:0 0 12px; }
 @media (max-width: 900px) {
   .submenu#nav { margin-left:0; border-left:0; padding-left:0; flex-direction:row; flex-wrap:wrap; gap:4px; }

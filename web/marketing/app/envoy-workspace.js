@@ -1,7 +1,8 @@
-// Envoy workspace for the Desktop view: channels | chat | agents | workbench.
+// Envoy workspace for the Desktop view: channels | chat | agent CLI | agents | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
+import { addSession, sessionsFromServer } from './app-model.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' };
@@ -105,6 +106,22 @@ export function pendingAgentWork(messages, roster, joined = {}, online = new Set
   return roster.filter((p) => due.has(p));
 }
 
+// The Agent Chat pane's own conversation with one provider: the signed-in
+// human's prompts that route to it (addressed() — the same routing the
+// channel runs on) plus that provider's replies, in channel order.
+// Everything else — other people's posts, other agents' replies, system
+// notices — stays in the channel where it happened.
+export function cliThreadFor(messages, roster, target, selfSubject) {
+  if (!target) return [];
+  const providerOf = (m) => m.agentProvider || (m.authorSubject?.startsWith('agent:') ? m.authorSubject.slice(6) : (m.authorSubject?.endsWith(':bridge') ? 'maestro' : null));
+  return messages.filter((m) => {
+    if (m.authorKind === 'system') return false;
+    const p = providerOf(m);
+    if (p) return p === target;
+    return m.authorKind === 'human' && m.authorSubject === selfSubject && addressed(m, roster).includes(target);
+  });
+}
+
 // Pending work in the open channel, from the live server-fed state.
 function currentWorking() {
   const agents = ws.config?.agents ?? [];
@@ -139,7 +156,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -158,7 +175,7 @@ function avatarPicker(choice, title, onPick) {
     const grid = h('div', { class: look === 'char' ? 'ew-ava-grid' : 'ew-ava-grid plain', role: 'radiogroup', 'aria-label': look === 'char' ? 'Pick a character' : 'Pick a colour' },
       ...(look === 'char'
         ? CHARACTERS.map(([id, glyph, label]) => h('button', { type: 'button', role: 'radio', class: `ew-ava char${choice?.id === id ? ' on' : ''}`, 'aria-checked': String(choice?.id === id), 'aria-label': label, title: label, onclick: () => { choice = { k: 'char', id }; onPick(choice); draw(); } }, glyph))
-        : COLORS.map((color, i) => h('button', { type: 'button', role: 'radio', class: `ew-ava plain${choice?.c === i ? ' on' : ''}`, style: `--ava:${color}`, 'aria-checked': String(choice?.c === i), 'aria-label': `Colour ${i + 1}`, onclick: () => { choice = { k: 'plain', c: i }; onPick(choice); draw(); } }, avatarFor({ k: 'plain', c: i }, title()).glyph))));
+        : COLORS.map((color, i) => h('button', { type: 'button', role: 'radio', class: `ew-ava plain${choice?.c === i ? ' on' : ''}`, style: `--ava:${color}`, 'aria-checked': String(choice?.c === i), 'aria-label': `Colour ${i + 1}`, title: `Colour ${i + 1}`, onclick: () => { choice = { k: 'plain', c: i }; onPick(choice); draw(); } }, avatarFor({ k: 'plain', c: i }, title()).glyph))));
     wrap.replaceChildren(seg, grid);
   };
   draw();
@@ -178,7 +195,7 @@ function renderHeadAvatar() {
   const c = ws.channels.find((x) => x.id === ws.channelId);
   b.replaceChildren(c ? chatAvatar(c) : h('span', { class: 'ew-hash' }, '#'));
 }
-function renderNewSessionAvatar() {
+function renderNewChannelAvatar() {
   const box = $('ew-new-avatar'); if (!box) return;
   const name = () => $('ew-new-channel-name').value.trim() || 'New chat';
   ws.pendingAvatar = defaultChoice(name(), isPlain() ? 'plain' : 'playful');
@@ -202,6 +219,14 @@ function wireSwipe() {
 
 function setPane(name, open, { user = false } = {}) {
   const pane = $(`ew-${name}`); if (!pane) return;
+  // Hide always wins over Expand: leaving bench-max on while the bench
+  // collapses strands an invisible-but-full-width bench, a zeroed chat and
+  // every restore control inside the dead pane (only a reload recovered).
+  if (name === 'bench' && !open && $('ew').classList.contains('bench-max')) {
+    $('ew').classList.remove('bench-max');
+    const maxBtn = $('ew-bench-max');
+    if (maxBtn) { maxBtn.textContent = '⤢'; maxBtn.title = 'Expand'; maxBtn.setAttribute('aria-label', 'Expand workbench'); }
+  }
   if (narrow()) {
     pane.classList.toggle('sheet-open', open);
     const anySheet = document.querySelector('.ew-pane.sheet-open');
@@ -214,6 +239,16 @@ function setPane(name, open, { user = false } = {}) {
     if (user && name !== 'agents') ls.set(`open.${name}`, open);
   }
   for (const b of document.querySelectorAll(`[data-toggle="${name}"]`)) b.setAttribute('aria-pressed', String(open));
+  syncSplitterAria(name);
+}
+// Keep a separator's aria-valuenow honest across collapse/restore: 0 while
+// the pane is collapsed, its remembered width when it comes back.
+function syncSplitterAria(name) {
+  const split = document.querySelector(`.ew-split[data-split="${name}"]`);
+  if (!split) return;
+  const open = paneOpen(name);
+  const w = open ? (ls.get('widths', {})[name] ?? Math.round($(`ew-${name}`)?.getBoundingClientRect().width ?? 0)) : 0;
+  split.setAttribute('aria-valuenow', String(Math.round(w)));
 }
 const paneOpen = (name) => { const p = $(`ew-${name}`); return narrow() ? p.classList.contains('sheet-open') : !p.classList.contains('collapsed'); };
 function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.sheet-open')) p.classList.remove('sheet-open'); $('ew-scrim').classList.remove('open'); for (const b of document.querySelectorAll('[data-toggle]')) b.setAttribute('aria-pressed', 'false'); }
@@ -221,8 +256,9 @@ function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.she
 function applyLayout() {
   const root = document.documentElement;
   for (const [k, v] of Object.entries(ls.get('widths', {}))) if (v > 120 && v < 1400) root.style.setProperty(`--ew-${k}`, `${v}px`);
-  if (narrow()) { for (const p of ['channels', 'agents', 'guard', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
+  if (narrow()) { for (const p of ['channels', 'cli', 'agents', 'guard', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
   setPane('channels', ls.get('open.channels', true));
+  setPane('cli', ls.get('open.cli', true));
   setPane('guard', ls.get('open.guard', true));
   setPane('bench', ls.get('open.bench', window.innerWidth >= 1680));
   syncAgentsPane();
@@ -235,28 +271,180 @@ function syncAgentsPane() {
   setPane('agents', pinned === undefined ? false : pinned);
 }
 
+// Splitter floors per pane. The CSS min-widths in envoy.css match these
+// exactly — when the two disagreed (JS clamped at 180, CSS floored the
+// workbench at 320) the drag had dead travel in both directions. Releasing
+// a drag below SNAP collapses the pane instead of parking it at the floor;
+// the pre-drag width stays in the var, so reopening restores it.
+const PANE_MIN = { channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 };
+const PANE_MAX = 900;
+const SNAP = 76;
+// Sized panes in DOM order (the chat sits between channels and cli but is
+// not sized — it is the flexible pane every drag trades space with).
+const PANE_ORDER = ['channels', 'cli', 'agents', 'guard', 'bench'];
+
+// Pure drag geometry, exported for tests. A drag must move the pane edge
+// 1:1 with the pointer, so the dragged pane's growth is bounded by what
+// the REST OF THE ROW can yield — the flexible chat down to its floor,
+// then each other sized pane down to its own floor — never by the
+// container's already-free space. The old clamp measured exactly that
+// free space, and in a full row it is ~0: a +300px drag on channels
+// landed +76px. widths/floors cover every open sized pane (rendered
+// widths; floors from PANE_MIN); splitsW is the visible separators'
+// total width. Returns the full width map for the row at the clamped
+// target: growth is taken from the other panes farthest from the dragged
+// one first, so the panes next to the pointer stay put longest.
+// Shrinking changes only the dragged pane — the freed space falls to
+// the chat on its own.
+export function dragLayout({ widths, floors, chatFloor = 380, containerW, splitsW = 0, name, target, maxCap = PANE_MAX }) {
+  const out = { ...widths };
+  const others = Object.keys(widths).filter((n) => n !== name);
+  const floorSum = others.reduce((sum, n) => sum + floors[n], 0);
+  const maxAbs = containerW - splitsW - chatFloor - floorSum;
+  const width = Math.max(floors[name], Math.min(maxCap, maxAbs, target));
+  out[name] = width;
+  let need = width - widths[name];
+  if (need > 0) {
+    // The flexible chat absorbs first, down to its floor; only the
+    // remainder is taken from the sized panes.
+    const chatNow = containerW - splitsW - Object.values(widths).reduce((sum, w) => sum + w, 0);
+    need -= Math.max(0, chatNow - chatFloor);
+    const byDistance = others.sort((a, b) => Math.abs(PANE_ORDER.indexOf(b) - PANE_ORDER.indexOf(name)) - Math.abs(PANE_ORDER.indexOf(a) - PANE_ORDER.indexOf(name)));
+    for (const n of byDistance) {
+      if (need <= 0) break;
+      const give = Math.min(Math.max(0, out[n] - floors[n]), need);
+      out[n] -= give; need -= give;
+    }
+  }
+  return { widths: out, width };
+}
+
 function wireSplitters() {
+  const ew = $('ew');
+  const setVar = (name, w) => document.documentElement.style.setProperty(`--ew-${name}`, `${Math.round(w)}px`);
+  // Flex-shrink decouples a pane's rendered width from its --ew-* var
+  // whenever the row is over-full (the default layout already is at laptop
+  // widths), which made drags move the var while the eye tracked a shrunken
+  // width, and made pointer-up persist a third number. Freezing writes every
+  // open pane's rendered width into its var first; while .ew.dragging pins
+  // flex-shrink to 0, var == rendered width for the whole drag.
+  // Freeze ONLY the dragged pane's var: writing every open pane's rendered
+  // width into its inline var permanently opts them all out of the
+  // responsive defaults (inline vars beat the <1280px media query), so one
+  // drag on a wide monitor crushed the chat on smaller windows forever.
+  // The .ew.dragging CSS already pins flex-shrink for the rest.
+  const freeze = (only) => {
+    const widths = {};
+    for (const p of document.querySelectorAll('.ew-pane')) { const n = p.id.replace('ew-', ''); if (n !== only) continue; if (PANE_MIN[n] && !p.classList.contains('collapsed')) widths[n] = Math.round(p.getBoundingClientRect().width); }
+    for (const [n, w] of Object.entries(widths)) setVar(n, w);
+    return widths;
+  };
+  // A drag trades space with the whole row (see dragLayout): snapshot
+  // every open sized pane's rendered width (read-only — unlike freeze,
+  // nothing is written here), which panes already carry an inline var
+  // (so an aborted drag restores the exact prior state), the chat's CSS
+  // floor and the visible separators' total width.
+  const snapshot = () => {
+    const widths = {}; const floors = {}; const inline = {};
+    for (const p of document.querySelectorAll('.ew-pane')) {
+      const n = p.id.replace('ew-', '');
+      if (!PANE_MIN[n] || p.classList.contains('collapsed')) continue;
+      const w = Math.round(p.getBoundingClientRect().width);
+      if (w <= 0) continue; // bench-max zeroes panes with !important — outside the row right now
+      widths[n] = w; floors[n] = PANE_MIN[n];
+      inline[n] = document.documentElement.style.getPropertyValue(`--ew-${n}`);
+    }
+    let splitsW = 0;
+    for (const s of document.querySelectorAll('.ew-split:not(.hidden)')) splitsW += 5;
+    const chatFloor = parseFloat(getComputedStyle($('ew-chat')).minWidth) || 380;
+    return { widths, floors, inline, splitsW, chatFloor, containerW: ew.clientWidth };
+  };
+  const restore = (snap, except = null) => {
+    for (const n of Object.keys(snap.widths)) {
+      if (n === except) continue;
+      if (snap.inline[n]) setVar(n, snap.widths[n]);
+      else document.documentElement.style.removeProperty(`--ew-${n}`);
+    }
+  };
+  const persist = (name, w) => { const widths = ls.get('widths', {}); widths[name] = Math.round(w); ls.set('widths', widths); const s = document.querySelector(`.ew-split[data-split="${name}"]`); if (s) s.setAttribute('aria-valuenow', String(Math.round(w))); };
   for (const split of document.querySelectorAll('.ew-split')) {
     const name = split.dataset.split;
     const pane = $(`ew-${name}`);
     const sign = name === 'channels' ? 1 : -1;
+    // Separator ARIA: range from the same tables the drag clamps to, and a
+    // starting value from the applied width — not silence until first drag.
+    split.setAttribute('aria-valuemin', String(PANE_MIN[name]));
+    split.setAttribute('aria-valuemax', String(PANE_MAX));
+    split.setAttribute('aria-valuenow', String(Math.round(ls.get('widths', {})[name] ?? pane.getBoundingClientRect().width)));
     split.addEventListener('pointerdown', (e) => {
       if (narrow()) return;
-      e.preventDefault(); split.setPointerCapture(e.pointerId); split.classList.add('dragging'); $('ew').classList.add('dragging');
-      const start = e.clientX; const startW = pane.getBoundingClientRect().width;
-      const move = (ev) => { const w = Math.max(180, Math.min(900, startW + sign * (ev.clientX - start))); document.documentElement.style.setProperty(`--ew-${name}`, `${w}px`); };
-      const up = () => {
-        split.classList.remove('dragging'); $('ew').classList.remove('dragging');
-        split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up);
-        const widths = ls.get('widths', {}); widths[name] = Math.round(pane.getBoundingClientRect().width); ls.set('widths', widths);
+      e.preventDefault(); split.setPointerCapture(e.pointerId);
+      const start = e.clientX; const startW = freeze(name)[name] ?? Math.round(pane.getBoundingClientRect().width);
+      if (!startW) return; // the pane is zeroed out (bench-max) — nothing to drag
+      const snap = snapshot(); const min = PANE_MIN[name];
+      split.classList.add('dragging'); ew.classList.add('dragging');
+      let raw = startW; let done = false; let applied = { ...snap.widths };
+      const move = (ev) => {
+        raw = startW + sign * (ev.clientX - start);
+        const lay = dragLayout({ ...snap, name, target: raw });
+        // Only panes whose width actually changes get their var written:
+        // on a roomy screen a drag still touches nobody else (S2).
+        for (const [n, w] of Object.entries(lay.widths)) if (w !== applied[n]) { setVar(n, w); applied[n] = w; }
+        split.setAttribute('aria-valuenow', String(Math.round(lay.width)));
+        // The collapse hint arms as soon as the pointer passes the pane's
+        // floor, not only in the last stretch of dead travel below SNAP.
+        pane.classList.toggle('will-collapse', raw < min);
       };
-      split.addEventListener('pointermove', move); split.addEventListener('pointerup', up);
+      const finish = (commit) => {
+        if (done) return; done = true;
+        split.classList.remove('dragging'); ew.classList.remove('dragging'); pane.classList.remove('will-collapse');
+        split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); split.removeEventListener('pointercancel', cancel);
+        if (!commit) { restore(snap); return; }
+        if (raw < SNAP) {
+          // Slide-to-collapse: the pre-drag width stays in the var (and in
+          // storage) as the remembered width reopening restores; any
+          // neighbour that yielded during the drag gets its width back.
+          restore(snap, name);
+          setVar(name, startW);
+          if (name === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); }
+          setPane(name, false, { user: true });
+          return;
+        }
+        persist(name, applied[name]);
+        // A neighbour that actually yielded keeps its new width — the
+        // user's own drag took that space. Untouched neighbours are
+        // neither written nor persisted, so their responsive defaults
+        // and remembered widths survive (S2).
+        for (const n of Object.keys(applied)) if (n !== name && applied[n] !== snap.widths[n]) persist(n, applied[n]);
+      };
+      const up = () => finish(true);
+      const cancel = () => finish(false);
+      split.addEventListener('pointermove', move); split.addEventListener('pointerup', up); split.addEventListener('pointercancel', cancel);
     });
-    split.addEventListener('dblclick', () => { document.documentElement.style.removeProperty(`--ew-${name}`); const w = ls.get('widths', {}); delete w[name]; ls.set('widths', w); });
+    const resetWidth = () => { document.documentElement.style.removeProperty(`--ew-${name}`); const w = ls.get('widths', {}); delete w[name]; ls.set('widths', w); split.setAttribute('aria-valuenow', String(Math.round(pane.getBoundingClientRect().width))); };
+    split.addEventListener('dblclick', resetWidth);
     split.addEventListener('keydown', (e) => {
+      // Keyboard parity with the pointer: Home collapses (slide-under),
+      // End/Enter resets to the default width, like the dblclick reset.
+      if (e.key === 'Home') {
+        e.preventDefault();
+        if (name === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); }
+        setPane(name, false, { user: true });
+        return;
+      }
+      if (e.key === 'End' || e.key === 'Enter') { e.preventDefault(); resetWidth(); return; }
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      const w = pane.getBoundingClientRect().width + sign * (e.key === 'ArrowRight' ? 24 : -24);
-      document.documentElement.style.setProperty(`--ew-${name}`, `${Math.max(180, Math.min(900, w))}px`);
+      e.preventDefault();
+      const startW = freeze(name)[name] ?? Math.round(pane.getBoundingClientRect().width);
+      if (!startW) return; // zeroed out (bench-max), same as the pointer path
+      const snap = snapshot();
+      ew.classList.add('dragging');
+      const lay = dragLayout({ ...snap, name, target: startW + sign * (e.key === 'ArrowRight' ? 24 : -24) });
+      for (const [n, w] of Object.entries(lay.widths)) if (w !== snap.widths[n]) setVar(n, w);
+      persist(name, lay.width);
+      for (const n of Object.keys(lay.widths)) if (n !== name && lay.widths[n] !== snap.widths[n]) persist(n, lay.widths[n]);
+      split.setAttribute('aria-valuenow', String(Math.round(lay.width)));
+      ew.classList.remove('dragging');
     });
   }
 }
@@ -272,22 +460,105 @@ async function loadChannels() {
   }
   const meta = ls.get('chanMeta', {});
   for (const c of ws.channels) if (meta[c.id]) { c._agents = meta[c.id].a; c._discord = meta[c.id].d; }
-  const saved = ls.get('channel', null);
-  if (!ws.channels.some((c) => c.id === ws.channelId)) ws.channelId = ws.channels.some((c) => c.id === saved) ? saved : ws.channels[0]?.id ?? null;
+  // The open channel is remembered per network mode: Envoy restores its
+  // own last channel (the legacy 'channel' key is its fallback), Discord
+  // mode restores its last linked channel.
+  const saved = ls.get(`netChannel.${ws.mode}`, null) ?? (ws.mode === 'envoy' ? ls.get('channel', null) : null);
+  const pool = modeChannels();
+  if (!pool.some((c) => c.id === ws.channelId)) ws.channelId = pool.some((c) => c.id === saved) ? saved : pool[0]?.id ?? null;
   renderChannels();
 }
 function currentTitle() { const c = ws.channels.find((x) => x.id === ws.channelId); return c?.title || c?.slug || 'channel'; }
-function openNewSession() {
+function openNewChannel() {
   setPane('channels', true);
-  $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; renderNewSessionAvatar(); $('ew-new-channel-name').focus();
+  $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; renderNewChannelAvatar(); $('ew-new-channel-name').focus();
 }
+// ---------- network flip: Envoy ⇄ Discord ----------
+// One chat surface, two networks (Troy's ruling + the Slack/Discord UX
+// research): a labelled two-segment switch at the top of the channels
+// pane — both names always visible, never icon-only — swaps the channel
+// list and the chat context with identical geometry. Linked channels
+// are distinguishable only through the per-channel config the client
+// already loads (the channels API carries no Discord field): _discord
+// is set from that config and cached in chanMeta, the same source the
+// old DISCORD section below the Envoy list always used.
+const linkedChannels = () => ws.channels.filter((c) => c._discord);
+const modeChannels = () => (ws.mode === 'discord' ? linkedChannels() : ws.channels);
+function renderNetSwitch() {
+  const envoy = $('ew-net-envoy'); const discord = $('ew-net-discord'); if (!envoy || !discord) return;
+  const dOn = ws.mode === 'discord';
+  envoy.classList.toggle('on', !dOn); envoy.setAttribute('aria-selected', String(!dOn));
+  discord.classList.toggle('on', dOn); discord.setAttribute('aria-selected', String(dOn));
+  // Inactive-side badge: the one count the data model honestly has is
+  // the linked-channel count (no unread/mention counts exist client-
+  // side), so it rides the Discord segment while Envoy is active, in a
+  // neutral chip — never the red mention style it does not mean.
+  const n = linkedChannels().length;
+  const chip = $('ew-net-discord-count');
+  chip.hidden = dOn || n === 0;
+  chip.textContent = String(n);
+  discord.title = n ? `Discord — ${n} linked channel${n === 1 ? '' : 's'}` : 'Discord';
+}
+// Anti-mis-send strip directly above the composer: names the network
+// and channel a message will land in, in both modes.
+function renderNetStrip() {
+  const strip = $('ew-net-strip'); if (!strip) return;
+  const ch = ws.channels.find((c) => c.id === ws.channelId);
+  const title = ch?.title || ch?.slug || 'channel';
+  const dOn = ws.mode === 'discord';
+  strip.classList.toggle('discord', dOn);
+  $('ew-chat').classList.toggle('net-discord', dOn);
+  strip.textContent = dOn
+    ? (ch ? `You're posting to Discord · #${ws.config?.discord?.channelName || title}` : "You're in Discord · no channel linked yet")
+    : `You're posting to Envoy · #${title}`;
+}
+function setComposer(on) {
+  const box = $('maestro-input'); const btn = $('maestro-send');
+  if (box) box.disabled = !on;
+  if (btn) btn.disabled = !on;
+}
+const discordEmptyText = () => ws.discordBot?.configured
+  ? 'No channels are linked to Discord yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.'
+  : 'The Helmian Discord bot is not connected yet. Once it is, linked channels mirror here.';
+async function setNetMode(mode) {
+  if (mode !== 'envoy' && mode !== 'discord') return;
+  if (ws.mode === mode) { renderNetSwitch(); return; }
+  if (ws.channelId) ls.set(`netChannel.${ws.mode}`, ws.channelId);
+  ws.mode = mode; ls.set('netMode', mode);
+  // Channel creation is an Envoy-side act; hide its affordances here.
+  $('ew-new-channel').hidden = true;
+  $('ew-add-channel').hidden = mode === 'discord';
+  const pool = modeChannels();
+  const saved = ls.get(`netChannel.${mode}`, null);
+  const target = pool.some((c) => c.id === saved) ? saved : pool[0]?.id ?? null;
+  renderNetSwitch(); renderChannels(); renderNetStrip();
+  if (target) { await selectChannel(target); return; }
+  // Discord mode with nothing linked: honest empty state, no fake chat.
+  ws.channelId = null; ws.config = null; ws.messages = []; ws.sig = null;
+  renderChannels(); renderHeader(); renderNetStrip();
+  $('ew-channel-title').textContent = 'Discord';
+  $('ew-link-discord').hidden = true;
+  $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, discordEmptyText()));
+  setComposer(false);
+}
+
 function renderChannels() {
   const list = $('ew-channel-list');
   const row = (c) => h('button', { type: 'button', class: `ew-channel${c.id === ws.channelId ? ' active' : ''}`, 'data-id': c.id, onclick: () => selectChannel(c.id) },
     chatAvatar(c, 'sm'), h('span', { class: 'name' }, c.title || c.slug),
     h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null));
-  const linked = ws.channels.filter((c) => c._discord);
+  renderNetSwitch();
+  list.setAttribute('aria-label', ws.mode === 'discord' ? 'Discord channels' : 'Envoy channels');
+  $('ew-add-channel').hidden = ws.mode === 'discord' || !$('ew-new-channel').hidden;
+  const linked = linkedChannels();
   const bot = ws.discordBot;
+  if (ws.mode === 'discord') {
+    list.replaceChildren(
+      h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
+      ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.' : 'Bot not connected yet. Linked channels mirror here.')])
+    );
+    return;
+  }
   list.replaceChildren(
     h('div', { class: 'ew-src-head' }, h('img', { src: '/assets/agents/maestro.png', alt: '', width: 14, height: 14 }), 'ENVOY'),
     ...(ws.channels.length ? ws.channels.map(row) : [h('p', { class: 'ew-note' }, 'No channels yet.')]),
@@ -299,7 +570,8 @@ function renderChannels() {
 }
 async function selectChannel(id) {
   if (!id) return;
-  ws.channelId = id; ls.set('channel', id); ws.sig = null; ws.messages = [];
+  ws.channelId = id; ls.set('channel', id); ls.set(`netChannel.${ws.mode}`, id); ws.sig = null; ws.messages = [];
+  setComposer(true);
   renderChannels();
   $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Loading…'));
   if (narrow()) closeSheets();
@@ -327,7 +599,9 @@ function renderHeader() {
   const ch = ws.channels.find((c) => c.id === ws.channelId);
   const title = ch?.title || ch?.slug || 'channel';
   $('ew-channel-title').textContent = title; renderHeadAvatar();
-  $('maestro-input').placeholder = ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent or let Maestro route it` : `Message #${title}`;
+  // The placeholder names the destination channel in both modes; the
+  // long @agent hint is an Envoy-side extra and stays there.
+  $('maestro-input').placeholder = ws.mode === 'discord' ? `Message #${title}` : (ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent or let Maestro route it` : `Message #${title}`);
   const badge = $('ew-discord-badge');
   const d = ws.config?.discord;
   badge.hidden = !(d || ws.config?.pendingLink);
@@ -339,6 +613,7 @@ function renderHeader() {
   link.hidden = !admin && !d;
   $('ew-agent-count').textContent = String(ws.config?.agents?.length ?? 0);
   $('ew-discord-status-text').textContent = ws.discordBot?.configured ? (d ? `linked to #${d.channelName || d.channelId}` : 'ready to link') : 'bot not set up yet';
+  renderNetStrip();
 }
 function renderAgents() {
   const roster = (ws.config?.agents ?? []).map((a) => a.provider);
@@ -347,19 +622,18 @@ function renderAgents() {
   $('ew-agent-cards').replaceChildren(...roster.map((p) => {
     const s = states[p];
     const label = s.state === 'offline' ? 'OFFLINE' : s.state === 'working' ? 'WORKING' : 'IDLE';
-    return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: `Ask ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
+    return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
       avatarImg(p), h('strong', {}, NAMES[p]),
       h('button', { type: 'button', class: 'ew-icon remove', title: `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×'),
       h('span', { class: `ew-state ${s.state}` }, label),
       h('span', { class: 'last' }, s.state === 'offline' ? 'Offline. Start the Helmian bridge on your PC to bring it online.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
   }));
   if (!roster.length) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, 'No agents in this channel. Add one below to make it an agent chat.'));
-  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill', onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
-  // Agent picker in the CLI: agents here are @mention pills; the rest add in one click.
+  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
+  // Channel composer mention pills: agents in this channel are @mention pills; the rest add in one click.
   $('ew-mention-pills').replaceChildren(...(roster.length > 1 ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
-    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
-    ...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)),
-    h('button', { type: 'button', class: 'ew-pill session', title: 'Start a new agent session', onclick: openNewSession }, '+ New session'));
+    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention @${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
+    ...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
   $('ew-mention-pills').hidden = false;
 }
 async function changeAgent(action, provider) {
@@ -380,13 +654,13 @@ function insertMention(name) {
 
 // ---------- messages ----------
 async function loadMessages() {
-  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'No channel yet. Ask the workspace owner to create one.')); return; }
+  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); renderCliThread(); return; }
   const body = await ws.ctx.api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(id)}&limit=100`);
   if (id !== ws.channelId) return;
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const sig = messages.map((m) => m.id).join(',');
   if (sig === ws.sig) {
-    renderAgents();
+    renderAgents(); renderCliThread();
     // No new messages, but pending work can still start or expire on
     // server state alone (a reply window lapsing, an agent coming online):
     // redraw the thread if the in-thread working cue changed.
@@ -394,7 +668,7 @@ async function loadMessages() {
     return;
   }
   ws.sig = sig; ws.messages = messages;
-  renderMessages(); renderAgents();
+  renderMessages(); renderAgents(); renderCliThread();
 }
 function whoOf(m) {
   const me = ws.ctx.state.actor?.subject;
@@ -452,6 +726,146 @@ async function send(e) {
   box.value = ''; grow();
   try { await ws.ctx.post('/api/admin/envoy/messages', { channelId: ws.channelId, body, idempotencyKey: key }); ws.sig = null; await loadMessages(); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
+  finally { btn.disabled = false; }
+}
+
+// ---------- agent chat pane: sessions + prompt composer ----------
+// The agent chat pane: the human's conversation with one picked agent,
+// shown on its own inside the pane. Sessions reuse the Session console's plumbing
+// (/api/admin/app/sessions — the same create/list payloads as app.js's
+// #session-form, with the same local fallback); prompts post through the
+// same envoy messages endpoint the console composer uses, into the open
+// channel, addressed with the @mention routing the chat already honours.
+// Maestro is the router, not a session provider (the server offers
+// Claude/ChatGPT/Grok/Gemini), so picking Maestro sends unaddressed and
+// lets Maestro route it — the rule the chat already runs on.
+const CLI_KEY_BY_PROVIDER = { Claude: 'claude', ChatGPT: 'openai', Grok: 'grok', Gemini: 'gemini' };
+function cliTarget() {
+  const s = ws.cli.sessions.find((x) => x.id === ws.cli.activeId);
+  if (s) return { key: CLI_KEY_BY_PROVIDER[s.provider] ?? 'maestro', session: s };
+  return { key: ws.cli.provider, session: null };
+}
+function renderCliChips() {
+  const active = cliTarget().key;
+  $('ew-cli-chips').replaceChildren(...AGENTS.map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: p === 'maestro' ? 'Maestro routes to the others' : `Show your conversation with ${NAMES[p]}`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
+}
+function renderCliTo() {
+  const { key, session } = cliTarget();
+  $('ew-cli-to').textContent = session ? `${session.provider} · posts in the channel as @${NAMES[key]}` : key === 'maestro' ? 'Maestro · posts in the channel and routes it' : `${NAMES[key]} · posts in the channel as @${NAMES[key]}`;
+  $('ew-cli-input').placeholder = key === 'maestro' ? 'Prompt...' : `Prompt ${NAMES[key]}...`;
+}
+function renderCliSessions() {
+  const box = $('ew-cli-sessions');
+  if (!ws.cli.sessions.length) { box.replaceChildren(h('p', { class: 'ew-note' }, 'No sessions yet. Pick an agent above to start one.')); return; }
+  box.replaceChildren(...ws.cli.sessions.map((s) => {
+    const key = CLI_KEY_BY_PROVIDER[s.provider] ?? 'maestro';
+    const prog = s.progress && s.progress.total ? `${s.progress.done}/${s.progress.total} steps${s.progress.current ? ` · now: ${s.progress.current}` : ''}` : clock(s.createdAt);
+    return h('button', { type: 'button', class: `ew-cli-session${s.id === ws.cli.activeId ? ' active' : ''}`, title: `${s.name} (${s.provider})`, onclick: () => selectCliSession(s.id) },
+      avatarImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
+  }));
+}
+// The pane's own conversation stream: the picked agent's exchange,
+// rendered where the human is looking instead of only in the channel.
+// Signature-guarded like the message list, so calm polls don't rebuild it.
+function renderCliThread() {
+  const box = $('ew-cli-thread'); if (!box) return;
+  const { key } = cliTarget();
+  const roster = (ws.config?.agents ?? []).map((a) => a.provider);
+  const me = ws.ctx.state?.actor?.subject;
+  const list = ws.channelId ? cliThreadFor(ws.messages, roster, key, me) : [];
+  const working = currentWorking();
+  const showing = key === 'maestro' ? working : working.filter((p) => p === key);
+  const sig = `${key}|${ws.channelId ?? ''}|${list.map((m) => m.id).join(',')}|${showing.join(',')}`;
+  if (sig === ws.cli.threadSig) return;
+  ws.cli.threadSig = sig;
+  if (!list.length && !showing.length) {
+    box.replaceChildren(h('p', { class: 'ew-note' }, ws.channelId
+      ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here.`
+      : 'Open a channel and your conversation with the picked agent shows up here.'));
+    return;
+  }
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const onLink = (url) => { openBench('browser'); navigate(url); };
+  const onCanvas = (code) => { openBench('canvas'); setCanvas(code); };
+  const out = [];
+  let prev = null;
+  for (const m of list) {
+    const who = whoOf(m);
+    const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
+    const avatar = who.kind === 'agent' ? h('div', { class: 'ew-avatar' }, avatarImg(who.provider)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase());
+    const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : null;
+    out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}` }, avatar,
+      h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
+        h('div', { class: 'ew-body' }, renderBody(m.body, { onLink, onCanvas })))));
+    prev = m;
+  }
+  for (const p of showing) {
+    out.push(h('div', { class: 'ew-msg ew-answering', role: 'status' },
+      h('div', { class: 'ew-avatar' }, avatarImg(p)),
+      h('div', {}, h('div', { class: 'ew-body ew-answering-body' },
+        h('span', { class: 'ew-working-dot', 'aria-hidden': 'true' }),
+        `${NAMES[p]} is answering…`))));
+  }
+  box.replaceChildren(...out);
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+function selectCliSession(id) {
+  const s = ws.cli.sessions.find((x) => x.id === id); if (!s) return;
+  ws.cli.activeId = id; ls.set('cliSession', id);
+  ws.cli.provider = CLI_KEY_BY_PROVIDER[s.provider] ?? ws.cli.provider;
+  if (ws.ctx.state) ws.ctx.state.activeSession = id;
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
+  $('ew-cli-input').focus({ preventScroll: true });
+}
+function pickCliProvider(p) {
+  ws.cli.provider = p; ws.cli.activeId = null; ls.set('cliSession', null);
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
+  if (p === 'maestro') { $('ew-cli-session-form').hidden = true; $('ew-cli-input').focus({ preventScroll: true }); return; }
+  ws.cli.pending = p;
+  const input = $('ew-cli-session-name');
+  $('ew-cli-session-form').hidden = false;
+  input.value = `${NAMES[p]} session`; input.select(); input.focus();
+}
+async function loadCliSessions() {
+  try {
+    const body = await ws.ctx.api('/api/admin/app/sessions');
+    ws.cli.sessions = sessionsFromServer(body); ws.cli.server = true;
+  } catch { ws.cli.server = false; ws.cli.sessions = ls.get('cliSessions', []); }
+  // Adopt the shared active session (sidebar / Session console) when listed.
+  const shared = ws.ctx.state?.activeSession;
+  if (shared && ws.cli.sessions.some((s) => s.id === shared)) ws.cli.activeId = shared;
+  if (!ws.cli.sessions.some((s) => s.id === ws.cli.activeId)) ws.cli.activeId = null;
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
+}
+async function createCliSession(name) {
+  const provider = NAMES[ws.cli.pending] ?? 'Claude';
+  try {
+    const r = await ws.ctx.post('/api/admin/app/sessions', { name, provider, idempotencyKey: crypto.randomUUID() });
+    await loadCliSessions();
+    if (r.session?.id) selectCliSession(r.session.id);
+  } catch {
+    // Same offline fallback as the Session console: keep the session locally.
+    ws.cli.sessions = addSession(ws.cli.sessions, { name, provider });
+    ls.set('cliSessions', ws.cli.sessions);
+    ws.cli.activeId = ws.cli.sessions[0]?.id ?? null; ls.set('cliSession', ws.cli.activeId);
+    renderCliChips(); renderCliSessions(); renderCliTo();
+  }
+  ws.ctx.toast('Session started', 'ok');
+}
+const growCli = () => { const t = $('ew-cli-input'); t.style.height = 'auto'; t.style.height = `${Math.min(t.scrollHeight, 200)}px`; };
+async function sendCli(e) {
+  e?.preventDefault?.();
+  const box = $('ew-cli-input'); const raw = box.value.trim();
+  if (!raw) return;
+  if (!ws.channelId) { ws.ctx.toast('No channel open yet — the prompt needs a channel to land in.'); return; }
+  const { key } = cliTarget();
+  const tag = key === 'maestro' ? '' : `@${NAMES[key]} `;
+  const body = tag && !raw.toLowerCase().startsWith(tag.trim().toLowerCase()) ? tag + raw : raw;
+  const btn = $('ew-cli-send'); btn.disabled = true;
+  try {
+    await ws.ctx.post('/api/admin/envoy/messages', { channelId: ws.channelId, body, idempotencyKey: crypto.randomUUID() });
+    box.value = ''; growCli(); ws.sig = null; await loadMessages();
+  } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
   finally { btn.disabled = false; }
 }
 
@@ -583,9 +997,12 @@ function wire() {
     setPane(n, open, { user: true });
   });
   $('ew-scrim').addEventListener('click', closeSheets);
-  $('ew-bench-max').addEventListener('click', () => { const on = $('ew').classList.toggle('bench-max'); $('ew-bench-max').textContent = on ? '⤡' : '⤢'; $('ew-bench-max').title = on ? 'Restore' : 'Expand'; });
+  $('ew-bench-max').addEventListener('click', () => { const on = $('ew').classList.toggle('bench-max'); $('ew-bench-max').textContent = on ? '⤡' : '⤢'; $('ew-bench-max').title = on ? 'Restore' : 'Expand'; $('ew-bench-max').setAttribute('aria-label', on ? 'Restore workbench' : 'Expand workbench'); });
   for (const t of document.querySelectorAll('#ew-bench .ew-tab')) t.addEventListener('click', () => selectTab(t.dataset.tab));
-  $('ew-add-channel').addEventListener('click', openNewSession);
+  $('ew-add-channel').addEventListener('click', openNewChannel);
+  $('ew-net-envoy').addEventListener('click', () => setNetMode('envoy'));
+  $('ew-net-discord').addEventListener('click', () => setNetMode('discord'));
+  renderNetSwitch(); renderNetStrip();
   $('ew-chat-ava').addEventListener('click', openAvatarModal);
   wireSwipe();
   $('ew-new-channel-cancel').addEventListener('click', () => { $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; });
@@ -594,11 +1011,10 @@ function wire() {
     const title = $('ew-new-channel-name').value.trim(); if (!title) return;
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'channel';
     try {
-      const made = await ws.ctx.post('/api/admin/envoy/channels', { slug, title, kind: $('ew-new-channel-agent').value ? 'agent' : 'team' });
+      const made = await ws.ctx.post('/api/admin/envoy/channels', { slug, title, kind: 'team' });
       $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; $('ew-new-channel-name').value = '';
       if (made.channel?.id && made.inserted !== false) saveAvatar(made.channel.id, ws.pendingAvatar);
       await loadChannels(); ws.channelId = made.channel?.id ?? ws.channelId;
-      const agent = $('ew-new-channel-agent').value; if (agent && made.inserted !== false) await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'add-agent', channelId: ws.channelId, provider: agent }).catch(() => {});
       await selectChannel(ws.channelId);
     } catch { ws.ctx.toast('Channel not created.'); }
   });
@@ -607,6 +1023,22 @@ function wire() {
   box.addEventListener('input', grow);
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
   $('maestro-plus').addEventListener('click', () => ws.ctx.openTools?.());
+  // Agent CLI pane
+  renderCliChips(); renderCliSessions(); renderCliTo();
+  $('ew-cli-new').addEventListener('click', () => pickCliProvider(ws.cli.provider === 'maestro' ? 'claude' : ws.cli.provider));
+  $('ew-cli-session-cancel').addEventListener('click', () => { $('ew-cli-session-form').hidden = true; });
+  $('ew-cli-session-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('ew-cli-session-name').value.trim(); if (!name) return;
+    $('ew-cli-session-form').hidden = true;
+    await createCliSession(name);
+    $('ew-cli-input').focus({ preventScroll: true });
+  });
+  $('ew-cli-form').addEventListener('submit', sendCli);
+  const cliBox = $('ew-cli-input');
+  cliBox.addEventListener('input', growCli);
+  cliBox.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); sendCli(); } });
+  ws.ctx.wireCliVoice?.();
   $('ew-link-discord').addEventListener('click', linkDiscord);
   $('ew-modal-close').addEventListener('click', closeModal);
   $('ew-modal').addEventListener('click', (e) => { if (e.target === $('ew-modal')) closeModal(); });
@@ -644,7 +1076,7 @@ export async function mountWorkspace(ctx) {
   if (ctx.benchTab) { openBench(ctx.benchTab); ctx.benchTab = null; }
   ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
-  await Promise.allSettled([loadPresence(), loadConfig(), loadMessages()]);
+  await Promise.allSettled([loadPresence(), loadConfig(), loadMessages(), loadCliSessions()]);
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
   const visible = () => document.visibilityState === 'visible' && document.getElementById('shell')?.dataset.view === 'desktop';
   // Adaptive message poll: while any agent has pending work in the open

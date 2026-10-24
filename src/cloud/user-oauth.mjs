@@ -4,7 +4,7 @@
 // The cloud never persists provider credentials (019 contract).
 
 import { randomBytes, createHash } from 'node:crypto';
-import { resolveGeminiOAuthConfig, createGeminiOAuthPkce } from './provider-oauth-config.mjs';
+import { resolveGeminiUserOAuthConfig, createGeminiOAuthPkce } from './provider-oauth-config.mjs';
 
 export const USER_GEMINI_OAUTH_START = '/api/provider-oauth/gemini/start';
 export const USER_GEMINI_OAUTH_CALLBACK = '/api/provider-oauth/gemini/callback';
@@ -29,7 +29,7 @@ export async function handleUserOAuthRoute({ request, response, requestUrl, send
   // Start: redirect to Google
   if (request?.method === 'GET' && pathname === USER_GEMINI_OAUTH_START) {
     const origin = `${requestUrl.protocol}//${requestUrl.host}`;
-    const config = resolveGeminiOAuthConfig(process.env, origin);
+    const config = resolveGeminiUserOAuthConfig(process.env, origin);
 
     if (!config.configured) {
       send(response, 503, JSON.stringify({ error: 'Gemini OAuth not configured', code: config.code }));
@@ -78,7 +78,12 @@ export async function handleUserOAuthRoute({ request, response, requestUrl, send
     }
 
     const origin = `${requestUrl.protocol}//${requestUrl.host}`;
-    const config = resolveGeminiOAuthConfig(process.env, origin);
+    const config = resolveGeminiUserOAuthConfig(process.env, origin);
+
+    if (!config.configured) {
+      send(response, 503, JSON.stringify({ error: 'Gemini OAuth not configured', code: config.code }));
+      return true;
+    }
 
     try {
       // Exchange code for token
