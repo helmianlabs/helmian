@@ -281,8 +281,10 @@ test('nav rail: the pin lives on the rail, hover peek is desktop-pointer only', 
 });
 
 // Polish Bites C/D (audit 2026-10-23): F2's leftover double animation, the
-// rail tooltips (I1) and the I2 interim — the composer "+" becomes a
-// labelled Tools button until real file attach lands (Bite I).
+// rail tooltips (I1) and the I2 interim — the composer "+" was a labelled
+// Tools button until real attach landed. It has now landed (composer "+"
+// picker, app/composer-picker.mjs): the channel composer's "+" opens the
+// picker; the Session console's button (app.js) is still the Tools opener.
 test('I1: every nav item carries a rail tooltip (data-tip) matching its label', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const items = [...html.matchAll(/<button class="nav-item[^"]*"([^>]*)>([\s\S]*?)<\/button>/g)]
@@ -296,19 +298,20 @@ test('I1: every nav item carries a rail tooltip (data-tip) matching its label', 
   }
 });
 
-test('I2 interim: both composer "+" buttons are labelled Tools buttons; openers unchanged', async () => {
+test('I2 landed: the channel composer "+" opens the attach picker; the console Tools button is unchanged', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const maestro = html.match(/<button[^>]*id="maestro-plus"[^>]*>([\s\S]*?)<\/button>/);
   assert.ok(maestro, '#maestro-plus exists');
-  assert.match(maestro[1], /🔧/, 'maestro composer button shows the wrench glyph');
-  assert.match(maestro[1], /Tools/, 'maestro composer button shows the word Tools');
+  assert.match(maestro[1], /\+/, 'maestro composer button shows the plus');
+  assert.match(maestro[1], /Add/, 'maestro composer button is labelled Add');
+  assert.doesNotMatch(maestro[1], /Tools/, 'maestro composer button no longer routes to Tools');
   const consoleBtn = html.match(/<button[^>]*data-tool="tools"[^>]*>([\s\S]*?)<\/button>/);
   assert.ok(consoleBtn, 'console composer tools button exists');
   assert.match(consoleBtn[1], /🔧/, 'console composer button shows the wrench glyph');
   assert.match(consoleBtn[1], /Tools/, 'console composer button shows the word Tools');
-  // Click behavior is untouched: both still open Tools / Integrations.
+  // The channel "+" opens the picker; the console button still opens Tools.
   const ejs = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
-  assert.match(ejs, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => ws\.ctx\.openTools\?\.\(\)\)/);
+  assert.match(ejs, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => togglePicker\('channel'\)\)/);
   const ajs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
   assert.match(ajs, /t\.dataset\.tool === 'tools'\) openTools\(\)/);
 });

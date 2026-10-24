@@ -3,6 +3,7 @@
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
 import { addSession, sessionsFromServer } from './app-model.mjs';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' };
@@ -156,7 +157,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null }, attach: { channel: [], cli: [] }, pickerFor: null, pickerData: null };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -652,6 +653,76 @@ function insertMention(name) {
   if (narrow()) closeSheets();
 }
 
+// ---------- composer "+" picker: skills, connectors, upload ----------
+// One picker for both composers (channel + agent chat); the pure model in
+// composer-picker.mjs decides what can be attached and how it travels.
+const PICKER_IDS = {
+  channel: { panel: 'ew-picker', chips: 'ew-attach-chips' },
+  cli: { panel: 'ew-cli-picker', chips: 'ew-cli-attach-chips' },
+};
+async function loadPickerData() {
+  if (ws.pickerData) return ws.pickerData;
+  const [c, p] = await Promise.allSettled([ws.ctx.api('/api/admin/cora/connectors'), ws.ctx.api('/api/admin/provider-connections')]);
+  ws.pickerData = pickerModel({ connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {} });
+  return ws.pickerData;
+}
+function renderAttachChips(which) {
+  const box = $(PICKER_IDS[which].chips); if (!box) return;
+  const list = ws.attach[which];
+  box.hidden = !list.length;
+  box.replaceChildren(...list.map((a) => h('span', { class: `ew-chip ${a.kind}` },
+    a.kind === 'skill' ? `/${a.name}` : a.name,
+    h('button', { type: 'button', class: 'ew-chip-x', title: `Remove ${a.kind === 'skill' ? `the ${a.name} skill` : a.name}`, 'aria-label': `Remove ${a.kind === 'skill' ? `skill ${a.name}` : a.name}`, onclick: () => { ws.attach[which] = removeAttachment(ws.attach[which], a); renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×'))));
+}
+function closePicker() {
+  ws.pickerFor = null;
+  for (const { panel } of Object.values(PICKER_IDS)) { const p = $(panel); if (p) p.hidden = true; }
+}
+async function togglePicker(which) {
+  if (ws.pickerFor === which) { closePicker(); return; }
+  ws.pickerFor = which;
+  const other = which === 'channel' ? 'cli' : 'channel';
+  const op = $(PICKER_IDS[other].panel); if (op) op.hidden = true;
+  await renderPicker(which);
+}
+async function renderPicker(which) {
+  const panel = $(PICKER_IDS[which].panel); if (!panel) return;
+  if (ws.pickerFor !== which) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const model = ws.pickerData ?? await loadPickerData().catch(() => pickerModel());
+  if (ws.pickerFor !== which) return; // closed while the registry loaded
+  const attached = new Set(ws.attach[which].map(attachmentKey));
+  const groups = [];
+  for (const g of model.groups) {
+    if (g.id === 'skills') {
+      const nameInput = h('input', { class: 'ew-picker-input', maxlength: 64, placeholder: 'Skill name — e.g. deploy, or plugin:skill', 'aria-label': 'Skill name' });
+      const note = h('p', { class: 'ew-note' });
+      const add = h('button', { type: 'button', class: 'ew-btn sm', onclick: () => {
+        const r = addAttachment(ws.attach[which], { kind: 'skill', name: nameInput.value });
+        if (!r.added) { note.textContent = r.reason; return; }
+        ws.attach[which] = r.list; note.textContent = '';
+        renderAttachChips(which); renderPicker(which);
+      } }, 'Attach skill');
+      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'SKILLS'), h('p', { class: 'ew-note' }, g.note), h('div', { class: 'ew-row' }, nameInput, add), note));
+    } else if (g.id === 'connectors') {
+      const rows = g.items.map((item) => {
+        const on = attached.has(`connector:${item.key}`);
+        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, disabled: item.connected ? null : true, title: item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`) : `${item.name} is not connected`, onclick: () => {
+          if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'connector', key: item.key }); renderAttachChips(which); renderPicker(which); return; }
+          const r = addAttachment(ws.attach[which], { kind: 'connector', key: item.key }, { catalog: g.items });
+          if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
+        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.connected ? 'on' : 'off'}` }, on ? 'Attached' : item.connected ? 'Connected' : 'Not connected'));
+      });
+      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'CONNECTORS'), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No connectors in the registry.')])));
+    } else if (g.id === 'upload') {
+      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'UPLOAD'), h('button', { type: 'button', class: 'ew-btn sm', disabled: true, title: g.reason }, 'Upload a file'), h('p', { class: 'ew-note' }, g.reason)));
+    }
+  }
+  panel.replaceChildren(
+    h('div', { class: 'ew-picker-head' }, h('strong', {}, 'Add to this message'), h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-icon', 'aria-label': 'Close picker', onclick: () => closePicker() }, '×')),
+    ...groups);
+}
+
 // ---------- messages ----------
 async function loadMessages() {
   const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); renderCliThread(); return; }
@@ -720,11 +791,12 @@ async function send(e) {
   const box = $('maestro-input'); const body = box.value.trim();
   if (!body || !ws.channelId) return;
   const key = crypto.randomUUID();
+  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel });
   const btn = $('maestro-send'); btn.disabled = true;
-  ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body, createdAt: new Date().toISOString(), _pending: true }];
+  ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
   box.value = ''; grow();
-  try { await ws.ctx.post('/api/admin/envoy/messages', { channelId: ws.channelId, body, idempotencyKey: key }); ws.sig = null; await loadMessages(); }
+  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
   finally { btn.disabled = false; }
 }
@@ -861,10 +933,14 @@ async function sendCli(e) {
   const { key } = cliTarget();
   const tag = key === 'maestro' ? '' : `@${NAMES[key]} `;
   const body = tag && !raw.toLowerCase().startsWith(tag.trim().toLowerCase()) ? tag + raw : raw;
+  // Attachments apply after the @tag is composed: an attached skill must
+  // lead the whole message for the bridge to expand it (see composer-picker).
+  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: crypto.randomUUID(), attachments: ws.attach.cli });
   const btn = $('ew-cli-send'); btn.disabled = true;
   try {
-    await ws.ctx.post('/api/admin/envoy/messages', { channelId: ws.channelId, body, idempotencyKey: crypto.randomUUID() });
-    box.value = ''; growCli(); ws.sig = null; await loadMessages();
+    await ws.ctx.post('/api/admin/envoy/messages', req.payload);
+    box.value = ''; growCli(); ws.attach.cli = []; renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
+    ws.sig = null; await loadMessages();
   } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
   finally { btn.disabled = false; }
 }
@@ -1022,7 +1098,8 @@ function wire() {
   const box = $('maestro-input');
   box.addEventListener('input', grow);
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
-  $('maestro-plus').addEventListener('click', () => ws.ctx.openTools?.());
+  $('maestro-plus').addEventListener('click', () => togglePicker('channel'));
+  $('ew-cli-plus').addEventListener('click', () => togglePicker('cli'));
   // Agent CLI pane
   renderCliChips(); renderCliSessions(); renderCliTo();
   $('ew-cli-new').addEventListener('click', () => pickCliProvider(ws.cli.provider === 'maestro' ? 'claude' : ws.cli.provider));
@@ -1042,7 +1119,7 @@ function wire() {
   $('ew-link-discord').addEventListener('click', linkDiscord);
   $('ew-modal-close').addEventListener('click', closeModal);
   $('ew-modal').addEventListener('click', (e) => { if (e.target === $('ew-modal')) closeModal(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if ($('ew-modal').classList.contains('open')) closeModal(); else closeSheets(); } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (ws.pickerFor) closePicker(); else if ($('ew-modal').classList.contains('open')) closeModal(); else closeSheets(); } });
   // Browser
   $('ew-browser-form').addEventListener('submit', (e) => { e.preventDefault(); navigate($('ew-browser-url').value); });
   $('ew-browser-back').addEventListener('click', () => { if (nav.index > 0) { nav.index -= 1; navigate(nav.stack[nav.index], { push: false }); } });

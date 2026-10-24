@@ -147,6 +147,25 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-composer textarea { border:0; background:transparent; resize:none; padding:4px 2px; max-height:200px; min-height:24px; }
 .ew-composer-row { display:flex; align-items:center; gap:6px; }
 .ew-hint { color:var(--faint); font-size:11px; }
+/* Composer "+" picker + attachment chips */
+.ew-attach-chips { display:flex; gap:6px; flex-wrap:wrap; }
+.ew-attach-chips[hidden] { display:none; }
+.ew-chip { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--accent); background:var(--panel-2); color:var(--text); border-radius:999px; padding:2px 4px 2px 10px; font-size:12px; font-weight:600; }
+.ew-chip-x { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; line-height:1; padding:0 4px; }
+.ew-chip-x:hover { color:var(--text); }
+.ew-picker { border:1px solid var(--border); border-radius:10px; background:var(--panel-2); padding:10px; display:flex; flex-direction:column; gap:10px; max-height:340px; overflow:auto; }
+.ew-picker[hidden] { display:none; }
+.ew-picker-head { display:flex; align-items:center; gap:6px; }
+.ew-picker-group { display:flex; flex-direction:column; gap:6px; }
+.ew-picker-input { flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); padding:6px 8px; }
+.ew-picker-row { display:flex; align-items:center; gap:8px; border:1px solid var(--border); background:var(--panel); color:var(--text); border-radius:8px; padding:7px 10px; cursor:pointer; text-align:left; font-size:13px; transition:border-color .15s; }
+.ew-picker-row:hover:not(:disabled) { border-color:var(--accent); }
+.ew-picker-row.on { border-color:var(--accent); }
+.ew-picker-row:disabled { opacity:.55; cursor:default; }
+.ew-picker-kind { color:var(--muted); font-size:12px; }
+.ew-picker-state { margin-left:auto; font-size:11px; font-weight:700; }
+.ew-picker-state.on { color:var(--green); }
+.ew-picker-state.off { color:var(--muted); }
 .ew-pills { display:flex; gap:6px; flex-wrap:wrap; }
 .ew-pill { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:999px; padding:2px 10px 2px 3px; font-size:12px; cursor:pointer; transition:border-color .15s, transform .1s; }
 .ew-pill:hover { border-color:var(--accent); }
