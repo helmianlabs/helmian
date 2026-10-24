@@ -76,6 +76,8 @@
       <label class="field">Theme<select id="theme-quick"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
     </details>
 
+    <button id="rail-more" class="nav-item rail-more" type="button" data-tip="More">⋯ <span class="label">More</span></button>
+
     <footer class="side-foot">
       <div class="svc"><span id="svc-dot" class="dot"></span><span id="svc-text">Cloud service · Connecting…</span></div>
       <div id="account" class="faint sm"></div>
@@ -327,7 +329,7 @@
         </div>
       </form>
       <details class="panel show-details" id="console-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <div id="mcp-panel" class="mcp">
           <div class="eyebrow">MCP SECURITY</div>
           <div class="steps"><span class="step"><b>1</b> Discover</span><span class="step"><b>2</b> Audit</span>
@@ -389,7 +391,7 @@
         </form>
       </div>
       <details class="panel show-details" id="devices-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <p class="muted sm">Until Clerk unify points Herald at the same keys as /app (see docs/CLERK_UNIFY.md in the repo), this list can stay empty or show a sign-in gap. Connect phone and enroll still work. After unify, reopen Devices to see live Desktops.</p>
       </details>
     </section>
@@ -423,7 +425,7 @@
         <div id="desktop-code" class="code" hidden></div>
       </div>
       <details class="panel show-details" id="settings-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <label class="row"><span>Text size</span><input id="text-size" type="range" min="85" max="130" step="5" value="100" aria-label="Text size"></label>
         <div class="eyebrow" style="margin-top:12px">API KEYS</div><div id="api-keys" class="kv"></div>
         <div class="eyebrow" style="margin-top:12px">CUSTOM LLM ENDPOINTS</div><p class="muted sm">No custom endpoints yet.</p>
@@ -482,7 +484,7 @@
         <div id="agents-sessions"></div>
       </div>
       <details class="panel show-details" id="agents-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <div id="agents-detail-list" class="kv"></div>
       </details>
     </section>
@@ -509,7 +511,7 @@
       <div class="agent"><span class="dot live"></span><span id="active-agent">No active agent</span></div>
       <div id="feed-progress" class="feed-progress" hidden></div>
       <div id="feed" class="feed"></div>
-      <details class="panel feed-settings show-details"><summary class="eyebrow">SHOW DETAILS</summary>
+      <details class="panel feed-settings show-details"><summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <button id="run-suite" class="btn ghost full" type="button">Run tool suite</button>
         <label class="toggle"><input type="checkbox" id="opt-info" checked> Show info events</label>
         <label class="toggle"><input type="checkbox" id="opt-approvals" checked> Show approval requests</label>
@@ -592,7 +594,7 @@
         <div id="create-history"></div>
       </div>
       <details class="panel show-details" id="create-details">
-        <summary class="eyebrow">SHOW DETAILS</summary>
+        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
         <label class="field-stack"><span class="muted sm">Department</span>
           <input id="create-department" maxlength="160" value="general" aria-label="Department"></label>
         <label class="field-stack" style="margin-top:8px"><span class="muted sm">Source citations (one per line)</span>
