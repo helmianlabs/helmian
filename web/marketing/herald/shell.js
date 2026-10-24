@@ -26,6 +26,7 @@ const shortcutsDialog = $('#shortcutsDialog');
 const accountDialog = $('#accountDialog');
 const draftKey = 'helmian:pwa:draft-v1';
 const themeKey = 'helmian:pwa:theme-v1';
+const pendingEnrollmentKey = 'helmian:pwa:pending-enroll-v1';
 // Sign-in happens inside Herald, so a successful sign-in — or a sign-up via
 // the link inside the sign-in form — must land back here. With no return
 // target, Clerk falls back to the instance default and sends the browser to
@@ -42,6 +43,17 @@ const delivery = createDeliveryTracker();
 // QR pairing: Helmian Desktop shows a QR for /herald/#enroll=<code>. Take the
 // one-time code from the fragment (never sent to a server) and scrub it now.
 let qrEnrollmentCode = takePairingCodeFromLocation(location, history, ENROLL_FRAGMENT_KEY);
+if (qrEnrollmentCode) {
+  // Sign-in navigates the whole page (Clerk's return trip), which would lose
+  // this in-memory code. Park it in sessionStorage — tab-scoped, dies with
+  // the tab — so the signed-in load can still redeem it: no re-scan, no
+  // typing. Never localStorage, never a cookie, never logged.
+  writeSessionStorage(pendingEnrollmentKey, qrEnrollmentCode);
+} else {
+  // Returning from the sign-in round-trip: restore the parked code.
+  const parked = readSessionStorage(pendingEnrollmentKey);
+  if (parked && /^\d{8}$/.test(parked)) qrEnrollmentCode = parked;
+}
 
 function readStorage(key, fallback = '') {
   try { return localStorage.getItem(key) ?? fallback; }
@@ -53,6 +65,26 @@ function writeStorage(key, value) {
     if (value) localStorage.setItem(key, value);
     else localStorage.removeItem(key);
   } catch { /* Presentation state remains usable without browser storage. */ }
+}
+
+function readSessionStorage(key) {
+  try { return sessionStorage.getItem(key) ?? null; }
+  catch { return null; }
+}
+
+function writeSessionStorage(key, value) {
+  try {
+    if (value) sessionStorage.setItem(key, value);
+    else sessionStorage.removeItem(key);
+  } catch { /* The in-memory code still covers a sign-in that never navigates. */ }
+}
+
+// Drops the parked enrollment code once that exact code has been redeemed or
+// has failed, so a dead code is never replayed on a later sign-in.
+function forgetPendingEnrollment(code) {
+  if (code && readSessionStorage(pendingEnrollmentKey) === code) {
+    writeSessionStorage(pendingEnrollmentKey, '');
+  }
 }
 
 function showToast(message) {
@@ -277,10 +309,14 @@ composer.addEventListener('submit', (event) => {
 
 function confirmEnrollmentCode(code) {
   return remoteApi.confirmEnrollment(code).then(async () => {
+    forgetPendingEnrollment(code);
     $('#enrollmentCode').value = '';
     showToast('Desktop enrollment confirmed. Helmian Desktop will finish connecting in a moment.');
     await refreshDesktopList();
-  }).catch((error) => showToast(error.message));
+  }).catch((error) => {
+    forgetPendingEnrollment(code);
+    showToast(error.message);
+  });
 }
 
 $('#enrollmentForm')?.addEventListener('submit', (event) => {
@@ -303,6 +339,7 @@ async function redeemScannedEnrollment() {
   if (!qrEnrollmentCode) return;
   const code = qrEnrollmentCode;
   qrEnrollmentCode = null;
+  writeSessionStorage(pendingEnrollmentKey, '');
   setRemoteStatus('Confirming the Desktop you scanned…', false);
   await confirmEnrollmentCode(code);
 }
@@ -526,6 +563,10 @@ function setRemoteStatus(message, live) {
 
 function resetRemoteUi() {
   remoteTransport?.close(); remoteTransport = null; selectedControl = null;
+  // A parked enrollment code belongs to the signed-out scan that parked it;
+  // signing out must not carry it into the next account's session.
+  qrEnrollmentCode = null;
+  writeSessionStorage(pendingEnrollmentKey, '');
   $('#selectedProjectName').textContent = 'No project open';
   $('#desktopList').replaceChildren(); $('#desktopEmpty').hidden = false;
   $('#accountButton').textContent = 'Sign in';
