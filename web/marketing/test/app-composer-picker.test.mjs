@@ -122,12 +122,14 @@ test('applySkillToBody never double-prefixes and never fights a typed command', 
 
 test('buildMessageRequest: the wire payload is exactly the fields the route accepts', () => {
   const req = buildMessageRequest({ channelId: 'c1', body: 'ship it', idempotencyKey: 'k1', attachments: [skill('deploy'), { kind: 'connector', key: 'discord', name: 'Discord' }] });
-  assert.deepEqual(Object.keys(req.payload).sort(), ['body', 'channelId', 'idempotencyKey']);
+  assert.deepEqual(Object.keys(req.payload).sort(), ['body', 'channelId', 'idempotencyKey', 'metadata']);
+  assert.deepEqual(req.payload.metadata, req.metadata, 'metadata rides the payload now that the route accepts, stores and consumes it');
   assert.equal(req.payload.body, '/deploy ship it', 'the skill is carried in the body, the shape the bridge expands');
   assert.equal(req.skillCarried, true);
   assert.deepEqual(req.metadata.attachments.map((a) => a.kind), ['skill', 'connector'], 'connectors ride as structured metadata');
   const bare = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'k2' });
   assert.equal(bare.metadata, null);
+  assert.deepEqual(Object.keys(bare.payload).sort(), ['body', 'channelId', 'idempotencyKey'], 'no attachments → the original wire shape, byte for byte');
   assert.equal(bare.payload.body, 'hi');
 });
 

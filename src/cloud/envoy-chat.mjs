@@ -27,11 +27,17 @@ export function normalizeEnvoyChannel(input) {
 export function normalizeEnvoyMessage(input) {
   const authorKind = text(input?.authorKind, 'author kind', 16).toLowerCase();
   if (!AUTHORS.has(authorKind)) throw new Error('author kind is unsupported');
+  // Attachments arrive either as a `metadata` object or as a bare
+  // `attachments` array (the picker's two shapes); both normalize to the
+  // one stored metadata form. Absent stays absent — the pre-picker wire
+  // shape is unchanged.
+  const metadata = normalizeMessageMetadata(input?.metadata ?? (input?.attachments !== undefined ? { attachments: input.attachments } : undefined));
   return Object.freeze({
     channelId: text(input?.channelId, 'channel id', 64),
     authorSubject: text(input?.authorSubject, 'author subject', 256),
     authorKind,
     body: text(input?.body, 'message body', 4000),
+    ...(metadata ? { metadata } : {}),
   });
 }
 
@@ -58,7 +64,8 @@ function contextFor(actor) {
 
 function rowMessage(row) {
   const who = describeAuthor(row.author_subject, row.author_kind);
-  return Object.freeze({ id: String(row.id), channelId: String(row.channel_id), authorSubject: String(row.author_subject), authorKind: String(row.author_kind), ...(who.name ? { authorName: who.name } : {}), source: who.source, ...(who.provider ? { agentProvider: who.provider } : {}), body: String(row.body), idempotencyKey: String(row.idempotency_key), createdAt: row.created_at });
+  const metadata = row.metadata ? normalizeMessageMetadata(typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) : null;
+  return Object.freeze({ id: String(row.id), channelId: String(row.channel_id), authorSubject: String(row.author_subject), authorKind: String(row.author_kind), ...(who.name ? { authorName: who.name } : {}), source: who.source, ...(who.provider ? { agentProvider: who.provider } : {}), body: String(row.body), ...(metadata ? { metadata } : {}), idempotencyKey: String(row.idempotency_key), createdAt: row.created_at });
 }
 
 export function createEnvoyStore(pool) {
@@ -100,13 +107,13 @@ export function createEnvoyStore(pool) {
         if (channel.rowCount !== 1) throw new Error('Envoy channel was not found in this Organization');
         const result = normalizedCursor
           ? await client.query(
-            `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
+            `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at, metadata
              from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and id > $3 and author_subject <> 'system:envoy-config'
              order by id asc limit $4`,
             [context.tenantId, normalizedChannelId, normalizedCursor, boundedLimit],
           )
           : await client.query(
-            `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
+            `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at, metadata
              from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject <> 'system:envoy-config'
              order by created_at desc, id desc limit $3`,
             [context.tenantId, normalizedChannelId, boundedLimit],
@@ -132,14 +139,14 @@ export function createEnvoyStore(pool) {
       const out = await withTenantTransaction(pool, context, async (client) => {
         await requireActiveTenantMembership(client, context);
         const result = await client.query(
-          `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key)
-           values ($1,$2,$3,$4,$5,$6)
+          `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, metadata)
+           values ($1,$2,$3,$4,$5,$6,$7)
            on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing
-           returning id, channel_id, author_subject, author_kind, body, idempotency_key, created_at`,
-          [context.tenantId, message.channelId, message.authorSubject, message.authorKind, message.body, idempotencyKey],
+           returning id, channel_id, author_subject, author_kind, body, idempotency_key, created_at, metadata`,
+          [context.tenantId, message.channelId, message.authorSubject, message.authorKind, message.body, idempotencyKey, message.metadata ? JSON.stringify(message.metadata) : null],
         );
         const row = result.rowCount === 1 ? result.rows[0] : (await client.query(
-          `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at
+          `select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at, metadata
            from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject=$3 and idempotency_key=$4`,
           [context.tenantId, message.channelId, message.authorSubject, idempotencyKey],
         )).rows[0];
@@ -166,4 +173,4 @@ export function createEnvoyStore(pool) {
 }
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
 import { appendAuditEvent } from './audit-event-repository.mjs';
-import { describeAuthor } from './envoy-agents.mjs';
+import { describeAuthor, normalizeMessageMetadata } from './envoy-agents.mjs';

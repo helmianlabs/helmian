@@ -12,6 +12,7 @@ import {
   serializeRegistry,
 } from './commands.mjs';
 import { loadEnabledPlugins } from './plugins.mjs';
+import { resolveTurnAttachments } from './attachments.mjs';
 
 /**
  * NDJSON bridge for the Windows Pilot EXE.
@@ -416,11 +417,38 @@ export async function runAgentBridge() {
             }))
           : [];
 
+        // Composer "+" attachments (skills/connectors/plugins + the
+        // web-search flag) ride the turn request as metadata. Plugins with
+        // approved MCP servers contribute REAL tools for this turn only;
+        // everything else becomes plain in-context truth (see
+        // src/agent/attachments.mjs). The per-turn runtime is discarded
+        // afterwards so no attachment leaks into the next turn.
+        const attachmentMetadata = req.metadata ?? (req.attachments !== undefined || req.webSearch !== undefined
+          ? { ...(req.attachments !== undefined ? { attachments: req.attachments } : {}), ...(req.webSearch !== undefined ? { webSearch: req.webSearch } : {}) }
+          : null);
+        let turnText = text;
+        let turnRuntime = state.runtime;
+        let attachmentDispose = null;
+        if (attachmentMetadata) {
+          try {
+            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins });
+            if (resolved.contextText) turnText = `${resolved.contextText}\n\n${text}`;
+            if (resolved.toolNames.length) {
+              turnRuntime = createToolRuntime(workspace, { ...runtimeOptions(), extraTools: resolved.extraTools });
+            }
+            attachmentDispose = resolved.dispose;
+            if (resolved.toolNames.length) emit({ event: 'status', message: `Attachments added ${resolved.toolNames.length} tool(s) to this turn.` });
+          } catch (err) {
+            emit({ event: 'status', message: `Attachments could not be resolved (${err.message}); continuing without them.` });
+          }
+        }
+
+        try {
         await runAgentTurn({
-          userText: text,
+          userText: turnText,
           messages: state.messages,
           provider,
-          runtime: state.runtime,
+          runtime: turnRuntime,
           tier: tierOverride,
           modelOverride,
           images,
@@ -473,6 +501,10 @@ export async function runAgentBridge() {
             }
           },
         });
+        } finally {
+          if (attachmentDispose) await attachmentDispose().catch(() => {});
+          if (turnRuntime !== state.runtime) void turnRuntime.dispose?.().catch(() => {});
+        }
         return;
       }
 
