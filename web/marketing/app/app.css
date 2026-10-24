@@ -94,6 +94,8 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 }
 .icon-btn.sm { width:28px; height:28px; }
 .dot-count { position:absolute; top:-4px; right:-4px; min-width:16px; height:16px; border-radius:8px; background:var(--red); font-size:10px; font-weight:700; display:grid; place-items:center; padding:0 3px; }
+/* I8: the phone panels button is a labelled pill (Guard shield + word), not a fixed square. */
+#guard-toggle { width:auto; padding:0 10px; gap:6px; grid-auto-flow:column; align-items:center; justify-content:center; font-size:12.5px; font-weight:700; }
 .only-mobile { display:none !important; }
 
 .console { display:flex; flex-direction:column; gap:12px; padding:16px; position:relative; }
