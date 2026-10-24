@@ -119,3 +119,11 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
     await pool.end();
   }
 });
+
+test('messageOut carries stored attachments metadata to the bridge work queue', async () => {
+  const { messageOut } = await import('../src/cloud/envoy-mesh.mjs');
+  const row = { id: 'm1', channel_id: 'c1', author_subject: 'user-1', author_kind: 'human', body: 'hi', idempotency_key: 'k-00000001', created_at: 'now', metadata: { attachments: [{ kind: 'plugin', name: 'calcplug' }] } };
+  assert.deepEqual(messageOut(row).metadata, { attachments: [{ kind: 'plugin', name: 'calcplug' }] });
+  const bare = { ...row, metadata: null };
+  assert.equal('metadata' in messageOut(bare), false);
+});

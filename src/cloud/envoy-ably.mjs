@@ -74,6 +74,7 @@ export async function publishEnvoyMessage({
     authorKind: String(message?.authorKind ?? ''),
     authorSubject: String(message?.authorSubject ?? ''),
     body: String(message?.body ?? ''),
+    ...(message?.metadata ? { metadata: message.metadata } : {}),
     createdAt: message?.createdAt ?? message?.created_at ?? null,
   };
   try {

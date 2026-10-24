@@ -695,11 +695,22 @@ export function createToolRuntime(workspaceRoot, options = {}) {
     },
     search_text: safeTools.search_text,
   };
-  const tools = options.safeWorkspaceTools === true ? safeTools : legacyTools;
+  // Caller-supplied extra tools (composer "+" attachments: an attached
+  // plugin's approved MCP servers, src/agent/attachments.mjs). They join the
+  // catalog by name and pass through EVERY gate below like a built-in —
+  // governance first, approval in ask mode. Eligibility: full/ask modes
+  // admit them like any tool; read-tools admits only ones the supplier
+  // marked readOnly (an MCP server's own readOnlyHint, defaulting to
+  // false); read-only admits none.
+  const extraTools = options.extraTools && typeof options.extraTools === 'object' ? options.extraTools : {};
+  const extraReadOnly = new Set(Object.entries(extraTools).filter(([, tool]) => tool?.readOnly === true).map(([name]) => name));
+  const tools = { ...(options.safeWorkspaceTools === true ? safeTools : legacyTools), ...extraTools };
+  const toolAllowed = (name) => isToolAllowed(permissionMode, name)
+    || (permissionMode === 'read-tools' && extraReadOnly.has(name));
 
   function allowedTools() {
     return Object.fromEntries(
-      Object.entries(tools).filter(([name]) => isToolAllowed(permissionMode, name)),
+      Object.entries(tools).filter(([name]) => toolAllowed(name)),
     );
   }
 
@@ -728,7 +739,7 @@ export function createToolRuntime(workspaceRoot, options = {}) {
       // Once the user has said stop, the correct number of NEW tool calls to
       // begin is zero, including ones that would otherwise have been allowed.
       if (signal?.aborted) return CANCELLED_TOOL_MESSAGE;
-      if (!isToolAllowed(permissionMode, name)) {
+      if (!toolAllowed(name)) {
         return (
           `Error: tool '${name}' blocked by permission mode '${permissionMode}'. `
           + `Use the Console permissions dropdown (Read tools / Ask before each tool / Full tools).`
