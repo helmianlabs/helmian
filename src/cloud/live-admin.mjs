@@ -58,6 +58,7 @@ import { createEncryptedVaultAdapterFromEnv } from './database-encrypted-vault-a
 import { createGeminiOAuthPkce, geminiCredentialReference, resolveGeminiOAuthConfig } from './provider-oauth-config.mjs';
 import { readGeminiOAuthReadiness } from './provider-oauth-readiness.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
+import { SLASH_COMMANDS_PATH, listSlashCommands, slashCommandsWorkspace } from './slash-commands.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
 import { createConsoleCommandWorker, CONSOLE_EXECUTORS } from './console-command-worker.mjs';
 import { claimFirstOwner } from './owner-claim.mjs';
@@ -295,6 +296,7 @@ export async function createLiveHelmianCloudAdminHandler({
   providerVaultAdapter: suppliedProviderVaultAdapter = null,
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
   consoleCommandRepository: suppliedConsoleCommandRepository = null,
+  commandLister: suppliedCommandLister = null,
   evidenceStore: suppliedEvidenceStore = null,
   canvasStore: suppliedCanvasStore = null,
   envoyStore: suppliedEnvoyStore = null,
@@ -341,6 +343,10 @@ export async function createLiveHelmianCloudAdminHandler({
   const providerConnections = suppliedProviderConnectionRepository ?? createProviderConnectionRepository(pool, { fetchImpl, vaultAdapter: providerVaultAdapter ?? undefined });
   const workspaceProjects = suppliedWorkspaceProjectRepository ?? createWorkspaceProjectRepository(pool);
   const consoleCommands = suppliedConsoleCommandRepository ?? createConsoleCommandRepository(pool);
+  // The composer's "/" menu list: the slash commands of the workspace
+  // this process serves, read through the same discovery the bridge
+  // turn expands with (slash-commands.mjs).
+  const commandLister = suppliedCommandLister ?? (async () => listSlashCommands({ workspace: slashCommandsWorkspace(env) }));
   const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
@@ -1108,6 +1114,11 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_CORA_CONNECTORS_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeActor(request); const body = await readJsonObject(request); exactKeys(body, ['allowedInboundChannels', 'enabled', 'lifecycle', 'provider', 'publicEndpointReady', 'secretReferenceName']); send(response, 200, JSON.stringify({ valid: true, ...await connectorRegistrations.save(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONNECTOR_ADMIN_REQUIRED' : 'CORA_CONNECTOR_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === SLASH_COMMANDS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await commandLister(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'COMMANDS_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'COMMANDS_SELECTOR_INVALID' : 'COMMANDS_READ_FAILED' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH) {

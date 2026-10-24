@@ -166,6 +166,9 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-picker-state { margin-left:auto; font-size:11px; font-weight:700; }
 .ew-picker-state.on { color:var(--green); }
 .ew-picker-state.off { color:var(--muted); }
+.ew-slash-menu { gap:6px; }
+.ew-slash-row .ew-slash-name { font-weight:700; white-space:nowrap; }
+.ew-slash-row .ew-picker-kind { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ew-pills { display:flex; gap:6px; flex-wrap:wrap; }
 .ew-pill { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:999px; padding:2px 10px 2px 3px; font-size:12px; cursor:pointer; transition:border-color .15s, transform .1s; }
 .ew-pill:hover { border-color:var(--accent); }
