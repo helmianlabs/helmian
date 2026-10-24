@@ -175,7 +175,9 @@
           <button id="ew-cli-new" class="ew-btn ghost full" type="button">+ New session</button>
           <div class="ew-subhead">SESSIONS</div>
           <div id="ew-cli-sessions" class="ew-cli-sessions" aria-label="Agent sessions"></div>
-          <p class="ew-note">A session is your running thread with one agent. Type below to talk: your prompt lands in the open channel, addressed to the agent you picked, and its answer shows up in the chat.</p>
+          <div class="ew-subhead">CONVERSATION</div>
+          <div id="ew-cli-thread" class="ew-cli-thread" aria-label="Conversation with the picked agent"></div>
+          <p class="ew-note">A session is your running thread with one agent. Type below to talk: your prompt goes to the agent you picked, and your conversation with it shows right here — it also posts in the open channel.</p>
           <form id="ew-cli-form" class="ew-composer" autocomplete="off">
             <div class="ew-cli-to" id="ew-cli-to">To: Maestro</div>
             <textarea id="ew-cli-input" rows="1" placeholder="Prompt..." aria-label="Prompt"></textarea>
