@@ -653,7 +653,7 @@ function insertMention(name) {
   if (narrow()) closeSheets();
 }
 
-// ---------- composer "+" picker: skills, connectors, upload ----------
+// ---------- composer "+" picker: skills, connectors, plugins, upload ----------
 // One picker for both composers (channel + agent chat); the pure model in
 // composer-picker.mjs decides what can be attached and how it travels.
 const PICKER_IDS = {
@@ -662,8 +662,8 @@ const PICKER_IDS = {
 };
 async function loadPickerData() {
   if (ws.pickerData) return ws.pickerData;
-  const [c, p] = await Promise.allSettled([ws.ctx.api('/api/admin/cora/connectors'), ws.ctx.api('/api/admin/provider-connections')]);
-  ws.pickerData = pickerModel({ connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {} });
+  const [c, p, pl] = await Promise.allSettled([ws.ctx.api('/api/admin/cora/connectors'), ws.ctx.api('/api/admin/provider-connections'), ws.ctx.api('/api/admin/plugins')]);
+  ws.pickerData = pickerModel({ connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {} });
   return ws.pickerData;
 }
 function renderAttachChips(which) {
@@ -714,6 +714,16 @@ async function renderPicker(which) {
         } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.connected ? 'on' : 'off'}` }, on ? 'Attached' : item.connected ? 'Connected' : 'Not connected'));
       });
       groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'CONNECTORS'), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No connectors in the registry.')])));
+    } else if (g.id === 'plugins') {
+      const rows = g.items.map((item) => {
+        const on = attached.has(`plugin:${item.name}`);
+        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`, onclick: () => {
+          if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'plugin', name: item.name }); renderAttachChips(which); renderPicker(which); return; }
+          const r = addAttachment(ws.attach[which], { kind: 'plugin', name: item.name }, { catalog: g.items });
+          if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
+        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.brings), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'Attached' : 'Installed'));
+      });
+      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'PLUGINS'), h('p', { class: 'ew-note' }, g.note), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No plugins installed on your PC bridge yet.')])));
     } else if (g.id === 'upload') {
       groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'UPLOAD'), h('button', { type: 'button', class: 'ew-btn sm', disabled: true, title: g.reason }, 'Upload a file'), h('p', { class: 'ew-note' }, g.reason)));
     }
