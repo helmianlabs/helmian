@@ -4877,10 +4877,6 @@
                     <TextBlock x:Name="VideoProviderDetailText" Text="" Visibility="Collapsed" />
                     <TextBlock x:Name="VideoProviderGuardText" Visibility="Collapsed" />
                   </StackPanel>
-                  <Button Grid.Column="1" Content="Soon"
-                          MinWidth="96" Padding="14,8" IsEnabled="False"
-                          Style="{StaticResource ConsoleNeutralButtonStyle}"
-                          VerticalAlignment="Center" />
                 </Grid>
               </StackPanel>
             </Border>
@@ -5517,12 +5513,7 @@
               </StackPanel>
             </Border>
 
-            <Grid Margin="0,0,0,18">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="1.15*" />
-                <ColumnDefinition Width="*" />
-              </Grid.ColumnDefinitions>
-              <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,9,0">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,18">
                 <StackPanel>
                   <TextBlock Text="Active coordinator" Style="{StaticResource SectionTitleStyle}" />
                   <!-- 2026-07-29: was the literal "None selected" with no x:Name, in an
@@ -5535,48 +5526,6 @@
                              Margin="0,7,0,0" />
                 </StackPanel>
               </Border>
-              <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="9,0,0,0">
-                <StackPanel>
-                  <TextBlock Text="Isolated development target" Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="Helmian Development" Foreground="{DynamicResource AccentBrush}" FontSize="17" FontWeight="SemiBold" Margin="0,15,0,0" />
-                  <TextBlock Text="Endpoint · ep-divine-leaf-ay38p1af" Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
-                  <TextBlock Text="Database · neondb" Style="{StaticResource MutedStyle}" Margin="0,3,0,0" />
-                  <TextBlock Text="Hard-bound profile ready · protected material not enrolled · test not run"
-                             Foreground="{DynamicResource AmberBrush}"
-                             FontSize="11"
-                             Margin="0,9,0,0" />
-                </StackPanel>
-              </Border>
-            </Grid>
-
-            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,18">
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*" />
-                  <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <StackPanel Margin="0,0,26,0">
-                  <TextBlock Text="Provider-adapter contract"
-                             Style="{StaticResource SectionTitleStyle}" />
-                  <TextBlock Text="Identity · auth type · CLI/API/local endpoint · capabilities · evidence · safety · non-mutating health check"
-                             Style="{StaticResource MutedStyle}"
-                             Margin="0,7,0,0" />
-                  <TextBlock Text="An adapter can be added only when the provider offers a supported, documented API, CLI, or local endpoint. Helmian does not scrape or drive consumer chat/voice UIs."
-                             Foreground="{DynamicResource SoftTextBrush}"
-                             FontSize="12"
-                             TextWrapping="Wrap"
-                             Margin="0,9,0,0" />
-                </StackPanel>
-                <Border Grid.Column="1"
-                        Style="{StaticResource PillStyle}"
-                        VerticalAlignment="Top">
-                  <TextBlock Text="CONTRACT IMPLEMENTED · ADAPTERS DESIGN-ONLY"
-                             Foreground="{DynamicResource AmberBrush}"
-                             FontSize="10"
-                             FontWeight="Bold" />
-                </Border>
-              </Grid>
-            </Border>
 
             <Grid Margin="0,0,0,14">
               <Grid.ColumnDefinitions>
