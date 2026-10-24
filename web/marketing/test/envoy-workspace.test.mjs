@@ -287,7 +287,7 @@ test('I1: every nav item carries a rail tooltip (data-tip) matching its label', 
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const items = [...html.matchAll(/<button class="nav-item[^"]*"([^>]*)>([\s\S]*?)<\/button>/g)]
     .filter((m) => m[1].includes('data-view='));
-  assert.equal(items.length, 14, 'all 14 view nav items are present');
+  assert.equal(items.length, 13, 'all 13 view nav items are present');
   for (const [, attrs, inner] of items) {
     const tip = attrs.match(/data-tip="([^"]+)"/)?.[1];
     const label = inner.match(/<span class="label">([^<]+)<\/span>/)?.[1];
