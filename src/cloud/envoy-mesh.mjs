@@ -46,7 +46,7 @@ export const AGENT_MESSAGES_PATH = '/api/admin/envoy/agent-messages';
 export const BRIDGE_PREFIX = '/api/admin/envoy/bridge/';
 export const LINK_CODE_TTL_MS = 15 * 60 * 1000;
 const WORK_WINDOW_MS = 30 * 60 * 1000;
-const MSG_COLS = 'id, channel_id, author_subject, author_kind, body, idempotency_key, created_at';
+const MSG_COLS = 'id, channel_id, author_subject, author_kind, body, idempotency_key, created_at, metadata';
 
 let sharedPool = null;
 function getPool() {
@@ -73,7 +73,7 @@ export function messageOut(row) {
   return {
     id: String(row.id), channelId: String(row.channel_id), authorSubject: String(row.author_subject), authorKind: String(row.author_kind),
     ...(who.name ? { authorName: who.name } : {}), source: who.source, ...(who.provider ? { agentProvider: who.provider } : {}),
-    body: String(row.body), idempotencyKey: String(row.idempotency_key), createdAt: row.created_at,
+    body: String(row.body), ...(row.metadata ? { metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata } : {}), idempotencyKey: String(row.idempotency_key), createdAt: row.created_at,
   };
 }
 

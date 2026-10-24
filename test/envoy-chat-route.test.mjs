@@ -41,7 +41,7 @@ function fakePool() {
       if (q.startsWith('insert into helmion.envoy_messages')) {
         const existing = messages.find((row) => row.tenant_id === values[0] && row.channel_id === values[1] && row.author_subject === values[2] && row.idempotency_key === values[5]);
         if (existing) return { rowCount: 0, rows: [] };
-        const row = { id: String(messages.length + 1), tenant_id: values[0], channel_id: values[1], author_subject: values[2], author_kind: values[3], body: values[4], idempotency_key: values[5], created_at: 'now' };
+        const row = { id: String(messages.length + 1), tenant_id: values[0], channel_id: values[1], author_subject: values[2], author_kind: values[3], body: values[4], idempotency_key: values[5], created_at: 'now', metadata: values[6] ? JSON.parse(values[6]) : null };
         messages.push(row); return { rowCount: 1, rows: [row] };
       }
       if (q.includes(' from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and id > $3')) {
@@ -202,4 +202,27 @@ test('device-token auth is rejected on non-Envoy paths and unknown tokens', asyn
     body: JSON.stringify({ channelId: 'channel-1', body: 'nope', idempotencyKey: 'bad-1' }),
   });
   assert.equal(bad.status, 403);
+});
+
+test('Envoy messages accept + store + return attachments metadata, and refuse unknown fields and junk attachments', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' };
+  const post = (payload) => fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers, body: JSON.stringify(payload) });
+
+  const withMeta = await post({ channelId: 'channel-1', body: 'look at this', idempotencyKey: 'message-meta-1', metadata: { attachments: [{ kind: 'connector', key: 'slack' }, { kind: 'plugin', name: 'calcplug' }], webSearch: true } });
+  assert.equal(withMeta.status, 200);
+  assert.equal((await withMeta.json()).receipt.message.metadata.attachments[1].name, 'calcplug');
+
+  const listed = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=channel-1`, { headers });
+  const messages = (await listed.json()).messages;
+  assert.equal(messages.at(-1).metadata.webSearch, true, 'stored metadata comes back on reads — the bridges read it from here');
+
+  const bareArray = await post({ channelId: 'channel-1', body: 'array shape', idempotencyKey: 'message-meta-2', attachments: [{ kind: 'skill', name: 'deploy' }] });
+  assert.equal(bareArray.status, 200);
+
+  const unknownField = await post({ channelId: 'channel-1', body: 'nope', idempotencyKey: 'message-meta-3', wormhole: true });
+  assert.equal(unknownField.status, 400, 'fields outside the allowlist are still refused');
+
+  const junk = await post({ channelId: 'channel-1', body: 'nope', idempotencyKey: 'message-meta-4', metadata: { attachments: [{ kind: 'wormhole', name: 'x' }] } });
+  assert.equal(junk.status, 400, 'an unsupported attachment kind refuses the message');
 });

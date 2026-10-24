@@ -19,15 +19,14 @@
 //   group is present but unavailable, with the reason stated.
 //
 // HOW AN ATTACHMENT TRAVELS: buildMessageRequest() returns the wire payload
-// plus structured metadata. The payload stays inside the message route's
-// exact field set ({ body, channelId, idempotencyKey } —
-// src/cloud/live-admin.mjs rejects anything else today), so:
-// - a skill rides IN the body as the leading /name (consumed for real by
-//   the bridge today);
-// - connectors ride as metadata only — the client builds it, nothing on the
-//   server reads it yet. Agent-side consumption (accept + persist the
-//   metadata field, hand it to the turn) is the next bite. Nothing here
-//   pretends a connector changed the turn.
+// plus structured metadata. The message route allowlists `metadata`
+// alongside { body, channelId, idempotencyKey }, envoy-chat stores it on
+// the message (sql/060), and the bridges hand it to the turn:
+// - a skill rides IN the body as the leading /name (expanded by the
+//   bridge) AND in the metadata;
+// - connectors and plugins ride as metadata, consumed agent-side by
+//   src/agent/attachments.mjs (plugins contribute real MCP tools;
+//   connectors are context-only today and the turn is told so).
 import { integrationsModel } from './app-model.mjs';
 
 export const MAX_ATTACHMENTS = 8;
@@ -108,8 +107,9 @@ export function removeAttachment(list = [], att) {
   return list.filter((a) => attachmentKey(a) !== key);
 }
 
-// The structured metadata shape the next bite teaches the server to accept
-// and the turn to consume. Plain JSON, frozen.
+// The structured metadata shape the server accepts, stores and hands to
+// the turn (normalizeMessageMetadata in src/cloud/envoy-agents.mjs is the
+// canonical validator). Plain JSON, frozen.
 export function attachmentMetadata(list = []) {
   if (!list.length) return null;
   return Object.freeze({
@@ -140,13 +140,14 @@ export function applySkillToBody(body, list = []) {
 
 export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [] } = {}) {
   const applied = applySkillToBody(body, attachments);
+  const metadata = attachmentMetadata(attachments);
   return Object.freeze({
-    // Exactly the fields POST /api/admin/envoy/messages accepts today.
-    payload: Object.freeze({ channelId, body: applied.body, idempotencyKey }),
-    // Structured metadata for the next bite (server accept + turn
-    // consumption). Not sent on the wire today: the route rejects
-    // unexpected fields.
-    metadata: attachmentMetadata(attachments),
+    // The fields POST /api/admin/envoy/messages accepts: the original
+    // three, plus `metadata` when something is attached. The route
+    // allowlists it, envoy-chat stores it, and the bridges hand it to
+    // the turn, which consumes it (src/agent/attachments.mjs).
+    payload: Object.freeze({ channelId, body: applied.body, idempotencyKey, ...(metadata ? { metadata } : {}) }),
+    metadata,
     skillCarried: applied.skillCarried,
     note: applied.note,
   });

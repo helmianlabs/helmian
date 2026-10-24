@@ -19,3 +19,14 @@ test('requires live membership and explicit Envoy policy enablement', () => {
   assert.throws(() => assertEnvoyMembership({ tenantId: 't1', subject: 'u1', role: 'admin', canUseEnvoy: false }), /not enabled/);
   assert.throws(() => assertEnvoyMembership({ tenantId: 't1', subject: 'u1', role: 'driver', canUseEnvoy: true }), /unsupported/);
 });
+
+test('message metadata: attachments normalize, junk refuses, absence stays absent', () => {
+  const withMeta = normalizeEnvoyMessage({ channelId: 'c1', authorSubject: 'u1', authorKind: 'human', body: 'hi', metadata: { attachments: [{ kind: 'connector', key: 'Slack' }], webSearch: false } });
+  assert.equal(withMeta.metadata.attachments[0].key, 'slack');
+  assert.equal(withMeta.metadata.webSearch, false);
+  const bare = normalizeEnvoyMessage({ channelId: 'c1', authorSubject: 'u1', authorKind: 'human', body: 'hi' });
+  assert.equal('metadata' in bare, false, 'the pre-picker shape is unchanged');
+  const arrayShape = normalizeEnvoyMessage({ channelId: 'c1', authorSubject: 'u1', authorKind: 'human', body: 'hi', attachments: [{ kind: 'plugin', name: 'calcplug' }] });
+  assert.equal(arrayShape.metadata.attachments[0].name, 'calcplug');
+  assert.throws(() => normalizeEnvoyMessage({ channelId: 'c1', authorSubject: 'u1', authorKind: 'human', body: 'hi', metadata: { attachments: [{ kind: 'wormhole', name: 'x' }] } }), /unsupported/);
+});

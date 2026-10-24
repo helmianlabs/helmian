@@ -144,3 +144,66 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
   const from = message?.authorName || (message?.authorKind === 'agent' ? 'Agent' : 'Member');
   return `${role}\n\nRecent conversation:\n${history || '(none)'}\n\nReply to this message from ${from}:\n${String(message?.body ?? '')}`;
 }
+
+// ── Message attachments (composer "+" picker) ─────────────────────────────
+// The picker attaches skills, connectors and plugins to a message, plus a
+// web-search on/off flag. This is the ONE shape every layer agrees on:
+// the web client builds it, envoy-chat stores it, envoy-mesh/Ably carry it,
+// and the agent runtime (src/agent/attachments.mjs) consumes it. Pure and
+// fail-closed: an unknown kind or an oversized field rejects the message
+// rather than riding along unexamined.
+
+export const ATTACHMENT_KINDS = Object.freeze(['skill', 'connector', 'plugin']);
+export const MAX_MESSAGE_ATTACHMENTS = 8;
+const ATTACHMENT_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const ATTACHMENT_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*(:[a-z0-9][a-z0-9_-]*)?$/;
+
+function attachmentField(value, name, pattern) {
+  const result = String(value ?? '').trim().toLowerCase();
+  if (!result || result.length > 64 || !pattern.test(result)) throw new Error(`${name} is invalid`);
+  return result;
+}
+
+/** One attachment → its canonical stored form, or a thrown Error. */
+export function normalizeAttachment(input) {
+  const kind = String(input?.kind ?? '').trim().toLowerCase();
+  if (!ATTACHMENT_KINDS.includes(kind)) throw new Error('attachment kind is unsupported');
+  if (kind === 'connector') {
+    return Object.freeze({
+      kind,
+      key: attachmentField(input.key, 'attachment connector key', ATTACHMENT_KEY_PATTERN),
+      ...(input.name ? { name: String(input.name).trim().slice(0, 120) } : {}),
+    });
+  }
+  return Object.freeze({
+    kind,
+    name: attachmentField(input.name, 'attachment name', ATTACHMENT_NAME_PATTERN),
+  });
+}
+
+/**
+ * The metadata object stored on a message. Accepts the two wire shapes the
+ * client may send — `{ attachments: [...], webSearch?: boolean }` — and
+ * returns the canonical frozen form, or null when nothing was attached.
+ */
+export function normalizeMessageMetadata(input) {
+  if (input === undefined || input === null) return null;
+  if (typeof input !== 'object' || Array.isArray(input)) throw new Error('message metadata is invalid');
+  const raw = input.attachments ?? [];
+  if (!Array.isArray(raw)) throw new Error('message attachments are invalid');
+  if (raw.length > MAX_MESSAGE_ATTACHMENTS) throw new Error('too many attachments');
+  const seen = new Set();
+  const attachments = raw.map((item) => {
+    const clean = normalizeAttachment(item);
+    const id = clean.kind === 'connector' ? `connector:${clean.key}` : `${clean.kind}:${clean.name}`;
+    if (seen.has(id)) throw new Error('attachment is duplicated');
+    seen.add(id);
+    return clean;
+  });
+  const webSearch = input.webSearch === undefined ? undefined : input.webSearch === true;
+  if (!attachments.length && webSearch === undefined) return null;
+  return Object.freeze({
+    ...(attachments.length ? { attachments: Object.freeze(attachments) } : {}),
+    ...(webSearch !== undefined ? { webSearch } : {}),
+  });
+}
