@@ -622,17 +622,17 @@ function renderAgents() {
   $('ew-agent-cards').replaceChildren(...roster.map((p) => {
     const s = states[p];
     const label = s.state === 'offline' ? 'OFFLINE' : s.state === 'working' ? 'WORKING' : 'IDLE';
-    return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: `Ask ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
+    return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
       avatarImg(p), h('strong', {}, NAMES[p]),
       h('button', { type: 'button', class: 'ew-icon remove', title: `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×'),
       h('span', { class: `ew-state ${s.state}` }, label),
       h('span', { class: 'last' }, s.state === 'offline' ? 'Offline. Start the Helmian bridge on your PC to bring it online.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
   }));
   if (!roster.length) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, 'No agents in this channel. Add one below to make it an agent chat.'));
-  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill', onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
-  // Agent picker in the CLI: agents here are @mention pills; the rest add in one click.
+  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
+  // Channel composer mention pills: agents in this channel are @mention pills; the rest add in one click.
   $('ew-mention-pills').replaceChildren(...(roster.length > 1 ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
-    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
+    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention @${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
     ...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
   $('ew-mention-pills').hidden = false;
 }
@@ -729,9 +729,9 @@ async function send(e) {
   finally { btn.disabled = false; }
 }
 
-// ---------- agent CLI pane: sessions + prompt composer ----------
-// The agent command chat: just the human and the agents, separate from
-// the human channel chat. Sessions reuse the Session console's plumbing
+// ---------- agent chat pane: sessions + prompt composer ----------
+// The agent chat pane: the human's conversation with one picked agent,
+// shown on its own inside the pane. Sessions reuse the Session console's plumbing
 // (/api/admin/app/sessions — the same create/list payloads as app.js's
 // #session-form, with the same local fallback); prompts post through the
 // same envoy messages endpoint the console composer uses, into the open
@@ -747,12 +747,12 @@ function cliTarget() {
 }
 function renderCliChips() {
   const active = cliTarget().key;
-  $('ew-cli-chips').replaceChildren(...AGENTS.map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: p === 'maestro' ? 'Maestro routes to the others' : `Start a ${NAMES[p]} session`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
+  $('ew-cli-chips').replaceChildren(...AGENTS.map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: p === 'maestro' ? 'Maestro routes to the others' : `Show your conversation with ${NAMES[p]}`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
 }
 function renderCliTo() {
   const { key, session } = cliTarget();
-  $('ew-cli-to').textContent = session ? `To: ${session.provider} · session "${session.name}"` : key === 'maestro' ? 'To: Maestro · routes to the others' : `To: ${NAMES[key]}`;
-  $('ew-cli-input').placeholder = session ? `Prompt ${session.provider}...` : 'Prompt...';
+  $('ew-cli-to').textContent = session ? `${session.provider} · posts in the channel as @${NAMES[key]}` : key === 'maestro' ? 'Maestro · posts in the channel and routes it' : `${NAMES[key]} · posts in the channel as @${NAMES[key]}`;
+  $('ew-cli-input').placeholder = key === 'maestro' ? 'Prompt...' : `Prompt ${NAMES[key]}...`;
 }
 function renderCliSessions() {
   const box = $('ew-cli-sessions');
