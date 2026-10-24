@@ -33,33 +33,37 @@ export function buildMcpServer(hands, auth, hooks = {}) {
   const server = new McpServer({ name: 'helmian-hands', version: '0.1.0' });
   const ro = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   const act = { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
+  // Optional caller targeting (bite 2b): name a connected device (hands_status
+  // lists them under "devices") to run this call there instead of on the PC.
+  const DEVICE_ARG = ' Optional argument "device": run on that connected device instead of the PC (see hands_status).';
+  const deviceSchema = { device: z.string().optional() };
   server.registerTool('hands_status', { description: 'Is the PC online, are hands on, and is Executive Guard live? Read-only.', inputSchema: {}, annotations: ro },
     async () => ({ content: [{ type: 'text', text: JSON.stringify(hands.status(), null, 2) }] }));
-  server.registerTool('list_files', { description: TOOLS.list_files.description, inputSchema: { path: z.string(), glob: z.string().optional() }, annotations: ro },
+  server.registerTool('list_files', { description: TOOLS.list_files.description + DEVICE_ARG, inputSchema: { path: z.string(), glob: z.string().optional(), ...deviceSchema }, annotations: ro },
     (args, extra) => hands.call('list_files', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('read_file', { description: TOOLS.read_file.description, inputSchema: { path: z.string(), maxBytes: z.number().int().optional() }, annotations: ro },
+  server.registerTool('read_file', { description: TOOLS.read_file.description + DEVICE_ARG, inputSchema: { path: z.string(), maxBytes: z.number().int().optional(), ...deviceSchema }, annotations: ro },
     (args, extra) => hands.call('read_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('search_files', { description: TOOLS.search_files.description, inputSchema: { path: z.string(), query: z.string().optional(), glob: z.string().optional(), maxResults: z.number().int().optional() }, annotations: ro },
+  server.registerTool('search_files', { description: TOOLS.search_files.description + DEVICE_ARG, inputSchema: { path: z.string(), query: z.string().optional(), glob: z.string().optional(), maxResults: z.number().int().optional(), ...deviceSchema }, annotations: ro },
     (args, extra) => hands.call('search_files', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('ollama_generate', { description: TOOLS.ollama_generate.description, inputSchema: { model: z.string(), prompt: z.string() }, annotations: ro },
+  server.registerTool('ollama_generate', { description: TOOLS.ollama_generate.description + DEVICE_ARG, inputSchema: { model: z.string(), prompt: z.string(), ...deviceSchema }, annotations: ro },
     (args, extra) => hands.call('ollama_generate', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('run_powershell', {
-    description: `${TOOLS.run_powershell.description} Commands: ${Object.entries(POWERSHELL_COMMANDS).map(([id, s]) => `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`).join('; ')}.`,
-    inputSchema: { commandId: z.enum(Object.keys(POWERSHELL_COMMANDS)), args: z.record(z.any()).optional() }, annotations: act,
+    description: `${TOOLS.run_powershell.description} Commands: ${Object.entries(POWERSHELL_COMMANDS).map(([id, s]) => `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`).join('; ')}.${DEVICE_ARG}`,
+    inputSchema: { commandId: z.enum(Object.keys(POWERSHELL_COMMANDS)), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: act,
   }, (args, extra) => hands.call('run_powershell', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('open_url', { description: TOOLS.open_url.description, inputSchema: { url: z.string() }, annotations: act },
+  server.registerTool('open_url', { description: TOOLS.open_url.description + DEVICE_ARG, inputSchema: { url: z.string(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('open_url', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('write_file', { description: TOOLS.write_file.description, inputSchema: { path: z.string(), content: z.string() }, annotations: act },
+  server.registerTool('write_file', { description: TOOLS.write_file.description + DEVICE_ARG, inputSchema: { path: z.string(), content: z.string(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('write_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('move_file', { description: TOOLS.move_file.description, inputSchema: { path: z.string(), destination: z.string() }, annotations: act },
+  server.registerTool('move_file', { description: TOOLS.move_file.description + DEVICE_ARG, inputSchema: { path: z.string(), destination: z.string(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('move_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('copy_file', { description: TOOLS.copy_file.description, inputSchema: { path: z.string(), destination: z.string() }, annotations: act },
+  server.registerTool('copy_file', { description: TOOLS.copy_file.description + DEVICE_ARG, inputSchema: { path: z.string(), destination: z.string(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('copy_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('delete_file', { description: TOOLS.delete_file.description, inputSchema: { path: z.string(), recursive: z.boolean().optional() }, annotations: act },
+  server.registerTool('delete_file', { description: TOOLS.delete_file.description + DEVICE_ARG, inputSchema: { path: z.string(), recursive: z.boolean().optional(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('delete_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('make_dir', { description: TOOLS.make_dir.description, inputSchema: { path: z.string() }, annotations: act },
+  server.registerTool('make_dir', { description: TOOLS.make_dir.description + DEVICE_ARG, inputSchema: { path: z.string(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('make_dir', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('edit_file', { description: TOOLS.edit_file.description, inputSchema: { path: z.string(), find: z.string(), replace: z.string(), all: z.boolean().optional() }, annotations: act },
+  server.registerTool('edit_file', { description: TOOLS.edit_file.description + DEVICE_ARG, inputSchema: { path: z.string(), find: z.string(), replace: z.string(), all: z.boolean().optional(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('edit_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('resume_action', { description: 'Run a mutating action that was waiting for a Guard approval, once a human approved it.', inputSchema: { requestId: z.string() }, annotations: act },
     ({ requestId }) => hands.resume(requestId, auth));
@@ -134,13 +138,15 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
     res.on('close', () => ctrl.abort());
     const job = await hub.nextJob({ deviceId: req.spokeDevice, capabilities: req.body?.capabilities, signal: ctrl.signal });
     if (res.writableEnded || res.destroyed) {
-      if (job) hub._queue.unshift(job); // the spoke went away; give the job to the next poll
+      if (job) hub.requeue(job); // the spoke went away; the job returns to its own device's queue
       return;
     }
     res.json({ job });
   });
   app.post('/spoke/v1/result', spokeAuth, express.json({ limit: '256kb' }), (req, res) => {
-    const ok = hub.complete(String(req.body?.jobId || ''), { ok: req.body?.ok === true, output: req.body?.output, error: req.body?.error, execution: req.body?.execution });
+    // Device binding: only the device the job was created for may report its
+    // result; a result from any other device is refused (404, as if unknown).
+    const ok = hub.complete(String(req.body?.jobId || ''), { ok: req.body?.ok === true, output: req.body?.output, error: req.body?.error, execution: req.body?.execution }, { deviceId: req.spokeDevice });
     res.status(ok ? 200 : 404).json({ accepted: ok });
   });
 

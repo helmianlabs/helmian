@@ -134,6 +134,39 @@ $('#theme').onchange = (e) => applyTheme(e.target.value); $('#theme-quick').onch
 $('#text-size').oninput = (e) => applyScale(Number(e.target.value));
 applyTheme(store.get('theme', 'midnight')); applyScale(store.get('scale', 100));
 
+// ---- collapsibles: state shown, state remembered ----
+// SHOW DETAILS summaries wear a chevron (CSS) and swap their label with
+// state; ADVANCED and APPEARANCE restore the state they were left in and
+// remember manual toggles (persisted via the app settings store).
+function wireCollapsibles() {
+  const swapLabel = (d) => {
+    const label = d.querySelector('summary .sd-label');
+    if (label) label.textContent = d.open ? 'HIDE DETAILS' : 'SHOW DETAILS';
+  };
+  for (const d of document.querySelectorAll('details.show-details')) {
+    swapLabel(d);
+    d.addEventListener('toggle', () => swapLabel(d));
+  }
+  const adv = $('#advanced-nav');
+  if (adv) {
+    adv.open = store.get('advancedOpen', false);
+    // A summary click is a manual toggle; the toggle event that follows it
+    // is what marks ADVANCED as hand-set (programmatic opens do not).
+    let advClicked = false;
+    adv.querySelector('summary')?.addEventListener('click', () => { advClicked = true; });
+    adv.addEventListener('toggle', () => {
+      store.set('advancedOpen', adv.open);
+      if (advClicked) { store.set('advancedManual', true); advClicked = false; }
+    });
+  }
+  const appearance = $('#appearance');
+  if (appearance) {
+    appearance.open = store.get('appearanceOpen', false);
+    appearance.addEventListener('toggle', () => store.set('appearanceOpen', appearance.open));
+  }
+}
+wireCollapsibles();
+
 // ---- drawers (mobile) ----
 function drawer(which, open) {
   shell.classList.toggle(`${which}-open`, open);
@@ -198,8 +231,11 @@ function show(view) {
   for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view && !p.closest('#chat-panel');
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
   $('#view-title').textContent = viewTitles(state.emojiMode)[view];
+  // ADVANCED is never forced by navigation: it offers itself once when a
+  // view inside it is opened directly, and after that it simply keeps the
+  // state it was left in (wireCollapsibles restores + remembers it).
   const adv = $('#advanced-nav');
-  if (adv) adv.open = ADVANCED_VIEWS.includes(view);
+  if (adv && !adv.open && ADVANCED_VIEWS.includes(view) && !store.get('advancedManual', false)) adv.open = true;
   if (narrow()) drawer('sidebar', false);
   loaders[view]?.().catch(() => {});
 }
@@ -1626,6 +1662,7 @@ function renderAgentSessions(container, sessions) {
     const closeBtn = el('button', 'btn sm icon-btn', '✕');
     closeBtn.type = 'button';
     closeBtn.title = 'Close session';
+    closeBtn.setAttribute('aria-label', 'Close session');
     closeBtn.onclick = (e) => { e.stopPropagation(); closeAgentSession(s.id, s.name); };
     header.append(title, closeBtn);
 
@@ -2033,6 +2070,7 @@ async function loadDesktop() {
     api, post, toast, state,
     openTools,
     wireVoice: wireMaestroVoiceChips,
+    wireCliVoice: wireCliVoiceChips,
     renderFeed,
     loadFeedData,
     ackAll: () => document.getElementById('feed-ack-all')?.click(),
@@ -2044,21 +2082,32 @@ async function loadDesktop() {
   wireGuardCreate();
 }
 
-// Left nav: the topbar button folds it to an icon rail; the choice is remembered.
+// Left nav: unpinned it rests as an icon rail that peeks open on hover or
+// keyboard focus (the .peek styles live in envoy.css, desktop pointers
+// only); the pin button on the rail itself keeps it expanded. The pin
+// choice is remembered. Touch uses the pin — there is no hover to catch.
 function wireRail() {
   const sidebar = document.getElementById('sidebar');
   const shellEl = document.querySelector('.shell');
-  const btn = document.getElementById('rail-toggle');
+  const btn = document.getElementById('rail-pin');
   if (!sidebar || !shellEl || sidebar.dataset.railWired) return;
   sidebar.dataset.railWired = '1';
   const setRail = (on) => {
     sidebar.classList.toggle('rail', on); shellEl.classList.toggle('sidebar-rail', on);
-    if (btn) { btn.textContent = on ? '»' : '«'; btn.title = on ? 'Expand navigation' : 'Collapse navigation'; btn.setAttribute('aria-pressed', String(on)); }
+    if (btn) { btn.setAttribute('aria-pressed', String(!on)); btn.title = on ? 'Pin navigation open' : 'Unpin navigation (folds to the icon rail)'; }
   };
-  // First visit on a laptop-sized screen starts on the rail so the chat gets the room.
-  let pinnedRail = store.get('navRail', window.innerWidth < 1600);
-  setRail(pinnedRail);
-  if (btn) btn.onclick = () => { pinnedRail = !pinnedRail; store.set('navRail', pinnedRail); setRail(pinnedRail); };
+  // First visit on a laptop-sized screen starts unpinned so the chat gets the room.
+  let pinned = store.get('navPinned', window.innerWidth >= 1600);
+  setRail(!pinned);
+  if (btn) btn.onclick = () => { pinned = !pinned; store.set('navPinned', pinned); setRail(!pinned); };
+  // "More" (visible at rest in rail mode only, envoy.css) is the hint that
+  // sections are folded away; it takes the same way out as the pin button.
+  const more = document.getElementById('rail-more');
+  if (more && btn) more.onclick = () => btn.click();
+  sidebar.addEventListener('mouseenter', () => sidebar.classList.add('peek'));
+  sidebar.addEventListener('mouseleave', () => sidebar.classList.remove('peek'));
+  sidebar.addEventListener('focusin', () => sidebar.classList.add('peek'));
+  sidebar.addEventListener('focusout', (e) => { if (!sidebar.contains(e.relatedTarget)) sidebar.classList.remove('peek'); });
 }
 
 function wireGuardCreate() {
@@ -2156,6 +2205,67 @@ function wireMaestroVoiceChips() {
       if (!input.value.startsWith('/')) input.value = '/' + input.value;
       input.focus();
     };
+  }
+}
+
+// Voice for the Workspace agent CLI pane (#ew-cli-*): the same voice
+// engine as the chat composer, dictation lands in the CLI prompt box.
+function insertCliDictation(text) {
+  const box = document.getElementById('ew-cli-input');
+  if (!box) return;
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? box.value.length;
+  const before = box.value.slice(0, start);
+  const after = box.value.slice(end);
+  const sep = before && !/[\s\n]$/.test(before) ? ' ' : '';
+  box.value = before + sep + text + after;
+  const pos = before.length + sep.length + text.length;
+  box.setSelectionRange(pos, pos);
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+  box.focus();
+}
+
+function updateCliVoiceChips() {
+  for (const [id, mode] of [['ew-cli-dictate', 'dictate'], ['ew-cli-voice', 'voice']]) {
+    const chip = document.getElementById(id);
+    if (!chip) continue;
+    const active = voice.voiceMode && voice.mode === mode;
+    chip.classList.toggle('recording', active);
+    chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+}
+
+function toggleCliVoice(mode) {
+  const onState = () => { updateCliVoiceChips(); updateMaestroVoiceChips(); };
+  if (voice.voiceMode && voice.mode === mode) {
+    voice.setVoiceMode(false, { onState });
+  } else {
+    if (voice.voiceMode) voice.setVoiceMode(false, {});
+    if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy(mode)); store.set('voicePrivacySeen', true); }
+    voice.setVoiceMode(true, {
+      mode,
+      onTranscript: (text) => { insertCliDictation(text); },
+      onSubmit: (text) => { if (text) insertCliDictation(text); const f = document.getElementById('ew-cli-form'); if (document.getElementById('ew-cli-input')?.value.trim() && f) f.requestSubmit(); },
+      onState,
+      onError: (msg) => { toast(msg); updateCliVoiceChips(); },
+    });
+  }
+  updateCliVoiceChips();
+  updateMaestroVoiceChips();
+}
+
+function wireCliVoiceChips() {
+  for (const [id, mode] of [['ew-cli-dictate', 'dictate'], ['ew-cli-voice', 'voice']]) {
+    const chip = document.getElementById(id);
+    if (!chip || chip.dataset.wired) continue;
+    chip.dataset.wired = '1';
+    chip.title = voicePrivacy(mode);
+    if (!voice.supported) {
+      chip.disabled = true;
+      chip.title = 'Voice is not supported by this browser — you can still type.';
+    } else {
+      chip.onclick = () => toggleCliVoice(mode);
+    }
   }
 }
 
