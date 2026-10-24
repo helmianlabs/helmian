@@ -15,6 +15,38 @@
     <meta name="twitter:title" content="Helmian">
     <meta name="twitter:description" content="Run Claude, ChatGPT, Grok and Gemini on one project without them stepping on each other.">
     <link rel="canonical" href="https://helmian.cloud/">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://helmian.cloud/#organization",
+          "name": "Helmian",
+          "url": "https://helmian.cloud/",
+          "logo": "https://helmian.cloud/assets/helmian-logo.png",
+          "description": "Helmian is a governance layer for AI coding agents: one agent holds write access to a project at a time, risky steps wait for human sign-off, and every action lands in an append-only audit trail."
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://helmian.cloud/#website",
+          "url": "https://helmian.cloud/",
+          "name": "Helmian",
+          "publisher": { "@id": "https://helmian.cloud/#organization" }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://helmian.cloud/#software",
+          "name": "Helmian",
+          "url": "https://helmian.cloud/",
+          "applicationCategory": "DeveloperApplication",
+          "description": "Run Claude, ChatGPT, Grok and Gemini on one project without them stepping on each other. One agent holds write access at a time, risky steps wait for your sign-off, and every action lands in an audit trail.",
+          "featureList": "Single write lease per project, Human approval gates for risky actions, Append-only audit trail, Guard review of destructive commands and unsourced claims, Multi-provider support (Claude, ChatGPT, Grok, Gemini), Phone approvals via Herald",
+          "publisher": { "@id": "https://helmian.cloud/#organization" }
+        }
+      ]
+    }
+    </script>
     <link rel="icon" href="assets/helmian-logo.png" type="image/png">
     <link rel="stylesheet" href="styles.css">
     <script src="site-config.js" defer></script>
