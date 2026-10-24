@@ -1,6 +1,7 @@
 // PC action approvals (hands connector -> Executive Guard on the Hetzner box).
 //
 //   GET  /api/admin/guard/pc-approvals          pending Guard approvals
+//   GET  /api/admin/guard/pc-upcoming           pending + approved Guard queue, soonest expiry first
 //   POST /api/admin/guard/pc-approvals/decide   { approvalId, approve: boolean, reason? }
 //
 // Used by /app (admin session cookie) and Herald (Clerk session Bearer), same origin.
@@ -18,6 +19,7 @@ import { verifyClerkSessionBearer } from './signup.mjs';
 
 export const PC_APPROVALS_PATH = '/api/admin/guard/pc-approvals';
 export const PC_APPROVALS_DECIDE_PATH = '/api/admin/guard/pc-approvals/decide';
+export const PC_UPCOMING_PATH = '/api/admin/guard/pc-upcoming';
 const ID = /^[A-Za-z0-9-]{8,64}$/;
 
 let _identity = null;
@@ -96,6 +98,31 @@ export function createPcApprovalsHandler({
         if (r.status !== 200) return sendJson(response, 502, { error: 'GUARD_UNAVAILABLE', status: r.status });
         const list = Array.isArray(r.body?.approvals) ? r.body.approvals : Array.isArray(r.body) ? r.body : [];
         return sendJson(response, 200, { approvals: list.map(publicApproval).filter((a) => a.status === 'pending') });
+      }
+      if (request.method === 'GET' && pathname === PC_UPCOMING_PATH) {
+        // The whole "what is waiting" queue in one call: pending approvals are
+        // waiting on the human (waitingOn: 'you'); approved ones are waiting on
+        // the PC to pick them up before their window closes (waitingOn: 'pc').
+        // Soonest expiry first, so nothing dies invisibly at the bottom.
+        const [pendingR, approvedR, expiredR] = await Promise.all([
+          guard('/v1/approvals?status=pending'),
+          guard('/v1/approvals?status=approved'),
+          guard('/v1/approvals?status=expired'),
+        ]);
+        if (pendingR.status !== 200) return sendJson(response, 502, { error: 'GUARD_UNAVAILABLE', status: pendingR.status });
+        if (approvedR.status !== 200) return sendJson(response, 502, { error: 'GUARD_UNAVAILABLE', status: approvedR.status });
+        const pick = (r, status) => (Array.isArray(r.body?.approvals) ? r.body.approvals : Array.isArray(r.body) ? r.body : [])
+          .map(publicApproval).filter((a) => a.status === status);
+        const pending = pick(pendingR, 'pending').map((a) => ({ ...a, waitingOn: 'you' }));
+        const approved = pick(approvedR, 'approved').map((a) => ({ ...a, waitingOn: 'pc' }));
+        const queue = [...pending, ...approved].sort((a, b) => (a.expiresAt ? Date.parse(a.expiresAt) : Infinity) - (b.expiresAt ? Date.parse(b.expiresAt) : Infinity));
+        // Expired is best-effort context ("died while you were away"), never a
+        // reason to fail the queue: a failed expired fetch just reports 0.
+        const dayAgo = Date.now() - 24 * 3600 * 1000;
+        const expiredRecent = expiredR.status === 200
+          ? pick(expiredR, 'expired').filter((a) => a.expiresAt && Date.parse(a.expiresAt) >= dayAgo).length
+          : 0;
+        return sendJson(response, 200, { queue, counts: { pending: pending.length, approved: approved.length, total: queue.length, expiredRecent } });
       }
       if (request.method === 'POST' && pathname === PC_APPROVALS_DECIDE_PATH) {
         if (!String(request.headers?.['content-type'] || '').toLowerCase().startsWith('application/json')) return sendJson(response, 415, { error: 'json required' });
