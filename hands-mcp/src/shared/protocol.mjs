@@ -11,6 +11,7 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 
 export const DECISION_AUDIENCE = 'helmian-executive-guard-decision-v1';
+export const ROOT_GRANT_AUDIENCE = 'helmian-executive-guard-root-grant-v1';
 export const GUARD_ACTION_SITE = 'hands.helmian';
 export const MAX_OUTPUT_BYTES = 64 * 1024;
 
@@ -187,6 +188,79 @@ export function verifyApproval({ publicKeyX, envelope, tool, args, nonce, device
     if (claims.actionHash !== guardActionHash(buildGuardAction(tool, args))) return { ok: false, error: 'approval is for different arguments' };
     if (nonce && claims.nonce !== nonce) return { ok: false, error: 'nonce mismatch' };
     if (deviceId && claims.deviceId !== deviceId) return { ok: false, error: 'device mismatch' };
+    return { ok: true, claims };
+  } catch (error) {
+    return { ok: false, error: `unverifiable: ${error.message}` };
+  }
+}
+
+// ─── PC workspace root grants ────────────────────────────────────────────────
+//
+// A root grant is NOT a Guard action decision. Existing decisions are bound to
+// one tool call, carry a nonce, are single-use, and are intentionally short
+// lived; none of those properties can describe standing folder access. A root
+// grant therefore uses the same transport-level trust shape as a decision —
+// a canonical-JSON payload in an Ed25519 envelope ({ payload, signature,
+// keyId }) verified against the Guard key pinned on the PC — but with its own
+// audience and claims. It is read-only, bound to one spoke device, and lasts
+// until its optional `exp` or until the entry is removed from the local grants
+// file (revocation). This distinction matters: today's Executive Guard decision
+// endpoint cannot issue one of these long-lived grant envelopes.
+
+export function isAbsoluteRootPath(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 1024
+    && !/[\u0000]/.test(value)
+    && (/^\//.test(value) || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value));
+}
+
+/** The Guard action a future hub root-request flow should ask a human to approve. */
+export function buildRootGrantAction({ rootPath, scope = 'read-only', spokeDeviceId, expiresAt = null } = {}) {
+  if (!isAbsoluteRootPath(rootPath)) throw new TypeError('rootPath must be an absolute path');
+  if (scope !== 'read-only') throw new TypeError('root grants are read-only');
+  if (!spokeDeviceId || typeof spokeDeviceId !== 'string') throw new TypeError('spokeDeviceId is required');
+  return {
+    kind: 'agent.tool',
+    site: GUARD_ACTION_SITE,
+    contentHash: sha256Hex(canonicalJson({ grant: { rootPath, scope, spokeDeviceId, expiresAt } })),
+    riskSignals: ['destructive-intent', 'hands.act', 'root-grant'].sort(),
+    summary: `hands grant read-only root ${rootPath}`,
+  };
+}
+
+export function rootGrantActionHash(request) {
+  return guardActionHash(buildRootGrantAction(request));
+}
+
+/**
+ * Verify a signed root-grant envelope against the PC's pinned Guard key.
+ * Required claims: aud, grantType='root', grantId, verdict='allow', a human
+ * approvalId + decidedBy, rootPath, scope='read-only', spokeDeviceId.
+ * Optional claims: requestId, actionHash, iat, exp (epoch seconds). No exp
+ * means "until revoked" — the local grants file is the revocation list.
+ */
+export function verifyRootGrant({ publicKeyX, envelope, spokeDeviceId, now = Date.now() } = {}) {
+  try {
+    if (!publicKeyX) return { ok: false, error: 'no pinned Guard key' };
+    if (!envelope || typeof envelope.payload !== 'string' || typeof envelope.signature !== 'string') return { ok: false, error: 'malformed root grant' };
+    const good = verify(null, Buffer.from(envelope.payload, 'utf8'), publicKeyFromX(publicKeyX), Buffer.from(envelope.signature, 'base64url'));
+    if (!good) return { ok: false, error: 'bad signature' };
+    const claims = JSON.parse(Buffer.from(envelope.payload, 'base64url').toString('utf8'));
+    if (claims.aud !== ROOT_GRANT_AUDIENCE) return { ok: false, error: 'wrong audience' };
+    if (claims.grantType !== 'root') return { ok: false, error: 'not a root grant' };
+    if (!claims.grantId || typeof claims.grantId !== 'string') return { ok: false, error: 'missing grantId' };
+    if (claims.verdict !== 'allow') return { ok: false, error: `verdict ${claims.verdict}` };
+    if (!claims.approvalId || !claims.decidedBy) return { ok: false, error: 'not a human approval' };
+    if (!isAbsoluteRootPath(claims.rootPath)) return { ok: false, error: 'rootPath is not absolute' };
+    if (claims.scope !== 'read-only') return { ok: false, error: 'root grants are read-only' };
+    if (!claims.spokeDeviceId || typeof claims.spokeDeviceId !== 'string') return { ok: false, error: 'missing spokeDeviceId' };
+    if (spokeDeviceId && claims.spokeDeviceId !== spokeDeviceId) return { ok: false, error: 'device mismatch' };
+    if (claims.exp != null) {
+      if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) return { ok: false, error: 'invalid expiry' };
+      if (claims.exp * 1000 <= now) return { ok: false, error: 'expired' };
+    }
+    if (claims.iat != null && (typeof claims.iat !== 'number' || !Number.isFinite(claims.iat))) return { ok: false, error: 'invalid issued-at' };
     return { ok: true, claims };
   } catch (error) {
     return { ok: false, error: `unverifiable: ${error.message}` };
