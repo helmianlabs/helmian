@@ -116,3 +116,30 @@ test('connector attachments are context-only and say so; webSearch flag is state
   assert.match(missing.contextText, /NOT installed or enabled/);
   await missing.dispose();
 });
+
+test('skill line states the expansion outcome the composing side reported', async () => {
+  const metadata = { attachments: [{ kind: 'skill', name: 'greet' }] };
+
+  // Expanded before the turn text was composed: the established claim stands.
+  const expanded = await resolveTurnAttachments({ metadata, plugins: [], slashExpansion: { name: 'greet', expanded: true } });
+  assert.match(expanded.contextText, /already been expanded into the command's instructions/);
+  await expanded.dispose();
+
+  // Attempted and missed: the honest line, and the false claim appears
+  // NOWHERE in the turn context (this was the wrapped-path lie).
+  const missed = await resolveTurnAttachments({ metadata, plugins: [], slashExpansion: { name: 'greet', expanded: false } });
+  assert.match(missed.contextText, /NOT expanded into the command's instructions/);
+  assert.doesNotMatch(missed.contextText, /already been expanded/);
+  await missed.dispose();
+
+  // No report (the direct path, where the agent bridge expands the turn
+  // text itself): the legacy wording is unchanged.
+  const legacy = await resolveTurnAttachments({ metadata, plugins: [] });
+  assert.match(legacy.contextText, /already been expanded into the command's instructions/);
+  await legacy.dispose();
+
+  // A report about a DIFFERENT command does not rewrite this skill's line.
+  const other = await resolveTurnAttachments({ metadata, plugins: [], slashExpansion: { name: 'other', expanded: false } });
+  assert.match(other.contextText, /already been expanded into the command's instructions/);
+  await other.dispose();
+});
