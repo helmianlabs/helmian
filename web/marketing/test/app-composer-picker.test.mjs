@@ -151,3 +151,37 @@ test('the picker model reuses the Integrations registry instead of inventing one
   const src = await readFile(new URL('../app/composer-picker.mjs', import.meta.url), 'utf8');
   assert.match(src, /import \{ integrationsModel \} from '\.\/app-model\.mjs'/);
 });
+
+test('a third attach list (the session console’s) is independent of the other composers’ lists', () => {
+  const channelList = addAttachment([], conn('discord'), { catalog }).list;
+  const consoleList = addAttachment([], skill('deploy')).list;
+  assert.deepEqual(channelList.map(attachmentKey), ['connector:discord']);
+  assert.deepEqual(consoleList.map(attachmentKey), ['skill:deploy']);
+  assert.deepEqual(removeAttachment(consoleList, skill('deploy')), [], 'clearing the console list empties only it');
+  assert.deepEqual(channelList.map(attachmentKey), ['connector:discord'], 'the channel list is untouched');
+  const req = buildMessageRequest({ channelId: 'c9', body: 'status', idempotencyKey: 'k9', attachments: consoleList });
+  assert.deepEqual(req.metadata.attachments, [{ kind: 'skill', name: 'deploy' }], 'the console send carries its attachments as metadata');
+  assert.equal(req.payload.body, '/deploy status', 'the skill leads the console message body, the shape the bridge expands');
+  const bare = buildMessageRequest({ channelId: 'c9', body: 'status', idempotencyKey: 'k10', attachments: [] });
+  assert.equal(bare.metadata, null);
+  assert.deepEqual(Object.keys(bare.payload).sort(), ['body', 'channelId', 'idempotencyKey'], 'an empty console send is the original wire shape');
+});
+
+test('the session console carries the picker too: plus button, panel, chips, its own list', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  for (const id of ['console-plus', 'console-picker', 'console-attach-chips']) {
+    assert.ok(html.includes(`id="${id}"`), `index.html has #${id}`);
+  }
+  const plus = html.match(/<button[^>]*id="console-plus"[^>]*>([\s\S]*?)<\/button>/);
+  assert.ok(plus, '#console-plus exists');
+  assert.match(plus[1], /\+/, 'console composer button shows the plus');
+  assert.match(plus[1], /Add/, 'console composer button is labelled Add');
+  const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  assert.match(js, /from '\.\/composer-picker\.mjs'/, 'app.js imports the shared picker model — no forked picker logic');
+  assert.match(js, /\$\('#console-plus'\)\.onclick = \(\) => toggleConsolePicker\(\)/, 'the console plus toggles the console picker');
+  assert.match(js, /api\('\/api\/admin\/cora\/connectors'\)/, 'the console picker reads the same connectors registry as Integrations');
+  assert.match(js, /api\('\/api\/admin\/provider-connections'\)/, 'the console picker reads the same provider connections');
+  assert.match(js, /buildMessageRequest\(\{ channelId: state\.channelId, body, idempotencyKey: crypto\.randomUUID\(\), attachments: consoleAttach\.list \}\)/, 'console send builds its request through the picker model with its own list');
+  assert.match(js, /consoleAttach\.list = \[\]; renderConsoleAttachChips\(\); closeConsolePicker\(\)/, 'a successful console send clears its own attachments');
+  assert.match(js, /const consoleAttach = \{ list: \[\], open: false, data: null \}/, 'the console keeps a separate attach list from the workspace’s channel/cli lists');
+});

@@ -1,4 +1,5 @@
 import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, friendlyWorkspace } from './app-model.mjs';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -917,14 +918,136 @@ $('#new-channel').onclick = () => {
     } catch { create.disabled = false; toast('Channel not created.'); }
   };
 };
+// ---- session console "+" picker ----
+// The same attach model as the workspace composers (composer-picker.mjs):
+// skills by name, connectors from the Integrations registry, plugins from
+// the PC bridge's install ledger when the picker model carries that group,
+// upload honestly unavailable. The console fetches the same endpoints the
+// workspace's loadPickerData does, keeps its OWN attach list (the third
+// one), and its send below builds through buildMessageRequest like the
+// others — so a console message carries metadata the same way, and with
+// nothing attached the payload is exactly what it was before.
+const consoleAttach = { list: [], open: false, data: null };
+async function loadConsolePickerData() {
+  if (consoleAttach.data) return consoleAttach.data;
+  const [c, p] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections')]);
+  consoleAttach.data = pickerModel({ connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {} });
+  return consoleAttach.data;
+}
+function renderConsoleAttachChips() {
+  const box = $('#console-attach-chips'); if (!box) return;
+  box.hidden = !consoleAttach.list.length;
+  box.replaceChildren(...consoleAttach.list.map((a) => {
+    const chip = el('span', `ew-chip ${a.kind}`, a.kind === 'skill' ? `/${a.name}` : a.name);
+    const x = el('button', 'ew-chip-x', '×');
+    x.type = 'button';
+    x.title = `Remove ${a.kind === 'skill' ? `the ${a.name} skill` : a.name}`;
+    x.setAttribute('aria-label', `Remove ${a.kind === 'skill' ? `skill ${a.name}` : a.name}`);
+    x.onclick = () => { consoleAttach.list = removeAttachment(consoleAttach.list, a); renderConsoleAttachChips(); if (consoleAttach.open) renderConsolePicker(); };
+    chip.append(x);
+    return chip;
+  }));
+}
+function closeConsolePicker() {
+  consoleAttach.open = false;
+  const panel = $('#console-picker'); if (panel) panel.hidden = true;
+}
+async function toggleConsolePicker() {
+  if (consoleAttach.open) { closeConsolePicker(); return; }
+  consoleAttach.open = true;
+  await renderConsolePicker();
+}
+async function renderConsolePicker() {
+  const panel = $('#console-picker'); if (!panel) return;
+  if (!consoleAttach.open) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const model = consoleAttach.data ?? await loadConsolePickerData().catch(() => pickerModel());
+  if (!consoleAttach.open) return; // closed while the registry loaded
+  const attached = new Set(consoleAttach.list.map(attachmentKey));
+  const groups = [];
+  for (const g of model.groups) {
+    if (g.id === 'skills') {
+      const group = el('div', 'ew-picker-group');
+      const nameInput = el('input', 'ew-picker-input');
+      nameInput.maxLength = 64;
+      nameInput.placeholder = 'Skill name — e.g. deploy, or plugin:skill';
+      nameInput.setAttribute('aria-label', 'Skill name');
+      const note = el('p', 'ew-note');
+      const add = el('button', 'ew-btn sm', 'Attach skill');
+      add.type = 'button';
+      add.onclick = () => {
+        const r = addAttachment(consoleAttach.list, { kind: 'skill', name: nameInput.value });
+        if (!r.added) { note.textContent = r.reason; return; }
+        consoleAttach.list = r.list; note.textContent = '';
+        renderConsoleAttachChips(); renderConsolePicker();
+      };
+      const row = el('div', 'ew-row'); row.append(nameInput, add);
+      group.append(el('div', 'ew-subhead', 'SKILLS'), el('p', 'ew-note', g.note), row, note);
+      groups.push(group);
+    } else if (g.id === 'connectors') {
+      const group = el('div', 'ew-picker-group');
+      group.append(el('div', 'ew-subhead', 'CONNECTORS'));
+      if (!g.items.length) group.append(el('p', 'ew-note', 'No connectors in the registry.'));
+      for (const item of g.items) {
+        const on = attached.has(`connector:${item.key}`);
+        const btn = el('button', `ew-picker-row${on ? ' on' : ''}`);
+        btn.type = 'button';
+        if (!item.connected) btn.disabled = true;
+        btn.title = item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`) : `${item.name} is not connected`;
+        btn.onclick = () => {
+          if (on) { consoleAttach.list = removeAttachment(consoleAttach.list, { kind: 'connector', key: item.key }); renderConsoleAttachChips(); renderConsolePicker(); return; }
+          const r = addAttachment(consoleAttach.list, { kind: 'connector', key: item.key }, { catalog: g.items });
+          if (r.added) { consoleAttach.list = r.list; renderConsoleAttachChips(); renderConsolePicker(); }
+        };
+        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.kindLabel), el('span', `ew-picker-state ${item.connected ? 'on' : 'off'}`, on ? 'Attached' : item.connected ? 'Connected' : 'Not connected'));
+        group.append(btn);
+      }
+      groups.push(group);
+    } else if (g.id === 'plugins') {
+      const group = el('div', 'ew-picker-group');
+      group.append(el('div', 'ew-subhead', 'PLUGINS'), el('p', 'ew-note', g.note));
+      if (!g.items.length) group.append(el('p', 'ew-note', 'No plugins installed on your PC bridge yet.'));
+      for (const item of g.items) {
+        const on = attached.has(`plugin:${item.name}`);
+        const btn = el('button', `ew-picker-row${on ? ' on' : ''}`);
+        btn.type = 'button';
+        btn.title = on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`;
+        btn.onclick = () => {
+          if (on) { consoleAttach.list = removeAttachment(consoleAttach.list, { kind: 'plugin', name: item.name }); renderConsoleAttachChips(); renderConsolePicker(); return; }
+          const r = addAttachment(consoleAttach.list, { kind: 'plugin', name: item.name }, { catalog: g.items });
+          if (r.added) { consoleAttach.list = r.list; renderConsoleAttachChips(); renderConsolePicker(); }
+        };
+        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.brings), el('span', `ew-picker-state ${on ? 'on' : 'off'}`, on ? 'Attached' : 'Installed'));
+        group.append(btn);
+      }
+      groups.push(group);
+    } else if (g.id === 'upload') {
+      const group = el('div', 'ew-picker-group');
+      const up = el('button', 'ew-btn sm', 'Upload a file');
+      up.type = 'button'; up.disabled = true; up.title = g.reason;
+      group.append(el('div', 'ew-subhead', 'UPLOAD'), up, el('p', 'ew-note', g.reason));
+      groups.push(group);
+    }
+  }
+  const head = el('div', 'ew-picker-head');
+  const close = el('button', 'ew-icon', '×');
+  close.type = 'button'; close.setAttribute('aria-label', 'Close picker');
+  close.onclick = () => closeConsolePicker();
+  head.append(el('strong', null, 'Add to this message'), el('span', 'ew-spacer'), close);
+  panel.replaceChildren(head, ...groups);
+}
+$('#console-plus').onclick = () => toggleConsolePicker();
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && consoleAttach.open) closeConsolePicker(); });
+
 const prompt = $('#prompt');
 prompt.oninput = () => { prompt.style.height = 'auto'; prompt.style.height = `${Math.min(prompt.scrollHeight, 200)}px`; };
 prompt.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); $('#composer').requestSubmit(); } };
 $('#composer').onsubmit = async (e) => {
   e.preventDefault(); const body = prompt.value.trim(); if (!body) return;
   if (!state.channelId) { toast('No team channel yet — ask the owner to set one up'); return; }
+  const req = buildMessageRequest({ channelId: state.channelId, body, idempotencyKey: crypto.randomUUID(), attachments: consoleAttach.list });
   $('#send').disabled = true;
-  try { await post('/api/admin/envoy/messages', { channelId: state.channelId, body, idempotencyKey: crypto.randomUUID() }); prompt.value = ''; prompt.oninput(); await loadLog(); $('#log').scrollTop = 1e9; }
+  try { await post('/api/admin/envoy/messages', req.payload); prompt.value = ''; prompt.oninput(); consoleAttach.list = []; renderConsoleAttachChips(); closeConsolePicker(); await loadLog(); $('#log').scrollTop = 1e9; }
   catch { toast('Not sent — your message is still in the box'); }
   finally { $('#send').disabled = false; }
 };
