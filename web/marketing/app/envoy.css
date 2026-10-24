@@ -270,6 +270,11 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   content:attr(data-tip); position:absolute; left:calc(100% + 10px); top:50%; transform:translateY(-50%);
   background:#0B1220; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; pointer-events:none; z-index:80; box-shadow:0 6px 18px rgba(0,0,0,.4); }
 .sidebar.rail .advanced-nav, .sidebar.rail .side-sessions, .sidebar.rail #appearance { display:none; }
+/* At rest the rail hides whole sections (above); "More" is the hint they
+   exist. It hides again while peeked, when the real sections are showing. */
+.rail-more { display:none; }
+.sidebar.rail .rail-more { display:flex; }
+.sidebar.rail.peek .rail-more { display:none; }
 
 /* Rail peek: an unpinned rail expands over the content while the pointer is
    on it or it holds keyboard focus (app.js toggles .peek from hover/focus),
