@@ -397,7 +397,9 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-cli-chips { padding:2px 12px 4px; }
 .ew-pill.on { border-color:var(--accent); color:var(--accent); }
 .ew-cli-form { display:flex; flex-direction:column; gap:8px; padding:8px 12px; border-top:1px solid var(--border); }
-.ew-cli-sessions { flex:1 1 auto; overflow:auto; display:flex; flex-direction:column; gap:6px; padding:6px 10px 10px; }
+.ew-cli-sessions { flex:0 1 auto; max-height:42%; overflow:auto; display:flex; flex-direction:column; gap:6px; padding:6px 10px 10px; }
+.ew-cli-thread { flex:1 1 auto; min-height:72px; overflow-y:auto; display:flex; flex-direction:column; padding:2px 8px 6px; }
+.ew-cli-thread .ew-note { padding:8px 4px; }
 .ew-cli-session { display:grid; grid-template-columns:30px minmax(0,1fr); gap:2px 10px; align-items:center; text-align:left; border:1px solid var(--border); border-radius:10px; background:var(--panel-2); color:var(--text); padding:8px 10px; cursor:pointer; transition:border-color .15s; animation:ew-in .22s var(--ease); }
 .ew-cli-session:hover { border-color:var(--accent); }
 .ew-cli-session.active { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }

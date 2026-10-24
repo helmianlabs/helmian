@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, dragLayout, pendingAgentWork } from '../app/envoy-workspace.js';
+import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, cliThreadFor, dragLayout, pendingAgentWork } from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -98,6 +98,57 @@ test('poll cadence: fast while work is pending, calm otherwise', () => {
   assert.equal(FAST_POLL_MS, 800);
   assert.equal(CALM_POLL_MS, 2500);
   assert.equal(AGENT_WORK_WINDOW_MS, 30 * 60_000);
+});
+
+// Agent-first increment 1 (Troy's chat direction, 2026-10-23): the Agent
+// Chat pane carries its own conversation — cliThreadFor picks, per picked
+// provider, the signed-in human's prompts that route to it (addressed())
+// plus that provider's replies, and nothing else.
+const ME = 'user:troy';
+const ids = (list) => list.map((m) => m.id);
+
+test('cli thread: an unaddressed prompt and the Maestro reply form the Maestro conversation', () => {
+  const msgs = [human('m1', 'hello'), reply('m2', 'm1', 'maestro')];
+  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'maestro', ME)), ['m1', 'm2']);
+  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'gemini', ME)), []);
+});
+
+test('cli thread: an @Gemini prompt pairs with the Gemini reply; other agents stay out', () => {
+  const msgs = [human('m1', '@Gemini build the page'), reply('m2', 'm1', 'gemini'), reply('m3', 'm1', 'claude')];
+  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'gemini', ME)), ['m1', 'm2']);
+  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'claude', ME)), ['m3']);
+  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'maestro', ME)), []);
+});
+
+test('cli thread: other people, their prompts and system notices stay in the channel', () => {
+  const other = { id: 'm1', authorKind: 'human', authorSubject: 'user:someone-else', body: '@Gemini hi', createdAt: iso(60_000) };
+  const notice = { id: 'm2', authorKind: 'system', authorSubject: 'system', body: 'Gemini joined', createdAt: iso(50_000) };
+  const mine = human('m3', '@Gemini mine');
+  assert.deepEqual(ids(cliThreadFor([other, notice, mine], ROSTER, 'gemini', ME)), ['m3']);
+});
+
+test('cli thread: an @all prompt shows in every roster thread; agentProvider field counts as authorship', () => {
+  const via = { id: 'm2', authorKind: 'agent', authorSubject: 'user:bridge-9', agentProvider: 'gemini', body: 'Done.', createdAt: iso(30_000) };
+  const msgs = [human('m1', '@all status?'), via];
+  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'maestro', ME)), ['m1']);
+  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'gemini', ME)), ['m1', 'm2']);
+});
+
+test('cli thread: no target, no thread', () => {
+  assert.deepEqual(cliThreadFor([human('m1', 'hello')], ROSTER, null, ME), []);
+});
+
+test('agent-first increment 1: the pane has a conversation region and the workspace renders into it', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  const sessions = html.indexOf('id="ew-cli-sessions"');
+  const thread = html.indexOf('id="ew-cli-thread"');
+  const form = html.indexOf('id="ew-cli-form"');
+  assert.ok(sessions !== -1 && thread > sessions && thread < form, 'the conversation region sits between the sessions and the composer, inside the Agent Chat pane');
+  assert.ok(js.includes('function renderCliThread'), 'envoy-workspace.js renders the pane conversation');
+  assert.ok((js.match(/renderCliThread\(\)/g) ?? []).length >= 4, 'the conversation re-renders on message loads and target changes');
+  assert.match(css, /\.ew-cli-thread \{/, 'envoy.css styles the conversation region');
 });
 
 // Layout bite 1 (Troy's ruling, 2026-10-23): the agent CLI is its own
