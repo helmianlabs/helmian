@@ -26,6 +26,11 @@ const shortcutsDialog = $('#shortcutsDialog');
 const accountDialog = $('#accountDialog');
 const draftKey = 'helmian:pwa:draft-v1';
 const themeKey = 'helmian:pwa:theme-v1';
+// Sign-in happens inside Herald, so a successful sign-in — or a sign-up via
+// the link inside the sign-in form — must land back here. With no return
+// target, Clerk falls back to the instance default and sends the browser to
+// the marketing landing page instead.
+const clerkReturnProps = { forceRedirectUrl: '/herald', signUpForceRedirectUrl: '/herald' };
 let activeDrawer = null;
 let toastTimer = null;
 let clerk = null;
@@ -194,7 +199,7 @@ function runAction(action, source) {
     if (clerk?.isSignedIn) void clerk.signOut().then(resetRemoteUi);
     else {
       accountDialog.showModal();
-      if (clerk) clerk.mountSignIn($('#clerkMount'));
+      if (clerk) clerk.mountSignIn($('#clerkMount'), clerkReturnProps);
     }
   } else if (action === 'close-account') {
     accountDialog.close();
@@ -381,7 +386,7 @@ async function applyAccountState(config) {
     $('#desktopList').replaceChildren();
     $('#desktopEmpty').hidden = false;
     if (qrEnrollmentCode && !accountDialog.open) accountDialog.showModal();
-    if (accountDialog.open) clerk.mountSignIn($('#clerkMount'));
+    if (accountDialog.open) clerk.mountSignIn($('#clerkMount'), clerkReturnProps);
     return;
   }
   const nextAccountId = clerk.user?.id ?? null;
