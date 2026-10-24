@@ -106,6 +106,22 @@ export function pendingAgentWork(messages, roster, joined = {}, online = new Set
   return roster.filter((p) => due.has(p));
 }
 
+// The Agent Chat pane's own conversation with one provider: the signed-in
+// human's prompts that route to it (addressed() — the same routing the
+// channel runs on) plus that provider's replies, in channel order.
+// Everything else — other people's posts, other agents' replies, system
+// notices — stays in the channel where it happened.
+export function cliThreadFor(messages, roster, target, selfSubject) {
+  if (!target) return [];
+  const providerOf = (m) => m.agentProvider || (m.authorSubject?.startsWith('agent:') ? m.authorSubject.slice(6) : (m.authorSubject?.endsWith(':bridge') ? 'maestro' : null));
+  return messages.filter((m) => {
+    if (m.authorKind === 'system') return false;
+    const p = providerOf(m);
+    if (p) return p === target;
+    return m.authorKind === 'human' && m.authorSubject === selfSubject && addressed(m, roster).includes(target);
+  });
+}
+
 // Pending work in the open channel, from the live server-fed state.
 function currentWorking() {
   const agents = ws.config?.agents ?? [];
@@ -140,7 +156,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null) } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -263,6 +279,45 @@ function syncAgentsPane() {
 const PANE_MIN = { channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 };
 const PANE_MAX = 900;
 const SNAP = 76;
+// Sized panes in DOM order (the chat sits between channels and cli but is
+// not sized — it is the flexible pane every drag trades space with).
+const PANE_ORDER = ['channels', 'cli', 'agents', 'guard', 'bench'];
+
+// Pure drag geometry, exported for tests. A drag must move the pane edge
+// 1:1 with the pointer, so the dragged pane's growth is bounded by what
+// the REST OF THE ROW can yield — the flexible chat down to its floor,
+// then each other sized pane down to its own floor — never by the
+// container's already-free space. The old clamp measured exactly that
+// free space, and in a full row it is ~0: a +300px drag on channels
+// landed +76px. widths/floors cover every open sized pane (rendered
+// widths; floors from PANE_MIN); splitsW is the visible separators'
+// total width. Returns the full width map for the row at the clamped
+// target: growth is taken from the other panes farthest from the dragged
+// one first, so the panes next to the pointer stay put longest.
+// Shrinking changes only the dragged pane — the freed space falls to
+// the chat on its own.
+export function dragLayout({ widths, floors, chatFloor = 380, containerW, splitsW = 0, name, target, maxCap = PANE_MAX }) {
+  const out = { ...widths };
+  const others = Object.keys(widths).filter((n) => n !== name);
+  const floorSum = others.reduce((sum, n) => sum + floors[n], 0);
+  const maxAbs = containerW - splitsW - chatFloor - floorSum;
+  const width = Math.max(floors[name], Math.min(maxCap, maxAbs, target));
+  out[name] = width;
+  let need = width - widths[name];
+  if (need > 0) {
+    // The flexible chat absorbs first, down to its floor; only the
+    // remainder is taken from the sized panes.
+    const chatNow = containerW - splitsW - Object.values(widths).reduce((sum, w) => sum + w, 0);
+    need -= Math.max(0, chatNow - chatFloor);
+    const byDistance = others.sort((a, b) => Math.abs(PANE_ORDER.indexOf(b) - PANE_ORDER.indexOf(name)) - Math.abs(PANE_ORDER.indexOf(a) - PANE_ORDER.indexOf(name)));
+    for (const n of byDistance) {
+      if (need <= 0) break;
+      const give = Math.min(Math.max(0, out[n] - floors[n]), need);
+      out[n] -= give; need -= give;
+    }
+  }
+  return { widths: out, width };
+}
 
 function wireSplitters() {
   const ew = $('ew');
@@ -284,11 +339,32 @@ function wireSplitters() {
     for (const [n, w] of Object.entries(widths)) setVar(n, w);
     return widths;
   };
-  const maxFor = (name, pane) => {
-    let used = parseFloat(getComputedStyle($('ew-chat')).minWidth) || 380;
-    for (const p of document.querySelectorAll('.ew-pane')) if (p !== pane && p.id !== 'ew-chat' && !p.classList.contains('collapsed')) used += p.getBoundingClientRect().width;
-    for (const s of document.querySelectorAll('.ew-split:not(.hidden)')) used += 5;
-    return Math.max(PANE_MIN[name], Math.min(PANE_MAX, ew.clientWidth - used));
+  // A drag trades space with the whole row (see dragLayout): snapshot
+  // every open sized pane's rendered width (read-only — unlike freeze,
+  // nothing is written here), which panes already carry an inline var
+  // (so an aborted drag restores the exact prior state), the chat's CSS
+  // floor and the visible separators' total width.
+  const snapshot = () => {
+    const widths = {}; const floors = {}; const inline = {};
+    for (const p of document.querySelectorAll('.ew-pane')) {
+      const n = p.id.replace('ew-', '');
+      if (!PANE_MIN[n] || p.classList.contains('collapsed')) continue;
+      const w = Math.round(p.getBoundingClientRect().width);
+      if (w <= 0) continue; // bench-max zeroes panes with !important — outside the row right now
+      widths[n] = w; floors[n] = PANE_MIN[n];
+      inline[n] = document.documentElement.style.getPropertyValue(`--ew-${n}`);
+    }
+    let splitsW = 0;
+    for (const s of document.querySelectorAll('.ew-split:not(.hidden)')) splitsW += 5;
+    const chatFloor = parseFloat(getComputedStyle($('ew-chat')).minWidth) || 380;
+    return { widths, floors, inline, splitsW, chatFloor, containerW: ew.clientWidth };
+  };
+  const restore = (snap, except = null) => {
+    for (const n of Object.keys(snap.widths)) {
+      if (n === except) continue;
+      if (snap.inline[n]) setVar(n, snap.widths[n]);
+      else document.documentElement.style.removeProperty(`--ew-${n}`);
+    }
   };
   const persist = (name, w) => { const widths = ls.get('widths', {}); widths[name] = Math.round(w); ls.set('widths', widths); const s = document.querySelector(`.ew-split[data-split="${name}"]`); if (s) s.setAttribute('aria-valuenow', String(Math.round(w))); };
   for (const split of document.querySelectorAll('.ew-split')) {
@@ -304,13 +380,17 @@ function wireSplitters() {
       if (narrow()) return;
       e.preventDefault(); split.setPointerCapture(e.pointerId);
       const start = e.clientX; const startW = freeze(name)[name] ?? Math.round(pane.getBoundingClientRect().width);
-      const max = maxFor(name, pane); const min = PANE_MIN[name];
+      if (!startW) return; // the pane is zeroed out (bench-max) — nothing to drag
+      const snap = snapshot(); const min = PANE_MIN[name];
       split.classList.add('dragging'); ew.classList.add('dragging');
-      let raw = startW; let done = false;
+      let raw = startW; let done = false; let applied = { ...snap.widths };
       const move = (ev) => {
         raw = startW + sign * (ev.clientX - start);
-        const w = Math.max(min, Math.min(max, raw));
-        setVar(name, w); split.setAttribute('aria-valuenow', String(Math.round(w)));
+        const lay = dragLayout({ ...snap, name, target: raw });
+        // Only panes whose width actually changes get their var written:
+        // on a roomy screen a drag still touches nobody else (S2).
+        for (const [n, w] of Object.entries(lay.widths)) if (w !== applied[n]) { setVar(n, w); applied[n] = w; }
+        split.setAttribute('aria-valuenow', String(Math.round(lay.width)));
         // The collapse hint arms as soon as the pointer passes the pane's
         // floor, not only in the last stretch of dead travel below SNAP.
         pane.classList.toggle('will-collapse', raw < min);
@@ -319,16 +399,23 @@ function wireSplitters() {
         if (done) return; done = true;
         split.classList.remove('dragging'); ew.classList.remove('dragging'); pane.classList.remove('will-collapse');
         split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); split.removeEventListener('pointercancel', cancel);
-        if (!commit) { setVar(name, startW); return; }
+        if (!commit) { restore(snap); return; }
         if (raw < SNAP) {
           // Slide-to-collapse: the pre-drag width stays in the var (and in
-          // storage) as the remembered width reopening restores.
+          // storage) as the remembered width reopening restores; any
+          // neighbour that yielded during the drag gets its width back.
+          restore(snap, name);
           setVar(name, startW);
           if (name === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); }
           setPane(name, false, { user: true });
           return;
         }
-        persist(name, Math.max(min, Math.min(max, raw)));
+        persist(name, applied[name]);
+        // A neighbour that actually yielded keeps its new width — the
+        // user's own drag took that space. Untouched neighbours are
+        // neither written nor persisted, so their responsive defaults
+        // and remembered widths survive (S2).
+        for (const n of Object.keys(applied)) if (n !== name && applied[n] !== snap.widths[n]) persist(n, applied[n]);
       };
       const up = () => finish(true);
       const cancel = () => finish(false);
@@ -349,9 +436,14 @@ function wireSplitters() {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
       const startW = freeze(name)[name] ?? Math.round(pane.getBoundingClientRect().width);
+      if (!startW) return; // zeroed out (bench-max), same as the pointer path
+      const snap = snapshot();
       ew.classList.add('dragging');
-      const w = Math.max(PANE_MIN[name], Math.min(maxFor(name, pane), startW + sign * (e.key === 'ArrowRight' ? 24 : -24)));
-      setVar(name, w); persist(name, pane.getBoundingClientRect().width); split.setAttribute('aria-valuenow', String(Math.round(w)));
+      const lay = dragLayout({ ...snap, name, target: startW + sign * (e.key === 'ArrowRight' ? 24 : -24) });
+      for (const [n, w] of Object.entries(lay.widths)) if (w !== snap.widths[n]) setVar(n, w);
+      persist(name, lay.width);
+      for (const n of Object.keys(lay.widths)) if (n !== name && lay.widths[n] !== snap.widths[n]) persist(n, lay.widths[n]);
+      split.setAttribute('aria-valuenow', String(Math.round(lay.width)));
       ew.classList.remove('dragging');
     });
   }
@@ -530,17 +622,17 @@ function renderAgents() {
   $('ew-agent-cards').replaceChildren(...roster.map((p) => {
     const s = states[p];
     const label = s.state === 'offline' ? 'OFFLINE' : s.state === 'working' ? 'WORKING' : 'IDLE';
-    return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: `Ask ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
+    return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
       avatarImg(p), h('strong', {}, NAMES[p]),
       h('button', { type: 'button', class: 'ew-icon remove', title: `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×'),
       h('span', { class: `ew-state ${s.state}` }, label),
       h('span', { class: 'last' }, s.state === 'offline' ? 'Offline. Start the Helmian bridge on your PC to bring it online.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
   }));
   if (!roster.length) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, 'No agents in this channel. Add one below to make it an agent chat.'));
-  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill', onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
-  // Agent picker in the CLI: agents here are @mention pills; the rest add in one click.
+  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
+  // Channel composer mention pills: agents in this channel are @mention pills; the rest add in one click.
   $('ew-mention-pills').replaceChildren(...(roster.length > 1 ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
-    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention ${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
+    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention @${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
     ...AGENTS.filter((p) => !roster.includes(p)).map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
   $('ew-mention-pills').hidden = false;
 }
@@ -562,13 +654,13 @@ function insertMention(name) {
 
 // ---------- messages ----------
 async function loadMessages() {
-  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); return; }
+  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); renderCliThread(); return; }
   const body = await ws.ctx.api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(id)}&limit=100`);
   if (id !== ws.channelId) return;
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const sig = messages.map((m) => m.id).join(',');
   if (sig === ws.sig) {
-    renderAgents();
+    renderAgents(); renderCliThread();
     // No new messages, but pending work can still start or expire on
     // server state alone (a reply window lapsing, an agent coming online):
     // redraw the thread if the in-thread working cue changed.
@@ -576,7 +668,7 @@ async function loadMessages() {
     return;
   }
   ws.sig = sig; ws.messages = messages;
-  renderMessages(); renderAgents();
+  renderMessages(); renderAgents(); renderCliThread();
 }
 function whoOf(m) {
   const me = ws.ctx.state.actor?.subject;
@@ -637,9 +729,9 @@ async function send(e) {
   finally { btn.disabled = false; }
 }
 
-// ---------- agent CLI pane: sessions + prompt composer ----------
-// The agent command chat: just the human and the agents, separate from
-// the human channel chat. Sessions reuse the Session console's plumbing
+// ---------- agent chat pane: sessions + prompt composer ----------
+// The agent chat pane: the human's conversation with one picked agent,
+// shown on its own inside the pane. Sessions reuse the Session console's plumbing
 // (/api/admin/app/sessions — the same create/list payloads as app.js's
 // #session-form, with the same local fallback); prompts post through the
 // same envoy messages endpoint the console composer uses, into the open
@@ -655,12 +747,12 @@ function cliTarget() {
 }
 function renderCliChips() {
   const active = cliTarget().key;
-  $('ew-cli-chips').replaceChildren(...AGENTS.map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: p === 'maestro' ? 'Maestro routes to the others' : `Start a ${NAMES[p]} session`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
+  $('ew-cli-chips').replaceChildren(...AGENTS.map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: p === 'maestro' ? 'Maestro routes to the others' : `Show your conversation with ${NAMES[p]}`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
 }
 function renderCliTo() {
   const { key, session } = cliTarget();
-  $('ew-cli-to').textContent = session ? `To: ${session.provider} · session "${session.name}"` : key === 'maestro' ? 'To: Maestro · routes to the others' : `To: ${NAMES[key]}`;
-  $('ew-cli-input').placeholder = session ? `Prompt ${session.provider}...` : 'Prompt...';
+  $('ew-cli-to').textContent = session ? `${session.provider} · posts in the channel as @${NAMES[key]}` : key === 'maestro' ? 'Maestro · posts in the channel and routes it' : `${NAMES[key]} · posts in the channel as @${NAMES[key]}`;
+  $('ew-cli-input').placeholder = key === 'maestro' ? 'Prompt...' : `Prompt ${NAMES[key]}...`;
 }
 function renderCliSessions() {
   const box = $('ew-cli-sessions');
@@ -672,17 +764,62 @@ function renderCliSessions() {
       avatarImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
   }));
 }
+// The pane's own conversation stream: the picked agent's exchange,
+// rendered where the human is looking instead of only in the channel.
+// Signature-guarded like the message list, so calm polls don't rebuild it.
+function renderCliThread() {
+  const box = $('ew-cli-thread'); if (!box) return;
+  const { key } = cliTarget();
+  const roster = (ws.config?.agents ?? []).map((a) => a.provider);
+  const me = ws.ctx.state?.actor?.subject;
+  const list = ws.channelId ? cliThreadFor(ws.messages, roster, key, me) : [];
+  const working = currentWorking();
+  const showing = key === 'maestro' ? working : working.filter((p) => p === key);
+  const sig = `${key}|${ws.channelId ?? ''}|${list.map((m) => m.id).join(',')}|${showing.join(',')}`;
+  if (sig === ws.cli.threadSig) return;
+  ws.cli.threadSig = sig;
+  if (!list.length && !showing.length) {
+    box.replaceChildren(h('p', { class: 'ew-note' }, ws.channelId
+      ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here.`
+      : 'Open a channel and your conversation with the picked agent shows up here.'));
+    return;
+  }
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const onLink = (url) => { openBench('browser'); navigate(url); };
+  const onCanvas = (code) => { openBench('canvas'); setCanvas(code); };
+  const out = [];
+  let prev = null;
+  for (const m of list) {
+    const who = whoOf(m);
+    const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
+    const avatar = who.kind === 'agent' ? h('div', { class: 'ew-avatar' }, avatarImg(who.provider)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase());
+    const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : null;
+    out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}` }, avatar,
+      h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
+        h('div', { class: 'ew-body' }, renderBody(m.body, { onLink, onCanvas })))));
+    prev = m;
+  }
+  for (const p of showing) {
+    out.push(h('div', { class: 'ew-msg ew-answering', role: 'status' },
+      h('div', { class: 'ew-avatar' }, avatarImg(p)),
+      h('div', {}, h('div', { class: 'ew-body ew-answering-body' },
+        h('span', { class: 'ew-working-dot', 'aria-hidden': 'true' }),
+        `${NAMES[p]} is answering…`))));
+  }
+  box.replaceChildren(...out);
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
 function selectCliSession(id) {
   const s = ws.cli.sessions.find((x) => x.id === id); if (!s) return;
   ws.cli.activeId = id; ls.set('cliSession', id);
   ws.cli.provider = CLI_KEY_BY_PROVIDER[s.provider] ?? ws.cli.provider;
   if (ws.ctx.state) ws.ctx.state.activeSession = id;
-  renderCliChips(); renderCliSessions(); renderCliTo();
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
   $('ew-cli-input').focus({ preventScroll: true });
 }
 function pickCliProvider(p) {
   ws.cli.provider = p; ws.cli.activeId = null; ls.set('cliSession', null);
-  renderCliChips(); renderCliSessions(); renderCliTo();
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
   if (p === 'maestro') { $('ew-cli-session-form').hidden = true; $('ew-cli-input').focus({ preventScroll: true }); return; }
   ws.cli.pending = p;
   const input = $('ew-cli-session-name');
@@ -698,7 +835,7 @@ async function loadCliSessions() {
   const shared = ws.ctx.state?.activeSession;
   if (shared && ws.cli.sessions.some((s) => s.id === shared)) ws.cli.activeId = shared;
   if (!ws.cli.sessions.some((s) => s.id === ws.cli.activeId)) ws.cli.activeId = null;
-  renderCliChips(); renderCliSessions(); renderCliTo();
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
 }
 async function createCliSession(name) {
   const provider = NAMES[ws.cli.pending] ?? 'Claude';
