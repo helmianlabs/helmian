@@ -106,6 +106,22 @@ export function pendingAgentWork(messages, roster, joined = {}, online = new Set
   return roster.filter((p) => due.has(p));
 }
 
+// The Agent Chat pane's own conversation with one provider: the signed-in
+// human's prompts that route to it (addressed() — the same routing the
+// channel runs on) plus that provider's replies, in channel order.
+// Everything else — other people's posts, other agents' replies, system
+// notices — stays in the channel where it happened.
+export function cliThreadFor(messages, roster, target, selfSubject) {
+  if (!target) return [];
+  const providerOf = (m) => m.agentProvider || (m.authorSubject?.startsWith('agent:') ? m.authorSubject.slice(6) : (m.authorSubject?.endsWith(':bridge') ? 'maestro' : null));
+  return messages.filter((m) => {
+    if (m.authorKind === 'system') return false;
+    const p = providerOf(m);
+    if (p) return p === target;
+    return m.authorKind === 'human' && m.authorSubject === selfSubject && addressed(m, roster).includes(target);
+  });
+}
+
 // Pending work in the open channel, from the live server-fed state.
 function currentWorking() {
   const agents = ws.config?.agents ?? [];
@@ -140,7 +156,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null) } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -638,13 +654,13 @@ function insertMention(name) {
 
 // ---------- messages ----------
 async function loadMessages() {
-  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); return; }
+  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); renderCliThread(); return; }
   const body = await ws.ctx.api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(id)}&limit=100`);
   if (id !== ws.channelId) return;
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const sig = messages.map((m) => m.id).join(',');
   if (sig === ws.sig) {
-    renderAgents();
+    renderAgents(); renderCliThread();
     // No new messages, but pending work can still start or expire on
     // server state alone (a reply window lapsing, an agent coming online):
     // redraw the thread if the in-thread working cue changed.
@@ -652,7 +668,7 @@ async function loadMessages() {
     return;
   }
   ws.sig = sig; ws.messages = messages;
-  renderMessages(); renderAgents();
+  renderMessages(); renderAgents(); renderCliThread();
 }
 function whoOf(m) {
   const me = ws.ctx.state.actor?.subject;
@@ -748,17 +764,62 @@ function renderCliSessions() {
       avatarImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
   }));
 }
+// The pane's own conversation stream: the picked agent's exchange,
+// rendered where the human is looking instead of only in the channel.
+// Signature-guarded like the message list, so calm polls don't rebuild it.
+function renderCliThread() {
+  const box = $('ew-cli-thread'); if (!box) return;
+  const { key } = cliTarget();
+  const roster = (ws.config?.agents ?? []).map((a) => a.provider);
+  const me = ws.ctx.state?.actor?.subject;
+  const list = ws.channelId ? cliThreadFor(ws.messages, roster, key, me) : [];
+  const working = currentWorking();
+  const showing = key === 'maestro' ? working : working.filter((p) => p === key);
+  const sig = `${key}|${ws.channelId ?? ''}|${list.map((m) => m.id).join(',')}|${showing.join(',')}`;
+  if (sig === ws.cli.threadSig) return;
+  ws.cli.threadSig = sig;
+  if (!list.length && !showing.length) {
+    box.replaceChildren(h('p', { class: 'ew-note' }, ws.channelId
+      ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here.`
+      : 'Open a channel and your conversation with the picked agent shows up here.'));
+    return;
+  }
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const onLink = (url) => { openBench('browser'); navigate(url); };
+  const onCanvas = (code) => { openBench('canvas'); setCanvas(code); };
+  const out = [];
+  let prev = null;
+  for (const m of list) {
+    const who = whoOf(m);
+    const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
+    const avatar = who.kind === 'agent' ? h('div', { class: 'ew-avatar' }, avatarImg(who.provider)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase());
+    const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : null;
+    out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}` }, avatar,
+      h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
+        h('div', { class: 'ew-body' }, renderBody(m.body, { onLink, onCanvas })))));
+    prev = m;
+  }
+  for (const p of showing) {
+    out.push(h('div', { class: 'ew-msg ew-answering', role: 'status' },
+      h('div', { class: 'ew-avatar' }, avatarImg(p)),
+      h('div', {}, h('div', { class: 'ew-body ew-answering-body' },
+        h('span', { class: 'ew-working-dot', 'aria-hidden': 'true' }),
+        `${NAMES[p]} is answering…`))));
+  }
+  box.replaceChildren(...out);
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
 function selectCliSession(id) {
   const s = ws.cli.sessions.find((x) => x.id === id); if (!s) return;
   ws.cli.activeId = id; ls.set('cliSession', id);
   ws.cli.provider = CLI_KEY_BY_PROVIDER[s.provider] ?? ws.cli.provider;
   if (ws.ctx.state) ws.ctx.state.activeSession = id;
-  renderCliChips(); renderCliSessions(); renderCliTo();
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
   $('ew-cli-input').focus({ preventScroll: true });
 }
 function pickCliProvider(p) {
   ws.cli.provider = p; ws.cli.activeId = null; ls.set('cliSession', null);
-  renderCliChips(); renderCliSessions(); renderCliTo();
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
   if (p === 'maestro') { $('ew-cli-session-form').hidden = true; $('ew-cli-input').focus({ preventScroll: true }); return; }
   ws.cli.pending = p;
   const input = $('ew-cli-session-name');
@@ -774,7 +835,7 @@ async function loadCliSessions() {
   const shared = ws.ctx.state?.activeSession;
   if (shared && ws.cli.sessions.some((s) => s.id === shared)) ws.cli.activeId = shared;
   if (!ws.cli.sessions.some((s) => s.id === ws.cli.activeId)) ws.cli.activeId = null;
-  renderCliChips(); renderCliSessions(); renderCliTo();
+  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
 }
 async function createCliSession(name) {
   const provider = NAMES[ws.cli.pending] ?? 'Claude';
