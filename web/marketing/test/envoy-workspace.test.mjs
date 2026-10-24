@@ -376,3 +376,43 @@ test('drag travel: the pointer and keyboard paths clamp through dragLayout, not 
   assert.equal(js.split('dragLayout({ ...snap, name, target:').length - 1, 2, 'both the pointer move and the arrow-key step call dragLayout');
   assert.doesNotMatch(js, /clientWidth - used/, 'the old already-free-space clamp is gone');
 });
+
+test('I3: brand marks are real SVG glyphs, not color blocks or a literal glyph', async () => {
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  const discordRule = css.match(/\.ew-discord-mark \{[^}]*\}/)?.[0] ?? '';
+  assert.match(discordRule, /mask:url\("data:image\/svg\+xml/, 'Discord mark is an SVG mask glyph');
+  assert.match(discordRule, /M20\.317 4\.3698/, 'Discord mark carries the real Discord silhouette path');
+  assert.doesNotMatch(discordRule, /background:#5865F2/, 'Discord mark is no longer a plain blurple square');
+  const slackRule = css.match(/\.ew-slack-mark \{[^}]*\}/)?.[0] ?? '';
+  assert.match(slackRule, /mask:url\("data:image\/svg\+xml/, 'Slack mark is an SVG mask glyph');
+  assert.match(slackRule, /M5\.042 15\.165/, 'Slack mark carries the real Slack silhouette path');
+  assert.match(css, /\.int-icon \.ew-slack-mark/, 'Integrations icon sizing covers the Slack mark');
+  const view = await readFile(new URL('../app/integrations-view.mjs', import.meta.url), 'utf8');
+  const slackCard = view.match(/\{ key: 'slack'[^}]*\}/)?.[0] ?? '';
+  assert.match(slackCard, /icon: \{ mark: 'slack' \}/, 'Slack card uses the Slack mark');
+  assert.doesNotMatch(slackCard, /glyph: '#'/, 'Slack card no longer uses a literal "#" glyph');
+});
+
+test('I6: channel-row status markers are glyphs, not unexplained color dots', async () => {
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  const discordMini = css.match(/\.ew-mini\.discord \{[^}]*\}/)?.[0] ?? '';
+  assert.match(discordMini, /mask:url\("data:image\/svg\+xml/, 'the linked-to-Discord marker is the Discord glyph');
+  const agentsMini = css.match(/\.ew-mini\.agents \{[^}]*\}/)?.[0] ?? '';
+  assert.match(agentsMini, /mask:url\("data:image\/svg\+xml/, 'the has-agents marker is the Agents people glyph');
+  assert.doesNotMatch(css, /\.ew-mini \{[^}]*border-radius:50%/, 'the markers are no longer round color dots');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /class: 'ew-mini discord', title: 'Linked to Discord'/, 'channel rows still flag Discord links');
+  assert.match(js, /class: 'ew-mini agents', title:/, 'channel rows still flag agent membership');
+});
+
+test('I8: the phone panels button is the Guard shield plus a visible Guard caption', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const btn = html.match(/<button id="guard-toggle"[^>]*>([\s\S]*?)<\/button>/)?.[1] ?? '';
+  assert.match(btn, /class="ew-shield"/, 'the button reuses the Guard shield mark');
+  assert.match(btn, /class="guard-lbl">Guard</, 'the button carries a visible Guard caption');
+  assert.doesNotMatch(btn, /⛨/, 'the obscure shield-cross glyph is gone');
+  const pane = html.match(/<span class="ew-shield" aria-hidden="true"><\/span><strong>Guard<\/strong>/);
+  assert.ok(pane, 'the desktop Guard pane uses the same shield + Guard pairing');
+  const appCss = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
+  assert.match(appCss, /#guard-toggle \{[^}]*width:auto/, 'the toggle widens to fit its caption');
+});
