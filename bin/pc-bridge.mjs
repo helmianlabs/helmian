@@ -218,7 +218,7 @@ async function loadVaultKey(deps) {
 // assistant text once the turn's `done` event arrives.
 // onPermissionRequest(event) is called for broker `permission_request` events
 // so the host can surface approvals (envoy channel) while the turn is blocked.
-function runTurn(child, text, { onPermissionRequest = null } = {}) {
+function runTurn(child, text, { onPermissionRequest = null, metadata = null } = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let buffer = '';
@@ -242,7 +242,7 @@ function runTurn(child, text, { onPermissionRequest = null } = {}) {
       }
     };
     child.stdout.on('data', onData);
-    child.stdin.write(`${JSON.stringify({ cmd: 'turn', text })}\n`, (err) => {
+    child.stdin.write(`${JSON.stringify({ cmd: 'turn', text, ...(metadata ? { metadata } : {}) })}\n`, (err) => {
       if (err) { child.stdout.off('data', onData); reject(err); }
     });
   });
@@ -390,7 +390,7 @@ export async function runBridge(overrides = {}) {
       await sendAndWait(child, { cmd: 'configure', provider: runProvider, workspace: deps.workspace, permission: deps.toolsMode }, 'ready');
       await sendAndWait(child, { cmd: 'reset' }, 'ready');
       const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message: item.message, source: item.message.source });
-      const reply = await runTurn(child, text);
+      const reply = await runTurn(child, text, { metadata: item.message?.metadata ?? null });
       if (!reply || !reply.trim()) { log(`agent ${provider}: no text for ${item.message.id}`); return; }
       const body = reply.length > 4000 ? `${reply.slice(0, 3997)}...` : reply;
       await api(deps, '/api/admin/envoy/agent-messages', { method: 'POST', token: creds.token, body: { channelId: item.channel.id, provider, replyTo: item.message.id, body } });
@@ -439,6 +439,7 @@ export async function runBridge(overrides = {}) {
     try {
       log(`turn for message ${message.id} from ${message.authorSubject}`);
       const reply = await runTurn(child, String(message.body ?? ''), {
+        metadata: message?.metadata ?? null,
         onPermissionRequest: (req) => {
           // Post to the channel the turn came from so the human sees it in context.
           void postApprovalRequest(deps, creds.token, message.channelId, req);

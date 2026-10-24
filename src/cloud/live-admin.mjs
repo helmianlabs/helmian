@@ -913,7 +913,7 @@ export async function createLiveHelmianCloudAdminHandler({
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {
-      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['body', 'channelId', 'idempotencyKey']); if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.appendMessage(actor, body) })); }
+      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); if (Object.keys(body).some((key) => !['attachments', 'body', 'channelId', 'idempotencyKey', 'metadata'].includes(key))) throw Object.assign(new Error('Request body has unexpected fields'), { status: 400, code: 'ACTION_POLICY_INPUT_INVALID' }); if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.appendMessage(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_MESSAGE_INVALID' })); }
       return true;
     }
