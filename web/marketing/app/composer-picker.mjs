@@ -15,6 +15,12 @@
 //   the picker attaches a skill BY NAME and the message carries it the one
 //   way the turn path already understands: as the leading /name the
 //   bridge's turn handler expands (src/agent/bridge.mjs).
+// - Plugins: installed on the PC bridge — the workspace registry plus the
+//   install ledger's verdicts (src/agent/plugins.mjs) — and listed by GET
+//   /api/admin/plugins (src/cloud/installed-plugins.mjs): the same enabled
+//   set the turn consumes. A plugin can be attached only when that list
+//   names it; a name the bridge does not have would ride to the turn and
+//   match nothing, so the picker refuses it here instead.
 // - Upload: the app has no file-upload path (no endpoint, no form), so the
 //   group is present but unavailable, with the reason stated.
 //
@@ -45,10 +51,15 @@ export function normalizeSkillName(value) {
   return { ok: true, name, reason: null };
 }
 
-export function pickerModel({ connectors = {}, providers = {} } = {}) {
+export function pickerModel({ connectors = {}, providers = {}, plugins = {} } = {}) {
   const connectorItems = integrationsModel(connectors, providers).map((p) => ({
     kind: 'connector', key: p.key, name: p.name, kindLabel: p.kind, connected: p.connected === true,
   }));
+  const pluginItems = (Array.isArray(plugins?.plugins) ? plugins.plugins : []).map((p) => ({
+    kind: 'plugin',
+    name: String(p?.name ?? '').trim().toLowerCase(),
+    brings: String(p?.brings ?? ''),
+  })).filter((p) => p.name);
   return Object.freeze({
     groups: Object.freeze([
       Object.freeze({
@@ -56,6 +67,10 @@ export function pickerModel({ connectors = {}, providers = {} } = {}) {
         note: 'Skills live with your agents — command files and plugins on your PC bridge. Attach one by name and it runs as a /command at the start of your message.',
       }),
       Object.freeze({ id: 'connectors', title: 'Connectors', items: Object.freeze(connectorItems) }),
+      Object.freeze({
+        id: 'plugins', title: 'Plugins', items: Object.freeze(pluginItems),
+        note: 'Plugins live on your PC bridge. Attaching one gives the agent its approved tools for this turn.',
+      }),
       Object.freeze({ id: 'upload', title: 'Upload a file', available: false, reason: UPLOAD_UNAVAILABLE_REASON, items: Object.freeze([]) }),
     ]),
   });
@@ -65,12 +80,16 @@ export function attachmentKey(att) {
   if (!att || typeof att !== 'object') return null;
   if (att.kind === 'skill') return att.name ? `skill:${att.name}` : null;
   if (att.kind === 'connector') return att.key ? `connector:${att.key}` : null;
+  if (att.kind === 'plugin') return att.name ? `plugin:${att.name}` : null;
   return null;
 }
 
-// catalog: the connectors group's items from pickerModel(). When given, a
-// connector attachment must exist in the registry and be connected — the
-// picker never attaches a connector the workspace does not actually have.
+// catalog: the connectors group's items from pickerModel() for a
+// connector attachment, the plugins group's items for a plugin
+// attachment. When given, the attachment must exist in that list — a
+// connector must be registered and connected, a plugin must actually be
+// installed on the PC bridge — the picker never attaches something the
+// workspace does not actually have.
 export function addAttachment(list = [], att, { catalog = null } = {}) {
   const fail = (reason) => ({ list, added: false, reason });
   if (!att || typeof att !== 'object') return fail('Nothing to attach.');
@@ -90,6 +109,20 @@ export function addAttachment(list = [], att, { catalog = null } = {}) {
     } else {
       clean = { kind: 'connector', key, name: String(att.name ?? key) };
     }
+  } else if (att.kind === 'plugin') {
+    // Plugin names are validated with the skill-name rules on purpose: the
+    // server accepts exactly the same shape for a plugin attachment name
+    // (ATTACHMENT_NAME_PATTERN in src/cloud/envoy-agents.mjs).
+    const name = String(att.name ?? '').trim().toLowerCase();
+    if (!name) return fail('Pick a plugin first.');
+    if (name.length > SKILL_NAME_MAX || !SKILL_NAME_PATTERN.test(name)) return fail('That plugin name is not one a message can carry.');
+    if (catalog) {
+      const item = catalog.find((i) => i.name === name);
+      if (!item) return fail('That plugin is not installed on your PC bridge.');
+      clean = { kind: 'plugin', name: item.name };
+    } else {
+      clean = { kind: 'plugin', name };
+    }
   } else {
     return fail('That kind of attachment is not supported yet.');
   }
@@ -97,6 +130,9 @@ export function addAttachment(list = [], att, { catalog = null } = {}) {
   // parseSlashInput reads one leading command, so one skill can lead a
   // message; a second skill could not be carried honestly.
   if (clean.kind === 'skill' && list.some((a) => a.kind === 'skill')) return fail('Only one skill can lead a message. Remove the attached skill first.');
+  // One plugin rides on a message: the turn resolves a single attached
+  // plugin's tools, and a second would double the tool surface silently.
+  if (clean.kind === 'plugin' && list.some((a) => a.kind === 'plugin')) return fail('Only one plugin can ride on a message. Remove the attached plugin first.');
   if (list.length >= MAX_ATTACHMENTS) return fail(`Up to ${MAX_ATTACHMENTS} attachments per message.`);
   return { list: [...list, clean], added: true, reason: null };
 }
@@ -113,9 +149,9 @@ export function removeAttachment(list = [], att) {
 export function attachmentMetadata(list = []) {
   if (!list.length) return null;
   return Object.freeze({
-    attachments: Object.freeze(list.map((a) => (a.kind === 'skill'
-      ? Object.freeze({ kind: 'skill', name: a.name })
-      : Object.freeze({ kind: 'connector', key: a.key, name: a.name })))),
+    attachments: Object.freeze(list.map((a) => (a.kind === 'connector'
+      ? Object.freeze({ kind: 'connector', key: a.key, name: a.name })
+      : Object.freeze({ kind: a.kind, name: a.name })))),
   });
 }
 

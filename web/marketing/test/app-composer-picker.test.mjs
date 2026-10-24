@@ -6,6 +6,10 @@ import {
   attachmentKey, attachmentMetadata, buildMessageRequest, normalizeSkillName,
   pickerModel, removeAttachment,
 } from '../app/composer-picker.mjs';
+// The REAL server validator the message route applies — imported, not
+// re-implemented, so a picker-built plugin payload is proven against the
+// allowlist + normalizer that will actually judge it (PR #97's shape).
+import { normalizeMessageMetadata } from '../../../src/cloud/envoy-agents.mjs';
 
 // The "+" picker model. Its connectors group is the Integrations registry
 // itself (PROVIDER_REGISTRY + live connection state, via integrationsModel)
@@ -14,12 +18,29 @@ import {
 // GET /api/admin/provider-connections (connections).
 const CONNECTORS = { registrations: [{ provider: 'discord' }], verifierStatus: {} };
 const PROVIDERS = { connections: [{ provider: 'google' }] };
-const model = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS });
+// Mirrors GET /api/admin/plugins (src/cloud/installed-plugins.mjs): the
+// enabled plugins of the bridge workspace, each with what it brings.
+const PLUGINS = {
+  plugins: [
+    { name: 'calc', version: '1.0.0', brings: 'Brings 1 approved tool server — their tools join the turn; adds its commands as skills.', tools: true, commands: true },
+    { name: 'greeter', brings: 'Adds its commands as skills.', tools: false, commands: true },
+  ],
+  unavailable: [],
+};
+const model = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS });
 const group = (id) => model.groups.find((g) => g.id === id);
 const catalog = group('connectors').items;
+const pluginCatalog = group('plugins').items;
 
-test('picker groups are skills, connectors, upload — in that order', () => {
-  assert.deepEqual(model.groups.map((g) => g.id), ['skills', 'connectors', 'upload']);
+test('picker groups are skills, connectors, plugins, upload — in that order', () => {
+  assert.deepEqual(model.groups.map((g) => g.id), ['skills', 'connectors', 'plugins', 'upload']);
+});
+
+test('plugins group is the installed list from the bridge, with what each brings', () => {
+  assert.deepEqual(pluginCatalog.map((i) => i.name), ['calc', 'greeter']);
+  assert.match(pluginCatalog[0].brings, /approved tool server/);
+  assert.match(group('plugins').note, /PC bridge/);
+  assert.deepEqual(pickerModel({}).groups.find((g) => g.id === 'plugins').items, [], 'no list yet → an empty group, never invented plugins');
 });
 
 test('connectors group is the real registry with live connected state', () => {
@@ -88,6 +109,46 @@ test('only one skill can lead a message', () => {
   assert.deepEqual(r.list, one, 'a refused attach leaves the list untouched');
 });
 
+const plug = (name) => ({ kind: 'plugin', name });
+
+test('addAttachment attaches an installed plugin from the list', () => {
+  const r = addAttachment([], plug('calc'), { catalog: pluginCatalog });
+  assert.equal(r.added, true);
+  assert.deepEqual(r.list, [{ kind: 'plugin', name: 'calc' }]);
+  assert.equal(attachmentKey(plug('calc')), 'plugin:calc');
+});
+
+test('addAttachment refuses a plugin that is not installed', () => {
+  const r = addAttachment([], plug('nope'), { catalog: pluginCatalog });
+  assert.equal(r.added, false);
+  assert.match(r.reason, /not installed on your PC bridge/);
+  assert.equal(addAttachment([], plug('has space'), { catalog: pluginCatalog }).added, false, 'a name a message cannot carry is refused before the list is even consulted');
+  assert.equal(addAttachment([], plug('')).added, false);
+});
+
+test('only one plugin can ride on a message', () => {
+  const one = addAttachment([], plug('calc'), { catalog: pluginCatalog }).list;
+  assert.equal(addAttachment(one, plug('calc'), { catalog: pluginCatalog }).reason, 'Already attached.');
+  const r = addAttachment(one, plug('greeter'), { catalog: pluginCatalog });
+  assert.equal(r.added, false);
+  assert.match(r.reason, /Only one plugin/);
+  assert.deepEqual(r.list, one, 'a refused attach leaves the list untouched');
+  assert.deepEqual(removeAttachment(one, plug('calc')), [], 'and it removes by the same identity key');
+});
+
+test('a plugin attachment rides as the metadata shape the server accepts', () => {
+  const list = addAttachment([], plug('calc'), { catalog: pluginCatalog }).list;
+  const meta = attachmentMetadata(list);
+  assert.deepEqual(JSON.parse(JSON.stringify(meta)), { attachments: [{ kind: 'plugin', name: 'calc' }] });
+  // The REAL allowlist + normalizer (src/cloud/envoy-agents.mjs) accepts
+  // the picker's payload unchanged — this is the shape envoy-chat stores
+  // and src/agent/attachments.mjs resolves against the installed plugins.
+  assert.deepEqual(normalizeMessageMetadata(meta), meta);
+  const req = buildMessageRequest({ channelId: 'c1', body: 'total these up', idempotencyKey: 'k3', attachments: list });
+  assert.deepEqual(normalizeMessageMetadata(req.payload.metadata), req.metadata);
+  assert.equal(req.payload.body, 'total these up', 'a plugin rides as metadata only — the body is untouched');
+});
+
 test('removeAttachment removes by identity key', () => {
   const list = [skill('deploy'), { kind: 'connector', key: 'discord', name: 'Discord' }];
   assert.deepEqual(removeAttachment(list, conn('discord')), [skill('deploy')]);
@@ -145,6 +206,7 @@ test('both composers carry the picker: plus buttons, panels, chips, wiring', asy
   assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel \}\)/, 'channel send builds its request through the picker model');
   assert.match(js, /attachments: ws\.attach\.cli/, 'agent-chat send carries its own attachments');
   assert.match(js, /api\('\/api\/admin\/cora\/connectors'\)/, 'the picker reads the same connectors registry as Integrations');
+  assert.match(js, /api\('\/api\/admin\/plugins'\)/, 'the picker reads the installed-plugins list the bridge ledger backs');
 });
 
 test('the picker model reuses the Integrations registry instead of inventing one', async () => {
