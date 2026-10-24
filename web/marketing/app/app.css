@@ -291,6 +291,9 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
 .show-details > summary { cursor:pointer; list-style:none; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; padding:4px 0; }
 .show-details > summary::-webkit-details-marker { display:none; }
 .show-details[open] > summary { margin-bottom:8px; color:var(--text); }
+.show-details > summary { display:flex; align-items:center; gap:6px; }
+.show-details > summary .chev { font-size:9px; transition:transform .15s; }
+.show-details[open] > summary .chev { transform:rotate(180deg); }
 #mcp-panel.mcp { margin-top:0; border:0; background:transparent; padding:0 0 12px; }
 @media (max-width: 900px) {
   .submenu#nav { margin-left:0; border-left:0; padding-left:0; flex-direction:row; flex-wrap:wrap; gap:4px; }
