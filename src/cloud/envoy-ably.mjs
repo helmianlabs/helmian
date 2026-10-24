@@ -172,6 +172,13 @@ export async function handleEnvoyAblyRoute({
     await createPcApprovalsHandler(sessionIdentity ? { identity: () => sessionIdentity } : {})(request, response, requestUrl.pathname);
     return true;
   }
+  // GitHub webhooks: HMAC-signed (no session), before tenant checks; the
+  // handler self-matches its path and reads the raw body for the signature.
+  {
+    const { handleGithubWebhookRoute, GITHUB_WEBHOOK_PATH } = await import('./github-webhook.mjs');
+    if (requestUrl?.pathname === GITHUB_WEBHOOK_PATH
+      && await handleGithubWebhookRoute({ request, response, requestUrl, send })) return true;
+  }
   // User-level OAuth (Gemini/Google): token goes to browser, not cloud storage
   if (requestUrl?.pathname?.startsWith('/api/provider-oauth/')) {
     const { handleUserOAuthRoute } = await import('./user-oauth.mjs');
