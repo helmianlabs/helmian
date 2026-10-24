@@ -23,6 +23,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openVault, readDeviceToken, defaultVaultPath, PROVIDER_KEY_ENV } from '../src/runner/vault.mjs';
 import { parseApprovalReply } from '../src/mcp/local-exec-server.mjs';
 import { agentPrompt, normalizeProvider } from '../src/cloud/envoy-agents.mjs';
+import { discoverCommands, expandCommand, parseSlashInput, resolveCommand } from '../src/agent/commands.mjs';
+import { loadEnabledPlugins } from '../src/agent/plugins.mjs';
 
 const CLOUD = 'https://helmian.cloud';
 const POLL_MS = 5000;
@@ -218,7 +220,7 @@ async function loadVaultKey(deps) {
 // assistant text once the turn's `done` event arrives.
 // onPermissionRequest(event) is called for broker `permission_request` events
 // so the host can surface approvals (envoy channel) while the turn is blocked.
-function runTurn(child, text, { onPermissionRequest = null, metadata = null } = {}) {
+function runTurn(child, text, { onPermissionRequest = null, metadata = null, slashExpansion = null } = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let buffer = '';
@@ -242,7 +244,7 @@ function runTurn(child, text, { onPermissionRequest = null, metadata = null } = 
       }
     };
     child.stdout.on('data', onData);
-    child.stdin.write(`${JSON.stringify({ cmd: 'turn', text, ...(metadata ? { metadata } : {}) })}\n`, (err) => {
+    child.stdin.write(`${JSON.stringify({ cmd: 'turn', text, ...(metadata ? { metadata } : {}), ...(slashExpansion ? { slashExpansion } : {}) })}\n`, (err) => {
       if (err) { child.stdout.off('data', onData); reject(err); }
     });
   });
@@ -382,6 +384,35 @@ export async function runBridge(overrides = {}) {
   let shuttingDown = false;
 
   const agentJobs = new Set();
+
+  // Slash-command preparation for agent-work turns. The agent child expands
+  // a leading "/name" only when the turn text STARTS with it, but this path
+  // wraps the body in agentPrompt() first ("You are Gemini… Reply to this
+  // message from Troy: /name …"), so the child's expansion could never fire
+  // here — while the attachment context still claimed the command "has
+  // already been expanded". Expand BEFORE wrapping instead, with the same
+  // discovery + expansion the child runs on the direct path, and report the
+  // outcome (slashExpansion) so the turn's skill line states what really
+  // happened: expanded only on a hit, honestly not-expanded on a miss.
+  const expandAgentWorkBody = async (rawBody) => {
+    const parsed = parseSlashInput(rawBody);
+    if (!parsed) return { body: rawBody, slashExpansion: null };
+    let hit = null;
+    try {
+      const { plugins } = await loadEnabledPlugins({ workspace: deps.workspace });
+      const registry = await discoverCommands({ workspace: deps.workspace, builtins: [], plugins });
+      const cmd = resolveCommand(registry, parsed.name);
+      if (cmd) {
+        hit = {
+          name: cmd.name,
+          text: expandCommand(cmd.body, parsed.rawArgs, { argumentNames: cmd.argumentNames }),
+        };
+      }
+    } catch { /* discovery failed: no expansion; the report below says so */ }
+    if (hit) return { body: hit.text, slashExpansion: { name: hit.name, expanded: true } };
+    return { body: rawBody, slashExpansion: { name: parsed.name, expanded: false } };
+  };
+
   const runAgentJob = async ({ item, provider }) => {
     const runProvider = provider === 'maestro' ? maestroProvider : provider;
     const key = `${provider}|${item.message.id}`;
@@ -389,8 +420,10 @@ export async function runBridge(overrides = {}) {
       log(`agent ${provider} (${runProvider}) answering ${item.message.id} in #${item.channel.slug}`);
       await sendAndWait(child, { cmd: 'configure', provider: runProvider, workspace: deps.workspace, permission: deps.toolsMode }, 'ready');
       await sendAndWait(child, { cmd: 'reset' }, 'ready');
-      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message: item.message, source: item.message.source });
-      const reply = await runTurn(child, text, { metadata: item.message?.metadata ?? null });
+      const prepared = await expandAgentWorkBody(String(item.message?.body ?? ''));
+      const message = prepared.body === String(item.message?.body ?? '') ? item.message : { ...item.message, body: prepared.body };
+      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source });
+      const reply = await runTurn(child, text, { metadata: item.message?.metadata ?? null, slashExpansion: prepared.slashExpansion });
       if (!reply || !reply.trim()) { log(`agent ${provider}: no text for ${item.message.id}`); return; }
       const body = reply.length > 4000 ? `${reply.slice(0, 3997)}...` : reply;
       await api(deps, '/api/admin/envoy/agent-messages', { method: 'POST', token: creds.token, body: { channelId: item.channel.id, provider, replyTo: item.message.id, body } });

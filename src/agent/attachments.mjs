@@ -17,8 +17,14 @@
 //               live cloud-side; no agent-side callable tool exists for
 //               them, so the turn is told exactly that, in-context, and
 //               told not to claim it used the connector.
-// - skill     → the name rides along; the bridge already expanded a
-//               leading /name into the command body before the turn.
+// - skill     → the name rides along. A leading /name is expanded into
+//               the command body before the turn text is composed — by
+//               the agent bridge itself on the direct path, or by the PC
+//               bridge before it wraps the message on the agent-work
+//               path. The wrapping side reports the outcome as
+//               slashExpansion, and the skill line below states it
+//               truthfully: "already expanded" only when expansion
+//               really happened, NOT expanded when the attempt missed.
 // - webSearch → a flag the turn honors by instruction. Helmian has no
 //               web-search tool today, so ON is stated plainly as
 //               requested-but-unavailable rather than faked, and OFF is
@@ -54,10 +60,11 @@ function resolveArgs(declaration, pluginRoot) {
 
 /**
  * @param {{metadata?: object|null, plugins?: Array, connectorInfo?: object,
+ *          slashExpansion?: {name: string, expanded: boolean}|null,
  *          createMcpClientImpl?: Function}} input
  * @returns {Promise<{extraTools: object, toolNames: string[], contextText: string|null, dispose: () => Promise<void>}>}
  */
-export async function resolveTurnAttachments({ metadata = null, plugins = [], connectorInfo = {}, createMcpClientImpl = createMcpClient } = {}) {
+export async function resolveTurnAttachments({ metadata = null, plugins = [], connectorInfo = {}, slashExpansion = null, createMcpClientImpl = createMcpClient } = {}) {
   const clean = normalizeMessageMetadata(metadata ?? undefined);
   const lines = [];
   const extraTools = {};
@@ -67,7 +74,20 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
   }
   for (const attachment of clean.attachments ?? []) {
     if (attachment.kind === 'skill') {
-      lines.push(`Skill attached: /${attachment.name}. If the message begins with that command it has already been expanded into the command's instructions for this turn.`);
+      // The "already been expanded" claim is only true when the side that
+      // composed this turn's text actually expanded the leading command.
+      // slashExpansion is that side's report ({name, expanded}); when it
+      // names THIS skill and says the attempt missed, the line must say
+      // so — on the wrapped agent-work path the unexpanded claim was
+      // false for every turn, because the wrapper text never starts
+      // with "/". No report (the direct path) keeps the legacy wording.
+      const fact = slashExpansion && typeof slashExpansion.name === 'string'
+        && slashExpansion.name.toLowerCase() === attachment.name
+        ? slashExpansion
+        : null;
+      lines.push(fact && !fact.expanded
+        ? `Skill attached: /${attachment.name}. The message begins with that command, but it was NOT expanded into the command's instructions for this turn, so those instructions are not part of this turn. Treat the skill name as context only and do not claim you ran it.`
+        : `Skill attached: /${attachment.name}. If the message begins with that command it has already been expanded into the command's instructions for this turn.`);
       continue;
     }
     if (attachment.kind === 'connector') {
