@@ -150,9 +150,11 @@
           <div id="ew-net-strip" class="ew-net-strip" role="status"></div>
           <form id="maestro-form" class="ew-composer" autocomplete="off">
             <div class="ew-pills" id="ew-mention-pills" aria-label="Mention an agent"></div>
+            <div class="ew-attach-chips" id="ew-attach-chips" hidden></div>
+            <div class="ew-picker" id="ew-picker" hidden></div>
             <textarea id="maestro-input" rows="1" placeholder="Message #channel" aria-label="Message"></textarea>
             <div class="ew-composer-row">
-              <button class="ew-btn sm" id="maestro-plus" type="button" title="Tools: open Integrations" aria-label="Tools: open Integrations"><span aria-hidden="true">🔧</span> Tools</button>
+              <button class="ew-btn sm" id="maestro-plus" type="button" title="Add a skill, connector or file to this message" aria-label="Add a skill, connector or file" aria-haspopup="true"><span aria-hidden="true">+</span> Add</button>
               <button class="ew-icon" id="maestro-dictate" type="button" aria-pressed="false" aria-label="Dictate" title="Dictate"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
               <button class="voice-orb sm" id="maestro-voice" type="button" aria-pressed="false" aria-label="Voice chat"><span class="orb-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="orb-label">Voice</span></button>
               <span class="ew-hint" id="ew-composer-hint">Enter to send · Shift+Enter for a new line</span>
@@ -183,8 +185,11 @@
           <p class="ew-note">Pick an agent above. What you type below posts in the open channel, addressed to that agent — and your conversation with it shows right here.</p>
           <form id="ew-cli-form" class="ew-composer" autocomplete="off">
             <div class="ew-cli-to" id="ew-cli-to">Maestro · posts in the channel and routes it</div>
+            <div class="ew-attach-chips" id="ew-cli-attach-chips" hidden></div>
+            <div class="ew-picker" id="ew-cli-picker" hidden></div>
             <textarea id="ew-cli-input" rows="1" placeholder="Prompt..." aria-label="Prompt"></textarea>
             <div class="ew-composer-row">
+              <button class="ew-btn sm" id="ew-cli-plus" type="button" title="Add a skill, connector or file to this message" aria-label="Add a skill, connector or file" aria-haspopup="true"><span aria-hidden="true">+</span> Add</button>
               <button class="ew-icon" id="ew-cli-dictate" type="button" aria-pressed="false" aria-label="Dictate" title="Dictate"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
               <button class="voice-orb sm" id="ew-cli-voice" type="button" aria-pressed="false" aria-label="Voice chat"><span class="orb-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="orb-label">Voice</span></button>
               <span class="ew-hint">Enter to send · Shift+Enter for a new line</span>
