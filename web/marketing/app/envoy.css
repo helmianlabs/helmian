@@ -393,7 +393,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   .ew-pill.session { margin-left:0; }
 }
 
-/* Agent CLI pane: your command chat with the agents (sessions + prompt). */
+/* Agent chat pane: your conversation with one picked agent (prompts post in the open channel). */
 .ew-cli-chips { padding:2px 12px 4px; }
 .ew-pill.on { border-color:var(--accent); color:var(--accent); }
 .ew-cli-form { display:flex; flex-direction:column; gap:8px; padding:8px 12px; border-top:1px solid var(--border); }
