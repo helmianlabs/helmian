@@ -92,6 +92,15 @@ export const CALM_POLL_MS = 2500;
 // inside the work window, after the provider joined, with no reply:<id>
 // from that provider yet. Offline providers are excluded — nobody is
 // coming, so the channel must not claim an answer is on its way.
+// The workspace's honest asleep banner: when the server says this
+// tenant's agents cannot answer yet (no subscription connected, or no
+// computer running them), the chat says so in plain words instead of
+// letting messages sit in silence. Null = nothing to show.
+export function agentStateBanner(agentState) {
+  if (!agentState || agentState.state !== 'asleep' || !agentState.line) return null;
+  return String(agentState.line);
+}
+
 export function pendingAgentWork(messages, roster, joined = {}, online = new Set(), now = Date.now()) {
   const answered = new Set();
   for (const m of messages) if (String(m.idempotencyKey ?? '').startsWith('reply:')) answered.add(`${m.authorSubject}|${String(m.idempotencyKey).slice(6)}`);
@@ -222,7 +231,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -1563,6 +1572,19 @@ async function loadPresence() {
   catch { ws.online = new Set(); }
 }
 
+function renderAgentState() {
+  const el = $('ew-agent-state'); if (!el) return;
+  const line = agentStateBanner(ws.agentState);
+  el.hidden = !line;
+  el.textContent = line ?? '';
+}
+
+async function loadAgentState() {
+  try { const body = await ws.ctx.api('/api/admin/envoy/agent-state'); ws.agentState = body.agentState ?? null; }
+  catch { ws.agentState = null; }
+  renderAgentState();
+}
+
 export async function mountWorkspace(ctx) {
   ws.ctx = ctx;
   if (!ws.wired) wire();
@@ -1571,7 +1593,7 @@ export async function mountWorkspace(ctx) {
   if (ctx.benchTab) { openBench(ctx.benchTab); ctx.benchTab = null; }
   ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
-  await Promise.allSettled([loadPresence(), loadConfig(), loadMessages(), loadCliSessions()]);
+  await Promise.allSettled([loadPresence(), loadAgentState(), loadConfig(), loadMessages(), loadCliSessions()]);
   if (inMaestroMode()) loadDeskLists();
   await openCliRoom().catch(() => {});
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
@@ -1590,5 +1612,5 @@ export async function mountWorkspace(ctx) {
     ws.timer = setTimeout(tick, (currentWorking().length || roomWorking().length) ? FAST_POLL_MS : CALM_POLL_MS);
   };
   ws.timer = setTimeout(tick, CALM_POLL_MS);
-  ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadConfig(); if (inMaestroMode()) loadDeskLists(); } }, 15000);
+  ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadAgentState(); loadConfig(); if (inMaestroMode()) loadDeskLists(); } }, 15000);
 }

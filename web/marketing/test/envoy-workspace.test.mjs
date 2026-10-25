@@ -563,3 +563,19 @@ test('app shell cache: vercel.json forces revalidation for /app assets so a depl
   const value = appRule.headers.find((header) => header.key.toLowerCase() === 'cache-control').value;
   assert.ok(/max-age=0|no-cache|no-store/.test(value), `the /app Cache-Control forces revalidation (got: ${value})`);
 });
+
+test('tenant onboarding: the asleep banner helper + element + state fetch are wired', async () => {
+  const { agentStateBanner } = await import('../app/envoy-workspace.js');
+  assert.equal(agentStateBanner(null), null);
+  assert.equal(agentStateBanner({ state: 'awake', line: null }), null);
+  assert.equal(
+    agentStateBanner({ state: 'asleep', line: 'Your agents wake up when you connect a subscription.' }),
+    'Your agents wake up when you connect a subscription.',
+  );
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="ew-agent-state"/, 'the banner element sits in the chat pane');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /\/api\/admin\/envoy\/agent-state/, 'the workspace fetches the tenant agent state');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.match(css, /\.ew-agent-state \{/, 'the banner has its own style');
+});
