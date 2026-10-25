@@ -52,7 +52,8 @@
     "desktop:qa": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/qa-package.ps1",
     "desktop:qa:pack": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/qa-package.ps1 -PublishPack",
     "test:hands": "npm --prefix hands-mcp ci --no-audit --no-fund && npm --prefix hands-mcp test",
-    "test:discord-bridge": "cd discord-bridge && node --test test/"
+    "test:discord-bridge": "cd discord-bridge && node --test test/",
+    "test:slack-bridge": "cd slack-bridge && node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

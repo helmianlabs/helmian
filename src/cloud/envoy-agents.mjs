@@ -1,13 +1,14 @@
 // Envoy agents: who is in a channel, who should answer a message, and how
-// agent / Discord / system authors are named. Pure functions only, shared by
-// the cloud routes (envoy-mesh.mjs), the PC bridge and the Discord bridge.
+// agent / Discord / Slack / system authors are named. Pure functions only,
+// shared by the cloud routes (envoy-mesh.mjs), the PC bridge and the
+// Discord / Slack bridge services.
 //
 // Agents are channel members. Maestro is NOT one of them: Maestro is the
 // human's manager seat, never an agent, so 'maestro' is not a routable
 // answerer anywhere (Maestro Bite 2). A roster may still carry a historical
 // 'maestro' entry; it is inert and filtered out of every routing result.
-// A human message (typed in Helmian or in a linked Discord channel) is
-// routed like this:
+// A human message (typed in Helmian or in a linked Discord or Slack
+// channel) is routed like this:
 //   - @all                -> every agent in the channel
 //   - @Claude, @Gemini... -> only the agents named
 //   - no mention          -> NO agent turn (silence)
@@ -61,7 +62,13 @@ export function agentSubject(provider) {
 }
 
 export function emptyConfig() {
-  return { format: CONFIG_FORMAT, agents: [], joined: {}, discord: null, pendingLink: null, desk: false };
+  return { format: CONFIG_FORMAT, agents: [], joined: {}, discord: null, slack: null, pendingLink: null, desk: false };
+}
+
+// Slack ids: team T…, channel C…, user U…/W… — uppercase letters and digits.
+export const SLACK_ID = /^[A-Z0-9]{6,24}$/;
+export function isSlackId(v) {
+  return SLACK_ID.test(String(v ?? ''));
 }
 
 // Parse a stored config row body. Bad rows read as "not configured".
@@ -73,18 +80,24 @@ export function parseConfig(body) {
     const discord = raw.discord && /^\d{5,25}$/.test(String(raw.discord.guildId)) && /^\d{5,25}$/.test(String(raw.discord.channelId))
       ? { guildId: String(raw.discord.guildId), channelId: String(raw.discord.channelId), channelName: String(raw.discord.channelName ?? '').slice(0, 100), guildName: String(raw.discord.guildName ?? '').slice(0, 100), linkedAt: raw.discord.linkedAt ?? null }
       : null;
+    const slack = raw.slack && isSlackId(raw.slack.teamId) && isSlackId(raw.slack.channelId)
+      ? { teamId: String(raw.slack.teamId), channelId: String(raw.slack.channelId), channelName: String(raw.slack.channelName ?? '').slice(0, 100), teamName: String(raw.slack.teamName ?? '').slice(0, 100), linkedAt: raw.slack.linkedAt ?? null }
+      : null;
     const pendingLink = raw.pendingLink && /^[a-f0-9]{64}$/.test(String(raw.pendingLink.codeHash)) && raw.pendingLink.expiresAt
       ? { codeHash: String(raw.pendingLink.codeHash), expiresAt: String(raw.pendingLink.expiresAt) }
       : null;
     const joined = {};
     for (const p of agents) { const t = raw.joined?.[p]; if (t && Number.isFinite(Date.parse(t))) joined[p] = String(t); }
-    return { format: CONFIG_FORMAT, agents, joined, discord, pendingLink, desk: raw.desk === true };
+    return { format: CONFIG_FORMAT, agents, joined, discord, slack, pendingLink, desk: raw.desk === true };
   } catch { return null; }
 }
 
 export function serializeConfig(config) {
   const joined = {}; for (const p of config.agents ?? []) if (config.joined?.[p]) joined[p] = config.joined[p];
   const stored = { format: CONFIG_FORMAT, agents: config.agents ?? [], joined, discord: config.discord ?? null, pendingLink: config.pendingLink ?? null };
+  // slack is written only when set, so every config stored before the
+  // Slack link existed keeps its exact bytes.
+  if (config.slack) stored.slack = config.slack;
   // desk is written only when true, so every config stored before the
   // desk existed keeps its exact bytes.
   if (config.desk === true) stored.desk = true;
@@ -100,6 +113,7 @@ export function publicConfig(config, now = Date.now()) {
     agents: c.agents.map((p) => ({ provider: p, name: AGENT_NAMES[p], joinedAt: c.joined?.[p] ?? null })),
     desk: c.desk === true,
     discord: c.discord,
+    slack: c.slack ?? null,
     pendingLink: c.pendingLink && Date.parse(c.pendingLink.expiresAt) > now ? { expiresAt: c.pendingLink.expiresAt } : null,
   };
 }
@@ -160,6 +174,12 @@ export function describeAuthor(subject, kind) {
     const name = i >= 0 ? rest.slice(i + 1) : '';
     return { name: name || 'Discord member', source: 'discord', provider: null };
   }
+  if (s.startsWith('slack:')) {
+    const rest = s.slice(6);
+    const i = rest.indexOf(':');
+    const name = i >= 0 ? rest.slice(i + 1) : '';
+    return { name: name || 'Slack member', source: 'slack', provider: null };
+  }
   if (s.startsWith('system:') || kind === 'system') return { name: 'Helmian', source: 'helmian', provider: null };
   // Replies the PC bridge posts for its direct (non-Envoy) path are the
   // bridge speaking, not an agent named Maestro — Maestro is the human.
@@ -173,6 +193,12 @@ export function discordSubject(userId, displayName) {
   return `discord:${userId}:${name}`;
 }
 
+export function slackSubject(userId, displayName) {
+  if (!isSlackId(userId)) throw new Error('slack user id is invalid');
+  const name = String(displayName ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 64) || 'Slack member';
+  return `slack:${userId}:${name}`;
+}
+
 // Text an agent gets for its turn: who it is, who else is here, the recent
 // conversation, and the message it is answering.
 export function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian' }) {
@@ -182,7 +208,7 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
   if (p === 'maestro') throw new Error('maestro is not an agent provider');
   const me = AGENT_NAMES[p] ?? 'Agent';
   const others = (members ?? []).map(normalizeProvider).filter((x) => x && x !== p && x !== 'maestro').map((x) => AGENT_NAMES[x]);
-  const where = source === 'discord' ? `the #${channelTitle} channel (mirrored with Discord)` : `the #${channelTitle} channel in Helmian Envoy`;
+  const where = source === 'discord' ? `the #${channelTitle} channel (mirrored with Discord)` : source === 'slack' ? `the #${channelTitle} channel (mirrored with Slack)` : `the #${channelTitle} channel in Helmian Envoy`;
   const role = `You are ${me}, an agent member of ${where}. Other agents here: ${others.join(', ') || 'none'}. If you were given a slice of work, start your reply with "Claim:" and the slice you are taking, so you do not overlap the others. Be concise.`;
   const history = context.slice(-12).map((m) => `${m.authorName || m.authorKind}: ${String(m.body ?? '').slice(0, 600)}`).join('\n');
   const from = message?.authorName || (message?.authorKind === 'agent' ? 'Agent' : 'Member');
@@ -300,9 +326,32 @@ export function normalizeAttachment(input) {
 }
 
 /**
+ * The external-source stamp a bridge stores on a mirrored message:
+ * `{ source: { provider, teamId?, channelId, channelName? } }`. It is a
+ * display hint only — the badge itself keys off the author subject, which
+ * the server sets — so an invalid stamp is dropped, never thrown. Only the
+ * fields the /app badge renders survive.
+ */
+export function normalizeSourceRef(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const provider = input.provider === 'slack' || input.provider === 'discord' ? input.provider : null;
+  if (!provider) return undefined;
+  const idOk = provider === 'slack' ? isSlackId : (v) => /^\d{5,25}$/.test(String(v ?? ''));
+  if (!idOk(input.channelId)) return undefined;
+  const clean = (v) => String(v ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 100);
+  return Object.freeze({
+    provider,
+    ...(input.teamId !== undefined && idOk(input.teamId) ? { teamId: String(input.teamId) } : {}),
+    channelId: String(input.channelId),
+    ...(clean(input.channelName) ? { channelName: clean(input.channelName) } : {}),
+  });
+}
+
+/**
  * The metadata object stored on a message. Accepts the two wire shapes the
- * client may send — `{ attachments: [...], webSearch?: boolean }` — and
- * returns the canonical frozen form, or null when nothing was attached.
+ * client may send — `{ attachments: [...], webSearch?: boolean }` — plus
+ * the bridge's source stamp, and returns the canonical frozen form, or
+ * null when nothing was attached.
  */
 export function normalizeMessageMetadata(input) {
   if (input === undefined || input === null) return null;
@@ -323,9 +372,11 @@ export function normalizeMessageMetadata(input) {
   const fileBytes = attachments.reduce((sum, a) => sum + (a.kind === 'file' ? a.size : 0), 0);
   if (fileBytes > FILE_ATTACHMENTS_MAX_TOTAL_BYTES) throw new Error('attached files are too large in total');
   const webSearch = input.webSearch === undefined ? undefined : input.webSearch === true;
-  if (!attachments.length && webSearch === undefined) return null;
+  const source = normalizeSourceRef(input.source);
+  if (!attachments.length && webSearch === undefined && !source) return null;
   return Object.freeze({
     ...(attachments.length ? { attachments: Object.freeze(attachments) } : {}),
     ...(webSearch !== undefined ? { webSearch } : {}),
+    ...(source ? { source } : {}),
   });
 }
