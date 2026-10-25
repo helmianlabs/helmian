@@ -927,7 +927,7 @@ $('#new-channel').onclick = () => {
 // one), and its send below builds through buildMessageRequest like the
 // others — so a console message carries metadata the same way, and with
 // nothing attached the payload is exactly what it was before.
-const consoleAttach = { list: [], open: false, data: null };
+const consoleAttach = { list: [], webSearch: false, open: false, data: null };
 async function loadConsolePickerData() {
   if (consoleAttach.data) return consoleAttach.data;
   const [c, p, pl] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/plugins')]);
@@ -936,8 +936,7 @@ async function loadConsolePickerData() {
 }
 function renderConsoleAttachChips() {
   const box = $('#console-attach-chips'); if (!box) return;
-  box.hidden = !consoleAttach.list.length;
-  box.replaceChildren(...consoleAttach.list.map((a) => {
+  const chips = consoleAttach.list.map((a) => {
     const chip = el('span', `ew-chip ${a.kind}`, a.kind === 'skill' ? `/${a.name}` : a.name);
     const x = el('button', 'ew-chip-x', '×');
     x.type = 'button';
@@ -946,7 +945,21 @@ function renderConsoleAttachChips() {
     x.onclick = () => { consoleAttach.list = removeAttachment(consoleAttach.list, a); renderConsoleAttachChips(); if (consoleAttach.open) renderConsolePicker(); };
     chip.append(x);
     return chip;
-  }));
+  });
+  // The web-search toggle rides the next message like an attachment, so
+  // it shows as a chip while it is on — and leaves with the send (or ×).
+  if (consoleAttach.webSearch) {
+    const chip = el('span', 'ew-chip web-search', 'Web search');
+    const x = el('button', 'ew-chip-x', '×');
+    x.type = 'button';
+    x.title = 'Turn web search off for this message';
+    x.setAttribute('aria-label', 'Turn web search off');
+    x.onclick = () => { consoleAttach.webSearch = false; renderConsoleAttachChips(); if (consoleAttach.open) renderConsolePicker(); };
+    chip.append(x);
+    chips.push(chip);
+  }
+  box.hidden = !chips.length;
+  box.replaceChildren(...chips);
 }
 function closeConsolePicker() {
   consoleAttach.open = false;
@@ -1027,6 +1040,16 @@ async function renderConsolePicker() {
       up.type = 'button'; up.disabled = true; up.title = g.reason;
       group.append(el('div', 'ew-subhead', 'UPLOAD'), up, el('p', 'ew-note', g.reason));
       groups.push(group);
+    } else if (g.id === 'web-search') {
+      const group = el('div', 'ew-picker-group');
+      const on = consoleAttach.webSearch === true;
+      const btn = el('button', `ew-picker-row${on ? ' on' : ''}`);
+      btn.type = 'button';
+      btn.title = on ? 'Web search is on for this message — tap to turn it off' : 'Turn web search on for this message';
+      btn.onclick = () => { consoleAttach.webSearch = !on; renderConsoleAttachChips(); renderConsolePicker(); };
+      btn.append(el('span', null, 'Web search'), el('span', 'ew-picker-kind', 'per message'), el('span', `ew-picker-state ${on ? 'on' : 'off'}`, on ? 'On' : 'Off'));
+      group.append(el('div', 'ew-subhead', 'WEB SEARCH'), el('p', 'ew-note', g.note), btn);
+      groups.push(group);
     }
   }
   const head = el('div', 'ew-picker-head');
@@ -1045,9 +1068,9 @@ prompt.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) {
 $('#composer').onsubmit = async (e) => {
   e.preventDefault(); const body = prompt.value.trim(); if (!body) return;
   if (!state.channelId) { toast('No team channel yet — ask the owner to set one up'); return; }
-  const req = buildMessageRequest({ channelId: state.channelId, body, idempotencyKey: crypto.randomUUID(), attachments: consoleAttach.list });
+  const req = buildMessageRequest({ channelId: state.channelId, body, idempotencyKey: crypto.randomUUID(), attachments: consoleAttach.list, webSearch: consoleAttach.webSearch });
   $('#send').disabled = true;
-  try { await post('/api/admin/envoy/messages', req.payload); prompt.value = ''; prompt.oninput(); consoleAttach.list = []; renderConsoleAttachChips(); closeConsolePicker(); await loadLog(); $('#log').scrollTop = 1e9; }
+  try { await post('/api/admin/envoy/messages', req.payload); prompt.value = ''; prompt.oninput(); consoleAttach.list = []; consoleAttach.webSearch = false; renderConsoleAttachChips(); closeConsolePicker(); await loadLog(); $('#log').scrollTop = 1e9; }
   catch { toast('Not sent — your message is still in the box'); }
   finally { $('#send').disabled = false; }
 };
