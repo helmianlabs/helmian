@@ -3,6 +3,24 @@
 // model — no DOM — so it is unit tested like app-model.mjs;
 // envoy-workspace.js renders it.
 //
+// PER-AGENT (plus-parity bite 1): pass `agent` to pickerModel() and the
+// model leads with that agent's own ecosystem group — its seat (the
+// provider connection the agent itself runs on), its by-name skills, and
+// the bridge plugins it can be handed — with the shared groups after.
+// Without an agent (the Maestro desk, an unaddressed channel, no active
+// session) the model is the shared one, exactly as before.
+// EVERY entry carries a truthful `state`, computed from the same registry
+// facts the Integrations page renders:
+// - 'connected' (label "Works"): turning the message over really uses it
+//   — an installed plugin's MCP tools join the turn; a seat is the
+//   connection the agent itself answers through.
+// - 'note-only' (label "Note only"): a registered connector. Attaching
+//   it hands the agent a NOTE that the service is connected — the turn
+//   is told the service was not opened for it (src/agent/attachments.mjs
+//   is explicit about this). A connector can therefore NEVER carry
+//   'connected' here: registry-connected is not turn-connected.
+// - 'not-connected': the registry holds no connection for it.
+//
 // WHERE THE GROUPS COME FROM (real registries only; nothing invented):
 // - Connectors: PROVIDER_REGISTRY in app-model.mjs, with connection truth
 //   from integrationsModel() over GET /api/admin/cora/connectors, GET
@@ -52,6 +70,39 @@
 //   only when ON; off is the absence every layer already treats as the
 //   default, so an untouched toggle changes nothing on the wire.
 import { integrationsModel } from './app-model.mjs';
+
+// Truthful attachment states (see the header): what attaching an entry
+// actually does on the turn, never just what the registry holds.
+export const ATTACH_STATE = Object.freeze({ CONNECTED: 'connected', NOTE_ONLY: 'note-only', NOT_CONNECTED: 'not-connected' });
+export const ATTACH_STATE_LABEL = Object.freeze({ connected: 'Works', 'note-only': 'Note only', 'not-connected': 'Not connected' });
+
+// The agents a composer can be talking to, and the PROVIDER_REGISTRY key
+// of each one's own provider connection — its seat. Keys are the
+// workspace's agent keys (envoy-workspace.js AGENTS, minus 'maestro':
+// Maestro is the human's seat, never an agent with an ecosystem).
+export const AGENT_ECOSYSTEMS = Object.freeze({
+  claude: Object.freeze({ agent: 'claude', name: 'Claude', registryKey: 'anthropic' }),
+  openai: Object.freeze({ agent: 'openai', name: 'ChatGPT', registryKey: 'openai' }),
+  grok: Object.freeze({ agent: 'grok', name: 'Grok', registryKey: 'xai' }),
+  gemini: Object.freeze({ agent: 'gemini', name: 'Gemini', registryKey: 'google' }),
+});
+const AGENT_ALIASES = Object.freeze({ chatgpt: 'openai', anthropic: 'claude', google: 'gemini', xai: 'grok' });
+
+// An agent named any way the surfaces name it — workspace key ('gemini',
+// 'openai'), display name ('Gemini', 'ChatGPT'), or registry key
+// ('google', 'anthropic') — resolves to its workspace key, or null when
+// it names no agent (including 'maestro', the human's seat).
+export function normalizeAgentKey(value) {
+  const k = String(value ?? '').trim().toLowerCase();
+  if (!k || k === 'maestro') return null;
+  if (Object.hasOwn(AGENT_ECOSYSTEMS, k)) return k;
+  return AGENT_ALIASES[k] ?? null;
+}
+
+export function agentEcosystem(value) {
+  const key = normalizeAgentKey(value);
+  return key ? AGENT_ECOSYSTEMS[key] : null;
+}
 
 export const MAX_ATTACHMENTS = 8;
 export const SKILL_NAME_MAX = 64;
@@ -138,29 +189,78 @@ export function normalizeSkillName(value) {
   return { ok: true, name, reason: null };
 }
 
-export function pickerModel({ connectors = {}, providers = {}, plugins = {}, toolConnections = null, presence = null, now = Date.now() } = {}) {
-  const connectorItems = integrationsModel(connectors, providers, { toolConnections, presence, now }).map((p) => ({
-    kind: 'connector', key: p.key, name: p.name, kindLabel: p.kind, connected: p.connected === true,
-    status: p.status, statusText: p.statusText, source: p.source,
-  }));
+const CONNECTORS_NOTE = 'Attaching a connector hands the agent a note that the service is connected — it does not open the service for the agent. Plugins are the exception: their tools really connect for the turn.';
+const SKILLS_NOTE = 'Skills live with your agents — command files and plugins on your PC bridge. Attach one by name and it runs as a /command at the start of your message.';
+
+export function pickerModel({ connectors = {}, providers = {}, plugins = {}, toolConnections = null, presence = null, now = Date.now(), agent = null } = {}) {
+  // A connector the truth model calls connected is attachable (the
+  // `connected` gate addAttachment enforces) but note-only on the turn;
+  // anything else is simply not connected. Neither is ever 'connected'
+  // as an attachment state — see the header. The row ALSO carries the
+  // truth model's own status fields (status / statusText / source) the
+  // Integrations surfaces render, so every surface tells the same story.
+  const connectorItems = integrationsModel(connectors, providers, { toolConnections, presence, now }).map((p) => {
+    const registered = p.connected === true;
+    const state = registered ? ATTACH_STATE.NOTE_ONLY : ATTACH_STATE.NOT_CONNECTED;
+    return {
+      kind: 'connector', key: p.key, name: p.name, kindLabel: p.kind, connected: registered,
+      status: p.status, statusText: p.statusText, source: p.source,
+      state, stateLabel: ATTACH_STATE_LABEL[state],
+    };
+  });
   const pluginItems = (Array.isArray(plugins?.plugins) ? plugins.plugins : []).map((p) => ({
     kind: 'plugin',
     name: String(p?.name ?? '').trim().toLowerCase(),
     brings: String(p?.brings ?? ''),
+    state: ATTACH_STATE.CONNECTED, stateLabel: ATTACH_STATE_LABEL[ATTACH_STATE.CONNECTED],
   })).filter((p) => p.name);
+  const pluginsGroup = Object.freeze({
+    id: 'plugins', title: 'Plugins', items: Object.freeze(pluginItems),
+    note: 'Plugins live on your PC bridge. Attaching one gives the agent its approved tools for this turn.',
+  });
+  const uploadGroup = Object.freeze({ id: 'upload', title: 'Upload a file', fileInput: true, note: UPLOAD_NOTE, items: Object.freeze([]) });
+  const webSearchGroup = Object.freeze({ id: 'web-search', title: 'Web search', toggle: true, note: WEB_SEARCH_NOTE, items: Object.freeze([]) });
+  const eco = agentEcosystem(agent);
+  if (!eco) {
+    return Object.freeze({
+      agent: null,
+      groups: Object.freeze([
+        Object.freeze({ id: 'skills', title: 'Skills', byName: true, items: Object.freeze([]), note: SKILLS_NOTE }),
+        Object.freeze({ id: 'connectors', title: 'Connectors', note: CONNECTORS_NOTE, items: Object.freeze(connectorItems) }),
+        pluginsGroup,
+        uploadGroup,
+        webSearchGroup,
+      ]),
+    });
+  }
+  // Per-agent: the agent's ecosystem leads. Its seat row is a STATUS row
+  // (kind 'provider' — never an attachment; addAttachment accepts only
+  // skill/connector/plugin/file), stating the one fact the integrations
+  // registry holds about the seat itself. The seat's registry entry
+  // leaves the shared connectors group — it is presented here, as the
+  // seat, instead of masquerading there as one more note-only connector.
+  const seatRow = connectorItems.find((i) => i.key === eco.registryKey);
+  const seatState = seatRow?.connected ? ATTACH_STATE.CONNECTED : ATTACH_STATE.NOT_CONNECTED;
+  const seatItem = Object.freeze({
+    kind: 'provider', key: eco.registryKey, name: eco.name, kindLabel: 'This agent\'s seat', seat: true,
+    connected: seatRow?.connected === true, state: seatState, stateLabel: ATTACH_STATE_LABEL[seatState],
+  });
+  const agentGroup = Object.freeze({
+    id: 'agent', agent: eco.agent, title: `${eco.name}'s ecosystem`, byName: true,
+    note: `${eco.name}'s skills live with the agent — command files and plugins on your PC bridge. Attach one by name and it runs as a /command at the start of your message.`,
+    items: Object.freeze([seatItem, ...pluginItems]),
+  });
   return Object.freeze({
+    agent: eco.agent,
     groups: Object.freeze([
+      agentGroup,
       Object.freeze({
-        id: 'skills', title: 'Skills', byName: true, items: Object.freeze([]),
-        note: 'Skills live with your agents — command files and plugins on your PC bridge. Attach one by name and it runs as a /command at the start of your message.',
+        id: 'connectors', title: 'Connectors', note: CONNECTORS_NOTE,
+        items: Object.freeze(connectorItems.filter((i) => i.key !== eco.registryKey)),
       }),
-      Object.freeze({ id: 'connectors', title: 'Connectors', items: Object.freeze(connectorItems) }),
-      Object.freeze({
-        id: 'plugins', title: 'Plugins', items: Object.freeze(pluginItems),
-        note: 'Plugins live on your PC bridge. Attaching one gives the agent its approved tools for this turn.',
-      }),
-      Object.freeze({ id: 'upload', title: 'Upload a file', fileInput: true, note: UPLOAD_NOTE, items: Object.freeze([]) }),
-      Object.freeze({ id: 'web-search', title: 'Web search', toggle: true, note: WEB_SEARCH_NOTE, items: Object.freeze([]) }),
+      pluginsGroup,
+      uploadGroup,
+      webSearchGroup,
     ]),
   });
 }
@@ -192,7 +292,10 @@ export function addAttachment(list = [], att, { catalog = null } = {}) {
     const key = String(att.key ?? '').trim().toLowerCase();
     if (!key) return fail('Pick a connector first.');
     if (catalog) {
-      const item = catalog.find((i) => i.key === key);
+      // Same-kind match only: a mixed catalog (the per-agent group holds
+      // the seat row beside plugin rows) must never let one kind's entry
+      // answer another kind's lookup.
+      const item = catalog.find((i) => i.kind === 'connector' && i.key === key);
       if (!item) return fail('That connector is not in the registry.');
       if (!item.connected) return fail(`${item.name} is not connected yet — connect it in Integrations first.`);
       clean = { kind: 'connector', key: item.key, name: item.name };
@@ -207,7 +310,7 @@ export function addAttachment(list = [], att, { catalog = null } = {}) {
     if (!name) return fail('Pick a plugin first.');
     if (name.length > SKILL_NAME_MAX || !SKILL_NAME_PATTERN.test(name)) return fail('That plugin name is not one a message can carry.');
     if (catalog) {
-      const item = catalog.find((i) => i.name === name);
+      const item = catalog.find((i) => i.kind === 'plugin' && i.name === name);
       if (!item) return fail('That plugin is not installed on your PC bridge.');
       clean = { kind: 'plugin', name: item.name };
     } else {

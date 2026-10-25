@@ -926,17 +926,27 @@ $('#new-channel').onclick = () => {
 // workspace's loadPickerData does, keeps its OWN attach list (the third
 // one), and its send below builds through buildMessageRequest like the
 // others — so a console message carries metadata the same way, and with
-// nothing attached the payload is exactly what it was before.
+// nothing attached the payload is exactly what it was before. The model
+// is per-agent like the workspace's: the registry facts (the same five
+// feeds Integrations renders, probe receipts and runner presence
+// included) load once, and each render builds the model for the ACTIVE
+// SESSION's provider (its ecosystem group first), or the shared model
+// when no session is active.
 const consoleAttach = { list: [], webSearch: false, open: false, data: null };
 async function loadConsolePickerData() {
   if (consoleAttach.data) return consoleAttach.data;
   const [c, p, pl, tc, pr] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/plugins'), api('/api/admin/tool-connections'), api('/api/admin/envoy/runner/presence')]);
-  consoleAttach.data = pickerModel({
+  consoleAttach.data = {
     connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {},
     toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null,
     presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null,
-  });
+  };
   return consoleAttach.data;
+}
+// The active session's provider, as the session list names it ('Claude',
+// 'ChatGPT', 'Grok', 'Gemini') — pickerModel normalizes it to the agent.
+function consolePickerAgent() {
+  return state.sessions.find((s) => s.id === state.activeSession)?.provider ?? null;
 }
 function renderConsoleAttachChips() {
   const box = $('#console-attach-chips'); if (!box) return;
@@ -978,12 +988,55 @@ async function renderConsolePicker() {
   const panel = $('#console-picker'); if (!panel) return;
   if (!consoleAttach.open) { panel.hidden = true; return; }
   panel.hidden = false;
-  const model = consoleAttach.data ?? await loadConsolePickerData().catch(() => pickerModel());
+  if (!consoleAttach.data) await loadConsolePickerData().catch(() => {});
   if (!consoleAttach.open) return; // closed while the registry loaded
+  const model = consoleAttach.data ? pickerModel({ ...consoleAttach.data, agent: consolePickerAgent() }) : pickerModel();
   const attached = new Set(consoleAttach.list.map(attachmentKey));
   const groups = [];
   for (const g of model.groups) {
-    if (g.id === 'skills') {
+    if (g.id === 'agent') {
+      // The session agent's own ecosystem: seat status row, by-name
+      // skills, and the bridge plugins it can be handed (mirrors the
+      // workspace picker's agent group).
+      const group = el('div', 'ew-picker-group');
+      const nameInput = el('input', 'ew-picker-input');
+      nameInput.maxLength = 64;
+      nameInput.placeholder = 'Skill name — e.g. deploy, or plugin:skill';
+      nameInput.setAttribute('aria-label', 'Skill name');
+      const note = el('p', 'ew-note');
+      const add = el('button', 'ew-btn sm', 'Attach skill');
+      add.type = 'button';
+      add.onclick = () => {
+        const r = addAttachment(consoleAttach.list, { kind: 'skill', name: nameInput.value });
+        if (!r.added) { note.textContent = r.reason; return; }
+        consoleAttach.list = r.list; note.textContent = '';
+        renderConsoleAttachChips(); renderConsolePicker();
+      };
+      const row = el('div', 'ew-row'); row.append(nameInput, add);
+      group.append(el('div', 'ew-subhead', g.title.toUpperCase()), el('p', 'ew-note', g.note), row, note);
+      for (const item of g.items) {
+        if (item.kind === 'provider') {
+          const btn = el('button', 'ew-picker-row');
+          btn.type = 'button'; btn.disabled = true;
+          btn.title = `${item.name} is the agent you are talking to — this is its own connection`;
+          btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.kindLabel), el('span', `ew-picker-state ${item.state === 'connected' ? 'on' : 'off'}`, item.stateLabel));
+          group.append(btn);
+          continue;
+        }
+        const on = attached.has(`plugin:${item.name}`);
+        const btn = el('button', `ew-picker-row${on ? ' on' : ''}`);
+        btn.type = 'button';
+        btn.title = on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`;
+        btn.onclick = () => {
+          if (on) { consoleAttach.list = removeAttachment(consoleAttach.list, { kind: 'plugin', name: item.name }); renderConsoleAttachChips(); renderConsolePicker(); return; }
+          const r = addAttachment(consoleAttach.list, { kind: 'plugin', name: item.name }, { catalog: g.items });
+          if (r.added) { consoleAttach.list = r.list; renderConsoleAttachChips(); renderConsolePicker(); }
+        };
+        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.brings), el('span', `ew-picker-state ${on ? 'on' : 'off'}`, on ? 'Attached' : item.stateLabel));
+        group.append(btn);
+      }
+      groups.push(group);
+    } else if (g.id === 'skills') {
       const group = el('div', 'ew-picker-group');
       const nameInput = el('input', 'ew-picker-input');
       nameInput.maxLength = 64;
@@ -1004,19 +1057,20 @@ async function renderConsolePicker() {
     } else if (g.id === 'connectors') {
       const group = el('div', 'ew-picker-group');
       group.append(el('div', 'ew-subhead', 'CONNECTORS'));
+      if (g.note) group.append(el('p', 'ew-note', g.note));
       if (!g.items.length) group.append(el('p', 'ew-note', 'No connectors in the registry.'));
       for (const item of g.items) {
         const on = attached.has(`connector:${item.key}`);
         const btn = el('button', `ew-picker-row${on ? ' on' : ''}`);
         btn.type = 'button';
         if (!item.connected) btn.disabled = true;
-        btn.title = item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`) : `${item.name}: ${item.statusText ?? 'Not connected'}`;
+        btn.title = item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message — it rides as a note for the agent`) : `${item.name}: ${item.statusText ?? 'Not connected'}`;
         btn.onclick = () => {
           if (on) { consoleAttach.list = removeAttachment(consoleAttach.list, { kind: 'connector', key: item.key }); renderConsoleAttachChips(); renderConsolePicker(); return; }
           const r = addAttachment(consoleAttach.list, { kind: 'connector', key: item.key }, { catalog: g.items });
           if (r.added) { consoleAttach.list = r.list; renderConsoleAttachChips(); renderConsolePicker(); }
         };
-        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.kindLabel), el('span', `ew-picker-state ${item.connected ? 'on' : 'off'}`, on ? 'Attached' : item.statusText ?? (item.connected ? 'Connected' : 'Not connected')));
+        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.kindLabel), el('span', `ew-picker-state ${item.connected ? 'on' : 'off'}`, on ? 'Attached' : item.stateLabel));
         group.append(btn);
       }
       groups.push(group);
@@ -1034,7 +1088,7 @@ async function renderConsolePicker() {
           const r = addAttachment(consoleAttach.list, { kind: 'plugin', name: item.name }, { catalog: g.items });
           if (r.added) { consoleAttach.list = r.list; renderConsoleAttachChips(); renderConsolePicker(); }
         };
-        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.brings), el('span', `ew-picker-state ${on ? 'on' : 'off'}`, on ? 'Attached' : 'Installed'));
+        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.brings), el('span', `ew-picker-state ${on ? 'on' : 'off'}`, on ? 'Attached' : item.stateLabel));
         group.append(btn);
       }
       groups.push(group);
