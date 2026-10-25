@@ -203,6 +203,7 @@ async function runAgentTurnInner({
     return chatWithTools({
       providerId: active.id,
       apiKey: active.key,
+      credentialType: active.credentialType || null,
       credentialResolver,
       credentialReference: active.credentialReference || credentialReference,
       // Context for the provenance ledger. NOT the record itself — the record is

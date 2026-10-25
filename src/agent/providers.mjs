@@ -174,6 +174,7 @@ async function runProviderTurn(call, metadata) {
 export async function chatWithTools({
   providerId,
   apiKey = '',
+  credentialType: credentialTypeHint = null,
   credentialResolver = null,
   credentialReference = null,
   model,
@@ -185,7 +186,32 @@ export async function chatWithTools({
   images = [],
   provenance = null,
 }) {
-  let credentialType = 'api_key';
+  let credentialType = credentialTypeHint
+    ? String(credentialTypeHint).toLowerCase()
+    : 'api_key';
+  // A SuperGrok subscription session beats a plain key for xAI: the resolver
+  // is the only component that knows whether a session exists, so for xai it
+  // is asked even when a key is already in hand. A null answer (no session)
+  // leaves the key in charge, and so does a throw when a key exists — a
+  // broken sign-in store can never take down a working key. Reference-based
+  // (tenant vault) resolution keeps its semantics: it is only consulted
+  // through the keyless path below, exactly as before.
+  if (providerId === 'xai' && !credentialReference && typeof credentialResolver === 'function') {
+    let resolved = null;
+    try {
+      resolved = await credentialResolver({ providerId, credentialReference });
+    } catch (error) {
+      if (!apiKey) throw error;
+      resolved = null;
+    }
+    if (typeof resolved === 'string' && resolved) {
+      apiKey = resolved;
+      credentialType = 'api_key';
+    } else if (resolved && typeof resolved.credential === 'string' && resolved.credential) {
+      apiKey = resolved.credential;
+      credentialType = String(resolved.tokenType || 'Bearer').toLowerCase();
+    }
+  }
   if (!apiKey && typeof credentialResolver === 'function') {
     const resolved = await credentialResolver({ providerId, credentialReference });
     if (typeof resolved === 'string') apiKey = resolved;
@@ -242,9 +268,9 @@ export async function chatWithTools({
     // Fallback fires only when no model was routed (unrecognized caller path).
     // Keep in sync with the standard tier in model-router.mjs.
     const resolvedModel = model || (providerId === 'xai' ? 'grok-4.3' : 'gpt-5.6-terra');
-    return runProviderTurn(() => openAiCompatibleTurn({
+    const attempt = (key) => openAiCompatibleTurn({
       url: resolvedUrl,
-      apiKey,
+      apiKey: key,
       model: resolvedModel,
       messages,
       toolDefs,
@@ -252,7 +278,26 @@ export async function chatWithTools({
       images,
       providerId,
       credentialType,
-    }), {
+    });
+    return runProviderTurn(async () => {
+      try {
+        return await attempt(apiKey);
+      } catch (error) {
+        // A SuperGrok access token can be revoked or rotated before its
+        // stated expiry. On a 401 against a subscription credential, ask the
+        // resolver that issued it for one forced refresh and retry with the
+        // fresh token; every other failure propagates untouched.
+        if (providerId !== 'xai' || credentialType !== 'oauth'
+          || error?.providerStatus !== 401
+          || typeof credentialResolver?.refreshCredential !== 'function') {
+          throw error;
+        }
+        const refreshed = await credentialResolver.refreshCredential({ providerId, credentialReference });
+        const freshKey = typeof refreshed === 'string' ? refreshed : refreshed?.credential;
+        if (!freshKey || freshKey === apiKey) throw error;
+        return attempt(freshKey);
+      }
+    }, {
       providerId, model: resolvedModel, url: resolvedUrl, isLocal: false, provenance, startedAt,
     });
   }
@@ -391,6 +436,12 @@ async function openAiCompatibleTurn({
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
+      // A SuperGrok subscription credential must carry the client marker the
+      // official Grok CLI sends, or xAI treats the bearer as an (invalid)
+      // API key and rejects it. Plain API keys must NOT send it.
+      ...(providerId === 'xai' && credentialType === 'oauth'
+        ? { 'X-XAI-Token-Auth': 'xai-grok-cli' }
+        : {}),
     },
     body: redactOutboundBody(JSON.stringify(body), apiKey),
     signal,

@@ -65,8 +65,8 @@ internal static class SuperGrokOAuthChecks
             SuperGrokOAuthClient.ClientId == "b1a00492-073a-47ea-816f-4c329264a828",
             "client id is xAI's first-party device client, confirmed as the token audience");
         Assert(
-            SuperGrokOAuthClient.DeviceAuthorizationScope == "openid offline_access",
-            "device authorization requests only minimal identity and refresh continuity scopes");
+            SuperGrokOAuthClient.DeviceAuthorizationScope == "openid profile email offline_access api:access",
+            "device authorization requests identity, refresh continuity, and api:access scopes");
         Assert(
             !typeof(SuperGrokOAuthClient).GetFields(
                     System.Reflection.BindingFlags.Public
