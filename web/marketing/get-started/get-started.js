@@ -1,4 +1,5 @@
 import { loadClerkBrowser } from '/herald/account-runtime.js?v=14';
+import { planDownloads } from './downloads.mjs';
 
 const PRODUCTS = {
   helmian_individual: { name: 'Helmian for Windows', items: ['exe'] },
@@ -39,12 +40,36 @@ async function deliver(email) {
       throw new Error(data.error || 'Signup failed');
     }
 
+    // Deliver what the product includes. The Windows installer starts only
+    // when /api/latest-release reports a real published release; until one
+    // exists the page says so plainly instead of firing a dead download.
+    const plan = planDownloads({
+      items: product.items,
+      release: product.items.includes('exe') ? await exeRelease() : null,
+      guard: GUARD,
+    });
+    const box = $('#gs-downloads');
+    box.replaceChildren();
+    let started = null;
+    for (const entry of plan) {
+      if (entry.ready) {
+        const line = el('p');
+        line.append(el('a', { href: entry.url, download: '' }, `Download ${entry.name}`));
+        box.append(line);
+        if (!started) started = entry;
+      } else if (entry.kind === 'exe') {
+        box.append(el('p', {}, 'Helmian for Windows is not published yet, so there is no installer to download today. Your workspace is ready in the web app.'));
+      }
+    }
+    if (plan.length) box.hidden = false;
+    if (started) startDownload(started.url);
+
     // Success: redirect to /app
     $('#gs-title').textContent = 'You are all set.';
     $('#gs-lede').textContent = data.created
       ? 'Your trial workspace is ready.'
       : 'Welcome back.';
-    status('Taking you to Helmian...');
+    status(started ? `Your download of ${started.name} has started. Taking you to Helmian...` : 'Taking you to Helmian...');
     setTimeout(() => { location.href = '/app'; }, 1500);
   } catch (err) {
     $('#gs-title').textContent = 'Something went wrong';

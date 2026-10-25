@@ -104,6 +104,10 @@ public sealed class BridgeWorker : BackgroundService
     {
         var explicitPath = Environment.GetEnvironmentVariable("HELMIAN_NODE");
         if (!string.IsNullOrWhiteSpace(explicitPath)) return explicitPath;
+        // The installer bundles a node.exe next to this exe (publish.ps1 stages it);
+        // prefer that exact build over whatever happens to be installed machine-wide.
+        var bundled = Path.Combine(AppContext.BaseDirectory, "node.exe");
+        if (File.Exists(bundled)) return bundled;
         foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
         {
             if (string.IsNullOrWhiteSpace(dir)) continue;
