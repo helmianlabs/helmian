@@ -24,7 +24,8 @@ import { Pool } from 'pg';
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
 import { publishEnvoyMessage } from './envoy-ably.mjs';
 import {
-  AGENT_NAMES, CONFIG_SUBJECT, NOTICE_SUBJECT, agentSubject, agentsToAnswer, describeAuthor, discordSubject,
+  AGENT_NAMES, AGENT_PROVIDERS, CONFIG_SUBJECT, DESK_ROSTER_FALLBACK, MAESTRO_DESK_SLUG, NOTICE_SUBJECT,
+  agentSubject, agentsToAnswer, describeAuthor, discordSubject,
   emptyConfig, normalizeProvider, parseConfig, publicConfig, serializeConfig,
 } from './envoy-agents.mjs';
 
@@ -211,7 +212,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           for (const row of rows) {
             const message = messageOut(row);
             const at = new Date(row.created_at).getTime();
-            const due = agentsToAnswer(message, config.agents).filter((p) => wanted.includes(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
+            const due = agentsToAnswer(message, config.agents, { desk: config.desk === true }).filter((p) => wanted.includes(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
             if (!due.length) continue;
             const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
             work.push({ channel: { id: String(channel.id), slug: channel.slug, title: channel.title, linkedToDiscord: Boolean(config.discord) }, members: config.agents, message, agents: due, context });
@@ -262,6 +263,37 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         config.joined = { [p]: new Date(now()).toISOString() };
         await writeConfig(client, actor.tenantId, channelId, config);
         return { seeded: true, configured: true };
+      });
+    },
+
+    // The Maestro desk (envoy-maestro.mjs): the tenant's one manager-seat
+    // channel (reserved slug). Its config is seeded once and carries
+    // desk:true — the flag that switches this channel's human sends to
+    // dispatch routing in agentsToAnswer (see agentWork above). The
+    // roster is the union of the agents seated in the tenant's other
+    // channels, or every worker agent when the desk is the first thing
+    // configured. 'maestro' is never on it: in the desk, Maestro is the
+    // human sending. An existing config is never rewritten.
+    async seedDesk(actor, channelId) {
+      return tx(actor, async (client) => {
+        const channel = await channelRow(client, actor.tenantId, channelId);
+        if (channel.slug !== MAESTRO_DESK_SLUG) throw fail(400, 'ENVOY_DESK_INVALID');
+        const existing = await readConfig(client, actor.tenantId, channelId);
+        if (existing) return { seeded: false, configured: true, agents: existing.agents };
+        const others = await client.query('select id from helmion.envoy_channels where tenant_id=$1 and id<>$2', [actor.tenantId, channel.id]);
+        const seated = new Set();
+        for (const row of others.rows) {
+          const cfg = await readConfig(client, actor.tenantId, String(row.id));
+          for (const p of cfg?.agents ?? []) if (p !== 'maestro') seated.add(p);
+        }
+        const roster = AGENT_PROVIDERS.filter((p) => seated.has(p));
+        const config = emptyConfig();
+        config.desk = true;
+        config.agents = roster.length ? roster : [...DESK_ROSTER_FALLBACK];
+        const stamp = new Date(now()).toISOString();
+        config.joined = Object.fromEntries(config.agents.map((p) => [p, stamp]));
+        await writeConfig(client, actor.tenantId, channelId, config);
+        return { seeded: true, configured: true, agents: config.agents };
       });
     },
 
