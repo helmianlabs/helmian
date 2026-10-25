@@ -930,8 +930,12 @@ $('#new-channel').onclick = () => {
 const consoleAttach = { list: [], webSearch: false, open: false, data: null };
 async function loadConsolePickerData() {
   if (consoleAttach.data) return consoleAttach.data;
-  const [c, p, pl] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/plugins')]);
-  consoleAttach.data = pickerModel({ connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {} });
+  const [c, p, pl, tc, pr] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/plugins'), api('/api/admin/tool-connections'), api('/api/admin/envoy/runner/presence')]);
+  consoleAttach.data = pickerModel({
+    connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {},
+    toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null,
+    presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null,
+  });
   return consoleAttach.data;
 }
 function renderConsoleAttachChips() {
@@ -1006,13 +1010,13 @@ async function renderConsolePicker() {
         const btn = el('button', `ew-picker-row${on ? ' on' : ''}`);
         btn.type = 'button';
         if (!item.connected) btn.disabled = true;
-        btn.title = item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`) : `${item.name} is not connected`;
+        btn.title = item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`) : `${item.name}: ${item.statusText ?? 'Not connected'}`;
         btn.onclick = () => {
           if (on) { consoleAttach.list = removeAttachment(consoleAttach.list, { kind: 'connector', key: item.key }); renderConsoleAttachChips(); renderConsolePicker(); return; }
           const r = addAttachment(consoleAttach.list, { kind: 'connector', key: item.key }, { catalog: g.items });
           if (r.added) { consoleAttach.list = r.list; renderConsoleAttachChips(); renderConsolePicker(); }
         };
-        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.kindLabel), el('span', `ew-picker-state ${item.connected ? 'on' : 'off'}`, on ? 'Attached' : item.connected ? 'Connected' : 'Not connected'));
+        btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.kindLabel), el('span', `ew-picker-state ${item.connected ? 'on' : 'off'}`, on ? 'Attached' : item.statusText ?? (item.connected ? 'Connected' : 'Not connected')));
         group.append(btn);
       }
       groups.push(group);
@@ -1504,8 +1508,8 @@ async function loadEvidence() {
 let integrationsMod = null; let qrMod = null;
 async function loadIntegrations() {
   integrationsMod ??= await import('./integrations-view.mjs');
-  const [c, p, pr, u, o] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview')]);
-  const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.value?.presence ?? [], usage: u.value ?? null, overview: o.value ?? null });
+  const [c, p, pr, u, o, tc] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview'), api('/api/admin/tool-connections')]);
+  const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
   box.replaceChildren(...sections.map((sec) => {
     const wrap = el('section', 'int-section'); wrap.append(el('h3', 'int-head', sec.title));

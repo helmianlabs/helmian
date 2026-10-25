@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, VIEW_TITLES_PLAYFUL, VIEW_TITLES_PLAIN, viewTitles, isPlainEmojiMode, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel, forgetDesktopPayload } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, VIEW_TITLES_PLAYFUL, VIEW_TITLES_PLAIN, viewTitles, isPlainEmojiMode, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, toolConnectionStatus, bestToolConnectionStatus, CONNECTION_FRESH_MS, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel, forgetDesktopPayload } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -34,7 +34,7 @@ test('no technical disclaimers and no framework', () => {
 
 test('only known admin + remote APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/agents/sessions', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/envoy/runner/presence', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/guard/pc-approvals', '/api/admin/guard/pc-approvals/decide', '/api/admin/guard/pc-upcoming', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/profile', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/signup', '/api/admin/workspace/active-project', '/api/admin/workspace/agent-icons', '/api/admin/workspace/canvas', '/api/admin/workspace/canvas/decisions', '/api/admin/workspace/layout-preferences', '/api/admin/workspace/projects', '/api/herald-config', '/api/provider-oauth/gemini/start', '/api/provider-oauth/grok/start', '/api/provider-oauth/openai/start', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/agents/sessions', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/envoy/runner/presence', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/guard/pc-approvals', '/api/admin/guard/pc-approvals/decide', '/api/admin/guard/pc-upcoming', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/plugins', '/api/admin/profile', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/signup', '/api/admin/tool-connections', '/api/admin/workspace/active-project', '/api/admin/workspace/agent-icons', '/api/admin/workspace/canvas', '/api/admin/workspace/canvas/decisions', '/api/admin/workspace/layout-preferences', '/api/admin/workspace/projects', '/api/herald-config', '/api/provider-oauth/gemini/start', '/api/provider-oauth/grok/start', '/api/provider-oauth/openai/start', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
 });
 
 test('models', () => {
@@ -49,12 +49,70 @@ test('models', () => {
   assert.equal(approvalsModel({ items: [{ approvalRequired: true }] }, 'member').items[0].canDecide, false);
   assert.deepEqual(logLines({ messages: [{ id: 1, body: 'hi', authorKind: 'human', authorSubject: 'u1' }] }, 'u1').map((l) => [l.mine, l.text]), [[true, 'hi']]);
   assert.equal(maskSecret('sk-abc123XYZ9'), '••••••••XYZ9'); assert.equal(maskSecret(), '••••••••');
-  assert.deepEqual(integrationsModel({ verifierStatus: { slack: { configured: true } } }, { connections: [{ provider: 'openai' }] }).filter((i) => i.connected).map((i) => i.key), ['slack', 'openai']);
+  assert.deepEqual(integrationsModel({ verifierStatus: { slack: { configured: true } } }, { connections: [{ provider: 'openai' }] }).filter((i) => i.connected).map((i) => i.key), [], 'an env configured flag and an unverified provider row connect nothing (bite 1b)');
   assert.equal(metricsModel({ counts: { members: 2 } })[1][1], 2);
   assert.equal(postureModel({ settings: { database: true } })[1][1], 'Connected');
   assert.equal(isAdminRole('Admin'), true);
   const s = addSession([], { name: 'Fix login', provider: 'Claude', now: 0 }); assert.deepEqual([s.length, s[0].provider], [1, 'Claude']);
   assert.equal(addSession([], { name: 'x', provider: 'Nope' }).length, 0);
+});
+
+test('connection truth: a tool connection reads Connected only from a verified, fresh probe receipt', () => {
+  const now = Date.parse('2026-10-25T18:00:00.000Z');
+  const fresh = { serviceId: 'github', state: 'verified', lastVerifiedAt: '2026-10-25T17:30:00.000Z' };
+  assert.deepEqual(toolConnectionStatus(fresh, { now }), { status: 'connected', statusText: 'Connected', connected: true });
+  assert.equal(toolConnectionStatus(fresh, { now: now + CONNECTION_FRESH_MS + 1 }).statusText, 'Not checked recently', 'a verified receipt past the fresh window is stale, not Connected');
+  assert.equal(toolConnectionStatus({ serviceId: 'github', state: 'verified', lastVerifiedAt: null }, { now }).statusText, 'Not checked', 'verified with no receipt timestamp proves nothing — not checked, and never Connected');
+  const github = integrationsModel({}, {}, { toolConnections: [fresh], presence: [], now }).find((i) => i.key === 'github');
+  assert.deepEqual([github.connected, github.statusText, github.source], [true, 'Connected', 'tool-connections']);
+  const noRow = integrationsModel({}, {}, { toolConnections: [], presence: [], now }).find((i) => i.key === 'github');
+  assert.deepEqual([noRow.connected, noRow.statusText, noRow.source], [false, 'Not connected', 'registry'], 'no row → the pre-1b registry answer, unchanged');
+});
+
+test('connection truth: a failed probe renders the failure state, and outranks an older verified scope', () => {
+  const now = Date.parse('2026-10-25T18:00:00.000Z');
+  const failed = { serviceId: 'github', state: 'failed', lastVerifiedAt: null, lastError: 'connection refused' };
+  assert.deepEqual(toolConnectionStatus(failed, { now }), { status: 'failed', statusText: 'Check failed', connected: false });
+  const mixed = bestToolConnectionStatus([
+    { serviceId: 'github', scopeKind: 'agent', state: 'verified', lastVerifiedAt: '2026-10-20T17:00:00.000Z' },
+    { serviceId: 'github', scopeKind: 'workspace', state: 'failed', lastVerifiedAt: null },
+    { serviceId: 'other', state: 'verified', lastVerifiedAt: '2026-10-25T17:59:00.000Z' },
+  ], 'github', { now });
+  assert.equal(mixed.statusText, 'Check failed', 'a failed receipt is said out loud; other services never leak in');
+  assert.equal(toolConnectionStatus({ serviceId: 'github', state: 'registered', lastVerifiedAt: null }, { now }).statusText, 'Not checked');
+});
+
+test('connection truth: Slack/Discord rows are channel mirrors — linked or not, never tool-connected', () => {
+  const rows = integrationsModel({ registrations: [
+    { provider: 'discord', lifecycle: 'enabled', enabled: true },
+    { provider: 'slack', lifecycle: 'draft', enabled: false },
+  ] }, {}, { toolConnections: [], presence: [] });
+  const by = Object.fromEntries(rows.map((i) => [i.key, i]));
+  assert.equal(by.discord.kind, 'Team chat mirror'); assert.equal(by.slack.kind, 'Team chat mirror');
+  assert.deepEqual([by.discord.connected, by.discord.statusText, by.discord.source], [true, 'Linked', 'channel-mirror']);
+  assert.deepEqual([by.slack.connected, by.slack.statusText], [false, 'Not linked'], 'a half-finished registration is not a link');
+  for (const key of ['slack', 'discord']) assert.notEqual(by[key].statusText, 'Connected', 'a mirror never wears the tool-connection word');
+  const evenWithToolRow = integrationsModel({ registrations: [] }, {}, { toolConnections: [{ serviceId: 'slack', state: 'verified', lastVerifiedAt: new Date().toISOString() }], presence: [] }).find((i) => i.key === 'slack');
+  assert.equal(evenWithToolRow.statusText, 'Not linked', 'a tool_connections row never speaks for a mirror');
+  const unchecked = integrationsModel({}, {}, {}).find((i) => i.key === 'discord');
+  assert.equal(unchecked.statusText, 'Not checked', 'registrations never read → not checked, not a guessed Not linked');
+});
+
+test('connection truth: provider rows read the runner link, not tool_connections', () => {
+  const now = Date.parse('2026-10-25T18:00:00.000Z');
+  const geminiToolRow = { serviceId: 'google', state: 'verified', lastVerifiedAt: '2026-10-25T17:59:00.000Z' };
+  const fromPresence = integrationsModel({}, {}, { toolConnections: [geminiToolRow], presence: [{ provider: 'gemini', connected: true }], now }).find((i) => i.key === 'google');
+  assert.deepEqual([fromPresence.connected, fromPresence.statusText, fromPresence.source], [true, 'Connected', 'runner-presence'], 'Gemini answering in its room reads Connected from presence');
+  const toolRowOnly = integrationsModel({}, { connections: [] }, { toolConnections: [geminiToolRow], presence: [], now }).find((i) => i.key === 'google');
+  assert.deepEqual([toolRowOnly.connected, toolRowOnly.statusText], [false, 'Not connected'], 'a tool_connections row never connects an AI provider');
+  const savedVerified = integrationsModel({}, { connections: [{ providerId: 'gemini', lifecycle: 'verified' }] }, { presence: [], now }).find((i) => i.key === 'google');
+  assert.deepEqual([savedVerified.connected, savedVerified.source], [true, 'provider-connection'], 'a verified sql/031 provider connection is the saved runner link');
+  const pending = integrationsModel({}, { connections: [{ providerId: 'gemini', lifecycle: 'pending' }] }, { presence: [], now }).find((i) => i.key === 'google');
+  assert.equal(pending.statusText, 'Not connected', 'a pending provider connection is not a working link');
+  const noSources = integrationsModel({}, {}, { now }).find((i) => i.key === 'google');
+  assert.equal(noSources.statusText, 'Not checked', 'neither source answered → Not checked, never a guessed Not connected');
+  const grokLive = integrationsModel({}, {}, { presence: [{ provider: 'xai', connected: true }], now }).find((i) => i.key === 'xai');
+  assert.equal(grokLive.connected, true, 'presence names fold (xai feed → Grok row)');
 });
 
 test('Guard Feed: approvals critical, denials warn, acknowledge turns amber, filters and clear', () => {
