@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,7 @@ import { createHands } from '../src/hands.mjs';
 import { createApp } from '../src/server.mjs';
 import { createSpokeTokens } from '../src/spoke-tokens.mjs';
 import { confinePath, createExecutor, pairSpoke, readSpokeConfig, startSpoke } from '../../src/hands/pc-spoke.mjs';
-import { buildGuardAction, guardActionHash, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
+import { buildGuardAction, guardActionHash, POWERSHELL_COMMANDS, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
 import { listen, mockGuard, pkce } from './helpers.mjs';
 
 const PASS = 'correct horse battery staple';
@@ -649,4 +650,54 @@ test('the new tools refuse secret paths and escapes at the executor', async () =
   await mkdir(join(root, '.ssh'));
   assert.match((await exec.execute(jobFor('make_dir', { path: join(root, '.ssh', 'x') }))).error, /secrets path/);
   assert.match((await exec.execute(jobFor('edit_file', { path: join(root, 'missing.txt'), find: 'a', replace: 'b' }))).error, /Not found/);
+});
+
+// ---- run_powershell allow-list: restart-bridge ----
+// The Bridge's in-process spoke reads its config once at pc-bridge start, so
+// restarting the Bridge is the only way to make it pick up a config change.
+// The allow-list gains exactly one fixed script for it: no arguments, no free
+// text, and run_powershell stays a mutating, Guard-approved tool.
+
+const RESTART_BRIDGE_SCRIPT = "$name = 'Helmian Bridge Service'; $exe = 'E:\\HelmianService\\Helmian Bridge Service.exe'; $roots = @(Get-Process -Name $name -ErrorAction SilentlyContinue); if ($roots.Count) { $ids = @($roots.Id); $frontier = @($roots.Id); while ($frontier.Count) { $kids = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $frontier -contains $_.ParentProcessId } | Select-Object -ExpandProperty ProcessId | Where-Object { $ids -notcontains $_ }); if (!$kids.Count) { break }; $ids += $kids; $frontier = $kids }; $ids | Where-Object { $_ -ne $PID } | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 2 }; if (!(Get-Process -Name $name -ErrorAction SilentlyContinue)) { Start-Process -FilePath $exe -WorkingDirectory 'E:\\HelmianService' -WindowStyle Hidden }; Start-Sleep -Seconds 3; $now = @(Get-Process -Name $name -ErrorAction SilentlyContinue); if ($now.Count) { $now | Select-Object Name,Id,StartTime | Format-Table -AutoSize | Out-String -Width 200 } else { 'Helmian Bridge Service is not running after the restart attempt.' }";
+
+function fakeSpawnChild(output = '') {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = () => {};
+  setImmediate(() => { if (output) child.stdout.emit('data', output); child.emit('close', 0); });
+  return child;
+}
+
+test('the powershell allow-list carries restart-bridge with no arguments, and run_powershell stays Guard-gated', () => {
+  assert.deepEqual(Object.keys(POWERSHELL_COMMANDS).sort(), ['disk-free', 'git-log', 'git-status', 'list-processes', 'ollama-list', 'restart-bridge']);
+  assert.deepEqual(POWERSHELL_COMMANDS['restart-bridge'].args, {});
+  assert.equal(TOOLS.run_powershell.mutating, true);
+  assert.deepEqual(validateArgs('run_powershell', { commandId: 'restart-bridge' }), { commandId: 'restart-bridge', args: {} });
+  assert.throws(() => validateArgs('run_powershell', { commandId: 'restart-bridge', args: { force: true } }), /unexpected argument args\.force/);
+  assert.throws(() => validateArgs('run_powershell', { commandId: 'restart-everything' }), /commandId must be one of: .*restart-bridge/);
+});
+
+test('restart-bridge runs its one fixed script, and only behind a human Guard approval', async () => {
+  const guard = mockGuard();
+  const root = await workspace();
+  const calls = [];
+  const spawnImpl = (file, argv, opts) => { calls.push({ file, argv, opts }); return fakeSpawnChild('Helmian Bridge Service    1234'); };
+  const exec = createExecutor({ roots: [root], guardPublicKeyX: guard.x, spawnImpl });
+  const iat = Math.floor(Date.now() / 1000);
+  const validated = { commandId: 'restart-bridge', args: {} };
+  const job = { tool: 'run_powershell', args: { commandId: 'restart-bridge' }, nonce: 'r'.repeat(20), guardDecision: guard.forge({ decisionId: 'rb-1', verdict: 'allow', actionHash: guardActionHash(buildGuardAction('run_powershell', validated)), deviceId: 'hands-mcp', nonce: 'r'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' }) };
+
+  // No decision: refused, and powershell never spawns.
+  const refused = await exec.execute({ ...job, guardDecision: null });
+  assert.match(refused.error, /malformed/);
+  assert.equal(calls.length, 0);
+
+  const done = await exec.execute(job);
+  assert.equal(done.ok, true);
+  assert.equal(done.execution.status, 'succeeded');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, 'powershell.exe');
+  assert.deepEqual(calls[0].argv.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
+  assert.equal(calls[0].argv[3], RESTART_BRIDGE_SCRIPT);
 });
