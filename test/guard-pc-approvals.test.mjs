@@ -98,6 +98,52 @@ test('upcoming fails soft with a 502 JSON error when Guard is unreachable or err
   assert.equal(r.out.body.error, 'GUARD_UNAVAILABLE');
 });
 
+test('a hub-raised PC approval in the real Executive Guard shape lands in the approvals the view reads', async () => {
+  // The payload below is field-for-field what the deployed Executive Guard
+  // (executive-guard/src/server.mjs: decide() + publicApproval) emits for a
+  // hands make_dir ask: seconds timestamps, actionHash + ruleId on the
+  // record, and the frozen action { kind, site, contentHash, riskSignals,
+  // summary }. If the route ever stops mapping this shape through, a PC ask
+  // raised hub-side silently never renders in /app — this test is the pin.
+  const realGuardApproval = {
+    id: '02641f0c-7295-4257-a8d5-017874af5e8e',
+    status: 'pending',
+    createdAt: 1792954049,
+    expiresAt: 1792954949,
+    deviceId: 'hands-mcp',
+    actionHash: '8fdedf9c60699bb9ee85cd04aaa0b2f39b03397015da446eb3162698a7b54b97',
+    action: {
+      kind: 'agent.tool',
+      site: 'hands.helmian',
+      contentHash: 'a'.repeat(64),
+      riskSignals: ['destructive-intent', 'hands.act', 'tool:make_dir'],
+      summary: 'hands make_dir → D:\\HelmianSpokeTest',
+    },
+    ruleId: 'destructive-needs-approval',
+    reason: 'destructive actions need a human approval',
+  };
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return { status: 200, json: async () => ({ approvals: [realGuardApproval] }) };
+  };
+  const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl });
+  const r = res(); await h(req({ cookie: 'troy-cookie' }), r, PC_APPROVALS_PATH);
+  assert.equal(r.out.status, 200);
+  assert.equal(calls[0].url, 'https://guard.test/v1/approvals?status=pending');
+  assert.equal(r.out.body.approvals.length, 1, 'the pending PC ask survives the route into the list the approvals view renders');
+  const [a] = r.out.body.approvals;
+  assert.equal(a.approvalId, realGuardApproval.id);
+  assert.equal(a.status, 'pending');
+  assert.equal(a.tool, 'make_dir');
+  assert.equal(a.summary, 'hands make_dir → D:\\HelmianSpokeTest');
+  assert.equal(a.deviceId, 'hands-mcp');
+  assert.equal(a.createdAt, new Date(1792954049 * 1000).toISOString(), 'Guard seconds become ISO for the view');
+  assert.equal(a.expiresAt, new Date(1792954949 * 1000).toISOString());
+  assert.equal('contentHash' in a, false);
+  assert.equal('actionHash' in a, false);
+});
+
 test('decide validates input and requires JSON', async () => {
   const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: guardFetch([]) });
   let r = res(); await h(req({ method: 'POST', cookie: 'troy-cookie', body: { approvalId: 'x', approve: 'yes' } }), r, PC_APPROVALS_DECIDE_PATH); assert.equal(r.out.status, 400);
