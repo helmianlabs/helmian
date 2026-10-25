@@ -12,6 +12,10 @@
       "destination": "/api/helmian-admin?__p=/api/profile"
     },
     {
+      "source": "/api/provider-oauth/:path*",
+      "destination": "/api/helmian-admin?__p=/api/provider-oauth/:path*"
+    },
+    {
       "source": "/admin",
       "destination": "/api/helmian-admin?__p=/admin"
     },

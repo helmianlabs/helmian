@@ -34,7 +34,7 @@ export function restorePath(rawUrl) {
   const url = new URL(rawUrl || '/', 'http://local');
   const original = url.searchParams.get('__p');
   url.searchParams.delete('__p');
-  if (!original || !(/^\/(admin|api\/admin)(\/|$)/.test(original) || /^\/api\/(signup|profile)$/.test(original))) return null;
+  if (!original || !(/^\/(admin|api\/admin|api\/provider-oauth)(\/|$)/.test(original) || /^\/api\/(signup|profile)$/.test(original))) return null;
   const query = url.searchParams.toString();
   // Vercel strips trailing slashes (trailingSlash:false), so serve the page for /admin directly.
   const target = original === '/admin' ? '/admin/' : original;
