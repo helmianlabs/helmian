@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
-  FILE_MAX_BYTES, MAX_ATTACHMENTS, UPLOAD_NOTE, addAttachment, applySkillToBody,
+  FILE_MAX_BYTES, MAX_ATTACHMENTS, UPLOAD_NOTE, WEB_SEARCH_NOTE, addAttachment, applySkillToBody,
   attachmentKey, attachmentMetadata, buildMessageRequest, classifyFile,
   fileRefusalReason, normalizeFileAttachment, normalizeSkillName,
   pickerModel, removeAttachment,
@@ -33,8 +33,17 @@ const group = (id) => model.groups.find((g) => g.id === id);
 const catalog = group('connectors').items;
 const pluginCatalog = group('plugins').items;
 
-test('picker groups are skills, connectors, plugins, upload — in that order', () => {
-  assert.deepEqual(model.groups.map((g) => g.id), ['skills', 'connectors', 'plugins', 'upload']);
+test('picker groups are skills, connectors, plugins, upload, web-search — in that order', () => {
+  assert.deepEqual(model.groups.map((g) => g.id), ['skills', 'connectors', 'plugins', 'upload', 'web-search']);
+});
+
+test('web-search group is a per-message toggle with the seat-honest note', () => {
+  const ws = group('web-search');
+  assert.equal(ws.toggle, true);
+  assert.deepEqual(ws.items, [], 'a toggle carries no attachable items');
+  assert.equal(ws.note, WEB_SEARCH_NOTE);
+  assert.match(ws.note, /Claude seat searches for real/, 'the note says which seat is real');
+  assert.match(ws.note, /say plainly/, 'and that the others say so instead of pretending');
 });
 
 test('plugins group is the installed list from the bridge, with what each brings', () => {
@@ -264,8 +273,11 @@ test('both composers carry the picker: plus buttons, panels, chips, wiring', asy
   assert.match(js, /from '\.\/composer-picker\.mjs'/);
   assert.match(js, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => togglePicker\('channel'\)\)/);
   assert.match(js, /\$\('ew-cli-plus'\)\.addEventListener\('click', \(\) => togglePicker\('cli'\)\)/);
-  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel \}\)/, 'channel send builds its request through the picker model');
+  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel \}\)/, 'channel send builds its request through the picker model, web-search toggle included');
   assert.match(js, /attachments: ws\.attach\.cli/, 'agent-chat send carries its own attachments');
+  assert.match(js, /attachments: ws\.attach\.cli, webSearch: ws\.webSearch\.cli/, 'agent-chat send carries its own web-search toggle');
+  assert.match(js, /g\.id === 'web-search'/, 'the workspace picker renders the web-search toggle group');
+  assert.match(js, /ws\.webSearch\[which\] = !on/, 'the toggle flips per-composer state, never the attach list');
   assert.match(js, /api\('\/api\/admin\/cora\/connectors'\)/, 'the picker reads the same connectors registry as Integrations');
   assert.match(js, /api\('\/api\/admin\/plugins'\)/, 'the picker reads the installed-plugins list the bridge ledger backs');
 });
@@ -304,9 +316,10 @@ test('the session console carries the picker too: plus button, panel, chips, its
   assert.match(js, /\$\('#console-plus'\)\.onclick = \(\) => toggleConsolePicker\(\)/, 'the console plus toggles the console picker');
   assert.match(js, /api\('\/api\/admin\/cora\/connectors'\)/, 'the console picker reads the same connectors registry as Integrations');
   assert.match(js, /api\('\/api\/admin\/provider-connections'\)/, 'the console picker reads the same provider connections');
-  assert.match(js, /buildMessageRequest\(\{ channelId: state\.channelId, body, idempotencyKey: crypto\.randomUUID\(\), attachments: consoleAttach\.list \}\)/, 'console send builds its request through the picker model with its own list');
-  assert.match(js, /consoleAttach\.list = \[\]; renderConsoleAttachChips\(\); closeConsolePicker\(\)/, 'a successful console send clears its own attachments');
-  assert.match(js, /const consoleAttach = \{ list: \[\], open: false, data: null \}/, 'the console keeps a separate attach list from the workspace’s channel/cli lists');
+  assert.match(js, /buildMessageRequest\(\{ channelId: state\.channelId, body, idempotencyKey: crypto\.randomUUID\(\), attachments: consoleAttach\.list, webSearch: consoleAttach\.webSearch \}\)/, 'console send builds its request through the picker model with its own list and toggle');
+  assert.match(js, /consoleAttach\.list = \[\]; consoleAttach\.webSearch = false; renderConsoleAttachChips\(\); closeConsolePicker\(\)/, 'a successful console send clears its own attachments and toggle');
+  assert.match(js, /const consoleAttach = \{ list: \[\], webSearch: false, open: false, data: null \}/, 'the console keeps a separate attach list and toggle from the workspace’s channel/cli state');
+  assert.match(js, /g\.id === 'web-search'/, 'the console picker renders the web-search toggle group too');
 });
 
 test('the workspace renders the upload group as a file input wired to the model', async () => {
@@ -315,4 +328,39 @@ test('the workspace renders the upload group as a file input wired to the model'
   assert.match(js, /fileRefusalReason\(\{ name: file\.name/, 'type/size are refused before the read');
   assert.match(js, /readFileAsBase64\(file\)/, 'the picked file is read to base64 for the metadata');
   assert.match(js, /addAttachment\(ws\.attach\[which\], \{ kind: 'file'/, 'the file joins the same attach list as skills and connectors');
+});
+
+// ---- the web-search toggle: reachable in the composer, carried as
+// ---- metadata.webSearch, accepted by the REAL server normalizer, and
+// ---- absent (byte-identical wire) when off — the flag every consumer
+// ---- already reads (bridge resolver, cloud worker) but no composer
+// ---- could set before.
+
+test('web search ON with nothing attached still produces metadata — and the server accepts it', () => {
+  const meta = attachmentMetadata([], { webSearch: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(meta)), { webSearch: true });
+  assert.deepEqual(normalizeMessageMetadata(meta), meta, 'the canonical validator keeps the flag');
+  const req = buildMessageRequest({ channelId: 'c1', body: 'what happened today?', idempotencyKey: 'kw1', webSearch: true });
+  assert.deepEqual(Object.keys(req.payload).sort(), ['body', 'channelId', 'idempotencyKey', 'metadata'], 'the flag rides the payload on its own');
+  assert.deepEqual(req.payload.metadata, { webSearch: true });
+  assert.equal(req.payload.body, 'what happened today?', 'the body is untouched');
+});
+
+test('web search ON rides alongside attachments in the same metadata object', () => {
+  const req = buildMessageRequest({ channelId: 'c1', body: 'see attached', idempotencyKey: 'kw2', attachments: [skill('deploy')], webSearch: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(req.metadata)), {
+    attachments: [{ kind: 'skill', name: 'deploy' }],
+    webSearch: true,
+  });
+  assert.deepEqual(normalizeMessageMetadata(req.payload.metadata), req.metadata, 'the combined shape is the stored shape');
+});
+
+test('web search OFF (or never touched) is the pre-toggle wire, byte for byte', () => {
+  assert.equal(attachmentMetadata([], { webSearch: false }), null);
+  assert.equal(attachmentMetadata([], {}), null);
+  const off = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'kw3', webSearch: false });
+  assert.equal(off.metadata, null);
+  assert.deepEqual(Object.keys(off.payload).sort(), ['body', 'channelId', 'idempotencyKey'], 'no metadata key at all when off');
+  const withAtt = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'kw4', attachments: [skill('deploy')], webSearch: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(withAtt.metadata)), { attachments: [{ kind: 'skill', name: 'deploy' }] }, 'no webSearch key appears when off');
 });
