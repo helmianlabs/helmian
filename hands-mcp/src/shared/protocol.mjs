@@ -267,3 +267,50 @@ export function verifyRootGrant({ publicKeyX, envelope, spokeDeviceId, now = Dat
     return { ok: false, error: `unverifiable: ${error.message}` };
   }
 }
+
+// ─── Spoke scope summary (scope-permission spec, bite 1: reporting) ──────────
+//
+// The spoke reports its file scope to the hub with its poll presence: which
+// tier it is in, its built-in default roots, and the folders opened by signed
+// root grants. The hub audits the report and flags changes (visibility only —
+// a report never grants anything; enforcement stays on the PC, per operation).
+// The tier words are the spec's three choices, machine-spelled:
+//   full-pc         "Full PC" — agents can look anywhere on this computer
+//   pick-folders    "Pick folders" — only the folders listed
+//   no-file-access  "No file access" — every file tool refuses
+export const SCOPE_TIERS = Object.freeze(['full-pc', 'pick-folders', 'no-file-access']);
+export const MAX_SCOPE_PATHS = 32; // per list (roots / grants)
+export const MAX_SCOPE_PATH_CHARS = 320;
+
+/**
+ * Canonicalize a scope summary arriving over the wire, or return null when it
+ * is absent or malformed in any part (a malformed report is treated as no
+ * report — never partially trusted). Canonical form: tier validated, roots
+ * and grants deduplicated and sorted, so two summaries compare by value.
+ */
+export function cleanScopeSummary(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (!SCOPE_TIERS.includes(raw.tier)) return null;
+  const cleanList = (v) => {
+    if (v === undefined) return [];
+    if (!Array.isArray(v) || v.length > MAX_SCOPE_PATHS) return null;
+    const out = new Set();
+    for (const entry of v) {
+      if (typeof entry !== 'string' || !entry.length || entry.length > MAX_SCOPE_PATH_CHARS) return null;
+      out.add(entry);
+    }
+    return [...out].sort();
+  };
+  const roots = cleanList(raw.roots);
+  const grants = cleanList(raw.grants);
+  if (roots === null || grants === null) return null;
+  return { tier: raw.tier, roots, grants };
+}
+
+/** Both inputs must already be canonical (cleanScopeSummary output). */
+export function scopeSummariesEqual(a, b) {
+  if (!a || !b) return a === b;
+  return a.tier === b.tier
+    && a.roots.length === b.roots.length && a.roots.every((r, i) => r === b.roots[i])
+    && a.grants.length === b.grants.length && a.grants.every((r, i) => r === b.grants[i]);
+}
