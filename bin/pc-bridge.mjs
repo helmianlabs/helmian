@@ -25,6 +25,7 @@ import { resolveGrokVaultInjection } from '../src/agent/supergrok-credentials.mj
 import { parseApprovalReply } from '../src/mcp/local-exec-server.mjs';
 import { agentPrompt, normalizeProvider } from '../src/cloud/envoy-agents.mjs';
 import { discoverCommands, expandCommand, parseSlashInput, resolveCommand } from '../src/agent/commands.mjs';
+import { discoverTenantCommands, ensureTenantStarterCommands, tenantWorkspacePath } from '../src/agent/tenant-workspace.mjs';
 import { loadEnabledPlugins } from '../src/agent/plugins.mjs';
 
 const CLOUD = 'https://helmian.cloud';
@@ -413,13 +414,39 @@ export async function runBridge(overrides = {}) {
   // discovery + expansion the child runs on the direct path, and report the
   // outcome (slashExpansion) so the turn's skill line states what really
   // happened: expanded only on a hit, honestly not-expanded on a miss.
+  // Tenant command workspace: this bridge serves one tenant (the one its
+  // device token paired with). That tenant's own commands live under
+  // <workspace>/tenants/<tenantId>/ (tenant-workspace.mjs); the starter
+  // set is stocked there on first use, and discovery merges the tenant's
+  // commands under the bridge workspace's own. Computed lazily so a
+  // bridge that never takes agent work never touches the disk for it.
+  let tenantDirCache;
+  const tenantCommandsDir = () => {
+    if (tenantDirCache === undefined) {
+      tenantDirCache = null;
+      try { if (creds?.tenantId) tenantDirCache = tenantWorkspacePath(deps.workspace, creds.tenantId); } catch { tenantDirCache = null; }
+    }
+    return tenantDirCache;
+  };
+  let tenantStartersSeeded = false;
+
   const expandAgentWorkBody = async (rawBody) => {
     const parsed = parseSlashInput(rawBody);
     if (!parsed) return { body: rawBody, slashExpansion: null };
     let hit = null;
     try {
       const { plugins } = await loadEnabledPlugins({ workspace: deps.workspace });
-      const registry = await discoverCommands({ workspace: deps.workspace, builtins: [], plugins });
+      const tenantDir = tenantCommandsDir();
+      if (tenantDir && !tenantStartersSeeded) {
+        tenantStartersSeeded = true;
+        try {
+          const written = await ensureTenantStarterCommands(tenantDir);
+          if (written.length) log(`tenant starter commands stocked: ${written.join(', ')}`);
+        } catch (err) { logError('tenant starter commands not stocked:', err?.message ?? err); }
+      }
+      const registry = tenantDir
+        ? await discoverTenantCommands({ workspace: deps.workspace, tenantDir, builtins: [], plugins })
+        : await discoverCommands({ workspace: deps.workspace, builtins: [], plugins });
       const cmd = resolveCommand(registry, parsed.name);
       if (cmd) {
         hit = {
