@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, friendlyWorkspace } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, friendlyWorkspace } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
 
 const $ = (s) => document.querySelector(s);
@@ -1180,15 +1180,32 @@ function findingCards() {
   }));
 }
 async function ackFinding(fingerprint) {
+  const finding = (state.findings ?? []).find((f) => f.fingerprint === fingerprint);
   try { await post('/api/admin/guard/acks', { fingerprint }); toast('Acknowledged'); }
-  catch { toast('Acknowledgement not saved — try again'); }
+  catch { toast('Acknowledgement not saved — try again'); await loadFeedData(); renderFeed(); return; }
+  // The ack is saved on the server; the card also leaves the pile for good
+  // via the persisted cleared set — except criticals, which are never
+  // hidden by an ack: they stay visible, marked acknowledged.
+  if (finding && String(finding.severity ?? '').toLowerCase() !== 'critical') {
+    state.cleared.add(`finding:${fingerprint}`); store.set('cleared', [...state.cleared]);
+  }
   await loadFeedData(); renderFeed();
+}
+// Acknowledging an event card removes it from the feed for good: the id
+// lands in the persisted cleared set, so a reload (which refetches the
+// same events from the server) cannot resurrect it. New events carry new
+// ids and still show.
+function clearFeedCard(id) {
+  state.ack.add(id); state.cleared.add(id);
+  store.set('ack', [...state.ack]); store.set('cleared', [...state.cleared]);
+  renderFeed();
 }
 function renderFeed() {
   renderGuardApprovals();
   const filter = $('#feed-filter').value;
   const cards = feedModel({ events: state.events, approvals: state.approvals }, { filter: 'all', showInfo: $('#opt-info').checked, showApprovals: $('#opt-approvals').checked, acknowledged: state.ack, cleared: state.cleared });
   const merged = [...findingCards(), ...cards]
+    .filter((c) => !state.cleared.has(c.id))
     .filter((c) => filter === 'all' || c.severity === filter)
     .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
   const critical = merged.filter((c) => c.severity === 'critical').length;
@@ -1211,11 +1228,11 @@ function renderFeed() {
       no.onclick = () => { if (a.querySelector('.confirm')) return; const cf = el('div', 'confirm'); cf.append(el('div', null, 'Reject this request?')); const r = el('div', 'actions'); const y = el('button', 'btn danger sm', 'Yes, reject'); const n = el('button', 'btn ghost sm', 'Cancel'); y.onclick = () => decide(c.approval, 'reject'); n.onclick = () => cf.remove(); r.append(y, n); cf.append(r); a.append(cf); };
       actions.append(ok, no);
     }
-    if (!c.ack && c.severity !== 'info') {
+    if (!c.ack && !c.approval) {
       const ack = el('button', 'btn ghost sm', 'Acknowledge');
       ack.onclick = c.finding
         ? () => ackFinding(c.finding.fingerprint)
-        : () => { state.ack.add(c.id); store.set('ack', [...state.ack]); renderFeed(); };
+        : () => clearFeedCard(c.id);
       actions.append(ack);
     }
     if (actions.childElementCount) a.append(actions);
@@ -1270,6 +1287,10 @@ function renderFeed() {
           const ackBtn = el('button', 'btn ghost sm', 'Ack');
           ackBtn.onclick = (e) => { e.stopPropagation(); ackFinding(c.finding.fingerprint); };
           head.append(ackBtn);
+        } else if (!c.ack && !c.approval) {
+          const ackBtn = el('button', 'btn ghost sm', 'Ack');
+          ackBtn.onclick = (e) => { e.stopPropagation(); clearFeedCard(c.id); };
+          head.append(ackBtn);
         }
         card.append(head, el('div', 'guard-card-title', c.title));
         if (c.body) card.append(el('div', 'muted sm', String(c.body).slice(0, 200)));
@@ -1285,6 +1306,16 @@ $('#feed-ack-all').onclick = async () => {
   const pending = (state.findings ?? []).filter((f) => !f.acked);
   for (const f of pending) { try { await post('/api/admin/guard/acks', { fingerprint: f.fingerprint }); } catch { /* keep going */ } }
   if (pending.length) toast(pending.length === 1 ? 'Finding acknowledged' : `${pending.length} findings acknowledged`);
+  // Ack all clears the pile, not just the findings: every event card and
+  // every non-critical finding card now in the feed is acknowledged and
+  // removed for good via the persisted cleared set, so a reload cannot
+  // resurrect them. Pending approvals are decisions, not notices — an ack
+  // never clears them.
+  const ids = feedAckClearIds({ events: state.events, findings: state.findings });
+  if (ids.length) {
+    for (const id of ids) { state.ack.add(id); state.cleared.add(id); }
+    store.set('ack', [...state.ack]); store.set('cleared', [...state.cleared]);
+  }
   await loadFeedData(); renderFeed();
 };
 
@@ -2546,7 +2577,11 @@ async function boot() {
   if (hashIsGuard()) openGuardPanel();
   if (!PANEL_VIEWS.includes(initialView)) selectPanelTab(store.get('panelTab', 'browser'));
   loadProjects(); loadSteps(); loadFeedData();
-  setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); loadSteps(); if (shell.dataset.view === 'console') loadLog(); if (shell.dataset.view === 'home') loadHome(); }, 6000);
+  // The heartbeat also re-reads the PC actions panel while the owner is on
+  // the Approvals view: a Guard ask raised on the PC (via the hands hub)
+  // appears here within one beat — and leaves again once it is decided on
+  // any surface — instead of only ever loading when the view is opened.
+  setInterval(() => { if (document.visibilityState !== 'visible' || !$('#opt-auto').checked) return; loadFeedData(); loadSteps(); if (shell.dataset.view === 'console') loadLog(); if (shell.dataset.view === 'home') loadHome(); if (shell.dataset.view === 'approvals') loadPcApprovals(); }, 6000);
 }
 boot();
 
