@@ -157,6 +157,7 @@ function run(file, args, { timeoutMs = 30000, spawnImpl = spawn } = {}) {
 
 const PS = ['-NoProfile', '-NonInteractive', '-Command'];
 const PS_SCRIPTS = {
+  'toolchain-versions': 'foreach ($c in @("node","npm","npx","eas")) { $g = Get-Command $c -ErrorAction SilentlyContinue; if ($g) { $v = & $c --version 2>&1 | Select-Object -First 1; "$c = $v" } else { "$c = MISSING" } }',
   'disk-free': "Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} | Format-Table -AutoSize | Out-String -Width 200",
   'list-processes': 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name,Id,@{n="CPU";e={[math]::Round($_.CPU,1)}},@{n="MemMB";e={[math]::Round($_.WorkingSet64/1MB)}} | Format-Table -AutoSize | Out-String -Width 200',
   // The Bridge's in-process spoke reads hands-spoke.json ONCE at pc-bridge
@@ -305,6 +306,25 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
           if (commandId === 'git-status') return run('git', ['-C', await confineFor(a.repo), 'status', '--short', '--branch'], { spawnImpl });
           if (commandId === 'git-log') return run('git', ['-C', await confineFor(a.repo), 'log', '--oneline', '-n', String(a.count)], { spawnImpl });
           if (commandId === 'ollama-list') return run('ollama', ['list'], { spawnImpl });
+          if (commandId === 'eas-build') {
+            // Start the build DETACHED (a real EAS build far outlives the
+            // spoke's 30 s job window): cmd.exe runs the build hidden with
+            // all output redirected into a log in the repo, appending a
+            // HELMIAN_BUILD_EXIT=<code> marker at the end (delayed expansion
+            // via /v:on so the code is read after the build finishes, not
+            // before). eas-build-status reads the log back. Only the
+            // confined repo path varies; it is single-quote-escaped.
+            const repo = await confineFor(a.repo);
+            const q = repo.replace(/'/g, "''");
+            const script = `$repo = '${q}'; $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'; $log = Join-Path $repo (".helmian-eas-build-$stamp.log"); $inner = 'eas build --platform android --profile preview --non-interactive > "' + $log + '" 2>&1 & echo HELMIAN_BUILD_EXIT=!ERRORLEVEL! >> "' + $log + '"'; $p = Start-Process cmd.exe -ArgumentList @('/v:on', '/c', $inner) -WorkingDirectory $repo -WindowStyle Hidden -PassThru; "build started: pid $($p.Id); log: $log"`;
+            return run('powershell.exe', [...PS, script], { spawnImpl });
+          }
+          if (commandId === 'eas-build-status') {
+            const repo = await confineFor(a.repo);
+            const q = repo.replace(/'/g, "''");
+            const script = `$log = Get-ChildItem -LiteralPath '${q}' -Filter '.helmian-eas-build-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if (!$log) { 'no spoke-started EAS build log in this repo' } else { "log: $($log.Name) - last write $($log.LastWriteTime)"; Get-Content -LiteralPath $log.FullName -Tail 40 }`;
+            return run('powershell.exe', [...PS, script], { spawnImpl });
+          }
           if (PS_SCRIPTS[commandId]) return run('powershell.exe', [...PS, PS_SCRIPTS[commandId]], { spawnImpl });
           return { ok: false, error: 'command not on the PC allow-list' };
         }
