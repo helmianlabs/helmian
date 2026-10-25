@@ -225,7 +225,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           for (const row of rows) {
             const message = messageOut(row);
             const at = new Date(row.created_at).getTime();
-            let due = agentsToAnswer(message, config.agents, { desk: config.desk === true }).filter((p) => wanted.includes(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
+            let due = agentsToAnswer(message, config.agents, { desk: config.desk === true, room: channel.kind === 'agent' && config.desk !== true }).filter((p) => wanted.includes(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
             if (gate) {
               for (const p of due) if (!gate.has(p)) withheld.set(p, state.reason ?? 'no-provider');
               due = due.filter((p) => gate.has(p));
@@ -247,6 +247,10 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       if (actor.viaDeviceToken !== true) throw fail(403, 'ENVOY_DEVICE_TOKEN_REQUIRED');
       const provider = normalizeProvider(input?.provider);
       if (!provider) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
+      // No reply is ever authored by Maestro: Maestro is the human's
+      // seat, not an agent, so a 'maestro' post is refused outright —
+      // even where a historical roster still lists it (Bite 2).
+      if (provider === 'maestro') throw fail(400, 'ENVOY_AGENT_NOT_AN_AGENT');
       const body = String(input?.body ?? '').trim();
       if (!body || body.length > 4000) throw fail(400, 'ENVOY_MESSAGE_INVALID');
       const replyTo = input?.replyTo ? String(input.replyTo) : null;
@@ -274,6 +278,8 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     async seedRoomAgent(actor, channelId, provider) {
       const p = normalizeProvider(provider);
       if (!p) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
+      // Maestro has no private room: it is the human's seat, not an agent.
+      if (p === 'maestro') throw fail(400, 'ENVOY_AGENT_NOT_AN_AGENT');
       return tx(actor, async (client) => {
         const channel = await channelRow(client, actor.tenantId, channelId);
         if (channel.kind !== 'agent') throw fail(400, 'ENVOY_ROOM_KIND_INVALID');

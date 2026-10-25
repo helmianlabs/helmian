@@ -17,21 +17,40 @@ test('mentions: names, numbered names, @all, emails ignored', () => {
   assert.deepEqual(mentionsIn('mail troy@claude.ai').providers, []);
 });
 
-test('routing: mention, @all, Maestro default, everyone when no Maestro', () => {
+test('routing matrix (ordinary channel): named answers, unnamed = silence, maestro never answers', () => {
   const roster = ['maestro', 'claude', 'gemini'];
+  // A named agent answers.
   assert.deepEqual(agentsToAnswer(human('@claude fix it'), roster), ['claude']);
-  assert.deepEqual(agentsToAnswer(human('@all status'), roster), roster);
-  assert.deepEqual(agentsToAnswer(human('build the page'), roster), ['maestro']);
-  assert.deepEqual(agentsToAnswer(human('build the page'), ['claude', 'grok']), ['claude', 'grok']);
+  assert.deepEqual(agentsToAnswer(human('@Claude and @Gemini: go'), roster), ['claude', 'gemini']);
+  // @all reaches every agent — and never 'maestro', which is not one.
+  assert.deepEqual(agentsToAnswer(human('@all status'), roster), ['claude', 'gemini']);
+  assert.deepEqual(agentsToAnswer(human('@all status'), ['claude', 'grok']), ['claude', 'grok']);
+  // An unnamed message gets NO agent turn, with or without a historical
+  // 'maestro' entry on the roster.
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster), []);
+  assert.deepEqual(agentsToAnswer(human('build the page'), ['claude', 'grok']), []);
+  // Naming Maestro names the human's own seat: nobody answers.
+  assert.deepEqual(agentsToAnswer(human('@maestro look at this'), roster), []);
+  assert.deepEqual(agentsToAnswer(human('hi'), ['maestro']), []);
   assert.deepEqual(agentsToAnswer(human('@grok hi'), roster), [], 'not a member');
   assert.deepEqual(agentsToAnswer(human('hi'), []), []);
 });
 
-test('routing: only Maestro dispatches to agents, one hop', () => {
+test('routing: agent-authored messages dispatch nobody — there is no Maestro hop', () => {
   const roster = ['maestro', 'claude', 'gemini'];
-  assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:maestro', body: '@Claude: UI. @Gemini: tests.' }, roster), ['claude', 'gemini']);
+  // The old impostor shape: a message authored "by Maestro" dispatched
+  // the named workers. That hop is gone — dispatch is the human's act.
+  assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:maestro', body: '@Claude: UI. @Gemini: tests.' }, roster), []);
+  assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:maestro', body: '@all go' }, roster), []);
   assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:claude', body: '@gemini your turn' }, roster), []);
   assert.deepEqual(agentsToAnswer({ authorKind: 'system', authorSubject: 'system:envoy', body: '@all' }, roster), []);
+});
+
+test('routing: a private room routes unnamed prompts to its one agent', () => {
+  assert.deepEqual(agentsToAnswer(human('just us here'), ['gemini'], { room: true }), ['gemini']);
+  assert.deepEqual(agentsToAnswer(human('@claude wrong room'), ['gemini'], { room: true }), []);
+  assert.deepEqual(agentsToAnswer(human('hello'), ['maestro'], { room: true }), [], 'a maestro room seats nobody');
+  assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:gemini', body: 'note to self' }, ['gemini'], { room: true }), []);
 });
 
 test('config round trip keeps join times, hides the code hash', () => {
@@ -59,8 +78,21 @@ test('author names for agents, Discord members, system', () => {
 
 test('agent prompt names the role and the claim rule', () => {
   const p = agentPrompt({ provider: 'claude', channelTitle: 'build', members: ['maestro', 'claude', 'gemini'], message: { authorName: 'Troy', body: 'ship it' } });
-  assert.match(p, /You are Claude/); assert.match(p, /Claim:/); assert.match(p, /Maestro, Gemini/); assert.match(p, /ship it/);
-  assert.match(agentPrompt({ provider: 'maestro', channelTitle: 'x', members: ['maestro'], message: { body: 'q' } }), /manager/);
+  assert.match(p, /You are Claude/); assert.match(p, /Claim:/); assert.match(p, /ship it/);
+  // Maestro is not listed among the other agents: it is not one.
+  assert.match(p, /Other agents here: Gemini\./);
+  assert.doesNotMatch(p, /Maestro/);
+});
+
+test('no prompt is ever composed for Maestro', () => {
+  assert.throws(
+    () => agentPrompt({ provider: 'maestro', channelTitle: 'x', members: ['maestro'], message: { body: 'q' } }),
+    /not an agent/,
+  );
+});
+
+test('bridge-authored posts are named for the bridge, never Maestro', () => {
+  assert.deepEqual(describeAuthor('user_abc:bridge', 'agent'), { name: 'PC bridge', source: 'helmian', provider: null });
 });
 
 const b64 = (text) => Buffer.from(text, 'utf8').toString('base64');
@@ -112,7 +144,7 @@ test('file attachments: dedupe is name+size, and other kinds are untouched', () 
 test('desk routing: a human send is a dispatch — @all, @name, unnamed = everyone', () => {
   const team = ['claude', 'openai', 'grok', 'gemini'];
   // Unnamed reaches the whole desk (desk-only rule; ordinary channels
-  // would route this to Maestro alone).
+  // would route this to nobody).
   assert.deepEqual(agentsToAnswer(human('build the page'), team, { desk: true }), team);
   assert.deepEqual(agentsToAnswer(human('@all status'), team, { desk: true }), team);
   assert.deepEqual(agentsToAnswer(human('@claude fix it'), team, { desk: true }), ['claude']);
@@ -133,15 +165,17 @@ test('desk routing: Maestro is never a dispatch target', () => {
 test('desk routing: agent and system messages keep the ordinary rules', () => {
   const team = ['claude', 'openai', 'grok', 'gemini'];
   assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:claude', body: '@gemini your turn' }, team, { desk: true }), []);
+  assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:maestro', body: '@all go' }, team, { desk: true }), [], 'no agent speaks as Maestro, even in the desk');
   assert.deepEqual(agentsToAnswer({ authorKind: 'system', authorSubject: 'system:envoy', body: '@all' }, team, { desk: true }), []);
 });
 
-test('ordinary routing is untouched when desk is off or absent', () => {
+test('ordinary routing holds when desk is off or absent: unnamed = silence', () => {
   const roster = ['maestro', 'claude', 'gemini'];
-  assert.deepEqual(agentsToAnswer(human('build the page'), roster), ['maestro']);
-  assert.deepEqual(agentsToAnswer(human('build the page'), roster, {}), ['maestro']);
-  assert.deepEqual(agentsToAnswer(human('build the page'), roster, { desk: false }), ['maestro']);
-  assert.deepEqual(agentsToAnswer(human('@all status'), roster, { desk: false }), roster);
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster), []);
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster, {}), []);
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster, { desk: false }), []);
+  assert.deepEqual(agentsToAnswer(human('@all status'), roster, { desk: false }), ['claude', 'gemini']);
+  assert.deepEqual(agentsToAnswer(human('@gemini status'), roster, { desk: false }), ['gemini']);
 });
 
 test('desk config: desk flag round-trips and stays out of configs that never had it', () => {

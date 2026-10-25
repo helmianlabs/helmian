@@ -81,7 +81,9 @@ export function clockTime(value) { return formatTime(value, { hour: '2-digit', m
 // Bridge identity: the PC bridge posts with authorKind='agent' and an
 // authorSubject ending in ':bridge' (server-derived in src/cloud/envoy-chat.mjs).
 // Give it a name instead of the generic "agent" fallback. Rename in one line here.
-export const BRIDGE_DISPLAY_NAME = 'Maestro';
+// The name is "PC bridge", not Maestro: Maestro is the human's seat,
+// and no reply is authored under that name (Maestro Bite 2).
+export const BRIDGE_DISPLAY_NAME = 'PC bridge';
 const BRIDGE_SUBJECT_SUFFIX = ':bridge';
 
 export function logLines(body = {}, subject = null) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, agentRoomFor, agentRoomThread, deskChannelFor, deskPending, deskRoster, deskTargets, dragLayout, isDeskChannel, pendingAgentWork } from '../app/envoy-workspace.js';
+import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, addressed, agentRoomFor, agentRoomThread, deskChannelFor, deskPending, deskRoster, deskTargets, dragLayout, isDeskChannel, pendingAgentWork, roomAddressed } from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -39,9 +39,12 @@ const ROSTER = ['maestro', 'gemini'];
 const JOINED = { maestro: iso(3_600_000), gemini: iso(3_600_000) };
 const ONLINE = new Set(['maestro', 'gemini']);
 
-test('an unmentioned human message is pending for Maestro only', () => {
+test('an unmentioned human message is pending for nobody (Bite 2: unnamed = silence)', () => {
   const msgs = [human('m1', 'hello')];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['maestro']);
+  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), []);
+  assert.deepEqual(addressed(human('m1', 'hello'), ROSTER), []);
+  // Naming Maestro names the human's own seat: still nobody.
+  assert.deepEqual(addressed(human('m1', '@Maestro look'), ROSTER), []);
 });
 
 test('a mention routes the pending work to the named agent', () => {
@@ -49,26 +52,33 @@ test('a mention routes the pending work to the named agent', () => {
   assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['gemini']);
 });
 
-test('@all makes the work pending for the whole roster, in roster order', () => {
+test('@all makes the work pending for every agent — never for Maestro', () => {
   const msgs = [human('m1', '@all hands on deck')];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['maestro', 'gemini']);
+  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['gemini']);
 });
 
 test('the work clears when the reply posts', () => {
-  const msgs = [human('m1', 'hello'), reply('m2', 'm1', 'maestro')];
+  const msgs = [human('m1', '@Gemini hello'), reply('m2', 'm1', 'gemini')];
   assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), []);
 });
 
 test('a second unanswered ask keeps the agent pending after the first is answered', () => {
-  const msgs = [human('m1', 'one', 120_000), reply('m2', 'm1', 'maestro', 90_000), human('m3', 'two', 60_000)];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['maestro']);
+  const msgs = [human('m1', '@Gemini one', 120_000), reply('m2', 'm1', 'gemini', 90_000), human('m3', '@Gemini two', 60_000)];
+  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['gemini']);
 });
 
 test('work expires at the server work window, not before', () => {
-  const justInside = [human('m1', 'hello', AGENT_WORK_WINDOW_MS - 1_000)];
-  assert.deepEqual(pendingAgentWork(justInside, ROSTER, JOINED, ONLINE, NOW), ['maestro']);
-  const justOutside = [human('m1', 'hello', AGENT_WORK_WINDOW_MS + 1_000)];
+  const justInside = [human('m1', '@Gemini hello', AGENT_WORK_WINDOW_MS - 1_000)];
+  assert.deepEqual(pendingAgentWork(justInside, ROSTER, JOINED, ONLINE, NOW), ['gemini']);
+  const justOutside = [human('m1', '@Gemini hello', AGENT_WORK_WINDOW_MS + 1_000)];
   assert.deepEqual(pendingAgentWork(justOutside, ROSTER, JOINED, ONLINE, NOW), []);
+});
+
+test('in a private room the unnamed prompt IS the room agent\'s work (the room is the address)', () => {
+  const msgs = [human('m1', 'just us here')];
+  assert.deepEqual(pendingAgentWork(msgs, ['gemini'], { gemini: iso(3_600_000) }, new Set(['gemini']), NOW, roomAddressed), ['gemini']);
+  assert.deepEqual(roomAddressed(human('m1', '@Claude wrong room'), ['gemini']), []);
+  assert.deepEqual(roomAddressed(human('m1', 'hello'), ['maestro']), [], 'a maestro room seats nobody');
 });
 
 test('messages from before an agent joined are not its work', () => {
@@ -78,14 +88,16 @@ test('messages from before an agent joined are not its work', () => {
 });
 
 test('offline agents are never reported as answering', () => {
-  const msgs = [human('m1', 'hello')];
+  const msgs = [human('m1', '@Gemini hello')];
   assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, new Set(), NOW), []);
   assert.deepEqual(pendingAgentWork([human('m2', '@Gemini yo')], ROSTER, JOINED, new Set(['maestro']), NOW), []);
 });
 
-test('Maestro dispatch makes named agents pending, one hop only', () => {
+test('agent-authored messages make nobody pending — there is no dispatch hop', () => {
+  // The old shape: a message authored "by Maestro" dispatched the named
+  // workers in the client's mirror too. Gone (Bite 2).
   const dispatch = { id: 'm1', authorKind: 'agent', authorSubject: 'agent:maestro', body: '@Gemini: take the summary slice', createdAt: iso(60_000) };
-  assert.deepEqual(pendingAgentWork([dispatch], ROSTER, JOINED, ONLINE, NOW), ['gemini']);
+  assert.deepEqual(pendingAgentWork([dispatch], ROSTER, JOINED, ONLINE, NOW), []);
   const workerNote = { id: 'm2', authorKind: 'agent', authorSubject: 'agent:gemini', body: '@Maestro done', createdAt: iso(60_000) };
   assert.deepEqual(pendingAgentWork([workerNote], ROSTER, JOINED, ONLINE, NOW), []);
 });
@@ -463,8 +475,8 @@ test('desk pending: an unnamed dispatch is pending for the whole online desk', (
   const msgs = [human('m1', 'status, everyone')];
   assert.deepEqual(deskPending(msgs, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), DESK_TEAM);
   // The contrast that defines the desk: the same message under ordinary
-  // routing (roster with Maestro) is pending for Maestro alone.
-  assert.deepEqual(pendingAgentWork(msgs, ['maestro', ...DESK_TEAM], { maestro: iso(3_600_000), ...DESK_JOINED }, new Set(['maestro', ...DESK_TEAM]), NOW), ['maestro']);
+  // routing is pending for nobody at all (Bite 2: unnamed = silence).
+  assert.deepEqual(pendingAgentWork(msgs, ['maestro', ...DESK_TEAM], { maestro: iso(3_600_000), ...DESK_JOINED }, new Set(['maestro', ...DESK_TEAM]), NOW), []);
 });
 
 test('desk pending: a named dispatch is pending for the named agent; its reply clears only its share', () => {
