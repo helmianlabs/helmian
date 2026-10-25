@@ -28,6 +28,7 @@ import {
   agentSubject, agentsToAnswer, describeAuthor, discordSubject,
   emptyConfig, normalizeProvider, parseConfig, publicConfig, serializeConfig,
 } from './envoy-agents.mjs';
+import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
 
 // Public bot status for the Link Discord dialog. Client id is public; the
 // bridge token only contributes a yes/no.
@@ -128,7 +129,7 @@ function contextFor(actor) {
 
 const publish = (tenantId, row, publishImpl) => { if (row) void (publishImpl ?? publishEnvoyMessage)({ tenantId, channelId: String(row.channel_id), message: messageOut(row) }); };
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -192,6 +193,18 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       const wanted = [...new Set(String(providers ?? '').split(',').map(normalizeProvider).filter(Boolean))];
       if (!wanted.length) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
       return tx(actor, async (client) => {
+        // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
+        // readiness signal — a registered runner, a presence report, a
+        // stored connection — those signals are authoritative: work is
+        // handed over only for providers the tenant itself has a
+        // credential for, and withheld providers are named in the
+        // response instead of the message silently sitting. A tenant
+        // with no signals at all is the hand-wired case (the operator's
+        // own runners resolve credentials locally); its claiming is
+        // exactly what it was before this gate existed.
+        const state = await (agentStateImpl ?? tenantAgentStateOn)(client, actor.tenantId);
+        const gate = claimGateFor(state);
+        const withheld = new Map();
         const cfgRows = await client.query(
           `select distinct on (channel_id) channel_id, body from helmion.envoy_messages where tenant_id=$1 and author_subject=$2 order by channel_id, created_at desc, id desc`,
           [actor.tenantId, CONFIG_SUBJECT],
@@ -212,13 +225,21 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           for (const row of rows) {
             const message = messageOut(row);
             const at = new Date(row.created_at).getTime();
-            const due = agentsToAnswer(message, config.agents, { desk: config.desk === true }).filter((p) => wanted.includes(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
+            let due = agentsToAnswer(message, config.agents, { desk: config.desk === true }).filter((p) => wanted.includes(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
+            if (gate) {
+              for (const p of due) if (!gate.has(p)) withheld.set(p, state.reason ?? 'no-provider');
+              due = due.filter((p) => gate.has(p));
+            }
             if (!due.length) continue;
             const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
             work.push({ channel: { id: String(channel.id), slug: channel.slug, title: channel.title, linkedToDiscord: Boolean(config.discord) }, members: config.agents, message, agents: due, context });
           }
         }
-        return { work: work.slice(0, 20) };
+        return {
+          work: work.slice(0, 20),
+          agentState: { state: state.state, gated: state.gated },
+          ...(withheld.size ? { withheld: [...withheld].map(([provider, reason]) => ({ provider, reason })) } : {}),
+        };
       });
     },
 
