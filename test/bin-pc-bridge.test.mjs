@@ -515,8 +515,13 @@ test('agent members: configured channel is answered per agent via agent-messages
     const json = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
     if (u.pathname === '/api/admin/envoy/channel-config') return json({ valid: true, configured: true, config: { agents: [] } });
     if (u.pathname === '/api/admin/envoy/agent-work') {
-      assert.deepEqual(u.searchParams.get('providers').split(',').sort(), ['claude', 'maestro']);
+      // 'maestro' was in the configured agents list, but the bridge
+      // never serves it: Maestro is the human's seat, not an agent.
+      assert.deepEqual(u.searchParams.get('providers').split(',').sort(), ['claude']);
       served += 1;
+      // The cloud hands back a stale item naming 'maestro' alongside
+      // Claude (as an old server would): the bridge must run and post
+      // Claude's turn only, and skip the Maestro one entirely.
       const work = posted.length ? [] : [{ channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['maestro', 'claude'], message: human, agents: ['maestro', 'claude'], context: [human] }];
       return json({ valid: true, work });
     }
@@ -527,16 +532,19 @@ test('agent members: configured channel is answered per agent via agent-messages
   const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'claude,maestro', spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
   t.after(() => handle.stop());
   cloud.messages.push({ id: '9', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', body: 'legacy should not answer', createdAt: 't' });
-  for (let i = 0; i < 50 && posted.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
-  assert.equal(posted.length, 2);
-  assert.deepEqual(posted.map((p) => p.provider).sort(), ['claude', 'maestro']);
+  for (let i = 0; i < 50 && posted.length < 1; i++) await new Promise((r) => setTimeout(r, 20));
+  // Give any (wrong) Maestro job a chance to run and post, then prove
+  // it never did.
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(posted.length, 1);
+  assert.deepEqual(posted.map((p) => p.provider), ['claude']);
   assert.ok(posted.every((p) => p.replyTo === human.id && p.channelId === 'ch-1'));
   const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
-  assert.ok(turns.some((c) => /You are Maestro/.test(c.text)) && turns.some((c) => /You are Claude/.test(c.text)));
+  assert.ok(turns.some((c) => /You are Claude/.test(c.text)));
+  assert.ok(!turns.some((c) => /You are Maestro/.test(c.text)), 'no turn is ever composed as Maestro');
   assert.ok(turns.every((c) => !/legacy should not answer/.test(c.text) || /Recent conversation/.test(c.text)), 'no legacy turn in a configured channel');
   const legacyPosts = cloud.calls.filter((c) => c.method === 'POST' && c.url.endsWith('/api/admin/envoy/messages'));
   assert.equal(legacyPosts.length, 0);
-  // Maestro ran on the bridge provider.
   const configures = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'configure').map((c) => c.provider);
   assert.ok(configures.includes('claude'));
   assert.ok(served >= 1);

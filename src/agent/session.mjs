@@ -67,7 +67,7 @@ export async function runAgentCli(argv = process.argv.slice(3)) {
     }]
     : [];
 
-  let provider = resolveProvider(flags.provider || env.maestro, env, inlineCustom);
+  let provider = resolveProvider(flags.provider || env.defaultProvider, env, inlineCustom);
 
   if (!provider.key) {
     process.stderr.write(

@@ -2,13 +2,20 @@
 // agent / Discord / system authors are named. Pure functions only, shared by
 // the cloud routes (envoy-mesh.mjs), the PC bridge and the Discord bridge.
 //
-// Agents are channel members. A human message (typed in Helmian or in a linked
-// Discord channel) is routed like this:
+// Agents are channel members. Maestro is NOT one of them: Maestro is the
+// human's manager seat, never an agent, so 'maestro' is not a routable
+// answerer anywhere (Maestro Bite 2). A roster may still carry a historical
+// 'maestro' entry; it is inert and filtered out of every routing result.
+// A human message (typed in Helmian or in a linked Discord channel) is
+// routed like this:
 //   - @all                -> every agent in the channel
 //   - @Claude, @Gemini... -> only the agents named
-//   - no mention          -> Maestro if Maestro is in the channel, else every agent
-// An agent message is answered only when Maestro (the manager) @mentions other
-// agents, one hop deep, so agents never loop on each other.
+//   - no mention          -> NO agent turn (silence)
+// An agent-authored message routes nobody: there is no dispatch hop,
+// because dispatch is the human's act, and agents never loop on each other.
+// A private agent room (kind 'agent') seats exactly one agent, so the mesh
+// passes room:true for those channels and an unnamed prompt there goes to
+// the room's agent — the room IS the address.
 //
 // The Maestro desk — the channel whose config carries desk:true, the human's
 // manager seat (see envoy-maestro.mjs) — routes HUMAN sends as dispatches
@@ -16,8 +23,8 @@
 // agents, and an unnamed send reaches the whole desk (that
 // unnamed-means-everyone rule is desk-only). 'maestro' is never a dispatch
 // target: in the desk, Maestro is the human sending, so there is no agent
-// behind the name to answer. Agent-authored and system messages keep the
-// ordinary rules in the desk too.
+// behind the name to answer. Agent-authored and system messages route
+// nobody in the desk too.
 
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini']);
 export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' });
@@ -109,32 +116,35 @@ export function mentionsIn(text) {
   return { all, providers: [...found] };
 }
 
+// The providers that can actually take an agent turn: every roster
+// provider except 'maestro'. Maestro is the human's seat; it never
+// answers, is never dispatched to, and never dispatches.
+export const ANSWERING_PROVIDERS = Object.freeze(AGENT_PROVIDERS.filter((p) => p !== 'maestro'));
+
 // Which agent members should answer `message`. `members` = provider ids.
-// `desk: true` turns on the desk dispatch rules for human sends (see the
-// header note); every other call keeps tonight's routing exactly.
-export function agentsToAnswer(message, members, { desk = false } = {}) {
+// `desk: true` turns on the desk dispatch rules for human sends;
+// `room: true` marks a private agent room, whose unnamed prompts go to
+// the room's one agent (see the header note).
+export function agentsToAnswer(message, members, { desk = false, room = false } = {}) {
   const roster = [...new Set((members ?? []).map(normalizeProvider).filter(Boolean))];
-  if (roster.length === 0) return [];
+  const team = roster.filter((p) => p !== 'maestro');
+  if (team.length === 0) return [];
   const text = String(message?.body ?? '');
   const kind = String(message?.authorKind ?? '');
   const { all, providers } = mentionsIn(text);
   if (desk && kind === 'human') {
-    const team = roster.filter((p) => p !== 'maestro');
     if (all) return team;
     if (providers.length) return team.filter((p) => providers.includes(p));
     return team;
   }
-  if (kind === 'agent') {
-    // Only Maestro dispatches, and only to the workers it names.
-    if (String(message?.authorSubject ?? '') !== 'agent:maestro') return [];
-    const named = all ? roster : providers;
-    return roster.filter((p) => p !== 'maestro' && named.includes(p));
-  }
+  // Agent-authored and system messages earn nobody a turn: dispatch is
+  // the human's act, and no agent (Maestro included) relays for them.
   if (kind !== 'human') return [];
-  if (all) return roster;
-  if (providers.length) return roster.filter((p) => providers.includes(p));
-  if (roster.includes('maestro')) return ['maestro'];
-  return roster;
+  if (all) return team;
+  if (providers.length) return team.filter((p) => providers.includes(p));
+  // Unnamed: silence in an ordinary channel; the room's agent in a
+  // private room, where the room itself is the address.
+  return room ? team : [];
 }
 
 // Display name + source for any stored author subject.
@@ -151,7 +161,9 @@ export function describeAuthor(subject, kind) {
     return { name: name || 'Discord member', source: 'discord', provider: null };
   }
   if (s.startsWith('system:') || kind === 'system') return { name: 'Helmian', source: 'helmian', provider: null };
-  if (s.endsWith(':bridge')) return { name: 'Maestro', source: 'helmian', provider: 'maestro' };
+  // Replies the PC bridge posts for its direct (non-Envoy) path are the
+  // bridge speaking, not an agent named Maestro — Maestro is the human.
+  if (s.endsWith(':bridge')) return { name: 'PC bridge', source: 'helmian', provider: null };
   return { name: null, source: 'helmian', provider: null };
 }
 
@@ -165,12 +177,13 @@ export function discordSubject(userId, displayName) {
 // conversation, and the message it is answering.
 export function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian' }) {
   const p = normalizeProvider(provider);
+  // There is no Maestro prompt: no turn is ever composed for 'maestro',
+  // because Maestro is the human's seat, not an agent (Bite 2).
+  if (p === 'maestro') throw new Error('maestro is not an agent provider');
   const me = AGENT_NAMES[p] ?? 'Agent';
-  const others = (members ?? []).map(normalizeProvider).filter((x) => x && x !== p).map((x) => AGENT_NAMES[x]);
+  const others = (members ?? []).map(normalizeProvider).filter((x) => x && x !== p && x !== 'maestro').map((x) => AGENT_NAMES[x]);
   const where = source === 'discord' ? `the #${channelTitle} channel (mirrored with Discord)` : `the #${channelTitle} channel in Helmian Envoy`;
-  const role = p === 'maestro'
-    ? `You are Maestro, the manager agent in ${where}. Other agents here: ${others.join(', ') || 'none'}. When the request needs work, split it into distinct slices and assign each with an @mention (for example "@Claude: ..."). Keep it short. If no other agents are here, answer yourself.`
-    : `You are ${me}, an agent member of ${where}. Other agents here: ${others.join(', ') || 'none'}. If you were given a slice of work, start your reply with "Claim:" and the slice you are taking, so you do not overlap the others. Be concise.`;
+  const role = `You are ${me}, an agent member of ${where}. Other agents here: ${others.join(', ') || 'none'}. If you were given a slice of work, start your reply with "Claim:" and the slice you are taking, so you do not overlap the others. Be concise.`;
   const history = context.slice(-12).map((m) => `${m.authorName || m.authorKind}: ${String(m.body ?? '').slice(0, 600)}`).join('\n');
   const from = message?.authorName || (message?.authorKind === 'agent' ? 'Agent' : 'Member');
   return `${role}\n\nRecent conversation:\n${history || '(none)'}\n\nReply to this message from ${from}:\n${String(message?.body ?? '')}`;

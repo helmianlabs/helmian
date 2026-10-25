@@ -42,9 +42,10 @@ function defaultDeps() {
     channelSlugs: process.env.HELMION_BRIDGE_CHANNEL_SLUGS || '*', // '*' = all channels, or comma-separated slugs
     provider: process.env.HELMION_BRIDGE_PROVIDER || 'claude',
     // Agent members this PC answers for in Envoy (and linked Discord) channels.
-    // Default: the bridge provider plus Maestro, plus every provider in the vault.
+    // Default: the bridge provider plus every provider in the vault.
+    // 'maestro' is never served: Maestro is the human's seat, not an
+    // agent, so there is no provider standing in for it (Bite 2).
     agents: process.env.HELMION_BRIDGE_AGENTS || null,
-    maestroProvider: process.env.HELMION_BRIDGE_MAESTRO_PROVIDER || null,
     workspace: process.env.HELMION_BRIDGE_WORKSPACE || join(homedir(), 'workspace'),
     toolsMode: process.env.HELMION_BRIDGE_TOOLS || 'read-only', // read-only | ask | full
     helmionBin: resolve(dirname(fileURLToPath(import.meta.url)), 'helmion.mjs'),
@@ -340,12 +341,13 @@ export async function runBridge(overrides = {}) {
   }
 
   // Agent members this PC serves (Envoy channel agents and linked Discord).
-  const servedAgents = [...new Set(String(deps.agents ?? '').split(',').map(normalizeProvider).filter(Boolean))];
+  // A 'maestro' entry — from an explicit list or an old config — is
+  // dropped, never served: no provider runs turns as Maestro (Bite 2).
+  const servedAgents = [...new Set(String(deps.agents ?? '').split(',').map(normalizeProvider).filter(Boolean))].filter((p) => p !== 'maestro');
   if (!servedAgents.length) {
-    for (const p of [deps.provider, 'maestro', ...await vaultProviders(deps)]) { const n = normalizeProvider(p); if (n && !servedAgents.includes(n)) servedAgents.push(n); }
+    for (const p of [deps.provider, ...await vaultProviders(deps)]) { const n = normalizeProvider(p); if (n && n !== 'maestro' && !servedAgents.includes(n)) servedAgents.push(n); }
   }
-  const maestroProvider = normalizeProvider(deps.maestroProvider) && normalizeProvider(deps.maestroProvider) !== 'maestro' ? normalizeProvider(deps.maestroProvider) : (normalizeProvider(deps.provider) || 'claude');
-  const keyProviders = [...new Set([deps.provider, maestroProvider, ...servedAgents.filter((p) => p !== 'maestro')])];
+  const keyProviders = [...new Set([deps.provider, ...servedAgents])];
   const child = startAgent(deps, await loadVaultKeys(deps, keyProviders));
   void reportPresence(deps, creds.token);
   const hello = await waitForHello(child);
@@ -368,7 +370,7 @@ export async function runBridge(overrides = {}) {
     return { ok: false, reason: 'channel not found' };
   }
   log(`watching ${watched.map((c) => `#${c.slug}`).join(', ')}`);
-  log(`agent member for: ${servedAgents.join(', ')} (Maestro runs on ${maestroProvider})`);
+  log(`agent member for: ${servedAgents.join(', ')}`);
 
   // Channels with an agent roster are answered by agent members only (below);
   // the legacy "reply to everything" path stays for channels never configured.
@@ -460,8 +462,16 @@ export async function runBridge(overrides = {}) {
   };
 
   const runAgentJob = async ({ item, provider }) => {
-    const runProvider = provider === 'maestro' ? maestroProvider : provider;
     const key = `${provider}|${item.message.id}`;
+    // Stale-work guard: the cloud no longer routes 'maestro' turns, but
+    // a queued or replayed item naming it must never be run or posted —
+    // no provider answers as Maestro (Bite 2).
+    if (provider === 'maestro') {
+      log(`skipping stale agent work for 'maestro' on ${item.message.id}: Maestro is the human's seat, not an agent`);
+      agentJobs.delete(key);
+      return;
+    }
+    const runProvider = provider;
     try {
       log(`agent ${provider} (${runProvider}) answering ${item.message.id} in #${item.channel.slug}`);
       await sendAndWait(child, { cmd: 'configure', provider: runProvider, workspace: deps.workspace, permission: deps.toolsMode }, 'ready');
