@@ -184,7 +184,10 @@ function harnessTables() {
     ],
     envoy_messages: [
       msg(A, CH_A, CONFIG_SUBJECT, 'system', cfg(['gemini']), 'c0ffee00-0000-4000-8000-0000000000a0', 60),
-      msg(A, CH_A, 'user_a', 'human', 'morning update please', 'a1500000-0000-4000-8000-0000000000a1', 5),
+      // Bite 2 (impostor removal): an unnamed message in an ordinary
+      // channel earns NO agent turn, so A's ask names its agent — like
+      // B's — and A stays the ungated control for the claim gate below.
+      msg(A, CH_A, 'user_a', 'human', '@gemini morning update please', 'a1500000-0000-4000-8000-0000000000a1', 5),
       msg(B, CH_B, CONFIG_SUBJECT, 'system', cfg(['gemini', 'grok']), 'c0ffee00-0000-4000-8000-0000000000b0', 60),
       msg(B, CH_B, 'user_b', 'human', '@gemini write the summary', 'b1500000-0000-4000-8000-0000000000b1', 5),
       msg(B, CH_B, 'user_b', 'human', '@grok check the numbers', 'b2500000-0000-4000-8000-0000000000b2', 4),

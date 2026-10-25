@@ -14,7 +14,6 @@ import { handleEnvoyAblyRoute } from '../src/cloud/envoy-ably.mjs';
 const ACTOR = { tenantId: 'tenant-rooms', subject: 'user:owner', role: 'owner' };
 
 test('room definitions: every agent gets one room, named for the agent', () => {
-  assert.deepEqual(agentRoomChannel('maestro'), { slug: 'agent-maestro', title: 'Maestro', kind: 'agent' });
   assert.deepEqual(agentRoomChannel('claude'), { slug: 'agent-claude', title: 'Claude', kind: 'agent' });
   assert.equal(agentRoomChannel('ChatGPT').slug, 'agent-openai', 'display-name aliases resolve to the provider room');
   assert.equal(agentRoomChannel('gpt').slug, 'agent-openai');
@@ -28,6 +27,25 @@ test('room definitions: unsupported providers have no room', () => {
   assert.equal(agentRoomChannel(''), null);
   assert.equal(agentRoomChannel(null), null);
   assert.equal(agentRoomSlug(undefined), null);
+});
+
+test('room definitions: Maestro has no room — it is the human seat, not an agent (Bite 2)', () => {
+  assert.equal(agentRoomChannel('maestro'), null);
+  assert.equal(agentRoomChannel('manager'), null, 'the manager alias is Maestro too');
+  assert.equal(agentRoomSlug('maestro'), null);
+});
+
+test('ensureRoom: Maestro is refused before anything is created', async () => {
+  const { rooms, chatCalls, meshCalls } = stubRooms();
+  await assert.rejects(rooms.ensureRoom(ACTOR, 'maestro'), (error) => error.code === 'ENVOY_AGENT_NOT_AN_AGENT' && error.status === 400);
+  assert.equal(chatCalls.length, 0);
+  assert.equal(meshCalls.length, 0);
+});
+
+test('route: asking for the Maestro room surfaces the not-an-agent code', async () => {
+  const fx = routeFixture(stubRooms().rooms, { body: { provider: 'maestro' } });
+  await handleAgentRoomsRoute(fx.args);
+  assert.deepEqual(fx.sent[0], [400, { valid: false, code: 'ENVOY_AGENT_NOT_AN_AGENT' }]);
 });
 
 function stubRooms() {

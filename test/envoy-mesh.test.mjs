@@ -41,7 +41,10 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
   const mesh = createEnvoyMesh({ pool, publishImpl: async (x) => published.push(x), nameLookup: async () => 'Troy' });
   const chat = createEnvoyStore(pool);
   try {
-    const { channel } = await chat.createChannel(owner, { slug: 'build', title: 'build', kind: 'agent' });
+    // An ordinary shared channel (kind 'team'): the Bite 2 routing
+    // matrix applies here. (This test used kind 'agent' before rooms
+    // gave that kind its one-agent meaning.)
+    const { channel } = await chat.createChannel(owner, { slug: 'build', title: 'build', kind: 'team' });
     // Unconfigured channel.
     let cfg = await mesh.getConfig(owner, channel.id);
     assert.equal(cfg.configured, false);
@@ -60,21 +63,24 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
     const human = (await chat.appendMessage(owner, { channelId: channel.id, body: 'Plan the launch page', idempotencyKey: randomUUID() })).receipt.message;
     // Session callers cannot pull agent work or post as agents.
     await assert.rejects(mesh.agentWork(owner, 'claude'), /DEVICE_TOKEN/);
-    let work = (await mesh.agentWork(device, 'maestro,claude,gemini')).work;
+    // Bite 2 matrix, ordinary channel: the unnamed message earns NO
+    // agent turn — not even with 'maestro' on the roster and asking.
+    let work = (await mesh.agentWork(device, 'maestro,claude,gemini')).work.filter((w) => w.channel.id === channel.id);
+    assert.equal(work.length, 0, 'unnamed message in an ordinary channel is silence');
+    // A named agent answers.
+    const named = (await chat.appendMessage(owner, { channelId: channel.id, body: '@Claude plan the launch page', idempotencyKey: randomUUID() })).receipt.message;
+    work = (await mesh.agentWork(device, 'maestro,claude,gemini')).work.filter((w) => w.channel.id === channel.id);
     assert.equal(work.length, 1);
-    assert.equal(work[0].message.id, human.id);
-    assert.deepEqual(work[0].agents, ['maestro']);
+    assert.equal(work[0].message.id, named.id);
+    assert.deepEqual(work[0].agents, ['claude'], "'maestro' is never among the answerers");
     assert.ok(work[0].context.some((m) => m.body === 'Plan the launch page'));
-    const maestro = await mesh.postAsAgent(device, { channelId: channel.id, provider: 'maestro', replyTo: human.id, body: '@Claude: layout. @Gemini: copy.' });
-    assert.equal(maestro.receipt.message.authorName, 'Maestro');
-    const again = await mesh.postAsAgent(device, { channelId: channel.id, provider: 'maestro', replyTo: human.id, body: 'dup' });
-    assert.equal(again.receipt.replayed, true);
-    work = (await mesh.agentWork(device, 'maestro,claude,gemini')).work;
-    assert.equal(work.length, 1, 'human message answered; Maestro dispatch is pending');
-    assert.deepEqual(work[0].agents, ['claude', 'gemini']);
-    await mesh.postAsAgent(device, { channelId: channel.id, provider: 'claude', replyTo: work[0].message.id, body: 'Claim: layout.' });
-    work = (await mesh.agentWork(device, 'claude,gemini')).work;
-    assert.deepEqual(work.map((w) => w.agents), [['gemini']]);
+    // No reply is ever authored by Maestro, even where a roster still
+    // lists it: the post is refused outright.
+    await assert.rejects(mesh.postAsAgent(device, { channelId: channel.id, provider: 'maestro', replyTo: named.id, body: '@Claude: layout. @Gemini: copy.' }), /NOT_AN_AGENT/);
+    // An agent's own post dispatches nobody (no Maestro hop, no relay).
+    await mesh.postAsAgent(device, { channelId: channel.id, provider: 'claude', replyTo: named.id, body: 'Claim: layout. @Gemini: copy is yours.' });
+    work = (await mesh.agentWork(device, 'maestro,claude,gemini')).work.filter((w) => w.channel.id === channel.id);
+    assert.equal(work.length, 0, 'the named message is answered and the agent post routes nobody');
     await assert.rejects(mesh.postAsAgent(device, { channelId: channel.id, provider: 'grok', replyTo: human.id, body: 'x' }), /NOT_MEMBER/);
 
     // Discord link: start, confirm from the bridge, inbound, outbound.
@@ -99,7 +105,8 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
     const outbound = (await mesh.bridgeOutbound(since)).messages.filter((m) => m.tenantId === tenantId);
     assert.ok(outbound.length >= 3);
     assert.ok(outbound.every((m) => m.source !== 'discord'), 'Discord-born messages are not echoed back');
-    assert.ok(outbound.some((m) => m.displayName === 'Maestro'));
+    assert.ok(outbound.some((m) => m.displayName === 'Claude'), 'the agent reply rides outbound under its own name');
+    assert.ok(!outbound.some((m) => m.displayName === 'Maestro'), 'nothing rides outbound under the Maestro name');
     assert.ok(outbound.some((m) => m.displayName === 'Troy' && m.authorKind === 'human'));
     // Unlink.
     await mesh.changeConfig(owner, { action: 'unlink-discord', channelId: channel.id });

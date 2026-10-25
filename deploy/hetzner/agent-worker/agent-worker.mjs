@@ -83,12 +83,13 @@ function normalizeProvider(value) {
 }
 function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian' }) {
   const p = normalizeProvider(provider);
+  // There is no Maestro prompt: no turn is ever composed for 'maestro',
+  // because Maestro is the human's seat, not an agent (Bite 2).
+  if (p === 'maestro') throw new Error('maestro is not an agent provider');
   const me = AGENT_NAMES[p] ?? 'Agent';
-  const others = (members ?? []).map(normalizeProvider).filter((x) => x && x !== p).map((x) => AGENT_NAMES[x]);
+  const others = (members ?? []).map(normalizeProvider).filter((x) => x && x !== p && x !== 'maestro').map((x) => AGENT_NAMES[x]);
   const where = source === 'discord' ? `the #${channelTitle} channel (mirrored with Discord)` : `the #${channelTitle} channel in Helmian Envoy`;
-  const role = p === 'maestro'
-    ? `You are Maestro, the manager agent in ${where}. Other agents here: ${others.join(', ') || 'none'}. When the request needs work, split it into distinct slices and assign each with an @mention (for example "@Claude: ..."). Keep it short. If no other agents are here, answer yourself.`
-    : `You are ${me}, an agent member of ${where}. Other agents here: ${others.join(', ') || 'none'}. If you were given a slice of work, start your reply with "Claim:" and the slice you are taking, so you do not overlap the others. Be concise.`;
+  const role = `You are ${me}, an agent member of ${where}. Other agents here: ${others.join(', ') || 'none'}. If you were given a slice of work, start your reply with "Claim:" and the slice you are taking, so you do not overlap the others. Be concise.`;
   const history = context.slice(-12).map((m) => `${m.authorName || m.authorKind}: ${String(m.body ?? '').slice(0, 600)}`).join('\n');
   const from = message?.authorName || (message?.authorKind === 'agent' ? 'Agent' : 'Member');
   return `${role}\n\nRecent conversation:\n${history || '(none)'}\n\nReply to this message from ${from}:\n${String(message?.body ?? '')}`;

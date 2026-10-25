@@ -368,7 +368,7 @@ test('THE BRIDGE EMITS A provenance EVENT AND THE ROW IS ON DISK IN THE WORKSPAC
     env: {
       ...process.env,
       HELMION_CUSTOM_PROVIDERS: '',
-      HELMION_MAESTRO_COORDINATOR: 'Gemini',
+      HELMION_DEFAULT_PROVIDER: 'Gemini',
       HELMION_LOCAL_ENABLED: '0',
     },
   });

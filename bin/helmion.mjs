@@ -1615,7 +1615,7 @@ Governance / Maestro (existing kernel):
 
 Environment (.env walk-up or process env):
   OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY / XAI_API_KEY
-  HELMION_MAESTRO_COORDINATOR   # default provider for agent
+  HELMION_DEFAULT_PROVIDER      # default provider for agent sessions
   WORKSPACE_PATH                # default workspace for agent
   HELMION_DATABASE_URL
   HELMION_EXPECTED_ENDPOINT_ID
