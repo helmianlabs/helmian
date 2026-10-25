@@ -869,8 +869,12 @@ const PICKER_IDS = {
 };
 async function loadPickerData() {
   if (ws.pickerData) return ws.pickerData;
-  const [c, p, pl] = await Promise.allSettled([ws.ctx.api('/api/admin/cora/connectors'), ws.ctx.api('/api/admin/provider-connections'), ws.ctx.api('/api/admin/plugins')]);
-  ws.pickerData = pickerModel({ connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {} });
+  const [c, p, pl, tc, pr] = await Promise.allSettled([ws.ctx.api('/api/admin/cora/connectors'), ws.ctx.api('/api/admin/provider-connections'), ws.ctx.api('/api/admin/plugins'), ws.ctx.api('/api/admin/tool-connections'), ws.ctx.api('/api/admin/envoy/runner/presence')]);
+  ws.pickerData = pickerModel({
+    connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {},
+    toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null,
+    presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null,
+  });
   return ws.pickerData;
 }
 function renderAttachChips(which) {
@@ -922,11 +926,11 @@ async function renderPicker(which) {
     } else if (g.id === 'connectors') {
       const rows = g.items.map((item) => {
         const on = attached.has(`connector:${item.key}`);
-        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, disabled: item.connected ? null : true, title: item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`) : `${item.name} is not connected`, onclick: () => {
+        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, disabled: item.connected ? null : true, title: item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`) : `${item.name}: ${item.statusText ?? 'Not connected'}`, onclick: () => {
           if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'connector', key: item.key }); renderAttachChips(which); renderPicker(which); return; }
           const r = addAttachment(ws.attach[which], { kind: 'connector', key: item.key }, { catalog: g.items });
           if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
-        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.connected ? 'on' : 'off'}` }, on ? 'Attached' : item.connected ? 'Connected' : 'Not connected'));
+        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.connected ? 'on' : 'off'}` }, on ? 'Attached' : item.statusText ?? (item.connected ? 'Connected' : 'Not connected')));
       });
       groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'CONNECTORS'), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No connectors in the registry.')])));
     } else if (g.id === 'plugins') {
