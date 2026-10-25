@@ -541,3 +541,80 @@ test('agent members: configured channel is answered per agent via agent-messages
   assert.ok(configures.includes('claude'));
   assert.ok(served >= 1);
 });
+
+// ---- Agent-work slash expansion: expand BEFORE the agentPrompt wrap ----
+// The agent child expands a leading "/name" only when the turn text starts
+// with it; agent-work turns are wrapped in agentPrompt() first, so without
+// preparation here the expansion never fired — while the attachment
+// context claimed it had. These tests pin the preparation and the
+// slashExpansion report the turn carries so the skill line can tell the
+// truth (see test/attachments.test.mjs for the line itself).
+
+function serveOneAgentJob(cloud, human) {
+  const orig = cloud.fetchImpl;
+  const posted = [];
+  cloud.fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    const json = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
+    if (u.pathname === '/api/admin/envoy/channel-config') return json({ valid: true, configured: true, config: { agents: [] } });
+    if (u.pathname === '/api/admin/envoy/agent-work') {
+      const work = posted.length ? [] : [{ channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['claude'], message: human, agents: ['claude'], context: [] }];
+      return json({ valid: true, work });
+    }
+    if (u.pathname === '/api/admin/envoy/agent-messages') { posted.push(JSON.parse(opts.body)); return json({ valid: true, receipt: { replayed: false } }); }
+    return orig(url, opts);
+  };
+  return posted;
+}
+
+test('agent work: a resolvable slash command is expanded before the wrap and reported expanded', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-agent-slash-'));
+  const { mkdir } = await import('node:fs/promises');
+  const workspace = join(tmp, 'ws');
+  await mkdir(join(workspace, '.helmion', 'commands'), { recursive: true });
+  await writeFile(join(workspace, '.helmion', 'commands', 'greet.md'), '---\ndescription: Greet the room\n---\nGREET-INSTRUCTIONS for $ARGUMENTS\n');
+  const cloud = makeFakeCloud();
+  const human = { id: '22222222-2222-4222-8222-222222222222', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', authorName: 'Troy', source: 'helmian', body: '/greet the whole team', metadata: { attachments: [{ kind: 'skill', name: 'greet' }] }, createdAt: 't' };
+  const posted = serveOneAgentJob(cloud, human);
+  const kids = [];
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'claude', workspace, spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
+  t.after(() => handle.stop());
+  for (let i = 0; i < 50 && posted.length < 1; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(posted.length, 1);
+  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
+  assert.equal(turns.length, 1);
+  const turn = turns[0];
+  // Still an agentPrompt-wrapped turn (the role line is there)…
+  assert.match(turn.text, /You are Claude/);
+  // …but the body inside the wrap is the EXPANDED command, not the slash line.
+  assert.match(turn.text, /Reply to this message from Troy:\nGREET-INSTRUCTIONS for the whole team/);
+  assert.doesNotMatch(turn.text, /\/greet the whole team/);
+  // …and the turn reports the expansion, so the skill line can say so truthfully.
+  assert.deepEqual(turn.slashExpansion, { name: 'greet', expanded: true });
+  assert.deepEqual(turn.metadata, { attachments: [{ kind: 'skill', name: 'greet' }] });
+  await handle.stop();
+});
+
+test('agent work: an unresolvable slash command rides through unexpanded and is reported as a miss', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-agent-slash-miss-'));
+  const { mkdir } = await import('node:fs/promises');
+  const workspace = join(tmp, 'ws');
+  await mkdir(workspace, { recursive: true }); // no commands defined anywhere in it
+  const cloud = makeFakeCloud();
+  const human = { id: '33333333-3333-4333-8333-333333333333', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', authorName: 'Troy', source: 'helmian', body: '/nosuchcmd do the thing', metadata: { attachments: [{ kind: 'skill', name: 'nosuchcmd' }] }, createdAt: 't' };
+  const posted = serveOneAgentJob(cloud, human);
+  const kids = [];
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'claude', workspace, spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
+  t.after(() => handle.stop());
+  for (let i = 0; i < 50 && posted.length < 1; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(posted.length, 1);
+  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
+  assert.equal(turns.length, 1);
+  const turn = turns[0];
+  // The unknown slash line is sent through as an ordinary prompt, exactly
+  // as the direct path treats an unknown command…
+  assert.match(turn.text, /Reply to this message from Troy:\n\/nosuchcmd do the thing/);
+  // …and the report says NOT expanded, so the skill line cannot claim it was.
+  assert.deepEqual(turn.slashExpansion, { name: 'nosuchcmd', expanded: false });
+  await handle.stop();
+});

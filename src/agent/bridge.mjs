@@ -426,12 +426,25 @@ export async function runAgentBridge() {
         const attachmentMetadata = req.metadata ?? (req.attachments !== undefined || req.webSearch !== undefined
           ? { ...(req.attachments !== undefined ? { attachments: req.attachments } : {}), ...(req.webSearch !== undefined ? { webSearch: req.webSearch } : {}) }
           : null);
+        // Slash-expansion report from the composing side. The PC bridge's
+        // agent-work path wraps the message in agentPrompt() BEFORE the
+        // turn, so the expansion this handler does below can never fire
+        // there — the PC bridge expands before wrapping instead and
+        // reports the outcome here, so the attachment context line can
+        // state it truthfully. Absent (direct turns, the desktop) means
+        // no report: this handler's own expansion above is the only one,
+        // and the legacy wording stands.
+        const slashExpansion = req.slashExpansion
+          && typeof req.slashExpansion.name === 'string'
+          && typeof req.slashExpansion.expanded === 'boolean'
+          ? { name: req.slashExpansion.name, expanded: req.slashExpansion.expanded }
+          : null;
         let turnText = text;
         let turnRuntime = state.runtime;
         let attachmentDispose = null;
         if (attachmentMetadata) {
           try {
-            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins });
+            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion });
             if (resolved.contextText) turnText = `${resolved.contextText}\n\n${text}`;
             if (resolved.toolNames.length) {
               turnRuntime = createToolRuntime(workspace, { ...runtimeOptions(), extraTools: resolved.extraTools });
