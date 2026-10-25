@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
-  FILE_MAX_BYTES, MAX_ATTACHMENTS, UPLOAD_NOTE, WEB_SEARCH_NOTE, addAttachment, applySkillToBody,
+  ATTACH_STATE, FILE_MAX_BYTES, MAX_ATTACHMENTS, UPLOAD_NOTE, WEB_SEARCH_NOTE, addAttachment, agentEcosystem, applySkillToBody,
   attachmentKey, attachmentMetadata, buildMessageRequest, classifyFile,
-  fileRefusalReason, normalizeFileAttachment, normalizeSkillName,
+  fileRefusalReason, normalizeAgentKey, normalizeFileAttachment, normalizeSkillName,
   pickerModel, removeAttachment,
 } from '../app/composer-picker.mjs';
 // The REAL server validator the message route applies — imported, not
@@ -383,4 +383,119 @@ test('web search OFF (or never touched) is the pre-toggle wire, byte for byte', 
   assert.deepEqual(Object.keys(off.payload).sort(), ['body', 'channelId', 'idempotencyKey'], 'no metadata key at all when off');
   const withAtt = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'kw4', attachments: [skill('deploy')], webSearch: false });
   assert.deepEqual(JSON.parse(JSON.stringify(withAtt.metadata)), { attachments: [{ kind: 'skill', name: 'deploy' }] }, 'no webSearch key appears when off');
+});
+
+// ---- per-agent model (plus-parity bite 1) ----
+// The picker leads with the agent's own ecosystem and tells the truth
+// about what attaching does: a registered connector is note-only, never
+// "connected"; plugins work; the seat row reports the agent's own
+// connection and can never be attached as anything.
+
+test('per-agent: the model leads with the agent\'s ecosystem, shared groups after', () => {
+  const m = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS, agent: 'gemini' });
+  assert.equal(m.agent, 'gemini');
+  assert.deepEqual(m.groups.map((g) => g.id), ['agent', 'connectors', 'plugins', 'upload', 'web-search'], 'ecosystem first, then the shared groups in their order; the standalone skills group folds into the ecosystem');
+  const ecoGroup = m.groups[0];
+  assert.equal(ecoGroup.title, 'Gemini\'s ecosystem');
+  assert.equal(ecoGroup.byName, true, 'the agent\'s skills attach by name from its own group');
+  assert.match(ecoGroup.note, /Gemini's skills/);
+});
+
+test('per-agent: the ecosystem group holds the seat row and the bridge plugins', () => {
+  const m = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS, agent: 'gemini' });
+  const ecoGroup = m.groups[0];
+  const seat = ecoGroup.items[0];
+  // PROVIDERS carries a google connection, so Gemini's seat is connected.
+  assert.deepEqual(
+    { kind: seat.kind, key: seat.key, name: seat.name, connected: seat.connected, state: seat.state },
+    { kind: 'provider', key: 'google', name: 'Gemini', connected: true, state: 'connected' },
+    'the seat row reports the agent\'s own connection from the same registry facts');
+  assert.equal(seat.stateLabel, 'Works');
+  assert.deepEqual(ecoGroup.items.slice(1).map((i) => i.name), ['calc', 'greeter'], 'the bridge plugins the agent can be handed ride in its ecosystem too');
+  for (const item of ecoGroup.items.slice(1)) assert.equal(item.state, 'connected', 'an installed plugin really works on the turn');
+  // The seat's registry entry no longer sits in the shared connectors group.
+  const shared = m.groups.find((g) => g.id === 'connectors');
+  assert.deepEqual(shared.items.map((i) => i.key), ['slack', 'discord', 'github', 'anthropic', 'openai', 'xai'], 'google moved up as the seat; the rest of the registry stays shared');
+});
+
+test('per-agent: an agent named any way its surfaces name it resolves to its ecosystem', () => {
+  assert.equal(pickerModel({ agent: 'ChatGPT' }).groups[0].title, 'ChatGPT\'s ecosystem', 'display name');
+  assert.equal(pickerModel({ agent: 'openai' }).agent, 'openai', 'workspace key');
+  assert.equal(pickerModel({ agent: 'google' }).agent, 'gemini', 'registry key');
+  assert.equal(pickerModel({ agent: 'anthropic' }).agent, 'claude', 'registry key');
+  assert.equal(pickerModel({ agent: 'xai' }).agent, 'grok', 'registry key');
+  assert.equal(normalizeAgentKey('Gemini'), 'gemini');
+  assert.equal(normalizeAgentKey(' chatgpt '), 'openai');
+  assert.equal(agentEcosystem('Grok').registryKey, 'xai');
+});
+
+test('per-agent: Maestro and unknown agents keep the shared model', () => {
+  for (const agent of [null, undefined, 'maestro', 'Maestro', 'nonsense', '']) {
+    const m = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS, agent });
+    assert.equal(m.agent, null);
+    assert.deepEqual(m.groups.map((g) => g.id), ['skills', 'connectors', 'plugins', 'upload', 'web-search'], `agent ${JSON.stringify(agent)} \u2192 shared groups in their original order`);
+  }
+  assert.equal(normalizeAgentKey('maestro'), null, 'Maestro is the human\'s seat, never an agent ecosystem');
+  assert.equal(agentEcosystem('maestro'), null);
+});
+
+test('state truthfulness: a connector with no real door NEVER renders as connected', () => {
+  const models = [
+    pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS }),
+    ...['claude', 'openai', 'grok', 'gemini'].map((agent) => pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS, agent })),
+  ];
+  for (const m of models) {
+    for (const g of m.groups) {
+      for (const item of g.items) {
+        if (item.kind === 'connector') {
+          assert.notEqual(item.state, ATTACH_STATE.CONNECTED, `${item.key} must never claim to work — attaching it is a note`);
+          assert.equal(item.state, item.connected ? ATTACH_STATE.NOTE_ONLY : ATTACH_STATE.NOT_CONNECTED);
+        }
+      }
+    }
+  }
+  // The fixtures' facts, stated plainly: discord is registered (note-only),
+  // slack is not (not connected); plugins are the working exception.
+  const shared = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS });
+  const byKey = new Map(shared.groups.find((g) => g.id === 'connectors').items.map((i) => [i.key, i]));
+  assert.equal(byKey.get('discord').state, 'note-only');
+  assert.equal(byKey.get('discord').stateLabel, 'Note only');
+  assert.equal(byKey.get('slack').state, 'not-connected');
+  assert.equal(byKey.get('slack').stateLabel, 'Not connected');
+  assert.match(shared.groups.find((g) => g.id === 'connectors').note, /hands the agent a note/, 'the connectors group says what attaching does, in plain words');
+  for (const item of shared.groups.find((g) => g.id === 'plugins').items) {
+    assert.equal(item.state, 'connected');
+    assert.equal(item.stateLabel, 'Works');
+  }
+});
+
+test('state truthfulness: the seat follows the same facts — no connection, no claim', () => {
+  const m = pickerModel({ connectors: {}, providers: {}, plugins: {}, agent: 'claude' });
+  const seat = m.groups[0].items[0];
+  assert.equal(seat.key, 'anthropic');
+  assert.equal(seat.connected, false);
+  assert.equal(seat.state, 'not-connected', 'an unconnected seat says so');
+  const connected = pickerModel({ connectors: {}, providers: { connections: [{ providerId: 'anthropic', lifecycle: 'verified' }] }, plugins: {}, agent: 'claude' });
+  assert.equal(connected.groups[0].items[0].state, 'connected', 'the seat is connected only when the registry says the provider connection exists');
+});
+
+test('per-agent: the seat can never be attached as a connector note', () => {
+  const m = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS, agent: 'gemini' });
+  const ecoItems = m.groups[0].items;
+  const asConnector = addAttachment([], { kind: 'connector', key: 'google' }, { catalog: ecoItems });
+  assert.equal(asConnector.added, false, 'the seat row is a status, not an attachment');
+  assert.match(asConnector.reason, /not in the registry/);
+  const plugin = addAttachment([], { kind: 'plugin', name: 'calc' }, { catalog: ecoItems });
+  assert.equal(plugin.added, true, 'plugins still attach from the ecosystem group catalog');
+  assert.deepEqual(plugin.list, [{ kind: 'plugin', name: 'calc' }]);
+  // And the seat as its own kind is refused outright.
+  assert.equal(addAttachment([], { kind: 'provider', key: 'google' }).added, false);
+});
+
+test('the session console builds its picker for the active session\'s agent', async () => {
+  const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  assert.match(js, /pickerModel\(\{ \.\.\.consoleAttach\.data, agent: consolePickerAgent\(\) \}\)/, 'the console renders the per-agent model for the session in context');
+  assert.match(js, /function consolePickerAgent\(\)/, 'the console resolves its agent from the active session');
+  assert.match(js, /g\.id === 'agent'/, 'the console renders the ecosystem group');
+  assert.match(js, /item\.stateLabel/, 'the console shows the truthful state labels, not a blanket Connected');
 });
