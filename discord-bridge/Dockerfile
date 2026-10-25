@@ -2,7 +2,7 @@ FROM node:22-alpine
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev --no-audit --no-fund || npm install --omit=dev --no-audit --no-fund
-COPY bridge-core.mjs index.mjs ./
+COPY bridge-core.mjs index.mjs mcp-core.mjs mcp-server.mjs ./
 USER node
 ENV STATE_DIR=/data NODE_ENV=production
 VOLUME ["/data"]
