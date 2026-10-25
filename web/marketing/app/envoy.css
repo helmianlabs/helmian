@@ -264,6 +264,19 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   .ew-hint { display:none; }
   .ew-messages { padding:10px 8px 6px; }
   .ew-composer { margin:0 8px 8px; }
+  /* Phone tap targets (mobile pass 2026-10-24): the chat-head toggles and
+     both composers are the primary phone controls — measured 24–36px tall,
+     under the ~40px touch minimum. Grow them inside this block only. */
+  .ew-btn.sm { min-height:38px; padding:8px 12px; }
+  .ew-composer .ew-btn, .ew-btn.full { min-height:38px; }
+  .ew-chat-head .ew-btn.sm { padding:8px 10px; }
+  .ew-icon { width:38px; height:38px; }
+  .ew-composer textarea { min-height:38px; }
+  .voice-orb.sm { width:40px; height:40px; }
+  .ew-channel { min-height:40px; }
+  .ew-net-switch .ew-net-seg { padding-top:10px; padding-bottom:10px; }
+  .ew-tab { padding-top:10px; padding-bottom:10px; }
+  .ew-ava-btn { min-width:32px; min-height:32px; }
   .ew-canvas-body.split { grid-template-columns:1fr; grid-template-rows:1fr 1fr; }
   .ew-canvas-body textarea { border-right:0; border-bottom:1px solid var(--border); }
 }
