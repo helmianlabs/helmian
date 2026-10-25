@@ -576,7 +576,7 @@ test('app shell cache: vercel.json forces revalidation for /app assets so a depl
   assert.ok(/max-age=0|no-cache|no-store/.test(value), `the /app Cache-Control forces revalidation (got: ${value})`);
 });
 
-test('tenant onboarding: the asleep banner helper + element + state fetch are wired', async () => {
+test('tenant onboarding: the asleep banner + element + state fetch are wired', async () => {
   const { agentStateBanner } = await import('../app/envoy-workspace.js');
   assert.equal(agentStateBanner(null), null);
   assert.equal(agentStateBanner({ state: 'awake', line: null }), null);

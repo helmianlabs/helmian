@@ -3,17 +3,22 @@
 // model — no DOM — so it is unit tested like app-model.mjs;
 // envoy-workspace.js renders it.
 //
-// PER-AGENT (plus-parity bite 1): pass `agent` to pickerModel() and the
-// model leads with that agent's own ecosystem group — its seat (the
-// provider connection the agent itself runs on), its by-name skills, and
-// the bridge plugins it can be handed — with the shared groups after.
-// Without an agent (the Maestro desk, an unaddressed channel, no active
-// session) the model is the shared one, exactly as before.
+// THE PLUS IS FOR THE AGENTS FIRST (Troy's framing): the model opens
+// with the AGENTS — ChatGPT, Antigravity, Claude, Grok, Claude Code,
+// Gemini — one group per agent, each carrying that agent's own things:
+// its own connection row (the provider connection the agent itself runs
+// on), its by-name skills, and the bridge plugins it can be handed.
+// Pass `agent` to pickerModel() and that agent's group leads (a private
+// room's agent, the session's agent); the other five follow. With no
+// agent in context (the Maestro desk, an unaddressed channel, no active
+// session) the six groups stand in their plain order and model.agent
+// is null. CONNECTORS follow — services only (see below) — then the
+// shared Plugins, Upload and Web search groups.
 // EVERY entry carries a truthful `state`, computed from the same registry
 // facts the Integrations page renders:
 // - 'connected' (label "Works"): turning the message over really uses it
-//   — an installed plugin's MCP tools join the turn; a seat is the
-//   connection the agent itself answers through.
+//   — an installed plugin's MCP tools join the turn; an agent's own
+//   connection row is the connection the agent itself answers through.
 // - 'note-only' (label "Note only"): a registered connector. Attaching
 //   it hands the agent a NOTE that the service is connected — the turn
 //   is told the service was not opened for it (src/agent/attachments.mjs
@@ -22,13 +27,23 @@
 // - 'not-connected': the registry holds no connection for it.
 //
 // WHERE THE GROUPS COME FROM (real registries only; nothing invented):
-// - Connectors: PROVIDER_REGISTRY in app-model.mjs, with connection truth
-//   from integrationsModel() over GET /api/admin/cora/connectors, GET
-//   /api/admin/provider-connections, GET /api/admin/tool-connections and
-//   the runner presence feed — the exact rows the Integrations page
-//   renders, each with its truthful statusText ("Connected" only from a
-//   verified probe receipt or a live runner link; mirrors read "Linked").
-//   A connector can be attached only when that truth says it is connected.
+// - Agents: AGENT_ECOSYSTEMS below — the six agents, each mapped to the
+//   provider connection it runs on. Their connection truth comes from
+//   integrationsModel() over GET /api/admin/cora/connectors, GET
+//   /api/admin/provider-connections, GET /api/admin/tool-connections
+//   and the runner presence feed — the exact facts the Integrations
+//   page renders ("Connected" only from a verified probe receipt or a
+//   live runner link).
+// - Connectors: SERVICES only — the PROVIDER_REGISTRY rows in
+//   app-model.mjs that are neither team chat mirrors (Slack, Discord:
+//   mirrors are not connectors and never appear in the picker at all)
+//   nor AI providers (Claude, ChatGPT, Grok, Gemini are agents, listed
+//   above, never connector rows) — plus any further service the
+//   tool-connections read (GET /api/admin/tool-connections) actually
+//   holds a row for, rendered with that row's probe truth. No service
+//   is listed on anything but real data: a service with no registry row
+//   and no tool-connections row is simply not here. A connector can be
+//   attached only when its truth says it is connected.
 // - Skills: there is deliberately NO skill list here. Skills are markdown
 //   command files that live with the agent runtime — .helmion/commands/
 //   plus plugin commands/ (src/agent/commands.mjs, src/agent/plugins.mjs) —
@@ -65,33 +80,38 @@
 //   join the turn's images, text is decoded and inlined.
 // - the web-search toggle rides as metadata.webSearch — not an
 //   attachment — and every consumer already reads it: the bridge resolver
-//   (src/agent/attachments.mjs: native on the Claude seat, an honest line
+//   (src/agent/attachments.mjs: native for Claude, an honest line
 //   on the others) and the cloud worker's context builder. It is carried
 //   only when ON; off is the absence every layer already treats as the
 //   default, so an untouched toggle changes nothing on the wire.
-import { integrationsModel } from './app-model.mjs';
+import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs';
 
 // Truthful attachment states (see the header): what attaching an entry
 // actually does on the turn, never just what the registry holds.
 export const ATTACH_STATE = Object.freeze({ CONNECTED: 'connected', NOTE_ONLY: 'note-only', NOT_CONNECTED: 'not-connected' });
 export const ATTACH_STATE_LABEL = Object.freeze({ connected: 'Works', 'note-only': 'Note only', 'not-connected': 'Not connected' });
 
-// The agents a composer can be talking to, and the PROVIDER_REGISTRY key
-// of each one's own provider connection — its seat. Keys are the
-// workspace's agent keys (envoy-workspace.js AGENTS, minus 'maestro':
-// Maestro is the human's seat, never an agent with an ecosystem).
+// The six agents the plus is for — Troy's list, in his order — and the
+// PROVIDER_REGISTRY key of the provider connection each one runs on.
+// Claude Code runs on the Claude connection (anthropic) and Antigravity
+// runs on the Google connection (google): their own-connection rows read
+// those providers' facts, the same facts the Integrations page renders.
+// Maestro is not here: the manager is the human, never an agent with an
+// ecosystem.
 export const AGENT_ECOSYSTEMS = Object.freeze({
-  claude: Object.freeze({ agent: 'claude', name: 'Claude', registryKey: 'anthropic' }),
   openai: Object.freeze({ agent: 'openai', name: 'ChatGPT', registryKey: 'openai' }),
+  antigravity: Object.freeze({ agent: 'antigravity', name: 'Antigravity', registryKey: 'google' }),
+  claude: Object.freeze({ agent: 'claude', name: 'Claude', registryKey: 'anthropic' }),
   grok: Object.freeze({ agent: 'grok', name: 'Grok', registryKey: 'xai' }),
+  'claude-code': Object.freeze({ agent: 'claude-code', name: 'Claude Code', registryKey: 'anthropic' }),
   gemini: Object.freeze({ agent: 'gemini', name: 'Gemini', registryKey: 'google' }),
 });
-const AGENT_ALIASES = Object.freeze({ chatgpt: 'openai', anthropic: 'claude', google: 'gemini', xai: 'grok' });
+const AGENT_ALIASES = Object.freeze({ chatgpt: 'openai', anthropic: 'claude', google: 'gemini', xai: 'grok', 'claude code': 'claude-code', claudecode: 'claude-code', agy: 'antigravity' });
 
-// An agent named any way the surfaces name it — workspace key ('gemini',
-// 'openai'), display name ('Gemini', 'ChatGPT'), or registry key
-// ('google', 'anthropic') — resolves to its workspace key, or null when
-// it names no agent (including 'maestro', the human's seat).
+// An agent named any way the surfaces name it — agent key ('gemini',
+// 'claude-code'), display name ('Gemini', 'Claude Code'), or registry
+// key ('google', 'anthropic') — resolves to its agent key, or null when
+// it names no agent (including 'maestro', the human manager).
 export function normalizeAgentKey(value) {
   const k = String(value ?? '').trim().toLowerCase();
   if (!k || k === 'maestro') return null;
@@ -119,7 +139,7 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*(:[a-z0-9][a-z0-9_-]*)?$/
 export const FILE_MAX_BYTES = 256 * 1024;
 export const FILE_TOTAL_MAX_BYTES = 512 * 1024;
 export const UPLOAD_NOTE = 'Up to 256 KB per file, 512 KB per message. Text files are read into the conversation; PNG, JPEG and WebP images are shown to the agent. Other kinds of file can\'t be read yet.';
-export const WEB_SEARCH_NOTE = 'For this message only. Whether the agent can actually search depends on the seat: the Claude seat searches for real; other seats will say plainly that they can\'t, rather than pretend.';
+export const WEB_SEARCH_NOTE = 'For this message only. Whether the agent can actually search depends on the agent: Claude searches for real; the others will say plainly that they can\'t, rather than pretend.';
 const FILE_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const FILE_TEXT_MEDIA_TYPES = new Set([
   'application/json', 'application/xml', 'application/yaml', 'application/x-yaml',
@@ -190,16 +210,26 @@ export function normalizeSkillName(value) {
 }
 
 const CONNECTORS_NOTE = 'Attaching a connector hands the agent a note that the service is connected — it does not open the service for the agent. Plugins are the exception: their tools really connect for the turn.';
-const SKILLS_NOTE = 'Skills live with your agents — command files and plugins on your PC bridge. Attach one by name and it runs as a /command at the start of your message.';
+
+// PROVIDER_REGISTRY keys that are NOT services: the team chat mirrors
+// (Slack, Discord — mirrors, not connectors; they never appear in the
+// picker) and the AI providers (Claude, ChatGPT, Grok, Gemini — they
+// are the agents above, never connector rows). What remains in the
+// registry is a service (GitHub today). Further services arrive only
+// through the tool-connections data itself — see pickerModel.
+const MIRROR_KEYS = new Set(['slack', 'discord']);
+const AGENT_REGISTRY_KEYS = new Set(['anthropic', 'openai', 'xai', 'google']);
 
 export function pickerModel({ connectors = {}, providers = {}, plugins = {}, toolConnections = null, presence = null, now = Date.now(), agent = null } = {}) {
+  const rows = integrationsModel(connectors, providers, { toolConnections, presence, now });
+  const rowByKey = new Map(rows.map((p) => [p.key, p]));
   // A connector the truth model calls connected is attachable (the
   // `connected` gate addAttachment enforces) but note-only on the turn;
   // anything else is simply not connected. Neither is ever 'connected'
-  // as an attachment state — see the header. The row ALSO carries the
+  // as an attachment state — see the header. The item ALSO carries the
   // truth model's own status fields (status / statusText / source) the
   // Integrations surfaces render, so every surface tells the same story.
-  const connectorItems = integrationsModel(connectors, providers, { toolConnections, presence, now }).map((p) => {
+  const toConnectorItem = (p) => {
     const registered = p.connected === true;
     const state = registered ? ATTACH_STATE.NOTE_ONLY : ATTACH_STATE.NOT_CONNECTED;
     return {
@@ -207,7 +237,35 @@ export function pickerModel({ connectors = {}, providers = {}, plugins = {}, too
       status: p.status, statusText: p.statusText, source: p.source,
       state, stateLabel: ATTACH_STATE_LABEL[state],
     };
-  });
+  };
+  const connectorItems = rows
+    .filter((p) => !MIRROR_KEYS.has(p.key) && !AGENT_REGISTRY_KEYS.has(p.key))
+    .map(toConnectorItem);
+  // Services the registry does not carry but the tool-connections read
+  // does: a service earns its row from real probe data, under the same
+  // truth rules — never from a list invented here. (A service Troy
+  // connects tomorrow, Vercel or any other, appears the day its row
+  // exists and says what its probe says.) Mirrors and the agents' own
+  // providers are excluded even if a row names them: they are not
+  // connectors.
+  if (Array.isArray(toolConnections)) {
+    const seen = new Set(connectorItems.map((i) => i.key));
+    for (const row of toolConnections) {
+      const serviceId = String(row?.serviceId ?? '');
+      if (!serviceId || seen.has(serviceId) || MIRROR_KEYS.has(serviceId) || AGENT_REGISTRY_KEYS.has(serviceId)) continue;
+      const s = bestToolConnectionStatus(toolConnections, serviceId, { now });
+      if (s.status === 'none') continue;
+      seen.add(serviceId);
+      const named = toolConnections.find((r) => String(r?.serviceId ?? '') === serviceId && r?.accountLabel);
+      const registered = s.connected === true;
+      const state = registered ? ATTACH_STATE.NOTE_ONLY : ATTACH_STATE.NOT_CONNECTED;
+      connectorItems.push({
+        kind: 'connector', key: serviceId, name: named?.accountLabel ?? serviceId, kindLabel: 'Service', connected: registered,
+        status: s.status, statusText: s.statusText, source: 'tool-connections',
+        state, stateLabel: ATTACH_STATE_LABEL[state],
+      });
+    }
+  }
   const pluginItems = (Array.isArray(plugins?.plugins) ? plugins.plugins : []).map((p) => ({
     kind: 'plugin',
     name: String(p?.name ?? '').trim().toLowerCase(),
@@ -220,44 +278,34 @@ export function pickerModel({ connectors = {}, providers = {}, plugins = {}, too
   });
   const uploadGroup = Object.freeze({ id: 'upload', title: 'Upload a file', fileInput: true, note: UPLOAD_NOTE, items: Object.freeze([]) });
   const webSearchGroup = Object.freeze({ id: 'web-search', title: 'Web search', toggle: true, note: WEB_SEARCH_NOTE, items: Object.freeze([]) });
-  const eco = agentEcosystem(agent);
-  if (!eco) {
+  // The agents: one group each, the addressed agent's group first. An
+  // agent's own-connection row is a STATUS row (kind 'provider' — never
+  // an attachment; addAttachment accepts only skill/connector/plugin/
+  // file), stating the one fact the integrations registry holds about
+  // the connection that agent itself runs on.
+  const agentRow = (eco) => {
+    const p = rowByKey.get(eco.registryKey);
+    const connected = p?.connected === true;
+    const state = connected ? ATTACH_STATE.CONNECTED : ATTACH_STATE.NOT_CONNECTED;
     return Object.freeze({
-      agent: null,
-      groups: Object.freeze([
-        Object.freeze({ id: 'skills', title: 'Skills', byName: true, items: Object.freeze([]), note: SKILLS_NOTE }),
-        Object.freeze({ id: 'connectors', title: 'Connectors', note: CONNECTORS_NOTE, items: Object.freeze(connectorItems) }),
-        pluginsGroup,
-        uploadGroup,
-        webSearchGroup,
-      ]),
+      kind: 'provider', key: eco.registryKey, agent: eco.agent, name: eco.name, kindLabel: 'This agent\'s connection',
+      connected, status: p?.status ?? 'not-connected', statusText: p?.statusText ?? 'Not connected', source: p?.source ?? 'registry',
+      state, stateLabel: ATTACH_STATE_LABEL[state],
     });
-  }
-  // Per-agent: the agent's ecosystem leads. Its seat row is a STATUS row
-  // (kind 'provider' — never an attachment; addAttachment accepts only
-  // skill/connector/plugin/file), stating the one fact the integrations
-  // registry holds about the seat itself. The seat's registry entry
-  // leaves the shared connectors group — it is presented here, as the
-  // seat, instead of masquerading there as one more note-only connector.
-  const seatRow = connectorItems.find((i) => i.key === eco.registryKey);
-  const seatState = seatRow?.connected ? ATTACH_STATE.CONNECTED : ATTACH_STATE.NOT_CONNECTED;
-  const seatItem = Object.freeze({
-    kind: 'provider', key: eco.registryKey, name: eco.name, kindLabel: 'This agent\'s seat', seat: true,
-    connected: seatRow?.connected === true, state: seatState, stateLabel: ATTACH_STATE_LABEL[seatState],
-  });
-  const agentGroup = Object.freeze({
-    id: 'agent', agent: eco.agent, title: `${eco.name}'s ecosystem`, byName: true,
-    note: `${eco.name}'s skills live with the agent — command files and plugins on your PC bridge. Attach one by name and it runs as a /command at the start of your message.`,
-    items: Object.freeze([seatItem, ...pluginItems]),
-  });
+  };
+  const lead = agentEcosystem(agent);
+  const ecos = Object.values(AGENT_ECOSYSTEMS);
+  const ordered = lead ? [lead, ...ecos.filter((e) => e.agent !== lead.agent)] : ecos;
+  const agentGroups = ordered.map((eco) => Object.freeze({
+    id: 'agent', section: 'agents', agent: eco.agent, lead: lead?.agent === eco.agent, title: `${eco.name}'s ecosystem`, byName: true,
+    note: `${eco.name}'s own skills, plugins and commands live with the agent — command files and plugins on your PC bridge. Attach a skill by name and it runs as a /command at the start of your message.`,
+    items: Object.freeze([agentRow(eco), ...pluginItems]),
+  }));
   return Object.freeze({
-    agent: eco.agent,
+    agent: lead?.agent ?? null,
     groups: Object.freeze([
-      agentGroup,
-      Object.freeze({
-        id: 'connectors', title: 'Connectors', note: CONNECTORS_NOTE,
-        items: Object.freeze(connectorItems.filter((i) => i.key !== eco.registryKey)),
-      }),
+      ...agentGroups,
+      Object.freeze({ id: 'connectors', title: 'Connectors', note: CONNECTORS_NOTE, items: Object.freeze(connectorItems) }),
       pluginsGroup,
       uploadGroup,
       webSearchGroup,
@@ -292,9 +340,9 @@ export function addAttachment(list = [], att, { catalog = null } = {}) {
     const key = String(att.key ?? '').trim().toLowerCase();
     if (!key) return fail('Pick a connector first.');
     if (catalog) {
-      // Same-kind match only: a mixed catalog (the per-agent group holds
-      // the seat row beside plugin rows) must never let one kind's entry
-      // answer another kind's lookup.
+      // Same-kind match only: a mixed catalog (an agent group holds the
+      // agent's own-connection row beside plugin rows) must never let
+      // one kind's entry answer another kind's lookup.
       const item = catalog.find((i) => i.kind === 'connector' && i.key === key);
       if (!item) return fail('That connector is not in the registry.');
       if (!item.connected) return fail(`${item.name} is not connected yet — connect it in Integrations first.`);

@@ -995,9 +995,9 @@ async function renderConsolePicker() {
   const groups = [];
   for (const g of model.groups) {
     if (g.id === 'agent') {
-      // The session agent's own ecosystem: seat status row, by-name
-      // skills, and the bridge plugins it can be handed (mirrors the
-      // workspace picker's agent group).
+      // One of the six agents' own groups: its own connection as a
+      // status row, by-name skills, and the bridge plugins it can be
+      // handed (mirrors the workspace picker's agent groups).
       const group = el('div', 'ew-picker-group');
       const nameInput = el('input', 'ew-picker-input');
       nameInput.maxLength = 64;
@@ -1035,24 +1035,6 @@ async function renderConsolePicker() {
         btn.append(el('span', null, item.name), el('span', 'ew-picker-kind', item.brings), el('span', `ew-picker-state ${on ? 'on' : 'off'}`, on ? 'Attached' : item.stateLabel));
         group.append(btn);
       }
-      groups.push(group);
-    } else if (g.id === 'skills') {
-      const group = el('div', 'ew-picker-group');
-      const nameInput = el('input', 'ew-picker-input');
-      nameInput.maxLength = 64;
-      nameInput.placeholder = 'Skill name — e.g. deploy, or plugin:skill';
-      nameInput.setAttribute('aria-label', 'Skill name');
-      const note = el('p', 'ew-note');
-      const add = el('button', 'ew-btn sm', 'Attach skill');
-      add.type = 'button';
-      add.onclick = () => {
-        const r = addAttachment(consoleAttach.list, { kind: 'skill', name: nameInput.value });
-        if (!r.added) { note.textContent = r.reason; return; }
-        consoleAttach.list = r.list; note.textContent = '';
-        renderConsoleAttachChips(); renderConsolePicker();
-      };
-      const row = el('div', 'ew-row'); row.append(nameInput, add);
-      group.append(el('div', 'ew-subhead', 'SKILLS'), el('p', 'ew-note', g.note), row, note);
       groups.push(group);
     } else if (g.id === 'connectors') {
       const group = el('div', 'ew-picker-group');
@@ -2295,7 +2277,7 @@ async function loadPreview() {
 $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 
 // Desktop view = the Envoy workspace (channels | chat | agents | workbench).
-// The module owns its own DOM wiring; app.js hands it the shared helpers.
+// The module owns its own DOM wiring; app.js hands it the shared context.
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
