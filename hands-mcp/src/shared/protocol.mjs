@@ -40,6 +40,9 @@ export const POWERSHELL_COMMANDS = Object.freeze({
   'list-processes': { args: {}, summary: 'top 20 processes by CPU' },
   'ollama-list': { args: {}, summary: 'installed Ollama models' },
   'restart-bridge': { args: {}, summary: 'restart the Helmian Bridge service (its in-process spoke re-reads its config)' },
+  'toolchain-versions': { args: {}, summary: 'node, npm, npx and eas versions on the PC' },
+  'eas-build': { args: { repo: 'path' }, summary: 'start an EAS Android preview build in a repo (detached; output logged in the repo)' },
+  'eas-build-status': { args: { repo: 'path' }, summary: 'tail of the latest spoke-started EAS build log in a repo, with its exit marker' },
 });
 
 export const TOOLS = Object.freeze({
