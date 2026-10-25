@@ -136,7 +136,7 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
   app.post('/spoke/v1/poll', spokeAuth, express.json({ limit: '16kb' }), async (req, res) => {
     const ctrl = new AbortController();
     res.on('close', () => ctrl.abort());
-    const job = await hub.nextJob({ deviceId: req.spokeDevice, capabilities: req.body?.capabilities, signal: ctrl.signal });
+    const job = await hub.nextJob({ deviceId: req.spokeDevice, capabilities: req.body?.capabilities, scope: req.body?.scope, signal: ctrl.signal });
     if (res.writableEnded || res.destroyed) {
       if (job) hub.requeue(job); // the spoke went away; the job returns to its own device's queue
       return;
