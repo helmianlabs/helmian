@@ -1,6 +1,7 @@
-// Composer "+" picker: attach a skill, a connector, or (once it exists) a
-// file to the message you are about to send. Pure model — no DOM — so it is
-// unit tested like app-model.mjs; envoy-workspace.js renders it.
+// Composer "+" picker: attach a skill, a connector, or a file to the
+// message you are about to send, or flip its web-search toggle. Pure
+// model — no DOM — so it is unit tested like app-model.mjs;
+// envoy-workspace.js renders it.
 //
 // WHERE THE GROUPS COME FROM (real registries only; nothing invented):
 // - Connectors: PROVIDER_REGISTRY in app-model.mjs, with live connected
@@ -42,6 +43,12 @@
 //   connectors are context-only today and the turn is told so);
 // - a file rides as metadata too, consumed by the same module: images
 //   join the turn's images, text is decoded and inlined.
+// - the web-search toggle rides as metadata.webSearch — not an
+//   attachment — and every consumer already reads it: the bridge resolver
+//   (src/agent/attachments.mjs: native on the Claude seat, an honest line
+//   on the others) and the cloud worker's context builder. It is carried
+//   only when ON; off is the absence every layer already treats as the
+//   default, so an untouched toggle changes nothing on the wire.
 import { integrationsModel } from './app-model.mjs';
 
 export const MAX_ATTACHMENTS = 8;
@@ -59,6 +66,7 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*(:[a-z0-9][a-z0-9_-]*)?$/
 export const FILE_MAX_BYTES = 256 * 1024;
 export const FILE_TOTAL_MAX_BYTES = 512 * 1024;
 export const UPLOAD_NOTE = 'Up to 256 KB per file, 512 KB per message. Text files are read into the conversation; PNG, JPEG and WebP images are shown to the agent. Other kinds of file can\'t be read yet.';
+export const WEB_SEARCH_NOTE = 'For this message only. Whether the agent can actually search depends on the seat: the Claude seat searches for real; other seats will say plainly that they can\'t, rather than pretend.';
 const FILE_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const FILE_TEXT_MEDIA_TYPES = new Set([
   'application/json', 'application/xml', 'application/yaml', 'application/x-yaml',
@@ -149,6 +157,7 @@ export function pickerModel({ connectors = {}, providers = {}, plugins = {} } = 
         note: 'Plugins live on your PC bridge. Attaching one gives the agent its approved tools for this turn.',
       }),
       Object.freeze({ id: 'upload', title: 'Upload a file', fileInput: true, note: UPLOAD_NOTE, items: Object.freeze([]) }),
+      Object.freeze({ id: 'web-search', title: 'Web search', toggle: true, note: WEB_SEARCH_NOTE, items: Object.freeze([]) }),
     ]),
   });
 }
@@ -229,15 +238,19 @@ export function removeAttachment(list = [], att) {
 
 // The structured metadata shape the server accepts, stores and hands to
 // the turn (normalizeMessageMetadata in src/cloud/envoy-agents.mjs is the
-// canonical validator). Plain JSON, frozen.
-export function attachmentMetadata(list = []) {
-  if (!list.length) return null;
+// canonical validator). Plain JSON, frozen. The web-search toggle joins
+// the same object as `webSearch` — carried only when ON (see the header).
+export function attachmentMetadata(list = [], { webSearch = false } = {}) {
+  if (!list.length && webSearch !== true) return null;
   return Object.freeze({
-    attachments: Object.freeze(list.map((a) => (a.kind === 'connector'
-      ? Object.freeze({ kind: 'connector', key: a.key, name: a.name })
-      : a.kind === 'file'
-        ? Object.freeze({ kind: 'file', name: a.name, mediaType: a.mediaType, size: a.size, data: a.data })
-        : Object.freeze({ kind: a.kind, name: a.name })))),
+    ...(list.length ? {
+      attachments: Object.freeze(list.map((a) => (a.kind === 'connector'
+        ? Object.freeze({ kind: 'connector', key: a.key, name: a.name })
+        : a.kind === 'file'
+          ? Object.freeze({ kind: 'file', name: a.name, mediaType: a.mediaType, size: a.size, data: a.data })
+          : Object.freeze({ kind: a.kind, name: a.name })))),
+    } : {}),
+    ...(webSearch === true ? { webSearch: true } : {}),
   });
 }
 
@@ -260,14 +273,14 @@ export function applySkillToBody(body, list = []) {
   return { body: `/${skill.name} ${text}`, skillCarried: true, note: null };
 }
 
-export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [] } = {}) {
+export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [], webSearch = false } = {}) {
   const applied = applySkillToBody(body, attachments);
-  const metadata = attachmentMetadata(attachments);
+  const metadata = attachmentMetadata(attachments, { webSearch });
   return Object.freeze({
     // The fields POST /api/admin/envoy/messages accepts: the original
-    // three, plus `metadata` when something is attached. The route
-    // allowlists it, envoy-chat stores it, and the bridges hand it to
-    // the turn, which consumes it (src/agent/attachments.mjs).
+    // three, plus `metadata` when something is attached or web search is
+    // on. The route allowlists it, envoy-chat stores it, and the bridges
+    // hand it to the turn, which consumes it (src/agent/attachments.mjs).
     payload: Object.freeze({ channelId, body: applied.body, idempotencyKey, ...(metadata ? { metadata } : {}) }),
     metadata,
     skillCarried: applied.skillCarried,
