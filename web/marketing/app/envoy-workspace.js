@@ -108,20 +108,23 @@ export function pendingAgentWork(messages, roster, joined = {}, online = new Set
   return roster.filter((p) => due.has(p));
 }
 
-// The Agent Chat pane's own conversation with one provider: the signed-in
-// human's prompts that route to it (addressed() — the same routing the
-// channel runs on) plus that provider's replies, in channel order.
-// Everything else — other people's posts, other agents' replies, system
-// notices — stays in the channel where it happened.
-export function cliThreadFor(messages, roster, target, selfSubject) {
-  if (!target) return [];
-  const providerOf = (m) => m.agentProvider || (m.authorSubject?.startsWith('agent:') ? m.authorSubject.slice(6) : (m.authorSubject?.endsWith(':bridge') ? 'maestro' : null));
-  return messages.filter((m) => {
-    if (m.authorKind === 'system') return false;
-    const p = providerOf(m);
-    if (p) return p === target;
-    return m.authorKind === 'human' && m.authorSubject === selfSubject && addressed(m, roster).includes(target);
-  });
+// Private agent rooms: every agent has its own channel (kind 'agent',
+// slug agent-<provider>) where its one-to-one conversation lives, away
+// from the shared channels. The Agent Chat pane reads and writes that
+// room instead of filtering the open channel: in the room there is
+// nothing else — the room seats exactly one agent, so its whole
+// non-system stream is the conversation. Rooms are created lazily by
+// the server (POST /api/admin/envoy/agent-room) the first time a room
+// is opened.
+export function agentRoomThread(messages) {
+  return (messages ?? []).filter((m) => m.authorKind !== 'system');
+}
+
+// The room channel for one provider in the loaded channel list, or null
+// until the server has created it.
+export function agentRoomFor(channels, provider) {
+  if (!provider) return null;
+  return (channels ?? []).find((c) => c.kind === 'agent' && c.slug === `agent-${provider}`) ?? null;
 }
 
 // Pending work in the open channel, from the live server-fed state.
@@ -158,7 +161,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null }, attach: { channel: [], cli: [] }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -546,9 +549,9 @@ async function setNetMode(mode) {
 
 function renderChannels() {
   const list = $('ew-channel-list');
-  const row = (c) => h('button', { type: 'button', class: `ew-channel${c.id === ws.channelId ? ' active' : ''}`, 'data-id': c.id, onclick: () => selectChannel(c.id) },
+  const row = (c) => h('button', { type: 'button', class: `ew-channel${c.kind === 'agent' ? ' room' : ''}${c.id === ws.channelId ? ' active' : ''}`, 'data-id': c.id, onclick: () => selectChannel(c.id) },
     chatAvatar(c, 'sm'), h('span', { class: 'name' }, c.title || c.slug),
-    h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null));
+    h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null, c.kind === 'agent' ? h('span', { class: 'ew-mini room', title: 'Private agent room' }) : null));
   renderNetSwitch();
   list.setAttribute('aria-label', ws.mode === 'discord' ? 'Discord channels' : 'Envoy channels');
   $('ew-add-channel').hidden = ws.mode === 'discord' || !$('ew-new-channel').hidden;
@@ -561,9 +564,14 @@ function renderChannels() {
     );
     return;
   }
+  // Agent rooms (kind 'agent') get their own section: they are private
+  // one-to-one rooms, not shared channels, and the list says so.
+  const regular = ws.channels.filter((c) => c.kind !== 'agent');
+  const rooms = ws.channels.filter((c) => c.kind === 'agent');
   list.replaceChildren(
     h('div', { class: 'ew-src-head' }, h('img', { src: '/assets/agents/maestro.png', alt: '', width: 14, height: 14 }), 'ENVOY'),
-    ...(ws.channels.length ? ws.channels.map(row) : [h('p', { class: 'ew-note' }, 'No channels yet.')]),
+    ...(regular.length ? regular.map(row) : [h('p', { class: 'ew-note' }, 'No channels yet.')]),
+    ...(rooms.length ? [h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-room-mark', 'aria-hidden': 'true' }), 'AGENT ROOMS'), ...rooms.map(row)] : []),
     h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
     ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Use Link Discord in a chat.' : 'Bot not connected yet. Linked channels mirror here.')]),
     h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-gh-mark', 'aria-hidden': 'true' }), 'GITHUB'),
@@ -909,11 +917,12 @@ async function send(e) {
 // shown on its own inside the pane. Sessions reuse the Session console's plumbing
 // (/api/admin/app/sessions — the same create/list payloads as app.js's
 // #session-form, with the same local fallback); prompts post through the
-// same envoy messages endpoint the console composer uses, into the open
-// channel, addressed with the @mention routing the chat already honours.
+// same envoy messages endpoint the console composer uses, into the picked
+// agent's private room (see the rooms block below) — the room seats
+// exactly that agent, so no @mention routing is needed there.
 // Maestro is the router, not a session provider (the server offers
-// Claude/ChatGPT/Grok/Gemini), so picking Maestro sends unaddressed and
-// lets Maestro route it — the rule the chat already runs on.
+// Claude/ChatGPT/Grok/Gemini); Maestro's room is the one-to-one with
+// Maestro itself.
 const CLI_KEY_BY_PROVIDER = { Claude: 'claude', ChatGPT: 'openai', Grok: 'grok', Gemini: 'gemini' };
 function cliTarget() {
   const s = ws.cli.sessions.find((x) => x.id === ws.cli.activeId);
@@ -926,7 +935,7 @@ function renderCliChips() {
 }
 function renderCliTo() {
   const { key, session } = cliTarget();
-  $('ew-cli-to').textContent = session ? `${session.provider} · posts in the channel as @${NAMES[key]}` : key === 'maestro' ? 'Maestro · posts in the channel and routes it' : `${NAMES[key]} · posts in the channel as @${NAMES[key]}`;
+  $('ew-cli-to').textContent = session ? `${session.provider} · your private room with ${NAMES[key]}` : `${NAMES[key]} · your private room`;
   $('ew-cli-input').placeholder = key === 'maestro' ? 'Prompt...' : `Prompt ${NAMES[key]}...`;
 }
 function renderCliSessions() {
@@ -939,24 +948,89 @@ function renderCliSessions() {
       avatarImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
   }));
 }
-// The pane's own conversation stream: the picked agent's exchange,
-// rendered where the human is looking instead of only in the channel.
+// ---------- private agent rooms ----------
+// The pane's conversation lives in the picked agent's own room. The room
+// id is resolved once per provider: from the channel list when the room
+// already exists, otherwise the server creates it lazily on first open.
+function setCliRoom(key, channel) {
+  const id = channel?.id ?? null;
+  if (ws.cli.roomFor === key && ws.cli.roomId === id) return;
+  ws.cli.roomFor = key; ws.cli.roomId = id; ws.cli.roomMessages = []; ws.cli.roomSig = null; ws.cli.roomJoined = {};
+  if (id) void loadCliRoomConfig();
+}
+async function ensureCliRoom(key) {
+  const known = agentRoomFor(ws.channels, key);
+  if (known) { setCliRoom(key, known); return known.id; }
+  if (ws.cli.roomFor === key && ws.cli.roomId) return ws.cli.roomId;
+  if (ws.cli.roomPromise) return ws.cli.roomPromise;
+  ws.cli.roomPromise = (async () => {
+    try {
+      const body = await ws.ctx.post('/api/admin/envoy/agent-room', { provider: key });
+      if (body.channel) {
+        const i = ws.channels.findIndex((c) => c.id === body.channel.id);
+        if (i >= 0) ws.channels[i] = { ...ws.channels[i], ...body.channel }; else ws.channels = [...ws.channels, body.channel];
+        renderChannels();
+        if (cliTarget().key === key) setCliRoom(key, body.channel);
+        return body.channel.id;
+      }
+    } catch { /* the pane keeps its opening note until a send retries */ }
+    return null;
+  })();
+  try { return await ws.cli.roomPromise; } finally { ws.cli.roomPromise = null; }
+}
+async function openCliRoom() {
+  const { key } = cliTarget();
+  const id = await ensureCliRoom(key);
+  if (id) await loadCliRoom();
+  else renderCliThread();
+}
+// The room's roster (exactly one agent, joined when the room was made) —
+// fetched once per room; it drives the in-thread answering cue.
+async function loadCliRoomConfig() {
+  const id = ws.cli.roomId; if (!id) return;
+  try {
+    const body = await ws.ctx.api(`/api/admin/envoy/channel-config?channel_id=${encodeURIComponent(id)}`);
+    if (id !== ws.cli.roomId) return;
+    ws.cli.roomJoined = Object.fromEntries((body.config?.agents ?? []).map((a) => [a.provider, a.joinedAt]));
+  } catch { ws.cli.roomJoined = {}; }
+  renderCliThread();
+}
+async function loadCliRoom() {
+  const id = ws.cli.roomId;
+  if (!id) { renderCliThread(); return; }
+  try {
+    const body = await ws.ctx.api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(id)}&limit=100`);
+    if (id !== ws.cli.roomId) return;
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const sig = messages.map((m) => m.id).join(',');
+    if (sig !== ws.cli.roomSig) { ws.cli.roomSig = sig; ws.cli.roomMessages = messages; }
+  } catch { /* keep the last good room state */ }
+  renderCliThread();
+}
+// Pending work inside the picked agent's room (the server's agent-work
+// rules over the room's own messages), for the fast-poll decision.
+function roomWorking() {
+  const { key } = cliTarget();
+  if (!key || ws.cli.roomFor !== key || !ws.cli.roomId) return [];
+  return pendingAgentWork(ws.cli.roomMessages, [key], ws.cli.roomJoined, ws.online);
+}
+
+// The pane's own conversation stream: the picked agent's room, rendered
+// where the human is looking instead of inside a shared channel.
 // Signature-guarded like the message list, so calm polls don't rebuild it.
 function renderCliThread() {
   const box = $('ew-cli-thread'); if (!box) return;
   const { key } = cliTarget();
-  const roster = (ws.config?.agents ?? []).map((a) => a.provider);
-  const me = ws.ctx.state?.actor?.subject;
-  const list = ws.channelId ? cliThreadFor(ws.messages, roster, key, me) : [];
-  const working = currentWorking();
-  const showing = key === 'maestro' ? working : working.filter((p) => p === key);
-  const sig = `${key}|${ws.channelId ?? ''}|${list.map((m) => m.id).join(',')}|${showing.join(',')}`;
+  const inRoom = ws.cli.roomFor === key && Boolean(ws.cli.roomId);
+  const list = inRoom ? agentRoomThread(ws.cli.roomMessages) : [];
+  const showing = inRoom ? roomWorking() : [];
+  const sig = `${key}|${ws.cli.roomId ?? ''}|${list.map((m) => m.id).join(',')}|${showing.join(',')}`;
   if (sig === ws.cli.threadSig) return;
   ws.cli.threadSig = sig;
   if (!list.length && !showing.length) {
-    box.replaceChildren(h('p', { class: 'ew-note' }, ws.channelId
-      ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here.`
-      : 'Open a channel and your conversation with the picked agent shows up here.'));
+    box.replaceChildren(h('p', { class: 'ew-note' }, inRoom
+      ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here, in ${NAMES[key]}'s own room.`
+      : `Opening your room with ${NAMES[key]}…`));
     return;
   }
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -990,11 +1064,13 @@ function selectCliSession(id) {
   ws.cli.provider = CLI_KEY_BY_PROVIDER[s.provider] ?? ws.cli.provider;
   if (ws.ctx.state) ws.ctx.state.activeSession = id;
   renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
+  void openCliRoom();
   $('ew-cli-input').focus({ preventScroll: true });
 }
 function pickCliProvider(p) {
   ws.cli.provider = p; ws.cli.activeId = null; ls.set('cliSession', null);
   renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
+  void openCliRoom();
   if (p === 'maestro') { $('ew-cli-session-form').hidden = true; $('ew-cli-input').focus({ preventScroll: true }); return; }
   ws.cli.pending = p;
   const input = $('ew-cli-session-name');
@@ -1032,18 +1108,18 @@ async function sendCli(e) {
   e?.preventDefault?.();
   const box = $('ew-cli-input'); const raw = box.value.trim();
   if (!raw) return;
-  if (!ws.channelId) { ws.ctx.toast('No channel open yet — the prompt needs a channel to land in.'); return; }
   const { key } = cliTarget();
-  const tag = key === 'maestro' ? '' : `@${NAMES[key]} `;
-  const body = tag && !raw.toLowerCase().startsWith(tag.trim().toLowerCase()) ? tag + raw : raw;
-  // Attachments apply after the @tag is composed: an attached skill must
-  // lead the whole message for the bridge to expand it (see composer-picker).
-  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: crypto.randomUUID(), attachments: ws.attach.cli });
+  // The prompt lands in the picked agent's own room — no @tag needed:
+  // the room seats exactly that agent, so everything in it is for them.
+  // The room is created lazily here if this is the first prompt ever.
+  const roomId = await ensureCliRoom(key);
+  if (!roomId) { ws.ctx.toast(`Could not open your room with ${NAMES[key]}. Your prompt is still in the box.`); return; }
+  const req = buildMessageRequest({ channelId: roomId, body: raw, idempotencyKey: crypto.randomUUID(), attachments: ws.attach.cli });
   const btn = $('ew-cli-send'); btn.disabled = true;
   try {
     await ws.ctx.post('/api/admin/envoy/messages', req.payload);
     box.value = ''; growCli(); closeSlashMenu(); ws.attach.cli = []; renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
-    ws.sig = null; await loadMessages();
+    await loadCliRoom();
   } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
   finally { btn.disabled = false; }
 }
@@ -1259,6 +1335,7 @@ export async function mountWorkspace(ctx) {
   ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
   await Promise.allSettled([loadPresence(), loadConfig(), loadMessages(), loadCliSessions()]);
+  await openCliRoom().catch(() => {});
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
   const visible = () => document.visibilityState === 'visible' && document.getElementById('shell')?.dataset.view === 'desktop';
   // Adaptive message poll: while any agent has pending work in the open
@@ -1270,9 +1347,9 @@ export async function mountWorkspace(ctx) {
   const gen = (ws.pollGen = (ws.pollGen ?? 0) + 1);
   const tick = async () => {
     if (gen !== ws.pollGen) return;
-    if (visible()) await loadMessages().catch(() => {});
+    if (visible()) { await loadMessages().catch(() => {}); await loadCliRoom().catch(() => {}); }
     if (gen !== ws.pollGen) return;
-    ws.timer = setTimeout(tick, currentWorking().length ? FAST_POLL_MS : CALM_POLL_MS);
+    ws.timer = setTimeout(tick, (currentWorking().length || roomWorking().length) ? FAST_POLL_MS : CALM_POLL_MS);
   };
   ws.timer = setTimeout(tick, CALM_POLL_MS);
   ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadConfig(); } }, 15000);

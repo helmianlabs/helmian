@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, cliThreadFor, dragLayout, pendingAgentWork } from '../app/envoy-workspace.js';
+import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, agentRoomFor, agentRoomThread, dragLayout, pendingAgentWork } from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -100,42 +100,44 @@ test('poll cadence: fast while work is pending, calm otherwise', () => {
   assert.equal(AGENT_WORK_WINDOW_MS, 30 * 60_000);
 });
 
-// Agent-first increment 1 (Troy's chat direction, 2026-10-23): the Agent
-// Chat pane carries its own conversation — cliThreadFor picks, per picked
-// provider, the signed-in human's prompts that route to it (addressed())
-// plus that provider's replies, and nothing else.
-const ME = 'user:troy';
+// Private agent rooms (Bite 7, 2026-10-24): the Agent Chat pane no
+// longer filters the open channel — it reads the picked agent's own
+// room (channel kind 'agent', slug agent-<provider>). The room seats
+// exactly one agent, so the thread is the room's whole non-system
+// stream, and room lookup is by kind + slug, never by title or position.
 const ids = (list) => list.map((m) => m.id);
 
-test('cli thread: an unaddressed prompt and the Maestro reply form the Maestro conversation', () => {
-  const msgs = [human('m1', 'hello'), reply('m2', 'm1', 'maestro')];
-  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'maestro', ME)), ['m1', 'm2']);
-  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'gemini', ME)), []);
+test('room thread: prompts and the room agent\'s replies are the conversation, in room order', () => {
+  const msgs = [human('m1', 'just between us'), reply('m2', 'm1', 'gemini')];
+  assert.deepEqual(ids(agentRoomThread(msgs)), ['m1', 'm2']);
 });
 
-test('cli thread: an @Gemini prompt pairs with the Gemini reply; other agents stay out', () => {
-  const msgs = [human('m1', '@Gemini build the page'), reply('m2', 'm1', 'gemini'), reply('m3', 'm1', 'claude')];
-  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'gemini', ME)), ['m1', 'm2']);
-  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'claude', ME)), ['m3']);
-  assert.deepEqual(ids(cliThreadFor(msgs, ['maestro', 'gemini', 'claude'], 'maestro', ME)), []);
-});
-
-test('cli thread: other people, their prompts and system notices stay in the channel', () => {
-  const other = { id: 'm1', authorKind: 'human', authorSubject: 'user:someone-else', body: '@Gemini hi', createdAt: iso(60_000) };
+test('room thread: system rows (config, join notices) never render', () => {
+  const config = { id: 'm0', authorKind: 'system', authorSubject: 'system:envoy-config', body: '{}', createdAt: iso(90_000) };
   const notice = { id: 'm2', authorKind: 'system', authorSubject: 'system', body: 'Gemini joined', createdAt: iso(50_000) };
-  const mine = human('m3', '@Gemini mine');
-  assert.deepEqual(ids(cliThreadFor([other, notice, mine], ROSTER, 'gemini', ME)), ['m3']);
+  assert.deepEqual(ids(agentRoomThread([config, human('m1', 'hi'), notice, reply('m3', 'm1', 'gemini')])), ['m1', 'm3']);
 });
 
-test('cli thread: an @all prompt shows in every roster thread; agentProvider field counts as authorship', () => {
-  const via = { id: 'm2', authorKind: 'agent', authorSubject: 'user:bridge-9', agentProvider: 'gemini', body: 'Done.', createdAt: iso(30_000) };
-  const msgs = [human('m1', '@all status?'), via];
-  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'maestro', ME)), ['m1']);
-  assert.deepEqual(ids(cliThreadFor(msgs, ROSTER, 'gemini', ME)), ['m1', 'm2']);
+test('room thread: it is the room, not a filter — every member of the room shows', () => {
+  const other = { id: 'm1', authorKind: 'human', authorSubject: 'user:someone-else', body: 'in the room too', createdAt: iso(60_000) };
+  assert.deepEqual(ids(agentRoomThread([other, reply('m2', 'm1', 'claude')])), ['m1', 'm2']);
+  assert.deepEqual(agentRoomThread(null), []);
+  assert.deepEqual(agentRoomThread([]), []);
 });
 
-test('cli thread: no target, no thread', () => {
-  assert.deepEqual(cliThreadFor([human('m1', 'hello')], ROSTER, null, ME), []);
+const ROOM_CHANNELS = [
+  { id: 'c-team', slug: 'team', title: 'Team', kind: 'team' },
+  { id: 'c-decoy', slug: 'agent-claude', title: 'Not a room', kind: 'team' },
+  { id: 'c-gemini', slug: 'agent-gemini', title: 'Gemini', kind: 'agent' },
+  { id: 'c-claude', slug: 'agent-claude', title: 'Claude', kind: 'agent' },
+];
+
+test('room lookup: finds the room by kind and slug only', () => {
+  assert.equal(agentRoomFor(ROOM_CHANNELS, 'claude')?.id, 'c-claude');
+  assert.equal(agentRoomFor(ROOM_CHANNELS, 'gemini')?.id, 'c-gemini');
+  assert.equal(agentRoomFor(ROOM_CHANNELS, 'grok'), null, 'a room that was never created is not in the list');
+  assert.equal(agentRoomFor(ROOM_CHANNELS, null), null);
+  assert.equal(agentRoomFor([], 'claude'), null);
 });
 
 test('agent-first increment 1: the pane has a conversation region and the workspace renders into it', async () => {

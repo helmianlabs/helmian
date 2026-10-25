@@ -245,6 +245,26 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       return result;
     },
 
+    // Private agent rooms (envoy-rooms.mjs): a kind 'agent' channel is one
+    // agent's own room, and its roster is exactly that agent, seeded once
+    // when the room is created. An existing config is never rewritten —
+    // if the room already has one, it stands as it is.
+    async seedRoomAgent(actor, channelId, provider) {
+      const p = normalizeProvider(provider);
+      if (!p) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
+      return tx(actor, async (client) => {
+        const channel = await channelRow(client, actor.tenantId, channelId);
+        if (channel.kind !== 'agent') throw fail(400, 'ENVOY_ROOM_KIND_INVALID');
+        const existing = await readConfig(client, actor.tenantId, channelId);
+        if (existing) return { seeded: false, configured: true };
+        const config = emptyConfig();
+        config.agents = [p];
+        config.joined = { [p]: new Date(now()).toISOString() };
+        await writeConfig(client, actor.tenantId, channelId, config);
+        return { seeded: true, configured: true };
+      });
+    },
+
     // ---- Discord bridge service ----
     async bridgeLinks() {
       return raw(async (client) => {
