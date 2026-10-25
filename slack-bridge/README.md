@@ -9,12 +9,19 @@ websocket open.
   /app under the author's name with a SLACK badge carrying the Slack channel
   name. Slack redeliveries dedupe twice: a bounded seen-set here, and the
   cloud's `slack:<ts>` idempotency key as the durable backstop.
-- Envoy to Slack: not in this service yet. Posting each author under their
-  own name needs the bot token's `chat.postMessage`, a go-live step; the
-  cloud already serves the feed (`/api/admin/envoy/bridge/outbound` excludes
-  Slack-born messages so nothing echoes back). Agent replies reach Slack
-  today through the signed webhook pipe (`HELMION_SLACK_WEBHOOK_URL`),
-  proven 2026-10-24.
+- Envoy to Slack: this bridge polls the cloud's outbound feed
+  (`/api/admin/envoy/bridge/outbound` excludes Slack-born messages so
+  nothing echoes back; the pump re-checks the origin before posting) and
+  posts each message to its linked Slack channel through the bot token's
+  `chat.postMessage`, authored as the sender: a bold name line
+  (`**Name**`, humans carry the ` (Helmian)` suffix — the Discord
+  bridge's authorship rule) over the message text. Attachments are not
+  carried — the feed carries text only, the same treatment Discord's
+  outbound gives them. Named outbound needs `SLACK_BOT_TOKEN`; without
+  it the pump never fires, `/healthz` reports `outbound: webhook-only`,
+  and agent replies still reach Slack through the signed webhook pipe
+  (`HELMION_SLACK_WEBHOOK_URL`, proven 2026-10-24) under the app
+  identity, with no author name.
 - Linking: an owner or admin presses **Link Slack** in /app and gets a code.
   Someone in the Slack channel types `helmian link CODE` (no leading slash —
   Slack eats `/…` as a slash command). Slack events carry no channel-admin
@@ -33,7 +40,7 @@ stays in place for the outbound webhook path.
 | Name | What |
 | --- | --- |
 | `SLACK_APP_TOKEN` | App-level token (`xapp-…`) with `connections:write`, from the app's Basic Information → App-Level Tokens (the token named "helmian-socket"). **Its value was never recorded** — regenerate it in the Slack app settings and paste the new value here. Without it the bridge idles and `/healthz` reports `slack: not_configured`. |
-| `SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) from the same app's OAuth & Permissions page. Optional: powers author display names (`users.info`) and the in-Slack link replies. Without it, inbound still mirrors with author name "Slack member". |
+| `SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) from the same app's OAuth & Permissions page. Optional for inbound: powers author display names (`users.info`) and the in-Slack link replies; without it, inbound still mirrors with author name "Slack member". **Required for named outbound** (Envoy → Slack under each sender's name via `chat.postMessage`); without it, outbound is webhook-only and `/healthz` says so (`outbound: webhook-only` vs `outbound: named`). |
 | `HELMIAN_ENVOY_BRIDGE_TOKEN` | Shared secret, at least 32 chars. Same value as the Vercel env var of that name (and the Discord bridge's). |
 | `HELMIAN_CLOUD` | Optional, default `https://helmian.cloud`. |
 
@@ -49,7 +56,7 @@ App "Helmian" (`A0CBUCYTVNW`), workspace HELMIAN (`T0BP40EFJ1W`):
 2. **Event Subscriptions: ON**, subscribed bot event `message.channels`
    (add `message.groups` too if private channels should mirror).
 3. Bot scopes: `channels:history`, `channels:read`, `users:read`, and
-   `chat:write` (link replies now, per-author outbound later).
+   `chat:write` (link replies and per-author outbound).
 4. The app must be **in the channel** it mirrors — invite `@Helmian` to
    `#all-helmian` (`C0BN7LCK946`).
 

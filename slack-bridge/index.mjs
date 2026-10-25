@@ -13,13 +13,16 @@
 // Env (in /opt/helmian-slack-bridge/app.env, chmod 600, never in git or Vercel):
 //   SLACK_APP_TOKEN             xapp-… app-level token with connections:write (Socket Mode)
 //   SLACK_BOT_TOKEN             xoxb-… bot token from the same install; optional —
-//                               without it, author names fall back to "Slack member"
-//                               and link confirmations get no reply in Slack
+//                               without it, author names fall back to "Slack member",
+//                               link confirmations get no reply in Slack, and named
+//                               outbound is off (/healthz reports outbound:
+//                               webhook-only — Envoy reaches Slack only through
+//                               the HELMION_SLACK_WEBHOOK_URL pipe, unnamed)
 //   HELMIAN_ENVOY_BRIDGE_TOKEN  shared secret, same value as the Vercel env var
 //   HELMIAN_CLOUD               default https://helmian.cloud
 //   HEALTH_PORT / HEALTH_HOST   default 8096 on 0.0.0.0 inside the container; publish it as 127.0.0.1:8096 only
 import http from 'node:http';
-import { createBridge, normalizeSlackEvent } from './bridge-core.mjs';
+import { createBridge, normalizeSlackEvent, outboundMode } from './bridge-core.mjs';
 
 const cloud = process.env.HELMIAN_CLOUD || 'https://helmian.cloud';
 const bridgeToken = String(process.env.HELMIAN_ENVOY_BRIDGE_TOKEN ?? '').trim();
@@ -28,7 +31,7 @@ const botToken = String(process.env.SLACK_BOT_TOKEN ?? '').trim();
 const log = (...a) => console.log(new Date().toISOString(), '[slack-bridge]', ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const health = { slack: appToken ? 'connecting' : 'not_configured', cloud: bridgeToken ? 'unknown' : 'not_configured', connections: 0 };
+const health = { slack: appToken ? 'connecting' : 'not_configured', cloud: bridgeToken ? 'unknown' : 'not_configured', connections: 0, outbound: outboundMode(Boolean(botToken)) };
 const bridge = bridgeToken ? createBridge({ cloud, token: bridgeToken }) : null;
 
 http.createServer((req, res) => {
@@ -63,6 +66,20 @@ const userName = (id) => (botToken ? cached(nameCaches.user, id, async () => {
 const channelName = (id) => (botToken ? cached(nameCaches.channel, id, async () => (await slackApi('conversations.info', { channel: id })).channel?.name ?? null) : Promise.resolve(null));
 const teamName = (id) => (botToken ? cached(nameCaches.team, id, async () => (await slackApi('team.info', { team: id })).team?.name ?? null) : Promise.resolve(null));
 const postMessage = async (channel, text) => { await slackApi('chat.postMessage', { channel, text }); };
+
+// chat.postMessage for outbound carries up to ~4k of text — too long for
+// the query-string helper above, so it goes as a JSON POST.
+async function slackApiPost(method, payload) {
+  const res = await fetch(`https://slack.com/api/${method}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${botToken}`, 'content-type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!data.ok) throw new Error(`${method}: ${data.error ?? res.status}`);
+  return data;
+}
+const postSlackMessage = async ({ channel, text }) => { await slackApiPost('chat.postMessage', { channel, text }); };
 
 // --- Socket Mode ---
 async function handleEnvelope(ws, raw) {
@@ -110,8 +127,23 @@ async function main() {
   if (!bridge) { log('HELMIAN_ENVOY_BRIDGE_TOKEN is not set; idle.'); return; }
   try { await bridge.refreshLinks(); health.cloud = 'ok'; log(`cloud ok, ${bridge.links.length} linked channel(s)`); }
   catch (e) { health.cloud = `error: ${e.message}`; log('cloud check failed:', e.message); }
-  if (!appToken) { log('SLACK_APP_TOKEN is not set; waiting. Add it to app.env and restart.'); return; }
   setInterval(() => { bridge.refreshLinks().then(() => { health.cloud = 'ok'; }).catch((e) => { health.cloud = `error: ${e.message}`; }); }, 30_000).unref();
+  // Named outbound needs only the cloud + the bot token (no socket), so
+  // it runs even while the socket is down; without a bot token it stays
+  // off and says so, here and on /healthz.
+  if (botToken) {
+    let busy = false;
+    setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try { await bridge.pumpOutbound({ postMessage: postSlackMessage }); }
+      catch (e) { bridge.stats.errors += 1; bridge.stats.lastError = e.message; log('outbound failed:', e.message); }
+      finally { busy = false; }
+    }, 2000).unref();
+  } else {
+    log('SLACK_BOT_TOKEN is not set; named outbound is off (outbound: webhook-only). Envoy messages reach Slack only through the webhook pipe.');
+  }
+  if (!appToken) { log('SLACK_APP_TOKEN is not set; waiting. Add it to app.env and restart.'); return; }
   void runSocket();
 }
 
