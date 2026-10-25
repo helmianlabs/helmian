@@ -222,7 +222,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -833,7 +833,7 @@ function insertMention(name) {
   if (narrow()) closeSheets();
 }
 
-// ---------- composer "+" picker: skills, connectors, plugins, upload ----------
+// ---------- composer "+" picker: skills, connectors, plugins, upload, web search ----------
 // One picker for both composers (channel + agent chat); the pure model in
 // composer-picker.mjs decides what can be attached and how it travels.
 const PICKER_IDS = {
@@ -849,10 +849,18 @@ async function loadPickerData() {
 function renderAttachChips(which) {
   const box = $(PICKER_IDS[which].chips); if (!box) return;
   const list = ws.attach[which];
-  box.hidden = !list.length;
-  box.replaceChildren(...list.map((a) => h('span', { class: `ew-chip ${a.kind}` },
+  const chips = list.map((a) => h('span', { class: `ew-chip ${a.kind}` },
     a.kind === 'skill' ? `/${a.name}` : a.name,
-    h('button', { type: 'button', class: 'ew-chip-x', title: `Remove ${a.kind === 'skill' ? `the ${a.name} skill` : a.name}`, 'aria-label': `Remove ${a.kind === 'skill' ? `skill ${a.name}` : a.name}`, onclick: () => { ws.attach[which] = removeAttachment(ws.attach[which], a); renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×'))));
+    h('button', { type: 'button', class: 'ew-chip-x', title: `Remove ${a.kind === 'skill' ? `the ${a.name} skill` : a.name}`, 'aria-label': `Remove ${a.kind === 'skill' ? `skill ${a.name}` : a.name}`, onclick: () => { ws.attach[which] = removeAttachment(ws.attach[which], a); renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×')));
+  // The web-search toggle rides the next message like an attachment, so
+  // it shows as a chip while it is on — and leaves with the send (or ×).
+  if (ws.webSearch[which]) {
+    chips.push(h('span', { class: 'ew-chip web-search' },
+      'Web search',
+      h('button', { type: 'button', class: 'ew-chip-x', title: 'Turn web search off for this message', 'aria-label': 'Turn web search off', onclick: () => { ws.webSearch[which] = false; renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×')));
+  }
+  box.hidden = !chips.length;
+  box.replaceChildren(...chips);
 }
 function closePicker() {
   ws.pickerFor = null;
@@ -923,6 +931,13 @@ async function renderPicker(which) {
         } catch { note.textContent = 'That file could not be read.'; }
       });
       groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'UPLOAD'), fileInput, note));
+    } else if (g.id === 'web-search') {
+      const on = ws.webSearch[which] === true;
+      const row = h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: on ? 'Web search is on for this message — tap to turn it off' : 'Turn web search on for this message', onclick: () => {
+        ws.webSearch[which] = !on;
+        renderAttachChips(which); renderPicker(which);
+      } }, h('span', {}, 'Web search'), h('span', { class: 'ew-picker-kind' }, 'per message'), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'On' : 'Off'));
+      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'WEB SEARCH'), h('p', { class: 'ew-note' }, g.note), row));
     }
   }
   panel.replaceChildren(
@@ -1123,12 +1138,12 @@ async function send(e) {
   const box = $('maestro-input'); const body = box.value.trim();
   if (!body || !ws.channelId) return;
   const key = crypto.randomUUID();
-  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel });
+  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel });
   const btn = $('maestro-send'); btn.disabled = true;
   ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
   box.value = ''; grow(); closeSlashMenu();
-  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); }
+  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
   finally { btn.disabled = false; }
 }
@@ -1335,11 +1350,11 @@ async function sendCli(e) {
   // The room is created lazily here if this is the first prompt ever.
   const roomId = await ensureCliRoom(key);
   if (!roomId) { ws.ctx.toast(`Could not open your room with ${NAMES[key]}. Your prompt is still in the box.`); return; }
-  const req = buildMessageRequest({ channelId: roomId, body: raw, idempotencyKey: crypto.randomUUID(), attachments: ws.attach.cli });
+  const req = buildMessageRequest({ channelId: roomId, body: raw, idempotencyKey: crypto.randomUUID(), attachments: ws.attach.cli, webSearch: ws.webSearch.cli });
   const btn = $('ew-cli-send'); btn.disabled = true;
   try {
     await ws.ctx.post('/api/admin/envoy/messages', req.payload);
-    box.value = ''; growCli(); closeSlashMenu(); ws.attach.cli = []; renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
+    box.value = ''; growCli(); closeSlashMenu(); ws.attach.cli = []; ws.webSearch.cli = false; renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
     await loadCliRoom();
   } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
   finally { btn.disabled = false; }
