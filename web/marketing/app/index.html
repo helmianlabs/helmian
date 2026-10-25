@@ -130,6 +130,7 @@
           <footer class="ew-foot">
             <div class="ew-source"><img src="/assets/agents/maestro.png" alt="" width="14" height="14"> Helmian Envoy</div>
             <div class="ew-source" id="ew-discord-status"><span class="ew-discord-mark" aria-hidden="true"></span> Discord: <span id="ew-discord-status-text">checking…</span></div>
+            <div class="ew-source" id="ew-slack-status"><span class="ew-slack-mark" aria-hidden="true"></span> Slack: <span id="ew-slack-status-text">checking…</span></div>
           </footer>
         </aside>
         <div class="ew-split" data-split="channels" role="separator" aria-orientation="vertical" aria-label="Resize channels" tabindex="0"></div>
@@ -139,8 +140,10 @@
             <button class="ew-icon ew-reveal" type="button" data-open="channels" aria-label="Show channels" title="Channels">☰</button>
             <button id="ew-chat-ava" class="ew-ava-btn" type="button" title="Change this chat's look" aria-label="Change this chat's look"><span class="ew-hash">#</span></button><strong id="ew-channel-title">…</strong>
             <span id="ew-discord-badge" class="ew-badge discord" hidden></span>
+            <span id="ew-slack-badge" class="ew-badge slack" hidden></span>
             <span class="ew-spacer"></span>
             <button id="ew-link-discord" class="ew-btn sm" type="button" title="Mirror this channel with a Discord channel"><span class="ew-discord-mark" aria-hidden="true"></span><span class="lbl">Link Discord</span></button>
+            <button id="ew-link-slack" class="ew-btn sm" type="button" title="Mirror this channel with a Slack channel"><span class="ew-slack-mark" aria-hidden="true"></span><span class="lbl">Link Slack</span></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="cli" aria-pressed="true" title="Agent chat: talk to one agent" aria-label="Agent chat"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3.4 4.1a1 1 0 0 0 0 1.4l2.5 2.5-2.5 2.5a1 1 0 1 0 1.4 1.4l3.2-3.2a1 1 0 0 0 0-1.4L8.8 8.1a1 1 0 0 0-1.4 0ZM13 15.5a1 1 0 1 0 0 2h4a1 1 0 1 0 0-2h-4Z"/></svg><span class="lbl">Agent chat</span></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="agents" aria-pressed="false" title="Agents in this channel" aria-label="Agents"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM9 13c-3.3 0-7 1.6-7 4.5V20h14v-2.5C16 14.6 12.3 13 9 13Zm7.5.2c1.6.8 2.5 2.1 2.5 4.3V20h3v-2.4c0-2.3-2.6-3.9-5.5-4.4Z"/></svg><span class="lbl">Agents</span> <b id="ew-agent-count">0</b></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="guard" aria-pressed="true" title="Guard: warnings, findings and approvals" aria-label="Guard"><span class="ew-shield" aria-hidden="true"></span><span class="lbl">Guard</span> <b id="ew-guard-count" class="ew-count" hidden></b></button>
