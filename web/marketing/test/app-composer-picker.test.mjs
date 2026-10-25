@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
-  MAX_ATTACHMENTS, UPLOAD_UNAVAILABLE_REASON, addAttachment, applySkillToBody,
-  attachmentKey, attachmentMetadata, buildMessageRequest, normalizeSkillName,
+  FILE_MAX_BYTES, MAX_ATTACHMENTS, UPLOAD_NOTE, addAttachment, applySkillToBody,
+  attachmentKey, attachmentMetadata, buildMessageRequest, classifyFile,
+  fileRefusalReason, normalizeFileAttachment, normalizeSkillName,
   pickerModel, removeAttachment,
 } from '../app/composer-picker.mjs';
 // The REAL server validator the message route applies — imported, not
@@ -60,10 +61,70 @@ test('skills group carries no invented list: attach-by-name only', () => {
   assert.match(skills.note, /PC bridge/);
 });
 
-test('upload group is unavailable with the honest reason (no upload path exists)', () => {
+test('upload group is a real file input whose note states the bounds plainly', () => {
   const upload = group('upload');
-  assert.equal(upload.available, false);
-  assert.equal(upload.reason, UPLOAD_UNAVAILABLE_REASON);
+  assert.equal(upload.fileInput, true);
+  assert.equal(upload.note, UPLOAD_NOTE);
+  assert.match(upload.note, /256 KB per file/);
+  assert.match(upload.note, /can't be read yet/, 'the note owns what uploads cannot do');
+});
+
+const b64 = (text) => Buffer.from(text, 'utf8').toString('base64');
+const textFile = (name, text, mediaType = 'text/plain') => ({ kind: 'file', name, mediaType, size: Buffer.byteLength(text), data: b64(text) });
+
+test('file classification mirrors the server: text and the three image types, nothing else', () => {
+  assert.equal(classifyFile({ name: 'a.txt', mediaType: 'text/plain' }), 'text');
+  assert.equal(classifyFile({ name: 'a.png', mediaType: 'image/png' }), 'image');
+  assert.equal(classifyFile({ name: 'a.jpg', mediaType: 'image/jpeg' }), 'image');
+  assert.equal(classifyFile({ name: 'notes.md', mediaType: '' }), 'text', 'extension decides when the browser gives no type');
+  assert.equal(classifyFile({ name: 'a.pdf', mediaType: 'application/pdf' }), null);
+  assert.equal(classifyFile({ name: 'a.bin', mediaType: 'application/octet-stream' }), null);
+});
+
+test('fileRefusalReason refuses before any bytes are read', () => {
+  assert.equal(fileRefusalReason({ name: 'a.txt', mediaType: 'text/plain', size: 12 }), null);
+  assert.match(fileRefusalReason({ name: 'a.pdf', mediaType: 'application/pdf', size: 12 }), /can't read that kind of file yet/);
+  assert.match(fileRefusalReason({ name: 'a.txt', mediaType: 'text/plain', size: FILE_MAX_BYTES + 1 }), /256 KB per file/);
+  assert.match(fileRefusalReason({ name: 'a.txt', mediaType: 'text/plain', size: 0 }), /empty/);
+});
+
+test('normalizeFileAttachment carries the bytes and refuses a truncated read', () => {
+  const ok = normalizeFileAttachment({ name: 'Notes.TXT', mediaType: 'Text/Plain', size: 5, data: b64('hello') });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.attachment, { kind: 'file', name: 'Notes.TXT', mediaType: 'text/plain', size: 5, data: b64('hello') });
+  const short = normalizeFileAttachment({ name: 'a.txt', mediaType: 'text/plain', size: 9, data: b64('hello') });
+  assert.equal(short.ok, false);
+  assert.match(short.reason, /could not be read completely/);
+});
+
+test('addAttachment attaches files, dedupes by name+size, and enforces the per-message total', () => {
+  const a = textFile('a.txt', 'hello');
+  const r = addAttachment([], a);
+  assert.equal(r.added, true);
+  assert.equal(attachmentKey(r.list[0]), 'file:a.txt:5');
+  assert.equal(addAttachment(r.list, a).reason, 'Already attached.');
+  const sameNameBigger = textFile('a.txt', 'hello world');
+  assert.equal(addAttachment(r.list, sameNameBigger).added, true, 'same name, different file: both ride');
+  const big = (name) => textFile(name, 'x'.repeat(200 * 1024));
+  let list = addAttachment([], big('b1.txt')).list;
+  list = addAttachment(list, big('b2.txt')).list;
+  const third = addAttachment(list, big('b3.txt'));
+  assert.equal(third.added, false);
+  assert.match(third.reason, /512 KB of files per message/);
+  assert.match(addAttachment([], { kind: 'file', name: 'a.pdf', mediaType: 'application/pdf', size: 4, data: b64('junk') }).reason, /can't read that kind/);
+});
+
+test('attachmentMetadata carries a file with its bytes, unchanged for the other kinds', () => {
+  const meta = attachmentMetadata([textFile('a.txt', 'hello'), skill('deploy')]);
+  assert.deepEqual(JSON.parse(JSON.stringify(meta)), {
+    attachments: [
+      { kind: 'file', name: 'a.txt', mediaType: 'text/plain', size: 5, data: b64('hello') },
+      { kind: 'skill', name: 'deploy' },
+    ],
+  });
+  const req = buildMessageRequest({ channelId: 'c1', body: 'see attached', idempotencyKey: 'k9', attachments: [textFile('a.txt', 'hello')] });
+  assert.equal(req.payload.metadata.attachments[0].data, b64('hello'), 'the bytes ride the wire payload itself');
+  assert.equal(removeAttachment([textFile('a.txt', 'hello')], textFile('a.txt', 'hello')).length, 0);
 });
 
 test('normalizeSkillName mirrors the command registry naming', () => {
@@ -246,4 +307,12 @@ test('the session console carries the picker too: plus button, panel, chips, its
   assert.match(js, /buildMessageRequest\(\{ channelId: state\.channelId, body, idempotencyKey: crypto\.randomUUID\(\), attachments: consoleAttach\.list \}\)/, 'console send builds its request through the picker model with its own list');
   assert.match(js, /consoleAttach\.list = \[\]; renderConsoleAttachChips\(\); closeConsolePicker\(\)/, 'a successful console send clears its own attachments');
   assert.match(js, /const consoleAttach = \{ list: \[\], open: false, data: null \}/, 'the console keeps a separate attach list from the workspace’s channel/cli lists');
+});
+
+test('the workspace renders the upload group as a file input wired to the model', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /type: 'file'/, 'a real file input, not a disabled button');
+  assert.match(js, /fileRefusalReason\(\{ name: file\.name/, 'type/size are refused before the read');
+  assert.match(js, /readFileAsBase64\(file\)/, 'the picked file is read to base64 for the metadata');
+  assert.match(js, /addAttachment\(ws\.attach\[which\], \{ kind: 'file'/, 'the file joins the same attach list as skills and connectors');
 });

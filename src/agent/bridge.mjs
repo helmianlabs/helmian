@@ -433,7 +433,7 @@ export async function runAgentBridge() {
           tools: Object.keys(state.runtime.tools),
         });
 
-        const images = Array.isArray(req.images)
+        let images = Array.isArray(req.images)
           ? req.images.filter((image) => image
               && ['image/png', 'image/jpeg', 'image/webp'].includes(image.mediaType)
               && typeof image.data === 'string'
@@ -470,15 +470,29 @@ export async function runAgentBridge() {
         let turnText = text;
         let turnRuntime = state.runtime;
         let attachmentDispose = null;
+        // The web-search toggle, resolved for THIS seat: true only when the
+        // user turned it on AND this provider carries a native search tool
+        // (attachments.mjs decides; loop.mjs forwards; providers.mjs is
+        // the only place a search declaration can reach the wire).
+        let turnWebSearch = false;
         if (attachmentMetadata) {
           try {
-            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion });
+            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion, providerId: provider.id });
             if (resolved.contextText) turnText = `${resolved.contextText}\n\n${text}`;
             if (resolved.toolNames.length) {
               turnRuntime = createToolRuntime(workspace, { ...runtimeOptions(), extraTools: resolved.extraTools });
             }
             attachmentDispose = resolved.dispose;
+            turnWebSearch = resolved.webSearch === true;
+            // File attachments that are images ride the same images
+            // channel as a turn request's own images — one path into the
+            // provider call, so an uploaded image is real image content.
+            if (resolved.images?.length) {
+              images = [...images, ...resolved.images];
+              emit({ event: 'status', message: `Attachments added ${resolved.images.length} image(s) to this turn.` });
+            }
             if (resolved.toolNames.length) emit({ event: 'status', message: `Attachments added ${resolved.toolNames.length} tool(s) to this turn.` });
+            if (turnWebSearch) emit({ event: 'status', message: 'Web search is ON for this turn (this seat\'s native search tool).' });
           } catch (err) {
             emit({ event: 'status', message: `Attachments could not be resolved (${err.message}); continuing without them.` });
           }
@@ -494,6 +508,7 @@ export async function runAgentBridge() {
           tier: tierOverride,
           modelOverride,
           images,
+          webSearch: turnWebSearch,
           onEvent: (ev) => {
             if (ev.type === 'model') {
               emit({
