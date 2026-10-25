@@ -21,6 +21,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openVault, readDeviceToken, defaultVaultPath, PROVIDER_KEY_ENV } from '../src/runner/vault.mjs';
+import { resolveGrokVaultInjection } from '../src/agent/supergrok-credentials.mjs';
 import { parseApprovalReply } from '../src/mcp/local-exec-server.mjs';
 import { agentPrompt, normalizeProvider } from '../src/cloud/envoy-agents.mjs';
 import { discoverCommands, expandCommand, parseSlashInput, resolveCommand } from '../src/agent/commands.mjs';
@@ -203,6 +204,24 @@ async function loadVaultKey(deps) {
     if (!token) return {};
     const vaultPath = deps.vaultPath || defaultVaultPath(homedir());
     const vault = await openVault({ vaultPath, deviceToken: token });
+    // A SuperGrok OAuth session is NOT an API key and must never be injected
+    // as one: resolve it to a fresh access token (refreshing inside the 60 s
+    // window) plus the marker env the child reads back as "subscription
+    // credential". A dead session resolves to null — the resolver has
+    // already wiped it — and the plain environment fallback below applies.
+    const providerName = String(deps.provider || '').toLowerCase();
+    if ((providerName === 'grok' || providerName === 'xai') && await vault.getOAuth('grok')) {
+      const injection = await resolveGrokVaultInjection({
+        vault,
+        onAuthProblem: (message) => deps.logError('grok sign-in:', message),
+      });
+      if (injection) {
+        deps.log('provider key: vault (SuperGrok sign-in)');
+        return injection;
+      }
+      deps.log(`provider key: environment (${envName})`);
+      return {};
+    }
     const secret = await vault.get(deps.provider);
     if (!secret) {
       deps.log(`provider key: environment (${envName})`);
