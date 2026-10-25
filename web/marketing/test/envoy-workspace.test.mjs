@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, addressed, agentRoomFor, agentRoomThread, deskChannelFor, deskPending, deskRoster, deskTargets, dragLayout, isDeskChannel, pendingAgentWork, pickerAgentContext, roomAddressed } from '../app/envoy-workspace.js';
+import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, addressed, agentRoomFor, agentRoomThread, deskChannelFor, deskPending, deskRoster, deskTargets, dragLayout, isDeskChannel, mirrorLinkHeader, pendingAgentWork, pickerAgentContext, roomAddressed } from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -631,4 +631,72 @@ test('picker wiring: the workspace renders the per-agent model with truthful sta
   assert.match(js, /g\.id === 'agent'/, 'the picker renders the ecosystem group');
   assert.match(js, /item\.stateLabel/, 'rows show the model\'s truthful state labels');
   assert.match(js, /g\.note \? \[h\('p', \{ class: 'ew-note' \}, g\.note\)\]/, 'the connectors group renders the model note that says attaching is a note, not an open door');
+});
+
+// Slack link button (stacked on the G-1 inbound bite): the client half of
+// the link-slack mesh action — the control in the chat head, the dialog,
+// and the linked state, mirroring the Discord link UI. The header state
+// derivation is pure (mirrorLinkHeader); the dialog is DOM and is pinned
+// by source assertions, the same split the desk tests use.
+const SLACK_LINK = { teamId: 'T0BP40EFJ1W', channelId: 'C0BN7LCK946', channelName: 'all-helmian', teamName: 'HELMIAN', linkedAt: '2026-10-25T00:00:00.000Z' };
+
+test('link slack: the control renders for an unlinked channel — admin sees Link Slack, badge hidden', () => {
+  const bot = { configured: true, inviteUrl: null };
+  const admin = mirrorLinkHeader({ link: null, bot, admin: true, label: 'Slack' });
+  assert.equal(admin.buttonHidden, false);
+  assert.equal(admin.buttonLabel, 'Link Slack');
+  assert.equal(admin.badgeHidden, true);
+  assert.equal(admin.statusText, 'ready to link');
+  const member = mirrorLinkHeader({ link: null, bot, admin: false, label: 'Slack' });
+  assert.equal(member.buttonHidden, true, 'starting a link is owner/admin work, like Discord');
+  const noBot = mirrorLinkHeader({ link: null, bot: { configured: false, inviteUrl: null }, admin: true, label: 'Slack' });
+  assert.equal(noBot.statusText, 'bot not set up yet');
+  assert.equal(noBot.buttonHidden, false, 'the control still renders; the dialog says the bot is not set up');
+});
+
+test('link slack: linked state renders from the config link + bot status', () => {
+  const linked = mirrorLinkHeader({ link: SLACK_LINK, bot: { configured: true, inviteUrl: null }, admin: false, label: 'Slack' });
+  assert.equal(linked.badgeHidden, false);
+  assert.equal(linked.badgeClass, 'slack');
+  assert.equal(linked.badgeText, 'Slack #all-helmian');
+  assert.equal(linked.buttonLabel, 'Slack linked');
+  assert.equal(linked.buttonHidden, false, 'a linked channel keeps the control so the link can be reviewed/unlinked');
+  assert.equal(linked.statusText, 'linked to #all-helmian');
+  const byId = mirrorLinkHeader({ link: { ...SLACK_LINK, channelName: '' }, bot: { configured: true }, admin: true, label: 'Slack' });
+  assert.equal(byId.badgeText, 'Slack #C0BN7LCK946', 'falls back to the channel id like Discord');
+});
+
+test('link slack: the shared pendingLink is never claimed by the Slack badge', () => {
+  // The config carries ONE pendingLink for both link flows; only the
+  // Discord call site passes it, so a pending Slack code cannot make the
+  // Slack badge lie — and Discord's pending rendering is unchanged.
+  const slack = mirrorLinkHeader({ link: null, bot: { configured: true }, admin: true, label: 'Slack' });
+  assert.equal(slack.badgeHidden, true);
+  const discord = mirrorLinkHeader({ link: null, pending: true, bot: { configured: true }, admin: true, label: 'Discord' });
+  assert.equal(discord.badgeHidden, false);
+  assert.equal(discord.badgeClass, 'pending');
+  assert.equal(discord.badgeText, 'Discord link pending');
+});
+
+test('link slack: control, dialog wiring and state plumbing exist in the app', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  for (const id of ['ew-link-slack', 'ew-slack-badge', 'ew-slack-status', 'ew-slack-status-text']) {
+    assert.match(html, new RegExp(`id="${id}"`), `index.html has #${id}`);
+  }
+  assert.ok(html.indexOf('id="ew-link-slack"') > html.indexOf('id="ew-link-discord"'), 'the Slack control sits beside the Discord one in the chat head');
+  for (const needle of [
+    'async function linkSlack()',
+    "{ action: 'link-slack', channelId: ws.channelId }",
+    "{ action: 'unlink-slack', channelId: ws.channelId }",
+    'res.linkCommand',
+    'ws.slackBot = body.slackBot ?? null',
+    "$('ew-link-slack').addEventListener('click', linkSlack)",
+    'Linked to Slack #',
+    'The code itself is the key',
+  ]) assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  assert.match(css, /\.ew-badge\.slack \{/, 'envoy.css styles the Slack badge');
+  assert.match(css, /\.ew-mini\.slack \{/, 'envoy.css styles the Slack channel tag');
+  assert.match(css, /#ew-link-discord, #ew-link-slack \{ display:none; \}/, 'the phone head hides both link controls');
 });

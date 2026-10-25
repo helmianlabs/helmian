@@ -247,7 +247,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -550,7 +550,7 @@ async function loadChannels() {
     if (made.channel) ws.channels = [made.channel];
   }
   const meta = ls.get('chanMeta', {});
-  for (const c of ws.channels) if (meta[c.id]) { c._agents = meta[c.id].a; c._discord = meta[c.id].d; }
+  for (const c of ws.channels) if (meta[c.id]) { c._agents = meta[c.id].a; c._discord = meta[c.id].d; c._slack = meta[c.id].s; }
   // The open channel is remembered per network mode: Envoy restores its
   // own last channel (the legacy 'channel' key is its fallback), Discord
   // mode restores its last linked channel.
@@ -668,6 +668,7 @@ async function setNetMode(mode) {
   renderChannels(); renderHeader(); renderNetStrip();
   $('ew-channel-title').textContent = 'Discord';
   $('ew-link-discord').hidden = true;
+  $('ew-link-slack').hidden = true;
   $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, discordEmptyText()));
   setComposer(false);
 }
@@ -676,7 +677,7 @@ function renderChannels() {
   const list = $('ew-channel-list');
   const row = (c) => h('button', { type: 'button', class: `ew-channel${c.kind === 'agent' ? ' room' : ''}${c.id === ws.channelId ? ' active' : ''}`, 'data-id': c.id, onclick: () => selectChannel(c.id) },
     chatAvatar(c, 'sm'), h('span', { class: 'name' }, c.title || c.slug),
-    h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null, c.kind === 'agent' ? h('span', { class: 'ew-mini room', title: 'Private agent room' }) : null));
+    h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._slack ? h('span', { class: 'ew-mini slack', title: 'Linked to Slack' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null, c.kind === 'agent' ? h('span', { class: 'ew-mini room', title: 'Private agent room' }) : null));
   renderNetSwitch();
   list.setAttribute('aria-label', ws.mode === 'discord' ? 'Discord channels' : 'Envoy channels');
   $('ew-add-channel').hidden = ws.mode === 'discord' || !$('ew-new-channel').hidden;
@@ -728,17 +729,35 @@ async function selectChannel(id) {
   $('maestro-input').focus({ preventScroll: true });
 }
 
-// ---------- config: agents + Discord ----------
+// ---------- config: agents + Discord + Slack ----------
+// The chat-head furniture for one mirror link (Discord or Slack),
+// derived purely from the channel config + bot status so it is testable
+// without a DOM. The badge's class is the network's own name, lowercase.
+// `pending` is passed only by the Discord call site: the config carries
+// ONE pendingLink field shared by both link flows, so the client cannot
+// tell whose code is outstanding — Discord's badge has always carried
+// the pending state, and Slack's must not claim it too.
+export function mirrorLinkHeader({ link = null, pending = false, bot = null, admin = false, label = 'Discord' } = {}) {
+  const name = link ? (link.channelName || link.channelId) : null;
+  return {
+    badgeHidden: !(link || pending),
+    badgeClass: link ? label.toLowerCase() : 'pending',
+    badgeText: link ? `${label} #${name}` : `${label} link pending`,
+    buttonLabel: link ? `${label} linked` : `Link ${label}`,
+    buttonHidden: !admin && !link,
+    statusText: bot?.configured ? (link ? `linked to #${name}` : 'ready to link') : 'bot not set up yet',
+  };
+}
 async function loadConfig() {
   if (!ws.channelId) return;
   const id = ws.channelId;
   try {
     const body = await ws.ctx.api(`/api/admin/envoy/channel-config?channel_id=${encodeURIComponent(id)}`);
     if (id !== ws.channelId) return;
-    ws.config = body.config ?? { agents: [] }; ws.configured = Boolean(body.configured); ws.discordBot = body.discordBot ?? null;
-  } catch { ws.config = { agents: [], discord: null }; ws.configured = false; }
+    ws.config = body.config ?? { agents: [] }; ws.configured = Boolean(body.configured); ws.discordBot = body.discordBot ?? null; ws.slackBot = body.slackBot ?? null;
+  } catch { ws.config = { agents: [], discord: null, slack: null }; ws.configured = false; }
   const ch = ws.channels.find((c) => c.id === id);
-  if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord }; ls.set('chanMeta', seen); }
+  if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack }; ls.set('chanMeta', seen); }
   renderHeader(); renderAgents(); renderChannels(); syncAgentsPane();
   // A roster or join change can start (or end) pending work without any
   // new message arriving; keep the in-thread cue honest.
@@ -753,15 +772,26 @@ function renderHeader() {
   $('maestro-input').placeholder = ws.mode === 'discord' ? `Message #${title}` : (ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent to get an answer` : `Message #${title}`);
   const badge = $('ew-discord-badge');
   const d = ws.config?.discord;
-  badge.hidden = !(d || ws.config?.pendingLink);
-  badge.className = `ew-badge ${d ? 'discord' : 'pending'}`;
-  badge.textContent = d ? `Discord #${d.channelName || d.channelId}` : 'Discord link pending';
   const admin = ['owner', 'admin'].includes(ws.ctx.state.actor?.role);
+  const dh = mirrorLinkHeader({ link: d, pending: Boolean(ws.config?.pendingLink), bot: ws.discordBot, admin, label: 'Discord' });
+  badge.hidden = dh.badgeHidden;
+  badge.className = `ew-badge ${dh.badgeClass}`;
+  badge.textContent = dh.badgeText;
   const link = $('ew-link-discord');
-  link.querySelector('.lbl').textContent = d ? 'Discord linked' : 'Link Discord';
-  link.hidden = !admin && !d;
+  link.querySelector('.lbl').textContent = dh.buttonLabel;
+  link.hidden = dh.buttonHidden;
+  const sBadge = $('ew-slack-badge');
+  const s = ws.config?.slack;
+  const sh = mirrorLinkHeader({ link: s, bot: ws.slackBot, admin, label: 'Slack' });
+  sBadge.hidden = sh.badgeHidden;
+  sBadge.className = `ew-badge ${sh.badgeClass}`;
+  sBadge.textContent = sh.badgeText;
+  const sLink = $('ew-link-slack');
+  sLink.querySelector('.lbl').textContent = sh.buttonLabel;
+  sLink.hidden = sh.buttonHidden;
   $('ew-agent-count').textContent = String(ws.config?.agents?.length ?? 0);
-  $('ew-discord-status-text').textContent = ws.discordBot?.configured ? (d ? `linked to #${d.channelName || d.channelId}` : 'ready to link') : 'bot not set up yet';
+  $('ew-discord-status-text').textContent = dh.statusText;
+  $('ew-slack-status-text').textContent = sh.statusText;
   renderNetStrip();
   renderMaestroMode();
 }
@@ -781,6 +811,8 @@ function renderMaestroMode() {
     if (hint) hint.textContent = 'Enter to dispatch · Shift+Enter for a new line';
     $('ew-link-discord').hidden = true;
     $('ew-discord-badge').hidden = true;
+    $('ew-link-slack').hidden = true;
+    $('ew-slack-badge').hidden = true;
   } else if (hint) {
     hint.textContent = 'Enter to send · Shift+Enter for a new line';
   }
@@ -1440,7 +1472,7 @@ async function sendCli(e) {
   finally { btn.disabled = false; }
 }
 
-// ---------- Discord link ----------
+// ---------- Discord + Slack link ----------
 function openModal(title, body) { $('ew-modal-title').textContent = title; $('ew-modal-body').replaceChildren(...body); $('ew-modal').classList.add('open'); }
 function closeModal() { $('ew-modal').classList.remove('open'); if (ws.linkPoll) { clearInterval(ws.linkPoll); ws.linkPoll = null; } }
 async function linkDiscord() {
@@ -1473,6 +1505,39 @@ async function linkDiscord() {
   ws.linkPoll = setInterval(async () => {
     await loadConfig();
     if (ws.config?.discord) { clearInterval(ws.linkPoll); ws.linkPoll = null; status.textContent = `Linked to Discord #${ws.config.discord.channelName || ws.config.discord.channelId}.`; status.className = 'sm'; await loadMessages(); setTimeout(closeModal, 1500); }
+  }, 3000);
+}
+async function linkSlack() {
+  const s = ws.config?.slack;
+  const admin = ['owner', 'admin'].includes(ws.ctx.state.actor?.role);
+  const ch = ws.channels.find((c) => c.id === ws.channelId);
+  if (s) {
+    openModal('Slack link', [
+      h('p', {}, `#${ch?.title} mirrors with Slack #${s.channelName || s.channelId}${s.teamName ? ` in ${s.teamName}` : ''}. Messages and agent replies go both ways.`),
+      admin ? h('div', { class: 'ew-row' }, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn ghost', onclick: async () => { try { await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'unlink-slack', channelId: ws.channelId }); closeModal(); await loadConfig(); await loadMessages(); } catch { ws.ctx.toast('Could not unlink.'); } } }, 'Unlink')) : null,
+    ]);
+    return;
+  }
+  if (!admin) return;
+  let res;
+  try { res = await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'link-slack', channelId: ws.channelId }); }
+  catch { ws.ctx.toast('Could not start the Slack link.'); return; }
+  const bot = ws.slackBot;
+  const copy = h('button', { type: 'button', class: 'ew-btn sm', onclick: async () => { try { await navigator.clipboard.writeText(res.linkCommand); ws.ctx.toast('Copied', 'ok'); } catch {} } }, 'Copy command');
+  const status = h('p', { class: 'muted sm' }, 'Waiting for the message in Slack… (code works for 15 minutes)');
+  openModal('Link Slack', [
+    h('ol', { class: 'ew-steps' },
+      h('li', {}, bot?.configured ? h('span', {}, 'Make sure the Helmian app is installed in your Slack workspace and added to the channel you want to link.') : h('span', {}, 'The Helmian Slack bot is not set up on this workspace yet, so the code will wait until it is.')),
+      h('li', {}, 'In the Slack channel you want to link, post:'),
+    ),
+    h('div', { class: 'ew-code' }, res.linkCommand),
+    h('div', { class: 'ew-row' }, copy, h('span', { class: 'ew-spacer' })),
+    h('p', { class: 'muted sm' }, 'The code itself is the key: anyone who can post in that channel can use it, so keep it private until it expires.'),
+    status,
+  ]);
+  ws.linkPoll = setInterval(async () => {
+    await loadConfig();
+    if (ws.config?.slack) { clearInterval(ws.linkPoll); ws.linkPoll = null; status.textContent = `Linked to Slack #${ws.config.slack.channelName || ws.config.slack.channelId}.`; status.className = 'sm'; await loadMessages(); setTimeout(closeModal, 1500); }
   }, 3000);
 }
 
@@ -1614,6 +1679,7 @@ function wire() {
   cliBox.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); sendCli(); } });
   ws.ctx.wireCliVoice?.();
   $('ew-link-discord').addEventListener('click', linkDiscord);
+  $('ew-link-slack').addEventListener('click', linkSlack);
   $('ew-maestro-exit').addEventListener('click', leaveMaestroSeat);
   $('ew-modal-close').addEventListener('click', closeModal);
   $('ew-modal').addEventListener('click', (e) => { if (e.target === $('ew-modal')) closeModal(); });
