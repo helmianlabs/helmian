@@ -65,7 +65,7 @@ import { resolveTurnAttachments } from './attachments.mjs';
 export async function runAgentBridge() {
   const env = loadHelmionEnv(process.cwd());
   let workspace = env.workspace || process.cwd();
-  let providerName = env.maestro || 'Gemini';
+  let providerName = env.defaultProvider || 'Gemini';
   let permissionMode = env.permissionMode || process.env.HELMION_PERMISSION_MODE || 'read-only';
   let provider = null;
   // User-defined OpenAI-compatible endpoints. Seeded from HELMION_CUSTOM_PROVIDERS,

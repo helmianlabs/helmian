@@ -34,14 +34,15 @@ const fail = (status, code, message = code) => Object.assign(new Error(message),
 
 export function agentRoomSlug(provider) {
   const p = normalizeProvider(provider);
-  return p ? `agent-${p}` : null;
+  return p && p !== 'maestro' ? `agent-${p}` : null;
 }
 
 // The channel definition for one provider's room, or null when the
-// provider is unsupported.
+// provider is unsupported — or is 'maestro': Maestro is the human's
+// manager seat, not an agent, so it has no room (Bite 2).
 export function agentRoomChannel(provider) {
   const p = normalizeProvider(provider);
-  if (!p) return null;
+  if (!p || p === 'maestro') return null;
   return Object.freeze({ slug: `agent-${p}`, title: AGENT_NAMES[p], kind: 'agent' });
 }
 
@@ -55,6 +56,7 @@ export function createAgentRooms({ pool, chat = null, mesh = null } = {}) {
     async ensureRoom(actor, providerInput) {
       const provider = normalizeProvider(providerInput);
       if (!provider) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
+      if (provider === 'maestro') throw fail(400, 'ENVOY_AGENT_NOT_AN_AGENT');
       const { channel, inserted } = await store.createChannel(actor, agentRoomChannel(provider));
       const { seeded } = await meshStore.seedRoomAgent(actor, channel.id, provider);
       return { channel, inserted, seeded, provider };

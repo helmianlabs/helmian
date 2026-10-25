@@ -52,17 +52,21 @@ export function mentions(text) {
 }
 
 // Same routing as the server (src/cloud/envoy-agents.mjs) for the "working" light.
+// Ordinary channels (Maestro Bite 2): only an explicit address earns a
+// turn — @name / @all — and an unnamed message is pending for nobody.
+// 'maestro' is never a target: Maestro is the human's seat, not an
+// agent, and agent-authored messages dispatch nobody.
 export function addressed(message, roster) {
-  if (!roster.length) return [];
-  const { all, providers } = mentions(message.body);
-  if (message.authorKind === 'agent') return message.authorSubject === 'agent:maestro' ? roster.filter((p) => p !== 'maestro' && (all || providers.includes(p))) : [];
+  const team = (roster ?? []).filter((p) => p !== 'maestro');
+  if (!team.length) return [];
   if (message.authorKind !== 'human') return [];
-  if (all) return roster;
-  if (providers.length) return roster.filter((p) => providers.includes(p));
-  return roster.includes('maestro') ? ['maestro'] : roster;
+  const { all, providers } = mentions(message.body);
+  if (all) return team;
+  if (providers.length) return team.filter((p) => providers.includes(p));
+  return [];
 }
 
-const providerOnline = (p, online) => (p === 'maestro' ? online.size > 0 : online.has(p));
+const providerOnline = (p, online) => online.has(p);
 
 export function agentStates(messages, roster, online, now = Date.now(), route = addressed) {
   const out = {};
@@ -101,13 +105,25 @@ export function agentStateBanner(agentState) {
   return String(agentState.line);
 }
 
-export function pendingAgentWork(messages, roster, joined = {}, online = new Set(), now = Date.now()) {
+// The room mirror of the server's room routing: a private room seats
+// exactly one agent, so an unnamed prompt there is that agent's work —
+// the room itself is the address. Named/@all keep the ordinary shape.
+export function roomAddressed(message, roster) {
+  const team = (roster ?? []).filter((p) => p !== 'maestro');
+  if (!team.length || message.authorKind !== 'human') return [];
+  const { all, providers } = mentions(message.body);
+  if (all) return team;
+  if (providers.length) return team.filter((p) => providers.includes(p));
+  return team;
+}
+
+export function pendingAgentWork(messages, roster, joined = {}, online = new Set(), now = Date.now(), route = addressed) {
   const answered = new Set();
   for (const m of messages) if (String(m.idempotencyKey ?? '').startsWith('reply:')) answered.add(`${m.authorSubject}|${String(m.idempotencyKey).slice(6)}`);
   const due = new Set();
   for (const m of messages) {
     if (now - new Date(m.createdAt).getTime() > AGENT_WORK_WINDOW_MS) continue;
-    for (const p of addressed(m, roster)) {
+    for (const p of route(m, roster)) {
       if (answered.has(`agent:${p}|${m.id}`)) continue;
       const j = joined[p];
       if (j && new Date(m.createdAt).getTime() < Date.parse(j)) continue;
@@ -231,7 +247,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'maestro', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -734,7 +750,7 @@ function renderHeader() {
   $('ew-channel-title').textContent = title; renderHeadAvatar();
   // The placeholder names the destination channel in both modes; the
   // long @agent hint is an Envoy-side extra and stays there.
-  $('maestro-input').placeholder = ws.mode === 'discord' ? `Message #${title}` : (ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent or let Maestro route it` : `Message #${title}`);
+  $('maestro-input').placeholder = ws.mode === 'discord' ? `Message #${title}` : (ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent to get an answer` : `Message #${title}`);
   const badge = $('ew-discord-badge');
   const d = ws.config?.discord;
   badge.hidden = !(d || ws.config?.pendingLink);
@@ -801,9 +817,11 @@ async function loadDeskLists() {
 function renderAgents() {
   const desk = inMaestroMode();
   const raw = (ws.config?.agents ?? []).map((a) => a.provider);
-  // In the desk the roster is the dispatch team: 'maestro' is never on
-  // it (Maestro is the sender), and the working lights use desk routing.
-  const roster = desk ? deskRoster(raw) : raw;
+  // The roster shown is always the answering team: 'maestro' is never
+  // on it — in the desk Maestro is the sender, and in ordinary channels
+  // Maestro is not an agent at all (Bite 2). A historical 'maestro'
+  // entry in a stored config simply does not render as a peer.
+  const roster = deskRoster(raw);
   const states = agentStates(ws.messages, roster, ws.online, Date.now(), desk ? deskTargets : addressed);
   $('ew-agents-summary').textContent = desk
     ? (roster.length ? `${roster.length} on the desk` : 'the desk is empty')
@@ -818,12 +836,12 @@ function renderAgents() {
       h('span', { class: 'last' }, s.state === 'offline' ? 'Offline. Start the Helmian bridge on your PC to bring it online.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
   }));
   if (!roster.length) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one below — everyone on the desk receives your dispatches.' : 'No agents in this channel. Add one below to make it an agent chat.'));
-  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p) && (!desk || p !== 'maestro')).map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
+  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
   // Channel composer mention pills: agents in this channel are @mention pills; the rest add in one click.
   // In the desk, @all is the broadcast pill and shows whenever anyone is seated.
   $('ew-mention-pills').replaceChildren(...((desk ? roster.length >= 1 : roster.length > 1) ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
     ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention @${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
-    ...AGENTS.filter((p) => !roster.includes(p) && (!desk || p !== 'maestro')).map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
+    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
   $('ew-mention-pills').hidden = false;
 }
 async function changeAgent(action, provider) {
@@ -1085,7 +1103,7 @@ function whoOf(m) {
   const me = ws.ctx.state.actor?.subject;
   if (m.authorKind === 'human' && m.authorSubject === me) return { name: 'You', kind: 'me' };
   if (m.agentProvider || m.authorSubject?.startsWith('agent:')) return { name: m.authorName || 'Agent', kind: 'agent', provider: m.agentProvider || m.authorSubject.slice(6) };
-  if (m.authorSubject?.endsWith(':bridge')) return { name: 'Maestro', kind: 'agent', provider: 'maestro' };
+  if (m.authorSubject?.endsWith(':bridge')) return { name: 'PC bridge', kind: 'agent', provider: null };
   if (m.source === 'discord') return { name: m.authorName || 'Discord member', kind: 'discord' };
   return { name: m.authorName || 'Member', kind: 'human' };
 }
@@ -1137,7 +1155,7 @@ function renderMessages() {
   }
   if (!ws.messages.length) out.push(h('div', { class: 'ew-empty' }, desk
     ? 'This is your desk. Send a dispatch — @name for one agent, @all for everyone, or name nobody and it goes to everyone on the desk.'
-    : (ws.config?.agents?.length ? 'Say hello. Maestro answers messages nobody is named in.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.')));
+    : (ws.config?.agents?.length ? 'Say hello. Name an agent with @ to get an answer — a message that names nobody is just posted, for people.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.')));
   box.replaceChildren(...out);
   if (atBottom || ws.messages.at(-1)?._pending || ws.messages.at(-1)?.authorSubject === ws.ctx.state.actor?.subject) box.scrollTop = box.scrollHeight;
 }
@@ -1165,29 +1183,28 @@ async function send(e) {
 // same envoy messages endpoint the console composer uses, into the picked
 // agent's private room (see the rooms block below) — the room seats
 // exactly that agent, so no @mention routing is needed there.
-// Maestro is the router, not a session provider (the server offers
-// Claude/ChatGPT/Grok/Gemini); Maestro's room is the one-to-one with
-// Maestro itself.
+// Maestro has no chip and no room here: Maestro is the human's manager
+// seat (the channel list), never a chat agent (Bite 2).
 const CLI_KEY_BY_PROVIDER = { Claude: 'claude', ChatGPT: 'openai', Grok: 'grok', Gemini: 'gemini' };
 function cliTarget() {
   const s = ws.cli.sessions.find((x) => x.id === ws.cli.activeId);
-  if (s) return { key: CLI_KEY_BY_PROVIDER[s.provider] ?? 'maestro', session: s };
+  if (s) return { key: CLI_KEY_BY_PROVIDER[s.provider] ?? 'claude', session: s };
   return { key: ws.cli.provider, session: null };
 }
 function renderCliChips() {
   const active = cliTarget().key;
-  $('ew-cli-chips').replaceChildren(...AGENTS.map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: p === 'maestro' ? 'Maestro routes to the others' : `Show your conversation with ${NAMES[p]}`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
+  $('ew-cli-chips').replaceChildren(...AGENTS.filter((p) => p !== 'maestro').map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: `Show your conversation with ${NAMES[p]}`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
 }
 function renderCliTo() {
   const { key, session } = cliTarget();
   $('ew-cli-to').textContent = session ? `${session.provider} · your private room with ${NAMES[key]}` : `${NAMES[key]} · your private room`;
-  $('ew-cli-input').placeholder = key === 'maestro' ? 'Prompt...' : `Prompt ${NAMES[key]}...`;
+  $('ew-cli-input').placeholder = `Prompt ${NAMES[key]}...`;
 }
 function renderCliSessions() {
   const box = $('ew-cli-sessions');
   if (!ws.cli.sessions.length) { box.replaceChildren(h('p', { class: 'ew-note' }, 'No sessions yet. Pick an agent above to start one.')); return; }
   box.replaceChildren(...ws.cli.sessions.map((s) => {
-    const key = CLI_KEY_BY_PROVIDER[s.provider] ?? 'maestro';
+    const key = CLI_KEY_BY_PROVIDER[s.provider] ?? 'claude';
     const prog = s.progress && s.progress.total ? `${s.progress.done}/${s.progress.total} steps${s.progress.current ? ` · now: ${s.progress.current}` : ''}` : clock(s.createdAt);
     return h('button', { type: 'button', class: `ew-cli-session${s.id === ws.cli.activeId ? ' active' : ''}`, title: `${s.name} (${s.provider})`, onclick: () => selectCliSession(s.id) },
       avatarImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
@@ -1257,7 +1274,7 @@ async function loadCliRoom() {
 function roomWorking() {
   const { key } = cliTarget();
   if (!key || ws.cli.roomFor !== key || !ws.cli.roomId) return [];
-  return pendingAgentWork(ws.cli.roomMessages, [key], ws.cli.roomJoined, ws.online);
+  return pendingAgentWork(ws.cli.roomMessages, [key], ws.cli.roomJoined, ws.online, Date.now(), roomAddressed);
 }
 
 // The pane's own conversation stream: the picked agent's room, rendered
@@ -1316,7 +1333,6 @@ function pickCliProvider(p) {
   ws.cli.provider = p; ws.cli.activeId = null; ls.set('cliSession', null);
   renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
   void openCliRoom();
-  if (p === 'maestro') { $('ew-cli-session-form').hidden = true; $('ew-cli-input').focus({ preventScroll: true }); return; }
   ws.cli.pending = p;
   const input = $('ew-cli-session-name');
   $('ew-cli-session-form').hidden = false;
@@ -1527,7 +1543,7 @@ function wire() {
   $('ew-cli-plus').addEventListener('click', () => togglePicker('cli'));
   // Agent CLI pane
   renderCliChips(); renderCliSessions(); renderCliTo();
-  $('ew-cli-new').addEventListener('click', () => pickCliProvider(ws.cli.provider === 'maestro' ? 'claude' : ws.cli.provider));
+  $('ew-cli-new').addEventListener('click', () => pickCliProvider(ws.cli.provider));
   $('ew-cli-session-cancel').addEventListener('click', () => { $('ew-cli-session-form').hidden = true; });
   $('ew-cli-session-form').addEventListener('submit', async (e) => {
     e.preventDefault();

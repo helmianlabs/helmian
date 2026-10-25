@@ -17,6 +17,9 @@ const HELMION_ENV_OVERRIDE_KEYS = new Set([
   'HELMION_EXPECTED_ENDPOINT_ID',
   'HELMION_CODEX_MODE',
   'HELMION_CODEX_INSTANCE_ID',
+  'HELMION_DEFAULT_PROVIDER',
+  // Legacy spelling the desktop still writes; read only as the default
+  // provider fallback in the snapshot below.
   'HELMION_MAESTRO_COORDINATOR',
   'HELMION_PERMISSION_MODE',
   'HELMION_MAX_TOOL_ROUNDS',
@@ -134,7 +137,15 @@ function snapshotHelmionEnv(values) {
     // (stamped by the bridge when it injects one from the vault — see
     // src/agent/supergrok-credentials.mjs). Anything else is a plain key.
     xaiCredentialType: String(values.HELMION_XAI_CREDENTIAL_TYPE || '').trim().toLowerCase() === 'oauth' ? 'oauth' : 'api_key',
-    maestro: (values.HELMION_MAESTRO_COORDINATOR || 'Gemini').trim(),
+    // The plain default provider for agent sessions and direct bridge
+    // turns when nothing names one. This used to be the "Maestro
+    // coordinator" setting — the hidden stand-in that decided which
+    // provider answered AS Maestro. Maestro is the human's seat now,
+    // so the setting is just a default provider (Bite 2). The legacy
+    // variable name is still honored as a fallback because the desktop
+    // writes it today; renaming the desktop setting is a parity
+    // follow-on, and the fallback carries no stand-in behavior.
+    defaultProvider: (values.HELMION_DEFAULT_PROVIDER || values.HELMION_MAESTRO_COORDINATOR || 'Gemini').trim(),
     permissionMode: (values.HELMION_PERMISSION_MODE || 'read-only').trim(),
     workspace: values.WORKSPACE_PATH || values.HELMION_WORKSPACE_PATH || process.cwd(),
     databaseUrl: values.HELMION_DATABASE_URL || '',
@@ -178,12 +189,12 @@ function readEnvFile(path) {
 }
 
 /**
- * Resolve a coordinator name to a provider descriptor.
+ * Resolve a provider name to a provider descriptor.
  * Built-ins win; any other name is matched (case-insensitively) against the
  * user's custom OpenAI-compatible endpoints — `overrides` first, then env.
  */
 export function resolveProvider(name, env, overrides = null) {
-  const raw = (name || env.maestro || 'Gemini').trim();
+  const raw = (name || env.defaultProvider || 'Gemini').trim();
   const n = raw.toLowerCase();
   if (n === 'openai' || n === 'gpt') {
     return { id: 'openai', key: env.openai, label: 'OpenAI' };

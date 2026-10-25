@@ -22,7 +22,7 @@ const BUILTIN_ENV = {
   anthropic: 'anthropic-key',
   gemini: 'gemini-key',
   xai: 'xai-key',
-  maestro: 'Gemini',
+  defaultProvider: 'Gemini',
   customProviders: [],
 };
 
@@ -74,6 +74,11 @@ test('resolveProvider still routes the four built-ins unchanged', () => {
   assert.equal(resolveProvider('grok', BUILTIN_ENV).id, 'xai');
 });
 
+test('resolveProvider falls back to the plain default provider (the old Maestro stand-in setting, renamed)', () => {
+  assert.equal(resolveProvider(undefined, BUILTIN_ENV).id, 'gemini');
+  assert.equal(resolveProvider(null, { ...BUILTIN_ENV, defaultProvider: 'Claude' }).id, 'anthropic');
+});
+
 test('resolveProvider resolves a custom provider from env', () => {
   const env = {
     ...BUILTIN_ENV,
@@ -101,7 +106,7 @@ test('a keyless local endpoint still resolves (Ollama runs without auth)', () =>
   assert.ok(provider.key, 'placeholder key keeps the no-key guard from rejecting it');
 });
 
-test('a custom provider may not shadow a built-in coordinator', () => {
+test('a custom provider may not shadow a built-in provider', () => {
   const overrides = [{ name: 'openai', baseUrl: 'http://127.0.0.1:9', apiKey: 'k', model: 'm' }];
   const provider = resolveProvider('openai', BUILTIN_ENV, overrides);
   assert.equal(provider.id, 'openai');
@@ -211,7 +216,7 @@ test('the NDJSON bridge routes a turn through a custom provider sent in the payl
     env: {
       ...process.env,
       HELMION_CUSTOM_PROVIDERS: '',
-      HELMION_MAESTRO_COORDINATOR: 'Gemini',
+      HELMION_DEFAULT_PROVIDER: 'Gemini',
       HELMION_LOCAL_ENABLED: '0',
     },
   });

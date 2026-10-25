@@ -64,7 +64,7 @@ export function createHands({ root, say, log }) {
     const { loadHelmionEnv, resolveProvider } = await import('../agent/env.mjs');
 
     const env = loadHelmionEnv(workspace);
-    const provider = resolveProvider(env.maestro, env, []);
+    const provider = resolveProvider(env.defaultProvider, env, []);
     if (!provider?.key) {
       const msg = `no API key for ${provider?.label || 'the selected provider'} — nothing was run`;
       log(`  · ${msg}`);
