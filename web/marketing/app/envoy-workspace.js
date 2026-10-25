@@ -247,7 +247,7 @@ function inline(text, into, onLink) {
   into.append(text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerData: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -863,19 +863,51 @@ function insertMention(name) {
 // ---------- composer "+" picker: skills, connectors, plugins, upload, web search ----------
 // One picker for both composers (channel + agent chat); the pure model in
 // composer-picker.mjs decides what can be attached and how it travels.
+// The model is PER-AGENT: the registry facts load once, and each render
+// builds the model for the agent that composer is talking to (its own
+// ecosystem group first), or the shared model when no single agent is in
+// context (the desk, an unaddressed channel).
 const PICKER_IDS = {
   channel: { panel: 'ew-picker', chips: 'ew-attach-chips' },
   cli: { panel: 'ew-cli-picker', chips: 'ew-cli-attach-chips' },
 };
+
+// Which agent a composer is talking to, in workspace agent keys — or
+// null for the shared picker. Pure, so it is unit tested: the Agent Chat
+// pane talks to its picked agent ('maestro' is the human's own seat, so
+// it gets the shared model); a private room talks to the room's agent; a
+// channel talks to the agent its draft addresses (@name), and the desk —
+// where Maestro dispatches to everyone — always keeps the shared model.
+export function pickerAgentContext({ which, cliProvider = null, channel = null, draft = '' } = {}) {
+  if (which === 'cli') return cliProvider && cliProvider !== 'maestro' ? cliProvider : null;
+  if (!channel || isDeskChannel(channel)) return null;
+  if (channel.kind === 'agent') {
+    const p = String(channel.slug ?? '').replace(/^agent-/, '');
+    return AGENTS.includes(p) && p !== 'maestro' ? p : null;
+  }
+  const { providers } = mentions(draft);
+  return providers.find((p) => p !== 'maestro') ?? null;
+}
+
 async function loadPickerData() {
-  if (ws.pickerData) return ws.pickerData;
+  if (ws.pickerFacts) return ws.pickerFacts;
   const [c, p, pl, tc, pr] = await Promise.allSettled([ws.ctx.api('/api/admin/cora/connectors'), ws.ctx.api('/api/admin/provider-connections'), ws.ctx.api('/api/admin/plugins'), ws.ctx.api('/api/admin/tool-connections'), ws.ctx.api('/api/admin/envoy/runner/presence')]);
-  ws.pickerData = pickerModel({
+  ws.pickerFacts = {
     connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {},
     toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null,
     presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null,
+  };
+  return ws.pickerFacts;
+}
+
+function currentPickerModel(which) {
+  const agent = pickerAgentContext({
+    which,
+    cliProvider: ws.cli.provider,
+    channel: openChannel(),
+    draft: $(which === 'cli' ? 'ew-cli-input' : 'maestro-input')?.value ?? '',
   });
-  return ws.pickerData;
+  return pickerModel({ ...ws.pickerFacts, agent });
 }
 function renderAttachChips(which) {
   const box = $(PICKER_IDS[which].chips); if (!box) return;
@@ -908,12 +940,38 @@ async function renderPicker(which) {
   const panel = $(PICKER_IDS[which].panel); if (!panel) return;
   if (ws.pickerFor !== which) { panel.hidden = true; return; }
   panel.hidden = false;
-  const model = ws.pickerData ?? await loadPickerData().catch(() => pickerModel());
+  if (!ws.pickerFacts) await loadPickerData().catch(() => {});
   if (ws.pickerFor !== which) return; // closed while the registry loaded
+  const model = ws.pickerFacts ? currentPickerModel(which) : pickerModel();
   const attached = new Set(ws.attach[which].map(attachmentKey));
   const groups = [];
   for (const g of model.groups) {
-    if (g.id === 'skills') {
+    if (g.id === 'agent') {
+      // The agent's own ecosystem: its seat as a status row (never an
+      // attachment), its by-name skills, and the bridge plugins it can
+      // be handed — each with its truthful state from the model.
+      const nameInput = h('input', { class: 'ew-picker-input', maxlength: 64, placeholder: 'Skill name — e.g. deploy, or plugin:skill', 'aria-label': 'Skill name' });
+      const note = h('p', { class: 'ew-note' });
+      const add = h('button', { type: 'button', class: 'ew-btn sm', onclick: () => {
+        const r = addAttachment(ws.attach[which], { kind: 'skill', name: nameInput.value });
+        if (!r.added) { note.textContent = r.reason; return; }
+        ws.attach[which] = r.list; note.textContent = '';
+        renderAttachChips(which); renderPicker(which);
+      } }, 'Attach skill');
+      const rows = g.items.map((item) => {
+        if (item.kind === 'provider') {
+          return h('button', { type: 'button', class: 'ew-picker-row', disabled: true, title: `${item.name} is the agent you are talking to — this is its own connection` },
+            h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.state === 'connected' ? 'on' : 'off'}` }, item.stateLabel));
+        }
+        const on = attached.has(`plugin:${item.name}`);
+        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`, onclick: () => {
+          if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'plugin', name: item.name }); renderAttachChips(which); renderPicker(which); return; }
+          const r = addAttachment(ws.attach[which], { kind: 'plugin', name: item.name }, { catalog: g.items });
+          if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
+        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.brings), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'Attached' : item.stateLabel));
+      });
+      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, g.title.toUpperCase()), h('p', { class: 'ew-note' }, g.note), h('div', { class: 'ew-row' }, nameInput, add), note, ...rows));
+    } else if (g.id === 'skills') {
       const nameInput = h('input', { class: 'ew-picker-input', maxlength: 64, placeholder: 'Skill name — e.g. deploy, or plugin:skill', 'aria-label': 'Skill name' });
       const note = h('p', { class: 'ew-note' });
       const add = h('button', { type: 'button', class: 'ew-btn sm', onclick: () => {
@@ -926,13 +984,13 @@ async function renderPicker(which) {
     } else if (g.id === 'connectors') {
       const rows = g.items.map((item) => {
         const on = attached.has(`connector:${item.key}`);
-        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, disabled: item.connected ? null : true, title: item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`) : `${item.name}: ${item.statusText ?? 'Not connected'}`, onclick: () => {
+        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, disabled: item.connected ? null : true, title: item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message — it rides as a note for the agent`) : `${item.name}: ${item.statusText ?? 'Not connected'}`, onclick: () => {
           if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'connector', key: item.key }); renderAttachChips(which); renderPicker(which); return; }
           const r = addAttachment(ws.attach[which], { kind: 'connector', key: item.key }, { catalog: g.items });
           if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
-        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.connected ? 'on' : 'off'}` }, on ? 'Attached' : item.statusText ?? (item.connected ? 'Connected' : 'Not connected')));
+        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.connected ? 'on' : 'off'}` }, on ? 'Attached' : item.stateLabel));
       });
-      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'CONNECTORS'), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No connectors in the registry.')])));
+      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'CONNECTORS'), ...(g.note ? [h('p', { class: 'ew-note' }, g.note)] : []), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No connectors in the registry.')])));
     } else if (g.id === 'plugins') {
       const rows = g.items.map((item) => {
         const on = attached.has(`plugin:${item.name}`);
@@ -940,7 +998,7 @@ async function renderPicker(which) {
           if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'plugin', name: item.name }); renderAttachChips(which); renderPicker(which); return; }
           const r = addAttachment(ws.attach[which], { kind: 'plugin', name: item.name }, { catalog: g.items });
           if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
-        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.brings), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'Attached' : 'Installed'));
+        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.brings), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'Attached' : item.stateLabel));
       });
       groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'PLUGINS'), h('p', { class: 'ew-note' }, g.note), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No plugins installed on your PC bridge yet.')])));
     } else if (g.id === 'upload') {

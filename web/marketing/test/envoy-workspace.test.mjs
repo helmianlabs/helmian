@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, addressed, agentRoomFor, agentRoomThread, deskChannelFor, deskPending, deskRoster, deskTargets, dragLayout, isDeskChannel, pendingAgentWork, roomAddressed } from '../app/envoy-workspace.js';
+import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, addressed, agentRoomFor, agentRoomThread, deskChannelFor, deskPending, deskRoster, deskTargets, dragLayout, isDeskChannel, pendingAgentWork, pickerAgentContext, roomAddressed } from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -590,4 +590,45 @@ test('tenant onboarding: the asleep banner helper + element + state fetch are wi
   assert.match(js, /\/api\/admin\/envoy\/agent-state/, 'the workspace fetches the tenant agent state');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
   assert.match(css, /\.ew-agent-state \{/, 'the banner has its own style');
+});
+
+// ---- per-agent "+" picker (plus-parity bite 1) ----
+// The workspace picker is built for the agent the composer is talking
+// to: the room's agent in a private room, the picked agent in Agent
+// Chat, the addressed agent in a channel — and the shared model at the
+// desk, where Maestro dispatches to everyone.
+const TEAM = { id: 'c1', slug: 'general', name: 'general', kind: 'team' };
+const DESK = { id: 'c2', slug: MAESTRO_DESK_SLUG, name: 'Maestro’s desk', kind: 'team' };
+const ROOM = { id: 'c3', slug: 'agent-gemini', name: 'Gemini', kind: 'agent' };
+
+test('picker agent context: a private room talks to the room\'s agent', () => {
+  assert.equal(pickerAgentContext({ which: 'channel', channel: ROOM }), 'gemini');
+  assert.equal(pickerAgentContext({ which: 'channel', channel: { ...ROOM, slug: 'agent-grok' } }), 'grok');
+});
+
+test('picker agent context: the desk keeps the shared model, even addressed', () => {
+  assert.equal(pickerAgentContext({ which: 'channel', channel: DESK, draft: '@Gemini look at this' }), null);
+  assert.equal(pickerAgentContext({ which: 'channel', channel: null }), null);
+});
+
+test('picker agent context: a channel talks to the agent its draft addresses', () => {
+  assert.equal(pickerAgentContext({ which: 'channel', channel: TEAM, draft: '@Gemini summarise this' }), 'gemini');
+  assert.equal(pickerAgentContext({ which: 'channel', channel: TEAM, draft: '@ChatGPT draft a reply' }), 'openai');
+  assert.equal(pickerAgentContext({ which: 'channel', channel: TEAM, draft: 'no one addressed' }), null);
+  assert.equal(pickerAgentContext({ which: 'channel', channel: TEAM, draft: '@all hands on deck' }), null, '@all is everyone — no single ecosystem');
+  assert.equal(pickerAgentContext({ which: 'channel', channel: TEAM, draft: '@Maestro route this' }), null, 'Maestro is the human\'s seat — the shared model');
+});
+
+test('picker agent context: Agent Chat talks to its picked agent', () => {
+  assert.equal(pickerAgentContext({ which: 'cli', cliProvider: 'claude' }), 'claude');
+  assert.equal(pickerAgentContext({ which: 'cli', cliProvider: 'maestro' }), null, 'the desk seat in Agent Chat keeps the shared model');
+  assert.equal(pickerAgentContext({ which: 'cli', cliProvider: null }), null);
+});
+
+test('picker wiring: the workspace renders the per-agent model with truthful states', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /pickerModel\(\{ \.\.\.ws\.pickerFacts, agent \}\)/, 'each render builds the model from the cached registry facts for the agent in context');
+  assert.match(js, /g\.id === 'agent'/, 'the picker renders the ecosystem group');
+  assert.match(js, /item\.stateLabel/, 'rows show the model\'s truthful state labels');
+  assert.match(js, /g\.note \? \[h\('p', \{ class: 'ew-note' \}, g\.note\)\]/, 'the connectors group renders the model note that says attaching is a note, not an open door');
 });
