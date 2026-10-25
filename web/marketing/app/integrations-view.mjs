@@ -6,26 +6,35 @@ import { integrationsModel, usageModel } from './app-model.mjs';
 export const PHONE_URL = 'https://helmian.cloud/app';
 const OAUTH = { openai: '/api/provider-oauth/openai/start', gemini: '/api/provider-oauth/gemini/start', grok: '/api/provider-oauth/grok/start' };
 
-// presence: rows from the PC presence feed; connectors/providers: the cloud's connection lists.
-export function integrationSections({ presence = [], connectors = {}, providers = {}, usage = null, overview = null } = {}) {
-  const online = new Set(presence.filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; }));
-  const cloud = new Map(integrationsModel(connectors, providers).map((i) => [i.key, i.connected]));
-  const on = (pc, cloudKey) => online.has(pc) || cloud.get(cloudKey) === true;
+// presence: rows from the runner presence feed (null when that read never
+// arrived); connectors/providers/toolConnections: the cloud's connection
+// lists. Every status below renders the shared truth rows from
+// integrationsModel (app-model.mjs) — this page invents no state of its own.
+export function integrationSections({ presence = null, connectors = {}, providers = {}, toolConnections = null, usage = null, overview = null, now = Date.now() } = {}) {
+  const online = new Set((Array.isArray(presence) ? presence : []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; }));
+  const truth = new Map(integrationsModel(connectors, providers, { toolConnections, presence, now }).map((i) => [i.key, i]));
   const ai = [
     ['claude', 'anthropic', 'Claude', 'Use your Claude subscription.'],
     ['openai', 'openai', 'ChatGPT', 'Sign in with your ChatGPT account.'],
     ['gemini', 'google', 'Gemini', 'Sign in with your Google account.'],
     ['grok', 'xai', 'Grok', 'Sign in with your X account.'],
   ].map(([key, cloudKey, name, blurb]) => {
-    const connected = on(key, cloudKey);
-    return { key, name, blurb, icon: { img: `/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png` }, status: connected ? 'on' : 'off', statusText: connected ? 'Connected' : 'Not connected',
+    const row = truth.get(cloudKey);
+    const connected = row?.connected === true;
+    return { key, name, blurb, icon: { img: `/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png` }, status: connected ? 'on' : 'off', statusText: row?.statusText ?? 'Not checked',
       action: connected ? { label: 'Manage', href: '#agents' } : OAUTH[key] ? { label: 'Connect', href: OAUTH[key] } : { label: 'Connect', act: 'claude-help' } };
   });
-  const discord = cloud.get('discord') === true;
+  const discord = truth.get('discord');
+  const github = truth.get('github');
+  const slack = truth.get('slack');
   const chat = [
-    { key: 'discord', name: 'Discord', blurb: 'Mirror a team channel with Discord.', icon: { mark: 'discord' }, status: discord ? 'on' : 'off', statusText: discord ? 'Connected' : 'Not connected', action: { label: discord ? 'Manage' : 'Link a channel', href: '#desktop' } },
-    { key: 'github', name: 'GitHub', blurb: 'See repo activity next to your chats.', icon: { mark: 'github' }, status: 'soon', statusText: 'Coming soon', action: null },
-    { key: 'slack', name: 'Slack', blurb: 'Bring Helmian into Slack.', icon: { mark: 'slack' }, status: cloud.get('slack') ? 'on' : 'soon', statusText: cloud.get('slack') ? 'Connected' : 'Coming soon', action: null },
+    { key: 'discord', name: 'Discord', blurb: 'Mirror a team channel with Discord.', icon: { mark: 'discord' }, status: discord?.connected ? 'on' : 'off', statusText: discord?.statusText ?? 'Not checked', action: { label: discord?.connected ? 'Manage' : 'Link a channel', href: '#desktop' } },
+    // GitHub is a tool connection: once a row exists its card renders the
+    // probe truth; before that, the honest "Coming soon" it always had.
+    github?.source === 'tool-connections'
+      ? { key: 'github', name: 'GitHub', blurb: 'See repo activity next to your chats.', icon: { mark: 'github' }, status: github.connected ? 'on' : 'off', statusText: github.statusText, action: null }
+      : { key: 'github', name: 'GitHub', blurb: 'See repo activity next to your chats.', icon: { mark: 'github' }, status: 'soon', statusText: 'Coming soon', action: null },
+    { key: 'slack', name: 'Slack', blurb: 'Mirror a team channel with Slack.', icon: { mark: 'slack' }, status: slack?.connected ? 'on' : 'off', statusText: slack?.statusText ?? 'Not checked', action: null },
   ];
   const pcOnline = online.size > 0;
   const devices = [

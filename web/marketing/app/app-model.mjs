@@ -15,7 +15,7 @@ export const PANEL_VIEWS = Object.freeze(['browser', 'canvas', 'preview', 'creat
 export const PANEL_TABS = Object.freeze(['browser', 'canvas', 'preview', 'create']);
 export const PROVIDERS = Object.freeze(['Claude', 'ChatGPT', 'Grok', 'Gemini']);
 export const PROVIDER_REGISTRY = Object.freeze([
-  { key: 'slack', name: 'Slack', kind: 'Team chat' }, { key: 'discord', name: 'Discord', kind: 'Team chat' }, { key: 'github', name: 'GitHub', kind: 'Code' },
+  { key: 'slack', name: 'Slack', kind: 'Team chat mirror' }, { key: 'discord', name: 'Discord', kind: 'Team chat mirror' }, { key: 'github', name: 'GitHub', kind: 'Code' },
   { key: 'anthropic', name: 'Claude', kind: 'AI provider' }, { key: 'openai', name: 'ChatGPT', kind: 'AI provider' }, { key: 'xai', name: 'Grok', kind: 'AI provider' }, { key: 'google', name: 'Gemini', kind: 'AI provider' },
 ]);
 
@@ -119,10 +119,120 @@ export function feedModel({ events = [], approvals = [] } = {}, { filter = 'all'
 
 export function maskSecret(hint = '') { const tail = String(hint).replace(/[^A-Za-z0-9]/g, '').slice(-4); return tail ? `••••••••${tail}` : '••••••••'; }
 
-export function integrationsModel(connectors = {}, providers = {}) {
-  const status = connectors.verifierStatus ?? {};
-  const connected = new Set([...(connectors.registrations ?? []).map((r) => String(r.provider ?? r.connectorKind ?? '').toLowerCase()), ...(providers.connections ?? []).map((c) => String(c.provider ?? c.providerKey ?? '').toLowerCase())]);
-  return PROVIDER_REGISTRY.map((p) => ({ ...p, connected: connected.has(p.key) || status[p.key]?.configured === true }));
+// ---- connection truth (bite 1b: the read-path) ----
+// Every surface that shows a connection state renders THESE rows — the
+// private-room CONNECTORS panel and the Integrations page alike — and each
+// row names the source its state came from (`source`), so a state is never
+// a guess wearing a label:
+// - Tool connections (GitHub and any future tool service): the row from
+//   helmion.tool_connections (GET /api/admin/tool-connections). "Connected"
+//   renders ONLY from a probe receipt — state 'verified' with a fresh
+//   lastVerifiedAt (toolConnectionStatus below; the same rule the store
+//   enforces server-side, isVerifiedFresh in src/cloud/tool-connections.mjs).
+//   A failed probe reads "Check failed"; a verified receipt gone stale
+//   reads "Not checked recently"; a row never probed reads "Not checked".
+// - Slack / Discord are CHANNEL MIRRORS (sql/026 registrations), not tool
+//   connections: their rows read "Linked" / "Not linked" — the mirror is
+//   live exactly when its registration is lifecycle 'enabled' and enabled,
+//   the same test the inbound gateway resolves by. An env "configured"
+//   flag or a half-finished registration never reads as linked.
+// - The AI providers are NOT tool connections either: their truth is the
+//   agent's own runner link — a provider connection saved as verified
+//   (sql/031) or the runner presence feed saying that provider is
+//   answering right now. When neither source answered, the row reads
+//   "Not checked" — never a guessed "Not connected".
+// Rows keep `connected` (the boolean the attach gate uses): it is true
+// only for a verified+fresh tool connection, a live mirror link, or a
+// provider with a live runner link.
+
+// How long a probe receipt still counts as "Connected" on screen. The
+// probe-wiring follow-on should check connections at least this often.
+export const CONNECTION_FRESH_MS = 60 * 60 * 1000;
+
+// The render rule for one tool_connections row (the store's row shape:
+// state, lastVerifiedAt). Pure; `now`/`maxAgeMs` injectable for tests.
+export function toolConnectionStatus(row, { now = Date.now(), maxAgeMs = CONNECTION_FRESH_MS } = {}) {
+  if (!row) return { status: 'none', statusText: null, connected: false };
+  if (row.state === 'verified' && row.lastVerifiedAt) {
+    const verifiedMs = new Date(row.lastVerifiedAt).getTime();
+    if (Number.isFinite(verifiedMs) && verifiedMs <= now && now - verifiedMs <= maxAgeMs) {
+      return { status: 'connected', statusText: 'Connected', connected: true };
+    }
+    return { status: 'stale', statusText: 'Not checked recently', connected: false };
+  }
+  if (row.state === 'failed') return { status: 'failed', statusText: 'Check failed', connected: false };
+  if (row.state === 'revoked') return { status: 'revoked', statusText: 'Not connected', connected: false };
+  // 'registered' / 'probing': intent on file, never proven either way.
+  return { status: 'unchecked', statusText: 'Not checked', connected: false };
+}
+
+// A service can hold rows in several scopes (workspace + per-agent). The
+// panel shows the strongest truth any of them earned: a live verified
+// receipt first, then a failure (a broken scope is worth saying out loud),
+// then staleness, then never-checked, then revoked.
+const TOOL_STATUS_RANK = Object.freeze({ connected: 5, failed: 4, stale: 3, unchecked: 2, revoked: 1, none: 0 });
+export function bestToolConnectionStatus(rows = [], serviceId, opts = {}) {
+  let best = { status: 'none', statusText: null, connected: false };
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (String(row?.serviceId ?? '') !== serviceId) continue;
+    const s = toolConnectionStatus(row, opts);
+    if (TOOL_STATUS_RANK[s.status] > TOOL_STATUS_RANK[best.status]) best = s;
+  }
+  return best;
+}
+
+const MIRROR_KEYS = new Set(['slack', 'discord']);
+// How the same provider is named in the other two sources: the provider
+// connections list (sql/031 — OAuth-era ids) and the runner presence feed.
+const PROVIDER_SOURCE_NAMES = Object.freeze({
+  anthropic: Object.freeze({ connections: ['anthropic', 'claude'], presence: ['claude', 'anthropic'] }),
+  openai: Object.freeze({ connections: ['openai'], presence: ['openai'] }),
+  xai: Object.freeze({ connections: ['xai', 'grok'], presence: ['xai', 'grok'] }),
+  google: Object.freeze({ connections: ['google', 'gemini'], presence: ['gemini', 'google'] }),
+});
+
+function mirrorRow(p, connectors) {
+  const registrations = connectors?.registrations;
+  if (!Array.isArray(registrations)) return { ...p, connected: false, status: 'unchecked', statusText: 'Not checked', source: 'channel-mirror' };
+  const reg = registrations.find((r) => String(r?.provider ?? r?.connectorKind ?? '').toLowerCase() === p.key);
+  const linked = Boolean(reg && reg.lifecycle === 'enabled' && reg.enabled === true);
+  return { ...p, connected: linked, status: linked ? 'linked' : 'not-linked', statusText: linked ? 'Linked' : 'Not linked', source: 'channel-mirror' };
+}
+
+function providerRow(p, providers, presence) {
+  const names = PROVIDER_SOURCE_NAMES[p.key];
+  const connections = providers?.connections;
+  const connectionsAnswered = Array.isArray(connections);
+  const saved = connectionsAnswered
+    ? connections.find((c) => names.connections.includes(String(c?.providerId ?? c?.provider ?? c?.providerKey ?? '').toLowerCase()))
+    : null;
+  const presenceAnswered = Array.isArray(presence);
+  const live = presenceAnswered && presence.some((r) => r?.connected === true && names.presence.includes(String(r?.provider ?? r?.providerName ?? '').toLowerCase()));
+  if (live) return { ...p, connected: true, status: 'connected', statusText: 'Connected', source: 'runner-presence' };
+  if (saved && saved.lifecycle === 'verified') return { ...p, connected: true, status: 'connected', statusText: 'Connected', source: 'provider-connection' };
+  // "Not connected" is a claim both sources must have answered to make:
+  // if either read never arrived, a working link could be sitting in the
+  // one we didn't see — the row says "Not checked" instead of guessing.
+  if (!connectionsAnswered || !presenceAnswered) return { ...p, connected: false, status: 'unchecked', statusText: 'Not checked', source: 'none' };
+  return { ...p, connected: false, status: 'not-connected', statusText: 'Not connected', source: saved ? 'provider-connection' : 'runner-presence' };
+}
+
+// connectors: GET /api/admin/cora/connectors body; providers: GET
+// /api/admin/provider-connections body; toolConnections: the rows from
+// GET /api/admin/tool-connections (null when that read never arrived);
+// presence: the runner presence rows (null likewise).
+export function integrationsModel(connectors = {}, providers = {}, { toolConnections = null, presence = null, now = Date.now() } = {}) {
+  return PROVIDER_REGISTRY.map((p) => {
+    if (MIRROR_KEYS.has(p.key)) return mirrorRow(p, connectors);
+    if (PROVIDER_SOURCE_NAMES[p.key]) return providerRow(p, providers, presence);
+    if (Array.isArray(toolConnections)) {
+      const s = bestToolConnectionStatus(toolConnections, p.key, { now });
+      if (s.status !== 'none') return { ...p, ...s, source: 'tool-connections' };
+    }
+    // No tool_connections row (or the read never arrived): the registry's
+    // existing answer for this service, exactly as before this bite.
+    return { ...p, connected: false, status: 'not-connected', statusText: 'Not connected', source: 'registry' };
+  });
 }
 
 export function metricsModel(body = {}) { const c = body.counts ?? {}; return [['Active projects', c.activeProjects ?? 0], ['Members', c.members ?? 0], ['Agent tasks', c.agentTasks ?? 0], ['AI providers', c.verifiedProviders ?? 0]]; }
