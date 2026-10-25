@@ -1,5 +1,9 @@
 import { createInterface } from 'node:readline';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { loadHelmionEnv, parseCustomProviders, resolveProvider } from './env.mjs';
+import { openVault, readDeviceToken, defaultVaultPath } from '../runner/vault.mjs';
+import { createSuperGrokCredentialResolver } from './supergrok-credentials.mjs';
 import { createToolRuntime } from './tools.mjs';
 import { createSessionState, resetSessionState, runAgentTurn } from './loop.mjs';
 import { normalizeTier } from './model-router.mjs';
@@ -75,6 +79,29 @@ export async function runAgentBridge() {
   const emit = (obj) => {
     process.stdout.write(`${JSON.stringify(obj)}\n`);
   };
+
+  // SuperGrok subscription seat: when the runner vault holds a Grok OAuth
+  // session, xAI turns resolve through it (fresh token, refresh on expiry or
+  // 401) instead of a pasted key — see supergrok-credentials.mjs. Best
+  // effort by design: an unpaired bridge or a closed vault leaves the
+  // resolver null and today's env-key behavior completely untouched. The
+  // token file path matches bin/pc-bridge.mjs / bin/runner-vault.mjs.
+  let supergrokResolver = null;
+  try {
+    const deviceToken = await readDeviceToken(
+      join(homedir(), 'AppData', 'Roaming', 'Helmian', 'pc-bridge-token.json'),
+    );
+    if (deviceToken) {
+      const vault = await openVault({ vaultPath: defaultVaultPath(homedir()), deviceToken });
+      supergrokResolver = createSuperGrokCredentialResolver({
+        vault,
+        onAuthProblem: (message) => emit({ event: 'status', message }),
+      });
+      if (supergrokResolver) await supergrokResolver.hasSession();
+    }
+  } catch {
+    supergrokResolver = null;
+  }
 
   // Human-in-the-loop approval for 'ask' mode. The broker is the only source of
   // an allow: it hands out ids and waits for a matching permission_response.
@@ -195,7 +222,8 @@ export async function runAgentBridge() {
   const reconfigure = () => {
     const envNow = loadHelmionEnv(workspace);
     provider = resolveProvider(providerName, envNow, customProviders);
-    if (!provider.key) {
+    if (!provider.key
+      && !(provider.id === 'xai' && supergrokResolver?.hasSessionSync())) {
       throw new Error(
         `No API key for ${provider.label}. Save keys in Settings / .env `
         + `(OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, XAI_API_KEY).`,
@@ -461,6 +489,7 @@ export async function runAgentBridge() {
           userText: turnText,
           messages: state.messages,
           provider,
+          credentialResolver: supergrokResolver,
           runtime: turnRuntime,
           tier: tierOverride,
           modelOverride,
