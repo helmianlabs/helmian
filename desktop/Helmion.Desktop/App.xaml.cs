@@ -16,9 +16,20 @@ public partial class App : Application
 
         if (e.Args.Contains("--service-smoke-test", StringComparer.Ordinal))
         {
-            var succeeded = Task.Run(RunServiceSmokeAsync)
-                .GetAwaiter()
-                .GetResult();
+            bool succeeded;
+            try
+            {
+                succeeded = Task.Run(RunServiceSmokeAsync)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch
+            {
+                // A failed connect or a timed-out check is a failed smoke,
+                // not a crashed process: report exit 2 like any other
+                // negative result so the caller sees a plain failure.
+                succeeded = false;
+            }
             ExitWith(succeeded ? 0 : 2);
             return;
         }
@@ -253,11 +264,16 @@ public partial class App : Application
             Path.GetTempPath(),
             $"helmion-packaged-service-smoke-{Guid.NewGuid():N}");
         Directory.CreateDirectory(smokeWorkspace);
+        // Every connector request runs on the caller's token; the connector's
+        // defaults are CancellationToken.None, under which a pipe read waits
+        // indefinitely for a response frame. Bound the whole packaged check
+        // here as well as in publish.ps1, which kills the process on timeout.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         try
         {
-            var hello = await connector.EnsureConnectedAsync();
-            var capabilities = await connector.DetectCapabilitiesAsync();
-            var inspection = await connector.InspectWorkspaceAsync(smokeWorkspace);
+            var hello = await connector.EnsureConnectedAsync(timeout.Token);
+            var capabilities = await connector.DetectCapabilitiesAsync(timeout.Token);
+            var inspection = await connector.InspectWorkspaceAsync(smokeWorkspace, timeout.Token);
             var governedGeneration = hello.Capabilities.Contains(
                 ReadOnlyServiceContract.GenerateApprovedArtifactCommand,
                 StringComparer.Ordinal);

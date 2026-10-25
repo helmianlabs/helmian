@@ -37,6 +37,36 @@ test('publish.ps1 ships the bridge service and the Node bridge app', () => {
   assert.match(ps1, /'node\.exe'\)/u);
 });
 
+test('packaged smoke tests are bounded: a stalled check kills its tree and fails loudly', () => {
+  // Run 40211924669: the Publish step sat silent for 58 minutes until the job
+  // cap killed it — Invoke-PackagedSmoke waited on WaitForExit() with no
+  // timeout and the GUI-subsystem checks print nothing of their own. These
+  // pins keep the bound (and the per-check announcement) from regressing.
+  const ps1 = read('desktop/scripts/publish.ps1');
+  assert.match(ps1, /\[int\]\$TimeoutSeconds = 120/u);
+  assert.match(ps1, /WaitForExit\(\$TimeoutSeconds \* 1000\)/u);
+  assert.match(ps1, /\$smokeProcess\.Kill\(\$true\)/u);
+  assert.match(ps1, /Packaged smoke test timed out after \$\{TimeoutSeconds\}s: \$Executable \$Argument/u);
+  assert.match(ps1, /Write-Host "Packaged smoke: \$Executable \$Argument/u);
+  assert.match(ps1, /Write-Host "Packaged smoke passed: \$Executable \$Argument"/u);
+  assert.match(ps1, /HELMION_SMOKE_TRACE_PATH/u);
+  assert.ok(!ps1.includes('$smokeProcess.WaitForExit()\n'),
+    'the unbounded WaitForExit() call must not come back');
+});
+
+test('service smoke test bounds its pipe reads and fails as exit 2, never a hang or a crash', () => {
+  // RunServiceSmokeAsync used to call the connector with its default
+  // CancellationToken.None, under which a pipe read waits indefinitely for a
+  // response frame; and a thrown connect error escaped the async-void
+  // OnStartup as an unhandled exception instead of a clean smoke failure.
+  const app = read('desktop/Helmion.Desktop/App.xaml.cs');
+  assert.match(app, /new CancellationTokenSource\(TimeSpan\.FromSeconds\(90\)\)/u);
+  assert.match(app, /EnsureConnectedAsync\(timeout\.Token\)/u);
+  assert.match(app, /DetectCapabilitiesAsync\(timeout\.Token\)/u);
+  assert.match(app, /InspectWorkspaceAsync\(smokeWorkspace, timeout\.Token\)/u);
+  assert.match(app, /succeeded = false;/u);
+});
+
 test('bridge service finds the bundled node.exe next to its own exe', () => {
   const cs = read('desktop/Helmion.BridgeService/BridgeSupervisor.cs');
   assert.match(cs, /AppContext\.BaseDirectory, "node\.exe"/u);
