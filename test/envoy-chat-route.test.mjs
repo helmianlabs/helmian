@@ -226,3 +226,27 @@ test('Envoy messages accept + store + return attachments metadata, and refuse un
   const junk = await post({ channelId: 'channel-1', body: 'nope', idempotencyKey: 'message-meta-4', metadata: { attachments: [{ kind: 'wormhole', name: 'x' }] } });
   assert.equal(junk.status, 400, 'an unsupported attachment kind refuses the message');
 });
+
+test('a message with a file attachment larger than the old 16 KB body cap posts and round-trips', async (t) => {
+  const app = await fixture(); t.after(app.close);
+  const headers = { cookie: 'helmion_admin_session=active-session', 'content-type': 'application/json' };
+  const post = (payload) => fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers, body: JSON.stringify(payload) });
+  // ~40 KB of text file: the JSON body is far past the general admin cap,
+  // so this only succeeds because the messages route carries the one
+  // larger budget — and the metadata normalizer still bounds the file.
+  const text = 'wash tag line\n'.repeat(2800); // 39,200 bytes
+  const data = Buffer.from(text, 'utf8').toString('base64');
+  const sent = await post({ channelId: 'channel-1', body: 'see the log', idempotencyKey: 'message-file-1', metadata: { attachments: [{ kind: 'file', name: 'log.txt', mediaType: 'text/plain', data }] } });
+  assert.equal(sent.status, 200);
+  const listed = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=channel-1`, { headers });
+  const stored = (await listed.json()).messages.find((m) => m.idempotencyKey === 'message-file-1');
+  assert.ok(stored, 'the message was stored');
+  assert.equal(stored.metadata.attachments[0].kind, 'file');
+  assert.equal(stored.metadata.attachments[0].size, Buffer.byteLength(text));
+  assert.equal(stored.metadata.attachments[0].data, data, 'the bytes survive the round trip byte for byte');
+
+  const tooBig = await post({ channelId: 'channel-1', body: 'x'.repeat(1_100_000), idempotencyKey: 'message-file-2' });
+  assert.equal(tooBig.status, 400, 'a body past the route budget is refused, not stored');
+  const channelsBody = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_CHANNELS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ slug: 'padded', title: 'x'.repeat(20_000), kind: 'team' }) });
+  assert.equal(channelsBody.status, 400, 'an oversized body on another admin route is still refused');
+});

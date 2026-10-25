@@ -156,6 +156,12 @@ export const LIVE_ADMIN_WORKSPACE_REPO_BINDINGS_PATH = '/api/admin/workspace/rep
 export const LIVE_ADMIN_CONSOLE_COMMANDS_PATH = '/api/admin/workspace/console/commands';
 
 const MAX_ADMIN_BODY_BYTES = 16 * 1024;
+// The ONE route with a larger body budget: POST /api/admin/envoy/messages,
+// whose allowlisted payload can carry file attachments inline in message
+// metadata (base64 bytes; bounded per file and in total by
+// normalizeMessageMetadata in src/cloud/envoy-agents.mjs — 256 KB per
+// file, 512 KB per message). Every other admin route keeps the 16 KB cap.
+const ENVOY_MESSAGE_MAX_BODY_BYTES = 1024 * 1024;
 const MAX_PENDING_PREVIEWS = 256;
 const PREVIEW_TTL_MS = 5 * 60 * 1000;
 const MAX_ENVOY_STREAM_MS = 30 * 60 * 1000;
@@ -226,19 +232,19 @@ function expectedVersion(request) {
   return version;
 }
 
-async function readJsonObject(request) {
+async function readJsonObject(request, maxBytes = MAX_ADMIN_BODY_BYTES) {
   if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(String(request.headers['content-type'] ?? '').trim())) {
     throw Object.assign(new Error('application/json is required'), { status: 415, code: 'ACTION_POLICY_MEDIA_TYPE_REQUIRED' });
   }
   const declared = Number(request.headers['content-length']);
-  if (Number.isFinite(declared) && declared > MAX_ADMIN_BODY_BYTES) {
+  if (Number.isFinite(declared) && declared > maxBytes) {
     throw Object.assign(new Error('Request body is too large'), { status: 413, code: 'ACTION_POLICY_BODY_TOO_LARGE' });
   }
   const chunks = [];
   let total = 0;
   for await (const chunk of request) {
     total += chunk.length;
-    if (total > MAX_ADMIN_BODY_BYTES) throw Object.assign(new Error('Request body is too large'), { status: 413, code: 'ACTION_POLICY_BODY_TOO_LARGE' });
+    if (total > maxBytes) throw Object.assign(new Error('Request body is too large'), { status: 413, code: 'ACTION_POLICY_BODY_TOO_LARGE' });
     chunks.push(chunk);
   }
   let value;
@@ -926,7 +932,7 @@ export async function createLiveHelmianCloudAdminHandler({
       return true;
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH) {
-      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request); if (Object.keys(body).some((key) => !['attachments', 'body', 'channelId', 'idempotencyKey', 'metadata'].includes(key))) throw Object.assign(new Error('Request body has unexpected fields'), { status: 400, code: 'ACTION_POLICY_INPUT_INVALID' }); if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.appendMessage(actor, body) })); }
+      try { const actor = await activeTenantActor(request); const body = await readJsonObject(request, ENVOY_MESSAGE_MAX_BODY_BYTES); if (Object.keys(body).some((key) => !['attachments', 'body', 'channelId', 'idempotencyKey', 'metadata'].includes(key))) throw Object.assign(new Error('Request body has unexpected fields'), { status: 400, code: 'ACTION_POLICY_INPUT_INVALID' }); if (Object.prototype.hasOwnProperty.call(body, 'tenantId')) throw new Error('tenant selector is not accepted'); send(response, 200, JSON.stringify({ valid: true, ...await envoy.appendMessage(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ENVOY_MEMBERSHIP_REQUIRED' : 'ENVOY_MESSAGE_INVALID' })); }
       return true;
     }
