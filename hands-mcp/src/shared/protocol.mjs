@@ -144,11 +144,130 @@ export function validateArgs(tool, args = {}) {
 
 // ─── Executive Guard action + decision ───────────────────────────────────────
 
-/** The action sent to Guard for a mutating tool. contentHash binds the exact arguments. */
-export function buildGuardAction(tool, args) {
-  const summary = tool === 'run_powershell' ? `hands ${tool} ${args.commandId}`
+// ── Human-readable action summary (display only — NEVER hashed) ────────────
+//
+// The summary is the one part of the Guard action a human actually reads on
+// an approval surface, so it names the real target: tool, target path, and
+// for content writes a short descriptor (byte count + first line). It is
+// composed here, at the single point where the action is built, from the
+// SAME validated args whose canonical form is hashed into contentHash — the
+// display text has no second channel it could drift through, and the args
+// the spoke executes are the args this summary was derived from.
+//
+// Verification never reads the summary: guardActionHash picks
+// {kind, site, contentHash, riskSignals, target} only — here, in Guard
+// (executive-guard/src/action.mjs mirrors it), and on the spoke. Enriching
+// the summary therefore cannot change any actionHash, signature check or
+// executed argument, and a hub/spoke pair running different summary builders
+// still verifies identically. (Proven by the golden-hash regression test.)
+//
+// Guard validates summaries (executive-guard/src/action.mjs): >500 chars is
+// refused, and a summary carrying an unredacted secret of most kinds is
+// refused outright ('unredacted-content') — the decision request fails
+// closed. So this builder never produces one: control characters stripped,
+// snippets truncated, a first line matching Guard's refused secret shapes
+// is withheld (byte count still shown), and if the composed summary STILL
+// trips the scan it degrades stepwise — snippets off, then the bare legacy
+// summary — never worse than the pre-enrichment behaviour.
+
+const SUMMARY_MAX_CHARS = 460; // Guard's hard limit is 500; keep margin.
+const SNIPPET_MAX_CHARS = 80;
+
+// Detection-only port of the secret shapes Executive Guard refuses in a
+// summary (action.mjs via extension/background/redact.js: every redaction
+// type except email/phone/ipv4 rejects the request). Keep in step with
+// that file; a miss here still fails closed because Guard refuses too.
+const GUARD_REFUSED_PATTERNS = Object.freeze([
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/u,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/u,
+  /\b(?:sk-[A-Za-z0-9_-]{12,}|sk-ant-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprse]-[A-Za-z0-9-]{12,}|AIza[0-9A-Za-z_-]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:sk|rk|pk)_live_[0-9A-Za-z]{16,}|(?:sk|rk)_test_[0-9A-Za-z]{16,}|whsec_[A-Za-z0-9]{20,}|re_[A-Za-z0-9]{8,}_[A-Za-z0-9]{16,}|glpat-[0-9A-Za-z_-]{20}|xai-[A-Za-z0-9]{20,})\b/u,
+  /\baws_secret_access_key["']?\s*[:=]/iu,
+  /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{10,}/u,
+  /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?):\/\/[^\s:@/]+:[^\s@/]+@/iu,
+  /\b(?:SSN|social security(?: number| no\.?)?)\s*[:#]?\s*\d{3}\s?\d{2}\s?\d{4}\b/iu,
+  /\b\d{3}-\d{2}-\d{4}\b/u,
+  /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/u,
+  /(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password|passwd|pwd|passcode|passphrase|secret|token)\s*[:=]\s*[^\s,;]+/iu,
+  /\b(?:pass(?:word|wd|phrase|code)?|pwd|api[_ -]?key|access[_ -]?token|auth[_ -]?token|client[_ -]?secret)\s+(?:is|was)\s*:?\s+["'`]?[^\s,;"'`)]{5,}/iu,
+]);
+
+function tripsGuardRefusal(text) {
+  return GUARD_REFUSED_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function sanitizeSnippet(raw, max = SNIPPET_MAX_CHARS) {
+  const clean = String(raw ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+function displayPath(path, max = 180) {
+  const text = String(path ?? '');
+  if (text.length <= max) return text;
+  return `${text.slice(0, 110)}…${text.slice(-60)}`;
+}
+
+/** "19 bytes: \"first line\"" — or bare bytes when there is nothing safe to quote. */
+function contentDescriptor(text, { snippets = true, snippetMax = SNIPPET_MAX_CHARS } = {}) {
+  const bytes = Buffer.byteLength(String(text ?? ''), 'utf8');
+  if (!snippets) return `${bytes} bytes`;
+  const firstLine = String(text ?? '').split(/\r\n|\r|\n/, 1)[0];
+  const snippet = sanitizeSnippet(firstLine, snippetMax);
+  if (!snippet) return `${bytes} bytes`;
+  if (tripsGuardRefusal(snippet)) return `${bytes} bytes; first line withheld (looked sensitive)`;
+  return `${bytes} bytes: "${snippet}"`;
+}
+
+/**
+ * The summary a human approves by: tool + real target, from the exact args.
+ * Falls back stepwise (no snippets, then the bare legacy form) if the rich
+ * form would be too long or would trip Guard's summary refusal — the action
+ * itself, and its hash, are identical either way.
+ */
+export function describeHandsAction(tool, args, { snippets = true } = {}) {
+  const legacy = tool === 'run_powershell' ? `hands ${tool} ${args.commandId}`
     : tool === 'open_url' ? `hands ${tool} ${new URL(args.url).host}`
     : `hands ${tool}`;
+  let rich;
+  switch (tool) {
+    case 'write_file':
+      rich = `hands write_file → ${displayPath(args.path)} (${contentDescriptor(args.content, { snippets })})`;
+      break;
+    case 'edit_file':
+      rich = `hands edit_file → ${displayPath(args.path)} (replace ${contentDescriptor(args.replace, { snippets, snippetMax: 40 })}; find ${contentDescriptor(args.find, { snippets, snippetMax: 40 })})`;
+      break;
+    case 'move_file':
+      rich = `hands move_file → ${displayPath(args.path)} → ${displayPath(args.destination)}`;
+      break;
+    case 'copy_file':
+      rich = `hands copy_file → ${displayPath(args.path)} → ${displayPath(args.destination)}`;
+      break;
+    case 'delete_file':
+      rich = `hands delete_file → ${displayPath(args.path)}${args.recursive ? ' (recursive)' : ''}`;
+      break;
+    case 'make_dir':
+      rich = `hands make_dir → ${displayPath(args.path)}`;
+      break;
+    case 'run_powershell': {
+      const bits = Object.entries(args.args || {}).map(([k, v]) => `${k}: ${v}`);
+      rich = bits.length ? `hands run_powershell ${args.commandId} (${bits.join(', ')})` : legacy;
+      break;
+    }
+    case 'open_url': {
+      // Host + path, never the query string: secrets ride in query strings.
+      const u = new URL(args.url);
+      rich = `hands open_url → ${u.host}${u.pathname === '/' ? '' : displayPath(u.pathname, 100)}`;
+      break;
+    }
+    default:
+      rich = legacy;
+  }
+  if (rich.length <= SUMMARY_MAX_CHARS && !tripsGuardRefusal(rich)) return rich;
+  if (snippets) return describeHandsAction(tool, args, { snippets: false });
+  return legacy;
+}
+
+/** The action sent to Guard for a mutating tool. contentHash binds the exact arguments. */
+export function buildGuardAction(tool, args) {
   return {
     kind: 'agent.tool',
     site: GUARD_ACTION_SITE,
@@ -156,7 +275,7 @@ export function buildGuardAction(tool, args) {
     // 'destructive-intent' routes every mutating hands call to Guard's
     // human-approval rule; without it Guard's default is deny.
     riskSignals: ['destructive-intent', 'hands.act', `tool:${tool}`].sort(),
-    summary,
+    summary: describeHandsAction(tool, args),
   };
 }
 
