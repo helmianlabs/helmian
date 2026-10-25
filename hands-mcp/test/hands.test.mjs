@@ -18,7 +18,7 @@ import { createHands } from '../src/hands.mjs';
 import { createApp } from '../src/server.mjs';
 import { createSpokeTokens } from '../src/spoke-tokens.mjs';
 import { confinePath, createExecutor, pairSpoke, readSpokeConfig, startSpoke } from '../../src/hands/pc-spoke.mjs';
-import { buildGuardAction, guardActionHash, POWERSHELL_COMMANDS, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
+import { buildGuardAction, describeHandsAction, guardActionHash, POWERSHELL_COMMANDS, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
 import { listen, mockGuard, pkce } from './helpers.mjs';
 
 const PASS = 'correct horse battery staple';
@@ -700,4 +700,84 @@ test('restart-bridge runs its one fixed script, and only behind a human Guard ap
   assert.equal(calls[0].file, 'powershell.exe');
   assert.deepEqual(calls[0].argv.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
   assert.equal(calls[0].argv[3], RESTART_BRIDGE_SCRIPT);
+});
+
+// ─── Approval-summary enrichment (folded in from the deployed hub) ──────────
+// The summary is display-only: guardActionHash never reads it, so enriching
+// it must leave every signed action hash byte-identical. The golden hashes
+// below were computed from the pre-enrichment builder on main (6d3a4d0) for
+// these exact inputs; if one changes, the enrichment leaked into signed
+// material and approvals verified by older spokes would break.
+
+const GOLDEN_ACTIONS = [
+  ['write_file', { path: 'E:\\Helmion\\notes.txt', content: 'hello world\nsecond line' }, '351fc6aa57d474c7016133a1dc03255bf943b98a248e6f708d49ea262cf9e42d'],
+  ['edit_file', { path: 'E:\\Helmion\\a.txt', find: 'old text', replace: 'new text' }, '60dd2abd153c4d76cf4c93cb1ed445b7cb189d323920d12193e2d3e146f10e34'],
+  ['move_file', { path: 'E:\\Helmion\\a.txt', destination: 'E:\\Helmion\\b.txt' }, 'e686cf1816260cdc11265d27bfca4df1969130dc4168d3ea53f398ab105122d9'],
+  ['copy_file', { path: 'E:\\Helmion\\a.txt', destination: 'E:\\Helmion\\b.txt' }, '396aeb907880297ef8a031829df7773de7ca655f0642df561227685f7adfd799'],
+  ['delete_file', { path: 'E:\\Helmion\\a.txt', recursive: true }, '9419c1de342bdca35e5b10ad62d93ad899c0df46221d769d76203b1862808195'],
+  ['make_dir', { path: 'E:\\Helmion\\newdir' }, '7468481d46b02b98c86f3dc72f0920fa9b9a28e32be56cb6387ef371e237aa4a'],
+  ['run_powershell', { commandId: 'git-status', args: { repo: 'E:\\Helmion' } }, '7fcd4cdd2db5ec5d159d42a4e2173d39d225a0a520a85f81c670ed5ea1a08f51'],
+  ['run_powershell', { commandId: 'restart-bridge', args: {} }, '23f9d44ba2f0702c0211d1619bca2bf75babb843d42710d18144920f2a6644ed'],
+  ['open_url', { url: 'https://example.com/some/path?token=abc' }, '65dbbf6db2ed6e9475d1e8cc64ba8624942f051523046f8510830f43936a442d'],
+  ['write_file', { path: 'C:\\Users\\troyh\\.claude.json', content: 'api_key = sk-1234567890abcdef\nrest' }, '6e71acd0e60323b5b5953382c7b04ecd4e96aa1034cf378f90beab70975634a1'],
+];
+
+test('golden hashes: the summary enrichment leaves every signed action hash unchanged', () => {
+  for (const [tool, args, golden] of GOLDEN_ACTIONS) {
+    assert.equal(guardActionHash(buildGuardAction(tool, args)), golden, `${tool} action hash drifted`);
+  }
+});
+
+test('a mutating action carries the human-readable summary: tool, real target, content descriptor', () => {
+  assert.equal(
+    buildGuardAction('write_file', { path: 'E:\\Helmion\\notes.txt', content: 'hello world\nsecond line' }).summary,
+    'hands write_file → E:\\Helmion\\notes.txt (23 bytes: "hello world")',
+  );
+  assert.equal(
+    buildGuardAction('move_file', { path: 'E:\\Helmion\\a.txt', destination: 'E:\\Helmion\\b.txt' }).summary,
+    'hands move_file → E:\\Helmion\\a.txt → E:\\Helmion\\b.txt',
+  );
+  assert.equal(
+    buildGuardAction('delete_file', { path: 'E:\\Helmion\\a.txt', recursive: true }).summary,
+    'hands delete_file → E:\\Helmion\\a.txt (recursive)',
+  );
+  assert.equal(
+    buildGuardAction('run_powershell', { commandId: 'git-status', args: { repo: 'E:\\Helmion' } }).summary,
+    'hands run_powershell git-status (repo: E:\\Helmion)',
+  );
+  // describeHandsAction is the same builder the action carries.
+  assert.equal(
+    describeHandsAction('make_dir', { path: 'E:\\Helmion\\newdir' }),
+    buildGuardAction('make_dir', { path: 'E:\\Helmion\\newdir' }).summary,
+  );
+});
+
+test('a secret-shaped value in the args never appears raw in the summary', () => {
+  const secret = 'sk-1234567890abcdef';
+  const a = buildGuardAction('write_file', { path: 'C:\\Users\\troyh\\.claude.json', content: `api_key = ${secret}\nrest` });
+  assert.ok(!a.summary.includes(secret), 'summary leaked the key');
+  assert.ok(a.summary.includes('first line withheld (looked sensitive)'), a.summary);
+
+  const pem = buildGuardAction('write_file', { path: 'E:\\Helmion\\k.txt', content: '-----BEGIN RSA PRIVATE KEY-----\nMII…' });
+  assert.ok(!pem.summary.includes('PRIVATE KEY-----'), pem.summary);
+
+  // A JWT as an edit target: the FULL token — and its signature segment, the
+  // part that makes it a credential — never appear. (Deployed nuance: the
+  // 40-char edit snippet is truncated BEFORE the refusal scan, so a JWT's
+  // first segment can show as a cut-off fragment; the scan, here and in
+  // Guard, judges the truncated text, which no longer matches the JWT shape.)
+  const jwtFull = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij1234567890';
+  const jwt = buildGuardAction('edit_file', { path: 'E:\\Helmion\\a.txt', find: 'x', replace: jwtFull });
+  assert.ok(!jwt.summary.includes(jwtFull), jwt.summary);
+  assert.ok(!jwt.summary.includes('abcdefghij1234567890'), jwt.summary);
+
+  // open_url shows host + path only: a secret riding the query string stays out.
+  const url = buildGuardAction('open_url', { url: 'https://example.com/cb?access_token=supersecretvalue123' });
+  assert.ok(!url.summary.includes('supersecretvalue123'), url.summary);
+  assert.equal(url.summary, 'hands open_url → example.com/cb');
+});
+
+test('summaries stay inside the Guard length cap even for huge first lines', () => {
+  const a = buildGuardAction('write_file', { path: 'E:\\Helmion\\big.txt', content: 'x'.repeat(5000) });
+  assert.ok(a.summary.length <= 460, `summary was ${a.summary.length} chars`);
 });
