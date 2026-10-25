@@ -67,6 +67,32 @@ test('service smoke test bounds its pipe reads and fails as exit 2, never a hang
   assert.match(app, /succeeded = false;/u);
 });
 
+test('empty-workspace audit can never block on the connector prompt', () => {
+  // Run 40219039046: --empty-workspace-audit timed out at 120s and had to be
+  // killed by the packaged-smoke bound. CountFreshWorkspaceRedRows clears the console box and
+  // then ran AddConnectorAsync() with default arguments; with nothing typed,
+  // ResolveConnectorNeed fell through to PromptForConnectorNeed's modal
+  // ShowDialog — a loop only a person can end, on an unattended runner — so
+  // the audit never returned and ExitWith was never reached. These pins keep
+  // the headless path prompt-free while the interactive prompt stays.
+  const window_ = read('desktop/Helmion.Desktop/MainWindow.xaml.cs');
+  const plusMenu = read('desktop/Helmion.Desktop/MainWindow.PlusMenu.cs');
+  const app = read('desktop/Helmion.Desktop/App.xaml.cs');
+  // The audit call passes the prompt off, explicitly.
+  assert.match(window_, /AddConnectorAsync\(allowNeedPrompt: false\)/u);
+  assert.ok(!window_.includes('_ = AddConnectorAsync();'),
+    'the audit must not call AddConnectorAsync with the prompt left on');
+  // The prompt is opt-out at the need resolution, and only there.
+  assert.match(plusMenu, /AddConnectorAsync\(bool allowNeedPrompt = true\)/u);
+  assert.match(plusMenu, /ResolveConnectorNeed\(allowNeedPrompt\)/u);
+  assert.match(plusMenu, /allowPrompt \? PromptForConnectorNeed\(\) : null/u);
+  // Interactive callers keep the prompt (default argument, unchanged calls).
+  assert.match(plusMenu, /case PlusMenuKind\.Connector: await AddConnectorAsync\(\); break;/u);
+  // The audit branch still terminates through ExitWith with its verdict
+  // semantics: 0 when no first-run state reads red, 3 when one does.
+  assert.match(app, /ExitWith\(red == 0 \? 0 : 3\)/u);
+});
+
 test('bridge service finds the bundled node.exe next to its own exe', () => {
   const cs = read('desktop/Helmion.BridgeService/BridgeSupervisor.cs');
   assert.match(cs, /AppContext\.BaseDirectory, "node\.exe"/u);
