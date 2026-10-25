@@ -168,3 +168,57 @@ test('mesh rooms: an agent room seats exactly its agent and routes its own work'
     await pool.end();
   }
 });
+
+test('mesh desk: the seat seeds its roster once, refuses other channels, and dispatches sends', { skip }, async () => {
+  const pg = (await import('pg')).default;
+  const pool = new pg.Pool({ connectionString: url, max: 4 });
+  const tenantId = `t-${randomUUID()}`;
+  const owner = { tenantId, subject: 'user:owner', role: 'owner' };
+  const device = { tenantId, subject: 'user:owner', role: 'owner', viaDeviceToken: true };
+  const chat = createEnvoyStore(pool);
+  const mesh = createEnvoyMesh({ pool });
+  try {
+    await pool.query('insert into helmion.tenants (tenant_id, owner_subject) values ($1,$2)', [tenantId, owner.subject]);
+    // A shared channel seats Claude, Maestro and Gemini.
+    const { channel: build } = await chat.createChannel(owner, { slug: 'build', title: 'Build', kind: 'team' });
+    await mesh.changeConfig(owner, { action: 'add-agent', channelId: build.id, provider: 'claude' });
+    await mesh.changeConfig(owner, { action: 'add-agent', channelId: build.id, provider: 'maestro' });
+    await mesh.changeConfig(owner, { action: 'add-agent', channelId: build.id, provider: 'gemini' });
+
+    const { channel: desk } = await chat.createChannel(owner, { slug: 'maestro-desk', title: 'Maestro', kind: 'team' });
+    const seeded = await mesh.seedDesk(owner, desk.id);
+    assert.equal(seeded.seeded, true);
+    assert.deepEqual(seeded.agents, ['claude', 'gemini'], 'the desk roster is the tenant union, and Maestro is never on it');
+    const again = await mesh.seedDesk(owner, desk.id);
+    assert.equal(again.seeded, false, 'seeding never rewrites an existing desk config');
+    assert.deepEqual(again.agents, ['claude', 'gemini']);
+    await assert.rejects(mesh.seedDesk(owner, build.id), /ENVOY_DESK_INVALID/, 'only the reserved channel can be a desk');
+    const cfg = await mesh.getConfig(owner, desk.id);
+    assert.equal(cfg.config.desk, true, 'the stored config carries the desk flag the routing reads');
+    assert.deepEqual(cfg.config.agents.map((a) => a.provider), ['claude', 'gemini']);
+
+    // An unnamed send in the desk is a dispatch to everyone on it.
+    const all = (await chat.appendMessage(owner, { channelId: desk.id, body: 'status, everyone', idempotencyKey: randomUUID() })).receipt.message;
+    let work = (await mesh.agentWork(device, 'maestro,claude,gemini,grok')).work.filter((w) => w.channel.id === desk.id);
+    assert.equal(work.length, 1);
+    assert.deepEqual(work[0].agents, ['claude', 'gemini'], 'unnamed dispatch reaches the whole desk, never Maestro');
+    // A named send dispatches to that agent alone.
+    const one = (await chat.appendMessage(owner, { channelId: desk.id, body: '@claude the numbers please', idempotencyKey: randomUUID() })).receipt.message;
+    work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === desk.id && w.message.id === one.id);
+    assert.equal(work.length, 1);
+    assert.deepEqual(work[0].agents, ['claude']);
+    // The reply lands in the desk under the agent's own name and clears its work.
+    const receipt = await mesh.postAsAgent(device, { channelId: desk.id, provider: 'claude', replyTo: one.id, body: 'Claim: the numbers.' });
+    assert.equal(receipt.receipt.message.authorName, 'Claude');
+    assert.equal(receipt.receipt.message.agentProvider, 'claude');
+    work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === desk.id && w.message.id === one.id);
+    assert.equal(work.length, 0, 'answered desk work clears');
+    // The unnamed dispatch is still waiting on Gemini alone.
+    work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === desk.id && w.message.id === all.id);
+    assert.equal(work.length, 1);
+    assert.deepEqual(work[0].agents, ['gemini']);
+  } finally {
+    await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
+    await pool.end();
+  }
+});
