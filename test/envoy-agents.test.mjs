@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentsToAnswer, mentionsIn, normalizeProvider, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, agentPrompt, emptyConfig, normalizeMessageMetadata, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES } from '../src/cloud/envoy-agents.mjs';
+import { agentsToAnswer, mentionsIn, normalizeProvider, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, emptyConfig, normalizeMessageMetadata, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES } from '../src/cloud/envoy-agents.mjs';
 
 const human = (body) => ({ authorKind: 'human', authorSubject: 'user_x', body });
 
@@ -74,6 +74,48 @@ test('author names for agents, Discord members, system', () => {
   assert.equal(describeAuthor('system:envoy', 'system').name, 'Helmian');
   assert.equal(describeAuthor('user_abc', 'human').name, null);
   assert.throws(() => discordSubject('abc', 'x'));
+});
+
+test('slack authors: subject shape, badge source, bad ids rejected', () => {
+  assert.equal(slackSubject('U0ABC12345', 'Troy'), 'slack:U0ABC12345:Troy');
+  assert.equal(slackSubject('U0ABC12345', ''), 'slack:U0ABC12345:Slack member');
+  const who = describeAuthor(slackSubject('U0ABC12345', 'Troy'), 'human');
+  assert.equal(who.name, 'Troy');
+  assert.equal(who.source, 'slack');
+  assert.equal(who.provider, null);
+  assert.throws(() => slackSubject('not-an-id', 'x'));
+  assert.throws(() => slackSubject('u0abc', 'x'), 'lowercase is not a Slack id');
+});
+
+test('slack config: link round-trips, old bodies parse slackless, bad ids drop the link', () => {
+  const c = emptyConfig();
+  assert.equal(c.slack, null);
+  // Byte-stability: a config with no Slack link serializes exactly as
+  // before the link existed (no "slack" key in the stored body).
+  assert.ok(!serializeConfig(c).includes('slack'));
+  const oldBody = JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: ['claude'], joined: {}, discord: null, pendingLink: null });
+  assert.equal(parseConfig(oldBody).slack, null);
+
+  c.slack = { teamId: 'T0BP40EFJ1W', channelId: 'C0BN7LCK946', channelName: 'all-helmian', teamName: 'HELMIAN', linkedAt: '2026-10-25T00:00:00.000Z' };
+  const back = parseConfig(serializeConfig(c));
+  assert.deepEqual(back.slack, c.slack);
+  assert.deepEqual(publicConfig(back).slack, c.slack);
+
+  const bad = emptyConfig();
+  bad.slack = { teamId: 'nope', channelId: 'C0BN7LCK946', channelName: '', teamName: '', linkedAt: null };
+  assert.equal(parseConfig(serializeConfig(bad)).slack, null);
+});
+
+test('message metadata: the bridge source stamp survives normalization, junk is dropped', () => {
+  const meta = normalizeMessageMetadata({ source: { provider: 'slack', teamId: 'T0BP40EFJ1W', channelId: 'C0BN7LCK946', channelName: 'all-helmian', evil: 'x' } });
+  assert.deepEqual(meta.source, { provider: 'slack', teamId: 'T0BP40EFJ1W', channelId: 'C0BN7LCK946', channelName: 'all-helmian' });
+  assert.equal(normalizeMessageMetadata({ source: { provider: 'slack', channelId: 'not an id' } }), null);
+  assert.equal(normalizeMessageMetadata({ source: { provider: 'myspace', channelId: 'C0BN7LCK946' } }), null);
+  assert.equal(normalizeMessageMetadata({}), null);
+  // The stamp rides alongside attachments without disturbing them.
+  const both = normalizeMessageMetadata({ source: { provider: 'discord', channelId: '222222', channelName: 'general' }, webSearch: true });
+  assert.equal(both.source.provider, 'discord');
+  assert.equal(both.webSearch, true);
 });
 
 test('agent prompt names the role and the claim rule', () => {
@@ -198,6 +240,14 @@ test('desk config: desk flag round-trips and stays out of configs that never had
   assert.equal(publicConfig(parseConfig(oldBody)).desk, false);
 });
 
+
+test('slack bot status: app id plus bridge token, no secret ever shown', async () => {
+  const { slackBotStatus } = await import('../src/cloud/envoy-mesh.mjs');
+  assert.deepEqual(slackBotStatus({}), { configured: false, inviteUrl: null });
+  assert.deepEqual(slackBotStatus({ HELMION_SLACK_APP_ID: 'A0CBUCYTVNW', HELMIAN_ENVOY_BRIDGE_TOKEN: 'x'.repeat(64) }), { configured: true, inviteUrl: null });
+  assert.equal(slackBotStatus({ HELMION_SLACK_APP_ID: 'A0CBUCYTVNW' }).configured, false, 'no bridge token, no bridge');
+  assert.equal(slackBotStatus({ HELMION_SLACK_APP_ID: 'evil&x=1', HELMIAN_ENVOY_BRIDGE_TOKEN: 'x'.repeat(64) }).configured, false);
+});
 
 test('discord bot status exposes only a public invite url and a yes/no', async () => {
   const { discordBotStatus } = await import('../src/cloud/envoy-mesh.mjs');

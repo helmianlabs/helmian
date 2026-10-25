@@ -1,12 +1,12 @@
-// Envoy mesh: agents as channel members, and the Discord link.
+// Envoy mesh: agents as channel members, and the Discord / Slack links.
 //
 // Routes (hung off handleEnvoyAblyRoute; live-admin.mjs stays untouched):
 //   Signed-in members and paired desktops (session cookie or device token):
-//     GET  /api/admin/envoy/channel-config?channel_id=   agents + Discord link for one channel
-//     POST /api/admin/envoy/channel-config               add-agent | remove-agent | link-discord | unlink-discord
+//     GET  /api/admin/envoy/channel-config?channel_id=   agents + Discord / Slack links for one channel
+//     POST /api/admin/envoy/channel-config               add-agent | remove-agent | link-discord | unlink-discord | link-slack | unlink-slack
 //     GET  /api/admin/envoy/agent-work?providers=a,b     device token: messages waiting for an agent reply
 //     POST /api/admin/envoy/agent-messages               device token: post as an agent member
-//   Discord bridge service (Hetzner, bearer HELMIAN_ENVOY_BRIDGE_TOKEN):
+//   Bridge services (Hetzner, bearer HELMIAN_ENVOY_BRIDGE_TOKEN):
 //     GET  /api/admin/envoy/bridge/links
 //     POST /api/admin/envoy/bridge/confirm-link
 //     POST /api/admin/envoy/bridge/inbound
@@ -25,7 +25,7 @@ import { withTenantTransaction, requireActiveTenantMembership } from '../core/te
 import { publishEnvoyMessage } from './envoy-ably.mjs';
 import {
   AGENT_NAMES, AGENT_PROVIDERS, CONFIG_SUBJECT, DESK_ROSTER_FALLBACK, MAESTRO_DESK_SLUG, NOTICE_SUBJECT,
-  agentSubject, agentsToAnswer, describeAuthor, discordSubject,
+  agentSubject, agentsToAnswer, describeAuthor, discordSubject, isSlackId, slackSubject,
   emptyConfig, normalizeProvider, parseConfig, publicConfig, serializeConfig,
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
@@ -39,6 +39,19 @@ export function discordBotStatus(env = process.env) {
   return {
     configured: valid && String(env.HELMIAN_ENVOY_BRIDGE_TOKEN ?? '').length >= 32,
     inviteUrl: valid ? `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot&permissions=${DISCORD_INVITE_PERMISSIONS}` : null,
+  };
+}
+
+// Public bot status for the Slack link, same shape as discordBotStatus.
+// The app id is public; there is no invite URL (Slack installs go through
+// OAuth, a later step), so configured means "the bridge can be serving":
+// a valid-looking app id plus the shared bridge token present.
+export function slackBotStatus(env = process.env) {
+  const appId = String(env.HELMION_SLACK_APP_ID ?? '').trim();
+  const valid = /^A[A-Z0-9]{6,20}$/.test(appId);
+  return {
+    configured: valid && String(env.HELMIAN_ENVOY_BRIDGE_TOKEN ?? '').length >= 32,
+    inviteUrl: null,
   };
 }
 
@@ -91,13 +104,13 @@ async function readConfig(client, tenantId, channelId) {
   return r.rowCount ? parseConfig(r.rows[0].body) : null;
 }
 
-async function insertMessage(client, { tenantId, channelId, subject, kind, body, key }) {
+async function insertMessage(client, { tenantId, channelId, subject, kind, body, key, metadata = null }) {
   const r = await client.query(
-    `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key)
-     values ($1,$2,$3,$4,$5,$6)
+    `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, metadata)
+     values ($1,$2,$3,$4,$5,$6,$7)
      on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing
      returning ${MSG_COLS}`,
-    [tenantId, channelId, subject, kind, body, key],
+    [tenantId, channelId, subject, kind, body, key, metadata ? JSON.stringify(metadata) : null],
   );
   if (r.rowCount === 1) return { row: r.rows[0], replayed: false };
   const again = await client.query(
@@ -178,6 +191,19 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             await writeConfig(client, actor.tenantId, channelId, config);
             if (was) posted = await notice(client, actor.tenantId, channelId, `#${channel.title} is no longer linked to Discord #${was.channelName || was.channelId}.`);
           }
+        } else if (action === 'link-slack') {
+          if (!admin) throw fail(403, 'ENVOY_ADMIN_REQUIRED');
+          linkCode = newLinkCode();
+          config.pendingLink = { codeHash: sha256(linkCode), expiresAt: new Date(now() + LINK_CODE_TTL_MS).toISOString() };
+          await writeConfig(client, actor.tenantId, channelId, config);
+        } else if (action === 'unlink-slack') {
+          if (!admin) throw fail(403, 'ENVOY_ADMIN_REQUIRED');
+          if (config.slack || config.pendingLink) {
+            const was = config.slack;
+            config.slack = null; config.pendingLink = null;
+            await writeConfig(client, actor.tenantId, channelId, config);
+            if (was) posted = await notice(client, actor.tenantId, channelId, `#${channel.title} is no longer linked to Slack #${was.channelName || was.channelId}.`);
+          }
         } else {
           throw fail(400, 'ENVOY_CONFIG_ACTION_UNSUPPORTED');
         }
@@ -232,7 +258,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             }
             if (!due.length) continue;
             const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
-            work.push({ channel: { id: String(channel.id), slug: channel.slug, title: channel.title, linkedToDiscord: Boolean(config.discord) }, members: config.agents, message, agents: due, context });
+            work.push({ channel: { id: String(channel.id), slug: channel.slug, title: channel.title, linkedToDiscord: Boolean(config.discord), linkedToSlack: Boolean(config.slack) }, members: config.agents, message, agents: due, context });
           }
         }
         return {
@@ -324,7 +350,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       });
     },
 
-    // ---- Discord bridge service ----
+    // ---- Bridge services (Discord + Slack) ----
     async bridgeLinks() {
       return raw(async (client) => {
         const r = await client.query(
@@ -332,17 +358,49 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           [CONFIG_SUBJECT],
         );
         const links = [];
+        const slackLinks = [];
         for (const row of r.rows) {
           const config = parseConfig(row.body);
           if (config?.discord) links.push({ tenantId: String(row.tenant_id), envoyChannelId: String(row.channel_id), guildId: config.discord.guildId, discordChannelId: config.discord.channelId, agents: config.agents });
+          if (config?.slack) slackLinks.push({ tenantId: String(row.tenant_id), envoyChannelId: String(row.channel_id), teamId: config.slack.teamId, slackChannelId: config.slack.channelId, agents: config.agents });
         }
-        return { links };
+        return { links, slackLinks };
       });
     },
 
     async bridgeConfirmLink(input) {
       const code = String(input?.code ?? '').trim().toUpperCase();
       if (!/^[A-Z2-9]{8}$/.test(code)) throw fail(400, 'ENVOY_LINK_CODE_INVALID');
+      if (String(input?.provider ?? 'discord') === 'slack') {
+        const teamId = String(input?.teamId ?? ''); const slackChannelId = String(input?.channelId ?? '');
+        if (!isSlackId(teamId) || !isSlackId(slackChannelId)) throw fail(400, 'SLACK_IDS_INVALID');
+        const hash = sha256(code);
+        let posted = null; let tenantId = null;
+        const result = await raw(async (client) => {
+          const r = await client.query(
+            `select distinct on (tenant_id, channel_id) tenant_id, channel_id, body from helmion.envoy_messages where author_subject=$1 and body like $2 order by tenant_id, channel_id, created_at desc, id desc`,
+            [CONFIG_SUBJECT, `%${hash}%`],
+          );
+          const hit = r.rows.map((row) => ({ row, config: parseConfig(row.body) })).find((x) => x.config?.pendingLink?.codeHash === hash && Date.parse(x.config.pendingLink.expiresAt) > now());
+          if (!hit) throw fail(404, 'ENVOY_LINK_CODE_UNKNOWN');
+          // The newest config for that channel must still be the one holding this code.
+          tenantId = String(hit.row.tenant_id);
+          await setTenant(client, tenantId);
+          const current = await readConfig(client, tenantId, String(hit.row.channel_id));
+          if (current?.pendingLink?.codeHash !== hash) throw fail(404, 'ENVOY_LINK_CODE_UNKNOWN');
+          // One Envoy channel per Slack channel.
+          const taken = (await this.bridgeLinks()).slackLinks.find((l) => l.slackChannelId === slackChannelId && !(l.tenantId === tenantId && l.envoyChannelId === String(hit.row.channel_id)));
+          if (taken) throw fail(409, 'SLACK_CHANNEL_ALREADY_LINKED');
+          const channel = await channelRow(client, tenantId, String(hit.row.channel_id));
+          current.pendingLink = null;
+          current.slack = { teamId, channelId: slackChannelId, channelName: String(input?.channelName ?? '').slice(0, 100), teamName: String(input?.teamName ?? '').slice(0, 100), linkedAt: new Date(now()).toISOString() };
+          await writeConfig(client, tenantId, String(channel.id), current);
+          posted = await notice(client, tenantId, String(channel.id), `#${channel.title} is now linked to Slack #${current.slack.channelName || slackChannelId}${current.slack.teamName ? ` in ${current.slack.teamName}` : ''}. Messages posted there now appear here.`);
+          return { tenantId, envoyChannelId: String(channel.id), envoyChannelTitle: channel.title, agents: current.agents };
+        });
+        publish(tenantId, posted, publishImpl);
+        return result;
+      }
       const guildId = String(input?.guildId ?? ''); const discordChannelId = String(input?.channelId ?? '');
       if (!/^\d{5,25}$/.test(guildId) || !/^\d{5,25}$/.test(discordChannelId)) throw fail(400, 'DISCORD_IDS_INVALID');
       const hash = sha256(code);
@@ -375,6 +433,29 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
 
     async bridgeInbound(input) {
       const tenantId = String(input?.tenantId ?? ''); const envoyChannelId = String(input?.envoyChannelId ?? '');
+      if (String(input?.provider ?? 'discord') === 'slack') {
+        // A Slack message id is its ts: "1729900000.000100". It is the
+        // idempotency anchor — Slack redelivers events, and the stored
+        // key `slack:<ts>` makes a redelivery a replay, never a dupe.
+        const messageId = String(input?.slackMessageId ?? '');
+        if (!/^\d{5,20}\.\d{1,10}$/.test(messageId)) throw fail(400, 'SLACK_MESSAGE_ID_INVALID');
+        const body = String(input?.body ?? '').trim();
+        if (!body) return { skipped: 'empty' };
+        const subject = slackSubject(input?.authorId, input?.authorName);
+        let out = null;
+        const result = await raw(async (client) => {
+          await setTenant(client, tenantId);
+          const config = await readConfig(client, tenantId, envoyChannelId);
+          if (!config?.slack || config.slack.channelId !== String(input?.slackChannelId ?? '')) throw fail(403, 'SLACK_CHANNEL_NOT_LINKED');
+          if (input?.teamId && config.slack.teamId !== String(input.teamId)) throw fail(403, 'SLACK_CHANNEL_NOT_LINKED');
+          const metadata = { source: { provider: 'slack', teamId: config.slack.teamId, channelId: config.slack.channelId, channelName: config.slack.channelName } };
+          const { row, replayed } = await insertMessage(client, { tenantId, channelId: envoyChannelId, subject, kind: 'human', body: body.slice(0, 4000), key: `slack:${messageId}`, metadata });
+          if (!replayed) out = row;
+          return { receipt: { durable: true, replayed, message: row ? messageOut(row) : null } };
+        });
+        publish(tenantId, out, publishImpl);
+        return result;
+      }
       const messageId = String(input?.discordMessageId ?? '');
       if (!/^\d{5,25}$/.test(messageId)) throw fail(400, 'DISCORD_MESSAGE_ID_INVALID');
       const body = String(input?.body ?? '').trim();
@@ -395,8 +476,8 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
 
     async bridgeOutbound(sinceValue) {
       const since = Number.isFinite(Date.parse(String(sinceValue ?? ''))) ? new Date(String(sinceValue)) : new Date(now() - 60_000);
-      const { links } = await this.bridgeLinks();
-      if (!links.length) return { messages: [], links: 0 };
+      const { links, slackLinks } = await this.bridgeLinks();
+      if (!links.length && !slackLinks.length) return { messages: [], links: 0, slackLinks: 0 };
       return raw(async (client) => {
         const out = [];
         for (const link of links) {
@@ -412,8 +493,23 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             out.push({ ...m, tenantId: link.tenantId, discordChannelId: link.discordChannelId, guildId: link.guildId, displayName: displayName || 'Helmian member' });
           }
         }
+        // Slack feed: same window, but a channel's Slack-born messages are
+        // never echoed back to Slack (origin exclusion on 'slack:%').
+        for (const link of slackLinks) {
+          await setTenant(client, link.tenantId);
+          const r = await client.query(
+            `select ${MSG_COLS} from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and created_at > $3 and author_subject <> $4 and author_subject not like 'slack:%' order by created_at asc, id asc limit 50`,
+            [link.tenantId, link.envoyChannelId, since.toISOString(), CONFIG_SUBJECT],
+          );
+          for (const row of r.rows) {
+            const m = messageOut(row);
+            let displayName = m.authorName;
+            if (!displayName && m.authorKind === 'human' && nameLookup) { try { displayName = await nameLookup(m.authorSubject); } catch {} }
+            out.push({ ...m, tenantId: link.tenantId, slackChannelId: link.slackChannelId, teamId: link.teamId, displayName: displayName || 'Helmian member' });
+          }
+        }
         out.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-        return { messages: out.slice(0, 200), links: links.length };
+        return { messages: out.slice(0, 200), links: links.length, slackLinks: slackLinks.length };
       });
     },
   });
@@ -473,7 +569,7 @@ export async function handleEnvoyMeshRoute({ request, response, requestUrl, acti
 
   try {
     const actor = await activeTenantActor(request);
-    if (path === CHANNEL_CONFIG_PATH && request.method === 'GET') reply(200, { valid: true, ...await store.getConfig(actor, requestUrl.searchParams.get('channel_id')), discordBot: discordBotStatus() });
+    if (path === CHANNEL_CONFIG_PATH && request.method === 'GET') reply(200, { valid: true, ...await store.getConfig(actor, requestUrl.searchParams.get('channel_id')), discordBot: discordBotStatus(), slackBot: slackBotStatus() });
     else if (path === CHANNEL_CONFIG_PATH && request.method === 'POST') reply(200, { valid: true, ...await store.changeConfig(actor, await body()) });
     else if (path === AGENT_WORK_PATH && request.method === 'GET') reply(200, { valid: true, ...await store.agentWork(actor, requestUrl.searchParams.get('providers')) });
     else if (path === AGENT_MESSAGES_PATH && request.method === 'POST') reply(200, { valid: true, ...await store.postAsAgent(actor, await body()) });

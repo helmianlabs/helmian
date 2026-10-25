@@ -114,6 +114,39 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
     // Members cannot link Discord.
     await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, 'user_member000000001', 'member']);
     await assert.rejects(mesh.changeConfig({ tenantId, subject: 'user_member000000001', role: 'member' }, { action: 'link-discord', channelId: channel.id }), /ADMIN_REQUIRED/);
+
+    // Slack link: start, confirm from the bridge, inbound with the badge, outbound.
+    const sStart = await mesh.changeConfig(owner, { action: 'link-slack', channelId: channel.id });
+    assert.match(sStart.linkCode, /^[A-Z2-9]{8}$/);
+    await assert.rejects(mesh.bridgeConfirmLink({ provider: 'slack', code: 'ZZZZZZZZ', teamId: 'T0BP40EFJ1W', channelId: 'C0BN7LCK946' }), /UNKNOWN/);
+    await assert.rejects(mesh.bridgeConfirmLink({ provider: 'slack', code: sStart.linkCode, teamId: 'nope', channelId: 'C0BN7LCK946' }), /SLACK_IDS_INVALID/);
+    const sLinked = await mesh.bridgeConfirmLink({ provider: 'slack', code: sStart.linkCode, teamId: 'T0BP40EFJ1W', channelId: 'C0BN7LCK946', channelName: 'all-helmian', teamName: 'HELMIAN' });
+    assert.equal(sLinked.envoyChannelId, channel.id);
+    await assert.rejects(mesh.bridgeConfirmLink({ provider: 'slack', code: sStart.linkCode, teamId: 'T0BP40EFJ1W', channelId: 'C0BN7LCK946' }), /UNKNOWN/, 'code is single use');
+    const sLinks = (await mesh.bridgeLinks()).slackLinks.filter((l) => l.tenantId === tenantId);
+    assert.deepEqual(sLinks.map((l) => l.slackChannelId), ['C0BN7LCK946']);
+    assert.equal(sLinks[0].teamId, 'T0BP40EFJ1W');
+    const sInbound = await mesh.bridgeInbound({ provider: 'slack', tenantId, envoyChannelId: channel.id, slackChannelId: 'C0BN7LCK946', slackMessageId: '1729900000.000100', authorId: 'U0ABC12345', authorName: 'Paul', body: '@gemini what about pricing?' });
+    assert.equal(sInbound.receipt.message.authorName, 'Paul');
+    assert.equal(sInbound.receipt.message.source, 'slack');
+    assert.equal(sInbound.receipt.message.metadata.source.provider, 'slack');
+    assert.equal(sInbound.receipt.message.metadata.source.channelName, 'all-helmian');
+    assert.equal((await mesh.bridgeInbound({ provider: 'slack', tenantId, envoyChannelId: channel.id, slackChannelId: 'C0BN7LCK946', slackMessageId: '1729900000.000100', authorId: 'U0ABC12345', authorName: 'Paul', body: 'x' })).receipt.replayed, true, 'Slack redelivery replays, never dupes');
+    await assert.rejects(mesh.bridgeInbound({ provider: 'slack', tenantId, envoyChannelId: channel.id, slackChannelId: 'C999999999', slackMessageId: '1729900001.000200', authorId: 'U0ABC12345', authorName: 'Paul', body: 'x' }), /SLACK_CHANNEL_NOT_LINKED/);
+    await assert.rejects(mesh.bridgeInbound({ provider: 'slack', tenantId, envoyChannelId: channel.id, slackChannelId: 'C0BN7LCK946', slackMessageId: '999999', authorId: 'U0ABC12345', authorName: 'Paul', body: 'x' }), /SLACK_MESSAGE_ID_INVALID/);
+    // Slack humans trigger agents too.
+    work = (await mesh.agentWork(device, 'gemini')).work;
+    assert.ok(work.some((w) => w.message.id === sInbound.receipt.message.id && w.agents.includes('gemini')));
+    assert.ok(work.find((w) => w.message.id === sInbound.receipt.message.id).channel.linkedToSlack);
+    const sOutbound = (await mesh.bridgeOutbound(since)).messages.filter((m) => m.tenantId === tenantId && m.slackChannelId === 'C0BN7LCK946');
+    assert.ok(sOutbound.length >= 1);
+    assert.ok(sOutbound.every((m) => m.source !== 'slack'), 'Slack-born messages are not echoed back');
+    assert.ok(!sOutbound.some((m) => m.id === sInbound.receipt.message.id));
+    // Unlink.
+    await mesh.changeConfig(owner, { action: 'unlink-slack', channelId: channel.id });
+    assert.equal((await mesh.bridgeLinks()).slackLinks.filter((l) => l.tenantId === tenantId).length, 0);
+    // Members cannot link Slack.
+    await assert.rejects(mesh.changeConfig({ tenantId, subject: 'user_member000000001', role: 'member' }, { action: 'link-slack', channelId: channel.id }), /ADMIN_REQUIRED/);
     // Other tenants cannot read this channel's config.
     const other = `t-${randomUUID().slice(0, 8)}`;
     await pool.query('insert into helmion.tenants(tenant_id, display_name) values ($1,$2)', [other, 'Other']);
