@@ -50,6 +50,40 @@ Live on the Hetzner box at `/opt/helmian-discord-bridge/`:
 
 Run `run.sh` again after any change to `app.env`; `docker restart` does not re-read an env file.
 
+## Discord as MCP tools (`mcp-server.mjs` + `mcp-core.mjs`)
+
+The mirror is also an MCP tool server Helmian agents can call — the first
+real tool connector (connector-truth bite 2). Same plumbing, no second bot,
+no new Discord token: reads go through the cloud bridge routes with the
+bridge's own `HELMIAN_ENVOY_BRIDGE_TOKEN`; an approved post goes out through
+the bridge's channel webhook (the cached webhook in the state file, read
+read-only).
+
+Tools:
+
+| Tool | Mutating | What it does |
+| --- | --- | --- |
+| `discord_list_channels` | no | The linked channels: Discord channel + server ids, the Envoy channel each mirrors, the agents seated in it. |
+| `discord_read_messages` | no | Recent messages of one linked channel from the mirror feed — the Helmian half of the conversation (Discord-origin posts are excluded by the cloud's anti-echo filter). |
+| `discord_post_message` | yes | Post to a linked channel. Carries the Executive Guard outcome surface of the hands pattern: the call is put to Guard first, the result reports the outcome, and nothing posts without a Guard allow. |
+
+Run it (HTTP, bearer `HELMIAN_DISCORD_MCP_TOKEN` — a Helmian-issued token
+for this server, never a Discord credential; the entry refuses to start
+without it), or `--stdio` for a local launch:
+
+```
+HELMIAN_DISCORD_MCP_TOKEN=... node mcp-server.mjs            # 127.0.0.1:8097/mcp, /healthz
+HELMIAN_ENVOY_BRIDGE_TOKEN=... node mcp-server.mjs --stdio
+```
+
+Guard posture today: no Guard client is wired for this service yet, so the
+core runs fail-closed — `discord_post_message` reports "Executive Guard is
+not live yet" and posts nothing. Wiring a real authorizer (a Guard client
+for the discord-mcp identity) is a placement step. The plugin declaration
+lives in `plugin/` (`.mcp.json` names a token SOURCE only) for registration
+in `tool_connections` and a real `tools/list` probe receipt.
+
 ## Tests
 
-`npm run test:discord-bridge` from the repo root.
+`npm run test:discord-bridge` from the repo root; the MCP tools are covered
+by `test/discord-mcp-tools.test.mjs` in root `npm test`.
