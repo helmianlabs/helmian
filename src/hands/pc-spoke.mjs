@@ -26,7 +26,7 @@ import { constants as fsConstants } from 'node:fs';
 import { copyFile, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, platform } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { MAX_OUTPUT_BYTES, TOOLS, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
+import { MAX_OUTPUT_BYTES, TOOLS, cleanScopeSummary, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
 import { defaultRootGrantsPath, loadRootGrants } from './root-grants.mjs';
 
 export { defaultRootGrantsPath } from './root-grants.mjs';
@@ -406,6 +406,48 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
   return { execute };
 }
 
+// ─── Scope summary (scope-permission spec, bite 1: reporting) ────────────────
+//
+// The spoke tells the hub its file scope with every poll: the tier it is in,
+// its built-in default roots, and the folders opened by signed root grants.
+// Reporting only — the report grants nothing and widens nothing; enforcement
+// stays here, per operation, exactly as before. The tier comes from the
+// user's recorded pick once pairing writes one (config.scope, bite 4); until
+// then it is derived from the folders actually in force: any folder in force
+// means pick-folders, none at all means no-file-access. full-pc is reported
+// only from an explicit pick — a wide roots list is never dressed up as one.
+
+export function deriveScopeTier({ roots = [], grantRoots = [], scopePick = null } = {}) {
+  switch (scopePick) {
+    case 'full': case 'full-pc': return 'full-pc';
+    case 'none': case 'no-file-access': return 'no-file-access';
+    case 'folders': case 'pick-folders': return 'pick-folders';
+    default: break; // no pick (or an unknown one): derive from what is in force
+  }
+  return roots.length || grantRoots.length ? 'pick-folders' : 'no-file-access';
+}
+
+/**
+ * Build the canonical scope summary for the next poll. Granted folders come
+ * from the same verified load the executor uses — an unverifiable grants file
+ * contributes none (fail closed), exactly as it grants none. Returns null
+ * when the summary cannot be canonicalized (e.g. absurdly many roots): the
+ * caller then polls without a scope field, as spokes always did.
+ */
+export async function buildScopeSummary({ roots = [], rootGrantsPath = null, guardPublicKeyX = null, deviceId = null, scopePick = null, now = Date.now } = {}) {
+  let grantRoots = [];
+  if (rootGrantsPath) {
+    try {
+      grantRoots = (await loadRootGrants({ path: rootGrantsPath, publicKeyX: guardPublicKeyX, spokeDeviceId: deviceId, now: now() })).roots;
+    } catch { grantRoots = []; }
+  }
+  return cleanScopeSummary({
+    tier: deriveScopeTier({ roots, grantRoots, scopePick }),
+    roots: [...roots],
+    grants: grantRoots,
+  });
+}
+
 async function detectCapabilities(fetchImpl) {
   const caps = ['local-files'];
   if (platform() === 'win32') caps.push('powershell', 'pc-browser');
@@ -420,7 +462,7 @@ async function detectCapabilities(fetchImpl) {
 }
 
 /** Long-poll loop. Returns { stop }. */
-export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor } = {}) {
+export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor, scopeProvider = null } = {}) {
   const roots = config.roots?.length ? config.roots : [process.env.HELMIAN_ROOT || process.cwd()];
   const deviceId = config.deviceId || defaultSpokeDeviceId();
   const rootGrantsPath = config.rootGrantsPath || defaultRootGrantsPath();
@@ -429,6 +471,12 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
   let ctrl = null;
   let caps = null;
   let capsAt = 0;
+  // Scope summary for poll presence (bite 1). Rebuilt for every poll — the
+  // grants load is the same verified load the executor runs per file
+  // operation, so a grant or revocation shows in the next report, never a
+  // stale one. A failed build polls WITHOUT a scope field: reporting must
+  // never become a reason polling breaks.
+  const provideScope = scopeProvider || (() => buildScopeSummary({ roots, rootGrantsPath, guardPublicKeyX: config.guardPublicKeyX || null, deviceId, scopePick: config.scope ?? null }));
   const post = (path, body, signal) => fetchImpl(`${config.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.token}` }, body: JSON.stringify(body), signal });
 
   (async () => {
@@ -442,8 +490,14 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
     while (!stopped) {
       try {
         if (!caps || Date.now() - capsAt > 300000) { caps = await detectCapabilities(fetchImpl); capsAt = Date.now(); }
+        const pollScope = await provideScope().catch(() => null);
+        // stop() may have landed during the scope build: a stopped loop must
+        // never post again (a late poll parks server-side and can steal a job
+        // meant for a live spoke). The check and the post below are in the
+        // same synchronous run, so nothing can slip between them.
+        if (stopped) break;
         ctrl = new AbortController();
-        const res = await post('/spoke/v1/poll', { deviceId, capabilities: caps }, ctrl.signal);
+        const res = await post('/spoke/v1/poll', { deviceId, capabilities: caps, ...(pollScope ? { scope: pollScope } : {}) }, ctrl.signal);
         if (res.status === 401) { log('the hands server rejected this PC (401). Re-pair with: node bin/hands-spoke.mjs pair'); await new Promise((r) => setTimeout(r, 60000)); continue; }
         if (!res.ok) throw new Error(`poll ${res.status}`);
         const { job } = await res.json();

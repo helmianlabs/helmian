@@ -15,6 +15,7 @@
 // spoke polling under the default identity still receives it exactly as before.
 
 import { randomUUID } from 'node:crypto';
+import { cleanScopeSummary, scopeSummariesEqual } from './shared/protocol.mjs';
 
 const LATE_RESULT_MS = 10 * 60 * 1000;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
@@ -35,19 +36,39 @@ export function cleanExecution(e) {
 const cleanId = (id) => String(id || 'pc').slice(0, 64);
 const isPcName = (id) => id === 'pc' || id.startsWith('pc-') || id.startsWith('pc.');
 
-export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 30000 } = {}) {
-  const devices = new Map(); // deviceId -> { capabilities, lastSeenAt }
+export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 30000, onScopeReport = null } = {}) {
+  const devices = new Map(); // deviceId -> { capabilities, lastSeenAt, scope? }
   const queues = new Map(); // deviceId -> [job] waiting for that device's next poll
   const waiters = new Map(); // deviceId -> [waiter] long-polls parked by that device
   const inflight = new Map(); // jobId -> { deviceId, deliver(result) }
 
   const listFor = (map, id) => { let l = map.get(id); if (!l) { l = []; map.set(id, l); } return l; };
 
-  function seen(deviceId, capabilities) {
+  function seen(deviceId, capabilities, scope) {
     const id = cleanId(deviceId);
+    const prev = devices.get(id);
+    // Scope reporting (scope-permission spec, bite 1): a poll may carry the
+    // spoke's scope summary. It is cleaned here and never trusted raw; a
+    // malformed summary is treated as no report at all. The first report for
+    // a device and every CHANGE from the last report are surfaced through
+    // onScopeReport (the hub's owner wires that to the audit log) — identical
+    // re-reports and scope-less polls (older spokes) change nothing and
+    // report nothing. A stored scope stands until a new report replaces it.
+    const cleaned = scope === undefined ? null : cleanScopeSummary(scope);
+    let scopeToStore = prev?.scope;
+    if (cleaned) {
+      if (!prev?.scope) {
+        scopeToStore = cleaned;
+        try { onScopeReport?.({ deviceId: id, scope: cleaned, changed: false, first: true }); } catch { /* auditing never breaks polling */ }
+      } else if (!scopeSummariesEqual(prev.scope, cleaned)) {
+        scopeToStore = cleaned;
+        try { onScopeReport?.({ deviceId: id, scope: cleaned, changed: true, previous: prev.scope }); } catch { /* auditing never breaks polling */ }
+      }
+    }
     devices.set(id, {
       capabilities: Array.isArray(capabilities) ? capabilities.map(String).slice(0, 20) : [],
       lastSeenAt: new Date().toISOString(),
+      ...(scopeToStore ? { scope: scopeToStore } : {}),
     });
     return id;
   }
@@ -75,15 +96,15 @@ export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 30000 } = {}
 
   function presence() {
     const out = { devices: {} };
-    for (const [id, d] of devices) out.devices[id] = { online: true, lastSeenAt: d.lastSeenAt, capabilities: d.capabilities };
+    for (const [id, d] of devices) out.devices[id] = { online: true, lastSeenAt: d.lastSeenAt, capabilities: d.capabilities, ...(d.scope ? { scope: d.scope } : {}) };
     const pcId = pcDeviceId();
-    if (pcId) { const d = devices.get(pcId); out.pc = { online: true, lastSeenAt: d.lastSeenAt, capabilities: d.capabilities, deviceId: pcId }; }
+    if (pcId) { const d = devices.get(pcId); out.pc = { online: true, lastSeenAt: d.lastSeenAt, capabilities: d.capabilities, deviceId: pcId, ...(d.scope ? { scope: d.scope } : {}) }; }
     return out;
   }
 
   /** Spoke side: wait for the next job bound to THIS device (or null after pollWaitMs). */
-  function nextJob({ deviceId, capabilities, signal } = {}) {
-    const id = seen(deviceId, capabilities);
+  function nextJob({ deviceId, capabilities, scope, signal } = {}) {
+    const id = seen(deviceId, capabilities, scope);
     const q = listFor(queues, id);
     if (q.length) return Promise.resolve(q.shift());
     return new Promise((resolve) => {
@@ -92,7 +113,7 @@ export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 30000 } = {}
       const done = (job) => { const i = ws.indexOf(w); if (i >= 0) ws.splice(i, 1); clearTimeout(t); resolve(job); };
       w.resolve = done;
       ws.push(w);
-      const t = setTimeout(() => { seen(id, capabilities); done(null); }, pollWaitMs);
+      const t = setTimeout(() => { seen(id, capabilities, scope); done(null); }, pollWaitMs);
       signal?.addEventListener?.('abort', () => done(null));
     });
   }
