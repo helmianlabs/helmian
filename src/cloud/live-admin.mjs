@@ -24,6 +24,7 @@ import { createEnvoyStore, normalizeEnvoyChannel } from './envoy-chat.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { createEvidenceStore, handleEvidenceRoute, EVIDENCE_HANDOFFS_PATH, EVIDENCE_CHECKPOINTS_PATH, EVIDENCE_RUNS_LEDGER_PATH, EVIDENCE_LEASES_POSTURE_PATH } from './evidence.mjs';
 import { handleEnvoyAblyRoute } from './envoy-ably.mjs';
+import { INSTALLED_PLUGINS_PATH, installedPluginsWorkspace, listInstalledPlugins } from './installed-plugins.mjs';
 import { createCanvasStore, handleCanvasRoute } from './workspace-canvas.mjs';
 import { handleBrowserRoute } from './browser-launcher.mjs';
 import { handleAgentIconRoute } from './workspace-agent-icons.mjs';
@@ -58,7 +59,6 @@ import { createEncryptedVaultAdapterFromEnv } from './database-encrypted-vault-a
 import { createGeminiOAuthPkce, geminiCredentialReference, resolveGeminiOAuthConfig } from './provider-oauth-config.mjs';
 import { readGeminiOAuthReadiness } from './provider-oauth-readiness.mjs';
 import { createWorkspaceProjectRepository } from './workspace-project-repository.mjs';
-import { SLASH_COMMANDS_PATH, listSlashCommands, slashCommandsWorkspace } from './slash-commands.mjs';
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
 import { createConsoleCommandWorker, CONSOLE_EXECUTORS } from './console-command-worker.mjs';
 import { claimFirstOwner } from './owner-claim.mjs';
@@ -132,6 +132,7 @@ export const LIVE_ADMIN_CORA_ARTIFACT_SCRIPTS_PATH = '/api/admin/cora/artifact-s
 export const LIVE_ADMIN_CORA_ARTIFACT_EXECUTION_PATH = '/api/admin/cora/artifact-execution-requests';
 export const LIVE_ADMIN_CORA_APPROVALS_PATH = '/api/admin/cora/approvals';
 export const LIVE_ADMIN_CORA_CONNECTORS_PATH = '/api/admin/cora/connectors';
+export const LIVE_ADMIN_PLUGINS_PATH = INSTALLED_PLUGINS_PATH;
 export const LIVE_CONNECTOR_SLACK_INBOUND_PATH = '/api/connectors/slack/inbound';
 export const LIVE_CONNECTOR_DISCORD_INBOUND_PATH = '/api/connectors/discord/inbound';
 export const LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH = '/api/admin/cora/personal-preferences';
@@ -284,6 +285,7 @@ export async function createLiveHelmianCloudAdminHandler({
   artifactExecutionRepository: suppliedArtifactExecutionRepository = null,
   approvalInboxRepository: suppliedApprovalInboxRepository = null,
   connectorRegistrationRepository: suppliedConnectorRegistrationRepository = null,
+  pluginLister: suppliedPluginLister = null,
   connectorSecretResolver = null,
   connectorResolveUser = null,
   connectorResolveChannel = null,
@@ -296,7 +298,6 @@ export async function createLiveHelmianCloudAdminHandler({
   providerVaultAdapter: suppliedProviderVaultAdapter = null,
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
   consoleCommandRepository: suppliedConsoleCommandRepository = null,
-  commandLister: suppliedCommandLister = null,
   evidenceStore: suppliedEvidenceStore = null,
   canvasStore: suppliedCanvasStore = null,
   envoyStore: suppliedEnvoyStore = null,
@@ -334,6 +335,10 @@ export async function createLiveHelmianCloudAdminHandler({
   const artifactExecution = suppliedArtifactExecutionRepository ?? createArtifactExecutionRepository(pool);
   const approvals = suppliedApprovalInboxRepository ?? createApprovalInboxRepository(pool);
   const connectorRegistrations = suppliedConnectorRegistrationRepository ?? createConnectorRegistrationRepository(pool);
+  // The composer's plugin list: the enabled plugins of the workspace this
+  // process serves, read through the install ledger's gate — never a
+  // second, ungated view of what is installed (installed-plugins.mjs).
+  const pluginLister = suppliedPluginLister ?? (async () => listInstalledPlugins({ workspace: installedPluginsWorkspace(env) }));
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
   const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
@@ -343,10 +348,6 @@ export async function createLiveHelmianCloudAdminHandler({
   const providerConnections = suppliedProviderConnectionRepository ?? createProviderConnectionRepository(pool, { fetchImpl, vaultAdapter: providerVaultAdapter ?? undefined });
   const workspaceProjects = suppliedWorkspaceProjectRepository ?? createWorkspaceProjectRepository(pool);
   const consoleCommands = suppliedConsoleCommandRepository ?? createConsoleCommandRepository(pool);
-  // The composer's "/" menu list: the slash commands of the workspace
-  // this process serves, read through the same discovery the bridge
-  // turn expands with (slash-commands.mjs).
-  const commandLister = suppliedCommandLister ?? (async () => listSlashCommands({ workspace: slashCommandsWorkspace(env) }));
   const resolveConnectorSecret = connectorSecretResolver;
   const sessionIdentity = (request) => identity.getSession(cookieValue(request, 'helmion_admin_session'));
   const pendingPreviews = new Map();
@@ -1116,9 +1117,9 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CORA_CONNECTOR_ADMIN_REQUIRED' : 'CORA_CONNECTOR_INVALID' })); }
       return true;
     }
-    if (request.method === 'GET' && requestUrl.pathname === SLASH_COMMANDS_PATH) {
-      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await commandLister(actor) })); }
-      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'COMMANDS_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'COMMANDS_SELECTOR_INVALID' : 'COMMANDS_READ_FAILED' })); }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_PLUGINS_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await pluginLister(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'PLUGIN_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'PLUGIN_SELECTOR_INVALID' : 'PLUGIN_READ_FAILED' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH) {
