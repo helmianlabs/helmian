@@ -89,6 +89,13 @@ test('shell does not present Plant/facility authority or fabricated execution', 
   assert.match(page, /approved, queued, running, provider result, accepted, and rejected execution stages are not performed/u);
 });
 
+test('policy loader reports into its own panel and can never flip the console to signed-out', () => {
+  const loadPolicyBody = script.slice(script.indexOf('async function loadPolicy()'), script.indexOf('function fillCards'));
+  assert.match(loadPolicyBody, /try\s*\{/u);
+  assert.match(loadPolicyBody, /catch \(error\) \{\s*policyStatus\.textContent/u);
+  assert.doesNotMatch(script, /if \(!response\.ok\) throw new Error\('Action policy unavailable'\)/u);
+});
+
 test('workspace navigation restores a visible tenant layout section from the URL hash', () => {
   assert.match(script, /function activateWorkspaceNav\(target/u);
   assert.match(script, /window\.history\.replaceState\(null, '', `#\$\{target\}`\)/u);

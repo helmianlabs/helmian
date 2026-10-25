@@ -1283,10 +1283,17 @@ coraKnowledgePackForm.onsubmit = async (event) => { event.preventDefault(); cora
 coraKnowledgeSnippetForm.onsubmit = async (event) => { event.preventDefault(); coraKnowledgeAdminStatus.textContent = 'Recording bounded cited excerpt…'; try { await coraClient.createKnowledgeSnippet({ packId: document.querySelector('#knowledge-snippet-pack').value, citation: document.querySelector('#knowledge-snippet-citation').value, textReference: document.querySelector('#knowledge-snippet-reference').value, excerpt: document.querySelector('#knowledge-snippet-excerpt').value, contentSha256: null, expiresAt: null }); await loadKnowledgeAdmin(); coraKnowledgeSnippetForm.reset(); } catch (error) { coraKnowledgeAdminStatus.textContent = `Excerpt not recorded: ${error.message}`; } };
 
 async function loadPolicy() {
-  const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });
-  if (!response.ok) throw new Error('Action policy unavailable');
-  policyEtag = response.headers.get('etag') ?? '';
-  renderPolicy(await response.json());
+  // Like every other panel loader: a failed read reports into its own panel.
+  // It must never throw — load() treats a rejection as a failed sign-in and
+  // flips the whole console back to the Owner access panel.
+  try {
+    const response = await fetch('/api/admin/action-policy', { credentials: 'same-origin' });
+    if (!response.ok) throw Object.assign(new Error('Action policy unavailable'), { status: response.status });
+    policyEtag = response.headers.get('etag') ?? '';
+    renderPolicy(await response.json());
+  } catch (error) {
+    policyStatus.textContent = error.status === 403 ? 'Action policy unavailable: owner or admin membership is required.' : `Action policy unavailable: ${error.message}`;
+  }
 }
 
 function fillCards(container, pairs) {
