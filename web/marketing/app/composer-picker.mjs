@@ -21,8 +21,15 @@
 //   set the turn consumes. A plugin can be attached only when that list
 //   names it; a name the bridge does not have would ride to the turn and
 //   match nothing, so the picker refuses it here instead.
-// - Upload: the app has no file-upload path (no endpoint, no form), so the
-//   group is present but unavailable, with the reason stated.
+// - Upload: a real file input. The picked file's bytes travel INLINE in
+//   the message metadata as base64 — there is no upload endpoint and no
+//   byte store in the cloud, and the metadata is the one channel every
+//   layer already passes along. That shape sets the honest bounds the
+//   group states plainly: up to 256 KB per file (512 KB per message),
+//   text-shaped files and PNG/JPEG/WebP images only — the kinds a turn
+//   can actually receive today (text is inlined; images become real
+//   image content). Other kinds are refused with the reason, here and
+//   again server-side.
 //
 // HOW AN ATTACHMENT TRAVELS: buildMessageRequest() returns the wire payload
 // plus structured metadata. The message route allowlists `metadata`
@@ -32,7 +39,9 @@
 //   bridge) AND in the metadata;
 // - connectors and plugins ride as metadata, consumed agent-side by
 //   src/agent/attachments.mjs (plugins contribute real MCP tools;
-//   connectors are context-only today and the turn is told so).
+//   connectors are context-only today and the turn is told so);
+// - a file rides as metadata too, consumed by the same module: images
+//   join the turn's images, text is decoded and inlined.
 import { integrationsModel } from './app-model.mjs';
 
 export const MAX_ATTACHMENTS = 8;
@@ -41,7 +50,75 @@ export const SKILL_NAME_MAX = 64;
 // namespaced "plugin:skill" (src/agent/plugins.mjs). One segment, or one
 // namespace segment + one name segment.
 export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*(:[a-z0-9][a-z0-9_-]*)?$/;
-export const UPLOAD_UNAVAILABLE_REASON = 'File upload is not wired into chat yet.';
+
+// File bounds — mirrors of the canonical validator's
+// (FILE_ATTACHMENT_MAX_BYTES / FILE_ATTACHMENTS_MAX_TOTAL_BYTES in
+// src/cloud/envoy-agents.mjs). The server re-checks everything; these
+// exist so the picker can refuse early, in plain words, before a big
+// file is even read.
+export const FILE_MAX_BYTES = 256 * 1024;
+export const FILE_TOTAL_MAX_BYTES = 512 * 1024;
+export const UPLOAD_NOTE = 'Up to 256 KB per file, 512 KB per message. Text files are read into the conversation; PNG, JPEG and WebP images are shown to the agent. Other kinds of file can\'t be read yet.';
+const FILE_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const FILE_TEXT_MEDIA_TYPES = new Set([
+  'application/json', 'application/xml', 'application/yaml', 'application/x-yaml',
+  'application/toml', 'application/javascript', 'application/x-sh', 'image/svg+xml',
+]);
+const FILE_TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log', 'yaml', 'yml', 'toml',
+  'xml', 'html', 'htm', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py',
+  'rb', 'go', 'rs', 'java', 'c', 'h', 'cpp', 'sh', 'sql', 'ini', 'env',
+]);
+
+// Mirror of classifyFileAttachment in src/cloud/envoy-agents.mjs.
+export function classifyFile({ name, mediaType } = {}) {
+  const type = String(mediaType ?? '').trim().toLowerCase();
+  if (FILE_IMAGE_MEDIA_TYPES.includes(type)) return 'image';
+  if (type.startsWith('text/') || FILE_TEXT_MEDIA_TYPES.has(type)) return 'text';
+  if (type === '' || type === 'application/octet-stream') {
+    const ext = String(name ?? '').trim().toLowerCase().split('.').pop();
+    if (ext && FILE_TEXT_EXTENSIONS.has(ext)) return 'text';
+  }
+  return null;
+}
+
+function cleanFileName(value) {
+  const result = String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120);
+  if (!result || result === '.' || result === '..' || result.includes('/') || result.includes('\\')) return null;
+  return result;
+}
+
+/**
+ * Type + size refusal for a picked file, BEFORE its bytes are read (the
+ * workspace calls this on the File's name/type/size first). Returns a
+ * plain-words reason, or null when the file may be attached.
+ */
+export function fileRefusalReason({ name, mediaType, size } = {}) {
+  if (!cleanFileName(name)) return 'That file has no usable name.';
+  if (!classifyFile({ name, mediaType })) return 'Helmian can\'t read that kind of file yet — text files and PNG, JPEG or WebP images work today.';
+  if (!Number.isSafeInteger(size) || size < 1) return 'That file is empty.';
+  if (size > FILE_MAX_BYTES) return `That file is too big — the limit is 256 KB per file.`;
+  return null;
+}
+
+/**
+ * A picked file (name, mediaType, size, base64 data) → the attachment the
+ * list carries, or a plain-words refusal. The base64 must decode to
+ * exactly `size` bytes: a truncated read is refused, never shipped.
+ */
+export function normalizeFileAttachment({ name, mediaType, size, data } = {}) {
+  const refusal = fileRefusalReason({ name, mediaType, size });
+  if (refusal) return { ok: false, attachment: null, reason: refusal };
+  const text = String(data ?? '');
+  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;
+  const decoded = text.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(text) ? (text.length / 4) * 3 - padding : -1;
+  if (decoded !== size) return { ok: false, attachment: null, reason: 'That file could not be read completely.' };
+  return {
+    ok: true,
+    attachment: Object.freeze({ kind: 'file', name: cleanFileName(name), mediaType: String(mediaType ?? '').trim().toLowerCase().slice(0, 100), size, data: text }),
+    reason: null,
+  };
+}
 
 export function normalizeSkillName(value) {
   const name = String(value ?? '').trim().replace(/^\//, '').toLowerCase();
@@ -71,7 +148,7 @@ export function pickerModel({ connectors = {}, providers = {}, plugins = {} } = 
         id: 'plugins', title: 'Plugins', items: Object.freeze(pluginItems),
         note: 'Plugins live on your PC bridge. Attaching one gives the agent its approved tools for this turn.',
       }),
-      Object.freeze({ id: 'upload', title: 'Upload a file', available: false, reason: UPLOAD_UNAVAILABLE_REASON, items: Object.freeze([]) }),
+      Object.freeze({ id: 'upload', title: 'Upload a file', fileInput: true, note: UPLOAD_NOTE, items: Object.freeze([]) }),
     ]),
   });
 }
@@ -81,6 +158,7 @@ export function attachmentKey(att) {
   if (att.kind === 'skill') return att.name ? `skill:${att.name}` : null;
   if (att.kind === 'connector') return att.key ? `connector:${att.key}` : null;
   if (att.kind === 'plugin') return att.name ? `plugin:${att.name}` : null;
+  if (att.kind === 'file') return att.name ? `file:${att.name}:${att.size}` : null;
   return null;
 }
 
@@ -123,6 +201,12 @@ export function addAttachment(list = [], att, { catalog = null } = {}) {
     } else {
       clean = { kind: 'plugin', name };
     }
+  } else if (att.kind === 'file') {
+    const n = normalizeFileAttachment(att);
+    if (!n.ok) return fail(n.reason);
+    clean = n.attachment;
+    const total = list.reduce((sum, a) => sum + (a.kind === 'file' ? a.size : 0), 0) + clean.size;
+    if (total > FILE_TOTAL_MAX_BYTES) return fail('Those files together are too big — the limit is 512 KB of files per message.');
   } else {
     return fail('That kind of attachment is not supported yet.');
   }
@@ -151,7 +235,9 @@ export function attachmentMetadata(list = []) {
   return Object.freeze({
     attachments: Object.freeze(list.map((a) => (a.kind === 'connector'
       ? Object.freeze({ kind: 'connector', key: a.key, name: a.name })
-      : Object.freeze({ kind: a.kind, name: a.name })))),
+      : a.kind === 'file'
+        ? Object.freeze({ kind: 'file', name: a.name, mediaType: a.mediaType, size: a.size, data: a.data })
+        : Object.freeze({ kind: a.kind, name: a.name })))),
   });
 }
 

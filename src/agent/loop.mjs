@@ -141,6 +141,13 @@ async function runAgentTurnInner({
   tier: explicitTier = null,
   modelOverride = null,
   images = [],
+  // The composer's web-search toggle for THIS turn (composer "+" →
+  // message metadata → bridge → here). Forwarded to chatWithTools, which
+  // honors it only on seats with a provider-native search tool
+  // (providers.mjs providerHasNativeWebSearch — today: the Claude seat).
+  // On every other seat it changes nothing on the wire, and the turn's
+  // attachment context line has already said so honestly.
+  webSearch = false,
   envTier = readEnvTier(),
   // Interactive replies fail closed to the selected provider. Local Qwen is
   // reserved for the schema-validated, no-tools micro-task runner under
@@ -231,6 +238,7 @@ async function runAgentTurnInner({
       // withLocalBrevity never mutates, so nothing leaks back into `messages`.
       messages: choice.isLocal ? withLocalBrevity(messages) : messages,
       toolDefs,
+      webSearch,
       // ONLY the local endpoint. qwen3.5:4b is a reasoning model; without this a
       // short conversational turn burns ~2,603 tokens over ~40 s to say one
       // sentence, and 30 tokens in 0.9 s with it. Deliberately keyed off the

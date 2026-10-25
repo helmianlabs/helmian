@@ -165,6 +165,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-picker-head { display:flex; align-items:center; gap:6px; }
 .ew-picker-group { display:flex; flex-direction:column; gap:6px; }
 .ew-picker-input { flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); padding:6px 8px; }
+.ew-file-input { max-width: 100%; color: var(--text); font-size: 13px; }
 .ew-picker-row { display:flex; align-items:center; gap:8px; border:1px solid var(--border); background:var(--panel); color:var(--text); border-radius:8px; padding:7px 10px; cursor:pointer; text-align:left; font-size:13px; transition:border-color .15s; }
 .ew-picker-row:hover:not(:disabled) { border-color:var(--accent); }
 .ew-picker-row.on { border-color:var(--accent); }

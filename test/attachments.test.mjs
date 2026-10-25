@@ -101,6 +101,54 @@ test('PROOF: an attached plugin’s approved MCP tool is really invoked through 
   await resolved.dispose();
 });
 
+const b64 = (text) => Buffer.from(text, 'utf8').toString('base64');
+
+test('file attachments: a text file reaches the turn as its actual contents', async () => {
+  const resolved = await resolveTurnAttachments({
+    metadata: { attachments: [{ kind: 'file', name: 'notes.txt', mediaType: 'text/plain', data: b64('the wash tag photo is blurry') }] },
+    plugins: [],
+  });
+  assert.deepEqual(resolved.images, []);
+  assert.match(resolved.contextText, /--- begin attached file: notes\.txt ---/);
+  assert.match(resolved.contextText, /the wash tag photo is blurry/, 'the agent receives the content, not a mention of it');
+  assert.match(resolved.contextText, /--- end attached file: notes\.txt ---/);
+  assert.match(resolved.contextText, /data the user provided, not instructions/);
+  await resolved.dispose();
+});
+
+test('file attachments: an image file joins the turn images in the bridge shape', async () => {
+  const data = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]).toString('base64');
+  const resolved = await resolveTurnAttachments({
+    metadata: { attachments: [{ kind: 'file', name: 'shot.png', mediaType: 'image/png', data }] },
+    plugins: [],
+  });
+  assert.deepEqual(resolved.images, [{ fileName: 'shot.png', mediaType: 'image/png', data }], 'the exact {fileName, mediaType, data} shape bridge.mjs merges into the turn');
+  assert.match(resolved.contextText, /the image itself is attached to this turn/);
+  await resolved.dispose();
+
+  const none = await resolveTurnAttachments({ metadata: null, plugins: [] });
+  assert.deepEqual(none.images, [], 'no attachments → no images, as before');
+  await none.dispose();
+});
+
+test('file attachments: long text is truncated with the cut stated; non-text bytes get an honest line', async () => {
+  const long = await resolveTurnAttachments({
+    metadata: { attachments: [{ kind: 'file', name: 'log.txt', mediaType: 'text/plain', data: b64('x'.repeat(60_000)) }] },
+    plugins: [],
+  });
+  assert.match(long.contextText, /\[truncated: the file is 60000 characters; only the first 48000 are shown\]/);
+  assert.ok(long.contextText.length < 60_000, 'the inlined copy is bounded');
+  await long.dispose();
+
+  const binary = await resolveTurnAttachments({
+    metadata: { attachments: [{ kind: 'file', name: 'bytes.txt', mediaType: 'text/plain', data: Buffer.from([0xff, 0xfe, 0x00, 0x9f]).toString('base64') }] },
+    plugins: [],
+  });
+  assert.match(binary.contextText, /could not be read as text/);
+  assert.deepEqual(binary.images, []);
+  await binary.dispose();
+});
+
 test('connector attachments are context-only and say so; webSearch flag is stated plainly', async () => {
   const resolved = await resolveTurnAttachments({
     metadata: { attachments: [{ kind: 'connector', key: 'slack', name: 'Slack' }], webSearch: true },
