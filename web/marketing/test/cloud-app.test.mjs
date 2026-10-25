@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, VIEW_TITLES_PLAYFUL, VIEW_TITLES_PLAIN, viewTitles, isPlainEmojiMode, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, maskSecret, integrationsModel, toolConnectionStatus, bestToolConnectionStatus, CONNECTION_FRESH_MS, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel, forgetDesktopPayload } from '../app/app-model.mjs';
+import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, VIEW_TITLES_PLAYFUL, VIEW_TITLES_PLAIN, viewTitles, isPlainEmojiMode, PRIMARY_VIEWS, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, CREATE_TYPES, viewFromHash, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, feedModel, feedAckClearIds, maskSecret, integrationsModel, toolConnectionStatus, bestToolConnectionStatus, CONNECTION_FRESH_MS, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, isAdminRole, addSession, desktopsModel, forgetDesktopPayload } from '../app/app-model.mjs';
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
@@ -125,6 +125,31 @@ test('Guard Feed: approvals critical, denials warn, acknowledge turns amber, fil
   const acked = feedModel(data, { acknowledged: new Set(['apr:r1']) })[0];
   assert.deepEqual([acked.severity, acked.ack], ['warning', true]);
   assert.equal(feedModel(data, { cleared: new Set(['evt:1', 'evt:2']) }).length, 1);
+});
+
+test('Guard Feed ack-all: ack clears the pile for good, newer events still show', () => {
+  const data = { approvals: [{ requestReceiptId: 'r1', summary: 'Deploy', decision: null }], events: [{ id: '1', actionType: 'cora.session.started', status: 'ALLOW' }, { id: '2', actionType: 'tool.call', status: 'DENY' }] };
+  const findings = [{ fingerprint: 'f1', severity: 'warning' }, { fingerprint: 'f2', severity: 'critical' }, { fingerprint: 'f3', severity: 'info' }];
+  // Every event card clears; findings clear except criticals (never hidden
+  // by an ack); pending approvals are decisions and never clear.
+  assert.deepEqual(feedAckClearIds({ events: data.events, findings }).sort(), ['evt:1', 'evt:2', 'finding:f1', 'finding:f3']);
+  assert.deepEqual(feedAckClearIds({}), []);
+  const cleared = new Set(feedAckClearIds({ events: data.events, findings }));
+  // Re-reading the same source with the persisted cleared set (what a
+  // reload does): the old pile stays gone; only the pending approval —
+  // a decision, not a notice — remains.
+  assert.deepEqual(feedModel(data, { cleared }).map((c) => c.id), ['apr:r1']);
+  // A per-card ack removes only that card.
+  assert.deepEqual(feedModel(data, { cleared: new Set(['evt:1']) }).map((c) => c.id), ['apr:r1', 'evt:2']);
+  // A genuinely new event arriving after the ack still shows.
+  assert.deepEqual(feedModel({ events: [{ id: '3', actionType: 'cora.session.started', status: 'ALLOW' }] }, { cleared }).map((c) => c.id), ['evt:3']);
+});
+
+test('Approvals view: the PC actions panel re-reads on the auto-refresh heartbeat', () => {
+  // loadPcApprovals runs when the view opens; the heartbeat clause is what
+  // makes a PC Guard ask raised WHILE the owner is already looking at the
+  // Approvals view appear (and a decided one leave) without reopening it.
+  assert.match(js, /if \(shell\.dataset\.view === 'approvals'\) loadPcApprovals\(\)/, 'the 6s heartbeat re-reads the PC actions panel on the Approvals view');
 });
 
 test('Guard Feed wording is plain language (no internal jargon)', () => {
