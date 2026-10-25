@@ -517,3 +517,49 @@ test('I8: the phone panels button is the Guard shield plus a visible Guard capti
   const appCss = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
   assert.match(appCss, /#guard-toggle \{[^}]*width:auto/, 'the toggle widens to fit its caption');
 });
+
+// ---------- Maestro seat invisibility: cache, not code (2026-10-25) ----------
+// Browser-proven twice on the live app: the channel list rendered with
+// NO Maestro section at all, while the server served envoy-workspace.js
+// byte-identical to main (seat code included). The rendered list matched
+// the PRE-seat renderChannels output exactly. Cause: no Cache-Control
+// anywhere in vercel.json for the /app shell, so the CDN stamps its
+// default `public, max-age=14400` on the unversioned shell files; a
+// browser that fetched the shell before a deploy runs the stale copy
+// for up to 4 hours — and the service worker's network-first fetch()
+// is satisfied by that fresh HTTP-cache entry, so the SW cannot rescue
+// it. These tests pin both halves: the renderer's unconditional seat
+// (with the real list shape from the live proof) and the header that
+// keeps the shell revalidating.
+
+test('seat render: with the live-proof channel shape (Team + agent rooms, no desk channel) the seat falls to its enter row and still renders above ENVOY', async () => {
+  // The exact shape seen live, 2026-10-25: one team channel, three
+  // private agent rooms (troy, Gemini, and the OLD Maestro room), and
+  // no desk channel — the state in which the seat was reported missing.
+  const channels = [
+    { id: 'c-team', slug: 'team', title: 'Team', kind: 'team' },
+    { id: 'c-room-troy', slug: 'troy', title: 'troy', kind: 'agent' },
+    { id: 'c-room-gemini', slug: 'gemini', title: 'Gemini', kind: 'agent' },
+    { id: 'c-room-maestro', slug: 'maestro', title: 'Maestro', kind: 'agent' },
+  ];
+  assert.equal(deskChannelFor(channels), null, 'no desk channel exists in this shape — the seat must use its enter row');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const render = js.slice(js.indexOf('function renderChannels()'), js.indexOf('async function selectChannel'));
+  const maestroHead = render.indexOf("'MAESTRO'");
+  const envoyHead = render.indexOf("'ENVOY'");
+  assert.ok(maestroHead !== -1 && envoyHead !== -1 && maestroHead < envoyHead, 'the MAESTRO head renders above the ENVOY head');
+  assert.ok(render.includes('seatRow,'), 'the seat row is emitted with the list children');
+  assert.ok(render.includes('enterMaestroSeat'), 'the no-desk-channel branch builds the enter-the-seat row');
+  assert.ok(render.includes('Your manager seat'), 'the desk-exists branch builds the desk row — both branches render a seat');
+});
+
+test('app shell cache: vercel.json forces revalidation for /app assets so a deploy is never hidden behind a 4-hour CDN default', async () => {
+  const raw = await readFile(new URL('../vercel.json', import.meta.url), 'utf8');
+  const config = JSON.parse(raw);
+  const appRule = (config.headers ?? []).find((entry) =>
+    typeof entry.source === 'string' && entry.source.includes('/app/')
+    && (entry.headers ?? []).some((header) => header.key.toLowerCase() === 'cache-control'));
+  assert.ok(appRule, 'vercel.json carries a Cache-Control rule scoped to /app/');
+  const value = appRule.headers.find((header) => header.key.toLowerCase() === 'cache-control').value;
+  assert.ok(/max-age=0|no-cache|no-store/.test(value), `the /app Cache-Control forces revalidation (got: ${value})`);
+});
