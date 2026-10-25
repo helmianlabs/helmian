@@ -46,9 +46,15 @@ function Publish-HelmionProject {
 function Invoke-PackagedSmoke {
   param(
     [Parameter(Mandatory)][string]$Executable,
-    [Parameter(Mandatory)][string]$Argument
+    [Parameter(Mandatory)][string]$Argument,
+    [int]$TimeoutSeconds = 120
   )
 
+  # Announce every check: the packaged exes are GUI-subsystem processes whose
+  # own output never reaches this log, so without these lines a stalled smoke
+  # is indistinguishable from a slow one (release run 40211924669 sat silent
+  # for 58 minutes before the job cap killed it).
+  Write-Host "Packaged smoke: $Executable $Argument (timeout ${TimeoutSeconds}s)"
   $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
   $startInfo.FileName = $Executable
   $startInfo.UseShellExecute = $false
@@ -58,10 +64,22 @@ function Invoke-PackagedSmoke {
   if (-not $smokeProcess) {
     throw "Packaged smoke test could not start: $Executable"
   }
-  $smokeProcess.WaitForExit()
+  if (-not $smokeProcess.WaitForExit($TimeoutSeconds * 1000)) {
+    # A packaged smoke that does not exit on its own must never hang the
+    # publish. Kill the whole tree — the service smoke spawns the Local
+    # Service as a child — then fail loudly, naming the exact stalled check.
+    try { $smokeProcess.Kill($true) } catch { }
+    $smokeProcess.WaitForExit(10000)
+    if ($env:HELMION_SMOKE_TRACE_PATH -and (Test-Path -LiteralPath $env:HELMION_SMOKE_TRACE_PATH)) {
+      Write-Host 'Smoke trace left by the stalled check:'
+      Get-Content -LiteralPath $env:HELMION_SMOKE_TRACE_PATH | ForEach-Object { Write-Host $_ }
+    }
+    throw "Packaged smoke test timed out after ${TimeoutSeconds}s: $Executable $Argument"
+  }
   if ($smokeProcess.ExitCode -ne 0) {
     throw "Packaged smoke test failed for $Executable $Argument with exit code $($smokeProcess.ExitCode)"
   }
+  Write-Host "Packaged smoke passed: $Executable $Argument"
 }
 
 function Stage-BridgeApp {
@@ -125,6 +143,10 @@ function Get-ArtifactDetails {
 }
 
 New-Item -ItemType Directory -Path $stagingDirectory -Force | Out-Null
+# The desktop app's headless checks append progress markers to this file when
+# the variable is set (App.SmokeTrace). Invoke-PackagedSmoke prints it when a
+# check stalls, so a timeout names where the check stopped, not just that it did.
+$env:HELMION_SMOKE_TRACE_PATH = Join-Path $artifactsRoot 'packaged-smoke-trace.log'
 try {
   Publish-HelmionProject -Project $desktopProject
   Publish-HelmionProject -Project $serviceProject
