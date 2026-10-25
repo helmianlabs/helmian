@@ -930,8 +930,8 @@ $('#new-channel').onclick = () => {
 const consoleAttach = { list: [], open: false, data: null };
 async function loadConsolePickerData() {
   if (consoleAttach.data) return consoleAttach.data;
-  const [c, p] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections')]);
-  consoleAttach.data = pickerModel({ connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {} });
+  const [c, p, pl] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/plugins')]);
+  consoleAttach.data = pickerModel({ connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {} });
   return consoleAttach.data;
 }
 function renderConsoleAttachChips() {
