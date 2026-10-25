@@ -141,7 +141,7 @@ export function pendingAgentWork(messages, roster, joined = {}, online = new Set
 // no 'maestro' on it: in the desk, Maestro is the human sending, and a
 // send is a dispatch — @all broadcasts to every agent on the desk,
 // @name picks the named agents, and an unnamed send reaches the whole
-// desk. These helpers mirror the server's desk routing
+// desk. These functions mirror the server's desk routing
 // (src/cloud/envoy-agents.mjs: agentsToAnswer with desk:true) the way
 // `addressed` mirrors the ordinary rules.
 export const MAESTRO_DESK_SLUG = 'maestro-desk';
@@ -860,13 +860,13 @@ function insertMention(name) {
   if (narrow()) closeSheets();
 }
 
-// ---------- composer "+" picker: skills, connectors, plugins, upload, web search ----------
+// ---------- composer "+" picker: agents, connectors, plugins, upload, web search ----------
 // One picker for both composers (channel + agent chat); the pure model in
 // composer-picker.mjs decides what can be attached and how it travels.
-// The model is PER-AGENT: the registry facts load once, and each render
-// builds the model for the agent that composer is talking to (its own
-// ecosystem group first), or the shared model when no single agent is in
-// context (the desk, an unaddressed channel).
+// The model is AGENTS FIRST: the registry facts load once, and each
+// render builds the model for the agent that composer is talking to
+// (that agent's own group leads the six), or with no agent in context
+// (the desk, an unaddressed channel), where no group leads.
 const PICKER_IDS = {
   channel: { panel: 'ew-picker', chips: 'ew-attach-chips' },
   cli: { panel: 'ew-cli-picker', chips: 'ew-cli-attach-chips' },
@@ -947,9 +947,10 @@ async function renderPicker(which) {
   const groups = [];
   for (const g of model.groups) {
     if (g.id === 'agent') {
-      // The agent's own ecosystem: its seat as a status row (never an
-      // attachment), its by-name skills, and the bridge plugins it can
-      // be handed — each with its truthful state from the model.
+      // One of the six agents' own groups: its own connection as a
+      // status row (never an attachment), its by-name skills, and the
+      // bridge plugins it can be handed — each with its truthful state
+      // from the model.
       const nameInput = h('input', { class: 'ew-picker-input', maxlength: 64, placeholder: 'Skill name — e.g. deploy, or plugin:skill', 'aria-label': 'Skill name' });
       const note = h('p', { class: 'ew-note' });
       const add = h('button', { type: 'button', class: 'ew-btn sm', onclick: () => {
@@ -971,16 +972,6 @@ async function renderPicker(which) {
         } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.brings), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'Attached' : item.stateLabel));
       });
       groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, g.title.toUpperCase()), h('p', { class: 'ew-note' }, g.note), h('div', { class: 'ew-row' }, nameInput, add), note, ...rows));
-    } else if (g.id === 'skills') {
-      const nameInput = h('input', { class: 'ew-picker-input', maxlength: 64, placeholder: 'Skill name — e.g. deploy, or plugin:skill', 'aria-label': 'Skill name' });
-      const note = h('p', { class: 'ew-note' });
-      const add = h('button', { type: 'button', class: 'ew-btn sm', onclick: () => {
-        const r = addAttachment(ws.attach[which], { kind: 'skill', name: nameInput.value });
-        if (!r.added) { note.textContent = r.reason; return; }
-        ws.attach[which] = r.list; note.textContent = '';
-        renderAttachChips(which); renderPicker(which);
-      } }, 'Attach skill');
-      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'SKILLS'), h('p', { class: 'ew-note' }, g.note), h('div', { class: 'ew-row' }, nameInput, add), note));
     } else if (g.id === 'connectors') {
       const rows = g.items.map((item) => {
         const on = attached.has(`connector:${item.key}`);
