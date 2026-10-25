@@ -505,7 +505,12 @@ export async function createLiveHelmianCloudAdminHandler({
   }
 
   async function controlSurface(actor) {
-    const actionPolicy = await readAdminActionPolicy(pool, actorContext(actor));
+    // The action policy is platform-global state stored under the synthetic
+    // platform tenant; read it through the system resolver. The admin reader
+    // (readAdminActionPolicy) demands the CALLER belong to that tenant, which
+    // no real organization membership can satisfy — it 403'd this surface
+    // for every actual owner/admin.
+    const actionPolicy = await resolvePlatformActionPolicy(pool);
     const context = actorContext(actor);
     return withTenantTransaction(pool, context, async (client) => {
       await requireActiveTenantMembership(client, context);
