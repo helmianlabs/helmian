@@ -13,12 +13,14 @@ import {
 import { normalizeMessageMetadata } from '../../../src/cloud/envoy-agents.mjs';
 
 // The "+" picker model. Its connectors group is the Integrations registry
-// itself (PROVIDER_REGISTRY + live connection state, via integrationsModel)
-// — these fixtures mirror the two API payloads loadIntegrations() merges:
-// GET /api/admin/cora/connectors (registrations + verifierStatus) and
-// GET /api/admin/provider-connections (connections).
-const CONNECTORS = { registrations: [{ provider: 'discord' }], verifierStatus: {} };
-const PROVIDERS = { connections: [{ provider: 'google' }] };
+// itself (PROVIDER_REGISTRY + connection truth, via integrationsModel)
+// — these fixtures mirror the API payloads the loaders merge:
+// GET /api/admin/cora/connectors (registrations), GET
+// /api/admin/provider-connections (connections), GET
+// /api/admin/tool-connections (probe receipts) and the runner presence
+// feed. Shapes are the real ones the repositories return (bite 1b).
+const CONNECTORS = { registrations: [{ provider: 'discord', lifecycle: 'enabled', enabled: true }], verifierStatus: {} };
+const PROVIDERS = { connections: [{ providerId: 'google', lifecycle: 'verified' }] };
 // Mirrors GET /api/admin/plugins (src/cloud/installed-plugins.mjs): the
 // enabled plugins of the bridge workspace, each with what it brings.
 const PLUGINS = {
@@ -56,11 +58,29 @@ test('plugins group is the installed list from the bridge, with what each brings
 test('connectors group is the real registry with live connected state', () => {
   assert.deepEqual(catalog.map((i) => i.key), ['slack', 'discord', 'github', 'anthropic', 'openai', 'xai', 'google']);
   const byKey = Object.fromEntries(catalog.map((i) => [i.key, i]));
-  assert.equal(byKey.discord.connected, true, 'a registration connects Discord');
-  assert.equal(byKey.google.connected, true, 'a provider connection connects Gemini');
+  assert.equal(byKey.discord.connected, true, 'an enabled registration links the Discord mirror');
+  assert.equal(byKey.discord.statusText, 'Linked', 'a mirror reads Linked, never Connected');
+  assert.equal(byKey.discord.kindLabel, 'Team chat mirror');
+  assert.equal(byKey.google.connected, true, 'a verified provider connection connects Gemini');
+  assert.equal(byKey.google.statusText, 'Connected');
   assert.equal(byKey.google.name, 'Gemini');
   assert.equal(byKey.slack.connected, false);
+  assert.equal(byKey.slack.statusText, 'Not linked');
+  assert.equal(byKey.slack.kindLabel, 'Team chat mirror');
   assert.equal(byKey.github.kindLabel, 'Code');
+  assert.equal(byKey.github.statusText, 'Not connected', 'no probe row yet → the registry answer');
+});
+
+test('connectors group renders probe truth for tool connections (bite 1b)', () => {
+  const now = Date.parse('2026-10-25T18:00:00.000Z');
+  const withRows = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS, presence: [],
+    toolConnections: [{ serviceId: 'github', state: 'failed', lastVerifiedAt: null, lastError: 'connection refused' }], now });
+  const github = withRows.groups.find((g) => g.id === 'connectors').items.find((i) => i.key === 'github');
+  assert.deepEqual([github.connected, github.statusText, github.source], [false, 'Check failed', 'tool-connections'], 'a failed probe is what the panel says');
+  const verified = pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS, presence: [],
+    toolConnections: [{ serviceId: 'github', state: 'verified', lastVerifiedAt: '2026-10-25T17:45:00.000Z' }], now });
+  const gh2 = verified.groups.find((g) => g.id === 'connectors').items.find((i) => i.key === 'github');
+  assert.deepEqual([gh2.connected, gh2.statusText], [true, 'Connected'], 'a fresh verified receipt is the only road to Connected');
 });
 
 test('skills group carries no invented list: attach-by-name only', () => {

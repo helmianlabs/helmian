@@ -4,11 +4,13 @@
 // envoy-workspace.js renders it.
 //
 // WHERE THE GROUPS COME FROM (real registries only; nothing invented):
-// - Connectors: PROVIDER_REGISTRY in app-model.mjs, with live connected
-//   state from GET /api/admin/cora/connectors + GET
-//   /api/admin/provider-connections merged by integrationsModel() — the
-//   exact lists the Integrations page renders. A connector can be attached
-//   only when that registry says it is connected.
+// - Connectors: PROVIDER_REGISTRY in app-model.mjs, with connection truth
+//   from integrationsModel() over GET /api/admin/cora/connectors, GET
+//   /api/admin/provider-connections, GET /api/admin/tool-connections and
+//   the runner presence feed — the exact rows the Integrations page
+//   renders, each with its truthful statusText ("Connected" only from a
+//   verified probe receipt or a live runner link; mirrors read "Linked").
+//   A connector can be attached only when that truth says it is connected.
 // - Skills: there is deliberately NO skill list here. Skills are markdown
 //   command files that live with the agent runtime — .helmion/commands/
 //   plus plugin commands/ (src/agent/commands.mjs, src/agent/plugins.mjs) —
@@ -136,9 +138,10 @@ export function normalizeSkillName(value) {
   return { ok: true, name, reason: null };
 }
 
-export function pickerModel({ connectors = {}, providers = {}, plugins = {} } = {}) {
-  const connectorItems = integrationsModel(connectors, providers).map((p) => ({
+export function pickerModel({ connectors = {}, providers = {}, plugins = {}, toolConnections = null, presence = null, now = Date.now() } = {}) {
+  const connectorItems = integrationsModel(connectors, providers, { toolConnections, presence, now }).map((p) => ({
     kind: 'connector', key: p.key, name: p.name, kindLabel: p.kind, connected: p.connected === true,
+    status: p.status, statusText: p.statusText, source: p.source,
   }));
   const pluginItems = (Array.isArray(plugins?.plugins) ? plugins.plugins : []).map((p) => ({
     kind: 'plugin',
