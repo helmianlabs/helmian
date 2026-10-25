@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createBridge, normalizeSlackEvent, LINK_RE } from '../bridge-core.mjs';
+import { createBridge, normalizeSlackEvent, LINK_RE, outboundMode, outboundParts } from '../bridge-core.mjs';
 
-function fakeCloud() {
+function fakeCloud({ outbound = [] } = {}) {
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
     calls.push({ url, method: init.method ?? 'GET', body: init.body ? JSON.parse(init.body) : null, auth: init.headers?.authorization });
     const ok = (body) => ({ ok: true, status: 200, json: async () => ({ valid: true, ...body }) });
+    if (url.includes('/bridge/outbound')) return ok({ messages: outbound, links: 0, slackLinks: 1 });
     if (url.includes('/bridge/links')) return ok({ links: [], slackLinks: [{ tenantId: 't1', envoyChannelId: 'e1', teamId: 'T0BP40EFJ1W', slackChannelId: 'C0BN7LCK946', agents: ['claude'] }] });
     if (url.includes('/bridge/confirm-link')) return JSON.parse(init.body).code === 'GOODCODE' && JSON.parse(init.body).provider === 'slack'
       ? ok({ envoyChannelId: 'e1', envoyChannelTitle: 'team', agents: ['claude'] })
@@ -95,4 +96,93 @@ test('link command confirms with provider slack; a bad code gets the friendly re
   assert.match(replies.at(-1), /wrong or expired/);
   // A bot typing the command never even reaches the cloud.
   assert.equal((await b.onSlackMessage(evt({ text: 'helmian link GOODCODE', bot_id: 'B0123' }), { reply })).skipped, 'bot');
+});
+
+// --- Outbound (Envoy -> Slack, named) ---
+
+const NOW = Date.parse('2026-10-25T14:00:00.000Z');
+const feedMsg = (o = {}) => ({
+  id: 'm1', channelId: 'e1', slackChannelId: 'C0BN7LCK946', teamId: 'T0BP40EFJ1W',
+  authorSubject: 'user_3L5HJWabcdef', authorKind: 'human', displayName: 'Troy', source: 'helmian',
+  body: 'hello slack', createdAt: '2026-10-25T13:59:30.000Z', ...o,
+});
+
+test('Envoy -> Slack: posts are authored with the sender name, Discord-style', async () => {
+  const cloud = fakeCloud({ outbound: [
+    feedMsg(),
+    feedMsg({ id: 'm2', authorSubject: 'agent:gemini', authorKind: 'agent', authorName: 'Gemini', displayName: undefined, body: 'answer here', createdAt: '2026-10-25T13:59:31.000Z' }),
+  ] });
+  const b = createBridge({ cloud: 'https://h', token: 't'.repeat(40), fetchImpl: cloud.fetchImpl, now: () => NOW });
+  const posts = [];
+  const sent = await b.pumpOutbound({ postMessage: async (p) => posts.push(p) });
+  assert.equal(sent, 2);
+  // Humans carry the " (Helmian)" suffix, agents their bare name — the
+  // same authorship rule as the Discord bridge's webhook names, rendered
+  // as a bold name line because Slack posts as the bot.
+  assert.deepEqual(posts, [
+    { channel: 'C0BN7LCK946', text: '**Troy (Helmian)**\nhello slack' },
+    { channel: 'C0BN7LCK946', text: '**Gemini**\nanswer here' },
+  ]);
+  assert.equal(b.stats.outbound, 2);
+});
+
+test('Envoy -> Slack: rows resolve to their own linked channel; Discord rows are not ours', async () => {
+  const cloud = fakeCloud({ outbound: [
+    feedMsg({ id: 'd1', slackChannelId: undefined, discordChannelId: 'D123456789', body: 'for discord' }),
+    feedMsg({ id: 'm9', slackChannelId: 'C555555555', body: 'other channel' }),
+  ] });
+  const b = createBridge({ cloud: 'https://h', token: 't'.repeat(40), fetchImpl: cloud.fetchImpl, now: () => NOW });
+  const posts = [];
+  assert.equal(await b.pumpOutbound({ postMessage: async (p) => posts.push(p) }), 1);
+  assert.deepEqual(posts, [{ channel: 'C555555555', text: '**Troy (Helmian)**\nother channel' }]);
+});
+
+test('Envoy -> Slack: a Slack-born message is never posted back (origin exclusion)', async () => {
+  const cloud = fakeCloud({ outbound: [
+    feedMsg({ id: 's1', authorSubject: 'slack:U0ABC12345:Troy', source: 'slack', body: 'echo me' }),
+    feedMsg({ id: 's2', authorSubject: 'slack:U0ABC12345:Troy', source: undefined, body: 'echo me too', createdAt: '2026-10-25T13:59:31.000Z' }),
+  ] });
+  const b = createBridge({ cloud: 'https://h', token: 't'.repeat(40), fetchImpl: cloud.fetchImpl, now: () => NOW });
+  const posts = [];
+  assert.equal(await b.pumpOutbound({ postMessage: async (p) => posts.push(p) }), 0);
+  assert.equal(posts.length, 0);
+  assert.equal(b.stats.outbound, 0);
+});
+
+test('Envoy -> Slack: the cursor advances and a repoll never reposts', async () => {
+  const cloud = fakeCloud({ outbound: [feedMsg()] });
+  const b = createBridge({ cloud: 'https://h', token: 't'.repeat(40), fetchImpl: cloud.fetchImpl, now: () => NOW });
+  const posts = [];
+  const postMessage = async (p) => posts.push(p);
+  assert.equal(await b.pumpOutbound({ postMessage }), 1);
+  assert.equal(await b.pumpOutbound({ postMessage }), 0);
+  assert.equal(posts.length, 1);
+  const sinceParams = cloud.calls.filter((c) => c.url.includes('/outbound')).map((c) => new URL(c.url).searchParams.get('since'));
+  // First poll starts 60s back; after a 13:59:30 message the cursor sits
+  // at newest-5s, so the overlap window is re-served but deduped.
+  assert.deepEqual(sinceParams, ['2026-10-25T13:59:00.000Z', '2026-10-25T13:59:25.000Z']);
+});
+
+test('no bot token: named outbound is off, says so, and never calls out', async () => {
+  assert.equal(outboundMode(true), 'named');
+  assert.equal(outboundMode(false), 'webhook-only');
+  const cloud = fakeCloud({ outbound: [feedMsg()] });
+  const b = createBridge({ cloud: 'https://h', token: 't'.repeat(40), fetchImpl: cloud.fetchImpl, now: () => NOW });
+  assert.deepEqual(await b.pumpOutbound(), { skipped: 'no_poster' });
+  assert.deepEqual(await b.pumpOutbound({}), { skipped: 'no_poster' });
+  assert.deepEqual(await b.pumpOutbound({ postMessage: null }), { skipped: 'no_poster' });
+  assert.equal(cloud.calls.filter((c) => c.url.includes('/outbound')).length, 0);
+  assert.equal(b.stats.outbound, 0);
+});
+
+test('outbound text: long bodies split under the cap, every part carrying the name line', async () => {
+  const parts = outboundParts(feedMsg({ body: 'x'.repeat(5000) }));
+  assert.equal(parts.length, 2);
+  for (const p of parts) {
+    assert.ok(p.length <= 3900, `part within cap (${p.length})`);
+    assert.ok(p.startsWith('**Troy (Helmian)**\n'));
+  }
+  assert.equal(parts.map((p) => p.split('\n')[1]).join(''), 'x'.repeat(5000));
+  assert.deepEqual(outboundParts(feedMsg({ body: '   ' })), []);
+  assert.deepEqual(outboundParts(feedMsg({ body: 'short' })), ['**Troy (Helmian)**\nshort']);
 });
