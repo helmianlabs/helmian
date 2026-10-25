@@ -127,3 +127,44 @@ test('messageOut carries stored attachments metadata to the bridge work queue', 
   const bare = { ...row, metadata: null };
   assert.equal('metadata' in messageOut(bare), false);
 });
+
+test('mesh rooms: an agent room seats exactly its agent and routes its own work', { skip }, async () => {
+  const pg = (await import('pg')).default;
+  const pool = new pg.Pool({ connectionString: url, max: 4 });
+  const tenantId = `t-${randomUUID()}`;
+  const owner = { tenantId, subject: 'user:owner', role: 'owner' };
+  const device = { tenantId, subject: 'user:owner', role: 'owner', viaDeviceToken: true };
+  const chat = createEnvoyStore(pool);
+  const mesh = createEnvoyMesh({ pool });
+  try {
+    await pool.query('insert into helmion.tenants (tenant_id, owner_subject) values ($1,$2)', [tenantId, owner.subject]);
+    const { channel } = await chat.createChannel(owner, { slug: 'agent-claude', title: 'Claude', kind: 'agent' });
+    assert.equal(channel.kind, 'agent');
+
+    const seeded = await mesh.seedRoomAgent(owner, channel.id, 'claude');
+    assert.deepEqual(seeded, { seeded: true, configured: true });
+    const again = await mesh.seedRoomAgent(owner, channel.id, 'claude');
+    assert.equal(again.seeded, false, 'seeding never rewrites an existing roster');
+    const other = await mesh.seedRoomAgent(owner, channel.id, 'gemini');
+    assert.equal(other.seeded, false, 'a second agent cannot take over the room');
+    const cfg = await mesh.getConfig(owner, channel.id);
+    assert.deepEqual(cfg.config.agents.map((a) => a.provider), ['claude'], 'the room seats exactly its agent');
+
+    const { channel: team } = await chat.createChannel(owner, { slug: 'team-x', title: 'Team X', kind: 'team' });
+    await assert.rejects(mesh.seedRoomAgent(owner, team.id, 'claude'), /ENVOY_ROOM_KIND_INVALID/, 'a shared channel is not a room');
+
+    const human = (await chat.appendMessage(owner, { channelId: channel.id, body: 'just between us', idempotencyKey: randomUUID() })).receipt.message;
+    let work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id);
+    assert.equal(work.length, 1, 'a prompt in the room is work for the room agent');
+    assert.deepEqual(work[0].agents, ['claude'], 'unaddressed room work routes to the room agent alone');
+    await mesh.postAsAgent(device, { channelId: channel.id, provider: 'claude', replyTo: human.id, body: 'Claim: on it.' });
+    await assert.rejects(
+      mesh.postAsAgent(device, { channelId: channel.id, provider: 'gemini', replyTo: human.id, body: 'me too' }),
+      /NOT_MEMBER/, 'another agent cannot post in the room');
+    work = (await mesh.agentWork(device, 'claude')).work.filter((w) => w.channel.id === channel.id);
+    assert.equal(work.length, 0, 'answered room work clears');
+  } finally {
+    await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
+    await pool.end();
+  }
+});
