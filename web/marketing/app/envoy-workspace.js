@@ -1158,6 +1158,7 @@ function whoOf(m) {
   if (m.agentProvider || m.authorSubject?.startsWith('agent:')) return { name: m.authorName || 'Agent', kind: 'agent', provider: m.agentProvider || m.authorSubject.slice(6) };
   if (m.authorSubject?.endsWith(':bridge')) return { name: 'PC bridge', kind: 'agent', provider: null };
   if (m.source === 'discord') return { name: m.authorName || 'Discord member', kind: 'discord' };
+  if (m.source === 'slack') return { name: m.authorName || 'Slack member', kind: 'slack' };
   return { name: m.authorName || 'Member', kind: 'human' };
 }
 // The line under a manager's desk send naming who it dispatched to —
@@ -1183,8 +1184,9 @@ function renderMessages() {
     if (m.authorKind === 'system') { out.push(h('div', { class: 'ew-notice' }, h('span', {}, m.body))); prev = null; continue; }
     const who = whoOf(m);
     const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
-    const avatar = who.kind === 'agent' ? h('div', { class: 'ew-avatar' }, avatarImg(who.provider)) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : ''}` }, who.name.slice(0, 1).toUpperCase());
-    const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : who.kind === 'discord' ? h('span', { class: 'ew-src discord' }, 'DISCORD') : null;
+    const avatar = who.kind === 'agent' ? h('div', { class: 'ew-avatar' }, avatarImg(who.provider)) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase());
+    const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
+    const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : who.kind === 'discord' ? h('span', { class: 'ew-src discord' }, 'DISCORD') : who.kind === 'slack' ? h('span', { class: 'ew-src slack' }, `SLACK${slackChannel}`) : null;
     // In the desk, a manager send carries its dispatch line; agent
     // replies render as themselves, under their own names, as anywhere.
     const dispatch = desk && m.authorKind === 'human' ? deskDispatchLine(m) : null;
