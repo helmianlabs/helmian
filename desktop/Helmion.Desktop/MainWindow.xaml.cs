@@ -1295,7 +1295,15 @@ public partial class MainWindow : Window
         }
 
         AddPluginsAsync().GetAwaiter().GetResult();   // no .helmion/plugins.json
-        _ = AddConnectorAsync();                      // nothing typed in the box
+        // Nothing typed in the box — and NO PROMPT. This audit runs headless
+        // (publish.ps1's packaged smoke); with the prompt allowed, an untyped
+        // box falls through to PromptForConnectorNeed's modal ShowDialog and
+        // this method never returns, so the audit's ExitWith is never reached
+        // and the process idles until the caller's timeout kills it (release
+        // run 40219039046). Prompt off, the untyped box settles synchronously
+        // as FirstRunStates.ConnectorNeed's EMPTY outcome — the cancelled
+        // search — which is the first-run state being audited.
+        _ = AddConnectorAsync(allowNeedPrompt: false);
         NewProjectButton_Click(this, new RoutedEventArgs());  // no name typed
 
         return _plusMenu.Items.Count(item => item.State == PlusActionState.Failed);
