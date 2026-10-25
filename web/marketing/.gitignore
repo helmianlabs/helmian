@@ -4,3 +4,11 @@
 .vercel
 .env*
 helmian-admin/
+
+# The starter slash commands under .helmion/commands/ are product content,
+# not a local workspace: they ship inside the admin function's bundle
+# (see the includeFiles glob in vercel.json), so they are tracked even
+# though the repo root ignores .helmion/ directories.
+!.helmion/
+!.helmion/commands/
+!.helmion/commands/*.md
