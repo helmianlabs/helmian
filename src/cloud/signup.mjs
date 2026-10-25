@@ -5,8 +5,18 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { createIdentityGateway } from './identity-gateway.mjs';
+import { NOTICE_SUBJECT } from './envoy-agents.mjs';
+import { ASLEEP_NO_PROVIDER_LINE, computeTenantAgentState } from './tenant-agent-state.mjs';
 
 export const SIGNUP_PATH = '/api/signup';
+
+// The starter channel every new workspace opens with — the same channel
+// the /app client used to create lazily on first load, now seeded at
+// signup so the workspace is never an empty room, with a welcome notice
+// that says the quiet part out loud: until a subscription is connected,
+// messages are saved and nobody answers yet.
+export const STARTER_CHANNEL = Object.freeze({ slug: 'team', title: 'Team', kind: 'team' });
+export const STARTER_WELCOME_BODY = `Welcome to Helmian — this is your first channel, and anything you post here is saved. ${ASLEEP_NO_PROVIDER_LINE} Connect one from Integrations, then open Helmian on your PC so your computer can run them.`;
 
 // Own pool and identity gateway (live-admin.mjs is frozen, can't pass its instances through)
 let _pool = null;
@@ -122,13 +132,36 @@ export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBeare
         [tenantId, subject]
       );
 
+      // Starter seeding: one channel + the welcome notice, same
+      // transaction, both additive (a replayed signup conflicts into
+      // no-ops rather than duplicating either).
+      const channel = await client.query(
+        `insert into helmion.envoy_channels(tenant_id, slug, title, kind, created_by_subject)
+         values ($1,$2,$3,$4,$5)
+         on conflict (tenant_id, slug) do nothing
+         returning id`,
+        [tenantId, STARTER_CHANNEL.slug, STARTER_CHANNEL.title, STARTER_CHANNEL.kind, subject]
+      );
+      const channelId = channel.rows?.[0]?.id ?? null;
+      if (channelId) {
+        await client.query(
+          `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key)
+           values ($1,$2,$3,'system',$4,$5)
+           on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing`,
+          [tenantId, channelId, NOTICE_SUBJECT, STARTER_WELCOME_BODY, `welcome:${tenantId}`]
+        );
+      }
+
       await client.query('commit');
 
       response.writeHead(201, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
         tenantId,
         created: true,
-        message: 'Trial workspace created'
+        message: 'Trial workspace created',
+        // A brand-new tenant has no runner and no connected provider:
+        // the workspace starts asleep, and the response says so.
+        agentState: computeTenantAgentState({}),
       }));
     } catch (error) {
       try { await client.query('rollback'); } catch {}

@@ -14,6 +14,7 @@
 import { handleEnvoyMeshRoute } from './envoy-mesh.mjs';
 import { createHmac, randomBytes } from 'node:crypto';
 import { handleRunnerPresenceRoute } from './runner-presence.mjs';
+import { handleTenantAgentStateRoute } from './tenant-agent-state.mjs';
 import { handleAgentSessionsRoute } from './agent-sessions.mjs';
 import { handleAgentRoomsRoute } from './envoy-rooms.mjs';
 import { handleMaestroDeskRoute } from './envoy-maestro.mjs';
@@ -188,6 +189,7 @@ export async function handleEnvoyAblyRoute({
     if (await handleUserOAuthRoute({ request, response, requestUrl, send })) return true;
   }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
+  if (await handleTenantAgentStateRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleAgentSessionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleAgentRoomsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleMaestroDeskRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
