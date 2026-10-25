@@ -117,6 +117,20 @@ export function feedModel({ events = [], approvals = [] } = {}, { filter = 'all'
     .filter((c) => filter === 'all' || c.severity === filter);
 }
 
+// Guard Feed "Ack all": the card ids an acknowledge-everything moves into
+// the persisted cleared set, so the pile is gone for good (a reload
+// refetches the same events from the server and must not resurrect them).
+// Every current event card clears. Findings clear too, except criticals —
+// a critical finding is never hidden by an ack; it stays visible, marked
+// acknowledged. Pending approvals are decisions, not notices, and are
+// never cleared by an ack (they leave when they are decided).
+export function feedAckClearIds({ events = [], findings = [] } = {}) {
+  const ids = [];
+  for (const e of events) ids.push(`evt:${e.id}`);
+  for (const f of findings) if (String(f.severity ?? '').toLowerCase() !== 'critical') ids.push(`finding:${f.fingerprint}`);
+  return ids;
+}
+
 export function maskSecret(hint = '') { const tail = String(hint).replace(/[^A-Za-z0-9]/g, '').slice(-4); return tail ? `••••••••${tail}` : '••••••••'; }
 
 // ---- connection truth (bite 1b: the read-path) ----
