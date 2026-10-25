@@ -159,6 +159,15 @@ const PS = ['-NoProfile', '-NonInteractive', '-Command'];
 const PS_SCRIPTS = {
   'disk-free': "Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}},@{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} | Format-Table -AutoSize | Out-String -Width 200",
   'list-processes': 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name,Id,@{n="CPU";e={[math]::Round($_.CPU,1)}},@{n="MemMB";e={[math]::Round($_.WorkingSet64/1MB)}} | Format-Table -AutoSize | Out-String -Width 200',
+  // The Bridge's in-process spoke reads hands-spoke.json ONCE at pc-bridge
+  // start and never re-reads it, so the only way to pick up a config change
+  // (e.g. widened roots) is a fresh Bridge. Stop the whole tree (root first,
+  // so the supervisor cannot respawn its children mid-kill; never our own
+  // $PID — when the job runs on the embedded spoke this script is a tree
+  // descendant, and killing our parent does not kill us), wait, relaunch the
+  // service exe detached via Start-Process so it outlives this script, then
+  // report the resulting process state.
+  'restart-bridge': "$name = 'Helmian Bridge Service'; $exe = 'E:\\HelmianService\\Helmian Bridge Service.exe'; $roots = @(Get-Process -Name $name -ErrorAction SilentlyContinue); if ($roots.Count) { $ids = @($roots.Id); $frontier = @($roots.Id); while ($frontier.Count) { $kids = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $frontier -contains $_.ParentProcessId } | Select-Object -ExpandProperty ProcessId | Where-Object { $ids -notcontains $_ }); if (!$kids.Count) { break }; $ids += $kids; $frontier = $kids }; $ids | Where-Object { $_ -ne $PID } | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 2 }; if (!(Get-Process -Name $name -ErrorAction SilentlyContinue)) { Start-Process -FilePath $exe -WorkingDirectory 'E:\\HelmianService' -WindowStyle Hidden }; Start-Sleep -Seconds 3; $now = @(Get-Process -Name $name -ErrorAction SilentlyContinue); if ($now.Count) { $now | Select-Object Name,Id,StartTime | Format-Table -AutoSize | Out-String -Width 200 } else { 'Helmian Bridge Service is not running after the restart attempt.' }",
 };
 
 function globToRegex(glob) {

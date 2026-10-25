@@ -39,6 +39,7 @@ export const POWERSHELL_COMMANDS = Object.freeze({
   'disk-free': { args: {}, summary: 'free disk space per drive' },
   'list-processes': { args: {}, summary: 'top 20 processes by CPU' },
   'ollama-list': { args: {}, summary: 'installed Ollama models' },
+  'restart-bridge': { args: {}, summary: 'restart the Helmian Bridge service (its in-process spoke re-reads its config)' },
 });
 
 export const TOOLS = Object.freeze({
