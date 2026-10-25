@@ -1,0 +1,1 @@
+{"description":"Mirrors linked Slack channels into Envoy over Socket Mode. Zero dependencies: Node 22 built-in WebSocket and fetch.","engines":{"node":">=22"},"main":"index.mjs","name":"helmian-slack-bridge","private":true,"scripts":{"start":"node index.mjs","test":"node --test test/*.test.mjs"},"type":"module","version":"1.0.0"}
