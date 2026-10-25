@@ -109,6 +109,62 @@ test('file attachments: dedupe is name+size, and other kinds are untouched', () 
   assert.equal(normalizeMessageMetadata({ attachments: [{ kind: 'skill', name: 'deploy' }] }).attachments[0].data, undefined, 'non-file metadata gains no file fields');
 });
 
+test('desk routing: a human send is a dispatch — @all, @name, unnamed = everyone', () => {
+  const team = ['claude', 'openai', 'grok', 'gemini'];
+  // Unnamed reaches the whole desk (desk-only rule; ordinary channels
+  // would route this to Maestro alone).
+  assert.deepEqual(agentsToAnswer(human('build the page'), team, { desk: true }), team);
+  assert.deepEqual(agentsToAnswer(human('@all status'), team, { desk: true }), team);
+  assert.deepEqual(agentsToAnswer(human('@claude fix it'), team, { desk: true }), ['claude']);
+  assert.deepEqual(agentsToAnswer(human('@Claude and @Gemini: go'), team, { desk: true }), ['claude', 'gemini']);
+  assert.deepEqual(agentsToAnswer(human('@gpt draft it'), team, { desk: true }), ['openai']);
+});
+
+test('desk routing: Maestro is never a dispatch target', () => {
+  const roster = ['maestro', 'claude', 'gemini'];
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster, { desk: true }), ['claude', 'gemini']);
+  assert.deepEqual(agentsToAnswer(human('@all status'), roster, { desk: true }), ['claude', 'gemini']);
+  // Naming yourself dispatches to nobody.
+  assert.deepEqual(agentsToAnswer(human('@maestro look at this'), roster, { desk: true }), []);
+  assert.deepEqual(agentsToAnswer(human('anything'), ['maestro'], { desk: true }), []);
+  assert.deepEqual(agentsToAnswer(human('@grok hi'), ['claude'], { desk: true }), [], 'not seated on the desk');
+});
+
+test('desk routing: agent and system messages keep the ordinary rules', () => {
+  const team = ['claude', 'openai', 'grok', 'gemini'];
+  assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:claude', body: '@gemini your turn' }, team, { desk: true }), []);
+  assert.deepEqual(agentsToAnswer({ authorKind: 'system', authorSubject: 'system:envoy', body: '@all' }, team, { desk: true }), []);
+});
+
+test('ordinary routing is untouched when desk is off or absent', () => {
+  const roster = ['maestro', 'claude', 'gemini'];
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster), ['maestro']);
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster, {}), ['maestro']);
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster, { desk: false }), ['maestro']);
+  assert.deepEqual(agentsToAnswer(human('@all status'), roster, { desk: false }), roster);
+});
+
+test('desk config: desk flag round-trips and stays out of configs that never had it', () => {
+  const plain = emptyConfig();
+  assert.equal(plain.desk, false);
+  // Byte-stability: a config without the desk flag serializes exactly
+  // as before the desk existed (no "desk" key in the stored body).
+  assert.ok(!serializeConfig(plain).includes('desk'));
+  assert.equal(parseConfig(serializeConfig(plain)).desk, false);
+  // An old stored body (no desk field at all) parses with desk off.
+  const oldBody = JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: ['claude'], joined: {}, discord: null, pendingLink: null });
+  assert.equal(parseConfig(oldBody).desk, false);
+
+  const desk = emptyConfig();
+  desk.desk = true; desk.agents = ['claude', 'gemini'];
+  const back = parseConfig(serializeConfig(desk));
+  assert.equal(back.desk, true);
+  assert.deepEqual(back.agents, ['claude', 'gemini']);
+  assert.equal(publicConfig(back).desk, true);
+  assert.equal(publicConfig(parseConfig(oldBody)).desk, false);
+});
+
+
 test('discord bot status exposes only a public invite url and a yes/no', async () => {
   const { discordBotStatus } = await import('../src/cloud/envoy-mesh.mjs');
   assert.deepEqual(discordBotStatus({}), { configured: false, inviteUrl: null });

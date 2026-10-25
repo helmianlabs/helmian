@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, agentRoomFor, agentRoomThread, dragLayout, pendingAgentWork } from '../app/envoy-workspace.js';
+import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, agentRoomFor, agentRoomThread, deskChannelFor, deskPending, deskRoster, deskTargets, dragLayout, isDeskChannel, pendingAgentWork } from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -408,6 +408,102 @@ test('I6: channel-row status markers are glyphs, not unexplained color dots', as
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.match(js, /class: 'ew-mini discord', title: 'Linked to Discord'/, 'channel rows still flag Discord links');
   assert.match(js, /class: 'ew-mini agents', title:/, 'channel rows still flag agent membership');
+});
+
+// The Maestro desk (Maestro Bite 1, 2026-10-25): the human's manager
+// seat is one channel per tenant (slug 'maestro-desk'). In the desk a
+// send is a dispatch — deskTargets mirrors the server's desk routing
+// (src/cloud/envoy-agents.mjs agentsToAnswer with desk:true) — and
+// deskPending mirrors pendingAgentWork over those targets.
+const DESK_TEAM = ['claude', 'openai', 'grok', 'gemini'];
+const DESK_JOINED = Object.fromEntries(DESK_TEAM.map((p) => [p, iso(3_600_000)]));
+const DESK_ONLINE = new Set(DESK_TEAM);
+
+test('desk identity: the desk channel is found by its reserved slug, never by title', () => {
+  const channels = [
+    { id: 'c-team', slug: 'team', title: 'Maestro', kind: 'team' },
+    { id: 'c-desk', slug: 'maestro-desk', title: 'Maestro', kind: 'team' },
+  ];
+  assert.equal(MAESTRO_DESK_SLUG, 'maestro-desk');
+  assert.equal(isDeskChannel(channels[1]), true);
+  assert.equal(isDeskChannel(channels[0]), false, 'a channel merely titled Maestro is not the desk');
+  assert.equal(isDeskChannel(null), false);
+  assert.equal(deskChannelFor(channels)?.id, 'c-desk');
+  assert.equal(deskChannelFor([]), null);
+});
+
+test('desk roster: AGENTS order, and Maestro is never on it', () => {
+  assert.deepEqual(deskRoster(['gemini', 'maestro', 'claude']), ['claude', 'gemini']);
+  assert.deepEqual(deskRoster(['maestro']), []);
+  assert.deepEqual(deskRoster([]), []);
+  assert.deepEqual(deskRoster(null), []);
+});
+
+test('desk targets: unnamed is everyone, @all is everyone, @name is the named alone', () => {
+  assert.deepEqual(deskTargets(human('m1', 'build the page'), DESK_TEAM), DESK_TEAM);
+  assert.deepEqual(deskTargets(human('m1', '@all status'), DESK_TEAM), DESK_TEAM);
+  assert.deepEqual(deskTargets(human('m1', '@Claude fix it'), DESK_TEAM), ['claude']);
+  assert.deepEqual(deskTargets(human('m1', '@Claude and @Grok: go'), DESK_TEAM), ['claude', 'grok']);
+});
+
+test('desk targets: naming Maestro dispatches to nobody — Maestro is the sender', () => {
+  assert.deepEqual(deskTargets(human('m1', '@Maestro look'), DESK_TEAM), []);
+  assert.deepEqual(deskTargets(human('m1', 'hello'), ['maestro', 'claude']), ['claude'], 'a stray maestro on the roster is stripped');
+  assert.deepEqual(deskTargets(human('m1', '@Grok hi'), ['claude']), [], 'not seated on the desk');
+});
+
+test('desk targets: agent and system messages dispatch nobody', () => {
+  const agentMsg = { id: 'm1', authorKind: 'agent', authorSubject: 'agent:claude', body: '@Gemini your turn', createdAt: iso(60_000) };
+  assert.deepEqual(deskTargets(agentMsg, DESK_TEAM), []);
+  const sysMsg = { id: 'm2', authorKind: 'system', authorSubject: 'system:envoy', body: '@all', createdAt: iso(60_000) };
+  assert.deepEqual(deskTargets(sysMsg, DESK_TEAM), []);
+});
+
+test('desk pending: an unnamed dispatch is pending for the whole online desk', () => {
+  const msgs = [human('m1', 'status, everyone')];
+  assert.deepEqual(deskPending(msgs, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), DESK_TEAM);
+  // The contrast that defines the desk: the same message under ordinary
+  // routing (roster with Maestro) is pending for Maestro alone.
+  assert.deepEqual(pendingAgentWork(msgs, ['maestro', ...DESK_TEAM], { maestro: iso(3_600_000), ...DESK_JOINED }, new Set(['maestro', ...DESK_TEAM]), NOW), ['maestro']);
+});
+
+test('desk pending: a named dispatch is pending for the named agent; its reply clears only its share', () => {
+  const msgs = [human('m1', 'status, everyone'), human('m2', '@Claude the numbers'), reply('m3', 'm2', 'claude')];
+  assert.deepEqual(deskPending(msgs, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), DESK_TEAM, 'the unnamed dispatch still waits on everyone, Claude included');
+  const afterAll = [...msgs, reply('m4', 'm1', 'claude'), reply('m5', 'm1', 'openai'), reply('m6', 'm1', 'grok'), reply('m7', 'm1', 'gemini')];
+  assert.deepEqual(deskPending(afterAll, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), []);
+});
+
+test('desk pending: offline agents and expired work are not pending', () => {
+  const msgs = [human('m1', 'status, everyone')];
+  assert.deepEqual(deskPending(msgs, DESK_TEAM, DESK_JOINED, new Set(['claude']), NOW), ['claude']);
+  const old = [human('m1', 'status, everyone', AGENT_WORK_WINDOW_MS + 1_000)];
+  assert.deepEqual(deskPending(old, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), []);
+});
+
+test('the seat on screen: banner over the thread, desk panel, and the mode hooks', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  const head = html.indexOf('ew-chat-head');
+  const banner = html.indexOf('id="ew-maestro-banner"');
+  const msgs = html.indexOf('id="ew-messages"');
+  assert.ok(head !== -1 && banner > head && banner < msgs, 'the manager-mode banner sits between the chat head and the thread');
+  assert.match(html, /id="ew-maestro-banner"[^>]*hidden/, 'the banner starts hidden — it shows only in the seat');
+  assert.match(html, /You are Maestro — manager mode/, 'the banner names the mode in plain words');
+  assert.match(html, /id="ew-maestro-exit"[^>]*>Leave the seat</, 'the banner carries the way out of the seat');
+  for (const id of ['ew-desk', 'ew-desk-handoffs', 'ew-desk-checkpoints', 'ew-desk-note']) {
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  }
+  const agentsPane = html.indexOf('id="ew-agents"');
+  const deskPanel = html.indexOf('id="ew-desk"');
+  assert.ok(deskPanel > agentsPane, 'the desk panel lives in the Agents pane');
+  for (const needle of ['function renderMaestroMode', 'function enterMaestroSeat', 'function leaveMaestroSeat', 'function loadDeskLists', "post('/api/admin/envoy/maestro-desk'", "'/api/admin/maestro/handoffs'", "'/api/admin/maestro/checkpoints'", 'inMaestroMode()', 'Dispatched to']) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
+  assert.match(css, /\.ew-maestro-banner \{/, 'envoy.css styles the banner');
+  assert.match(css, /#ew-chat\.maestro-mode \{/, 'envoy.css frames the chat pane in manager mode');
+  assert.match(css, /\.ew-channel\.seat \{/, 'envoy.css marks the seat row in the channel list');
 });
 
 test('I8: the phone panels button is the Guard shield plus a visible Guard caption', async () => {
