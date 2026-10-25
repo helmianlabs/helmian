@@ -14,6 +14,42 @@ const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
+ * Provider-NATIVE web search, per seat — the only thing the composer's
+ * web-search toggle is allowed to mean.
+ *
+ * A seat gets real search ONLY where the provider itself supplies the tool
+ * inside the same API call the seat already makes, under the credential the
+ * seat already holds. No third-party search API, no extra key:
+ *
+ * - anthropic (the Claude seat): the Messages API's server-side web_search
+ *   tool — Anthropic's own native search, the same capability the Claude
+ *   CLI exposes as its WebSearch tool. Declared in `tools` beside the
+ *   function tools; Anthropic runs the searches inside the call and returns
+ *   `server_tool_use` / `web_search_tool_result` blocks with the answer.
+ * - openai / xai: these adapters speak chat.completions with function
+ *   tools; neither wire format carries a native search declaration here
+ *   (OpenAI search lives on the Responses API, which this adapter does not
+ *   call). No declaration is sent.
+ * - gemini: this adapter sends function_declarations only; no google_search
+ *   grounding is declared, so no search happens.
+ * - custom: an arbitrary OpenAI-compatible endpoint; nothing native exists
+ *   to declare.
+ *
+ * Everywhere else the toggle falls back to the honest in-context line (see
+ * src/agent/attachments.mjs) instead of a silent pretense.
+ */
+export const ANTHROPIC_WEB_SEARCH_TOOL = Object.freeze({
+  type: 'web_search_20250305',
+  name: 'web_search',
+  max_uses: 5,
+});
+
+/** True only for seats whose adapter can declare the provider's own search. */
+export function providerHasNativeWebSearch(providerId) {
+  return providerId === 'anthropic';
+}
+
+/**
  * Second redaction layer at the outbound request boundary — the last point
  * before bytes leave for the provider. Covers any route into the request body
  * the tool-layer redaction does not (history, prompts, model-generated args).
@@ -185,6 +221,10 @@ export async function chatWithTools({
   reasoningEffortNone = false,
   images = [],
   provenance = null,
+  // The composer's web-search toggle, per turn. Honored ONLY where the
+  // provider supplies the search natively (providerHasNativeWebSearch);
+  // every other adapter ignores it, and the turn's context line says so.
+  webSearch = false,
 }) {
   let credentialType = credentialTypeHint
     ? String(credentialTypeHint).toLowerCase()
@@ -312,6 +352,7 @@ export async function chatWithTools({
       signal,
       images,
       credentialType,
+      webSearch,
     }), {
       providerId, model: resolvedModel, url: ANTHROPIC_URL, isLocal: false, provenance, startedAt,
     });
@@ -471,7 +512,7 @@ async function openAiCompatibleTurn({
   };
 }
 
-async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images = [] }) {
+async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images = [], webSearch = false }) {
   // Convert OpenAI-style messages to Anthropic
   let system = '';
   const anthMessages = [];
@@ -542,7 +583,12 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images
     system: system || undefined,
     messages: anthMessages,
   };
-  if (tools.length > 0) {
+  if (webSearch) {
+    // Anthropic's OWN server-side search, declared beside the function
+    // tools (or alone, on a no-function-tools turn). Anthropic executes
+    // the searches inside this one call; nothing client-side runs.
+    payload.tools = [...tools, { ...ANTHROPIC_WEB_SEARCH_TOOL }];
+  } else if (tools.length > 0) {
     payload.tools = tools;
   }
 
@@ -569,6 +615,11 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images
   const toolCalls = [];
   for (const b of blocks) {
     if (b.type === 'text') content += b.text;
+    // 'server_tool_use' (web_search) and 'web_search_tool_result' blocks
+    // are deliberately NOT collected: Anthropic already executed them
+    // inside this call. They are not client tool calls, and echoing them
+    // into the loop would send the runtime hunting for a tool it must
+    // never run itself.
     if (b.type === 'tool_use') {
       toolCalls.push({
         id: b.id,

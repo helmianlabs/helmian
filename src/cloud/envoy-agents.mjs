@@ -146,17 +146,79 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
 }
 
 // ── Message attachments (composer "+" picker) ─────────────────────────────
-// The picker attaches skills, connectors and plugins to a message, plus a
-// web-search on/off flag. This is the ONE shape every layer agrees on:
-// the web client builds it, envoy-chat stores it, envoy-mesh/Ably carry it,
-// and the agent runtime (src/agent/attachments.mjs) consumes it. Pure and
-// fail-closed: an unknown kind or an oversized field rejects the message
-// rather than riding along unexamined.
+// The picker attaches skills, connectors, plugins and FILES to a message,
+// plus a web-search on/off flag. This is the ONE shape every layer agrees
+// on: the web client builds it, envoy-chat stores it, envoy-mesh/Ably
+// carry it, and the agent runtime (src/agent/attachments.mjs) consumes it.
+// Pure and fail-closed: an unknown kind or an oversized field rejects the
+// message rather than riding along unexamined.
+//
+// A file attachment carries its bytes INLINE, as base64 `data`, in the
+// metadata itself: there is no upload endpoint and no byte store in the
+// cloud, and the metadata jsonb (sql/060) is the one channel every layer
+// already passes along. That choice caps the size honestly — the bounds
+// below are the feature's real limits, stated plainly in the picker.
+// Text-shaped files are inlined into the turn as text and images become
+// real image content for the provider (src/agent/attachments.mjs); any
+// other kind of file is refused here rather than stored unread.
 
-export const ATTACHMENT_KINDS = Object.freeze(['skill', 'connector', 'plugin']);
+export const ATTACHMENT_KINDS = Object.freeze(['skill', 'connector', 'plugin', 'file']);
 export const MAX_MESSAGE_ATTACHMENTS = 8;
 const ATTACHMENT_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ATTACHMENT_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*(:[a-z0-9][a-z0-9_-]*)?$/;
+
+export const FILE_ATTACHMENT_MAX_BYTES = 256 * 1024;
+export const FILE_ATTACHMENTS_MAX_TOTAL_BYTES = 512 * 1024;
+const FILE_DATA_MAX_CHARS = Math.ceil(FILE_ATTACHMENT_MAX_BYTES / 3) * 4;
+const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+const MEDIA_TYPE_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
+// The image types the turn path can hand a provider as image content
+// (src/agent/bridge.mjs's req.images filter is the same set).
+export const FILE_IMAGE_MEDIA_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/webp']);
+const FILE_TEXT_MEDIA_TYPES = new Set([
+  'application/json', 'application/xml', 'application/yaml', 'application/x-yaml',
+  'application/toml', 'application/javascript', 'application/x-sh', 'image/svg+xml',
+]);
+// When the browser reports no useful media type, the extension decides —
+// and only for kinds of file that are text by construction.
+const FILE_TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log', 'yaml', 'yml', 'toml',
+  'xml', 'html', 'htm', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py',
+  'rb', 'go', 'rs', 'java', 'c', 'h', 'cpp', 'sh', 'sql', 'ini', 'env',
+]);
+
+/**
+ * How a file attachment would be consumed by a turn: 'image' (real image
+ * content), 'text' (decoded and inlined), or null (Helmian cannot read
+ * this kind of file — refused at attach time, never stored unread).
+ */
+export function classifyFileAttachment({ name, mediaType } = {}) {
+  const type = String(mediaType ?? '').trim().toLowerCase();
+  if (FILE_IMAGE_MEDIA_TYPES.includes(type)) return 'image';
+  if (type.startsWith('text/') || FILE_TEXT_MEDIA_TYPES.has(type)) return 'text';
+  if (type === '' || type === 'application/octet-stream') {
+    const ext = String(name ?? '').trim().toLowerCase().split('.').pop();
+    if (ext && FILE_TEXT_EXTENSIONS.has(ext)) return 'text';
+  }
+  return null;
+}
+
+function fileAttachmentName(value) {
+  // A file NAME, never a path: no separators, no control characters.
+  const result = String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120);
+  if (!result || result === '.' || result === '..' || result.includes('/') || result.includes('\\')) {
+    throw new Error('attachment file name is invalid');
+  }
+  return result;
+}
+
+/** Decoded byte count of a well-formed base64 string; throws otherwise. */
+export function base64DecodedBytes(data) {
+  const text = String(data ?? '');
+  if (!text || text.length % 4 !== 0 || !BASE64_PATTERN.test(text)) throw new Error('attachment file data is invalid');
+  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;
+  return (text.length / 4) * 3 - padding;
+}
 
 function attachmentField(value, name, pattern) {
   const result = String(value ?? '').trim().toLowerCase();
@@ -174,6 +236,18 @@ export function normalizeAttachment(input) {
       key: attachmentField(input.key, 'attachment connector key', ATTACHMENT_KEY_PATTERN),
       ...(input.name ? { name: String(input.name).trim().slice(0, 120) } : {}),
     });
+  }
+  if (kind === 'file') {
+    const name = fileAttachmentName(input.name);
+    const mediaType = String(input.mediaType ?? '').trim().toLowerCase().slice(0, 100);
+    if (mediaType && !MEDIA_TYPE_PATTERN.test(mediaType)) throw new Error('attachment file media type is invalid');
+    const data = String(input.data ?? '');
+    if (data.length > FILE_DATA_MAX_CHARS) throw new Error('attachment file is too large');
+    const size = base64DecodedBytes(data);
+    if (size < 1 || size > FILE_ATTACHMENT_MAX_BYTES) throw new Error('attachment file size is invalid');
+    if (input.size !== undefined && Number(input.size) !== size) throw new Error('attachment file size is invalid');
+    if (!classifyFileAttachment({ name, mediaType })) throw new Error('attachment file type is unsupported');
+    return Object.freeze({ kind, name, mediaType, size, data });
   }
   return Object.freeze({
     kind,
@@ -195,11 +269,15 @@ export function normalizeMessageMetadata(input) {
   const seen = new Set();
   const attachments = raw.map((item) => {
     const clean = normalizeAttachment(item);
-    const id = clean.kind === 'connector' ? `connector:${clean.key}` : `${clean.kind}:${clean.name}`;
+    // Files dedupe on name AND size: two different files that share a
+    // name are both legitimate; the same file twice is not.
+    const id = clean.kind === 'connector' ? `connector:${clean.key}` : clean.kind === 'file' ? `file:${clean.name}:${clean.size}` : `${clean.kind}:${clean.name}`;
     if (seen.has(id)) throw new Error('attachment is duplicated');
     seen.add(id);
     return clean;
   });
+  const fileBytes = attachments.reduce((sum, a) => sum + (a.kind === 'file' ? a.size : 0), 0);
+  if (fileBytes > FILE_ATTACHMENTS_MAX_TOTAL_BYTES) throw new Error('attached files are too large in total');
   const webSearch = input.webSearch === undefined ? undefined : input.webSearch === true;
   if (!attachments.length && webSearch === undefined) return null;
   return Object.freeze({

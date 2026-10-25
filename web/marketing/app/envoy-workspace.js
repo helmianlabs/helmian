@@ -3,7 +3,7 @@
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
 import { addSession, sessionsFromServer } from './app-model.mjs';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
+import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
@@ -734,7 +734,24 @@ async function renderPicker(which) {
       });
       groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'PLUGINS'), h('p', { class: 'ew-note' }, g.note), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No plugins installed on your PC bridge yet.')])));
     } else if (g.id === 'upload') {
-      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'UPLOAD'), h('button', { type: 'button', class: 'ew-btn sm', disabled: true, title: g.reason }, 'Upload a file'), h('p', { class: 'ew-note' }, g.reason)));
+      const note = h('p', { class: 'ew-note' }, g.note);
+      const fileInput = h('input', { type: 'file', class: 'ew-file-input', 'aria-label': 'Choose a file to attach to this message' });
+      fileInput.addEventListener('change', async () => {
+        const file = fileInput.files?.[0];
+        fileInput.value = '';
+        if (!file) return;
+        // Refuse on name/type/size before reading a single byte.
+        const refusal = fileRefusalReason({ name: file.name, mediaType: file.type || '', size: file.size });
+        if (refusal) { note.textContent = refusal; return; }
+        try {
+          const data = await readFileAsBase64(file);
+          const r = addAttachment(ws.attach[which], { kind: 'file', name: file.name, mediaType: file.type || '', size: file.size, data });
+          if (!r.added) { note.textContent = r.reason; return; }
+          ws.attach[which] = r.list;
+          renderAttachChips(which); renderPicker(which);
+        } catch { note.textContent = 'That file could not be read.'; }
+      });
+      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'UPLOAD'), fileInput, note));
     }
   }
   panel.replaceChildren(
@@ -832,6 +849,23 @@ function slashKeydown(which, e) {
     return true;
   }
   return false;
+}
+
+// A picked file → its base64 payload (the metadata carries the bytes
+// inline; see composer-picker.mjs). Resolves with the part after the
+// data-URL comma; the picker model verifies it decodes to the file's
+// exact size before anything is attached.
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('file read failed'));
+    reader.onload = () => {
+      const text = String(reader.result ?? '');
+      const comma = text.indexOf(',');
+      resolve(comma >= 0 ? text.slice(comma + 1) : text);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 // ---------- messages ----------
