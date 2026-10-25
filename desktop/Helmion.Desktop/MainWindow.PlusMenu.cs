@@ -254,11 +254,22 @@ public partial class MainWindow
     /// says that, and the result no longer settles as "Added" — nothing was added.
     /// </para>
     /// </summary>
-    private async Task AddConnectorAsync()
+    private async Task AddConnectorAsync(bool allowNeedPrompt = true)
     {
         // Prefer MCP panel need field, then composer, then a small prompt so
         // + › Connectors never dead-ends on "Nothing yet" with nowhere to type.
-        var need = ResolveConnectorNeed();
+        //
+        // allowNeedPrompt is false ONLY for the headless fresh-workspace audit
+        // (CountFreshWorkspaceRedRows). The prompt is a modal ShowDialog: it
+        // returns only when a person clicks, and a packaged audit runs where
+        // no person is — release run 40219039046 sat in that dialog for the
+        // full 120s smoke timeout. With the prompt off and nothing typed,
+        // need is null and the row settles below on
+        // FirstRunStates.ConnectorNeed's EMPTY "search cancelled" outcome —
+        // exactly what a person cancelling the prompt produces — so the audit
+        // still measures the same state, just without asking a question
+        // nobody can answer.
+        var need = ResolveConnectorNeed(allowNeedPrompt);
 
         // "Found", not "Added". A list of GitHub repositories is not a connection,
         // and the state chip is the first thing the operator reads.
@@ -305,7 +316,7 @@ public partial class MainWindow
     /// <summary>
     /// Where the operator can type a connector need, in priority order.
     /// </summary>
-    private string? ResolveConnectorNeed()
+    private string? ResolveConnectorNeed(bool allowPrompt = true)
     {
         var fromMcp = (McpDiscoverNeedInput?.Text ?? string.Empty).Trim();
         if (fromMcp.Length > 0)
@@ -318,7 +329,7 @@ public partial class MainWindow
             && !fromConsole.StartsWith('@'))
             return fromConsole;
 
-        return PromptForConnectorNeed();
+        return allowPrompt ? PromptForConnectorNeed() : null;
     }
 
     /// <summary>
