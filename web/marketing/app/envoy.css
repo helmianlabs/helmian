@@ -525,3 +525,27 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 @media (max-width: 900px) and (pointer: coarse) {
   .int-qr { display:none; }
 }
+
+/* ── The Maestro desk (manager seat) ──────────────────────────────
+   The seat is marked in amber everywhere it appears: the seat row in
+   the channel list, the banner over the thread, and the frame on the
+   chat pane while the desk is open — manager mode is never ambiguous. */
+.ew-channel.seat { border:1px solid rgba(245,158,11,.45); background:rgba(245,158,11,.07); color:var(--text); }
+.ew-channel.seat:hover { background:rgba(245,158,11,.13); }
+.ew-channel.seat.active { background:rgba(245,158,11,.16); box-shadow:inset 3px 0 0 var(--amber); }
+.ew-channel .seat-ava { width:22px; height:22px; flex:none; margin:0; }
+.ew-mini.seat { color:var(--amber);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 3 7v2h18V7l-9-5ZM5 11v7H3v3h18v-3h-2v-7h-3v7h-3v-7h-2v7H8v-7H5Z'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 3 7v2h18V7l-9-5ZM5 11v7H3v3h18v-3h-2v-7h-3v7h-3v-7h-2v7H8v-7H5Z'/%3E%3C/svg%3E") center/contain no-repeat; }
+.ew-maestro-banner { flex:none; display:flex; align-items:center; gap:12px; padding:10px 16px; background:rgba(245,158,11,.1); border-bottom:2px solid var(--amber); }
+.ew-maestro-banner[hidden] { display:none; }
+.ew-maestro-banner img { border-radius:50%; flex:none; }
+.ew-maestro-text { flex:1 1 auto; display:flex; flex-direction:column; gap:1px; min-width:0; }
+.ew-maestro-text strong { font-size:13.5px; color:var(--text); }
+.ew-maestro-text span { font-size:12px; color:var(--muted); line-height:1.4; }
+#ew-chat.maestro-mode { box-shadow:inset 0 0 0 2px var(--amber); }
+.ew-dispatch { margin-top:3px; font-size:11.5px; font-weight:600; color:var(--amber); }
+.ew-desk-list { display:flex; flex-direction:column; gap:6px; padding:0 12px 4px; }
+.ew-desk-item { border:1px solid var(--border); border-radius:10px; background:var(--panel-2); padding:8px 10px; display:flex; flex-direction:column; gap:2px; }
+.ew-desk-item strong { font-size:12.5px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-desk-item .meta { font-size:11.5px; color:var(--muted); }

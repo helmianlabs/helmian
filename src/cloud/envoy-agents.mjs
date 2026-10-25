@@ -9,6 +9,15 @@
 //   - no mention          -> Maestro if Maestro is in the channel, else every agent
 // An agent message is answered only when Maestro (the manager) @mentions other
 // agents, one hop deep, so agents never loop on each other.
+//
+// The Maestro desk — the channel whose config carries desk:true, the human's
+// manager seat (see envoy-maestro.mjs) — routes HUMAN sends as dispatches
+// instead: @all broadcasts to every agent on the desk, @name picks the named
+// agents, and an unnamed send reaches the whole desk (that
+// unnamed-means-everyone rule is desk-only). 'maestro' is never a dispatch
+// target: in the desk, Maestro is the human sending, so there is no agent
+// behind the name to answer. Agent-authored and system messages keep the
+// ordinary rules in the desk too.
 
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini']);
 export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' });
@@ -24,6 +33,15 @@ export const CONFIG_SUBJECT = 'system:envoy-config';
 export const NOTICE_SUBJECT = 'system:envoy';
 export const CONFIG_FORMAT = 'helmian.envoy.channel-config.v1';
 
+// The desk channel is reserved by slug: the desk route (envoy-maestro.mjs)
+// creates it lazily under this slug, and envoy-mesh.mjs refuses to seed
+// desk config on any other channel.
+export const MAESTRO_DESK_SLUG = 'maestro-desk';
+// Roster the desk falls back to when it is the first thing a tenant
+// configures (no other channel to take a roster from): every worker
+// agent. 'maestro' is excluded by construction.
+export const DESK_ROSTER_FALLBACK = Object.freeze(AGENT_PROVIDERS.filter((p) => p !== 'maestro'));
+
 export function normalizeProvider(value) {
   const key = String(value ?? '').trim().toLowerCase().replace(/^@/, '');
   return ALIASES[key] ?? null;
@@ -36,7 +54,7 @@ export function agentSubject(provider) {
 }
 
 export function emptyConfig() {
-  return { format: CONFIG_FORMAT, agents: [], joined: {}, discord: null, pendingLink: null };
+  return { format: CONFIG_FORMAT, agents: [], joined: {}, discord: null, pendingLink: null, desk: false };
 }
 
 // Parse a stored config row body. Bad rows read as "not configured".
@@ -53,13 +71,17 @@ export function parseConfig(body) {
       : null;
     const joined = {};
     for (const p of agents) { const t = raw.joined?.[p]; if (t && Number.isFinite(Date.parse(t))) joined[p] = String(t); }
-    return { format: CONFIG_FORMAT, agents, joined, discord, pendingLink };
+    return { format: CONFIG_FORMAT, agents, joined, discord, pendingLink, desk: raw.desk === true };
   } catch { return null; }
 }
 
 export function serializeConfig(config) {
   const joined = {}; for (const p of config.agents ?? []) if (config.joined?.[p]) joined[p] = config.joined[p];
-  const body = JSON.stringify({ format: CONFIG_FORMAT, agents: config.agents ?? [], joined, discord: config.discord ?? null, pendingLink: config.pendingLink ?? null });
+  const stored = { format: CONFIG_FORMAT, agents: config.agents ?? [], joined, discord: config.discord ?? null, pendingLink: config.pendingLink ?? null };
+  // desk is written only when true, so every config stored before the
+  // desk existed keeps its exact bytes.
+  if (config.desk === true) stored.desk = true;
+  const body = JSON.stringify(stored);
   if (body.length > 4000) throw new Error('channel config is too large');
   return body;
 }
@@ -69,6 +91,7 @@ export function publicConfig(config, now = Date.now()) {
   const c = config ?? emptyConfig();
   return {
     agents: c.agents.map((p) => ({ provider: p, name: AGENT_NAMES[p], joinedAt: c.joined?.[p] ?? null })),
+    desk: c.desk === true,
     discord: c.discord,
     pendingLink: c.pendingLink && Date.parse(c.pendingLink.expiresAt) > now ? { expiresAt: c.pendingLink.expiresAt } : null,
   };
@@ -87,12 +110,20 @@ export function mentionsIn(text) {
 }
 
 // Which agent members should answer `message`. `members` = provider ids.
-export function agentsToAnswer(message, members) {
+// `desk: true` turns on the desk dispatch rules for human sends (see the
+// header note); every other call keeps tonight's routing exactly.
+export function agentsToAnswer(message, members, { desk = false } = {}) {
   const roster = [...new Set((members ?? []).map(normalizeProvider).filter(Boolean))];
   if (roster.length === 0) return [];
   const text = String(message?.body ?? '');
   const kind = String(message?.authorKind ?? '');
   const { all, providers } = mentionsIn(text);
+  if (desk && kind === 'human') {
+    const team = roster.filter((p) => p !== 'maestro');
+    if (all) return team;
+    if (providers.length) return team.filter((p) => providers.includes(p));
+    return team;
+  }
   if (kind === 'agent') {
     // Only Maestro dispatches, and only to the workers it names.
     if (String(message?.authorSubject ?? '') !== 'agent:maestro') return [];
