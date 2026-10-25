@@ -138,7 +138,7 @@
   "functions": {
     "api/helmian-admin.js": {
       "maxDuration": 60,
-      "includeFiles": "helmian-admin/**"
+      "includeFiles": "{helmian-admin,.helmion/commands}/**"
     }
   },
   "redirects": [
