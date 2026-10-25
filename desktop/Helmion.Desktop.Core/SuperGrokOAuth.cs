@@ -76,12 +76,12 @@ public sealed class SuperGrokOAuthClient : IDisposable
     public const string DeviceCodeGrantType = "urn:ietf:params:oauth:grant-type:device_code";
 
     /// <summary>
-    /// Minimal public-client device authorization scope. xAI requires a scope on this
+    /// Public-client device authorization scope. xAI requires a scope on this
     /// request; <c>openid</c> identifies the signed-in session and <c>offline_access</c>
-    /// requests refresh-token continuity. No chat, tool, data, or provider API scope is
-    /// requested here.
+    /// requests refresh-token continuity. <c>api:access</c> is required for the token
+    /// to be accepted by api.x.ai (without it the API returns 403 permission-denied).
     /// </summary>
-    public const string DeviceAuthorizationScope = "openid offline_access";
+    public const string DeviceAuthorizationScope = "openid profile email offline_access api:access";
 
     /// <summary>
     /// xAI's first-party device-flow client id. Confirmed as the <c>aud</c> claim of a live

@@ -130,6 +130,10 @@ function snapshotHelmionEnv(values) {
     anthropic: values.ANTHROPIC_API_KEY || '',
     gemini: values.GEMINI_API_KEY || '',
     xai: values.XAI_API_KEY || values.GROK_API_KEY || '',
+    // 'oauth' when the key in hand is a SuperGrok subscription access token
+    // (stamped by the bridge when it injects one from the vault — see
+    // src/agent/supergrok-credentials.mjs). Anything else is a plain key.
+    xaiCredentialType: String(values.HELMION_XAI_CREDENTIAL_TYPE || '').trim().toLowerCase() === 'oauth' ? 'oauth' : 'api_key',
     maestro: (values.HELMION_MAESTRO_COORDINATOR || 'Gemini').trim(),
     permissionMode: (values.HELMION_PERMISSION_MODE || 'read-only').trim(),
     workspace: values.WORKSPACE_PATH || values.HELMION_WORKSPACE_PATH || process.cwd(),
@@ -191,7 +195,7 @@ export function resolveProvider(name, env, overrides = null) {
     return { id: 'gemini', key: env.gemini, label: 'Gemini' };
   }
   if (n === 'grok' || n === 'xai') {
-    return { id: 'xai', key: env.xai, label: 'xAI Grok' };
+    return { id: 'xai', key: env.xai, label: 'xAI Grok', credentialType: env.xaiCredentialType === 'oauth' ? 'oauth' : 'api_key' };
   }
 
   const pools = [

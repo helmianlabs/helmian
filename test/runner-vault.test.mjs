@@ -107,3 +107,46 @@ test('provider key env mapping covers the bridge providers', async () => {
 test('defaultVaultPath lives under the user home', async () => {
   assert.equal(defaultVaultPath('/home/u'), join('/home/u', '.helmian', 'vault.json'));
 });
+
+test('oauth bundle round-trips and leaves api_key records untouched', async () => {
+  const { vault } = await freshVault();
+  await vault.set('gemini', 'api_key', 'gemini-key-1');
+  const bundle = {
+    accessToken: 'oauth-access-1',
+    refreshToken: 'oauth-refresh-1',
+    expiresAt: '2026-10-24T12:00:00.000Z',
+    email: 'troy@example.com',
+    origin: 'device-flow',
+  };
+  await vault.setOAuth('grok', bundle);
+  assert.deepEqual(await vault.getOAuth('grok'), bundle);
+  // The pre-existing api_key record is exactly as it was.
+  assert.equal(await vault.get('gemini'), 'gemini-key-1');
+  assert.equal(await vault.getOAuth('gemini'), null);
+});
+
+test('oauth status is presence-only and the file at rest hides the tokens', async () => {
+  const { vault, vaultPath } = await freshVault();
+  await vault.setOAuth('grok', {
+    accessToken: 'oauth-access-xyz',
+    refreshToken: 'oauth-refresh-xyz',
+    expiresAt: '2026-10-24T12:00:00.000Z',
+    email: null,
+    origin: 'device-flow',
+  });
+  const rows = await vault.status();
+  const grok = rows.find((r) => r.provider === 'grok');
+  assert.equal(grok.credential_type, 'oauth');
+  assert.ok(!JSON.stringify(rows).includes('oauth-access-xyz'));
+  assert.ok(!JSON.stringify(rows).includes('oauth-refresh-xyz'));
+  const raw = await readFile(vaultPath, 'utf8');
+  assert.ok(!raw.includes('oauth-access-xyz'));
+  assert.ok(!raw.includes('oauth-refresh-xyz'));
+});
+
+test('setOAuth rejects a bundle without an access token', async () => {
+  const { vault } = await freshVault();
+  await assert.rejects(() => vault.setOAuth('grok', { refreshToken: 'r' }), /VAULT_OAUTH_INVALID/);
+  await assert.rejects(() => vault.setOAuth('grok', null), /VAULT_OAUTH_INVALID/);
+  assert.equal(await vault.getOAuth('grok'), null);
+});

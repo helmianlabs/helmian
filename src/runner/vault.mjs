@@ -7,9 +7,10 @@
 // wiping the device token crypto-shreds the vault. No new master secret to
 // manage. Fail-closed: a missing or wrong token means the vault does not open.
 //
-// v1 scope: paste-a-key storage (API keys, long-lived tokens). No OAuth
-// device flows yet (v2). Single-user (the runner owner); per-tenant vaults
-// are a later step if the runner ever becomes shared.
+// Scope: paste-a-key storage (API keys, long-lived tokens) plus OAuth token
+// bundles from device-flow sign-ins (credential_type 'oauth', see setOAuth).
+// Single-user (the runner owner); per-tenant vaults are a later step if the
+// runner ever becomes shared.
 import { hkdfSync, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -115,6 +116,58 @@ export async function openVault({ vaultPath, deviceToken }) {
       } catch {
         // Wrong master secret (or tampered file): fail closed, never partial.
         throw new Error('VAULT_DECRYPT_FAILED');
+      }
+    },
+
+    // Stores an OAuth token bundle from a device-flow sign-in as ONE
+    // encrypted record. It rides the same AES-256-GCM envelope as API keys;
+    // credential_type 'oauth' is what tells every consumer this is NOT a key
+    // and must never be injected as one. The bundle shape mirrors the desktop
+    // SuperGrok session (SuperGrokTokens): access token, optional refresh
+    // token, expiry, and the claims the UI may show. Never logs the contents.
+    async setOAuth(provider, tokens) {
+      const p = normProvider(provider);
+      if (!tokens || typeof tokens !== 'object'
+        || typeof tokens.accessToken !== 'string' || !tokens.accessToken) {
+        throw new Error('VAULT_OAUTH_INVALID');
+      }
+      const bundle = {
+        accessToken: tokens.accessToken,
+        refreshToken: typeof tokens.refreshToken === 'string' && tokens.refreshToken ? tokens.refreshToken : null,
+        expiresAt: typeof tokens.expiresAt === 'string' && tokens.expiresAt ? tokens.expiresAt : null,
+        email: typeof tokens.email === 'string' && tokens.email ? tokens.email : null,
+        origin: typeof tokens.origin === 'string' && tokens.origin ? tokens.origin : 'device-flow',
+      };
+      records[p] = {
+        credential_type: 'oauth',
+        updated_at: new Date().toISOString(),
+        ...encrypt(dataKey, JSON.stringify(bundle)),
+      };
+      await persist();
+      return { ok: true, provider: p };
+    },
+
+    // Returns the parsed OAuth bundle, or null when the provider has no
+    // oauth record — absent entirely, or stored as an api_key instead (an
+    // api_key record must never be misread as a token bundle). A corrupt or
+    // foreign bundle parses to null; an undecryptable record fails closed
+    // exactly like get().
+    async getOAuth(provider) {
+      const p = normProvider(provider);
+      const rec = records[p];
+      if (!rec || rec.credential_type !== 'oauth') return null;
+      let plaintext;
+      try {
+        plaintext = decrypt(dataKey, rec);
+      } catch {
+        throw new Error('VAULT_DECRYPT_FAILED');
+      }
+      try {
+        const parsed = JSON.parse(plaintext);
+        if (!parsed || typeof parsed.accessToken !== 'string' || !parsed.accessToken) return null;
+        return parsed;
+      } catch {
+        return null;
       }
     },
 

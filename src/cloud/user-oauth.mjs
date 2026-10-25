@@ -237,7 +237,7 @@ a{color:#60a5fa}</style></head>
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           client_id: 'b1a00492-073a-47ea-816f-4c329264a828',
-          scope: 'openid offline_access',
+          scope: 'openid profile email offline_access api:access',
         }),
       });
       const deviceData = await deviceRes.json();
