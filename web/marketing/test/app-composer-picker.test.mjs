@@ -515,11 +515,15 @@ test('state truthfulness: an agent\'s own row follows the same facts — no conn
   const row = agentRowOf(m, 'claude');
   assert.equal(row.key, 'anthropic');
   assert.equal(row.connected, false);
-  assert.equal(row.state, 'not-connected', 'an unconnected agent row says so');
+  // Bite 3 correction: this fixture never passes a presence feed, so the
+  // truth model has only said 'unchecked' — the row must say 'not-checked',
+  // not claim 'not-connected' (the assertion previously encoded the
+  // flattening bite 3 removed). No connection still means no Works claim.
+  assert.equal(row.state, 'not-checked', 'an unchecked agent row says so — it does not guess not-connected');
   const connected = pickerModel({ connectors: {}, providers: { connections: [{ providerId: 'anthropic', lifecycle: 'verified' }] }, plugins: {}, agent: 'claude' });
   assert.equal(agentRowOf(connected, 'claude').state, 'connected', 'the row is connected only when the registry says the provider connection exists');
   assert.equal(agentRowOf(connected, 'claude-code').state, 'connected', 'Claude Code runs on the same Claude connection');
-  assert.equal(agentRowOf(connected, 'gemini').state, 'not-connected', 'other agents\' rows are untouched by it');
+  assert.equal(agentRowOf(connected, 'gemini').state, 'not-checked', 'other agents\' rows are untouched by it — and equally honest about not having checked');
 });
 
 test('agents are never attachable — not as their own row, not as connector notes', () => {
@@ -567,4 +571,37 @@ test('the session console builds its picker for the active session\'s agent', as
   assert.match(js, /function consolePickerAgent\(\)/, 'the console resolves its agent from the active session');
   assert.match(js, /g\.id === 'agent'/, 'the console renders the ecosystem group');
   assert.match(js, /item\.stateLabel/, 'the console shows the truthful state labels, not a blanket Connected');
+});
+
+// Bite 3 (2026-10-26): the agent's own-connection row printed
+// 'Not connected' even when the truth model had only said 'Not checked'
+// (neither the saved-connections read nor the runner presence feed had
+// answered). The row now carries the model's own verdict. (agentRowOf
+// is the helper defined with the parity tests above.)
+test('bite 3: agent row says Not checked when neither truth source answered', () => {
+  const m = pickerModel({});
+  const row = agentRowOf(m, 'claude');
+  assert.equal(row.status, 'unchecked');
+  assert.equal(row.state, ATTACH_STATE.NOT_CHECKED);
+  assert.equal(row.stateLabel, 'Not checked');
+});
+
+test('bite 3: agent row says Not checked when only one source answered', () => {
+  const m = pickerModel({ providers: { connections: [] } });
+  assert.equal(agentRowOf(m, 'claude').stateLabel, 'Not checked');
+});
+
+test('bite 3: agent row says Not connected only when both sources answered and neither shows it', () => {
+  const m = pickerModel({ providers: { connections: [] }, presence: [] });
+  const row = agentRowOf(m, 'claude');
+  assert.equal(row.status, 'not-connected');
+  assert.equal(row.state, ATTACH_STATE.NOT_CONNECTED);
+  assert.equal(row.stateLabel, 'Not connected');
+});
+
+test('bite 3: agent row still says Works when the runner presence or a verified connection shows it', () => {
+  const live = pickerModel({ providers: { connections: [] }, presence: [{ provider: 'claude', connected: true }] });
+  assert.equal(agentRowOf(live, 'claude').stateLabel, 'Works');
+  const saved = pickerModel({ providers: { connections: [{ providerId: 'anthropic', lifecycle: 'verified' }] }, presence: [] });
+  assert.equal(agentRowOf(saved, 'claude').stateLabel, 'Works');
 });
