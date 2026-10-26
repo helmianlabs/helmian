@@ -3,8 +3,11 @@
 # the installer as a workflow artifact only; they never publish a release.
 #
 # Code signing is optional: if the WINDOWS_CERT_PFX_BASE64 + WINDOWS_CERT_PASSWORD
-# secrets exist, the exes and installer are signed with signtool; otherwise the
-# build is unsigned (SmartScreen will warn: "More info" -> "Run anyway").
+# secrets exist, the exes and installer are signed with signtool. If instead the
+# SSL.com eSigner secrets exist (ES_USERNAME + ES_PASSWORD + ES_CREDENTIAL_ID +
+# ES_TOTP_SECRET), signing runs through SSL.com's cloud (no certificate file).
+# With neither configured the build is unsigned (SmartScreen will warn:
+# "More info" -> "Run anyway").
 name: desktop-release
 
 on:
@@ -26,6 +29,7 @@ jobs:
     timeout-minutes: 60
     env:
       HAS_CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+      HAS_ESIGNER: ${{ secrets.ES_USERNAME != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -69,6 +73,19 @@ jobs:
           }
           Remove-Item $pfx
 
+      - name: Sign executables (SSL.com eSigner cloud, only if configured)
+        if: ${{ env.HAS_ESIGNER == 'true' }}
+        uses: sslcom/actions-codesigner@develop
+        with:
+          command: batch_sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}/artifacts/Helmion-Pilot-win-x64-self-contained
+          output_path: ${{ github.workspace }}/artifacts/Helmion-Pilot-win-x64-self-contained
+          override: true
+
       - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
@@ -90,6 +107,19 @@ jobs:
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object FullName -like '*x64*' | Select-Object -Last 1
           Get-ChildItem artifacts/installer -Filter *.exe | ForEach-Object { & $signtool.FullName sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName }
           Remove-Item $pfx
+
+      - name: Sign installer (SSL.com eSigner cloud, only if configured)
+        if: ${{ env.HAS_ESIGNER == 'true' }}
+        uses: sslcom/actions-codesigner@develop
+        with:
+          command: sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          file_path: ${{ github.workspace }}/artifacts/installer/Helmian-Setup-${{ steps.ver.outputs.version }}-win-x64.exe
+          output_path: ${{ github.workspace }}/artifacts/installer
+          override: true
 
       - uses: actions/upload-artifact@v4
         with:
