@@ -26,9 +26,14 @@
 //   'connected' here: registry-connected is not turn-connected.
 // - 'not-connected': the registry holds no connection for it.
 // - 'not-checked' (label "Not checked"): an agent's own-connection row
-//   only — neither truth source (saved connections, runner presence)
+//   — neither truth source (saved connections, runner presence)
 //   answered, so the row says it has not checked instead of guessing
-//   'not-connected' (integrationsModel's 'unchecked' verdict).
+//   'not-connected' (integrationsModel's 'unchecked' verdict). A
+//   connector row carries the same word for a never-probed connection.
+// - 'stale' (label "Not checked recently") and 'failed' (label "Check
+//   failed"): connector rows only — the probe receipt exists but is
+//   old, or the last probe failed. Only a plain not-connected or
+//   revoked verdict prints 'Not connected' on a connector row.
 //
 // WHERE THE GROUPS COME FROM (real registries only; nothing invented):
 // - Agents: AGENT_ECOSYSTEMS below — the six agents, each mapped to the
@@ -92,8 +97,21 @@ import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs';
 
 // Truthful attachment states (see the header): what attaching an entry
 // actually does on the turn, never just what the registry holds.
-export const ATTACH_STATE = Object.freeze({ CONNECTED: 'connected', NOTE_ONLY: 'note-only', NOT_CONNECTED: 'not-connected', NOT_CHECKED: 'not-checked' });
-export const ATTACH_STATE_LABEL = Object.freeze({ connected: 'Works', 'note-only': 'Note only', 'not-connected': 'Not connected', 'not-checked': 'Not checked' });
+export const ATTACH_STATE = Object.freeze({ CONNECTED: 'connected', NOTE_ONLY: 'note-only', NOT_CONNECTED: 'not-connected', NOT_CHECKED: 'not-checked', STALE: 'stale', FAILED: 'failed' });
+export const ATTACH_STATE_LABEL = Object.freeze({ connected: 'Works', 'note-only': 'Note only', 'not-connected': 'Not connected', 'not-checked': 'Not checked', stale: 'Not checked recently', failed: 'Check failed' });
+
+// A connector row's state from the truth model's own status (bite 4,
+// 2026-10-26): a connected connector is note-only on the turn; every
+// other row carries its real probe verdict — stale, failed, or never
+// probed says so, and only a plain not-connected/revoked verdict prints
+// 'Not connected'. The state never gates attaching (item.connected does).
+export function connectorState(status, connected) {
+  if (connected === true) return ATTACH_STATE.NOTE_ONLY;
+  if (status === 'stale') return ATTACH_STATE.STALE;
+  if (status === 'failed') return ATTACH_STATE.FAILED;
+  if (status === 'unchecked') return ATTACH_STATE.NOT_CHECKED;
+  return ATTACH_STATE.NOT_CONNECTED;
+}
 
 // The six agents the plus is for — Troy's list, in his order — and the
 // PROVIDER_REGISTRY key of the provider connection each one runs on.
@@ -229,13 +247,14 @@ export function pickerModel({ connectors = {}, providers = {}, plugins = {}, too
   const rowByKey = new Map(rows.map((p) => [p.key, p]));
   // A connector the truth model calls connected is attachable (the
   // `connected` gate addAttachment enforces) but note-only on the turn;
-  // anything else is simply not connected. Neither is ever 'connected'
-  // as an attachment state — see the header. The item ALSO carries the
-  // truth model's own status fields (status / statusText / source) the
-  // Integrations surfaces render, so every surface tells the same story.
+  // it is never 'connected' as an attachment state — see the header.
+  // Any other row carries its real probe state via connectorState
+  // (bite 4). The item ALSO carries the truth model's own status fields
+  // (status / statusText / source) the Integrations surfaces render, so
+  // every surface tells the same story.
   const toConnectorItem = (p) => {
     const registered = p.connected === true;
-    const state = registered ? ATTACH_STATE.NOTE_ONLY : ATTACH_STATE.NOT_CONNECTED;
+    const state = connectorState(p.status, registered);
     return {
       kind: 'connector', key: p.key, name: p.name, kindLabel: p.kind, connected: registered,
       status: p.status, statusText: p.statusText, source: p.source,
@@ -262,7 +281,7 @@ export function pickerModel({ connectors = {}, providers = {}, plugins = {}, too
       seen.add(serviceId);
       const named = toolConnections.find((r) => String(r?.serviceId ?? '') === serviceId && r?.accountLabel);
       const registered = s.connected === true;
-      const state = registered ? ATTACH_STATE.NOTE_ONLY : ATTACH_STATE.NOT_CONNECTED;
+      const state = connectorState(s.status, registered);
       connectorItems.push({
         kind: 'connector', key: serviceId, name: named?.accountLabel ?? serviceId, kindLabel: 'Service', connected: registered,
         status: s.status, statusText: s.statusText, source: 'tool-connections',
