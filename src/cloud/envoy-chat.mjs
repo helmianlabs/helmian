@@ -75,7 +75,13 @@ export function createEnvoyStore(pool) {
       return withTenantTransaction(pool, context, async (client) => {
         await requireActiveTenantMembership(client, context);
         const result = await client.query('select id, slug, title, kind, created_by_subject, created_at from helmion.envoy_channels where tenant_id=$1 order by created_at, id', [context.tenantId]);
-        return { channels: result.rows.map((row) => Object.freeze({ id: String(row.id), slug: String(row.slug), title: String(row.title), kind: String(row.kind), createdBySubject: String(row.created_by_subject), createdAt: row.created_at })) };
+        const channels = result.rows.map((row) => Object.freeze({ id: String(row.id), slug: String(row.slug), title: String(row.title), kind: String(row.kind), createdBySubject: String(row.created_by_subject), createdAt: row.created_at }));
+        const configs = await client.query(
+          'select distinct on (channel_id) channel_id, body from helmion.envoy_messages where tenant_id=$1 and author_subject=$2 order by channel_id, created_at desc, id desc',
+          [context.tenantId, CONFIG_SUBJECT],
+        );
+        const configsByChannelId = new Map(configs.rows.map((row) => [String(row.channel_id), parseConfig(row.body)]));
+        return { channels: attachChannelLinks(channels, configsByChannelId), discordBot: discordBotStatus(), slackBot: slackBotStatus() };
       });
     },
     async createChannel(actor, input) {
@@ -173,4 +179,17 @@ export function createEnvoyStore(pool) {
 }
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
 import { appendAuditEvent } from './audit-event-repository.mjs';
-import { describeAuthor, normalizeMessageMetadata } from './envoy-agents.mjs';
+import { CONFIG_SUBJECT, describeAuthor, normalizeMessageMetadata, parseConfig } from './envoy-agents.mjs';
+import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
+
+// The channels list carries each channel's Discord / Slack link (from
+// its newest config row, the same rows the bridges read) plus the bot
+// status, so a client knows the true link state of every channel from
+// this one read — not only the channel it happens to have open. Pure:
+// the store hands it the parsed configs by channel id.
+export function attachChannelLinks(channels, configsByChannelId = new Map()) {
+  return channels.map((channel) => {
+    const config = configsByChannelId.get(String(channel.id)) ?? null;
+    return Object.freeze({ ...channel, discord: config?.discord ?? null, slack: config?.slack ?? null });
+  });
+}

@@ -541,16 +541,35 @@ function wireSplitters() {
 }
 
 // ---------- channels ----------
+// Per-channel link flags for the channel list: the channels API now
+// carries each channel's Discord / Slack link itself (server truth from
+// the channel's config row — the same rows the bridges read), so the
+// flags are right for every channel from this one read, including a
+// room this browser has never opened. The chanMeta cache only fills
+// the agent count, and only stands in for a link flag when an older
+// server did not send the field at all. Pure; unit tested.
+export function applyChannelLinks(channels, meta = {}) {
+  for (const c of channels) {
+    const cached = meta[c.id];
+    if (cached) c._agents = cached.a;
+    c._discord = 'discord' in c ? Boolean(c.discord) : Boolean(cached?.d);
+    c._slack = 'slack' in c ? Boolean(c.slack) : Boolean(cached?.s);
+  }
+  return channels;
+}
 async function loadChannels() {
   const { api, post, state } = ws.ctx;
   const body = await api('/api/admin/envoy/channels');
   ws.channels = Array.isArray(body.channels) ? body.channels : [];
+  // Bot status rides the channels read, so it is known at boot — the
+  // Discord panel no longer needs an open channel's config to learn it.
+  if (body.discordBot) ws.discordBot = body.discordBot;
+  if (body.slackBot) ws.slackBot = body.slackBot;
   if (!ws.channels.length && ['owner', 'admin'].includes(state.actor?.role)) {
     const made = await post('/api/admin/envoy/channels', { slug: 'team', title: 'Team', kind: 'team' });
     if (made.channel) ws.channels = [made.channel];
   }
-  const meta = ls.get('chanMeta', {});
-  for (const c of ws.channels) if (meta[c.id]) { c._agents = meta[c.id].a; c._discord = meta[c.id].d; c._slack = meta[c.id].s; }
+  applyChannelLinks(ws.channels, ls.get('chanMeta', {}));
   // The open channel is remembered per network mode: Envoy restores its
   // own last channel (the legacy 'channel' key is its fallback), Discord
   // mode restores its last linked channel.
@@ -572,11 +591,11 @@ function openNewChannel() {
 // research): a labelled two-segment switch at the top of the channels
 // pane — both names always visible, never icon-only — swaps the channel
 // list and the chat context with identical geometry. Linked channels
-// are distinguishable only through the per-channel config the client
-// already loads (the channels API carries no Discord field): _discord
-// is set from that config and cached in chanMeta, the same source the
-// old DISCORD section below the Envoy list always used.
-const linkedChannels = () => ws.channels.filter((c) => c._discord);
+// are distinguishable through the link fields the channels API now
+// carries per channel (applyChannelLinks above turns them into the
+// _discord flag); the open channel's config load still refreshes its
+// own flag and the chanMeta cache.
+export const linkedChannels = (channels = ws.channels) => channels.filter((c) => c._discord);
 const modeChannels = () => (ws.mode === 'discord' ? linkedChannels() : ws.channels);
 function renderNetSwitch() {
   const envoy = $('ew-net-envoy'); const discord = $('ew-net-discord'); if (!envoy || !discord) return;
@@ -594,28 +613,34 @@ function renderNetSwitch() {
   discord.title = n ? `Discord — ${n} linked channel${n === 1 ? '' : 's'}` : 'Discord';
 }
 // Anti-mis-send strip directly above the composer: names the network
-// and channel a message will land in, in both modes.
+// and channel a message will land in, in both modes. The wording is a
+// pure function of the mode, the open channel and its Discord link, so
+// it is unit tested without a DOM. In Discord mode the channel name
+// comes from the channel's own link (carried by the channels API),
+// falling back to the open channel's loaded config, then its title.
+export function netStripText({ mode, channel, config = null } = {}) {
+  const title = channel?.title || channel?.slug || 'channel';
+  if (mode !== 'discord' && isDeskChannel(channel)) {
+    return "You're dispatching as Maestro · the desk — replies come back under each agent's own name";
+  }
+  return mode === 'discord'
+    ? (channel ? `You're posting to Discord · #${channel.discord?.channelName || config?.discord?.channelName || title}` : "You're in Discord · no channel linked yet")
+    : `You're posting to Envoy · #${title}`;
+}
 function renderNetStrip() {
   const strip = $('ew-net-strip'); if (!strip) return;
   const ch = ws.channels.find((c) => c.id === ws.channelId);
-  const title = ch?.title || ch?.slug || 'channel';
   const dOn = ws.mode === 'discord';
   strip.classList.toggle('discord', dOn);
   $('ew-chat').classList.toggle('net-discord', dOn);
-  if (!dOn && isDeskChannel(ch)) {
-    strip.textContent = "You're dispatching as Maestro · the desk — replies come back under each agent's own name";
-    return;
-  }
-  strip.textContent = dOn
-    ? (ch ? `You're posting to Discord · #${ws.config?.discord?.channelName || title}` : "You're in Discord · no channel linked yet")
-    : `You're posting to Envoy · #${title}`;
+  strip.textContent = netStripText({ mode: ws.mode, channel: ch, config: ws.config });
 }
 function setComposer(on) {
   const box = $('maestro-input'); const btn = $('maestro-send');
   if (box) box.disabled = !on;
   if (btn) btn.disabled = !on;
 }
-const discordEmptyText = () => ws.discordBot?.configured
+export const discordEmptyText = (bot = ws.discordBot) => bot?.configured
   ? 'No channels are linked to Discord yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.'
   : 'The Helmian Discord bot is not connected yet. Once it is, linked channels mirror here.';
 // ---------- entering and leaving the seat ----------
