@@ -700,3 +700,38 @@ test('link slack: control, dialog wiring and state plumbing exist in the app', a
   assert.match(css, /\.ew-mini\.slack \{/, 'envoy.css styles the Slack channel tag');
   assert.match(css, /#ew-link-discord, #ew-link-slack \{ display:none; \}/, 'the phone head hides both link controls');
 });
+
+// Bite 2 (2026-10-26, from the forensic sweep): the Discord panel lied
+// twice — a room linked server-side but never opened in this browser
+// was invisible as linked, and the bot status only loaded with an open
+// channel, so the panel defaulted to "bot is not connected yet". The
+// channels payload now carries the links and the bot status; these
+// cases run the panel's own functions on that payload.
+test('bite 2: a room linked but never opened in this browser reads linked from the channels payload', async () => {
+  const { applyChannelLinks, linkedChannels, netStripText, discordEmptyText } = await import('../app/envoy-workspace.js');
+  // The payload as the fixed server sends it; chanMeta is EMPTY — this
+  // browser has never opened either channel.
+  const channels = applyChannelLinks([
+    { id: 'team-1', slug: 'team', title: 'Team', kind: 'team', discord: null, slack: null },
+    { id: 'room-1', slug: 'troy', title: 'troy', kind: 'agent', discord: { guildId: '1563445314692718645', channelId: '1563445315237974069', channelName: 'general', guildName: 'HELMIAN', linkedAt: null }, slack: null },
+  ], {});
+  assert.equal(channels[0]._discord, false);
+  assert.equal(channels[1]._discord, true, 'the room link comes from the payload, not from having opened the room');
+  assert.deepEqual(linkedChannels(channels).map((c) => c.id), ['room-1'], 'Discord mode has a channel to open');
+  assert.equal(netStripText({ mode: 'discord', channel: channels[1] }), "You're posting to Discord · #general");
+  assert.equal(netStripText({ mode: 'discord', channel: null }), "You're in Discord · no channel linked yet", 'the no-link wording remains for a workspace with truly nothing linked');
+});
+
+test('bite 2: bot status known at boot resolves the empty-state wording to the truth', async () => {
+  const { discordEmptyText } = await import('../app/envoy-workspace.js');
+  assert.equal(discordEmptyText({ configured: true, inviteUrl: 'https://discord.com/oauth2/authorize?client_id=1' }), 'No channels are linked to Discord yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.', 'configured bot + nothing linked says so — never "bot is not connected"');
+  assert.equal(discordEmptyText({ configured: false, inviteUrl: null }), 'The Helmian Discord bot is not connected yet. Once it is, linked channels mirror here.', 'a bot that truly is not configured keeps the original wording');
+  assert.equal(discordEmptyText(null), 'The Helmian Discord bot is not connected yet. Once it is, linked channels mirror here.');
+});
+
+test('bite 2: an older server payload (no link fields) still falls back to the chanMeta cache', async () => {
+  const { applyChannelLinks } = await import('../app/envoy-workspace.js');
+  const channels = applyChannelLinks([{ id: 'room-1', slug: 'troy', title: 'troy', kind: 'agent' }], { 'room-1': { a: 1, d: true, s: false } });
+  assert.equal(channels[0]._discord, true);
+  assert.equal(channels[0]._agents, 1);
+});
