@@ -10,7 +10,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { renderConsentPage } from './consent.mjs';
-import { POWERSHELL_COMMANDS, TOOLS } from './shared/protocol.mjs';
+import { PHONE_ACT_COMMANDS, PHONE_COMMANDS, PHONE_READ_COMMANDS, POWERSHELL_COMMANDS, TOOLS } from './shared/protocol.mjs';
 
 function safeEqual(a, b) {
   const x = createHash('sha256').update(String(a)).digest();
@@ -51,6 +51,15 @@ export function buildMcpServer(hands, auth, hooks = {}) {
     description: `${TOOLS.run_powershell.description} Commands: ${Object.entries(POWERSHELL_COMMANDS).map(([id, s]) => `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`).join('; ')}.${DEVICE_ARG}`,
     inputSchema: { commandId: z.enum(Object.keys(POWERSHELL_COMMANDS)), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: act,
   }, (args, extra) => hands.call('run_powershell', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  const phoneList = (ids) => ids.map((id) => { const s = PHONE_COMMANDS[id]; return `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`; }).join('; ');
+  server.registerTool('phone_look', {
+    description: `${TOOLS.phone_look.description} Commands: ${phoneList(PHONE_READ_COMMANDS)}.${DEVICE_ARG}`,
+    inputSchema: { commandId: z.enum([...PHONE_READ_COMMANDS]), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: ro,
+  }, (args, extra) => hands.call('phone_look', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('run_phone', {
+    description: `${TOOLS.run_phone.description} Commands: ${phoneList(PHONE_ACT_COMMANDS)}.${DEVICE_ARG}`,
+    inputSchema: { commandId: z.enum([...PHONE_ACT_COMMANDS]), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: act,
+  }, (args, extra) => hands.call('run_phone', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('open_url', { description: TOOLS.open_url.description + DEVICE_ARG, inputSchema: { url: z.string(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('open_url', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('write_file', { description: TOOLS.write_file.description + DEVICE_ARG, inputSchema: { path: z.string(), content: z.string(), ...deviceSchema }, annotations: act },

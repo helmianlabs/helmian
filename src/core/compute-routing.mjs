@@ -13,7 +13,7 @@ export const COMPUTE_TARGETS = Object.freeze(['pc', 'runner']);
 // Capabilities that physically exist only on the PC. A job that needs one of
 // these can never be silently moved to the runner.
 export const PC_ONLY_CAPABILITIES = Object.freeze([
-  'local-files', 'powershell', 'ollama', 'unity', 'pc-browser', 'pc-clipboard',
+  'local-files', 'powershell', 'ollama', 'unity', 'pc-browser', 'pc-clipboard', 'phone',
 ]);
 
 // Capabilities the runner provides and the PC may not (or must not be relied on for).
