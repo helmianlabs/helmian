@@ -45,6 +45,27 @@ export const POWERSHELL_COMMANDS = Object.freeze({
   'eas-build-status': { args: { repo: 'path' }, summary: 'tail of the latest spoke-started EAS build log in a repo, with its exit marker' },
 });
 
+// The phone family (Broad Spectrum Spoke, phone commands added 2026-10-26):
+// fixed, narrow commands for a screen-by-screen pass over the Android phone
+// paired with the PC (the spoke reaches it through the Android bridge, adb).
+// The read commands ride the phone_look tool (no Guard ask, like the file
+// reads); the changing commands ride run_phone and are Guard-gated exactly
+// like run_powershell. One registry, split by each entry's `mutating` flag;
+// validateArgs refuses a command on the wrong tool, fail closed.
+// Arg kinds: 'coord' = a screen coordinate (integer 0..12000, no default);
+// 'text' = words to type (plain string, capped in validateArgs).
+export const PHONE_COMMANDS = Object.freeze({
+  'phone-status': { mutating: false, args: {}, summary: 'is the phone there: connected or not, which phone, battery, screen on or off' },
+  'phone-screen': { mutating: false, args: {}, summary: 'a picture of the phone screen right now (small JPEG, base64, with its size)' },
+  'phone-layout': { mutating: false, args: {}, summary: 'what is on the phone screen in words: the text, buttons and fields, and where each one sits' },
+  'phone-tap': { mutating: true, args: { x: 'coord', y: 'coord' }, summary: 'tap the phone screen at one spot' },
+  'phone-swipe': { mutating: true, args: { fromX: 'coord', fromY: 'coord', toX: 'coord', toY: 'coord' }, summary: 'swipe the phone screen from one spot to another' },
+  'phone-type': { mutating: true, args: { text: 'text' }, summary: 'type words into the phone where the cursor already sits' },
+});
+
+export const PHONE_READ_COMMANDS = Object.freeze(Object.keys(PHONE_COMMANDS).filter((id) => !PHONE_COMMANDS[id].mutating));
+export const PHONE_ACT_COMMANDS = Object.freeze(Object.keys(PHONE_COMMANDS).filter((id) => PHONE_COMMANDS[id].mutating));
+
 export const TOOLS = Object.freeze({
   list_files: { mutating: false, needs: ['local-files'], description: 'List files under a folder inside the PC workspace roots.' },
   read_file: { mutating: false, needs: ['local-files'], description: 'Read a text file inside the PC workspace roots (secrets paths refused, 64 KB cap).' },
@@ -58,6 +79,8 @@ export const TOOLS = Object.freeze({
   delete_file: { mutating: true, needs: ['local-files'], description: 'Delete a file inside the PC workspace roots; a folder needs recursive: true. Needs a human Guard approval.' },
   make_dir: { mutating: true, needs: ['local-files'], description: 'Create one folder inside the PC workspace roots (its parent folder must already exist). Needs a human Guard approval.' },
   edit_file: { mutating: true, needs: ['local-files'], description: 'Replace exact text in a text file inside the PC workspace roots. Needs a human Guard approval.' },
+  phone_look: { mutating: false, needs: ['phone'], description: 'Look at the Android phone paired with the PC: is it there, a picture of its screen, or its layout in words. Read-only.' },
+  run_phone: { mutating: true, needs: ['phone'], description: 'Change something on the Android phone paired with the PC: tap, swipe, or type. Run ONE allow-listed command by id (never free text). Needs a human Guard approval.' },
 });
 
 export class ArgError extends Error {}
@@ -67,6 +90,30 @@ function str(v, name, max) {
   if (v.length > max) throw new ArgError(`${name} is longer than ${max} characters`);
   if (/[\u0000]/.test(v)) throw new ArgError(`${name} contains a NUL byte`);
   return v;
+}
+
+/** Validate one phone command call. `wantMutating` binds the tool to its half
+ * of PHONE_COMMANDS: phone_look takes only the read commands, run_phone only
+ * the changing ones; a command on the wrong tool is refused, fail closed. */
+function validatePhoneArgs(a, wantMutating) {
+  const id = str(a.commandId, 'commandId', 64);
+  const spec = PHONE_COMMANDS[id];
+  const own = wantMutating ? PHONE_ACT_COMMANDS : PHONE_READ_COMMANDS;
+  if (!spec || spec.mutating !== wantMutating) {
+    throw new ArgError(`commandId must be one of: ${own.join(', ')}`);
+  }
+  const inArgs = a.args && typeof a.args === 'object' ? a.args : {};
+  const out = {};
+  for (const [k, kind] of Object.entries(spec.args)) {
+    if (kind === 'coord') {
+      const n = Number(inArgs[k]);
+      if (!Number.isInteger(n) || n < 0 || n > 12000) throw new ArgError(`args.${k} must be a screen coordinate (integer 0..12000)`);
+      out[k] = n;
+    }
+    if (kind === 'text') out[k] = str(inArgs[k], `args.${k}`, 1000);
+  }
+  for (const k of Object.keys(inArgs)) if (!(k in spec.args)) throw new ArgError(`unexpected argument args.${k}`);
+  return { commandId: id, args: out };
 }
 
 /** Normalize and validate arguments. Returns a plain object with only known keys. */
@@ -102,6 +149,10 @@ export function validateArgs(tool, args = {}) {
       for (const k of Object.keys(inArgs)) if (!(k in spec.args)) throw new ArgError(`unexpected argument args.${k}`);
       return { commandId: id, args: out };
     }
+    case 'phone_look':
+      return validatePhoneArgs(a, false);
+    case 'run_phone':
+      return validatePhoneArgs(a, true);
     case 'open_url': {
       const raw = str(a.url, 'url', 2048);
       let u;
@@ -227,7 +278,7 @@ function contentDescriptor(text, { snippets = true, snippetMax = SNIPPET_MAX_CHA
  * itself, and its hash, are identical either way.
  */
 export function describeHandsAction(tool, args, { snippets = true } = {}) {
-  const legacy = tool === 'run_powershell' ? `hands ${tool} ${args.commandId}`
+  const legacy = (tool === 'run_powershell' || tool === 'run_phone') ? `hands ${tool} ${args.commandId}`
     : tool === 'open_url' ? `hands ${tool} ${new URL(args.url).host}`
     : `hands ${tool}`;
   let rich;
@@ -253,6 +304,13 @@ export function describeHandsAction(tool, args, { snippets = true } = {}) {
     case 'run_powershell': {
       const bits = Object.entries(args.args || {}).map(([k, v]) => `${k}: ${v}`);
       rich = bits.length ? `hands run_powershell ${args.commandId} (${bits.join(', ')})` : legacy;
+      break;
+    }
+    case 'run_phone': {
+      // The words phone-type would type are never quoted on the card (they
+      // could be a password being typed into the phone); the count is shown.
+      const bits = Object.entries(args.args || {}).map(([k, v]) => (k === 'text' ? `text: ${String(v).length} characters` : `${k}: ${v}`));
+      rich = bits.length ? `hands run_phone ${args.commandId} (${bits.join(', ')})` : legacy;
       break;
     }
     case 'open_url': {
