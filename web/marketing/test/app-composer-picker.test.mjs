@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import {
   ATTACH_STATE, FILE_MAX_BYTES, MAX_ATTACHMENTS, UPLOAD_NOTE, WEB_SEARCH_NOTE, addAttachment, agentEcosystem, applySkillToBody,
   attachmentKey, attachmentMetadata, buildMessageRequest, classifyFile,
-  fileRefusalReason, normalizeAgentKey, normalizeFileAttachment, normalizeSkillName,
+  connectorState, fileRefusalReason, normalizeAgentKey, normalizeFileAttachment, normalizeSkillName,
   pickerModel, removeAttachment,
 } from '../app/composer-picker.mjs';
 // The REAL server validator the message route applies — imported, not
@@ -604,4 +604,48 @@ test('bite 3: agent row still says Works when the runner presence or a verified 
   assert.equal(agentRowOf(live, 'claude').stateLabel, 'Works');
   const saved = pickerModel({ providers: { connections: [{ providerId: 'anthropic', lifecycle: 'verified' }] }, presence: [] });
   assert.equal(agentRowOf(saved, 'claude').stateLabel, 'Works');
+});
+
+// Bite 4 (2026-10-26): a connector row whose real probe state was stale,
+// failed, or never probed printed 'Not connected' as its label — the
+// label now carries the true state, the Integrations standard. The
+// attach gate is untouched: only a fresh verified receipt attaches.
+const connectorRowOf = (m, key) => m.groups.find((g) => g.id === 'connectors').items.find((i) => i.key === key);
+const B4_NOW = Date.parse('2026-10-25T18:00:00.000Z');
+const b4Model = (rows) => pickerModel({ connectors: CONNECTORS, providers: PROVIDERS, plugins: PLUGINS, presence: [], toolConnections: rows, now: B4_NOW });
+
+test('bite 4: a failed probe prints Check failed, not Not connected', () => {
+  const row = connectorRowOf(b4Model([{ serviceId: 'github', state: 'failed', lastVerifiedAt: null }]), 'github');
+  assert.equal(row.state, ATTACH_STATE.FAILED);
+  assert.equal(row.stateLabel, 'Check failed');
+  assert.equal(row.connected, false);
+});
+
+test('bite 4: a stale receipt prints Not checked recently', () => {
+  const row = connectorRowOf(b4Model([{ serviceId: 'github', state: 'verified', lastVerifiedAt: '2026-10-25T14:00:00.000Z' }]), 'github');
+  assert.equal(row.state, ATTACH_STATE.STALE);
+  assert.equal(row.stateLabel, 'Not checked recently');
+  assert.equal(row.connected, false, 'a stale receipt never attaches');
+});
+
+test('bite 4: a never-probed row prints Not checked', () => {
+  const row = connectorRowOf(b4Model([{ serviceId: 'github', state: 'registered', lastVerifiedAt: null }]), 'github');
+  assert.equal(row.state, ATTACH_STATE.NOT_CHECKED);
+  assert.equal(row.stateLabel, 'Not checked');
+});
+
+test('bite 4: revoked still prints Not connected, and a fresh verified receipt still prints Note only', () => {
+  const revoked = connectorRowOf(b4Model([{ serviceId: 'github', state: 'revoked', lastVerifiedAt: null }]), 'github');
+  assert.equal(revoked.stateLabel, 'Not connected');
+  const fresh = connectorRowOf(b4Model([{ serviceId: 'github', state: 'verified', lastVerifiedAt: '2026-10-25T17:45:00.000Z' }]), 'github');
+  assert.equal(fresh.state, ATTACH_STATE.NOTE_ONLY);
+  assert.equal(fresh.stateLabel, 'Note only');
+  assert.equal(fresh.connected, true);
+});
+
+test('bite 4: services that arrive only through tool connections carry the same truth', () => {
+  const row = connectorRowOf(b4Model([{ serviceId: 'vercel', state: 'failed', lastVerifiedAt: null, accountLabel: 'Vercel' }]), 'vercel');
+  assert.equal(row.stateLabel, 'Check failed');
+  assert.equal(connectorState('revoked', false), ATTACH_STATE.NOT_CONNECTED);
+  assert.equal(connectorState('connected', true), ATTACH_STATE.NOTE_ONLY);
 });
