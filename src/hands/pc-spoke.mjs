@@ -24,9 +24,9 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { copyFile, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { homedir, hostname, platform } from 'node:os';
+import { homedir, hostname, platform, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { MAX_OUTPUT_BYTES, TOOLS, cleanScopeSummary, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
+import { MAX_OUTPUT_BYTES, PHONE_COMMANDS, TOOLS, cleanScopeSummary, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
 import { defaultRootGrantsPath, loadRootGrants } from './root-grants.mjs';
 
 export { defaultRootGrantsPath } from './root-grants.mjs';
@@ -153,6 +153,116 @@ function run(file, args, { timeoutMs = 30000, spawnImpl = spawn } = {}) {
     child.on('error', (e) => { clearTimeout(t); resolveRun({ ok: false, error: e.message }); });
     child.on('close', (code) => { clearTimeout(t); resolveRun(code === 0 ? { ok: true, output: cap(out) } : { ok: false, error: `exit ${code}: ${cap(err || out).slice(0, 2000)}` }); });
   });
+}
+
+// ─── Phone channel (Broad Spectrum Spoke phone commands) ───────────────────
+// The spoke reaches the Android phone paired with this PC through the
+// Android bridge (adb), always with fixed argument arrays — never a shell,
+// never free text. Every phone command first asks adb which phones are
+// there and uses the first fully-authorized one; no phone (or a phone that
+// has not allowed debugging) is an honest error, never a guess.
+
+function runBinary(file, args, { timeoutMs = 30000, spawnImpl = spawn, maxBytes = 8 * 1024 * 1024 } = {}) {
+  return new Promise((resolveRun) => {
+    const chunks = [];
+    let size = 0;
+    let err = '';
+    let child;
+    try { child = spawnImpl(file, args, { shell: false, windowsHide: true }); }
+    catch (e) { resolveRun({ ok: false, error: e.message }); return; }
+    const t = setTimeout(() => { try { child.kill(); } catch {} }, timeoutMs);
+    child.stdout?.on('data', (d) => { size += d.length; if (size <= maxBytes) chunks.push(d); });
+    child.stderr?.on('data', (d) => { if (err.length < 8192) err += d; });
+    child.on('error', (e) => { clearTimeout(t); resolveRun({ ok: false, error: e.message }); });
+    child.on('close', (code) => { clearTimeout(t); resolveRun(code === 0 ? { ok: true, buffer: Buffer.concat(chunks) } : { ok: false, error: `exit ${code}: ${err.slice(0, 500)}` }); });
+  });
+}
+
+const NO_PHONE = 'no phone found: no Android phone is connected to this PC, or the phone has not allowed USB debugging on it';
+
+async function phoneSerial(spawnImpl) {
+  const r = await run('adb', ['devices'], { spawnImpl });
+  if (!r.ok) return { error: `the Android bridge (adb) did not answer on this PC: ${r.error}` };
+  const serials = r.output.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\tdevice$/.test(l)).map((l) => l.split(/\s+/)[0]);
+  if (!serials.length) return { error: NO_PHONE };
+  return { serial: serials[0], count: serials.length };
+}
+
+async function phoneStatus(spawnImpl) {
+  const found = await phoneSerial(spawnImpl);
+  if (found.error) return { ok: false, error: found.error };
+  const s = found.serial;
+  const model = await run('adb', ['-s', s, 'shell', 'getprop', 'ro.product.model'], { spawnImpl });
+  const battery = await run('adb', ['-s', s, 'shell', 'dumpsys', 'battery'], { spawnImpl });
+  const power = await run('adb', ['-s', s, 'shell', 'dumpsys', 'power'], { spawnImpl });
+  const level = /level:\s*(\d+)/.exec(battery.output || '')?.[1];
+  const awake = /mWakefulness=(\w+)/.exec(power.output || '')?.[1];
+  return {
+    ok: true,
+    output: [
+      `phone: connected${found.count > 1 ? ` (${found.count} phones connected; using the first)` : ''}`,
+      `model: ${(model.ok && model.output.trim()) || 'unknown'}`,
+      `battery: ${level ? `${level}%` : 'unknown'}`,
+      `screen: ${awake ? (awake === 'Awake' ? 'on' : 'off') : 'unknown'}`,
+    ].join('\n'),
+  };
+}
+
+function decodeXmlText(s) {
+  return s.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#10;/g, ' ').replace(/&amp;/g, '&');
+}
+
+function layoutLines(xml) {
+  const lines = [];
+  const nodeRe = /<node\b([^>]*?)\/?>/g;
+  let m;
+  while ((m = nodeRe.exec(xml)) && lines.length < 120) {
+    const attrs = {};
+    for (const am of m[1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[am[1]] = am[2];
+    const text = decodeXmlText((attrs.text || '').trim());
+    const desc = decodeXmlText((attrs['content-desc'] || '').trim());
+    const cls = (attrs.class || '').split('.').pop() || '';
+    if (!text && !desc && attrs.clickable !== 'true') continue;
+    const kind = /Button/.test(cls) ? 'button' : /EditText/.test(cls) ? 'field' : /CheckBox/.test(cls) ? 'checkbox' : /TextView/.test(cls) ? 'text' : (cls.toLowerCase() || 'item');
+    lines.push(`${kind}${(text || desc) ? ` "${text || desc}"` : ''} at ${attrs.bounds || '?'}`);
+  }
+  return lines;
+}
+
+// Shrink a screencap PNG (already on disk at pngPath) to a small JPEG and
+// print ONLY its base64. Width is fixed at 540; the quality steps down until
+// the base64 fits the spoke's normal output size, else a marker line says
+// the screen was too dense (phone-layout is then the honest fallback).
+function phoneScreenScript(pngPath) {
+  const q = pngPath.replace(/'/g, "''");
+  return `$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile('${q}'); $w = 540; $h = [int]($img.Height * $w / $img.Width); $bmp = New-Object System.Drawing.Bitmap $w, $h; $g = [System.Drawing.Graphics]::FromImage($bmp); $g.DrawImage($img, 0, 0, $w, $h); $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }; $b64 = ''; foreach ($quality in @(60, 45, 32, 24)) { $params = New-Object System.Drawing.Imaging.EncoderParameters 1; $params.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality, [long]$quality); $ms = New-Object IO.MemoryStream; $bmp.Save($ms, $codec, $params); $b64 = [Convert]::ToBase64String($ms.ToArray()); if ($b64.Length -le 58000) { break } }; if ($b64.Length -gt 58000) { 'SCREEN_TOO_DENSE' } else { $b64 }`;
+}
+
+async function phoneScreen(spawnImpl) {
+  const found = await phoneSerial(spawnImpl);
+  if (found.error) return { ok: false, error: found.error };
+  const shot = await runBinary('adb', ['-s', found.serial, 'exec-out', 'screencap', '-p'], { spawnImpl, timeoutMs: 45000 });
+  if (!shot.ok) return { ok: false, error: `the phone would not give its screen picture: ${shot.error}` };
+  if (!shot.buffer.length) return { ok: false, error: 'the phone returned an empty screen picture (its screen may be off or locked)' };
+  const tmp = join(tmpdir(), `helmian-phone-screen-${process.pid}.png`);
+  try {
+    await writeFile(tmp, shot.buffer);
+    const r = await run('powershell.exe', [...PS, phoneScreenScript(tmp)], { spawnImpl, timeoutMs: 45000 });
+    if (!r.ok) return { ok: false, error: `the screen picture could not be shrunk on the PC: ${r.error}` };
+    const b64 = r.output.trim();
+    if (b64 === 'SCREEN_TOO_DENSE') return { ok: false, error: 'the screen picture is too dense to fit the result size; phone-layout gives the same screen in words' };
+    if (!/^[A-Za-z0-9+/=]+$/.test(b64)) return { ok: false, error: 'the screen picture came back in an unexpected shape' };
+    return { ok: true, output: JSON.stringify({ format: 'jpeg', width: 540, base64: b64 }) };
+  } finally {
+    await rm(tmp, { force: true }).catch(() => {});
+  }
+}
+
+// adb's on-device typing takes spaces as %s and chokes on shell characters,
+// so the fixed command accepts a plain set only and converts spaces itself.
+function phoneTypeArg(text) {
+  if (!/^[A-Za-z0-9 .,!?@'_\-+/:;()]+$/.test(text)) return null;
+  return text.replace(/ /g, '%s');
 }
 
 const PS = ['-NoProfile', '-NonInteractive', '-Command'];
@@ -328,6 +438,51 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
           if (PS_SCRIPTS[commandId]) return run('powershell.exe', [...PS, PS_SCRIPTS[commandId]], { spawnImpl });
           return { ok: false, error: 'command not on the PC allow-list' };
         }
+        case 'phone_look':
+        case 'run_phone': {
+          const { commandId, args: a } = args;
+          const pspec = PHONE_COMMANDS[commandId];
+          if (!pspec || pspec.mutating !== (job.tool === 'run_phone')) return { ok: false, error: 'command not on the PC allow-list' };
+          // Only the screen picture is Windows-shaped (its shrink step is a
+          // PowerShell/.NET one); the rest of the phone channel is pure adb.
+          if (commandId === 'phone-screen' && platform() !== 'win32') return { ok: false, error: 'phone-screen is only wired for Windows PCs' };
+          switch (commandId) {
+            case 'phone-status': return phoneStatus(spawnImpl);
+            case 'phone-screen': return phoneScreen(spawnImpl);
+            case 'phone-layout': {
+              const found = await phoneSerial(spawnImpl);
+              if (found.error) return { ok: false, error: found.error };
+              const dump = await runBinary('adb', ['-s', found.serial, 'exec-out', 'uiautomator', 'dump', '/dev/tty'], { spawnImpl });
+              if (!dump.ok) return { ok: false, error: `the phone would not describe its screen: ${dump.error}` };
+              const lines = layoutLines(dump.buffer.toString('utf8'));
+              return lines.length
+                ? { ok: true, output: cap(lines.join('\n')) }
+                : { ok: false, error: 'the phone described an empty screen (it may be locked or still waking up)' };
+            }
+            case 'phone-tap': {
+              const found = await phoneSerial(spawnImpl);
+              if (found.error) return { ok: false, error: found.error };
+              const r = await run('adb', ['-s', found.serial, 'shell', 'input', 'tap', String(a.x), String(a.y)], { spawnImpl });
+              return r.ok ? { ok: true, output: `tapped at ${a.x}, ${a.y}` } : r;
+            }
+            case 'phone-swipe': {
+              const found = await phoneSerial(spawnImpl);
+              if (found.error) return { ok: false, error: found.error };
+              const r = await run('adb', ['-s', found.serial, 'shell', 'input', 'swipe', String(a.fromX), String(a.fromY), String(a.toX), String(a.toY), '300'], { spawnImpl });
+              return r.ok ? { ok: true, output: `swiped from ${a.fromX}, ${a.fromY} to ${a.toX}, ${a.toY}` } : r;
+            }
+            case 'phone-type': {
+              const found = await phoneSerial(spawnImpl);
+              if (found.error) return { ok: false, error: found.error };
+              const typed = phoneTypeArg(a.text);
+              if (typed == null) return { ok: false, error: "phone-type can only type plain letters, numbers, spaces and . , ! ? @ ' _ - + / : ; ( ) — one of those characters was in the text" };
+              const r = await run('adb', ['-s', found.serial, 'shell', 'input', 'text', typed], { spawnImpl });
+              return r.ok ? { ok: true, output: `typed ${a.text.length} characters` } : r;
+            }
+            default:
+              return { ok: false, error: 'command not on the PC allow-list' };
+          }
+        }
         case 'open_url': {
           if (platform() !== 'win32') return { ok: false, error: 'open_url is only wired for Windows' };
           return run('explorer.exe', [args.url], { spawnImpl }).then((r) => (r.ok || /exit 1/.test(r.error || '') ? { ok: true, output: `Opened ${args.url}` } : r));
@@ -471,6 +626,10 @@ export async function buildScopeSummary({ roots = [], rootGrantsPath = null, gua
 async function detectCapabilities(fetchImpl) {
   const caps = ['local-files'];
   if (platform() === 'win32') caps.push('powershell', 'pc-browser');
+  // The phone capability means the Android bridge answers on this PC; an
+  // actually-connected phone is a per-call question (phone-status).
+  const adb = await run('adb', ['version'], { timeoutMs: 5000 }).catch(() => ({ ok: false }));
+  if (adb.ok) caps.push('phone');
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 1500);

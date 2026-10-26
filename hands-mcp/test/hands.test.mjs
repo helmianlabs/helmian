@@ -18,7 +18,7 @@ import { createHands } from '../src/hands.mjs';
 import { createApp } from '../src/server.mjs';
 import { createSpokeTokens } from '../src/spoke-tokens.mjs';
 import { confinePath, createExecutor, pairSpoke, readSpokeConfig, startSpoke } from '../../src/hands/pc-spoke.mjs';
-import { buildGuardAction, describeHandsAction, guardActionHash, POWERSHELL_COMMANDS, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
+import { buildGuardAction, describeHandsAction, guardActionHash, PHONE_ACT_COMMANDS, PHONE_READ_COMMANDS, POWERSHELL_COMMANDS, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
 import { listen, mockGuard, pkce } from './helpers.mjs';
 
 const PASS = 'correct horse battery staple';
@@ -780,4 +780,89 @@ test('a secret-shaped value in the args never appears raw in the summary', () =>
 test('summaries stay inside the Guard length cap even for huge first lines', () => {
   const a = buildGuardAction('write_file', { path: 'E:\\Helmion\\big.txt', content: 'x'.repeat(5000) });
   assert.ok(a.summary.length <= 460, `summary was ${a.summary.length} chars`);
+});
+
+// ---- the phone family: phone_look (read) + run_phone (Guard-gated) ----
+
+test('phone catalog: the six phone commands carry the right gating flags and argument rules', () => {
+  assert.equal(TOOLS.phone_look.mutating, false);
+  assert.equal(TOOLS.run_phone.mutating, true);
+  assert.deepEqual(TOOLS.phone_look.needs, ['phone']);
+  assert.deepEqual(TOOLS.run_phone.needs, ['phone']);
+  assert.deepEqual(PHONE_READ_COMMANDS, ['phone-status', 'phone-screen', 'phone-layout']);
+  assert.deepEqual(PHONE_ACT_COMMANDS, ['phone-tap', 'phone-swipe', 'phone-type']);
+  assert.deepEqual(validateArgs('phone_look', { commandId: 'phone-status' }), { commandId: 'phone-status', args: {} });
+  assert.deepEqual(validateArgs('run_phone', { commandId: 'phone-tap', args: { x: 540, y: 1200 } }), { commandId: 'phone-tap', args: { x: 540, y: 1200 } });
+  // A command on the wrong tool is refused, fail closed, both ways.
+  assert.throws(() => validateArgs('phone_look', { commandId: 'phone-tap', args: { x: 1, y: 2 } }), /commandId must be one of/);
+  assert.throws(() => validateArgs('run_phone', { commandId: 'phone-status' }), /commandId must be one of/);
+  assert.throws(() => validateArgs('run_phone', { commandId: 'phone-tap', args: { x: -1, y: 2 } }), /screen coordinate/);
+  assert.throws(() => validateArgs('run_phone', { commandId: 'phone-tap', args: { x: 1, y: 2, z: 3 } }), /unexpected argument/);
+  assert.throws(() => validateArgs('run_phone', { commandId: 'phone-nuke', args: {} }), /commandId must be one of/);
+  // The Guard card names the action; the words phone-type types are never quoted.
+  assert.equal(describeHandsAction('run_phone', { commandId: 'phone-tap', args: { x: 540, y: 1200 } }), 'hands run_phone phone-tap (x: 540, y: 1200)');
+  const typeCard = describeHandsAction('run_phone', { commandId: 'phone-type', args: { text: 'a password' } });
+  assert.match(typeCard, /10 characters/);
+  assert.ok(!typeCard.includes('a password'));
+});
+
+function fakeAdbSpawn({ phoneThere = true } = {}) {
+  return (file, args) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    let out = '';
+    if (file === 'adb' && args[0] === 'devices') out = phoneThere ? 'List of devices attached\npixel-1\tdevice\n' : 'List of devices attached\n';
+    else if (file === 'adb' && args.includes('getprop')) out = 'Pixel 8\n';
+    else if (file === 'adb' && args.includes('battery')) out = '  level: 87\n  scale: 100\n';
+    else if (file === 'adb' && args.includes('power')) out = 'mWakefulness=Awake\n';
+    else if (file === 'adb' && args.includes('uiautomator')) out = '<?xml version="1.0"?><hierarchy><node text="Forge TMS" class="android.widget.TextView" bounds="[40,80][600,140]" /><node text="" content-desc="Sign in" class="android.widget.Button" clickable="true" bounds="[120,860][960,940]" /><node text="driver@example.com" class="android.widget.EditText" bounds="[120,300][960,380]" /></hierarchy>';
+    else if (file === 'adb' && args.includes('input')) out = '';
+    queueMicrotask(() => { if (out) child.stdout.emit('data', Buffer.from(out)); child.emit('close', 0); });
+    return child;
+  };
+}
+
+test('phone_look reads the phone through the bridge: status and layout in words, no Guard', async () => {
+  const root = await workspace();
+  const exec = createExecutor({ roots: [root], spawnImpl: fakeAdbSpawn() });
+  const status = await exec.execute({ tool: 'phone_look', args: { commandId: 'phone-status', args: {} } });
+  assert.equal(status.ok, true, status.error);
+  assert.match(status.output, /phone: connected/);
+  assert.match(status.output, /model: Pixel 8/);
+  assert.match(status.output, /battery: 87%/);
+  assert.match(status.output, /screen: on/);
+  const layout = await exec.execute({ tool: 'phone_look', args: { commandId: 'phone-layout', args: {} } });
+  assert.equal(layout.ok, true, layout.error);
+  assert.match(layout.output, /text "Forge TMS" at \[40,80\]\[600,140\]/);
+  assert.match(layout.output, /button "Sign in" at \[120,860\]\[960,940\]/);
+  assert.match(layout.output, /field "driver@example\.com"/);
+  // No phone there: an honest error, not a guess.
+  const none = createExecutor({ roots: [root], spawnImpl: fakeAdbSpawn({ phoneThere: false }) });
+  const missing = await none.execute({ tool: 'phone_look', args: { commandId: 'phone-status', args: {} } });
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /no phone found/);
+});
+
+test('run_phone changes the phone only after a human Guard approval the PC verifies itself', async () => {
+  const guard = mockGuard();
+  const root = await workspace();
+  const iat = Math.floor(Date.now() / 1000);
+  const tapArgs = { commandId: 'phone-tap', args: { x: 540, y: 1200 } };
+  const mk = (tool, args, id) => ({ tool, args, nonce: 'n'.repeat(20), guardDecision: guard.forge({ decisionId: id, verdict: 'allow', actionHash: guardActionHash(buildGuardAction(tool, args)), deviceId: 'hands-mcp', nonce: 'n'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' }) });
+  // No pinned Guard key on the PC: refused before anything runs.
+  const unpinned = await createExecutor({ roots: [root], spawnImpl: fakeAdbSpawn() }).execute(mk('run_phone', tapArgs, 'p1'));
+  assert.equal(unpinned.ok, false);
+  assert.match(unpinned.error, /no Executive Guard key is pinned/);
+  // Pinned + a real human approval envelope: the tap runs.
+  const exec = createExecutor({ roots: [root], guardPublicKeyX: guard.x, spawnImpl: fakeAdbSpawn() });
+  const tapped = await exec.execute(mk('run_phone', tapArgs, 'p2'));
+  assert.equal(tapped.ok, true, tapped.error);
+  assert.match(tapped.output, /tapped at 540, 1200/);
+  // Typing refuses characters the fixed command cannot safely type.
+  const typeArgs = { commandId: 'phone-type', args: { text: 'pay $500 & go' } };
+  const badType = await exec.execute(mk('run_phone', typeArgs, 'p3'));
+  assert.equal(badType.ok, false);
+  assert.match(badType.error, /can only type plain/);
 });
