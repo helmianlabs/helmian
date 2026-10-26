@@ -25,6 +25,10 @@
 //   is explicit about this). A connector can therefore NEVER carry
 //   'connected' here: registry-connected is not turn-connected.
 // - 'not-connected': the registry holds no connection for it.
+// - 'not-checked' (label "Not checked"): an agent's own-connection row
+//   only — neither truth source (saved connections, runner presence)
+//   answered, so the row says it has not checked instead of guessing
+//   'not-connected' (integrationsModel's 'unchecked' verdict).
 //
 // WHERE THE GROUPS COME FROM (real registries only; nothing invented):
 // - Agents: AGENT_ECOSYSTEMS below — the six agents, each mapped to the
@@ -88,8 +92,8 @@ import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs';
 
 // Truthful attachment states (see the header): what attaching an entry
 // actually does on the turn, never just what the registry holds.
-export const ATTACH_STATE = Object.freeze({ CONNECTED: 'connected', NOTE_ONLY: 'note-only', NOT_CONNECTED: 'not-connected' });
-export const ATTACH_STATE_LABEL = Object.freeze({ connected: 'Works', 'note-only': 'Note only', 'not-connected': 'Not connected' });
+export const ATTACH_STATE = Object.freeze({ CONNECTED: 'connected', NOTE_ONLY: 'note-only', NOT_CONNECTED: 'not-connected', NOT_CHECKED: 'not-checked' });
+export const ATTACH_STATE_LABEL = Object.freeze({ connected: 'Works', 'note-only': 'Note only', 'not-connected': 'Not connected', 'not-checked': 'Not checked' });
 
 // The six agents the plus is for — Troy's list, in his order — and the
 // PROVIDER_REGISTRY key of the provider connection each one runs on.
@@ -286,7 +290,12 @@ export function pickerModel({ connectors = {}, providers = {}, plugins = {}, too
   const agentRow = (eco) => {
     const p = rowByKey.get(eco.registryKey);
     const connected = p?.connected === true;
-    const state = connected ? ATTACH_STATE.CONNECTED : ATTACH_STATE.NOT_CONNECTED;
+    // The label carries the truth model's own verdict, never a flattening
+    // of it: 'Not checked' when neither source answered (providerRow's
+    // 'unchecked'), 'Not connected' only when both answered and neither
+    // shows the connection. (Bite 3, 2026-10-26: the row previously
+    // printed 'Not connected' for the unchecked case too.)
+    const state = connected ? ATTACH_STATE.CONNECTED : (p?.status === 'unchecked' ? ATTACH_STATE.NOT_CHECKED : ATTACH_STATE.NOT_CONNECTED);
     return Object.freeze({
       kind: 'provider', key: eco.registryKey, agent: eco.agent, name: eco.name, kindLabel: 'This agent\'s connection',
       connected, status: p?.status ?? 'not-connected', statusText: p?.statusText ?? 'Not connected', source: p?.source ?? 'registry',
