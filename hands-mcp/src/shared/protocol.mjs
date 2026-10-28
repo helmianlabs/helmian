@@ -43,6 +43,8 @@ export const POWERSHELL_COMMANDS = Object.freeze({
   'toolchain-versions': { args: {}, summary: 'node, npm, npx and eas versions on the PC' },
   'eas-build': { args: { repo: 'path' }, summary: 'start an EAS Android preview build in a repo (detached; output logged in the repo)' },
   'eas-build-status': { args: { repo: 'path' }, summary: 'tail of the latest spoke-started EAS build log in a repo, with its exit marker' },
+  'elevenlabs-onboard': { args: { repo: 'path' }, summary: 'start the ElevenLabs CLI onboard in a repo (detached; output logged in the repo)' },
+  'elevenlabs-onboard-status': { args: { repo: 'path' }, summary: 'tail of the latest spoke-started ElevenLabs onboard log in a repo, with its exit marker' },
 });
 
 // The phone family (Broad Spectrum Spoke, phone commands added 2026-10-26):

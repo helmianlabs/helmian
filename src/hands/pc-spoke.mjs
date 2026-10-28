@@ -435,6 +435,28 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
             const script = `$log = Get-ChildItem -LiteralPath '${q}' -Filter '.helmian-eas-build-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if (!$log) { 'no spoke-started EAS build log in this repo' } else { "log: $($log.Name) - last write $($log.LastWriteTime)"; Get-Content -LiteralPath $log.FullName -Tail 40 }`;
             return run('powershell.exe', [...PS, script], { spawnImpl });
           }
+          if (commandId === 'elevenlabs-onboard') {
+            // Same detached shape as eas-build: the ElevenLabs onboard can
+            // wait on its browser key approval, which far outlives the
+            // spoke's 30 s job window, so cmd.exe runs it hidden with all
+            // output redirected into a log in the repo, appending a
+            // HELMIAN_ONBOARD_EXIT=<code> marker at the end (delayed
+            // expansion via /v:on). elevenlabs-onboard-status reads the log
+            // back. The API key never passes through the spoke or the door:
+            // the CLI reads the repo's own .env.local, or runs its own
+            // browser approval and writes that file itself. Only the
+            // confined repo path varies; it is single-quote-escaped.
+            const repo = await confineFor(a.repo);
+            const q = repo.replace(/'/g, "''");
+            const script = `$repo = '${q}'; $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'; $log = Join-Path $repo (".helmian-elevenlabs-onboard-$stamp.log"); $inner = 'npx -y @elevenlabs/cli@latest onboard init > "' + $log + '" 2>&1 & echo HELMIAN_ONBOARD_EXIT=!ERRORLEVEL! >> "' + $log + '"'; $p = Start-Process cmd.exe -ArgumentList @('/v:on', '/c', $inner) -WorkingDirectory $repo -WindowStyle Hidden -PassThru; "onboard started: pid $($p.Id); log: $log"`;
+            return run('powershell.exe', [...PS, script], { spawnImpl });
+          }
+          if (commandId === 'elevenlabs-onboard-status') {
+            const repo = await confineFor(a.repo);
+            const q = repo.replace(/'/g, "''");
+            const script = `$log = Get-ChildItem -LiteralPath '${q}' -Filter '.helmian-elevenlabs-onboard-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if (!$log) { 'no spoke-started ElevenLabs onboard log in this repo' } else { "log: $($log.Name) - last write $($log.LastWriteTime)"; Get-Content -LiteralPath $log.FullName -Tail 40 }`;
+            return run('powershell.exe', [...PS, script], { spawnImpl });
+          }
           if (PS_SCRIPTS[commandId]) return run('powershell.exe', [...PS, PS_SCRIPTS[commandId]], { spawnImpl });
           return { ok: false, error: 'command not on the PC allow-list' };
         }
