@@ -45,6 +45,20 @@ export const POWERSHELL_COMMANDS = Object.freeze({
   'eas-build-status': { args: { repo: 'path' }, summary: 'tail of the latest spoke-started EAS build log in a repo, with its exit marker' },
   'elevenlabs-onboard': { args: { repo: 'path' }, summary: 'start the ElevenLabs CLI onboard in a repo (detached; output logged in the repo)' },
   'elevenlabs-onboard-status': { args: { repo: 'path' }, summary: 'tail of the latest spoke-started ElevenLabs onboard log in a repo, with its exit marker' },
+  'run-command': { args: { repo: 'path', command: 'text' }, summary: 'run a command line in a repo on the PC (the Guard approval shows the exact line; output returned, 25 second limit)' },
+});
+
+// The Linux box build family (fleet cloud door, added 2026-10-27 on Troy's
+// direct order): fixed, narrow commands so a Scribe-connected AI can build
+// inside the box spoke's roots. Long work runs detached with a log in the
+// folder, the same pattern as eas-build on the PC.
+export const BUILD_COMMANDS = Object.freeze({
+  'node-version': { args: {}, summary: 'node version on the box' },
+  'npm-version': { args: {}, summary: 'npm version on the box' },
+  'install-start': { args: { repo: 'path' }, summary: 'start npm install in a folder inside the box roots (detached; output logged in the folder)' },
+  'build-start': { args: { repo: 'path' }, summary: 'start npm run build in a folder inside the box roots (detached; output logged in the folder)' },
+  'build-status': { args: { repo: 'path' }, summary: 'tail of the latest spoke-started build log in a folder, with its exit marker' },
+  'run-command': { args: { repo: 'path', command: 'text' }, summary: 'run a command line in a folder inside the box roots (the Guard approval shows the exact line; output returned, 25 second limit)' },
 });
 
 // The phone family (Broad Spectrum Spoke, phone commands added 2026-10-26):
@@ -74,6 +88,7 @@ export const TOOLS = Object.freeze({
   search_files: { mutating: false, needs: ['local-files'], description: 'Search inside the PC workspace roots: match file names by glob and/or file text by a plain-text query (secrets paths refused, results capped).' },
   ollama_generate: { mutating: false, needs: ['ollama'], description: 'Ask a local Ollama model on the PC. Free local compute; nothing leaves the PC except the answer.' },
   run_powershell: { mutating: true, needs: ['powershell'], description: 'Run ONE allow-listed command by id (never free text). Needs a human Guard approval.' },
+  run_build: { mutating: true, needs: ['linux-build'], description: 'Run ONE allow-listed build command by id on the Linux box (never free text). Needs a human Guard approval.' },
   open_url: { mutating: true, needs: ['pc-browser'], description: 'Open an https URL in the PC browser. Needs a human Guard approval.' },
   write_file: { mutating: true, needs: ['local-files'], description: 'Write a text file inside the PC workspace roots. Needs a human Guard approval.' },
   move_file: { mutating: true, needs: ['local-files'], description: 'Move or rename a file or folder inside the PC workspace roots. Refuses if the destination already exists. Needs a human Guard approval.' },
@@ -142,6 +157,25 @@ export function validateArgs(tool, args = {}) {
       const out = {};
       for (const [k, kind] of Object.entries(spec.args)) {
         if (kind === 'path') out[k] = str(inArgs[k], `args.${k}`, 1024);
+        if (kind === 'text') out[k] = str(inArgs[k], `args.${k}`, 4000);
+        if (kind === 'int') {
+          const n = inArgs[k] == null ? 10 : Number(inArgs[k]);
+          if (!Number.isInteger(n) || n < 1 || n > 50) throw new ArgError(`args.${k} must be 1..50`);
+          out[k] = n;
+        }
+      }
+      for (const k of Object.keys(inArgs)) if (!(k in spec.args)) throw new ArgError(`unexpected argument args.${k}`);
+      return { commandId: id, args: out };
+    }
+    case 'run_build': {
+      const id = str(a.commandId, 'commandId', 64);
+      const spec = BUILD_COMMANDS[id];
+      if (!spec) throw new ArgError(`commandId must be one of: ${Object.keys(BUILD_COMMANDS).join(', ')}`);
+      const inArgs = a.args && typeof a.args === 'object' ? a.args : {};
+      const out = {};
+      for (const [k, kind] of Object.entries(spec.args)) {
+        if (kind === 'path') out[k] = str(inArgs[k], `args.${k}`, 1024);
+        if (kind === 'text') out[k] = str(inArgs[k], `args.${k}`, 4000);
         if (kind === 'int') {
           const n = inArgs[k] == null ? 10 : Number(inArgs[k]);
           if (!Number.isInteger(n) || n < 1 || n > 50) throw new ArgError(`args.${k} must be 1..50`);
@@ -306,6 +340,11 @@ export function describeHandsAction(tool, args, { snippets = true } = {}) {
     case 'run_powershell': {
       const bits = Object.entries(args.args || {}).map(([k, v]) => `${k}: ${v}`);
       rich = bits.length ? `hands run_powershell ${args.commandId} (${bits.join(', ')})` : legacy;
+      break;
+    }
+    case 'run_build': {
+      const bits = Object.entries(args.args || {}).map(([k, v]) => `${k}: ${v}`);
+      rich = bits.length ? `hands run_build ${args.commandId} (${bits.join(', ')})` : legacy;
       break;
     }
     case 'run_phone': {

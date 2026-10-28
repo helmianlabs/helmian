@@ -10,7 +10,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { renderConsentPage } from './consent.mjs';
-import { PHONE_ACT_COMMANDS, PHONE_COMMANDS, PHONE_READ_COMMANDS, POWERSHELL_COMMANDS, TOOLS } from './shared/protocol.mjs';
+import { BUILD_COMMANDS, PHONE_ACT_COMMANDS, PHONE_COMMANDS, PHONE_READ_COMMANDS, POWERSHELL_COMMANDS, TOOLS } from './shared/protocol.mjs';
 
 function safeEqual(a, b) {
   const x = createHash('sha256').update(String(a)).digest();
@@ -51,6 +51,10 @@ export function buildMcpServer(hands, auth, hooks = {}) {
     description: `${TOOLS.run_powershell.description} Commands: ${Object.entries(POWERSHELL_COMMANDS).map(([id, s]) => `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`).join('; ')}.${DEVICE_ARG}`,
     inputSchema: { commandId: z.enum(Object.keys(POWERSHELL_COMMANDS)), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: act,
   }, (args, extra) => hands.call('run_powershell', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('run_build', {
+    description: `${TOOLS.run_build.description} Commands: ${Object.entries(BUILD_COMMANDS).map(([id, s]) => `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`).join('; ')}.${DEVICE_ARG}`,
+    inputSchema: { commandId: z.enum(Object.keys(BUILD_COMMANDS)), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: act,
+  }, (args, extra) => hands.call('run_build', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   const phoneList = (ids) => ids.map((id) => { const s = PHONE_COMMANDS[id]; return `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`; }).join('; ');
   server.registerTool('phone_look', {
     description: `${TOOLS.phone_look.description} Commands: ${phoneList(PHONE_READ_COMMANDS)}.${DEVICE_ARG}`,

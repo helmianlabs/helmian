@@ -26,7 +26,7 @@ import { constants as fsConstants } from 'node:fs';
 import { copyFile, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, platform, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { MAX_OUTPUT_BYTES, PHONE_COMMANDS, TOOLS, cleanScopeSummary, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
+import { BUILD_COMMANDS, MAX_OUTPUT_BYTES, PHONE_COMMANDS, TOOLS, cleanScopeSummary, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
 import { defaultRootGrantsPath, loadRootGrants } from './root-grants.mjs';
 
 export { defaultRootGrantsPath } from './root-grants.mjs';
@@ -352,6 +352,7 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
         case 'write_file': case 'edit_file': case 'delete_file': case 'make_dir': return [a.path];
         case 'move_file': case 'copy_file': return [a.path, a.destination];
         case 'run_powershell': return a.args?.repo ? [a.args.repo] : [];
+        case 'run_build': return a.args?.repo ? [a.args.repo] : [];
         default: return [];
       }
     };
@@ -457,8 +458,53 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
             const script = `$log = Get-ChildItem -LiteralPath '${q}' -Filter '.helmian-elevenlabs-onboard-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if (!$log) { 'no spoke-started ElevenLabs onboard log in this repo' } else { "log: $($log.Name) - last write $($log.LastWriteTime)"; Get-Content -LiteralPath $log.FullName -Tail 40 }`;
             return run('powershell.exe', [...PS, script], { spawnImpl });
           }
+          if (commandId === 'run-command') {
+            // The general door (Troy's full-access order, 2026-10-28): run
+            // the caller's command line in the confined repo. The Guard
+            // approval is bound to these exact arguments, so Troy sees the
+            // exact line before anything runs. Synchronous inside the
+            // spoke's job window (25 s): quick commands return their
+            // output; long work uses the detached shapes above, or
+            // backgrounds itself. The line runs verbatim once the shell
+            // sits in the repo.
+            const repo = await confineFor(a.repo);
+            const q = repo.replace(/'/g, "''");
+            const script = `Set-Location -LiteralPath '${q}'; ${a.command}`;
+            return run('powershell.exe', [...PS, script], { spawnImpl, timeoutMs: 25000 });
+          }
           if (PS_SCRIPTS[commandId]) return run('powershell.exe', [...PS, PS_SCRIPTS[commandId]], { spawnImpl });
           return { ok: false, error: 'command not on the PC allow-list' };
+        }
+        case 'run_build': {
+          const { commandId, args: a } = args;
+          if (!BUILD_COMMANDS[commandId]) return { ok: false, error: 'command not on the box build allow-list' };
+          if (platform() !== 'linux') return { ok: false, error: 'run_build is only wired for the Linux box spoke' };
+          if (commandId === 'node-version') return run('node', ['--version'], { spawnImpl });
+          if (commandId === 'npm-version') return run('npm', ['--version'], { spawnImpl });
+          const repo = await confineFor(a.repo);
+          const q = repo.replace(/'/g, "'\\''");
+          if (commandId === 'build-status') {
+            const script = `log=$(ls -t '${q}'/.helmian-build-*.log 2>/dev/null | head -1); if [ -z "$log" ]; then echo 'no spoke-started build log in this folder'; else echo "log: $log"; tail -40 "$log"; fi`;
+            return run('bash', ['-c', script], { spawnImpl });
+          }
+          if (commandId === 'run-command') {
+            // The general door on the box (Troy's full-access order,
+            // 2026-10-28): run the caller's command line in the confined
+            // folder. The Guard approval is bound to these exact arguments,
+            // so Troy sees the exact line before anything runs. Synchronous
+            // inside the spoke's job window (25 s): quick commands return
+            // their output; long work uses the detached shapes below, or
+            // backgrounds itself.
+            return run('bash', ['-c', `cd '${q}' && ${a.command}`], { spawnImpl, timeoutMs: 25000 });
+          }
+          // install-start and build-start run DETACHED: a real install or
+          // build far outlives the spoke's 30 s job window. Output lands in
+          // a log in the folder with a HELMIAN_BUILD_EXIT=<code> marker at
+          // the end; build-status reads it back. Only the confined folder
+          // path varies; it is single-quote-escaped.
+          const inner = commandId === 'install-start' ? 'npm install --no-audit --no-fund' : 'npm run build';
+          const script = `cd '${q}' && stamp=$(date +%Y%m%d-%H%M%S) && log="${repo}/.helmian-build-$stamp.log" && nohup bash -c '${inner} > "$1" 2>&1; echo HELMIAN_BUILD_EXIT=$? >> "$1"' _ "$log" >/dev/null 2>&1 & echo "started in ${repo}; log: $log"`;
+          return run('bash', ['-c', script], { spawnImpl });
         }
         case 'phone_look':
         case 'run_phone': {
@@ -645,9 +691,12 @@ export async function buildScopeSummary({ roots = [], rootGrantsPath = null, gua
   });
 }
 
-async function detectCapabilities(fetchImpl) {
+async function detectCapabilities(fetchImpl, config = {}) {
   const caps = ['local-files'];
   if (platform() === 'win32') caps.push('powershell', 'pc-browser');
+  // The Linux box build runner is opt-in per device config (build: true in
+  // the spoke's own hands-spoke.json); no config flag, no capability.
+  if (platform() === 'linux' && config.build === true) caps.push('linux-build');
   // The phone capability means the Android bridge answers on this PC; an
   // actually-connected phone is a per-call question (phone-status).
   const adb = await run('adb', ['version'], { timeoutMs: 5000 }).catch(() => ({ ok: false }));
@@ -690,7 +739,7 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
     let backoff = 1000;
     while (!stopped) {
       try {
-        if (!caps || Date.now() - capsAt > 300000) { caps = await detectCapabilities(fetchImpl); capsAt = Date.now(); }
+        if (!caps || Date.now() - capsAt > 300000) { caps = await detectCapabilities(fetchImpl, config); capsAt = Date.now(); }
         const pollScope = await provideScope().catch(() => null);
         // stop() may have landed during the scope build: a stopped loop must
         // never post again (a late poll parks server-side and can steal a job

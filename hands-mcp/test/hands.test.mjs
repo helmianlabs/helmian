@@ -670,7 +670,7 @@ function fakeSpawnChild(output = '') {
 }
 
 test('the powershell allow-list carries restart-bridge with no arguments, and run_powershell stays Guard-gated', () => {
-  assert.deepEqual(Object.keys(POWERSHELL_COMMANDS).sort(), ['disk-free', 'eas-build', 'eas-build-status', 'elevenlabs-onboard', 'elevenlabs-onboard-status', 'git-log', 'git-status', 'list-processes', 'ollama-list', 'restart-bridge', 'toolchain-versions']);
+  assert.deepEqual(Object.keys(POWERSHELL_COMMANDS).sort(), ['disk-free', 'eas-build', 'eas-build-status', 'elevenlabs-onboard', 'elevenlabs-onboard-status', 'git-log', 'git-status', 'list-processes', 'ollama-list', 'restart-bridge', 'run-command', 'toolchain-versions']);
   assert.deepEqual(POWERSHELL_COMMANDS['restart-bridge'].args, {});
   assert.equal(TOOLS.run_powershell.mutating, true);
   assert.deepEqual(validateArgs('run_powershell', { commandId: 'restart-bridge' }), { commandId: 'restart-bridge', args: {} });
