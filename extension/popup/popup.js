@@ -341,3 +341,76 @@ $('flagsRefresh').addEventListener('click', () => refreshAlerts(true));
 
 refreshExecutiveSettings();
 refreshFlagsSettings().then((s) => { if (s && s.enabled) refreshAlerts(false); });
+
+
+// ─── Scribe door-knock ──────────────────────────────────────────────────────
+function requestNotifications() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.request !== 'function') { resolve(false); return; }
+      const r = chrome.permissions.request({ permissions: ['notifications'] }, (g) => { void chrome.runtime.lastError; resolve(Boolean(g)); });
+      if (r && typeof r.then === 'function') r.then((g) => resolve(Boolean(g)), () => resolve(false));
+    } catch { resolve(false); }
+  });
+}
+let openLetterId = null;
+async function loadScribe() {
+  const r = await askWithPayload('helmion:scribe-settings', { settings: {} });
+  if (!r || !r.ok) return;
+  const s = r.settings;
+  $('scribeEnabled').checked = s.enabled === true;
+  $('scribeUrl').value = s.baseUrl || '';
+  $('scribeMailbox').value = s.mailbox || '';
+  $('scribePeriod').value = String(s.periodMinutes || 2);
+  $('scribeNotify').checked = s.notify !== false;
+  $('scribeToken').placeholder = s.hasToken ? 'Token saved (paste a new one to replace it)' : 'mailbox token (smk_… with mailbox.read)';
+  if (s.tokenRejected) $('scribeStatus').textContent = 'Scribe rejected the token. Paste a new one.';
+  renderInbox(await askWithPayload('helmion:scribe-inbox', { options: {} }));
+}
+function renderInbox(r) {
+  const list = $('scribeInbox');
+  list.textContent = '';
+  if (!r || !r.ok) return;
+  for (const m of r.mailboxes || []) {
+    if (!m.newest || !m.count) continue;
+    const li = document.createElement('li');
+    li.textContent = `${m.mailbox}: ${m.count} unread · newest from ${m.newest.sender}: ${m.newest.subject} `;
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = 'Open';
+    b.addEventListener('click', () => openScribeLetter(m.newest.id));
+    li.append(b); list.append(li);
+  }
+  const when = r.polledAt ? new Date(r.polledAt).toLocaleTimeString() : 'never';
+  $('scribeStatus').textContent = r.offline ? 'Offline; will check again when back online.' : r.lastError ? `Last check failed: ${r.lastError}` : `${r.unread || 0} unread. Last checked ${when}.`;
+}
+async function openScribeLetter(id) {
+  const r = await askWithPayload('helmion:scribe-open', { id });
+  if (!r || !r.ok) { $('scribeStatus').textContent = `Could not open the letter: ${r && r.error}`; return; }
+  openLetterId = r.letter.id;
+  $('scribeLetterSubject').textContent = r.letter.subject;
+  $('scribeLetterFrom').textContent = `From ${r.letter.from} ${r.letter.createdAt ? `· ${fmt(r.letter.createdAt)}` : ''}`;
+  $('scribeLetterBody').textContent = r.letter.body;
+  $('scribeLetter').hidden = false;
+}
+$('scribeReceipt').addEventListener('click', async () => {
+  if (!openLetterId) return;
+  const r = await askWithPayload('helmion:scribe-receipt', { id: openLetterId });
+  $('scribeStatus').textContent = r && r.ok ? 'Receipt sent.' : `Receipt not sent: ${r && r.error}`;
+  if (r && r.ok) { $('scribeLetter').hidden = true; openLetterId = null; renderInbox(await askWithPayload('helmion:scribe-inbox', { options: {} })); }
+});
+$('scribeSave').addEventListener('click', async () => {
+  const url = $('scribeUrl').value.trim();
+  if ($('scribeEnabled').checked && url) {
+    const granted = await requestOrigin(url);
+    if (!granted) { $('scribeStatus').textContent = 'Permission to reach that URL was not granted, so nothing was saved.'; return; }
+    if ($('scribeNotify').checked) await requestNotifications();
+  }
+  const saved = await askWithPayload('helmion:scribe-settings', { settings: {
+    enabled: $('scribeEnabled').checked, baseUrl: url, token: $('scribeToken').value || undefined,
+    mailbox: $('scribeMailbox').value, periodMinutes: Number($('scribePeriod').value), notify: $('scribeNotify').checked,
+  } });
+  $('scribeToken').value = '';
+  $('scribeStatus').textContent = saved && saved.ok ? 'Saved.' : `Not saved: ${saved && saved.error}`;
+});
+$('scribeRefresh').addEventListener('click', async () => renderInbox(await askWithPayload('helmion:scribe-inbox', { options: { force: true } })));
+loadScribe();
