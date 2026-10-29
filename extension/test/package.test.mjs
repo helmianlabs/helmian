@@ -103,7 +103,7 @@ test('it asks for exactly ONE permission, and that one is storage', () => {
   // 0.5.0 (Scribe door-knock, 2026-10-29): + 'alarms', which shows no install
   // warning and is needed for MV3 polling. 'notifications' is OPTIONAL and only
   // requested from the popup when the user turns the door-knock on.
-  assert.deepEqual(manifest.permissions, ['storage', 'alarms']);
+  assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'idle']);
   assert.deepEqual(manifest.optional_permissions, ['notifications']);
   // Optional host permissions (2026-10-22): requested from the popup, in a user
   // gesture, only for the Executive Guard / Flags URL the user typed. Nothing is

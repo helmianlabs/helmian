@@ -5,7 +5,8 @@
   "description": "Catches destructive commands, keeps secrets out of AI chats, flags evasive, leaky or harmful replies, and keeps a durable local log of every flag.",
   "permissions": [
     "storage",
-    "alarms"
+    "alarms",
+    "idle"
   ],
   "host_permissions": [
     "https://helmian.cloud/*"

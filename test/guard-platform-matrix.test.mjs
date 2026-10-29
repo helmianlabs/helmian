@@ -11,7 +11,7 @@ const OPTIONAL_ORIGINS = ['https://*/*', 'http://localhost/*', 'http://127.0.0.1
 
 test('Chromium and Firefox packages keep the minimal permission boundary', () => {
   for (const manifest of [chromium, firefox]) {
-    assert.deepEqual(manifest.permissions, ['storage', 'alarms']); // alarms: Scribe door-knock (no install warning)
+    assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'idle']); // alarms: Scribe door-knock (no install warning)
     assert.deepEqual(manifest.content_scripts[0].matches, ['https://claude.ai/*', 'https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://grok.com/*']);
     assert.ok(!JSON.stringify(manifest).includes('<all_urls>'));
   }

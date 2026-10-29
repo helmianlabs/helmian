@@ -14,6 +14,8 @@ const storageBag = new Map();
 const alarmCalls = [];
 const notificationCalls = [];
 const alarmListeners = [];
+const tabCalls = [];
+const notificationClickListeners = [];
 let grantedPermissions = new Set();
 
 export const fake = {
@@ -28,6 +30,8 @@ export const fake = {
   alarmCalls,
   notificationCalls,
   alarmListeners,
+  tabCalls,
+  notificationClickListeners,
   grant(p) { grantedPermissions.add(p); },
   revokeAll() { grantedPermissions = new Set(); },
   reset() {
@@ -113,8 +117,10 @@ export const chrome = {
   notifications: {
     create(id, opts) { notificationCalls.push({ call: 'create', id, ...opts }); },
     clear(id) { notificationCalls.push({ call: 'clear', id }); },
-    onClicked: { addListener() {} },
+    onClicked: { addListener(l) { notificationClickListeners.push(l); } },
   },
+  tabs: { create(opts) { tabCalls.push(opts); } },
+  idle: { queryState(_s, cb) { cb('active'); } },
   permissions: {
     contains(q, cb) { cb((q.permissions || []).every((p) => grantedPermissions.has(p))); },
     request(q, cb) { cb(false); },

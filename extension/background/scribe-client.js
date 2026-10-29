@@ -1,33 +1,53 @@
-// Scribe "door-knock": poll Helmian Scribe for unread letters, badge + notify,
-// open a letter and send a receipt. OPT-IN and OFF BY DEFAULT: nothing here
-// makes a request unless the person enabled it in the popup, entered the Scribe
-// URL (and granted that one origin) and pasted a token.
+// Scribe "door-knock": poll Helmian Scribe for unread letters, set a badge and
+// notify. Guard NEVER writes to Scribe: receipts are automatic when the AI reads
+// its mail over MCP (check_inbox -> delivered, read_message/mark_read -> read,
+// ack_message -> ack). OPT-IN and OFF BY DEFAULT.
 //
-// Contract status (2026-10-29): Paul's door-knock contract
-// (/workspace/scribe/door-knock-contract.md) has NOT landed yet. What is used:
-//   GET  {base}/mailbox-status            EXISTS on Scribe main (f58c762):
-//        {generated_at, mailboxes:[{tag:'for-<agent>', agent?, count, newest:{id,sender,created_at,subject}|null}]}
-//        Bearer: smk_ key with mailbox.read (SaaS) or MAILBOX_STATUS_TOKEN (self-host).
-//   GET  {base}/api/courier/messages/:id  PROVISIONAL (mocked) -> {id, from, subject, body, created_at}
-//   POST {base}/api/courier/messages/:id/receipt  PROVISIONAL (mocked) -> {ok:true}
-// Change SCRIBE_PATHS when the contract lands. The token is never returned to the
-// popup or a page and is never logged.
+// Contract: /workspace/scribe/door-knock-contract.md v1 (troy83352/shared-memory-mcp
+// PR #3, branch door-knock/courier-receipts).
+//   GET {base}/mailbox/unread?agent=<mailbox>&since_id=<cursor>[&include_legacy=1]
+//   Authorization: Bearer <MAILBOX_STATUS_TOKEN> (self-host) | smk_… mailbox.read / OAuth memory.read (SaaS)
+//   200 {generated_at, poll_after_seconds, agent, unread_count, newest_id, cursor, new:[{id,from,subject,priority,created_at}], legacy?}
+//   400 bad_request · 401/403 unauthorized · 404 feature off · 503 courier_not_installed · 500 unavailable
+// The token is never returned to the popup or a page and is never logged.
 
 export const SCRIBE_SETTINGS_KEY = 'helmion.scribe.settings';
 export const SCRIBE_STATE_KEY = 'helmion.scribe.state';
 export const SCRIBE_ALARM = 'helmion-scribe-poll';
-export const SCRIBE_PATHS = Object.freeze({
-  status: () => '/mailbox-status',
-  letter: (id) => `/api/courier/messages/${encodeURIComponent(id)}`,
-  receipt: (id) => `/api/courier/messages/${encodeURIComponent(id)}/receipt`,
-});
-export const MIN_PERIOD_MIN = 1; // chrome.alarms floor is 30 s in MV3; 1 min is well above it.
-export const MAX_PERIOD_MIN = 2;
-export const DEFAULT_PERIOD_MIN = 2;
-export const DEFAULT_DAILY_BUDGET = 1000; // polls per UTC day; 1/min = 1440, 1/2min = 720.
-export const MAX_BACKOFF_MS = 30 * 60 * 1000;
+export const ALARM_PERIOD_MIN = 1; // ticks every minute; each mailbox has its own nextAt. MV3 floor is 30 s.
+export const MIN_POLL_S = 60;
+export const MAX_POLL_S = 120;
+export const JITTER_S = 15;
+export const ERROR_BACKOFF_S = 300; // contract: back off to 5 min after 3 errors
+export const NOT_INSTALLED_S = 900; // contract: 503 courier_not_installed -> every 15 min
+export const FEATURE_OFF_S = 900; // 404: no token configured on the server
+export const LEGACY_MIN_S = 300; // contract: include_legacy at most every 5 min
+export const DEFAULT_DAILY_BUDGET = 2000; // requests per UTC day across all mailboxes
+export const MAX_MAILBOXES = 8;
 export const TIMEOUT_MS = 5000;
 const TOKEN = /^[A-Za-z0-9._~+/=-]{16,512}$/;
+
+// The contract's canonical mailboxes and aliases (PR #3 courier/mailboxes.ts).
+// Normalised client-side only for display and de-duplication; the server is
+// the authority and returns the canonical name in `agent`.
+export const MAILBOX_ALIASES = Object.freeze({
+  troy: ['owner', 'troy-halter'], paul: ['grok-bot', 'grokbot', 'grokbot-paul', 'grok-bot-paul'],
+  muse: ['faith-and-light-news', 'faith-n-light', 'news'], 'claude-pc': ['claude-code', 'claude-desktop', 'claudepc', 'claude-on-pc'],
+  'claude.ai': ['claude-ai', 'claudeai'], chatgpt: ['gpt', 'openai', 'chat-gpt'], gemini: ['google-gemini', 'bard'],
+  grok: ['grok-x', 'xai'], mistral: ['le-chat', 'lechat'], social: ['social-bot'], youtube: ['yt'],
+  sites: ['site', 'websites'], helmian: ['helmian-bot'], guard: ['helmian-guard', 'helium-guard'], writer: ['writer-bot'],
+});
+const ALIAS = new Map();
+for (const [n, as] of Object.entries(MAILBOX_ALIASES)) { ALIAS.set(n, n); for (const a of as) ALIAS.set(a, n); }
+// Where the "nudge" sends you for each AI mailbox (open the AI so it runs check_inbox).
+export const MAILBOX_SITES = Object.freeze({ 'claude.ai': 'https://claude.ai/', chatgpt: 'https://chatgpt.com/', gemini: 'https://gemini.google.com/', grok: 'https://grok.com/' });
+
+/** Same slug rule as PR #3 agentName(), then alias -> canonical. */
+export function mailboxName(raw) {
+  const n = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9._-]/g, '').replace(/^[._-]+|[._-]+$/g, '').slice(0, 40);
+  if (!n || n === 'all') return null;
+  return ALIAS.get(n) || n;
+}
 
 export function isAllowedScribeUrl(value) {
   try {
@@ -37,81 +57,80 @@ export function isAllowedScribeUrl(value) {
     return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
   } catch { return false; }
 }
-export function scribeOriginPattern(value) {
-  const u = new URL(String(value));
-  return `${u.protocol}//${u.hostname}/*`;
-}
-export function clampPeriod(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return DEFAULT_PERIOD_MIN;
-  return Math.min(MAX_PERIOD_MIN, Math.max(MIN_PERIOD_MIN, v));
-}
+export function scribeOriginPattern(value) { const u = new URL(String(value)); return `${u.protocol}//${u.hostname}/*`; }
+export function clampPollSeconds(n) { const v = Number(n); return Number.isFinite(v) ? Math.min(MAX_POLL_S, Math.max(MIN_POLL_S, v)) : MIN_POLL_S; }
 function utcDay(now) { return new Date(now).toISOString().slice(0, 10); }
-function nextUtcMidnight(now) { const d = new Date(now); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); }
+export function nextUtcMidnight(now) { const d = new Date(now); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); }
 
 async function readObj(storage, key) { const v = await storage.get(key); return v && typeof v === 'object' ? v : {}; }
 async function readSettings(storage) {
   const s = await readObj(storage, SCRIBE_SETTINGS_KEY);
   return {
     enabled: s.enabled === true, baseUrl: typeof s.baseUrl === 'string' ? s.baseUrl : '',
-    token: typeof s.token === 'string' ? s.token : '', mailbox: typeof s.mailbox === 'string' ? s.mailbox : '',
-    periodMinutes: clampPeriod(s.periodMinutes ?? DEFAULT_PERIOD_MIN),
+    token: typeof s.token === 'string' ? s.token : '',
+    mailboxes: Array.isArray(s.mailboxes) ? s.mailboxes.filter(Boolean) : [],
+    includeLegacy: s.includeLegacy === true,
     dailyBudget: Number.isInteger(s.dailyBudget) ? s.dailyBudget : DEFAULT_DAILY_BUDGET,
     notify: s.notify !== false,
   };
 }
-export async function readScribeState(storage) { return readObj(storage, SCRIBE_STATE_KEY); }
-async function patchState(storage, patch) {
-  const next = { ...(await readScribeState(storage)), ...patch };
-  await storage.set(SCRIBE_STATE_KEY, next);
-  return next;
+export async function readScribeState(storage) {
+  const st = await readObj(storage, SCRIBE_STATE_KEY);
+  return { ...st, boxes: st.boxes && typeof st.boxes === 'object' ? st.boxes : {} };
 }
+async function writeState(storage, st) { await storage.set(SCRIBE_STATE_KEY, st); return st; }
 
-/** Public view of settings: never the token. */
 export async function getScribeSettings(storage) {
   const s = await readSettings(storage);
   const st = await readScribeState(storage);
   const { token, ...rest } = s;
   return { ...rest, hasToken: Boolean(token), tokenRejected: st.tokenRejected === true };
 }
-export function isReady(s, st = {}) { return s.enabled && Boolean(s.baseUrl) && Boolean(s.token) && st.tokenRejected !== true; }
+export function isConfigured(view) { return view.enabled && Boolean(view.baseUrl) && view.hasToken && !view.tokenRejected && view.mailboxes.length > 0; }
 
 export async function setScribeSettings(storage, patch = {}) {
   const next = await readSettings(storage);
+  const st = await readScribeState(storage);
   if (typeof patch.baseUrl === 'string') {
     const t = patch.baseUrl.trim().replace(/\/+$/, '');
     if (t && !isAllowedScribeUrl(t)) throw new Error('Scribe URL must be https://, or http://localhost for local testing');
+    if (t !== next.baseUrl) st.boxes = {}; // cursors belong to one server
     next.baseUrl = t;
   }
   if (typeof patch.token === 'string' && patch.token.trim()) {
     const tok = patch.token.trim();
-    if (!TOKEN.test(tok)) throw new Error('That does not look like a Scribe token');
+    if (!TOKEN.test(tok)) throw new Error('That does not look like a Scribe mailbox token');
     next.token = tok;
-    await patchState(storage, { tokenRejected: false, lastError: null, failures: 0, nextAllowedAt: 0 });
+    st.tokenRejected = false; st.serverState = null;
   }
-  if (typeof patch.mailbox === 'string') next.mailbox = patch.mailbox.trim().replace(/^for-/, '').slice(0, 80);
-  if (patch.periodMinutes !== undefined) next.periodMinutes = clampPeriod(patch.periodMinutes);
+  if (patch.mailboxes !== undefined) {
+    const raw = Array.isArray(patch.mailboxes) ? patch.mailboxes : String(patch.mailboxes).split(',');
+    const names = [...new Set(raw.map(mailboxName).filter(Boolean))];
+    if (names.length > MAX_MAILBOXES) throw new Error(`Watch at most ${MAX_MAILBOXES} mailboxes`);
+    next.mailboxes = names;
+    for (const k of Object.keys(st.boxes)) if (!names.includes(k)) delete st.boxes[k];
+  }
+  if (typeof patch.includeLegacy === 'boolean') next.includeLegacy = patch.includeLegacy;
   if (patch.dailyBudget !== undefined) {
     const n = Number(patch.dailyBudget);
-    if (!Number.isInteger(n) || n < 1 || n > 10000) throw new Error('Daily poll budget must be a whole number from 1 to 10000');
+    if (!Number.isInteger(n) || n < 1 || n > 20000) throw new Error('Daily request budget must be a whole number from 1 to 20000');
     next.dailyBudget = n;
   }
   if (typeof patch.notify === 'boolean') next.notify = patch.notify;
   if (typeof patch.enabled === 'boolean') next.enabled = patch.enabled;
   if (patch.clearToken === true) next.token = '';
   await storage.set(SCRIBE_SETTINGS_KEY, next);
+  await writeState(storage, st);
   return getScribeSettings(storage);
 }
 
-async function call(s, path, { method = 'GET', body, fetchImpl, timeoutMs = TIMEOUT_MS } = {}) {
+async function call(s, url, { fetchImpl, timeoutMs = TIMEOUT_MS } = {}) {
   const doFetch = fetchImpl || ((...a) => fetch(...a));
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
-    const res = await doFetch(`${s.baseUrl}${path}`, {
-      method,
-      headers: { authorization: `Bearer ${s.token}`, accept: 'application/json', ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    const res = await doFetch(url, {
+      method: 'GET', headers: { authorization: `Bearer ${s.token}`, accept: 'application/json' },
       credentials: 'omit', cache: 'no-store', ...(controller ? { signal: controller.signal } : {}),
     });
     let json = null;
@@ -120,98 +139,112 @@ async function call(s, path, { method = 'GET', body, fetchImpl, timeoutMs = TIME
   } finally { if (timer) clearTimeout(timer); }
 }
 
-export function backoffMs(failures) { return Math.min(MAX_BACKOFF_MS, 60000 * 2 ** Math.max(0, failures - 1)); }
+export function unreadUrl(base, agent, sinceId, legacy) {
+  const u = new URL(`${base}/mailbox/unread`);
+  u.searchParams.set('agent', agent);
+  u.searchParams.set('since_id', String(Math.max(0, Math.floor(Number(sinceId) || 0))));
+  if (legacy) u.searchParams.set('include_legacy', '1');
+  return u.toString();
+}
+function jitter(rand) { return Math.round((rand() * 2 - 1) * JITTER_S * 1000); }
+function cleanItem(x) {
+  return { id: Number(x.id), from: String(x.from ?? '').slice(0, 80), subject: String(x.subject ?? '').slice(0, 200),
+    priority: String(x.priority ?? 'normal').slice(0, 20), createdAt: String(x.created_at ?? '') };
+}
 
-/** Normalise /mailbox-status into the mailbox we care about (or all). */
-export function summarise(json, mailbox) {
-  const list = Array.isArray(json && json.mailboxes) ? json.mailboxes : [];
-  const rows = list.map((m) => ({
-    mailbox: String(m.tag || (m.agent ? `for-${m.agent}` : '')).slice(0, 90),
-    count: Math.max(0, Number(m.count ?? m.unread) || 0),
-    newest: m.newest && typeof m.newest === 'object' ? {
-      id: String(m.newest.id), sender: String(m.newest.sender || '').slice(0, 80),
-      createdAt: String(m.newest.created_at || ''), subject: String(m.newest.subject || '').slice(0, 200),
-    } : null,
-  })).filter((r) => r.mailbox && (!mailbox || r.mailbox === `for-${mailbox}`));
-  return { unread: rows.reduce((n, r) => n + r.count, 0), mailboxes: rows };
+/** Poll one mailbox now. Updates its box state; returns {fresh, kind}. */
+async function pollBox(storage, s, st, name, { fetchImpl, now, rand }) {
+  const box = st.boxes[name] || { cursor: 0, errors: 0 };
+  const legacy = s.includeLegacy && (box.legacyAt == null || now - box.legacyAt >= LEGACY_MIN_S * 1000);
+  let r;
+  try { r = await call(s, unreadUrl(s.baseUrl, name, box.cursor, legacy), { fetchImpl }); }
+  catch { r = { status: 0 }; }
+  const later = (sec) => now + sec * 1000 + jitter(rand);
+  let fresh = [];
+  if (r.status === 200 && r.json) {
+    const j = r.json;
+    const items = Array.isArray(j.new) ? j.new.map(cleanItem).filter((x) => x.id > (box.cursor || 0)) : [];
+    fresh = items;
+    Object.assign(box, {
+      state: 'ok', errors: 0, unread: Math.max(0, Number(j.unread_count) || 0), newestId: j.newest_id ?? null,
+      cursor: Math.max(Number(box.cursor) || 0, Number(j.cursor) || 0),
+      recent: [...(box.recent || []), ...items].slice(-20), polledAt: now,
+      nextAt: later(clampPollSeconds(j.poll_after_seconds)),
+    });
+    if (legacy && j.legacy) { box.legacyAt = now; box.legacyCount = Math.max(0, Number(j.legacy.recent_count) || 0); }
+    st.serverState = 'ok';
+  } else if (r.status === 401 || r.status === 403) {
+    st.tokenRejected = true; st.serverState = 'reconnect';
+  } else if (r.status === 503 && r.json && r.json.error === 'courier_not_installed') {
+    Object.assign(box, { state: 'not-installed', nextAt: later(NOT_INSTALLED_S) }); st.serverState = 'not-installed';
+  } else if (r.status === 404) {
+    Object.assign(box, { state: 'feature-off', nextAt: later(FEATURE_OFF_S) }); st.serverState = 'feature-off';
+  } else if (r.status === 400) {
+    Object.assign(box, { state: 'bad-name', nextAt: Infinity }); // fix the name in settings
+  } else if (r.status === 402) {
+    Object.assign(box, { state: 'limit', nextAt: nextUtcMidnight(now) });
+  } else if (r.status === 429) {
+    const ra = Number(r.retryAfter);
+    Object.assign(box, { state: 'rate-limited', nextAt: now + (Number.isFinite(ra) && ra > 0 ? Math.min(ra, 3600) : ERROR_BACKOFF_S) * 1000 });
+  } else {
+    box.errors = (Number(box.errors) || 0) + 1;
+    Object.assign(box, { state: 'error', lastStatus: r.status || 'network', nextAt: later(box.errors >= 3 ? ERROR_BACKOFF_S : MIN_POLL_S) });
+  }
+  st.boxes[name] = box;
+  return { fresh };
 }
 
 /**
- * One poll. Returns {skipped} or {unread, mailboxes, fresh} where fresh is the
- * newest letters not seen by an earlier poll (for notifications).
+ * One alarm tick. Polls each watched mailbox whose nextAt has passed.
+ * Returns {skipped} or {unread, fresh:[{mailbox, items}], serverState}.
  */
-export async function pollScribe(storage, { fetchImpl, now = Date.now(), online = true, force = false } = {}) {
+export async function pollScribe(storage, { fetchImpl, now = Date.now(), online = true, idle = false, force = false, rand = Math.random } = {}) {
   const s = await readSettings(storage);
   const st = await readScribeState(storage);
   if (!s.enabled) return { skipped: 'not-enabled' };
-  if (!s.baseUrl || !s.token) return { skipped: 'not-configured' };
+  if (!s.baseUrl || !s.token || !s.mailboxes.length) return { skipped: 'not-configured' };
   if (st.tokenRejected) return { skipped: 'token-rejected' };
-  if (!online) { await patchState(storage, { offline: true }); return { skipped: 'offline' }; }
-  if (!force && st.nextAllowedAt && now < st.nextAllowedAt) return { skipped: 'backing-off', until: st.nextAllowedAt };
+  if (!online) { st.offline = true; await writeState(storage, st); return { skipped: 'offline' }; }
+  if (idle && !force) return { skipped: 'idle' };
+  st.offline = false;
   const day = utcDay(now);
-  const used = st.budgetDay === day ? Number(st.budgetUsed) || 0 : 0;
-  if (used >= s.dailyBudget) return { skipped: 'budget-spent', resetsAt: nextUtcMidnight(now) };
-  await patchState(storage, { budgetDay: day, budgetUsed: used + 1, offline: false });
-  let r;
-  try { r = await call(s, SCRIBE_PATHS.status(), { fetchImpl }); }
-  catch (error) {
-    const failures = (Number(st.failures) || 0) + 1;
-    await patchState(storage, { failures, nextAllowedAt: now + backoffMs(failures), lastError: 'network' });
-    return { skipped: 'network-error', failures };
+  if (st.budgetDay !== day) { st.budgetDay = day; st.budgetUsed = 0; }
+  const fresh = [];
+  let polled = 0;
+  for (const name of s.mailboxes) {
+    const box = st.boxes[name];
+    if (!force && box && box.nextAt && now < box.nextAt) continue;
+    if (box && box.state === 'bad-name' && !force) continue;
+    if (st.budgetUsed >= s.dailyBudget) { st.budgetSpent = true; break; }
+    st.budgetUsed += 1; polled += 1;
+    const r = await pollBox(storage, s, st, name, { fetchImpl, now, rand });
+    if (r.fresh.length) fresh.push({ mailbox: name, items: r.fresh });
+    if (st.tokenRejected) break;
   }
-  if (r.status === 401 || r.status === 403) {
-    await patchState(storage, { tokenRejected: true, lastError: `rejected (${r.status})` });
-    return { skipped: 'token-rejected' };
-  }
-  if (r.status === 402) { // Scribe's daily tenant limit: wait for the UTC reset.
-    await patchState(storage, { nextAllowedAt: nextUtcMidnight(now), lastError: 'scribe daily limit reached' });
-    return { skipped: 'scribe-limit', until: nextUtcMidnight(now) };
-  }
-  if (r.status === 429) {
-    const ra = Number(r.retryAfter);
-    const wait = Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, MAX_BACKOFF_MS) : backoffMs((Number(st.failures) || 0) + 1);
-    await patchState(storage, { nextAllowedAt: now + wait, lastError: 'rate limited' });
-    return { skipped: 'rate-limited', until: now + wait };
-  }
-  if (r.status !== 200) {
-    const failures = (Number(st.failures) || 0) + 1;
-    await patchState(storage, { failures, nextAllowedAt: now + backoffMs(failures), lastError: `http ${r.status}` });
-    return { skipped: 'server-error', status: r.status };
-  }
-  const sum = summarise(r.json, s.mailbox);
-  const seen = new Set(Array.isArray(st.notifiedIds) ? st.notifiedIds : []);
-  const fresh = sum.mailboxes.filter((m) => m.newest && m.count > 0 && !seen.has(`${m.mailbox}:${m.newest.id}`));
-  const notifiedIds = [...seen, ...fresh.map((m) => `${m.mailbox}:${m.newest.id}`)].slice(-200);
-  await patchState(storage, { failures: 0, nextAllowedAt: 0, lastError: null, polledAt: now, unread: sum.unread, mailboxes: sum.mailboxes, notifiedIds });
-  return { unread: sum.unread, mailboxes: sum.mailboxes, fresh: s.notify ? fresh : [] };
+  const unread = Object.values(st.boxes).reduce((n, b) => n + (b.state === 'ok' ? Number(b.unread) || 0 : 0), 0);
+  st.unread = unread;
+  await writeState(storage, st);
+  if (st.tokenRejected) return { skipped: 'token-rejected' };
+  if (!polled) return { skipped: st.budgetSpent && st.budgetUsed >= s.dailyBudget ? 'budget-spent' : 'not-due', unread };
+  return { unread, fresh: s.notify ? fresh : [], serverState: st.serverState };
 }
 
-function cleanId(id) {
-  const v = String(id ?? '');
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(v)) throw new Error('bad letter id');
-  return v;
-}
-
-export async function openLetter(storage, id, { fetchImpl } = {}) {
+/** Popup view of the inbox: counts and subjects only. */
+export async function inboxView(storage) {
   const s = await readSettings(storage);
-  if (!isReady(s, await readScribeState(storage))) throw new Error('Scribe door-knock is not set up');
-  const r = await call(s, SCRIBE_PATHS.letter(cleanId(id)), { fetchImpl });
-  if (r.status === 401 || r.status === 403) { await patchState(storage, { tokenRejected: true }); throw new Error('Scribe rejected the token'); }
-  if (r.status !== 200 || !r.json) throw new Error(`Scribe answered ${r.status}`);
-  const j = r.json;
-  return { id: String(j.id ?? id), from: String(j.from ?? j.sender ?? ''), subject: String(j.subject ?? ''), body: String(j.body ?? j.text ?? '').slice(0, 20000), createdAt: String(j.created_at ?? '') };
+  const st = await readScribeState(storage);
+  return {
+    unread: st.unread || 0, offline: st.offline === true, serverState: st.tokenRejected ? 'reconnect' : (st.serverState || null),
+    mailboxes: s.mailboxes.map((name) => {
+      const b = st.boxes[name] || {};
+      return { mailbox: name, state: b.state || 'waiting', unread: b.unread || 0, recent: (b.recent || []).slice(-5).reverse(),
+        polledAt: b.polledAt || null, legacyCount: b.legacyCount ?? null, site: MAILBOX_SITES[name] || null };
+    }),
+  };
 }
 
-export async function sendReceipt(storage, id, { fetchImpl } = {}) {
-  const s = await readSettings(storage);
-  if (!isReady(s, await readScribeState(storage))) throw new Error('Scribe door-knock is not set up');
-  const r = await call(s, SCRIBE_PATHS.receipt(cleanId(id)), { method: 'POST', body: { mailbox: s.mailbox || undefined, via: 'helmion-guard' }, fetchImpl });
-  if (r.status === 401 || r.status === 403) { await patchState(storage, { tokenRejected: true }); throw new Error('Scribe rejected the token'); }
-  if (r.status !== 200 && r.status !== 201) throw new Error(`Scribe answered ${r.status}`);
-  return { ok: true };
-}
-
-export function badgeFor(unread) {
-  const n = Number(unread) || 0;
-  return n <= 0 ? '' : n > 99 ? '99+' : String(n);
+export function badgeFor(unread) { const n = Number(unread) || 0; return n <= 0 ? '' : n > 99 ? '99+' : String(n); }
+export function noticeText(mailbox, items) {
+  const who = mailbox.charAt(0).toUpperCase() + mailbox.slice(1);
+  return { title: `${who}: ${items.length} new letter${items.length === 1 ? '' : 's'}`, message: items.slice(-3).map((x) => `${x.from}: ${x.subject}`).join('\n') };
 }

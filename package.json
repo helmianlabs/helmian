@@ -60,7 +60,8 @@
     "desktop:package": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/publish.ps1",
     "desktop:qa": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/qa-package.ps1",
     "desktop:qa:pack": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/qa-package.ps1 -PublishPack",
-    "test:hands": "npm --prefix hands-mcp ci --no-audit --no-fund && npm --prefix hands-mcp test"
+    "test:hands": "npm --prefix hands-mcp ci --no-audit --no-fund && npm --prefix hands-mcp test",
+    "test:scribe-pr3": "node --test extension/test/scribe-pr3-local.test.mjs"
   },
   "engines": {
     "node": ">=20"
