@@ -11,6 +11,10 @@ const listeners = [];
 // ledger rows and drive the Executive Guard / Flags settings through the real
 // worker. Reset with fake.resetStorage().
 const storageBag = new Map();
+const alarmCalls = [];
+const notificationCalls = [];
+const alarmListeners = [];
+let grantedPermissions = new Set();
 
 export const fake = {
   // 'normal'  answer messages the way Chrome does
@@ -21,6 +25,11 @@ export const fake = {
   badgeCalls,
   listeners,
   storageBag,
+  alarmCalls,
+  notificationCalls,
+  alarmListeners,
+  grant(p) { grantedPermissions.add(p); },
+  revokeAll() { grantedPermissions = new Set(); },
   reset() {
     badgeCalls.length = 0;
     fake.mode = 'normal';
@@ -94,6 +103,21 @@ export const chrome = {
         for (const k of Array.isArray(key) ? key : [key]) storageBag.delete(k);
       },
     },
+  },
+
+  alarms: {
+    create(name, info) { alarmCalls.push({ call: 'create', name, ...info }); },
+    clear(name) { alarmCalls.push({ call: 'clear', name }); },
+    onAlarm: { addListener(l) { alarmListeners.push(l); } },
+  },
+  notifications: {
+    create(id, opts) { notificationCalls.push({ call: 'create', id, ...opts }); },
+    clear(id) { notificationCalls.push({ call: 'clear', id }); },
+    onClicked: { addListener() {} },
+  },
+  permissions: {
+    contains(q, cb) { cb((q.permissions || []).every((p) => grantedPermissions.has(p))); },
+    request(q, cb) { cb(false); },
   },
 
   action: {
