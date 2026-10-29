@@ -353,51 +353,51 @@ function requestNotifications() {
     } catch { resolve(false); }
   });
 }
-let openLetterId = null;
+const SCRIBE_STATE_TEXT = {
+  'not-installed': 'Mailbox not set up yet on the Scribe server. Guard will check again in 15 minutes.',
+  'feature-off': 'The Scribe server has the mailbox feature turned off.',
+  reconnect: 'Scribe did not accept the token. Reconnect Scribe by pasting a new one.',
+};
 async function loadScribe() {
   const r = await askWithPayload('helmion:scribe-settings', { settings: {} });
   if (!r || !r.ok) return;
   const s = r.settings;
   $('scribeEnabled').checked = s.enabled === true;
   $('scribeUrl').value = s.baseUrl || '';
-  $('scribeMailbox').value = s.mailbox || '';
-  $('scribePeriod').value = String(s.periodMinutes || 2);
+  $('scribeMailboxes').value = (s.mailboxes || []).join(', ');
+  $('scribeLegacy').checked = s.includeLegacy === true;
   $('scribeNotify').checked = s.notify !== false;
-  $('scribeToken').placeholder = s.hasToken ? 'Token saved (paste a new one to replace it)' : 'mailbox token (smk_… with mailbox.read)';
-  if (s.tokenRejected) $('scribeStatus').textContent = 'Scribe rejected the token. Paste a new one.';
+  $('scribeToken').placeholder = s.hasToken ? 'Token saved (paste a new one to replace it)' : 'MAILBOX_STATUS_TOKEN or smk_… (mailbox.read)';
   renderInbox(await askWithPayload('helmion:scribe-inbox', { options: {} }));
 }
 function renderInbox(r) {
   const list = $('scribeInbox');
   list.textContent = '';
   if (!r || !r.ok) return;
+  if (SCRIBE_STATE_TEXT[r.serverState]) { $('scribeStatus').textContent = SCRIBE_STATE_TEXT[r.serverState]; }
+  else if (r.offline) { $('scribeStatus').textContent = 'Offline. Guard will check again when you are back online.'; }
+  else { $('scribeStatus').textContent = `${r.unread || 0} unread.`; }
   for (const m of r.mailboxes || []) {
-    if (!m.newest || !m.count) continue;
     const li = document.createElement('li');
-    li.textContent = `${m.mailbox}: ${m.count} unread · newest from ${m.newest.sender}: ${m.newest.subject} `;
-    const b = document.createElement('button');
-    b.type = 'button'; b.textContent = 'Open';
-    b.addEventListener('click', () => openScribeLetter(m.newest.id));
-    li.append(b); list.append(li);
+    const head = document.createElement('div');
+    const note = m.state === 'bad-name' ? ' (Scribe does not know this mailbox name)' : m.state === 'error' ? ' (last check failed, retrying)' : '';
+    head.textContent = `${m.mailbox}: ${m.unread} unread${m.legacyCount != null ? ` · ${m.legacyCount} legacy` : ''}${note}`;
+    li.append(head);
+    for (const x of m.recent || []) {
+      const row = document.createElement('div');
+      row.className = 'muted';
+      row.textContent = `${x.priority === 'high' || x.priority === 'urgent' ? '! ' : ''}${x.from}: ${x.subject}`;
+      li.append(row);
+    }
+    if (m.site && m.unread) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = `Open ${m.mailbox} to read`;
+      b.addEventListener('click', () => askWithPayload('helmion:scribe-nudge', { mailbox: m.mailbox }));
+      li.append(b);
+    }
+    list.append(li);
   }
-  const when = r.polledAt ? new Date(r.polledAt).toLocaleTimeString() : 'never';
-  $('scribeStatus').textContent = r.offline ? 'Offline; will check again when back online.' : r.lastError ? `Last check failed: ${r.lastError}` : `${r.unread || 0} unread. Last checked ${when}.`;
 }
-async function openScribeLetter(id) {
-  const r = await askWithPayload('helmion:scribe-open', { id });
-  if (!r || !r.ok) { $('scribeStatus').textContent = `Could not open the letter: ${r && r.error}`; return; }
-  openLetterId = r.letter.id;
-  $('scribeLetterSubject').textContent = r.letter.subject;
-  $('scribeLetterFrom').textContent = `From ${r.letter.from} ${r.letter.createdAt ? `· ${fmt(r.letter.createdAt)}` : ''}`;
-  $('scribeLetterBody').textContent = r.letter.body;
-  $('scribeLetter').hidden = false;
-}
-$('scribeReceipt').addEventListener('click', async () => {
-  if (!openLetterId) return;
-  const r = await askWithPayload('helmion:scribe-receipt', { id: openLetterId });
-  $('scribeStatus').textContent = r && r.ok ? 'Receipt sent.' : `Receipt not sent: ${r && r.error}`;
-  if (r && r.ok) { $('scribeLetter').hidden = true; openLetterId = null; renderInbox(await askWithPayload('helmion:scribe-inbox', { options: {} })); }
-});
 $('scribeSave').addEventListener('click', async () => {
   const url = $('scribeUrl').value.trim();
   if ($('scribeEnabled').checked && url) {
@@ -407,7 +407,7 @@ $('scribeSave').addEventListener('click', async () => {
   }
   const saved = await askWithPayload('helmion:scribe-settings', { settings: {
     enabled: $('scribeEnabled').checked, baseUrl: url, token: $('scribeToken').value || undefined,
-    mailbox: $('scribeMailbox').value, periodMinutes: Number($('scribePeriod').value), notify: $('scribeNotify').checked,
+    mailboxes: $('scribeMailboxes').value, includeLegacy: $('scribeLegacy').checked, notify: $('scribeNotify').checked,
   } });
   $('scribeToken').value = '';
   $('scribeStatus').textContent = saved && saved.ok ? 'Saved.' : `Not saved: ${saved && saved.error}`;

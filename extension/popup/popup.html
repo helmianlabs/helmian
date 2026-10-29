@@ -86,17 +86,16 @@
 
   <section id="scribe" aria-live="polite">
     <h2>Scribe letters</h2>
-    <p class="muted">Off by default. Checks your Scribe mailbox every 1–2 minutes and shows a badge and a notification when a letter arrives.</p>
+    <p class="muted">Off by default. Knocks when a mailbox you watch has new Scribe mail. Guard only counts letters; the AI reads them (and Scribe records the receipt) when it runs check_inbox.</p>
     <label class="row"><input id="scribeEnabled" type="checkbox"> Knock when I have Scribe mail</label>
     <label class="row">Scribe URL <input id="scribeUrl" type="url" autocomplete="off" placeholder="https://scribe.example.com"></label>
-    <label class="row">Token <input id="scribeToken" type="password" autocomplete="off" spellcheck="false" placeholder="mailbox token (smk_… with mailbox.read)"></label>
-    <label class="row">Mailbox <input id="scribeMailbox" type="text" autocomplete="off" placeholder="troy (blank = all)"></label>
-    <label class="row">Check every <select id="scribePeriod"><option value="1">1 minute</option><option value="2">2 minutes</option></select></label>
+    <label class="row">Mailbox token <input id="scribeToken" type="password" autocomplete="off" spellcheck="false" placeholder="MAILBOX_STATUS_TOKEN or smk_… (mailbox.read)"></label>
+    <label class="row">Mailboxes <input id="scribeMailboxes" type="text" autocomplete="off" placeholder="troy, claude.ai, muse"></label>
+    <label class="row"><input id="scribeLegacy" type="checkbox"> Also count legacy for-&lt;name&gt; memories (self-host, every 5 min at most)</label>
     <label class="row"><input id="scribeNotify" type="checkbox" checked> Show a notification for new letters</label>
     <div class="row"><button id="scribeSave" type="button">Save Scribe settings</button> <button id="scribeRefresh" type="button">Check now</button></div>
     <p id="scribeStatus" class="muted" role="status"></p>
     <ul id="scribeInbox" class="alerts"></ul>
-    <article id="scribeLetter" hidden><h3 id="scribeLetterSubject"></h3><p class="muted" id="scribeLetterFrom"></p><pre id="scribeLetterBody"></pre><button id="scribeReceipt" type="button">Send receipt</button></article>
   </section>
 
   <p id="confirm" class="confirm" hidden>
