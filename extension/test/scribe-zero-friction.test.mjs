@@ -51,7 +51,7 @@ test('mailbox derivation from ticked AIs: chatgpt, claude.ai, grok, gemini; neve
   assert.deepEqual(D.mailboxesForAis(['chatgpt', 'claude', 'grok', 'gemini']), ['chatgpt', 'claude.ai', 'grok', 'gemini']);
   assert.deepEqual(D.mailboxesForAis(['gemini', 'claude']), ['claude.ai', 'gemini']);
   assert.deepEqual(D.mailboxesForAis(['bogus']), []);
-  assert.deepEqual(D.nudgeSitesForAis(['grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false });
+  assert.deepEqual(D.nudgeSitesForAis(['grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false });
 });
 
 test('welcome page saves name + AIs: mailboxes and per-site nudge filled in, idle 3, cap 20', async () => {
@@ -68,7 +68,7 @@ test('welcome page saves name + AIs: mailboxes and per-site nudge filled in, idl
   assert.equal(s.settings.baseUrl, D.SCRIBE_DEFAULT_URL);
   const n = await send({ type: 'helmion:nudge-settings', settings: {} }, POPUP_AS_TAB);
   assert.equal(n.settings.enabled, true);
-  assert.deepEqual(n.settings.sites, { 'chatgpt.com': false, 'claude.ai': true, 'grok.com': true, 'gemini.google.com': false });
+  assert.deepEqual(n.settings.sites, { 'chatgpt.com': false, 'claude.ai': true, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false });
   assert.equal(n.settings.idleMinutes, 3); assert.equal(n.settings.dailyCapPerSite, 20);
   const back = await send({ type: 'helmion:onboarding', action: 'get' }, WELCOME);
   assert.equal(back.profile.name, 'Troy');
@@ -174,7 +174,7 @@ test('connect: a worker that never answers times out with a plain message', asyn
 test('popup: advanced fields live behind an Advanced disclosure; welcome page lists the four AIs', async () => {
   const html = await readFile(path.join(EXT, 'popup/popup.html'), 'utf8');
   const adv = html.slice(html.indexOf('<details id="scribeAdvanced">'), html.indexOf('</details>', html.indexOf('<details id="scribeAdvanced">')));
-  for (const id of ['scribeUrl', 'scribeMailboxes', 'scribeUnreadPath', 'scribeToken', 'nudgeIdle', 'nudgeCap', 'nudgeSite-chatgpt.com', 'nudgeSite-claude.ai', 'nudgeSite-grok.com', 'nudgeSite-gemini.google.com', 'scribeRedirect']) {
+  for (const id of ['scribeUrl', 'scribeMailboxes', 'scribeUnreadPath', 'scribeToken', 'nudgeIdle', 'nudgeCap', 'nudgeSite-chatgpt.com', 'nudgeSite-claude.ai', 'nudgeSite-grok.com', 'nudgeSite-gemini.google.com', 'nudgeSite-perplexity.ai', 'scribeRedirect']) {
     assert.ok(adv.includes(`id="${id}"`), `${id} is inside Advanced`);
   }
   const svc = html.slice(html.indexOf('<details id="advancedServices">'));
@@ -189,10 +189,10 @@ test('popup: advanced fields live behind an Advanced disclosure; welcome page li
   assert.doesNotMatch(welcome, /id="[^"]*mailbox/i, 'no mailbox field to type into');
 });
 
-test('package: welcome page ships, version 0.6.4, options page, build-time --scribe-url rewrite', async () => {
+test('package: welcome page ships, version 0.6.5, options page, build-time --scribe-url rewrite', async () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(await readFile(path.join(EXT, f), 'utf8'));
-    assert.equal(m.version, '0.6.4');
+    assert.equal(m.version, '0.6.5');
     assert.deepEqual(m.options_ui, { page: 'popup/popup.html', open_in_tab: true });
   }
   const { applyScribeUrl } = await import('../../tools/package-guard.mjs');
@@ -214,9 +214,9 @@ test('0.6.4 AI table: seven AIs, one table drives mailboxes, nudge sites and ope
     if (c.nudge) assert.ok(c.hosts.length && c.chatUrl);
   }
   assert.deepEqual(D.mailboxesForAis(['mistral', 'perplexity', 'muse']), ['mistral', 'perplexity', 'muse']);
-  assert.deepEqual(D.nudgeSitesForAis(['mistral', 'muse', 'grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false }, 'mailbox-only AIs add no nudge site');
+  assert.deepEqual(D.nudgeSitesForAis(['mistral', 'muse', 'grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false }, 'mailbox-only AIs add no nudge site');
   const { NUDGE_SITES } = await import('../background/nudge-policy.js');
-  assert.deepEqual(NUDGE_SITES, { 'chatgpt.com': 'chatgpt', 'claude.ai': 'claude.ai', 'grok.com': 'grok', 'gemini.google.com': 'gemini' });
+  assert.deepEqual(NUDGE_SITES, { 'chatgpt.com': 'chatgpt', 'claude.ai': 'claude.ai', 'grok.com': 'grok', 'gemini.google.com': 'gemini', 'perplexity.ai': 'perplexity' });
   const { MAILBOX_SITES, mailboxName } = await import('../background/scribe-client.js');
   assert.equal(MAILBOX_SITES.mistral, 'https://chat.mistral.ai/');
   assert.equal(MAILBOX_SITES.perplexity, 'https://www.perplexity.ai/');
@@ -230,4 +230,24 @@ test('0.6.4 AI table: seven AIs, one table drives mailboxes, nudge sites and ope
     assert.ok(man.content_scripts[0].matches.includes(`https://${host}/*`), host);
     assert.ok(nudgeJs.includes(`'${host}'`), host);
   }
+});
+
+test('0.6.5 Perplexity row: nudge on, www and bare host matched, popup toggle, no other host left without a tick', async () => {
+  const p = D.AI_CHOICES.find((c) => c.key === 'perplexity');
+  assert.equal(p.nudge, true); assert.deepEqual(p.hosts, ['perplexity.ai']);
+  assert.deepEqual(D.nudgeSitesForAis(['perplexity'])['perplexity.ai'], true);
+  const { siteForHost } = await import('../background/nudge-policy.js');
+  if (typeof siteForHost === 'function') { assert.equal(siteForHost('www.perplexity.ai'), 'perplexity.ai'); assert.equal(siteForHost('perplexity.ai'), 'perplexity.ai'); }
+  for (const f of ['manifest.json', 'manifest.firefox.json']) {
+    const m = JSON.parse(await readFile(path.join(EXT, f), 'utf8'));
+    for (const u of ['https://www.perplexity.ai/*', 'https://perplexity.ai/*']) assert.ok(m.content_scripts[0].matches.includes(u), f + ' ' + u);
+    // Every AI site the content scripts run on is a tick box on the welcome page.
+    const tickHosts = D.AI_CHOICES.flatMap((c) => c.hosts);
+    for (const u of m.content_scripts.flatMap((c) => c.matches)) {
+      const h = new URL(u.replace('/*', '/')).hostname;
+      assert.ok(tickHosts.some((t) => h === t || h.endsWith('.' + t)), f + ': ' + h + ' has no tick');
+    }
+  }
+  const html = await readFile(path.join(EXT, 'popup/popup.html'), 'utf8');
+  assert.match(html, /id="nudgeSite-perplexity\.ai"/);
 });
