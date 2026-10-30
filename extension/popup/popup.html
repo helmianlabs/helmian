@@ -84,6 +84,20 @@
     <ul id="flagsAlerts" class="alerts"></ul>
   </section>
 
+  <section id="scribe" aria-live="polite">
+    <h2>Scribe letters</h2>
+    <p class="muted">Off by default. Knocks when a mailbox you watch has new Scribe mail. Guard only counts letters; the AI reads them (and Scribe records the receipt) when it runs check_inbox.</p>
+    <label class="row"><input id="scribeEnabled" type="checkbox"> Knock when I have Scribe mail</label>
+    <label class="row">Scribe URL <input id="scribeUrl" type="url" autocomplete="off" placeholder="https://scribe.example.com"></label>
+    <label class="row">Mailbox token <input id="scribeToken" type="password" autocomplete="off" spellcheck="false" placeholder="MAILBOX_STATUS_TOKEN or smk_… (mailbox.read)"></label>
+    <label class="row">Mailboxes <input id="scribeMailboxes" type="text" autocomplete="off" placeholder="troy, claude.ai, muse"></label>
+    <label class="row"><input id="scribeLegacy" type="checkbox"> Also count legacy for-&lt;name&gt; memories (self-host, every 5 min at most)</label>
+    <label class="row"><input id="scribeNotify" type="checkbox" checked> Show a notification for new letters</label>
+    <div class="row"><button id="scribeSave" type="button">Save Scribe settings</button> <button id="scribeRefresh" type="button">Check now</button></div>
+    <p id="scribeStatus" class="muted" role="status"></p>
+    <ul id="scribeInbox" class="alerts"></ul>
+  </section>
+
   <p id="confirm" class="confirm" hidden>
     This deletes every logged flag on this machine and cannot be undone.
     <button id="confirmClear" type="button" class="danger-btn">Yes, delete them</button>
