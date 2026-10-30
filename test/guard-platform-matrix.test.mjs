@@ -22,7 +22,7 @@ test('Chromium and Firefox packages keep the minimal permission boundary', () =>
   assert.equal(firefox.host_permissions, undefined);
   assert.deepEqual(firefox.optional_permissions, ['notifications', 'https://*/*', 'http://localhost/*', 'http://127.0.0.1/*']);
   for (const manifest of [chromium, firefox]) {
-    assert.deepEqual(manifest.content_scripts[0].matches, ['https://claude.ai/*', 'https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://grok.com/*']);
+    assert.deepEqual(manifest.content_scripts[0].matches, ['https://claude.ai/*', 'https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://grok.com/*', 'https://www.perplexity.ai/*', 'https://perplexity.ai/*']);
   }
   assert.equal(chromium.background.service_worker, 'background/worker.js');
   assert.deepEqual(firefox.background.scripts, ['background/worker.js']);
