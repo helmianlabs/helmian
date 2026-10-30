@@ -189,11 +189,17 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:nudge-settings',
 ]);
 
-function isFromOwnPopup(sender) {
-  if (!sender || sender.tab) return false;
-  if (sender.id !== chrome.runtime.id) return false;
+// 0.6.2 FIX: this used to refuse any sender with a `tab`. The popup opened as
+// a full tab (chrome-extension://<id>/popup/popup.html) has a tab, so every
+// settings save and the Scribe sign-in were refused with "only accepted from
+// the extension popup" (reproduced in Chromium 141 with the 0.6.0 build).
+// What matters is the sender's URL: our own popup page. A content script's
+// sender.url is the web page's URL, so it is still refused.
+export function isFromOwnPopup(sender, runtime = chrome.runtime) {
+  if (!sender) return false;
+  if (sender.id !== runtime.id) return false;
   try {
-    return String(sender.url || '').startsWith(chrome.runtime.getURL('popup/'));
+    return String(sender.url || '').startsWith(runtime.getURL('popup/'));
   } catch {
     // getURL unavailable. Fail CLOSED — an unverifiable sender does not get the
     // ledger. A safety tool's evidence log is the last thing to hand out on a
@@ -270,14 +276,20 @@ export async function runAutoNudge(result = {}, { now = Date.now() } = {}) {
   for (const { mailbox, items } of (result && result.mail) || []) await queuePending(ledger, mailbox, items, now);
   return runNudges(ledger, { sendToTab, now });
 }
+export function plainLaunchError(raw) {
+  const m = String(raw || '');
+  if (!m || /did not approve|closed|cancel/i.test(m)) return 'The Scribe sign-in window was closed before sign-in finished. Click Sign in to Scribe to try again.';
+  if (/could not be loaded/i.test(m)) return `The Scribe sign-in page could not be loaded (browser said: ${m}). Check your internet connection and that the Scribe server is up, then try again.`;
+  return `The browser could not open the Scribe sign-in window (browser said: ${m}).`;
+}
 function identityApi() {
   const b = globalThis.browser && globalThis.browser.identity;
-  if (b && typeof b.launchWebAuthFlow === 'function') return { launch: (url) => b.launchWebAuthFlow({ url, interactive: true }), redirect: b.getRedirectURL() };
+  if (b && typeof b.launchWebAuthFlow === 'function') return { launch: (url) => b.launchWebAuthFlow({ url, interactive: true }).catch((e) => { throw new Error(plainLaunchError(e && e.message)); }), redirect: b.getRedirectURL() };
   const c = chrome.identity;
   if (c && typeof c.launchWebAuthFlow === 'function') {
     return {
       launch: (url) => new Promise((resolve, reject) => chrome.identity.launchWebAuthFlow({ url, interactive: true }, (final) => {
-        const err = chrome.runtime.lastError; if (err || !final) reject(new Error((err && err.message) || 'Sign-in was cancelled')); else resolve(final);
+        const err = chrome.runtime.lastError; if (err || !final) reject(new Error(plainLaunchError(err && err.message))); else resolve(final);
       })),
       redirect: c.getRedirectURL(),
     };
@@ -535,7 +547,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const s = await getScribeSettings(ledger);
         if (!s.baseUrl) throw new Error('Save the Scribe URL first');
         const id = identityApi();
-        if (!id) throw new Error('This browser did not grant the identity permission needed for sign-in');
+        if (!id) throw new Error('The browser did not give Guard the "identity" permission, so it cannot open the Scribe sign-in window. Click Sign in to Scribe again and choose Allow.');
         const view = await scribeSignIn(ledger, s.baseUrl, { launch: id.launch, redirectUri: id.redirect });
         await setScribeSettings(ledger, { clearRejected: true });
         await syncScribeAlarm();
