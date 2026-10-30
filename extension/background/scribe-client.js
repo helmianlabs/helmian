@@ -239,7 +239,9 @@ export async function pollScribe(storage, { fetchImpl, now = Date.now(), online 
   if (!s.baseUrl || (!s.token && !useOAuth) || !s.mailboxes.length) return { skipped: 'not-configured' };
   if (st.tokenRejected) return { skipped: 'token-rejected' };
   if (!online) { st.offline = true; await writeState(storage, st); return { skipped: 'offline' }; }
-  if (idle && !force) return { skipped: 'idle' };
+  // 0.6.8: keep polling while the computer is idle. Idle is exactly when the AIs
+  // should get their mail; the old 'idle' skip stopped mail overnight.
+  void idle;
   st.offline = false;
   const day = utcDay(now);
   if (st.budgetDay !== day) { st.budgetDay = day; st.budgetUsed = 0; }
@@ -268,7 +270,14 @@ export async function pollScribe(storage, { fetchImpl, now = Date.now(), online 
   if (!polled) return { skipped: st.budgetSpent && st.budgetUsed >= s.dailyBudget ? 'budget-spent' : 'not-due', unread };
   // `mail` is every fresh item (ids, from, subject only) for the auto-nudge policy;
   // `fresh` is only for notices, which are off by default.
-  return { unread, fresh: s.notify ? fresh : [], mail: fresh, showBadge: s.showBadge, serverState: st.serverState };
+  return { unread, fresh: s.notify ? fresh : [], mail: fresh, boxes: unreadByBox(st), showBadge: s.showBadge, serverState: st.serverState };
+}
+
+/** mailbox -> {count, newestId} for boxes the server answered for (state ok). */
+export function unreadByBox(st) {
+  const out = {};
+  for (const [name, b] of Object.entries((st && st.boxes) || {})) if (b && b.state === 'ok') out[name] = { count: Math.max(0, Number(b.unread) || 0), newestId: b.newestId == null ? null : Number(b.newestId) };
+  return out;
 }
 
 /** Popup view of the inbox: counts and subjects only. */

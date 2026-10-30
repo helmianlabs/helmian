@@ -189,10 +189,10 @@ test('popup: advanced fields live behind an Advanced disclosure; welcome page li
   assert.doesNotMatch(welcome, /id="[^"]*mailbox/i, 'no mailbox field to type into');
 });
 
-test('package: welcome page ships, version 0.6.7, options page, build-time --scribe-url rewrite', async () => {
+test('package: welcome page ships, version 0.6.8, options page, build-time --scribe-url rewrite', async () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(await readFile(path.join(EXT, f), 'utf8'));
-    assert.equal(m.version, '0.6.7');
+    assert.equal(m.version, '0.6.8');
     assert.deepEqual(m.options_ui, { page: 'popup/popup.html', open_in_tab: true });
   }
   const { applyScribeUrl } = await import('../../tools/package-guard.mjs');
@@ -272,4 +272,23 @@ test('0.6.7 worker: a tab on a lookalike or non-chat page is never registered fo
   }
   assert.equal((await hello('https://grok.com/c/abc-123')).ok, true);
   assert.equal((await hello('https://www.perplexity.ai/')).ok, true);
+});
+
+test('0.6.8 update migration: Mistral/Perplexity switched ON for AIs Troy ticked; existing site choices untouched', async () => {
+  const W = await import('../background/worker.js');
+  const { memoryStorage } = await import('../background/ledger.js');
+  const { setNudgeSettings, getNudgeSettings } = await import('../background/nudge-policy.js');
+  const s = memoryStorage();
+  await s.set(W.PROFILE_KEY, { name: 'Troy', ais: ['chatgpt', 'claude', 'mistral', 'perplexity', 'grok'] });
+  // State as left by the 0.6.4 welcome page: four sites, Troy later switched Grok off himself.
+  await setNudgeSettings(s, { enabled: true, sites: { 'chatgpt.com': true, 'claude.ai': true, 'grok.com': false } });
+  const on = await W.migrateNudgeSites(s);
+  assert.deepEqual(on, { 'perplexity.ai': true, 'chat.mistral.ai': true });
+  const n = await getNudgeSettings(s);
+  assert.equal(n.sites['chat.mistral.ai'], true); assert.equal(n.sites['perplexity.ai'], true);
+  assert.equal(n.sites['grok.com'], false, 'his own choice kept');
+  // Second run: nothing new; and if he switches Mistral off it stays off.
+  await setNudgeSettings(s, { sites: { 'chat.mistral.ai': false } });
+  assert.deepEqual(await W.migrateNudgeSites(s), {});
+  assert.equal((await getNudgeSettings(s)).sites['chat.mistral.ai'], false);
 });

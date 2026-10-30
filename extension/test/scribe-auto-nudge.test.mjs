@@ -159,3 +159,92 @@ test('unread path is configurable; 404 means "not deployed yet" (feature-off, sl
   const popup = (await import('node:fs')).readFileSync(new URL('../popup/popup.js', import.meta.url), 'utf8');
   assert.match(popup, /'feature-off': 'Not deployed yet/);
 });
+
+// ---- 0.6.8: re-nudge while mail stays unread, back-off, logs, refused != pause ----
+test('0.6.8 re-nudge: still-unread letters are nudged again after 10 min, then 20, 40...; gives up after 6; new letter resets', async () => {
+  const s = memoryStorage();
+  await N.setNudgeSettings(s, { enabled: true, sites: { 'chatgpt.com': true } });
+  const sent = [];
+  const sendToTab = async (tabId) => { sent.push(tabId); return { ok: true, reason: 'sent' }; };
+  const tab = async (t) => N.noteTab(s, 5, 'chatgpt.com', t);
+  // Letters 10, 12, 19 unread; first nudge for newest 19.
+  await tab(T0); await N.queuePending(s, 'chatgpt', [{ id: 19, subject: 'x' }], T0);
+  const unread = { chatgpt: { count: 3, newestId: 19 } };
+  let r = await N.runNudges(s, { sendToTab, now: T0 + 1, unread });
+  assert.equal(r[0].outcome, 'sent'); assert.equal(sent.length, 1);
+  // 9 min later: still unread, but cooldown.
+  await tab(T0 + 9 * 60000);
+  r = await N.runNudges(s, { sendToTab, now: T0 + 9 * 60000, unread });
+  assert.equal(sent.length, 1); assert.ok(r.some((x) => x.reason === 'renudge-cooldown' || x.reason === 'tab-cooldown'));
+  // 10 min later: re-nudged.
+  let t = T0 + 1 + 10 * 60000; await tab(t);
+  r = await N.runNudges(s, { sendToTab, now: t, unread });
+  assert.equal(sent.length, 2); assert.equal(r[0].renudge, true);
+  // Next wait is 20 min (back-off): 15 min later nothing, 20 min later yes.
+  await tab(t + 15 * 60000); await N.runNudges(s, { sendToTab, now: t + 15 * 60000, unread }); assert.equal(sent.length, 2);
+  t += 20 * 60000; await tab(t); await N.runNudges(s, { sendToTab, now: t, unread }); assert.equal(sent.length, 3);
+  // Continue until it gives up (6 tries total).
+  for (const wait of [40, 80, 160]) { t += wait * 60000; await tab(t); await N.runNudges(s, { sendToTab, now: t, unread }); }
+  assert.equal(sent.length, 6);
+  t += 24 * 60 * 60000 - 1; await tab(t);
+  r = await N.runNudges(s, { sendToTab, now: t, unread });
+  assert.equal(sent.length, 6); assert.ok(r.some((x) => x.reason === 'gave-up-same-letters-unread'));
+  // A newer letter (20) resets the back-off and nudges at once.
+  await N.queuePending(s, 'chatgpt', [{ id: 20, subject: 'y' }], t + 1);
+  await N.runNudges(s, { sendToTab, now: t + 1, unread: { chatgpt: { count: 4, newestId: 20 } } });
+  assert.equal(sent.length, 7);
+  assert.equal((await N.readNudgeState(s)).mail.chatgpt.tries, 1);
+  // Mailbox read (count 0): nothing more.
+  t += 3 * 3600000; await tab(t);
+  await N.runNudges(s, { sendToTab, now: t, unread: { chatgpt: { count: 0, newestId: 20 } } });
+  assert.equal(sent.length, 7);
+});
+
+test('0.6.8 re-nudge still respects the daily cap of 20 and the page idle check (busy waits)', async () => {
+  const s = memoryStorage();
+  await N.setNudgeSettings(s, { enabled: true, sites: { 'chatgpt.com': true }, dailyCapPerSite: 2 });
+  let answer = { ok: false, reason: 'busy', detail: 'user active in the last 3 min' };
+  const sendToTab = async () => answer;
+  let t = T0; await N.noteTab(s, 5, 'chatgpt.com', t);
+  const unread = { chatgpt: { count: 1, newestId: 9 } };
+  let r = await N.runNudges(s, { sendToTab, now: t, unread });
+  assert.equal(r[0].outcome, 'waiting', 'idle check is the page\'s; Guard waits');
+  answer = { ok: true };
+  for (let i = 0; i < 4; i += 1) { t += 3 * 3600000; await N.noteTab(s, 5, 'chatgpt.com', t); r = await N.runNudges(s, { sendToTab, now: t, unread }); }
+  const st = await N.readNudgeState(s);
+  assert.ok(Number(st.perSite['chatgpt.com']) <= 2);
+  assert.equal(N.renudgeWaitMs(1), 10 * 60000); assert.equal(N.renudgeWaitMs(3), 40 * 60000); assert.equal(N.renudgeWaitMs(99), 4 * 3600000);
+});
+
+test('0.6.8 refused (not a real chat page) forgets the tab and does NOT pause the site', async () => {
+  const s = memoryStorage();
+  await N.setNudgeSettings(s, { enabled: true, sites: { 'grok.com': true } });
+  await N.noteTab(s, 7, 'grok.com', T0);
+  await N.queuePending(s, 'grok', [{ id: 3, subject: 'x' }], T0);
+  const r = await N.runNudges(s, { sendToTab: async () => ({ ok: false, reason: 'refused', detail: 'page lacks the real chat composer signature' }), now: T0 + 1 });
+  assert.equal(r[0].outcome, 'refused');
+  assert.equal((await N.readNudgeState(s)).sitePausedUntil['grok.com'], undefined);
+  assert.deepEqual(await N.liveTabs(s, T0 + 2), []);
+  assert.ok((await N.readNudgeLog(s)).some((l) => l.site === 'grok.com' && l.outcome === 'refused' && /signature/.test(l.reason)));
+});
+
+test('0.6.8 decision log explains silence: site off, no open tab; deduped; ring buffer per site', async () => {
+  const s = memoryStorage();
+  await N.setNudgeSettings(s, { enabled: true, sites: { 'chatgpt.com': true } });
+  await N.queuePending(s, 'mistral', [{ id: 3, subject: 'x' }], T0);
+  await N.queuePending(s, 'chatgpt', [{ id: 4, subject: 'x' }], T0);
+  await N.runNudges(s, { sendToTab: async () => ({ ok: true }), now: T0 });
+  await N.runNudges(s, { sendToTab: async () => ({ ok: true }), now: T0 + 60000 });
+  const log = await N.readNudgeLog(s);
+  const mis = log.filter((l) => l.site === 'chat.mistral.ai');
+  assert.equal(mis.length, 1, 'deduped'); assert.match(mis[0].reason, /switched off/);
+  assert.ok(log.some((l) => l.site === 'chatgpt.com' && /no open chat tab/.test(l.reason)));
+  for (let i = 0; i < 100; i += 1) await N.logNudge(s, { now: T0 + i, site: 'claude.ai', mailbox: 'claude.ai', outcome: 'x', reason: String(i) });
+  const after = await N.readNudgeLog(s);
+  assert.equal(after.filter((l) => l.site === 'claude.ai').length, N.NUDGE_LOG_PER_SITE);
+  assert.ok(after.some((l) => l.site === 'chat.mistral.ai'), 'other sites keep their lines');
+  // Off switch is logged too.
+  await N.setNudgeSettings(s, { enabled: false });
+  await N.runNudges(s, { sendToTab: async () => ({ ok: true }), now: T0 + 1e6 });
+  assert.ok((await N.readNudgeLog(s)).some((l) => l.outcome === 'off'));
+});

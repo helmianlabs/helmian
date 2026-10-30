@@ -34,7 +34,8 @@ function wire(composer, button, { accepts = true } = {}) {
 const FIXTURES = {
   'chatgpt.com': () => { const c = element('div', { id: 'prompt-textarea', contenteditable: 'true', class: 'ProseMirror' }); const b = element('button', { 'data-testid': 'send-button' }); wire(c, b); return { c, b, page: [element('form', {}, [c, b])] }; },
   'claude.ai': () => { const c = element('div', { class: 'ProseMirror', contenteditable: 'true' }); const b = element('button', { 'aria-label': 'Send message' }); wire(c, b); return { c, b, page: [element('fieldset', {}, [c, b])] }; },
-  'grok.com': () => { const c = element('textarea', { 'aria-label': 'Ask Grok anything' }); c.value = ''; const b = element('button', { type: 'submit' }); wire(c, b); return { c, b, page: [element('form', {}, [c, b])] }; },
+  // Real grok.com composer as seen live 2026-10-29: form[data-composer] > [data-testid=chat-input] > TipTap ProseMirror div.
+  'grok.com': () => { const c = element('div', { class: 'tiptap ProseMirror', contenteditable: 'true', role: 'combobox', 'aria-label': 'Ask Grok anything' }); const b = element('button', { type: 'submit', 'aria-label': 'Submit' }); wire(c, b); return { c, b, page: [element('form', { 'data-composer': 'true' }, [element('div', { 'data-testid': 'chat-input' }, [element('div', {}, [c])]), b])] }; },
   // Mistral Le Chat: ProseMirror div, button[type=submit][aria-label=Send] (live DOM checked 2026-10-29).
   'chat.mistral.ai': () => { const c = element('div', { class: 'ProseMirror', contenteditable: 'true', 'data-placeholder': 'Ask anything' }); const b = element('button', { type: 'submit', 'aria-label': 'Send' }); wire(c, b); return { c, b, page: [element('form', {}, [c, element('button', { type: 'submit' }), b])] }; },
   // Perplexity: Lexical editor, no form, Submit button (live DOM checked 2026-10-29).
@@ -151,7 +152,7 @@ test('0.6.7 lookalikes never nudge: Grok Bot app style pages, grok subdomains, n
     const { doc, N } = await loadNudge(host, x.page, { pathname });
     const r = await N.tryNudge(doc, msg());
     assert.equal(r.ok, false, host + pathname); assert.equal(r.reason, 'refused', host + pathname);
-    assert.equal(x.c.value, '', 'nothing typed on ' + host + pathname); assert.ok(!clicked);
+    assert.equal(x.c.textContent, '', 'nothing typed on ' + host + pathname); assert.ok(!clicked);
     assert.equal(N.siteKey(host, pathname), null, host + pathname);
   }
 });
@@ -177,4 +178,31 @@ test('0.6.7 content-side CHAT_PAGES matches background CHAT_PAGES exactly; backg
     'https://grok.com.evil.example/', 'https://x.com/i/grok', 'https://user@grok.com/', 'not a url']) assert.equal(D.chatSiteForUrl(u), null, u);
   const P = await import('../background/nudge-policy.js');
   assert.equal(P.siteForHost('bots.grok.com'), null); assert.equal(P.siteForHost('www.perplexity.ai'), 'perplexity.ai'); assert.equal(P.siteForHost('grok.com'), 'grok.com');
+});
+
+// 0.6.8: the Grok Bot app false positive. A grok.com page on a chat path that lacks the
+// real Grok composer signature is refused, nothing typed, nothing clicked.
+test('0.6.8 grok.com without the real composer signature is refused (Grok Bot app style pages)', async () => {
+  const lookalikes = [
+    () => { const c = element('textarea', { 'aria-label': 'Message Paul' }); c.value = ''; const b = element('button', { type: 'submit' }); return { c, b, page: [element('form', {}, [c, b])] }; },
+    () => { const c = element('div', { class: 'ProseMirror', contenteditable: 'true' }); const b = element('button', { 'aria-label': 'Submit', type: 'submit' }); return { c, b, page: [element('form', {}, [c, b])] }; },
+    () => { const c = element('div', { contenteditable: 'true', 'data-testid': 'chat-input' }); const b = element('button', { type: 'submit' }); return { c, b, page: [element('div', {}, [c, b])] }; },
+  ];
+  for (const make of lookalikes) for (const pathname of ['/', '/c/abc-123']) {
+    const x = make(); let clicked = false; x.b.click = () => { clicked = true; };
+    const { doc, N } = await loadNudge('grok.com', x.page, { pathname });
+    const r = await N.tryNudge(doc, msg());
+    assert.deepEqual({ ok: r.ok, reason: r.reason }, { ok: false, reason: 'refused' }, pathname);
+    assert.match(r.detail, /signature/);
+    assert.equal(x.c.value ?? x.c.textContent, '', 'nothing typed'); assert.ok(!clicked, 'nothing clicked');
+  }
+});
+
+test('0.6.8 waits for a Send button that enables a moment after the text lands', async () => {
+  const f = FIXTURES['chat.mistral.ai']();
+  f.b.disabled = true; setTimeout(() => { f.b.disabled = false; }, 150);
+  let clicked = false; const click = f.b.click; f.b.click = () => { clicked = true; click(); };
+  const { doc, N } = await loadNudge('chat.mistral.ai', f.page);
+  const r = await N.tryNudge(doc, msg({ sendWaitMs: 1000 }));
+  assert.equal(r.reason, 'sent', JSON.stringify(r)); assert.ok(clicked, 'clicked once enabled');
 });

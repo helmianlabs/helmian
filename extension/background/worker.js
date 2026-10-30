@@ -33,7 +33,7 @@ import {
   inboxView,
   isConfigured as scribeConfigured,
   noticeText,
-  pollScribe,
+  pollScribe, readScribeState, unreadByBox,
   setScribeSettings,
 } from './scribe-client.js';
 import { AI_CHOICES, mailboxesForAis, nudgeSitesForAis, redirectUrlFor, DEFAULT_NUDGE_IDLE_MIN, DEFAULT_NUDGE_DAILY_CAP, SCRIBE_DEFAULT_URL } from './defaults.js';
@@ -291,7 +291,9 @@ function sendToTab(tabId, message) {
 }
 export async function runAutoNudge(result = {}, { now = Date.now() } = {}) {
   for (const { mailbox, items } of (result && result.mail) || []) await queuePending(ledger, mailbox, items, now);
-  return runNudges(ledger, { sendToTab, now });
+  // 0.6.8: always pass the last known unread counts, so letters that stay unread get re-nudged.
+  const unread = (result && result.boxes) || unreadByBox(await readScribeState(ledger));
+  return runNudges(ledger, { sendToTab, now, unread });
 }
 export function plainLaunchError(raw) {
   const m = String(raw || '');
@@ -336,6 +338,7 @@ export const ONBOARDING_PAGE = 'onboarding/onboarding.html';
 export function handleInstalled(details, api = chrome) {
   syncScribeAlarm();
   // 0.6.2: first install opens the welcome page. Updates and browser updates do not.
+  if (details && details.reason === 'update') migrateNudgeSites(ledger).catch((e) => console.warn('[Helmion Guard] nudge-site migration failed:', e && e.message));
   if (details && details.reason === 'install') {
     try { api.tabs.create({ url: api.runtime.getURL(ONBOARDING_PAGE) }); } catch (error) { console.warn('[Helmion Guard] could not open the welcome page:', error && error.message); }
     return true;
@@ -355,8 +358,26 @@ export async function saveOnboarding(storage, { name, ais } = {}) {
   await storage.set(PROFILE_KEY, { name: who, ais: keys, savedAt: new Date().toISOString() });
   const s = await getScribeSettings(storage);
   await setScribeSettings(storage, { mailboxes, ...(s.baseUrl ? {} : { baseUrl: SCRIBE_DEFAULT_URL }) });
+  await storage.set(NUDGE_KNOWN_SITES_KEY, Object.keys(nudgeSitesForAis([])));
   await setNudgeSettings(storage, { enabled: true, sites: nudgeSitesForAis(keys), idleMinutes: DEFAULT_NUDGE_IDLE_MIN, dailyCapPerSite: DEFAULT_NUDGE_DAILY_CAP });
   return { name: who, ais: keys, mailboxes };
+}
+// 0.6.8: sites that gained nudge support after the welcome page was filled in
+// (Perplexity 0.6.5, Mistral 0.6.6) stayed switched OFF, so they never nudged.
+// On update, switch on any NEWLY supported site for an AI Troy ticked. Sites
+// that already existed are left exactly as he set them.
+export const NUDGE_KNOWN_SITES_KEY = 'helmion.nudge.knownSites';
+const ORIGINAL_NUDGE_SITES = ['chatgpt.com', 'claude.ai', 'grok.com', 'gemini.google.com'];
+export async function migrateNudgeSites(storage) {
+  const known = await storage.get(NUDGE_KNOWN_SITES_KEY);
+  const knownList = Array.isArray(known) ? known : ORIGINAL_NUDGE_SITES;
+  const profile = await readOnboarding(storage);
+  const want = profile && Array.isArray(profile.ais) ? nudgeSitesForAis(profile.ais) : {};
+  const turnOn = {};
+  for (const [site, on] of Object.entries(want)) if (on && !knownList.includes(site)) turnOn[site] = true;
+  if (Object.keys(turnOn).length) await setNudgeSettings(storage, { sites: turnOn });
+  await storage.set(NUDGE_KNOWN_SITES_KEY, Object.keys(nudgeSitesForAis([])));
+  return turnOn;
 }
 export async function readOnboarding(storage) {
   const p = await storage.get(PROFILE_KEY);
@@ -580,7 +601,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const payload = message.settings || {};
       const write = Object.keys(payload).length > 0;
       (write ? setNudgeSettings(ledger, payload) : getNudgeSettings(ledger))
-        .then(async (settings) => sendResponse({ ok: true, settings, log: (await readNudgeLog(ledger)).slice(-20).reverse() }))
+        .then(async (settings) => sendResponse({ ok: true, settings, log: (await readNudgeLog(ledger)).slice(-40).reverse() }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }

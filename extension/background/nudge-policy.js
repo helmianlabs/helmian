@@ -22,6 +22,15 @@ export const NUDGE_STATE_KEY = 'helmion.nudge.state';
 export const NUDGE_LOG_KEY = 'helmion.nudge.log';
 export const NUDGE_LOG_MAX = 500;
 export const TAB_COOLDOWN_MS = 10 * 60 * 1000;
+// 0.6.8 re-nudge: while a mailbox still has unread mail, nudge again after a
+// cooldown that doubles each time the SAME letters stay unread (10, 20, 40, 80,
+// 160 min), and give up after RENUDGE_MAX_TRIES until a newer letter arrives.
+export const RENUDGE_BASE_MS = 10 * 60 * 1000;
+export const RENUDGE_MAX_MS = 4 * 60 * 60 * 1000;
+export const RENUDGE_MAX_TRIES = 6;
+export const NUDGE_LOG_PER_SITE = 60; // ring buffer per site
+export const NUDGE_LOG_DEDUPE_MS = 15 * 60 * 1000; // same site+mailbox+reason not repeated within 15 min
+export function renudgeWaitMs(tries) { return Math.min(RENUDGE_MAX_MS, RENUDGE_BASE_MS * 2 ** Math.max(0, (Number(tries) || 1) - 1)); }
 export const DEFAULT_IDLE_MIN = 3;
 export const DEFAULT_DAILY_CAP = 20;
 export const DOM_FAIL_PAUSE_MS = 6 * 60 * 60 * 1000; // a site whose DOM did not match is paused 6 h, not retried in a loop
@@ -131,6 +140,7 @@ export async function readNudgeState(storage) {
     perSite: st.perSite && typeof st.perSite === 'object' ? st.perSite : {}, // site -> count today
     cursors: st.cursors && typeof st.cursors === 'object' ? st.cursors : {}, // mailbox -> highest id already nudged
     sitePausedUntil: st.sitePausedUntil && typeof st.sitePausedUntil === 'object' ? st.sitePausedUntil : {},
+    mail: st.mail && typeof st.mail === 'object' ? st.mail : {}, // mailbox -> {lastAt, tries, newestId}
   };
 }
 
@@ -140,7 +150,7 @@ export async function readNudgeState(storage) {
  * The page-side checks (empty composer, not streaming, idle, user not typing)
  * are done by the content script, which re-checks them right before typing.
  */
-export function decideNudge({ settings, state, site, tabId, mailbox, items, now }) {
+export function decideNudge({ settings, state, site, tabId, mailbox, items, now, stillUnread = false }) {
   if (settings.killed) return { ok: false, reason: 'kill-switch' };
   if (!settings.enabled) return { ok: false, reason: 'master-off' };
   if (!site || !(site in settings.sites)) return { ok: false, reason: 'unknown-site' };
@@ -152,12 +162,21 @@ export function decideNudge({ settings, state, site, tabId, mailbox, items, now 
   const letters = list.filter((x) => !isReceiptOnly(x));
   if (!letters.length) return { ok: false, reason: list.length ? 'receipts-only' : 'no-new-mail' };
   const cursor = Math.max(...letters.map((x) => Number(x.id) || 0));
-  if (cursor <= Number(state.cursors[mailbox] || 0)) return { ok: false, reason: 'cursor-already-nudged' };
+  let renudge = false;
+  if (cursor <= Number(state.cursors[mailbox] || 0)) {
+    // Already nudged for these letters. Nudge again only while they are still unread, with back-off.
+    if (!stillUnread) return { ok: false, reason: 'cursor-already-nudged' };
+    const m = (state.mail && state.mail[mailbox]) || {};
+    const tries = Number(m.tries) || 1;
+    if (tries >= RENUDGE_MAX_TRIES) return { ok: false, reason: 'gave-up-same-letters-unread' };
+    if (now - Number(m.lastAt || 0) < renudgeWaitMs(tries)) return { ok: false, reason: 'renudge-cooldown' };
+    renudge = true;
+  }
   const last = Number(state.tabs[String(tabId)] || 0);
   if (now - last < TAB_COOLDOWN_MS) return { ok: false, reason: 'tab-cooldown' };
   const used = state.day === utcDay(now) ? Number(state.perSite[site] || 0) : 0;
   if (used >= settings.dailyCapPerSite) return { ok: false, reason: 'daily-cap' };
-  return { ok: true, reason: 'due', cursor };
+  return { ok: true, reason: renudge ? 'renudge-still-unread' : 'due', cursor, renudge };
 }
 
 /** Record a SUCCESSFUL nudge: cooldown, daily count, cursor. */
@@ -167,7 +186,10 @@ export async function recordNudge(storage, { site, tabId, mailbox, cursor, now }
   if (st.day !== day) { st.day = day; st.perSite = {}; }
   st.perSite[site] = Number(st.perSite[site] || 0) + 1;
   st.tabs[String(tabId)] = now;
-  st.cursors[mailbox] = Math.max(Number(st.cursors[mailbox] || 0), Number(cursor) || 0);
+  const prev = Number(st.cursors[mailbox] || 0);
+  const m = st.mail[mailbox] || {};
+  st.mail[mailbox] = { lastAt: now, newestId: Math.max(prev, Number(cursor) || 0), tries: Number(cursor) > prev ? 1 : (Number(m.tries) || 1) + 1 };
+  st.cursors[mailbox] = Math.max(prev, Number(cursor) || 0);
   await storage.set(NUDGE_STATE_KEY, st);
   return st;
 }
@@ -189,8 +211,21 @@ export async function logNudge(storage, entry) {
     mailbox: String(entry.mailbox || ''), cursor: entry.cursor == null ? null : Number(entry.cursor),
     outcome: String(entry.outcome || ''), reason: String(entry.reason || '').slice(0, 120),
   };
+  if (entry.dedupe) {
+    const t = Date.parse(row.at);
+    for (let i = log.length - 1; i >= 0; i -= 1) {
+      const o = log[i];
+      if (o.site === row.site && o.mailbox === row.mailbox) {
+        if (o.outcome === row.outcome && o.reason === row.reason && t - Date.parse(o.at) < NUDGE_LOG_DEDUPE_MS) return null;
+        break;
+      }
+    }
+  }
   log.push(row);
-  await storage.set(NUDGE_LOG_KEY, log.slice(-NUDGE_LOG_MAX));
+  // Ring buffer per site, then an overall bound.
+  const keep = []; const seen = {};
+  for (let i = log.length - 1; i >= 0; i -= 1) { const k = log[i].site; seen[k] = (seen[k] || 0) + 1; if (seen[k] <= NUDGE_LOG_PER_SITE) keep.push(log[i]); }
+  await storage.set(NUDGE_LOG_KEY, keep.reverse().slice(-NUDGE_LOG_MAX));
   return row;
 }
 export async function readNudgeLog(storage) { const v = await storage.get(NUDGE_LOG_KEY); return Array.isArray(v) ? v : []; }
@@ -248,21 +283,44 @@ export async function liveTabs(storage, now) {
  * One pass over pending mail and open tabs. `sendToTab(tabId, msg)` resolves to
  * the content script's answer. Returns the list of attempts (for tests/logs).
  */
-export async function runNudges(storage, { sendToTab, now = Date.now() } = {}) {
+export async function runNudges(storage, { sendToTab, now = Date.now(), unread = null } = {}) {
   const settings = await getNudgeSettings(storage);
-  if (settings.killed || !settings.enabled) return [];
+  const log = (e) => logNudge(storage, { now, dedupe: true, ...e });
+  if (settings.killed || !settings.enabled) {
+    await log({ site: '*', mailbox: '*', outcome: 'off', reason: settings.killed ? 'kill switch on' : 'auto-nudge switched off' });
+    return [];
+  }
   const pending = await readPending(storage);
+  // 0.6.8: a mailbox the server says is now empty needs nothing.
+  if (unread) for (const mb of Object.keys(pending)) if (unread[mb] && unread[mb].count === 0) { await clearPending(storage, mb, Infinity); delete pending[mb]; }
+  // Work list: fresh pending mail, plus mailboxes that still have unread letters (re-nudge).
+  const work = {};
+  for (const [mb, p] of Object.entries(pending)) work[mb] = { cursor: p.cursor, stillUnread: Boolean(unread && unread[mb] && unread[mb].count > 0) };
+  if (unread) {
+    const st = await readNudgeState(storage);
+    for (const [mb, u] of Object.entries(unread)) {
+      if (work[mb] || !(u && u.count > 0)) continue;
+      work[mb] = { cursor: Number(u.newestId) || Number(st.cursors[mb] || 0) || 1, stillUnread: true };
+    }
+  }
   const tabs = await liveTabs(storage, now);
   const attempts = [];
-  for (const [mailbox, p] of Object.entries(pending)) {
+  for (const [mailbox, p] of Object.entries(work)) {
+    const sitesForBox = Object.keys(settings.mailboxes).filter((k) => settings.mailboxes[k] === mailbox);
+    if (!sitesForBox.length) continue; // a mailbox no chat site reads (e.g. muse): nothing to nudge
+    for (const site of sitesForBox) {
+      if (!settings.sites[site]) await log({ site, mailbox, outcome: 'skipped', reason: 'site switched off in Advanced' });
+      else if (!tabs.some((t) => t.site === site)) await log({ site, mailbox, outcome: 'skipped', reason: 'no open chat tab for this site (or tab not on a chat page)' });
+    }
     let delivered = false;
     for (const { tabId, site } of tabs) {
       if (delivered) break;
       const state = await readNudgeState(storage);
-      const d = decideNudge({ settings, state, site, tabId, mailbox, items: [{ id: p.cursor, subject: '' }], now });
+      const d = decideNudge({ settings, state, site, tabId, mailbox, items: [{ id: p.cursor, subject: '' }], now, stillUnread: p.stillUnread });
       if (!d.ok) {
         if (!['not-this-sites-mailbox', 'site-off', 'unknown-site'].includes(d.reason)) {
           attempts.push({ tabId, site, mailbox, outcome: 'skipped', reason: d.reason });
+          await log({ site, tabId, mailbox, cursor: p.cursor, outcome: 'skipped', reason: d.reason });
           if (d.reason === 'cursor-already-nudged') await clearPending(storage, mailbox, p.cursor);
         }
         continue;
@@ -270,20 +328,25 @@ export async function runNudges(storage, { sendToTab, now = Date.now() } = {}) {
       let answer;
       try { answer = await sendToTab(tabId, { type: 'helmion:nudge-try', text: nudgeText(mailbox), idleMinutes: settings.idleMinutes }); }
       catch { answer = null; }
-      if (!answer) { await forgetTab(storage, tabId); attempts.push({ tabId, site, mailbox, outcome: 'no-tab', reason: 'tab gone' }); continue; }
+      if (!answer) { await forgetTab(storage, tabId); await log({ site, tabId, mailbox, outcome: 'no-tab', reason: 'tab closed or Guard not loaded in it (reload the tab)' }); attempts.push({ tabId, site, mailbox, outcome: 'no-tab', reason: 'tab gone' }); continue; }
       if (answer.ok) {
         await recordNudge(storage, { site, tabId, mailbox, cursor: d.cursor, now });
         await clearPending(storage, mailbox, d.cursor);
-        await logNudge(storage, { now, site, tabId, mailbox, cursor: d.cursor, outcome: 'sent', reason: 'sent' });
-        attempts.push({ tabId, site, mailbox, outcome: 'sent' });
+        await logNudge(storage, { now, site, tabId, mailbox, cursor: d.cursor, outcome: 'sent', reason: d.renudge ? 'sent again: letters still unread' : 'sent' });
+        attempts.push({ tabId, site, mailbox, outcome: 'sent', renudge: Boolean(d.renudge) });
         delivered = true;
       } else if (answer.reason === 'busy') {
-        await logNudge(storage, { now, site, tabId, mailbox, cursor: d.cursor, outcome: 'waiting', reason: answer.detail || 'busy' });
+        await log({ site, tabId, mailbox, cursor: d.cursor, outcome: 'waiting', reason: answer.detail || 'busy' });
         attempts.push({ tabId, site, mailbox, outcome: 'waiting', reason: answer.detail });
+      } else if (answer.reason === 'refused') {
+        // 0.6.8: not a real chat page (lookalike app, settings page...). Forget the tab; do NOT pause the whole site.
+        await forgetTab(storage, tabId);
+        await log({ site, tabId, mailbox, cursor: d.cursor, outcome: 'refused', reason: answer.detail || 'not a chat page' });
+        attempts.push({ tabId, site, mailbox, outcome: 'refused', reason: answer.detail });
       } else {
-        // dom-mismatch, blocked-by-guard, refused: fail closed, pause the site, no loop.
+        // dom-mismatch, blocked-by-guard: fail closed, pause the site, no loop.
         await pauseSite(storage, site, now);
-        await logNudge(storage, { now, site, tabId, mailbox, cursor: d.cursor, outcome: answer.reason || 'failed', reason: answer.detail || '' });
+        await logNudge(storage, { now, site, tabId, mailbox, cursor: d.cursor, outcome: answer.reason || 'failed', reason: `${answer.detail || ''}; site paused 6 h` });
         attempts.push({ tabId, site, mailbox, outcome: answer.reason || 'failed', reason: answer.detail });
       }
     }

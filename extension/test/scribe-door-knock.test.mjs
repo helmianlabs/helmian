@@ -172,14 +172,17 @@ test('429 honours Retry-After', async () => {
   } finally { await api.close(); }
 });
 
-test('offline and idle: skip without spending budget', async () => {
+test('offline: skip without spending budget; 0.6.8: an idle computer STILL polls (mail must arrive overnight)', async () => {
   const api = await startMockScribe();
   try {
     const s = await ready(api);
     assert.equal((await pollScribe(s, { online: false })).skipped, 'offline');
-    assert.equal((await pollScribe(s, { idle: true })).skipped, 'idle');
     assert.equal(api.requests.length, 0);
     assert.equal((await inboxView(s)).offline, true);
+    const r = await pollScribe(s, { idle: true });
+    assert.equal(r.skipped, undefined, 'idle no longer skips');
+    assert.ok(api.requests.length > 0);
+    assert.equal(typeof r.boxes, 'object');
   } finally { await api.close(); }
 });
 
