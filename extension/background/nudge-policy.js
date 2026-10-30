@@ -1,3 +1,4 @@
+import { nudgeSiteTable } from './defaults.js';
 // Scribe AUTO-NUDGE policy (0.6.0). Pure logic, no network, no DOM.
 //
 // When Scribe has unread mail for an AI whose chat tab is open, Guard may type
@@ -26,12 +27,7 @@ export const DEFAULT_DAILY_CAP = 20;
 export const DOM_FAIL_PAUSE_MS = 6 * 60 * 60 * 1000; // a site whose DOM did not match is paused 6 h, not retried in a loop
 
 /** Chat site -> default Scribe mailbox (contract mailbox table). */
-export const NUDGE_SITES = Object.freeze({
-  'chatgpt.com': 'chatgpt',
-  'claude.ai': 'claude.ai',
-  'grok.com': 'grok',
-  'gemini.google.com': 'gemini',
-});
+export const NUDGE_SITES = Object.freeze(nudgeSiteTable()); // from background/defaults.js AI_CHOICES
 
 export function siteForHost(host) {
   const h = String(host || '').toLowerCase();

@@ -25,7 +25,7 @@ export const LEGACY_MIN_S = 300; // contract: include_legacy at most every 5 min
 export const DEFAULT_DAILY_BUDGET = 2000; // requests per UTC day across all mailboxes
 export const MAX_MAILBOXES = 8;
 export const TIMEOUT_MS = 5000;
-import { SCRIBE_DEFAULT_URL } from './defaults.js';
+import { SCRIBE_DEFAULT_URL, mailboxSiteTable } from './defaults.js';
 import { accessToken as oauthAccessToken, getAuth as getOAuth, inboxStatusViaMcp } from './scribe-auth.js';
 const TOKEN = /^[A-Za-z0-9._~+/=-]{16,512}$/;
 
@@ -42,7 +42,7 @@ export const MAILBOX_ALIASES = Object.freeze({
 const ALIAS = new Map();
 for (const [n, as] of Object.entries(MAILBOX_ALIASES)) { ALIAS.set(n, n); for (const a of as) ALIAS.set(a, n); }
 // Where the "nudge" sends you for each AI mailbox (open the AI so it runs check_inbox).
-export const MAILBOX_SITES = Object.freeze({ 'claude.ai': 'https://claude.ai/', chatgpt: 'https://chatgpt.com/', gemini: 'https://gemini.google.com/', grok: 'https://grok.com/' });
+export const MAILBOX_SITES = Object.freeze(mailboxSiteTable()); // from background/defaults.js AI_CHOICES
 
 /** Same slug rule as PR #3 agentName(), then alias -> canonical. */
 export function mailboxName(raw) {

@@ -1,7 +1,21 @@
 // The welcome page (0.6.2). Opens once, on first install.
 // Name or email, tick the AIs, one Connect Scribe button. Mailboxes come from
 // the ticks (background/defaults.js AI_CHOICES); nothing else is typed.
+import { AI_CHOICES } from '../background/defaults.js';
+
 const $ = (id) => document.getElementById(id);
+// Tick boxes come from the one AI table (background/defaults.js).
+for (const ai of AI_CHOICES) {
+  const label = document.createElement('label');
+  label.className = 'ai';
+  const box = document.createElement('input');
+  box.type = 'checkbox'; box.name = 'ai'; box.value = ai.key;
+  const text = document.createElement('span');
+  text.textContent = ai.label;
+  label.append(box, text);
+  if (ai.note) { const n = document.createElement('span'); n.className = 'ai-note'; n.textContent = ai.note; label.append(n); }
+  $('ais').append(label);
+}
 const C = globalThis.HelmionConnect;
 let scribeUrl = '';
 
