@@ -10,14 +10,14 @@
 [Setup]
 AppId={{EEE4DDE3-DB3E-453E-B88D-0C9146ECA332}
 AppName=Helmian Spoke
-AppVersion=1.0.7
+AppVersion=1.0.8
 AppPublisher=Helmian Labs
 DefaultDirName={localappdata}\Programs\HelmianSpoke
 DefaultGroupName=Helmian Spoke
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=output
-OutputBaseFilename=Helmian-Spoke-Setup-1.0.7-win-x64
+OutputBaseFilename=Helmian-Spoke-Setup-1.0.8-win-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
