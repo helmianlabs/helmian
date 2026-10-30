@@ -30,7 +30,10 @@
     "guard:package:chrome": "node tools/package-guard.mjs --target chrome",
     "guard:package:edge": "node tools/package-guard.mjs --target edge",
     "guard:package:all": "node tools/package-guard.mjs --target chrome && node tools/package-guard.mjs --target edge && node tools/package-guard.mjs --target firefox",
-    "test:guard-extension": "node --test extension/test/*.test.mjs test/guard-platform-matrix.test.mjs test/package-guard.test.mjs",
+    "guard:sign:firefox": "node tools/package-guard.mjs --target firefox && node tools/sign-guard.mjs --target firefox",
+    "guard:sign:chrome": "node tools/package-guard.mjs --target chrome && node tools/sign-guard.mjs --target chrome",
+    "guard:sign:edge": "node tools/sign-guard.mjs --target edge",
+    "test:guard-extension": "node --test extension/test/*.test.mjs test/guard-platform-matrix.test.mjs test/package-guard.test.mjs test/sign-guard.test.mjs",
     "test:executive-guard": "node --test executive-guard/test/*.test.mjs",
     "executive-guard": "node executive-guard/bin/executive-guard.mjs",
     "test": "node --test test/agent-sessions.test.mjs test/cloud-signup.test.mjs test/compute-routing.test.mjs test/guard-pc-approvals.test.mjs",
@@ -57,7 +60,8 @@
     "desktop:package": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/publish.ps1",
     "desktop:qa": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/qa-package.ps1",
     "desktop:qa:pack": "powershell -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/qa-package.ps1 -PublishPack",
-    "test:hands": "npm --prefix hands-mcp ci --no-audit --no-fund && npm --prefix hands-mcp test"
+    "test:hands": "npm --prefix hands-mcp ci --no-audit --no-fund && npm --prefix hands-mcp test",
+    "test:scribe-pr3": "node --test extension/test/scribe-pr3-local.test.mjs"
   },
   "engines": {
     "node": ">=20"

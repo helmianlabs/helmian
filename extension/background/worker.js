@@ -24,6 +24,18 @@
 // instead of a whole reply.
 
 import { scanBlocks } from './scan.js';
+import {
+  ALARM_PERIOD_MIN,
+  MAILBOX_SITES,
+  SCRIBE_ALARM,
+  badgeFor,
+  getScribeSettings,
+  inboxView,
+  isConfigured as scribeConfigured,
+  noticeText,
+  pollScribe,
+  setScribeSettings,
+} from './scribe-client.js';
 import { scanProse } from './claims.js';
 import {
   getUploadSettings,
@@ -166,6 +178,9 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:executive-pair',
   'helmion:flags-settings',
   'helmion:flags-alerts',
+  'helmion:scribe-settings',
+  'helmion:scribe-inbox',
+  'helmion:scribe-nudge',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -180,6 +195,78 @@ function isFromOwnPopup(sender) {
     return false;
   }
 }
+
+// ─── SCRIBE DOOR-KNOCK ─────────────────────────────────────────────────────
+// Off by default. A 1-minute alarm (MV3 floor is 30 s) polls each watched
+// mailbox when it is due (60–120 s per the server's poll_after_seconds, ±15 s
+// jitter). Guard only knocks: it never writes to Scribe; the AI's own
+// check_inbox / read_message produce the receipts. See background/scribe-client.js.
+const SCRIBE_BADGE = '#2e6b3a';
+async function syncScribeAlarm() {
+  try {
+    const s = await getScribeSettings(ledger);
+    if (!chrome.alarms) return;
+    if (scribeConfigured(s)) chrome.alarms.create(SCRIBE_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
+    else { chrome.alarms.clear(SCRIBE_ALARM); setScribeBadge(0); }
+  } catch (error) { console.warn('[Helmion Guard] scribe alarm sync failed:', error.message); }
+}
+function setScribeBadge(unread) {
+  try {
+    chrome.action.setBadgeText({ text: badgeFor(unread) });
+    if (unread > 0) {
+      chrome.action.setBadgeBackgroundColor({ color: SCRIBE_BADGE });
+      chrome.action.setTitle({ title: `Helmion Guard: ${unread} unread Scribe letter(s)` });
+    }
+  } catch { /* badge is best effort */ }
+}
+async function notifyFresh(fresh) {
+  if (!fresh || !fresh.length || !chrome.notifications) return;
+  const granted = await new Promise((resolve) => {
+    try { chrome.permissions.contains({ permissions: ['notifications'] }, (ok) => resolve(Boolean(ok))); } catch { resolve(false); }
+  });
+  if (!granted) return;
+  for (const { mailbox, items } of fresh.slice(0, 4)) {
+    const t = noticeText(mailbox, items);
+    try {
+      chrome.notifications.create(`helmion-scribe:${mailbox}:${items[items.length - 1].id}`, {
+        type: 'basic', iconUrl: 'popup/icon-128.png', title: t.title, message: t.message, priority: 1,
+      });
+    } catch { /* notification is best effort */ }
+  }
+}
+function idleState() {
+  return new Promise((resolve) => {
+    try { if (!chrome.idle) { resolve('active'); return; } chrome.idle.queryState(300, (st) => resolve(st || 'active')); }
+    catch { resolve('active'); }
+  });
+}
+export async function runScribePoll(opts = {}) {
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  const idle = (await idleState()) !== 'active';
+  const result = await pollScribe(ledger, { online, idle, ...opts });
+  if (typeof result.unread === 'number') setScribeBadge(result.unread);
+  if (result.fresh) await notifyFresh(result.fresh);
+  return result;
+}
+// The nudge: open (or focus) the AI that owns the mailbox so it runs check_inbox.
+function openMailboxSite(mailbox) {
+  const url = MAILBOX_SITES[mailbox];
+  if (!url) { try { if (chrome.action.openPopup) chrome.action.openPopup(); } catch { /* unsupported */ } return false; }
+  try { chrome.tabs.create({ url }); return true; } catch { return false; }
+}
+if (chrome.alarms && chrome.alarms.onAlarm) {
+  chrome.alarms.onAlarm.addListener((alarm) => { if (alarm && alarm.name === SCRIBE_ALARM) runScribePoll().catch(() => {}); });
+}
+if (chrome.notifications && chrome.notifications.onClicked) {
+  chrome.notifications.onClicked.addListener((id) => {
+    const m = /^helmion-scribe:([^:]+):/.exec(String(id));
+    if (!m) return;
+    openMailboxSite(m[1]);
+    try { chrome.notifications.clear(id); } catch { /* ignore */ }
+  });
+}
+if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncScribeAlarm(); });
+if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => { syncScribeAlarm(); });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
@@ -366,6 +453,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .then((settings) => sendResponse({ ok: true, settings }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
+    }
+
+    if (type === 'helmion:scribe-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'baseUrl', 'token', 'mailboxes', 'includeLegacy', 'dailyBudget', 'notify', 'clearToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setScribeSettings(ledger, payload).then(async (r) => { await syncScribeAlarm(); return r; }) : getScribeSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-inbox') {
+      const force = message.options && message.options.force === true;
+      (force ? runScribePoll({ force: true }) : Promise.resolve({}))
+        .then(async (poll) => sendResponse({ ok: true, skipped: poll.skipped, ...(await inboxView(ledger)) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-nudge') {
+      sendResponse({ ok: true, opened: openMailboxSite(String(message.mailbox || '')) });
+      return false;
     }
 
     if (type === 'helmion:badge') {

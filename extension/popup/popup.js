@@ -341,3 +341,76 @@ $('flagsRefresh').addEventListener('click', () => refreshAlerts(true));
 
 refreshExecutiveSettings();
 refreshFlagsSettings().then((s) => { if (s && s.enabled) refreshAlerts(false); });
+
+
+// ─── Scribe door-knock ──────────────────────────────────────────────────────
+function requestNotifications() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.request !== 'function') { resolve(false); return; }
+      const r = chrome.permissions.request({ permissions: ['notifications'] }, (g) => { void chrome.runtime.lastError; resolve(Boolean(g)); });
+      if (r && typeof r.then === 'function') r.then((g) => resolve(Boolean(g)), () => resolve(false));
+    } catch { resolve(false); }
+  });
+}
+const SCRIBE_STATE_TEXT = {
+  'not-installed': 'Mailbox not set up yet on the Scribe server. Guard will check again in 15 minutes.',
+  'feature-off': 'The Scribe server has the mailbox feature turned off.',
+  reconnect: 'Scribe did not accept the token. Reconnect Scribe by pasting a new one.',
+};
+async function loadScribe() {
+  const r = await askWithPayload('helmion:scribe-settings', { settings: {} });
+  if (!r || !r.ok) return;
+  const s = r.settings;
+  $('scribeEnabled').checked = s.enabled === true;
+  $('scribeUrl').value = s.baseUrl || '';
+  $('scribeMailboxes').value = (s.mailboxes || []).join(', ');
+  $('scribeLegacy').checked = s.includeLegacy === true;
+  $('scribeNotify').checked = s.notify !== false;
+  $('scribeToken').placeholder = s.hasToken ? 'Token saved (paste a new one to replace it)' : 'MAILBOX_STATUS_TOKEN or smk_… (mailbox.read)';
+  renderInbox(await askWithPayload('helmion:scribe-inbox', { options: {} }));
+}
+function renderInbox(r) {
+  const list = $('scribeInbox');
+  list.textContent = '';
+  if (!r || !r.ok) return;
+  if (SCRIBE_STATE_TEXT[r.serverState]) { $('scribeStatus').textContent = SCRIBE_STATE_TEXT[r.serverState]; }
+  else if (r.offline) { $('scribeStatus').textContent = 'Offline. Guard will check again when you are back online.'; }
+  else { $('scribeStatus').textContent = `${r.unread || 0} unread.`; }
+  for (const m of r.mailboxes || []) {
+    const li = document.createElement('li');
+    const head = document.createElement('div');
+    const note = m.state === 'bad-name' ? ' (Scribe does not know this mailbox name)' : m.state === 'error' ? ' (last check failed, retrying)' : '';
+    head.textContent = `${m.mailbox}: ${m.unread} unread${m.legacyCount != null ? ` · ${m.legacyCount} legacy` : ''}${note}`;
+    li.append(head);
+    for (const x of m.recent || []) {
+      const row = document.createElement('div');
+      row.className = 'muted';
+      row.textContent = `${x.priority === 'high' || x.priority === 'urgent' ? '! ' : ''}${x.from}: ${x.subject}`;
+      li.append(row);
+    }
+    if (m.site && m.unread) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = `Open ${m.mailbox} to read`;
+      b.addEventListener('click', () => askWithPayload('helmion:scribe-nudge', { mailbox: m.mailbox }));
+      li.append(b);
+    }
+    list.append(li);
+  }
+}
+$('scribeSave').addEventListener('click', async () => {
+  const url = $('scribeUrl').value.trim();
+  if ($('scribeEnabled').checked && url) {
+    const granted = await requestOrigin(url);
+    if (!granted) { $('scribeStatus').textContent = 'Permission to reach that URL was not granted, so nothing was saved.'; return; }
+    if ($('scribeNotify').checked) await requestNotifications();
+  }
+  const saved = await askWithPayload('helmion:scribe-settings', { settings: {
+    enabled: $('scribeEnabled').checked, baseUrl: url, token: $('scribeToken').value || undefined,
+    mailboxes: $('scribeMailboxes').value, includeLegacy: $('scribeLegacy').checked, notify: $('scribeNotify').checked,
+  } });
+  $('scribeToken').value = '';
+  $('scribeStatus').textContent = saved && saved.ok ? 'Saved.' : `Not saved: ${saved && saved.error}`;
+});
+$('scribeRefresh').addEventListener('click', async () => renderInbox(await askWithPayload('helmion:scribe-inbox', { options: { force: true } })));
+loadScribe();
