@@ -34,16 +34,33 @@ export const sha256Hex = (text) => createHash('sha256').update(String(text), 'ut
 // needs           => compute-routing capabilities (src/core/compute-routing.mjs)
 
 export const POWERSHELL_COMMANDS = Object.freeze({
-  'git-status': { args: { repo: 'path' }, summary: 'git status of a repo' },
-  'git-log': { args: { repo: 'path', count: 'int' }, summary: 'recent git commits of a repo' },
-  'disk-free': { args: {}, summary: 'free disk space per drive' },
-  'list-processes': { args: {}, summary: 'top 20 processes by CPU' },
-  'ollama-list': { args: {}, summary: 'installed Ollama models' },
+  'git-status': { readOnly: true, args: { repo: 'path' }, summary: 'git status of a repo' },
+  'git-log': { readOnly: true, args: { repo: 'path', count: 'int' }, summary: 'recent git commits of a repo' },
+  'disk-free': { readOnly: true, args: {}, summary: 'free disk space per drive' },
+  'list-processes': { readOnly: true, args: {}, summary: 'top 20 processes by CPU' },
+  'ollama-list': { readOnly: true, args: {}, summary: 'installed Ollama models' },
   'restart-bridge': { args: {}, summary: 'restart the Helmian Bridge service (its in-process spoke re-reads its config)' },
-  'toolchain-versions': { args: {}, summary: 'node, npm, npx and eas versions on the PC' },
+  'toolchain-versions': { readOnly: true, args: {}, summary: 'node, npm, npx and eas versions on the PC' },
   'eas-build': { args: { repo: 'path' }, summary: 'start an EAS Android preview build in a repo (detached; output logged in the repo)' },
-  'eas-build-status': { args: { repo: 'path' }, summary: 'tail of the latest spoke-started EAS build log in a repo, with its exit marker' },
+  'eas-build-status': { readOnly: true, args: { repo: 'path' }, summary: 'tail of the latest spoke-started EAS build log in a repo, with its exit marker' },
 });
+
+// Read-only allow-list (Troy, 2026-10-30: "if it's read-only, the user doesn't
+// need to click"). A run_powershell call whose commandId is flagged readOnly
+// above only LOOKS at the PC (status, logs, versions, free space), so it skips
+// the Executive Guard approval. Everything else (restart-bridge, eas-build,
+// every write/move/copy/delete/open_url/phone change) still needs a human
+// Guard approval. Both the hub and the PC spoke use this one check.
+export const POWERSHELL_READ_COMMANDS = Object.freeze(Object.keys(POWERSHELL_COMMANDS).filter((id) => POWERSHELL_COMMANDS[id].readOnly === true));
+// Capability a spoke reports when it runs read-only allow-listed commands
+// without a Guard decision. Older spokes don't report it, so the hub keeps
+// asking Guard for them (they would refuse an unsigned run_powershell job).
+export const POWERSHELL_READ_CAPABILITY = 'powershell-read';
+
+/** True only for a validated run_powershell call to a readOnly allow-listed command. */
+export function isReadOnlyCall(tool, args) {
+  return tool === 'run_powershell' && typeof args?.commandId === 'string' && POWERSHELL_READ_COMMANDS.includes(args.commandId);
+}
 
 // The phone family (Broad Spectrum Spoke, phone commands added 2026-10-26):
 // fixed, narrow commands for a screen-by-screen pass over the Android phone
