@@ -10,14 +10,14 @@
 [Setup]
 AppId={{EEE4DDE3-DB3E-453E-B88D-0C9146ECA332}
 AppName=Helmian Spoke
-AppVersion=1.0.6
+AppVersion=1.0.7
 AppPublisher=Helmian Labs
 DefaultDirName={localappdata}\Programs\HelmianSpoke
 DefaultGroupName=Helmian Spoke
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=output
-OutputBaseFilename=Helmian-Spoke-Setup-1.0.6-win-x64
+OutputBaseFilename=Helmian-Spoke-Setup-1.0.7-win-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -66,7 +66,14 @@ begin
   Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     '-NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name=''node.exe''\" | Where-Object { $_.CommandLine -like ''*hands-spoke.mjs*'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(1000);
+  { Legacy spokes: older builds registered tasks under other names (e.g.
+    "Helmian Spoke" running helmian-spoke.exe from Downloads). Stop and
+    unregister those tasks and kill helmian-spoke.exe from any path so only the
+    new spoke answers for this PC. The old exe file itself is left in place. }
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -Command "Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -ne ''HelmianSpoke'' -and ($_.TaskName -match ''^Helmian[ _-]?(Spoke|Bridge)'' -or ($_.Actions | Where-Object { $_.Execute -like ''*helmian-spoke.exe*'' })) } | ForEach-Object { Stop-ScheduledTask -InputObject $_ -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath -Confirm:$false -ErrorAction SilentlyContinue }; Get-Process -Name helmian-spoke -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
   Result := '';
 end;
 
