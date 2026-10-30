@@ -37,6 +37,13 @@
       composer: ['form textarea', 'div.ProseMirror[contenteditable="true"]', 'form [contenteditable="true"]'],
       send: ['form button[type="submit"]', 'button[aria-label="Submit"]', 'button[aria-label*="Send" i]'],
     },
+    // Perplexity (verified 2026-10-29 on www.perplexity.ai, signed out, Chromium 141):
+    // a Lexical editor div#ask-input[contenteditable][role=textbox], no <form>;
+    // a button[aria-label="Submit"] appears only once the composer has text.
+    'perplexity.ai': {
+      composer: ['#ask-input[contenteditable="true"]', 'div[data-lexical-editor="true"][contenteditable="true"]', 'textarea#ask-input'],
+      send: ['button[aria-label="Submit"]', 'button[data-testid="submit-button"]'],
+    },
     'gemini.google.com': {
       composer: ['rich-textarea .ql-editor[contenteditable="true"]', '.ql-editor[contenteditable="true"]', 'div[role="textbox"][contenteditable="true"]'],
       send: ['button.send-button', 'button[aria-label="Send message"]', 'button[aria-label*="Send" i]'],
