@@ -935,28 +935,29 @@
           pollApproval(decision.approvalId, fp, { denied: 'The approver did not allow this message.', actions: [redactAction, cancelAction] });
           return;
         }
-        HelmionUI.showAskAlert({
+        // Compact corner pill: explicit Allow or Deny; timeout = deny; never auto-allows.
+        HelmionUI.hideAskAlert();
+        HelmionUI.showApprovalPill({
           tone: 'warn',
-          title: 'Send this to the AI?',
+          title: 'Guard: send this as written?',
           message: `It contains ${what}. ${decision.reason || ''}`.trim(),
-          status: decision.serverUnavailable ? 'Executive Guard could not be reached; you decide.' : '',
-          actions: [
-            redactAction,
-            {
-              id: 'send-anyway',
-              label: 'Send as written',
-              onClick: () => {
-                grantOnce(fp, 'person-at-keyboard');
-                HelmionUI.showAskAlert({
-                  tone: 'ok',
-                  title: 'Allowed once',
-                  message: 'Press Send again to send it as written.',
-                  actions: [cancelAction],
-                });
-              },
-            },
-            cancelAction,
-          ],
+          status: decision.serverUnavailable ? 'Executive Guard could not be reached; you decide. No answer in 60 s = Deny.' : 'No answer in 60 s = Deny.',
+          allowLabel: 'Allow once',
+          denyLabel: 'Deny',
+          timeoutMs: 60000,
+          onAllow: () => {
+            if (state.privacyActiveFp !== fp) return;
+            grantOnce(fp, 'person-at-keyboard');
+            HelmionUI.showAskAlert({
+              tone: 'ok',
+              title: 'Allowed once',
+              message: 'Press Send again to send it as written.',
+              actions: [redactAction, cancelAction],
+            });
+          },
+          onDeny: (why) => {
+            logToLedger({ kind: 'ai-flag', site: SOURCE, matched: `approval-pill-${why}`, text: '', outcome: 'blocked-before-send' });
+          },
         });
       })
       .catch((error) => {

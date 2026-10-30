@@ -64,6 +64,8 @@ function utcDay(now) { return new Date(now).toISOString().slice(0, 10); }
 export function nextUtcMidnight(now) { const d = new Date(now); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); }
 
 async function readObj(storage, key) { const v = await storage.get(key); return v && typeof v === 'object' ? v : {}; }
+export const DEFAULT_UNREAD_PATH = '/mailbox/unread';
+const UNREAD_PATH = /^\/[A-Za-z0-9/_.-]{1,100}$/;
 async function readSettings(storage) {
   const s = await readObj(storage, SCRIBE_SETTINGS_KEY);
   return {
@@ -76,6 +78,8 @@ async function readSettings(storage) {
     // The code stays; the popup hides these switches under Advanced.
     notify: s.notify === true,
     showBadge: s.showBadge === true,
+    // Configurable until Scribe's route is final (404 = not deployed yet).
+    unreadPath: typeof s.unreadPath === 'string' && UNREAD_PATH.test(s.unreadPath) ? s.unreadPath : DEFAULT_UNREAD_PATH,
   };
 }
 export async function readScribeState(storage) {
@@ -124,6 +128,11 @@ export async function setScribeSettings(storage, patch = {}) {
   }
   if (typeof patch.notify === 'boolean') next.notify = patch.notify;
   if (typeof patch.showBadge === 'boolean') next.showBadge = patch.showBadge;
+  if (typeof patch.unreadPath === 'string') {
+    const pth = patch.unreadPath.trim() || DEFAULT_UNREAD_PATH;
+    if (!UNREAD_PATH.test(pth) || pth.includes('..')) throw new Error('Unread path must start with / and use only letters, digits, / _ . -');
+    next.unreadPath = pth;
+  }
   if (typeof patch.enabled === 'boolean') next.enabled = patch.enabled;
   if (patch.clearToken === true) next.token = '';
   if (patch.clearRejected === true) { st.tokenRejected = false; st.serverState = null; }
@@ -147,8 +156,8 @@ async function call(s, url, { fetchImpl, timeoutMs = TIMEOUT_MS } = {}) {
   } finally { if (timer) clearTimeout(timer); }
 }
 
-export function unreadUrl(base, agent, sinceId, legacy) {
-  const u = new URL(`${base}/mailbox/unread`);
+export function unreadUrl(base, agent, sinceId, legacy, path = DEFAULT_UNREAD_PATH) {
+  const u = new URL(`${base}${path}`);
   u.searchParams.set('agent', agent);
   u.searchParams.set('since_id', String(Math.max(0, Math.floor(Number(sinceId) || 0))));
   if (legacy) u.searchParams.set('include_legacy', '1');
@@ -174,7 +183,7 @@ async function pollBox(storage, s, st, name, { fetchImpl, now, rand, oauth }) {
         if (fresh) { oauth.token = fresh; r = await inboxStatusViaMcp(s.baseUrl, fresh, name, box.cursor, { fetchImpl }); }
       }
     } else {
-      r = await call(s, unreadUrl(s.baseUrl, name, box.cursor, legacy), { fetchImpl });
+      r = await call(s, unreadUrl(s.baseUrl, name, box.cursor, legacy, s.unreadPath), { fetchImpl });
     }
   } catch { r = { status: 0 }; }
   const later = (sec) => now + sec * 1000 + jitter(rand);

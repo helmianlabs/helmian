@@ -355,7 +355,7 @@ function requestNotifications() {
 }
 const SCRIBE_STATE_TEXT = {
   'not-installed': 'Mailbox not set up yet on the Scribe server. Guard will check again in 15 minutes.',
-  'feature-off': 'The Scribe server has the mailbox feature turned off.',
+  'feature-off': 'Not deployed yet: the Scribe server answered 404 for the unread-mail address. Guard checks again in 15 minutes.',
   reconnect: 'Scribe did not accept the token. Reconnect Scribe by pasting a new one.',
 };
 async function loadScribe() {
@@ -368,6 +368,7 @@ async function loadScribe() {
   $('scribeLegacy').checked = s.includeLegacy === true;
   $('scribeNotify').checked = s.notify === true;
   $('scribeBadge').checked = s.showBadge === true;
+  if ($('scribeUnreadPath')) $('scribeUnreadPath').value = s.unreadPath || '/mailbox/unread';
   $('scribeAuth').textContent = s.signedIn ? 'Signed in (read-only).' : (s.hasToken ? 'Using a pasted token (fallback).' : 'Not signed in.');
   $('scribeToken').placeholder = s.hasToken ? 'Token saved (paste a new one to replace it)' : 'MAILBOX_STATUS_TOKEN or smk_… (mailbox.read)';
   renderInbox(await askWithPayload('helmion:scribe-inbox', { options: {} }));
@@ -409,7 +410,7 @@ $('scribeSave').addEventListener('click', async () => {
   }
   const saved = await askWithPayload('helmion:scribe-settings', { settings: {
     enabled: $('scribeEnabled').checked, baseUrl: url, token: $('scribeToken').value || undefined,
-    mailboxes: $('scribeMailboxes').value, includeLegacy: $('scribeLegacy').checked, notify: $('scribeNotify').checked, showBadge: $('scribeBadge').checked,
+    mailboxes: $('scribeMailboxes').value, includeLegacy: $('scribeLegacy').checked, notify: $('scribeNotify').checked, showBadge: $('scribeBadge').checked, ...($('scribeUnreadPath') ? { unreadPath: $('scribeUnreadPath').value } : {}),
   } });
   $('scribeToken').value = '';
   $('scribeStatus').textContent = saved && saved.ok ? 'Saved.' : `Not saved: ${saved && saved.error}`;
