@@ -181,17 +181,18 @@ test('popup: advanced fields live behind an Advanced disclosure; welcome page li
   for (const id of ['execUrl', 'execToken', 'flagsUrl', 'flagsKey', 'uploadToken']) assert.ok(svc.includes(`id="${id}"`), `${id} is inside Advanced`);
   assert.match(html, /<script src="connect\.js"><\/script>\s*<script src="popup\.js">/);
   const welcome = await readFile(path.join(EXT, 'onboarding/onboarding.html'), 'utf8');
-  const values = [...welcome.matchAll(/name="ai" value="([a-z]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(values, D.AI_CHOICES.map((c) => c.key));
+  const ob = await readFile(path.join(EXT, 'onboarding/onboarding.js'), 'utf8');
+  assert.match(welcome, /<script type="module" src="onboarding\.js">/);
+  assert.match(ob, /import \{ AI_CHOICES \} from '\.\.\/background\/defaults\.js'/, 'tick boxes come from the one AI table');
   assert.match(welcome, /Connect Scribe/);
   assert.match(welcome, /may conflict with some sites' terms/);
   assert.doesNotMatch(welcome, /id="[^"]*mailbox/i, 'no mailbox field to type into');
 });
 
-test('package: welcome page ships, version 0.6.3, options page, build-time --scribe-url rewrite', async () => {
+test('package: welcome page ships, version 0.6.4, options page, build-time --scribe-url rewrite', async () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(await readFile(path.join(EXT, f), 'utf8'));
-    assert.equal(m.version, '0.6.3');
+    assert.equal(m.version, '0.6.4');
     assert.deepEqual(m.options_ui, { page: 'popup/popup.html', open_in_tab: true });
   }
   const { applyScribeUrl } = await import('../../tools/package-guard.mjs');
@@ -203,4 +204,30 @@ test('package: welcome page ships, version 0.6.3, options page, build-time --scr
   assert.match(out, /export const SCRIBE_DEFAULT_URL = 'https:\/\/scribe\.helmian\.cloud'; \/\/ @build:scribe-url/);
   await assert.rejects(applyScribeUrl(dir, 'http://plain.example'));
   assert.equal(await applyScribeUrl(dir, ''), null);
+});
+
+test('0.6.4 AI table: seven AIs, one table drives mailboxes, nudge sites and open-to-read links', async () => {
+  assert.deepEqual(D.AI_CHOICES.map((c) => c.key), ['chatgpt', 'claude', 'grok', 'gemini', 'mistral', 'perplexity', 'muse']);
+  for (const c of D.AI_CHOICES) {
+    assert.match(c.mailbox, /^[a-z0-9][a-z0-9._-]*$/, 'lowercase mailbox ids');
+    assert.equal(typeof c.nudge, 'boolean');
+    if (c.nudge) assert.ok(c.hosts.length && c.chatUrl);
+  }
+  assert.deepEqual(D.mailboxesForAis(['mistral', 'perplexity', 'muse']), ['mistral', 'perplexity', 'muse']);
+  assert.deepEqual(D.nudgeSitesForAis(['mistral', 'muse', 'grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false }, 'mailbox-only AIs add no nudge site');
+  const { NUDGE_SITES } = await import('../background/nudge-policy.js');
+  assert.deepEqual(NUDGE_SITES, { 'chatgpt.com': 'chatgpt', 'claude.ai': 'claude.ai', 'grok.com': 'grok', 'gemini.google.com': 'gemini' });
+  const { MAILBOX_SITES, mailboxName } = await import('../background/scribe-client.js');
+  assert.equal(MAILBOX_SITES.mistral, 'https://chat.mistral.ai/');
+  assert.equal(MAILBOX_SITES.perplexity, 'https://www.perplexity.ai/');
+  assert.equal(MAILBOX_SITES.muse, undefined, 'Muse chat URL not verified');
+  assert.equal(mailboxName('le-chat'), 'mistral'); assert.equal(mailboxName('muse'), 'muse'); assert.equal(mailboxName('Perplexity'), 'perplexity');
+  assert.match(D.AI_CHOICES.find((c) => c.key === 'perplexity').note, /higher Perplexity plan/);
+  // Every nudge site has a content-script match and a nudge adapter.
+  const man = JSON.parse(await readFile(path.join(EXT, 'manifest.json'), 'utf8'));
+  const nudgeJs = await readFile(path.join(EXT, 'content/nudge.js'), 'utf8');
+  for (const host of Object.keys(NUDGE_SITES)) {
+    assert.ok(man.content_scripts[0].matches.includes(`https://${host}/*`), host);
+    assert.ok(nudgeJs.includes(`'${host}'`), host);
+  }
 });
