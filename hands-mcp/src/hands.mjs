@@ -18,7 +18,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { decideComputeRoute } from '../../src/core/compute-routing.mjs';
-import { ArgError, TOOLS, validateArgs } from './shared/protocol.mjs';
+import { ArgError, POWERSHELL_READ_CAPABILITY, TOOLS, isReadOnlyCall, validateArgs } from './shared/protocol.mjs';
 
 const PENDING_TTL_MS = 15 * 60 * 1000;
 // Hold-open: after Guard answers "ask", the SAME tool call waits for the human
@@ -179,6 +179,17 @@ export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = 
     if (!spec.mutating && !route.requiresGuardApproval) {
       audit.append({ event: 'allowed.read-only', requestId, tool, clientId });
       return runOnPc({ requestId, tool, args, clientId, targetDeviceId: target?.deviceId });
+    }
+
+    // Read-only allow-listed PowerShell (git-status, disk-free, ...): no click
+    // needed, but only when the target spoke says it runs these without a
+    // Guard decision; an older spoke falls through to the normal Guard ask.
+    if (isReadOnlyCall(tool, args)) {
+      const caps = target ? target.capabilities : (hub.presence().pc?.capabilities || []);
+      if (Array.isArray(caps) && caps.includes(POWERSHELL_READ_CAPABILITY)) {
+        audit.append({ event: 'allowed.read-only', requestId, tool, commandId: args.commandId, clientId, ...(target ? { deviceId: target.deviceId } : {}) });
+        return runOnPc({ requestId, tool, args, clientId, targetDeviceId: target?.deviceId });
+      }
     }
 
     const decision = await guard.authorize({ tool, args });
