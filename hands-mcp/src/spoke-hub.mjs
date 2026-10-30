@@ -36,7 +36,7 @@ export function cleanExecution(e) {
 const cleanId = (id) => String(id || 'pc').slice(0, 64);
 const isPcName = (id) => id === 'pc' || id.startsWith('pc-') || id.startsWith('pc.');
 
-export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 30000, onScopeReport = null } = {}) {
+export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 30000, onScopeReport = null, onCapabilitiesReport = null } = {}) {
   const devices = new Map(); // deviceId -> { capabilities, lastSeenAt, scope? }
   const queues = new Map(); // deviceId -> [job] waiting for that device's next poll
   const waiters = new Map(); // deviceId -> [waiter] long-polls parked by that device
@@ -65,8 +65,14 @@ export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 30000, onSco
         try { onScopeReport?.({ deviceId: id, scope: cleaned, changed: true, previous: prev.scope }); } catch { /* auditing never breaks polling */ }
       }
     }
+    const caps = Array.isArray(capabilities) ? capabilities.map(String).slice(0, 20) : [];
+    // Audit the first capability list per device and every change, so "why did
+    // a read-only check still ask Guard" is answerable from the log.
+    if (!prev || prev.capabilities.join(',') !== caps.join(',')) {
+      try { onCapabilitiesReport?.({ deviceId: id, capabilities: caps, previous: prev ? prev.capabilities : null }); } catch { /* auditing never breaks polling */ }
+    }
     devices.set(id, {
-      capabilities: Array.isArray(capabilities) ? capabilities.map(String).slice(0, 20) : [],
+      capabilities: caps,
       lastSeenAt: new Date().toISOString(),
       ...(scopeToStore ? { scope: scopeToStore } : {}),
     });
