@@ -573,6 +573,22 @@
     const text = composerText(composer);
     const fp = fingerprint(text);
 
+    // Guard's OWN Scribe auto-nudge (content/nudge.js). It is not exempt from
+    // scanning: the same prompt-risk and secret checks run, and only a clean
+    // scan lets it through. A dirty scan stops it and tells nudge.js, which
+    // clears the composer and reports a failure (fail closed).
+    const nudge = globalThis.HelmionNudge;
+    if (nudge && typeof nudge.pendingFor === 'function' && nudge.pendingFor(text)) {
+      const risk = HelmionPromptRisk.scan(text);
+      const leak = HelmionSanitize.scan(text);
+      if (risk.blocked || leak.found) {
+        stopEvent(event);
+        nudge.markBlocked();
+        logToLedger({ kind: 'ai-flag', site: SOURCE, matched: 'scribe-nudge-blocked', text: leak.redacted || '', outcome: 'blocked-before-send' });
+      }
+      return;
+    }
+
     // An explicit "send it as written" (or a verified Executive Guard approval)
     // for exactly this text. Every event of the one send gesture
     // (pointerdown, mousedown, click) passes; the window closes shortly after.
@@ -919,28 +935,29 @@
           pollApproval(decision.approvalId, fp, { denied: 'The approver did not allow this message.', actions: [redactAction, cancelAction] });
           return;
         }
-        HelmionUI.showAskAlert({
+        // Compact corner pill: explicit Allow or Deny; timeout = deny; never auto-allows.
+        HelmionUI.hideAskAlert();
+        HelmionUI.showApprovalPill({
           tone: 'warn',
-          title: 'Send this to the AI?',
+          title: 'Guard: send this as written?',
           message: `It contains ${what}. ${decision.reason || ''}`.trim(),
-          status: decision.serverUnavailable ? 'Executive Guard could not be reached; you decide.' : '',
-          actions: [
-            redactAction,
-            {
-              id: 'send-anyway',
-              label: 'Send as written',
-              onClick: () => {
-                grantOnce(fp, 'person-at-keyboard');
-                HelmionUI.showAskAlert({
-                  tone: 'ok',
-                  title: 'Allowed once',
-                  message: 'Press Send again to send it as written.',
-                  actions: [cancelAction],
-                });
-              },
-            },
-            cancelAction,
-          ],
+          status: decision.serverUnavailable ? 'Executive Guard could not be reached; you decide. No answer in 60 s = Deny.' : 'No answer in 60 s = Deny.',
+          allowLabel: 'Allow once',
+          denyLabel: 'Deny',
+          timeoutMs: 60000,
+          onAllow: () => {
+            if (state.privacyActiveFp !== fp) return;
+            grantOnce(fp, 'person-at-keyboard');
+            HelmionUI.showAskAlert({
+              tone: 'ok',
+              title: 'Allowed once',
+              message: 'Press Send again to send it as written.',
+              actions: [redactAction, cancelAction],
+            });
+          },
+          onDeny: (why) => {
+            logToLedger({ kind: 'ai-flag', site: SOURCE, matched: `approval-pill-${why}`, text: '', outcome: 'blocked-before-send' });
+          },
         });
       })
       .catch((error) => {

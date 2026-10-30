@@ -530,3 +530,20 @@
   font: 11px ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
   cursor: pointer !important;
 }
+
+/* 0.6.0: compact allow/deny pill, bottom-right, never covers the chat. */
+.helmion-guard-approval-pill {
+  position: fixed; right: 16px; bottom: 16px; z-index: 2147483646;
+  max-width: 320px; font: 13px/1.35 system-ui, sans-serif; color: #1f1f1f;
+  background: #fff8e1; border: 1px solid #c58f00; border-radius: 18px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18); padding: 4px;
+}
+.helmion-guard-approval-pill.helmion-guard-tone-danger { background: #fdecea; border-color: #b3261e; }
+.helmion-guard-approval-pill-toggle { all: unset; cursor: pointer; padding: 4px 10px; font-weight: 600; display: block; }
+.helmion-guard-approval-pill[aria-expanded="true"] { border-radius: 12px; }
+.helmion-guard-approval-pill-details { padding: 4px 10px 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.helmion-guard-approval-pill-details[hidden] { display: none; }
+.helmion-guard-approval-pill-message, .helmion-guard-approval-pill-status { flex-basis: 100%; }
+.helmion-guard-approval-pill-status { opacity: .75; font-size: 12px; }
+.helmion-guard-approval-pill-allow, .helmion-guard-approval-pill-deny { cursor: pointer; border-radius: 8px; padding: 3px 12px; border: 1px solid #888; background: #fff; }
+.helmion-guard-approval-pill-deny { border-color: #b3261e; color: #b3261e; }

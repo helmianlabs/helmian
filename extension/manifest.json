@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Helmion Guard",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Catches destructive commands, keeps secrets out of AI chats, flags evasive, leaky or harmful replies, and keeps a durable local log of every flag.",
   "permissions": [
     "storage",
@@ -30,6 +30,7 @@
         "content/extract.js",
         "content/stream-watch.js",
         "content/ui.js",
+        "content/nudge.js",
         "content/guard.js"
       ],
       "css": [
@@ -49,6 +50,7 @@
     "http://127.0.0.1/*"
   ],
   "optional_permissions": [
-    "notifications"
+    "notifications",
+    "identity"
   ]
 }

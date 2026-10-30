@@ -355,7 +355,7 @@ function requestNotifications() {
 }
 const SCRIBE_STATE_TEXT = {
   'not-installed': 'Mailbox not set up yet on the Scribe server. Guard will check again in 15 minutes.',
-  'feature-off': 'The Scribe server has the mailbox feature turned off.',
+  'feature-off': 'Not deployed yet: the Scribe server answered 404 for the unread-mail address. Guard checks again in 15 minutes.',
   reconnect: 'Scribe did not accept the token. Reconnect Scribe by pasting a new one.',
 };
 async function loadScribe() {
@@ -366,7 +366,10 @@ async function loadScribe() {
   $('scribeUrl').value = s.baseUrl || '';
   $('scribeMailboxes').value = (s.mailboxes || []).join(', ');
   $('scribeLegacy').checked = s.includeLegacy === true;
-  $('scribeNotify').checked = s.notify !== false;
+  $('scribeNotify').checked = s.notify === true;
+  $('scribeBadge').checked = s.showBadge === true;
+  if ($('scribeUnreadPath')) $('scribeUnreadPath').value = s.unreadPath || '/mailbox/unread';
+  $('scribeAuth').textContent = s.signedIn ? 'Signed in (read-only).' : (s.hasToken ? 'Using a pasted token (fallback).' : 'Not signed in.');
   $('scribeToken').placeholder = s.hasToken ? 'Token saved (paste a new one to replace it)' : 'MAILBOX_STATUS_TOKEN or smk_… (mailbox.read)';
   renderInbox(await askWithPayload('helmion:scribe-inbox', { options: {} }));
 }
@@ -407,10 +410,70 @@ $('scribeSave').addEventListener('click', async () => {
   }
   const saved = await askWithPayload('helmion:scribe-settings', { settings: {
     enabled: $('scribeEnabled').checked, baseUrl: url, token: $('scribeToken').value || undefined,
-    mailboxes: $('scribeMailboxes').value, includeLegacy: $('scribeLegacy').checked, notify: $('scribeNotify').checked,
+    mailboxes: $('scribeMailboxes').value, includeLegacy: $('scribeLegacy').checked, notify: $('scribeNotify').checked, showBadge: $('scribeBadge').checked, ...($('scribeUnreadPath') ? { unreadPath: $('scribeUnreadPath').value } : {}),
   } });
   $('scribeToken').value = '';
   $('scribeStatus').textContent = saved && saved.ok ? 'Saved.' : `Not saved: ${saved && saved.error}`;
 });
 $('scribeRefresh').addEventListener('click', async () => renderInbox(await askWithPayload('helmion:scribe-inbox', { options: { force: true } })));
 loadScribe();
+
+// ─── Scribe sign-in (OAuth, no pasted key) ─────────────────────────────────
+// ONE permissions.request in the click (a second await would lose the user
+// gesture in Chrome): the Scribe origin plus, on Chrome/Edge, the optional
+// 'identity' permission. On Firefox 'identity' is an install-time permission.
+function requestSignInPermissions(url) {
+  const origin = originFor(url);
+  if (!origin) return Promise.resolve(false);
+  const firefox = Boolean(globalThis.browser && globalThis.browser.runtime);
+  const want = firefox ? { origins: [origin] } : { permissions: ['identity'], origins: [origin] };
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.request !== 'function') { resolve(false); return; }
+      const result = chrome.permissions.request(want, (g) => { void chrome.runtime.lastError; resolve(Boolean(g)); });
+      if (result && typeof result.then === 'function') result.then((g) => resolve(Boolean(g)), () => resolve(false));
+    } catch { resolve(false); }
+  });
+}
+$('scribeSignIn').addEventListener('click', async () => {
+  const url = $('scribeUrl').value.trim();
+  if (!url) { $('scribeAuth').textContent = 'Enter and save the Scribe URL first.'; return; }
+  const granted = await requestSignInPermissions(url);
+  if (!granted) { $('scribeAuth').textContent = 'Sign-in needs permission to reach Scribe and to open its sign-in window.'; return; }
+  await askWithPayload('helmion:scribe-settings', { settings: { baseUrl: url } });
+  $('scribeAuth').textContent = 'Opening the Scribe sign-in window…';
+  const r = await askWithPayload('helmion:scribe-signin', { action: 'signin' });
+  $('scribeAuth').textContent = r && r.ok ? 'Signed in (read-only).' : `Not signed in: ${r && r.error}`;
+});
+$('scribeSignOut').addEventListener('click', async () => {
+  await askWithPayload('helmion:scribe-signin', { action: 'signout' });
+  $('scribeAuth').textContent = 'Signed out.';
+});
+
+// ─── Auto-nudge ────────────────────────────────────────────────────────────
+const NUDGE_SITES = ['chatgpt.com', 'claude.ai', 'grok.com', 'gemini.google.com'];
+function renderNudge(r) {
+  if (!r || !r.ok) { $('nudgeStatus').textContent = `Could not load: ${r && r.error}`; return; }
+  const s = r.settings;
+  $('nudgeEnabled').checked = s.enabled; $('nudgeKilled').checked = s.killed;
+  for (const site of NUDGE_SITES) $(`nudgeSite-${site}`).checked = s.sites[site] === true;
+  $('nudgeIdle').value = s.idleMinutes; $('nudgeCap').value = s.dailyCapPerSite;
+  const list = $('nudgeLog'); list.textContent = '';
+  for (const row of r.log || []) {
+    const li = document.createElement('li');
+    li.textContent = `${row.at.slice(0, 16).replace('T', ' ')} ${row.site} → ${row.mailbox}: ${row.outcome}${row.reason && row.reason !== row.outcome ? ` (${row.reason})` : ''}`;
+    list.appendChild(li);
+  }
+}
+async function loadNudge() { renderNudge(await askWithPayload('helmion:nudge-settings', { settings: {} })); }
+$('nudgeSave').addEventListener('click', async () => {
+  const sites = {};
+  for (const site of NUDGE_SITES) sites[site] = $(`nudgeSite-${site}`).checked;
+  const r = await askWithPayload('helmion:nudge-settings', { settings: {
+    enabled: $('nudgeEnabled').checked, killed: $('nudgeKilled').checked, sites,
+    idleMinutes: Number($('nudgeIdle').value), dailyCapPerSite: Number($('nudgeCap').value),
+  } });
+  renderNudge(r);
+  if (r && r.ok) $('nudgeStatus').textContent = 'Saved.';
+});
+loadNudge();
