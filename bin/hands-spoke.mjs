@@ -24,6 +24,8 @@
 //       removes a grant. Access closes immediately; no restart needed.
 //   node bin/hands-spoke.mjs            run in the foreground (the HelmianBridge service runs it for you)
 import { readFile, stat, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
+import { dirname as pathDirname, join as pathJoin } from 'node:path';
 import { readHidden } from '../src/hands/hidden-input.mjs';
 import { DEFAULT_HANDS_URL, defaultConfigPath, defaultRootGrantsPath, defaultSpokeDeviceId, pairSpoke, readSpokeConfig, startSpoke } from '../src/hands/pc-spoke.mjs';
 import { activateRootGrant, createRootRequest, loadRootGrants, revokeRootGrant, saveRootRequest } from '../src/hands/root-grants.mjs';
@@ -117,7 +119,17 @@ if (cmd === 'pair') {
 } else {
   const config = await readSpokeConfig();
   if (!config) { console.error('Not paired. Run: node bin/hands-spoke.mjs pair'); process.exit(2); }
-  const handle = startSpoke({ config });
+  // Heartbeat for the installer's "is it really running and connected?" check.
+  const hbPath = pathJoin(pathDirname(defaultConfigPath()), 'spoke-heartbeat.json');
+  let hbLast = '';
+  let hbAt = 0;
+  const heartbeat = ({ connected, status }) => {
+    const key = `${connected}:${status}`;
+    if (key === hbLast && Date.now() - hbAt < 60000) return;
+    hbLast = key; hbAt = Date.now();
+    try { writeFileSync(hbPath, JSON.stringify({ pid: process.pid, connected, status, at: new Date().toISOString() }) + '\n'); } catch { /* best effort */ }
+  };
+  const handle = startSpoke({ config, heartbeat });
   const stop = () => { handle.stop(); process.exit(0); };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

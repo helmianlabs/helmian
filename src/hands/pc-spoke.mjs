@@ -695,7 +695,10 @@ async function detectCapabilities(fetchImpl) {
 }
 
 /** Long-poll loop. Returns { stop }. */
-export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor, scopeProvider = null } = {}) {
+export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor, scopeProvider = null, heartbeat = null } = {}) {
+  // heartbeat({ connected, status }) after each poll answer, so the installer can
+  // check the spoke really reached the hub. It must never break polling.
+  const beat = (connected, status) => { try { heartbeat?.({ connected, status }); } catch { /* ignore */ } };
   const roots = config.roots?.length ? config.roots : [process.env.HELMIAN_ROOT || process.cwd()];
   const deviceId = config.deviceId || defaultSpokeDeviceId();
   const rootGrantsPath = config.rootGrantsPath || defaultRootGrantsPath();
@@ -731,6 +734,7 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
         if (stopped) break;
         ctrl = new AbortController();
         const res = await post('/spoke/v1/poll', { deviceId, capabilities: caps, ...(pollScope ? { scope: pollScope } : {}) }, ctrl.signal);
+        beat(res.ok, res.status);
         if (res.status === 401) { log('the hands server rejected this PC (401). Re-pair with: node bin/hands-spoke.mjs pair'); await new Promise((r) => setTimeout(r, 60000)); continue; }
         if (!res.ok) throw new Error(`poll ${res.status}`);
         const { job } = await res.json();
@@ -742,6 +746,7 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
         await post('/spoke/v1/result', { jobId: job.id, ...result });
       } catch (e) {
         if (stopped) break;
+        beat(false, 0);
         log(`connection problem (${e.message}); retrying in ${backoff / 1000}s`);
         await new Promise((r) => setTimeout(r, backoff));
         backoff = Math.min(backoff * 2, 60000);
