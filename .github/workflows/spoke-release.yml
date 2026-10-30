@@ -1,0 +1,72 @@
+# Helmian Spoke — standalone installer release.
+#
+# Manual run (workflow_dispatch): stages the spoke tree into
+# spoke-installer/stage (the layout HelmianSpoke.iss packs), compiles the
+# one-file Setup with Inno Setup, and publishes it as its own GitHub
+# release, tag spoke-v<version>, with the version read from the .iss.
+# The spoke is a separate download from the Helmian app (design law).
+name: Spoke release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the spoke version from the installer script
+        id: ver
+        shell: pwsh
+        run: |
+          $iss = Get-Content 'spoke-installer/HelmianSpoke.iss' -Raw
+          if ($iss -notmatch 'AppVersion=([0-9]+\.[0-9]+\.[0-9]+)') { throw 'AppVersion not found in HelmianSpoke.iss' }
+          "version=$($Matches[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Download the bundled Node runtime (v24.22.1, checksum-verified)
+        shell: pwsh
+        run: |
+          $base = 'https://nodejs.org/dist/v24.22.1'
+          Invoke-WebRequest "$base/node-v24.22.1-win-x64.zip" -OutFile node.zip
+          Invoke-WebRequest "$base/SHASUMS256.txt" -OutFile SHASUMS256.txt
+          $want = (Select-String -Path SHASUMS256.txt -Pattern 'node-v24\.22\.1-win-x64\.zip').Line.Split(' ')[0]
+          $got = (Get-FileHash node.zip -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $want.ToLower()) { throw "node zip checksum mismatch: got $got want $want" }
+          Expand-Archive node.zip -DestinationPath node-dist
+
+      - name: Stage the spoke tree the installer packs
+        shell: pwsh
+        run: |
+          $stage = 'spoke-installer/stage'
+          New-Item -ItemType Directory -Force "$stage/bin", "$stage/src/hands", "$stage/hands-mcp/src/shared" | Out-Null
+          Copy-Item 'node-dist/node-v24.22.1-win-x64/node.exe' "$stage/node.exe"
+          Copy-Item 'bin/hands-spoke.mjs' "$stage/bin/"
+          Copy-Item 'src/hands/*.mjs' "$stage/src/hands/"
+          Copy-Item 'hands-mcp/src/shared/protocol.mjs' "$stage/hands-mcp/src/shared/"
+          Copy-Item 'package.json' "$stage/package.json"
+          Copy-Item 'spoke-installer/install-pair.mjs' "$stage/install-pair.mjs"
+
+      - name: Compile the installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = @('C:\Program Files (x86)\Inno Setup 6\ISCC.exe', 'C:\Program Files\Inno Setup 6\ISCC.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          }
+          & $iscc 'spoke-installer/HelmianSpoke.iss'
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - name: Publish the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $exe = "spoke-installer/output/Helmian-Spoke-Setup-$v-win-x64.exe"
+          if (-not (Test-Path $exe)) { throw "installer not found: $exe" }
+          gh release create "spoke-v$v" $exe --title "Helmian Spoke v$v" --notes "Standalone Helmian Spoke installer for Windows. One Setup file: installs the spoke and starts it at sign-in. Upgrading keeps your current pairing (leave the pairing box blank). This build adds the phone log (logcat) tools and finds the Android bridge in its standard install places."
