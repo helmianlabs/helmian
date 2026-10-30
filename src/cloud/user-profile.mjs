@@ -63,6 +63,7 @@ export function createProfileHandler({ getIdentity = defaultIdentity } = {}) {
         });
       } catch (e) {
         console.error('[profile] GET failed:', e.message);
+        if (e?.code === '42P01') return json(res, 503, { error: 'Profiles are not set up yet', code: 'PROFILE_STORE_MISSING' });
         return json(res, 500, { error: 'Failed to load profile' });
       }
     }
@@ -97,6 +98,7 @@ export function createProfileHandler({ getIdentity = defaultIdentity } = {}) {
         return json(res, 200, { ok: true, nickname, avatarEmoji });
       } catch (e) {
         console.error('[profile] POST failed:', e.message);
+        if (e?.code === '42P01') return json(res, 503, { error: 'Profiles are not set up yet', code: 'PROFILE_STORE_MISSING' });
         return json(res, 500, { error: 'Failed to save profile' });
       }
     }
