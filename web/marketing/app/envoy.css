@@ -557,3 +557,29 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-desk-item { border:1px solid var(--border); border-radius:10px; background:var(--panel-2); padding:8px 10px; display:flex; flex-direction:column; gap:2px; }
 .ew-desk-item strong { font-size:12.5px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ew-desk-item .meta { font-size:11.5px; color:var(--muted); }
+
+/* ---- 2026-10-29 demo polish ---- */
+/* Splitter hit area must never sit over pills or composer buttons. */
+.ew-split { z-index:1; }
+.ew-split::after { inset:0 -3px; }
+.ew-pills, #ew-mention-pills, #ew-agent-add, .ew-chips { position:relative; z-index:2; }
+.ew-pane.collapsed .ew-pills, .ew-pane.collapsed .ew-chips { pointer-events:none; }
+/* Agent pills read as faces, not names: bigger avatar with a soft ring. */
+.ew-pill { padding:3px 12px 3px 3px; gap:7px; }
+.ew-pill img { width:24px; height:24px; box-shadow:0 0 0 2px var(--panel), 0 0 0 3px rgba(56,189,248,.45); }
+.ew-pill:hover { transform:translateY(-1px); box-shadow:0 4px 14px rgba(56,189,248,.18); }
+.ew-avatar img { border-radius:50%; box-shadow:0 0 0 2px rgba(56,189,248,.35); }
+/* ADVANCED no longer vanishes when the unpinned rail stops peeking: its
+   icons stay on the rail (summary hidden), so it does not "collapse itself". */
+.sidebar.rail .advanced-nav[open] { display:block; }
+.sidebar.rail .advanced-nav[open] > summary { display:none; }
+.sidebar.rail.peek .advanced-nav > summary { display:flex; }
+/* Empty states and Get started */
+.empty-hint { margin-top:14px; border:1px dashed var(--border); border-radius:14px; padding:22px; text-align:center; background:linear-gradient(180deg, rgba(56,189,248,.06), transparent); }
+.empty-hint .btn { margin-top:10px; }
+.getting-started { background:linear-gradient(135deg, rgba(56,189,248,.10), rgba(167,139,250,.08)); border-color:rgba(56,189,248,.35); }
+.gs-steps { margin:8px 0 0; padding-left:20px; line-height:1.6; }
+.gs-steps li { margin:4px 0; }
+.gs-steps a { color:var(--accent); }
+.scribe-card .invite-new { display:flex; gap:8px; margin:8px 0; }
+.scribe-card input { flex:1 1 auto; min-width:0; font-family:ui-monospace, monospace; }
