@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Welcome to Helmion Guard</title>
+  <link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+  <main>
+    <h1>Welcome to Helmion Guard</h1>
+    <p class="lead">Three quick steps. Nothing to type except your name.</p>
+
+    <section>
+      <h2><span class="step">1</span> Your name or email</h2>
+      <label for="who" class="sr">Your name or email</label>
+      <input id="who" type="text" autocomplete="name" placeholder="Your name or email" />
+    </section>
+
+    <section>
+      <h2><span class="step">2</span> Which AIs do you use?</h2>
+      <div class="ais">
+        <label class="ai"><input type="checkbox" name="ai" value="chatgpt" /> ChatGPT</label>
+        <label class="ai"><input type="checkbox" name="ai" value="claude" /> Claude</label>
+        <label class="ai"><input type="checkbox" name="ai" value="grok" /> Grok</label>
+        <label class="ai"><input type="checkbox" name="ai" value="gemini" /> Gemini</label>
+      </div>
+      <p class="note">Guard will gently remind the AIs you tick to check their Scribe mail when their tab sits idle. Automatic typing into AI chats may conflict with some sites' terms (for example Anthropic's and xAI's rules on automated use). You can turn it off any time in Guard's settings.</p>
+    </section>
+
+    <section>
+      <h2><span class="step">3</span> Connect Scribe</h2>
+      <button id="connect" type="button">Connect Scribe</button>
+      <p id="status" class="status" role="status" aria-live="assertive" hidden></p>
+    </section>
+
+    <p class="small">You can change anything later from the Guard button in your toolbar, under Advanced.</p>
+  </main>
+  <script src="../popup/connect.js"></script>
+  <script src="onboarding.js"></script>
+</body>
+</html>
