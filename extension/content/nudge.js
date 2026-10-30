@@ -58,11 +58,28 @@
 
   var state = { lastUserInputAt: Date.now(), pending: null, busy: false };
 
-  function siteKey(host) {
+  // 0.6.7: exact host + real chat path only; never substring/subdomain matching.
+  // Keep in sync with CHAT_PAGES in background/defaults.js (a test checks).
+  var CHAT_PAGES = {
+    'chatgpt.com': { hosts: ['chatgpt.com'], paths: ['^/$', '^/c/[A-Za-z0-9-]+/?$', '^/g/[A-Za-z0-9-]+(/c/[A-Za-z0-9-]+)?/?$'] },
+    'claude.ai': { hosts: ['claude.ai'], paths: ['^/$', '^/new/?$', '^/chat/[A-Za-z0-9-]+/?$'] },
+    'grok.com': { hosts: ['grok.com'], paths: ['^/$', '^/c/[A-Za-z0-9-]+/?$', '^/chat/[A-Za-z0-9-]+/?$'] },
+    'gemini.google.com': { hosts: ['gemini.google.com'], paths: ['^(/u/[0-9]+)?/app(/[A-Za-z0-9]+)?/?$', '^(/u/[0-9]+)?/gem/[A-Za-z0-9-]+(/[A-Za-z0-9]+)?/?$'] },
+    'perplexity.ai': { hosts: ['www.perplexity.ai', 'perplexity.ai'], paths: ['^/$', '^/search/[A-Za-z0-9._-]+/?$'] },
+    'chat.mistral.ai': { hosts: ['chat.mistral.ai'], paths: ['^/chat(/[A-Za-z0-9-]+)?/?$'] },
+  };
+  function siteKey(host, pathname) {
     var h = String(host || '').toLowerCase();
-    for (var k in ADAPTERS) if (h === k || h.slice(-(k.length + 1)) === '.' + k) return k;
+    for (var k in CHAT_PAGES) {
+      if (CHAT_PAGES[k].hosts.indexOf(h) === -1) continue;
+      if (pathname == null) return null; // no path known: refuse
+      var p = String(pathname);
+      for (var i = 0; i < CHAT_PAGES[k].paths.length; i += 1) if (new RegExp(CHAT_PAGES[k].paths[i]).test(p)) return ADAPTERS[k] ? k : null;
+      return null;
+    }
     return null;
   }
+  function locOf(doc) { return (doc && doc.location) || root.location || {}; }
 
   function visible(el) {
     if (!el) return false;
@@ -91,9 +108,9 @@
   }
 
   function probe(doc, opts) {
-    var site = siteKey((doc.location && doc.location.hostname) || (root.location && root.location.hostname));
+    var loc = locOf(doc); var site = siteKey(loc.hostname, loc.pathname);
     var adapter = site && ADAPTERS[site];
-    if (!adapter) return { ok: false, reason: 'dom-mismatch', detail: 'no adapter for this site' };
+    if (!adapter) return { ok: false, reason: 'refused', detail: 'not a supported AI chat page' };
     var composer = first(doc, adapter.composer);
     if (!composer) return { ok: false, reason: 'dom-mismatch', detail: 'composer not found' };
     if (norm(text(composer))) return { ok: false, reason: 'busy', detail: 'composer not empty' };
@@ -209,12 +226,12 @@
       return true;
     });
     var hello = function () {
-      try { rt.sendMessage({ type: 'helmion:nudge-hello', site: siteKey(win.location.hostname) }, function () { void rt.lastError; }); } catch (e) { /* worker asleep */ }
+      try { rt.sendMessage({ type: 'helmion:nudge-hello', site: siteKey(win.location.hostname, win.location.pathname) }, function () { void rt.lastError; }); } catch (e) { /* worker asleep */ }
     };
     hello();
     setInterval(hello, 4 * 60000); // re-register after a service-worker restart
   }
 
-  root.HelmionNudge = { ADAPTERS: ADAPTERS, PREFIX: PREFIX, siteKey: siteKey, probe: probe, tryNudge: tryNudge, pendingFor: pendingFor, markBlocked: markBlocked, install: install, _state: state };
+  root.HelmionNudge = { ADAPTERS: ADAPTERS, PREFIX: PREFIX, siteKey: siteKey, CHAT_PAGES: CHAT_PAGES, probe: probe, tryNudge: tryNudge, pendingFor: pendingFor, markBlocked: markBlocked, install: install, _state: state };
   if (typeof window !== 'undefined' && root === window && !root.__helmionNudgeNoAutoInstall) install(window);
 })(typeof globalThis !== 'undefined' ? globalThis : this);
