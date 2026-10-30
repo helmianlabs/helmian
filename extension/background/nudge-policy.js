@@ -1,4 +1,4 @@
-import { nudgeSiteTable } from './defaults.js';
+import { CHAT_PAGES, chatSiteForUrl, nudgeSiteTable } from './defaults.js';
 // Scribe AUTO-NUDGE policy (0.6.0). Pure logic, no network, no DOM.
 //
 // When Scribe has unread mail for an AI whose chat tab is open, Guard may type
@@ -31,7 +31,8 @@ export const NUDGE_SITES = Object.freeze(nudgeSiteTable()); // from background/d
 
 export function siteForHost(host) {
   const h = String(host || '').toLowerCase();
-  for (const site of Object.keys(NUDGE_SITES)) if (h === site || h.endsWith(`.${site}`)) return site;
+  // 0.6.7: exact host only. No subdomain/suffix matching (lookalikes must never map to a chat).
+  for (const site of Object.keys(NUDGE_SITES)) if (h === site || (CHAT_PAGES[site] && CHAT_PAGES[site].hosts.includes(h))) return site;
   return null;
 }
 
@@ -289,3 +290,6 @@ export async function runNudges(storage, { sendToTab, now = Date.now() } = {}) {
   }
   return attempts;
 }
+
+/** Site for a tab's full URL: exact host + chat path, else null. */
+export function siteForUrl(url) { return chatSiteForUrl(url); }
