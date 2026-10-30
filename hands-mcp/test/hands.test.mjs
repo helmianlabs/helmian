@@ -784,14 +784,19 @@ test('summaries stay inside the Guard length cap even for huge first lines', () 
 
 // ---- the phone family: phone_look (read) + run_phone (Guard-gated) ----
 
-test('phone catalog: the six phone commands carry the right gating flags and argument rules', () => {
+test('phone catalog: the eight phone commands carry the right gating flags and argument rules', () => {
   assert.equal(TOOLS.phone_look.mutating, false);
   assert.equal(TOOLS.run_phone.mutating, true);
   assert.deepEqual(TOOLS.phone_look.needs, ['phone']);
   assert.deepEqual(TOOLS.run_phone.needs, ['phone']);
-  assert.deepEqual(PHONE_READ_COMMANDS, ['phone-status', 'phone-screen', 'phone-layout']);
-  assert.deepEqual(PHONE_ACT_COMMANDS, ['phone-tap', 'phone-swipe', 'phone-type']);
+  assert.deepEqual(PHONE_READ_COMMANDS, ['phone-status', 'phone-screen', 'phone-layout', 'phone-logcat']);
+  assert.deepEqual(PHONE_ACT_COMMANDS, ['phone-tap', 'phone-swipe', 'phone-type', 'phone-logcat-clear']);
   assert.deepEqual(validateArgs('phone_look', { commandId: 'phone-status' }), { commandId: 'phone-status', args: {} });
+  assert.deepEqual(validateArgs('phone_look', { commandId: 'phone-logcat' }), { commandId: 'phone-logcat', args: { lines: 2000 } });
+  assert.deepEqual(validateArgs('phone_look', { commandId: 'phone-logcat', args: { lines: 500 } }), { commandId: 'phone-logcat', args: { lines: 500 } });
+  assert.throws(() => validateArgs('phone_look', { commandId: 'phone-logcat', args: { lines: 5 } }), /line count/);
+  assert.throws(() => validateArgs('phone_look', { commandId: 'phone-logcat-clear' }), /commandId must be one of/);
+  assert.throws(() => validateArgs('run_phone', { commandId: 'phone-logcat' }), /commandId must be one of/);
   assert.deepEqual(validateArgs('run_phone', { commandId: 'phone-tap', args: { x: 540, y: 1200 } }), { commandId: 'phone-tap', args: { x: 540, y: 1200 } });
   // A command on the wrong tool is refused, fail closed, both ways.
   assert.throws(() => validateArgs('phone_look', { commandId: 'phone-tap', args: { x: 1, y: 2 } }), /commandId must be one of/);
@@ -819,6 +824,8 @@ function fakeAdbSpawn({ phoneThere = true } = {}) {
     else if (file === 'adb' && args.includes('power')) out = 'mWakefulness=Awake\n';
     else if (file === 'adb' && args.includes('uiautomator')) out = '<?xml version="1.0"?><hierarchy><node text="Forge TMS" class="android.widget.TextView" bounds="[40,80][600,140]" /><node text="" content-desc="Sign in" class="android.widget.Button" clickable="true" bounds="[120,860][960,940]" /><node text="driver@example.com" class="android.widget.EditText" bounds="[120,300][960,380]" /></hierarchy>';
     else if (file === 'adb' && args.includes('input')) out = '';
+    else if (file === 'adb' && args.includes('logcat') && args.includes('-c')) out = '';
+    else if (file === 'adb' && args.includes('logcat')) out = '10-30 11:14:29.001  1234  5678 D ForgeDriver: Talk to Cora tapped\n10-30 11:14:30.500  1234  5678 I chromium: microphone stream started\n';
     queueMicrotask(() => { if (out) child.stdout.emit('data', Buffer.from(out)); child.emit('close', 0); });
     return child;
   };
@@ -843,6 +850,27 @@ test('phone_look reads the phone through the bridge: status and layout in words,
   const missing = await none.execute({ tool: 'phone_look', args: { commandId: 'phone-status', args: {} } });
   assert.equal(missing.ok, false);
   assert.match(missing.error, /no phone found/);
+});
+
+test('phone_look reads the phone log (logcat) with no Guard; clearing it is a Guard-gated change', async () => {
+  const root = await workspace();
+  const exec = createExecutor({ roots: [root], spawnImpl: fakeAdbSpawn() });
+  const log = await exec.execute({ tool: 'phone_look', args: { commandId: 'phone-logcat', args: { lines: 2000 } } });
+  assert.equal(log.ok, true, log.error);
+  assert.match(log.output, /Talk to Cora tapped/);
+  assert.match(log.output, /microphone stream started/);
+  // Clearing without a Guard envelope is refused by the executor's own gate.
+  const guard = mockGuard();
+  const iat = Math.floor(Date.now() / 1000);
+  const clearArgs = { commandId: 'phone-logcat-clear', args: {} };
+  const mk = (tool, args, id) => ({ tool, args, nonce: 'n'.repeat(20), guardDecision: guard.forge({ decisionId: id, verdict: 'allow', actionHash: guardActionHash(buildGuardAction(tool, args)), deviceId: 'hands-mcp', nonce: 'n'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' }) });
+  const unpinned = await createExecutor({ roots: [root], spawnImpl: fakeAdbSpawn() }).execute(mk('run_phone', clearArgs, 'lc1'));
+  assert.equal(unpinned.ok, false);
+  assert.match(unpinned.error, /no Executive Guard key is pinned/);
+  const pinned = createExecutor({ roots: [root], guardPublicKeyX: guard.x, spawnImpl: fakeAdbSpawn() });
+  const cleared = await pinned.execute(mk('run_phone', clearArgs, 'lc2'));
+  assert.equal(cleared.ok, true, cleared.error);
+  assert.match(cleared.output, /phone log cleared/);
 });
 
 test('run_phone changes the phone only after a human Guard approval the PC verifies itself', async () => {
