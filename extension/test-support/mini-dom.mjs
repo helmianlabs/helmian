@@ -22,17 +22,19 @@ function parseSimpleSelector(selector) {
     rest = rest.slice(tagMatch[0].length);
   }
 
-  const token = /\.([\w-]+)|\[([\w-]+)(?:(\*?=)"([^"]*)"\s*(i)?)?\]/g;
+  const token = /#([\w-]+)|\.([\w-]+)|\[([\w-]+)(?:(\*?=)"([^"]*)"\s*(i)?)?\]/g;
   let match = token.exec(rest);
   while (match !== null) {
     if (match[1]) {
-      parsed.classes.push(match[1]);
+      parsed.attrs.push({ name: 'id', op: '=', value: match[1], caseInsensitive: false });
+    } else if (match[2]) {
+      parsed.classes.push(match[2]);
     } else {
       parsed.attrs.push({
-        name: match[2],
-        op: match[3] || null,
-        value: match[4] === undefined ? null : match[4],
-        caseInsensitive: Boolean(match[5]),
+        name: match[3],
+        op: match[4] || null,
+        value: match[5] === undefined ? null : match[5],
+        caseInsensitive: Boolean(match[6]),
       });
     }
     match = token.exec(rest);
@@ -41,11 +43,43 @@ function parseSimpleSelector(selector) {
   return parsed;
 }
 
-function parseSelectorList(selector) {
-  return String(selector).split(',').map(parseSimpleSelector);
+// Splits on a top-level character (outside [..] and quotes).
+function splitTop(source, isSep) {
+  const out = []; let cur = ''; let depth = 0; let quote = null;
+  for (const ch of String(source)) {
+    if (quote) { if (ch === quote) quote = null; cur += ch; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; cur += ch; continue; }
+    if (ch === '[') depth += 1; else if (ch === ']') depth -= 1;
+    if (depth === 0 && isSep(ch)) { if (cur.trim()) out.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
 }
 
-function matchesSimple(node, parsed) {
+// Each list entry is a chain of compound selectors joined by the descendant
+// combinator (a space): 'form textarea', 'rich-textarea .ql-editor'.
+function parseSelectorList(selector) {
+  return splitTop(selector, (c) => c === ',').map((entry) => {
+    const chain = splitTop(entry, (c) => /\s/.test(c)).map(parseSimpleSelector);
+    const last = chain[chain.length - 1];
+    last.ancestors = chain.slice(0, -1);
+    return last;
+  });
+}
+
+function matchesChain(node, parsed) {
+  if (!matchesCompound(node, parsed)) return false;
+  let need = (parsed.ancestors || []).length - 1;
+  let up = node.parentElement;
+  while (need >= 0 && up) {
+    if (matchesCompound(up, parsed.ancestors[need])) need -= 1;
+    up = up.parentElement;
+  }
+  return need < 0;
+}
+
+function matchesCompound(node, parsed) {
   if (node.nodeType !== ELEMENT_NODE) return false;
   if (parsed.tag && node.tagName.toLowerCase() !== parsed.tag) return false;
 
@@ -196,14 +230,14 @@ class MiniElement {
   }
 
   matches(selector) {
-    return parseSelectorList(selector).some((parsed) => matchesSimple(this, parsed));
+    return parseSelectorList(selector).some((parsed) => matchesChain(this, parsed));
   }
 
   querySelectorAll(selector) {
     const parsedList = parseSelectorList(selector);
     const found = [];
     for (const node of this.descendants()) {
-      if (parsedList.some((parsed) => matchesSimple(node, parsed))) found.push(node);
+      if (parsedList.some((parsed) => matchesChain(node, parsed))) found.push(node);
     }
     return found;
   }

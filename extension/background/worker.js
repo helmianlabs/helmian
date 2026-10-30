@@ -494,7 +494,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (type === 'helmion:scribe-settings') {
       const payload = message.settings || {};
-      const isWrite = ['enabled', 'baseUrl', 'token', 'mailboxes', 'includeLegacy', 'dailyBudget', 'notify', 'showBadge', 'clearToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      const isWrite = ['enabled', 'baseUrl', 'token', 'mailboxes', 'includeLegacy', 'dailyBudget', 'notify', 'showBadge', 'unreadPath', 'clearToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
       (isWrite ? setScribeSettings(ledger, payload).then(async (r) => { await syncScribeAlarm(); return r; }) : getScribeSettings(ledger))
         .then((settings) => sendResponse({ ok: true, settings }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));

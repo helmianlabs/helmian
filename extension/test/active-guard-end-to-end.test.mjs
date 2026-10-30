@@ -124,16 +124,24 @@ test('REDACT AND KEEP EDITING replaces the composer text; the redacted text then
   assert.equal(again.prevented, false, 'the redacted message was still blocked');
 });
 
-test('PERSONAL DETAILS ASK: "Send as written" lets exactly that text through once', async () => {
+const pills = (doc) => doc.querySelectorAll('.helmion-guard-approval-pill');
+
+test('PERSONAL DETAILS ASK: the corner pill\'s explicit Allow lets exactly that text through once', async () => {
   fake.resetStorage();
   const composer = textarea('email the report to jordan.lee@gmail.com');
   const { doc, fakeWindow } = await runExtension([composer]);
   await wait(40);
 
   assert.equal(sendEnter(fakeWindow, composer).prevented, true);
-  assert.ok(await waitFor(() => button(doc, 'send-anyway')), 'no ask card with Send as written');
-  assert.match(askAlerts(doc)[0].textContent, /an email address/);
-  button(doc, 'send-anyway').dispatch('click', {});
+  assert.ok(await waitFor(() => button(doc, 'allow')), 'no approval pill');
+  assert.equal(pills(doc).length, 1);
+  assert.equal(askAlerts(doc).length, 0, 'the big card no longer covers the chat');
+  assert.equal(doc.querySelector('.helmion-guard-approval-pill-details').hidden, true, 'pill starts collapsed');
+  button(doc, 'expand').dispatch('click', {});
+  assert.equal(doc.querySelector('.helmion-guard-approval-pill-details').hidden, false, 'pill expands for details');
+  assert.match(pills(doc)[0].textContent, /an email address/);
+  assert.equal(sendEnter(fakeWindow, composer).prevented, true, 'nothing is allowed before an explicit Allow');
+  button(doc, 'allow').dispatch('click', {});
 
   assert.equal(sendEnter(fakeWindow, composer).prevented, false, 'the approved text was blocked');
   await wait(1600);
@@ -267,8 +275,8 @@ test('LOOP: Executive Guard down -> the local policy decides and the card says s
   const { doc, fakeWindow } = await runExtension([composer]);
   await wait(40);
   sendEnter(fakeWindow, composer);
-  assert.ok(await waitFor(() => /could not be reached/.test(askAlerts(doc)[0]?.textContent || '')));
-  assert.ok(button(doc, 'send-anyway'));
+  assert.ok(await waitFor(() => /could not be reached/.test(pills(doc)[0]?.textContent || '')));
+  assert.ok(button(doc, 'allow') && button(doc, 'deny'));
 });
 
 // ─── Flags lane ─────────────────────────────────────────────────────────────
