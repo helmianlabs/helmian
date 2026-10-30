@@ -37,6 +37,12 @@
       composer: ['form textarea', 'div.ProseMirror[contenteditable="true"]', 'form [contenteditable="true"]'],
       send: ['form button[type="submit"]', 'button[aria-label="Submit"]', 'button[aria-label*="Send" i]'],
     },
+    // Mistral Le Chat (verified 2026-10-29 on chat.mistral.ai/chat, signed out, Chromium 141):
+    // ProseMirror div[contenteditable] (placeholder "Ask anything"); button[type=submit][aria-label="Send"].
+    'chat.mistral.ai': {
+      composer: ['div.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][data-placeholder]', 'textarea'],
+      send: ['button[type="submit"][aria-label="Send"]', 'button[aria-label="Send"]', 'button[aria-label*="Send" i]'],
+    },
     // Perplexity (verified 2026-10-29 on www.perplexity.ai, signed out, Chromium 141):
     // a Lexical editor div#ask-input[contenteditable][role=textbox], no <form>;
     // a button[aria-label="Submit"] appears only once the composer has text.
