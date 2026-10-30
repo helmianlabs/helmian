@@ -8,7 +8,7 @@
 //   4. Writes %APPDATA%\Helmian\spoke-install-status.json so the installer's
 //      last page can say honestly whether pairing finished.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -26,10 +26,17 @@ function run(args, opts = {}) {
   return r;
 }
 
-try {
-  const pair = run(['pair', '--roots', roots]);
-  status.paired = pair.status === 0;
-} catch { /* status stays false */ }
+const configPath = path.join(process.env.APPDATA || path.join(homedir(), 'AppData', 'Roaming'), 'Helmian', 'hands-spoke.json');
+if (!String(process.env.HELMIAN_HANDS_PASSPHRASE || '').trim() && existsSync(configPath)) {
+  // Upgrade with the code left blank: keep the existing pairing and roots.
+  status.paired = true;
+  status.keptPairing = true;
+} else {
+  try {
+    const pair = run(['pair', '--roots', roots]);
+    status.paired = pair.status === 0;
+  } catch { /* status stays false */ }
+}
 
 if (status.paired) {
   try {
