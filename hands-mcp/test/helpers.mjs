@@ -78,6 +78,7 @@ export function mockGuard({ deviceToken = 'guard-device-token-0123456789abcdef',
   return {
     handler, x, deviceToken, approvals, calls, outcomes,
     decide(id, approve) { approvals.get(id).status = approve ? 'approved' : 'denied'; },
+    expire(id) { approvals.get(id).status = 'expired'; },
     forge(claims) { return signClaims(claims); },
   };
 }

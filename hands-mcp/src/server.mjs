@@ -41,8 +41,8 @@ export function buildMcpServer(hands, auth, hooks = {}) {
   const save = WRITE_FILE_ANNOTATIONS;
   // Optional caller targeting (bite 2b): name a connected device (hands_status
   // lists them under "devices") to run this call there instead of on the PC.
-  const DEVICE_ARG = ' Optional argument "device": run on that connected device instead of the PC (see hands_status).';
-  const deviceSchema = { device: z.string().optional() };
+  const DEVICE_ARG = ' Optional argument "device": run on that connected device instead of the PC (see hands_status). Optional "mailbox": your Scribe mailbox name (e.g. "claude.ai", "gemini"); if a human approval is still pending when this call returns, the result is mailed there once approved.';
+  const deviceSchema = { device: z.string().optional(), mailbox: z.string().optional() };
   server.registerTool('hands_status', { description: 'Is the PC online, are hands on, and is Executive Guard live? Read-only.', inputSchema: {}, annotations: ro },
     async () => ({ content: [{ type: 'text', text: JSON.stringify(hands.status(), null, 2) }] }));
   server.registerTool('list_files', { description: TOOLS.list_files.description + DEVICE_ARG, inputSchema: { path: z.string(), glob: z.string().optional(), ...deviceSchema }, annotations: ro },
