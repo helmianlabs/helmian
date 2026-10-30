@@ -190,6 +190,7 @@ export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = 
         audit.append({ event: 'allowed.read-only', requestId, tool, commandId: args.commandId, clientId, ...(target ? { deviceId: target.deviceId } : {}) });
         return runOnPc({ requestId, tool, args, clientId, targetDeviceId: target?.deviceId });
       }
+      audit.append({ event: 'read-only.needs-guard', requestId, tool, commandId: args.commandId, reason: `spoke does not report ${POWERSHELL_READ_CAPABILITY} (old spoke still running?)`, capabilities: Array.isArray(caps) ? caps : [] });
     }
 
     const decision = await guard.authorize({ tool, args });
