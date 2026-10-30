@@ -242,13 +242,13 @@ test('createModel maps receipts and builds review payload', () => {
   assert.match(html, />Review</);
 });
 
-test('devices empty-state points at Clerk unify and Connect phone', () => {
+test('devices empty-state uses plain words, keeps the owner doc link and Connect phone', () => {
   assert.match(html, /No Desktop connected yet/);
   assert.match(html, /id="devices-clerk-note"/);
-  assert.match(html, /Clerk unify checklist/);
+  assert.doesNotMatch(html, /Clerk unify checklist/);
   assert.match(html, /docs\/CLERK_UNIFY\.md/);
   assert.match(html, /href="\/app\/pair"/);
-  assert.match(js, /Desktop list needs Clerk unify/);
+  assert.match(js, /Your linked PCs can\\u2019t be listed from this page yet/);
   assert.doesNotMatch(js, /Remote Control sign-in is separate until Clerk is unified/);
 });
 
