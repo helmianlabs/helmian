@@ -7,25 +7,47 @@
 
 const badgeCalls = [];
 const listeners = [];
-const storageData = new Map();
+// chrome.storage.local, in memory. Added 2026-10-22 so end-to-end tests can see
+// ledger rows and drive the Executive Guard / Flags settings through the real
+// worker. Reset with fake.resetStorage().
+const storageBag = new Map();
+const alarmCalls = [];
+const notificationCalls = [];
+const alarmListeners = [];
+const tabCalls = [];
+const notificationClickListeners = [];
+let grantedPermissions = new Set();
 
 export const fake = {
   // 'normal'  answer messages the way Chrome does
   // 'silent'  never answer, so the content script's timeout fires
   // 'missing' answer with no listener, the way a dead service worker looks
   mode: 'normal',
+  pageUrl: 'https://chatgpt.com/c/test-conversation?model=x',
   badgeCalls,
   listeners,
+  storageBag,
+  alarmCalls,
+  notificationCalls,
+  alarmListeners,
+  tabCalls,
+  notificationClickListeners,
+  grant(p) { grantedPermissions.add(p); },
+  revokeAll() { grantedPermissions = new Set(); },
   reset() {
     badgeCalls.length = 0;
     fake.mode = 'normal';
-    storageData.clear();
+  },
+  resetStorage() {
+    storageBag.clear();
   },
 };
 
 export const chrome = {
   runtime: {
+    id: 'helmion-guard-test-id',
     lastError: undefined,
+    getURL(path) { return `chrome-extension://helmion-guard-test-id/${String(path).replace(/^\//, '')}`; },
 
     onMessage: {
       addListener(listener) {
@@ -44,27 +66,24 @@ export const chrome = {
           return;
         }
 
-        const sender = { tab: { id: 7 } };
+        // What Chrome sets for a content script message: the extension id,
+        // the frame URL and the tab.
+        const pageUrl = fake.pageUrl;
+        const sender = { id: chrome.runtime.id, url: pageUrl, tab: { id: 7, url: pageUrl } };
         let answered = false;
-        let keepOpen = false;
         const sendResponse = (response) => {
-          if (answered) return;
           answered = true;
           if (!callback) return;
           chrome.runtime.lastError = undefined;
           callback(response);
         };
 
-        listeners.forEach((listener) => {
-          // Chrome's contract: a listener that returns true will answer
-          // asynchronously, and the channel stays open for it. Deciding an
-          // approval (helmion:decide) is exactly that shape, so the
-          // no-listener error below must not fire the moment the listener
-          // returns, before its promise settles.
-          if (listener(message, sender, sendResponse) === true) keepOpen = true;
-        });
+        // A listener that returns true keeps the channel open and answers
+        // later, exactly as Chrome allows (the async ledger, decide and flag
+        // handlers rely on it).
+        const keptOpen = listeners.map((listener) => listener(message, sender, sendResponse)).some((r) => r === true);
 
-        if (!answered && !keepOpen && callback) {
+        if (!answered && !keptOpen && callback) {
           chrome.runtime.lastError = { message: 'no listener answered' };
           callback(undefined);
           chrome.runtime.lastError = undefined;
@@ -73,36 +92,45 @@ export const chrome = {
     },
   },
 
-  // The worker's ledger and settings live in chrome.storage.local, and the
-  // decide path reads them on every call. Without this the real worker
-  // answers helmion:decide with an error, and no send-time decision can be
-  // exercised end to end. In-memory, promise-shaped like the real API, and
-  // cleared by fake.reset() so tests stay isolated.
   storage: {
     local: {
       async get(key) {
-        if (key == null) return Object.fromEntries(storageData);
-        if (typeof key === 'string') {
-          return storageData.has(key) ? { [key]: storageData.get(key) } : {};
-        }
-        if (Array.isArray(key)) {
+        // Object form (keys with defaults), as the real API allows; main's
+        // 0.7.0 injection tests read settings this way.
+        if (key && typeof key === 'object' && !Array.isArray(key)) {
           const out = {};
-          for (const k of key) if (storageData.has(k)) out[k] = storageData.get(k);
+          for (const [k, fallback] of Object.entries(key)) out[k] = storageBag.has(k) ? structuredClone(storageBag.get(k)) : fallback;
           return out;
         }
+        const keys = key == null ? [...storageBag.keys()] : (Array.isArray(key) ? key : [key]);
         const out = {};
-        for (const [k, fallback] of Object.entries(key)) {
-          out[k] = storageData.has(k) ? storageData.get(k) : fallback;
-        }
+        for (const k of keys) if (storageBag.has(k)) out[k] = structuredClone(storageBag.get(k));
         return out;
       },
       async set(items) {
-        for (const [k, v] of Object.entries(items)) storageData.set(k, v);
+        for (const [k, v] of Object.entries(items)) storageBag.set(k, structuredClone(v));
       },
       async remove(key) {
-        for (const k of [].concat(key)) storageData.delete(k);
+        for (const k of Array.isArray(key) ? key : [key]) storageBag.delete(k);
       },
     },
+  },
+
+  alarms: {
+    create(name, info) { alarmCalls.push({ call: 'create', name, ...info }); },
+    clear(name) { alarmCalls.push({ call: 'clear', name }); },
+    onAlarm: { addListener(l) { alarmListeners.push(l); } },
+  },
+  notifications: {
+    create(id, opts) { notificationCalls.push({ call: 'create', id, ...opts }); },
+    clear(id) { notificationCalls.push({ call: 'clear', id }); },
+    onClicked: { addListener(l) { notificationClickListeners.push(l); } },
+  },
+  tabs: { create(opts) { tabCalls.push(opts); } },
+  idle: { queryState(_s, cb) { cb('active'); } },
+  permissions: {
+    contains(q, cb) { cb((q.permissions || []).every((p) => grantedPermissions.has(p))); },
+    request(q, cb) { cb(false); },
   },
 
   action: {

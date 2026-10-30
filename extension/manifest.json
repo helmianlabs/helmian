@@ -54,5 +54,9 @@
   "optional_permissions": [
     "notifications",
     "identity"
-  ]
+  ],
+  "options_ui": {
+    "page": "popup/popup.html",
+    "open_in_tab": true
+  }
 }
