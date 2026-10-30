@@ -26,7 +26,7 @@ import { constants as fsConstants } from 'node:fs';
 import { copyFile, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, platform, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { MAX_OUTPUT_BYTES, PHONE_COMMANDS, TOOLS, cleanScopeSummary, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
+import { MAX_OUTPUT_BYTES, PHONE_COMMANDS, POWERSHELL_READ_CAPABILITY, TOOLS, cleanScopeSummary, isReadOnlyCall, validateArgs, verifyApproval } from '../../hands-mcp/src/shared/protocol.mjs';
 import { defaultRootGrantsPath, loadRootGrants } from './root-grants.mjs';
 
 export { defaultRootGrantsPath } from './root-grants.mjs';
@@ -371,7 +371,9 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
       }
     }
 
-    if (spec.mutating) {
+    // Read-only allow-listed commands (protocol.isReadOnlyCall) run without a
+    // Guard decision; every other mutating job must carry a verified one.
+    if (spec.mutating && !isReadOnlyCall(job.tool, args)) {
       const v = verifyApproval({ publicKeyX: guardPublicKeyX, envelope: job.guardDecision, tool: job.tool, args, nonce: job.nonce, deviceId: guardDeviceId, now: now() });
       if (!v.ok) return { ok: false, error: `refused by the PC: ${v.error === 'no pinned Guard key' ? 'no Executive Guard key is pinned on this PC, so mutating actions are refused' : `Guard decision did not verify (${v.error})`}` };
       let claimed;
@@ -625,7 +627,7 @@ export async function buildScopeSummary({ roots = [], rootGrantsPath = null, gua
 
 async function detectCapabilities(fetchImpl) {
   const caps = ['local-files'];
-  if (platform() === 'win32') caps.push('powershell', 'pc-browser');
+  if (platform() === 'win32') caps.push('powershell', POWERSHELL_READ_CAPABILITY, 'pc-browser');
   // The phone capability means the Android bridge answers on this PC; an
   // actually-connected phone is a per-call question (phone-status).
   const adb = await run('adb', ['version'], { timeoutMs: 5000 }).catch(() => ({ ok: false }));
