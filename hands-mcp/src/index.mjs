@@ -16,6 +16,7 @@ const audit = createAudit(`${config.stateDir}/audit.jsonl`);
 // first scope report and every change from the last one; both land in the
 // audit as scope.reported, changes flagged with the previous summary.
 const hub = createSpokeHub({
+  onCapabilitiesReport: ({ deviceId, capabilities, previous }) => audit.append({ event: 'capabilities.reported', deviceId, capabilities, previous }),
   onScopeReport: ({ deviceId, scope, changed, first = false, previous = null }) => audit.append({
     event: 'scope.reported', deviceId, tier: scope.tier, roots: scope.roots, grants: scope.grants,
     changed, ...(first ? { first: true } : {}), ...(previous ? { previous } : {}),
