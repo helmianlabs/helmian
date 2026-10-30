@@ -51,7 +51,7 @@ test('mailbox derivation from ticked AIs: chatgpt, claude.ai, grok, gemini; neve
   assert.deepEqual(D.mailboxesForAis(['chatgpt', 'claude', 'grok', 'gemini']), ['chatgpt', 'claude.ai', 'grok', 'gemini']);
   assert.deepEqual(D.mailboxesForAis(['gemini', 'claude']), ['claude.ai', 'gemini']);
   assert.deepEqual(D.mailboxesForAis(['bogus']), []);
-  assert.deepEqual(D.nudgeSitesForAis(['grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false });
+  assert.deepEqual(D.nudgeSitesForAis(['grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false, 'chat.mistral.ai': false });
 });
 
 test('welcome page saves name + AIs: mailboxes and per-site nudge filled in, idle 3, cap 20', async () => {
@@ -68,7 +68,7 @@ test('welcome page saves name + AIs: mailboxes and per-site nudge filled in, idl
   assert.equal(s.settings.baseUrl, D.SCRIBE_DEFAULT_URL);
   const n = await send({ type: 'helmion:nudge-settings', settings: {} }, POPUP_AS_TAB);
   assert.equal(n.settings.enabled, true);
-  assert.deepEqual(n.settings.sites, { 'chatgpt.com': false, 'claude.ai': true, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false });
+  assert.deepEqual(n.settings.sites, { 'chatgpt.com': false, 'claude.ai': true, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false, 'chat.mistral.ai': false });
   assert.equal(n.settings.idleMinutes, 3); assert.equal(n.settings.dailyCapPerSite, 20);
   const back = await send({ type: 'helmion:onboarding', action: 'get' }, WELCOME);
   assert.equal(back.profile.name, 'Troy');
@@ -174,7 +174,7 @@ test('connect: a worker that never answers times out with a plain message', asyn
 test('popup: advanced fields live behind an Advanced disclosure; welcome page lists the four AIs', async () => {
   const html = await readFile(path.join(EXT, 'popup/popup.html'), 'utf8');
   const adv = html.slice(html.indexOf('<details id="scribeAdvanced">'), html.indexOf('</details>', html.indexOf('<details id="scribeAdvanced">')));
-  for (const id of ['scribeUrl', 'scribeMailboxes', 'scribeUnreadPath', 'scribeToken', 'nudgeIdle', 'nudgeCap', 'nudgeSite-chatgpt.com', 'nudgeSite-claude.ai', 'nudgeSite-grok.com', 'nudgeSite-gemini.google.com', 'nudgeSite-perplexity.ai', 'scribeRedirect']) {
+  for (const id of ['scribeUrl', 'scribeMailboxes', 'scribeUnreadPath', 'scribeToken', 'nudgeIdle', 'nudgeCap', 'nudgeSite-chatgpt.com', 'nudgeSite-claude.ai', 'nudgeSite-grok.com', 'nudgeSite-gemini.google.com', 'nudgeSite-perplexity.ai', 'nudgeSite-chat.mistral.ai', 'scribeRedirect']) {
     assert.ok(adv.includes(`id="${id}"`), `${id} is inside Advanced`);
   }
   const svc = html.slice(html.indexOf('<details id="advancedServices">'));
@@ -189,10 +189,10 @@ test('popup: advanced fields live behind an Advanced disclosure; welcome page li
   assert.doesNotMatch(welcome, /id="[^"]*mailbox/i, 'no mailbox field to type into');
 });
 
-test('package: welcome page ships, version 0.6.5, options page, build-time --scribe-url rewrite', async () => {
+test('package: welcome page ships, version 0.6.6, options page, build-time --scribe-url rewrite', async () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(await readFile(path.join(EXT, f), 'utf8'));
-    assert.equal(m.version, '0.6.5');
+    assert.equal(m.version, '0.6.6');
     assert.deepEqual(m.options_ui, { page: 'popup/popup.html', open_in_tab: true });
   }
   const { applyScribeUrl } = await import('../../tools/package-guard.mjs');
@@ -214,9 +214,9 @@ test('0.6.4 AI table: seven AIs, one table drives mailboxes, nudge sites and ope
     if (c.nudge) assert.ok(c.hosts.length && c.chatUrl);
   }
   assert.deepEqual(D.mailboxesForAis(['mistral', 'perplexity', 'muse']), ['mistral', 'perplexity', 'muse']);
-  assert.deepEqual(D.nudgeSitesForAis(['mistral', 'muse', 'grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false }, 'mailbox-only AIs add no nudge site');
+  assert.deepEqual(D.nudgeSitesForAis(['muse', 'grok']), { 'chatgpt.com': false, 'claude.ai': false, 'grok.com': true, 'gemini.google.com': false, 'perplexity.ai': false, 'chat.mistral.ai': false }, 'mailbox-only AIs add no nudge site');
   const { NUDGE_SITES } = await import('../background/nudge-policy.js');
-  assert.deepEqual(NUDGE_SITES, { 'chatgpt.com': 'chatgpt', 'claude.ai': 'claude.ai', 'grok.com': 'grok', 'gemini.google.com': 'gemini', 'perplexity.ai': 'perplexity' });
+  assert.deepEqual(NUDGE_SITES, { 'chatgpt.com': 'chatgpt', 'claude.ai': 'claude.ai', 'grok.com': 'grok', 'gemini.google.com': 'gemini', 'perplexity.ai': 'perplexity', 'chat.mistral.ai': 'mistral' });
   const { MAILBOX_SITES, mailboxName } = await import('../background/scribe-client.js');
   assert.equal(MAILBOX_SITES.mistral, 'https://chat.mistral.ai/');
   assert.equal(MAILBOX_SITES.perplexity, 'https://www.perplexity.ai/');
@@ -250,4 +250,17 @@ test('0.6.5 Perplexity row: nudge on, www and bare host matched, popup toggle, n
   }
   const html = await readFile(path.join(EXT, 'popup/popup.html'), 'utf8');
   assert.match(html, /id="nudgeSite-perplexity\.ai"/);
+});
+
+test('0.6.6 Mistral row: nudge on, chat.mistral.ai matched, popup toggle; Muse stays mailbox-only', async () => {
+  const m = D.AI_CHOICES.find((c) => c.key === 'mistral');
+  assert.equal(m.nudge, true); assert.deepEqual(m.hosts, ['chat.mistral.ai']);
+  assert.equal(D.nudgeSitesForAis(['mistral'])['chat.mistral.ai'], true);
+  const muse = D.AI_CHOICES.find((c) => c.key === 'muse');
+  assert.equal(muse.nudge, false); assert.equal(muse.chatUrl, null);
+  for (const f of ['manifest.json', 'manifest.firefox.json']) {
+    const man = JSON.parse(await readFile(path.join(EXT, f), 'utf8'));
+    assert.ok(man.content_scripts[0].matches.includes('https://chat.mistral.ai/*'), f);
+  }
+  assert.match(await readFile(path.join(EXT, 'popup/popup.html'), 'utf8'), /id="nudgeSite-chat\.mistral\.ai"/);
 });

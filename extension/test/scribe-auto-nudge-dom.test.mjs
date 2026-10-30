@@ -34,6 +34,8 @@ const FIXTURES = {
   'chatgpt.com': () => { const c = element('div', { id: 'prompt-textarea', contenteditable: 'true', class: 'ProseMirror' }); const b = element('button', { 'data-testid': 'send-button' }); wire(c, b); return { c, b, page: [element('form', {}, [c, b])] }; },
   'claude.ai': () => { const c = element('div', { class: 'ProseMirror', contenteditable: 'true' }); const b = element('button', { 'aria-label': 'Send message' }); wire(c, b); return { c, b, page: [element('fieldset', {}, [c, b])] }; },
   'grok.com': () => { const c = element('textarea', { 'aria-label': 'Ask Grok anything' }); c.value = ''; const b = element('button', { type: 'submit' }); wire(c, b); return { c, b, page: [element('form', {}, [c, b])] }; },
+  // Mistral Le Chat: ProseMirror div, button[type=submit][aria-label=Send] (live DOM checked 2026-10-29).
+  'chat.mistral.ai': () => { const c = element('div', { class: 'ProseMirror', contenteditable: 'true', 'data-placeholder': 'Ask anything' }); const b = element('button', { type: 'submit', 'aria-label': 'Send' }); wire(c, b); return { c, b, page: [element('form', {}, [c, element('button', { type: 'submit' }), b])] }; },
   // Perplexity: Lexical editor, no form, Submit button (live DOM checked 2026-10-29).
   'perplexity.ai': () => { const c = element('div', { id: 'ask-input', contenteditable: 'true', role: 'textbox', 'data-lexical-editor': 'true' }); const b = element('button', { 'aria-label': 'Submit', type: 'button' }); wire(c, b); return { c, b, page: [element('div', {}, [c, b])] }; },
   'www.perplexity.ai': () => FIXTURES['perplexity.ai'](),
@@ -123,4 +125,12 @@ test('perplexity: types into #ask-input, clicks Submit; never types into a non-e
   assert.equal(r.reason, 'sent', JSON.stringify(r)); assert.ok(clicked, 'Submit clicked');
   ({ doc, N } = await loadNudge('www.perplexity.ai', [element('div', { contenteditable: 'false' }, ['search results'])]));
   assert.equal((await N.tryNudge(doc, msg())).reason, 'dom-mismatch');
+});
+
+test('mistral: clicks the Send button, not the unlabeled submit button beside it', async () => {
+  const f = FIXTURES['chat.mistral.ai']();
+  let clicked = false; const click = f.b.click; f.b.click = () => { clicked = true; click(); };
+  const { doc, N } = await loadNudge('chat.mistral.ai', f.page);
+  const r = await N.tryNudge(doc, msg());
+  assert.equal(r.reason, 'sent', JSON.stringify(r)); assert.ok(clicked);
 });

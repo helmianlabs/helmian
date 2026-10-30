@@ -170,6 +170,7 @@ test('it runs on the five AI sites (Perplexity on www and bare), still not on ev
     'https://chatgpt.com/*',
     'https://gemini.google.com/*',
     'https://grok.com/*',
+    'https://chat.mistral.ai/*',
     'https://www.perplexity.ai/*',
     'https://perplexity.ai/*',
   ]);

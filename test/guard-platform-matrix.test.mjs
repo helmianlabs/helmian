@@ -12,7 +12,7 @@ const OPTIONAL_ORIGINS = ['https://*/*', 'http://localhost/*', 'http://127.0.0.1
 test('Chromium and Firefox packages keep the minimal permission boundary', () => {
   for (const manifest of [chromium, firefox]) {
     assert.deepEqual(manifest.permissions, manifest === firefox ? ['storage', 'alarms', 'idle', 'identity'] : ['storage', 'alarms', 'idle']); // identity: Firefox cannot make it optional (MDN) // alarms: Scribe door-knock (no install warning)
-    assert.deepEqual(manifest.content_scripts[0].matches, ['https://claude.ai/*', 'https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://grok.com/*', 'https://www.perplexity.ai/*', 'https://perplexity.ai/*']);
+    assert.deepEqual(manifest.content_scripts[0].matches, ['https://claude.ai/*', 'https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://grok.com/*', 'https://chat.mistral.ai/*', 'https://www.perplexity.ai/*', 'https://perplexity.ai/*']);
     assert.ok(!JSON.stringify(manifest).includes('<all_urls>'));
   }
   // The one install-time host: the opt-in helmian.cloud findings upload (Chromium only).
