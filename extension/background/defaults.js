@@ -24,7 +24,7 @@ export const AI_CHOICES = Object.freeze([
   // Mailbox only for now: no tested nudge adapter, and nudging would widen the
   // content-script host list (a new install-time permission prompt).
   { key: 'mistral', label: 'Mistral (Le Chat)', mailbox: 'mistral', hosts: ['chat.mistral.ai'], chatUrl: 'https://chat.mistral.ai/', nudge: false },
-  { key: 'perplexity', label: 'Perplexity', mailbox: 'perplexity', hosts: ['perplexity.ai'], chatUrl: 'https://www.perplexity.ai/', nudge: false,
+  { key: 'perplexity', label: 'Perplexity', mailbox: 'perplexity', hosts: ['perplexity.ai'], chatUrl: 'https://www.perplexity.ai/', nudge: true,
     note: 'Custom connectors may need a higher Perplexity plan.' },
   // Muse: Troy's own assistant ("Shared Memory — muse" in Scribe). Its chat
   // address is not verified, so it is a mailbox only.

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Helmion Guard",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "Catches destructive commands, keeps secrets out of AI chats, flags evasive, leaky or harmful replies, and keeps a durable local log of every flag.",
   "permissions": [
     "storage",
@@ -21,7 +21,9 @@
         "https://claude.ai/*",
         "https://chatgpt.com/*",
         "https://gemini.google.com/*",
-        "https://grok.com/*"
+        "https://grok.com/*",
+        "https://www.perplexity.ai/*",
+        "https://perplexity.ai/*"
       ],
       "js": [
         "content/prompt-risk.js",

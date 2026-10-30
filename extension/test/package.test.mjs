@@ -164,12 +164,14 @@ test('page health UI is bounded and internal diagnostics are not user-facing', a
   assert.match(popup, /id="guardStatus"/);
 });
 
-test('it runs on the four sites, still not on every site', () => {
+test('it runs on the five AI sites (Perplexity on www and bare), still not on every site', () => {
   assert.deepEqual(manifest.content_scripts[0].matches, [
     'https://claude.ai/*',
     'https://chatgpt.com/*',
     'https://gemini.google.com/*',
     'https://grok.com/*',
+    'https://www.perplexity.ai/*',
+    'https://perplexity.ai/*',
   ]);
 });
 

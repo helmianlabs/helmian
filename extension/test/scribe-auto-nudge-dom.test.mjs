@@ -34,6 +34,9 @@ const FIXTURES = {
   'chatgpt.com': () => { const c = element('div', { id: 'prompt-textarea', contenteditable: 'true', class: 'ProseMirror' }); const b = element('button', { 'data-testid': 'send-button' }); wire(c, b); return { c, b, page: [element('form', {}, [c, b])] }; },
   'claude.ai': () => { const c = element('div', { class: 'ProseMirror', contenteditable: 'true' }); const b = element('button', { 'aria-label': 'Send message' }); wire(c, b); return { c, b, page: [element('fieldset', {}, [c, b])] }; },
   'grok.com': () => { const c = element('textarea', { 'aria-label': 'Ask Grok anything' }); c.value = ''; const b = element('button', { type: 'submit' }); wire(c, b); return { c, b, page: [element('form', {}, [c, b])] }; },
+  // Perplexity: Lexical editor, no form, Submit button (live DOM checked 2026-10-29).
+  'perplexity.ai': () => { const c = element('div', { id: 'ask-input', contenteditable: 'true', role: 'textbox', 'data-lexical-editor': 'true' }); const b = element('button', { 'aria-label': 'Submit', type: 'button' }); wire(c, b); return { c, b, page: [element('div', {}, [c, b])] }; },
+  'www.perplexity.ai': () => FIXTURES['perplexity.ai'](),
   'gemini.google.com': () => { const c = element('div', { class: 'ql-editor textarea', contenteditable: 'true', role: 'textbox' }); const b = element('button', { class: 'send-button', 'aria-label': 'Send message' }); wire(c, b); return { c, b, page: [element('rich-textarea', {}, [c]), b] }; },
 };
 
@@ -110,4 +113,14 @@ test('guard.js: a pending "nudge" that fails the scan is stopped and marked bloc
   sb.HelmionNudge._state.pending = { text: dirty, at: Date.now(), blocked: false };
   assert.equal(enter(win, c), true, 'Guard did not stop its own dirty nudge');
   assert.equal(sb.HelmionNudge._state.pending.blocked, true);
+});
+
+test('perplexity: types into #ask-input, clicks Submit; never types into a non-editable lookalike', async () => {
+  const f = FIXTURES['perplexity.ai']();
+  let clicked = false; const click = f.b.click; f.b.click = () => { clicked = true; click(); };
+  let { doc, N } = await loadNudge('www.perplexity.ai', f.page);
+  const r = await N.tryNudge(doc, msg());
+  assert.equal(r.reason, 'sent', JSON.stringify(r)); assert.ok(clicked, 'Submit clicked');
+  ({ doc, N } = await loadNudge('www.perplexity.ai', [element('div', { contenteditable: 'false' }, ['search results'])]));
+  assert.equal((await N.tryNudge(doc, msg())).reason, 'dom-mismatch');
 });
