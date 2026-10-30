@@ -25,6 +25,7 @@ export const LEGACY_MIN_S = 300; // contract: include_legacy at most every 5 min
 export const DEFAULT_DAILY_BUDGET = 2000; // requests per UTC day across all mailboxes
 export const MAX_MAILBOXES = 8;
 export const TIMEOUT_MS = 5000;
+import { accessToken as oauthAccessToken, getAuth as getOAuth, inboxStatusViaMcp } from './scribe-auth.js';
 const TOKEN = /^[A-Za-z0-9._~+/=-]{16,512}$/;
 
 // The contract's canonical mailboxes and aliases (PR #3 courier/mailboxes.ts).
@@ -71,7 +72,10 @@ async function readSettings(storage) {
     mailboxes: Array.isArray(s.mailboxes) ? s.mailboxes.filter(Boolean) : [],
     includeLegacy: s.includeLegacy === true,
     dailyBudget: Number.isInteger(s.dailyBudget) ? s.dailyBudget : DEFAULT_DAILY_BUDGET,
-    notify: s.notify !== false,
+    // 0.6.0: notices and the badge are OFF by default (Troy: no doorbell to click).
+    // The code stays; the popup hides these switches under Advanced.
+    notify: s.notify === true,
+    showBadge: s.showBadge === true,
   };
 }
 export async function readScribeState(storage) {
@@ -84,9 +88,11 @@ export async function getScribeSettings(storage) {
   const s = await readSettings(storage);
   const st = await readScribeState(storage);
   const { token, ...rest } = s;
-  return { ...rest, hasToken: Boolean(token), tokenRejected: st.tokenRejected === true };
+  const auth = await getOAuth(storage);
+  const signedIn = auth.signedIn === true && auth.baseUrl === s.baseUrl;
+  return { ...rest, hasToken: Boolean(token), signedIn, authMode: signedIn ? 'oauth' : (token ? 'token' : 'none'), tokenRejected: st.tokenRejected === true };
 }
-export function isConfigured(view) { return view.enabled && Boolean(view.baseUrl) && view.hasToken && !view.tokenRejected && view.mailboxes.length > 0; }
+export function isConfigured(view) { return view.enabled && Boolean(view.baseUrl) && (view.signedIn || view.hasToken) && !view.tokenRejected && view.mailboxes.length > 0; }
 
 export async function setScribeSettings(storage, patch = {}) {
   const next = await readSettings(storage);
@@ -117,8 +123,10 @@ export async function setScribeSettings(storage, patch = {}) {
     next.dailyBudget = n;
   }
   if (typeof patch.notify === 'boolean') next.notify = patch.notify;
+  if (typeof patch.showBadge === 'boolean') next.showBadge = patch.showBadge;
   if (typeof patch.enabled === 'boolean') next.enabled = patch.enabled;
   if (patch.clearToken === true) next.token = '';
+  if (patch.clearRejected === true) { st.tokenRejected = false; st.serverState = null; }
   await storage.set(SCRIBE_SETTINGS_KEY, next);
   await writeState(storage, st);
   return getScribeSettings(storage);
@@ -153,12 +161,22 @@ function cleanItem(x) {
 }
 
 /** Poll one mailbox now. Updates its box state; returns {fresh, kind}. */
-async function pollBox(storage, s, st, name, { fetchImpl, now, rand }) {
+async function pollBox(storage, s, st, name, { fetchImpl, now, rand, oauth }) {
   const box = st.boxes[name] || { cursor: 0, errors: 0 };
   const legacy = s.includeLegacy && (box.legacyAt == null || now - box.legacyAt >= LEGACY_MIN_S * 1000);
   let r;
-  try { r = await call(s, unreadUrl(s.baseUrl, name, box.cursor, legacy), { fetchImpl }); }
-  catch { r = { status: 0 }; }
+  try {
+    if (oauth) {
+      // Signed in (no pasted key): count unread over MCP inbox_status with the OAuth token.
+      r = await inboxStatusViaMcp(s.baseUrl, oauth.token, name, box.cursor, { fetchImpl });
+      if (r.status === 401 || r.status === 403) {
+        const fresh = await oauthAccessToken(storage, { fetchImpl, now, forceRefresh: true });
+        if (fresh) { oauth.token = fresh; r = await inboxStatusViaMcp(s.baseUrl, fresh, name, box.cursor, { fetchImpl }); }
+      }
+    } else {
+      r = await call(s, unreadUrl(s.baseUrl, name, box.cursor, legacy), { fetchImpl });
+    }
+  } catch { r = { status: 0 }; }
   const later = (sec) => now + sec * 1000 + jitter(rand);
   let fresh = [];
   if (r.status === 200 && r.json) {
@@ -202,7 +220,9 @@ export async function pollScribe(storage, { fetchImpl, now = Date.now(), online 
   const s = await readSettings(storage);
   const st = await readScribeState(storage);
   if (!s.enabled) return { skipped: 'not-enabled' };
-  if (!s.baseUrl || !s.token || !s.mailboxes.length) return { skipped: 'not-configured' };
+  const auth = await getOAuth(storage);
+  const useOAuth = auth.signedIn === true && auth.baseUrl === s.baseUrl;
+  if (!s.baseUrl || (!s.token && !useOAuth) || !s.mailboxes.length) return { skipped: 'not-configured' };
   if (st.tokenRejected) return { skipped: 'token-rejected' };
   if (!online) { st.offline = true; await writeState(storage, st); return { skipped: 'offline' }; }
   if (idle && !force) return { skipped: 'idle' };
@@ -211,13 +231,19 @@ export async function pollScribe(storage, { fetchImpl, now = Date.now(), online 
   if (st.budgetDay !== day) { st.budgetDay = day; st.budgetUsed = 0; }
   const fresh = [];
   let polled = 0;
+  let oauth = null;
+  if (useOAuth) {
+    const t = await oauthAccessToken(storage, { fetchImpl, now });
+    if (!t) { st.tokenRejected = true; st.serverState = 'reconnect'; await writeState(storage, st); return { skipped: 'token-rejected' }; }
+    oauth = { token: t };
+  }
   for (const name of s.mailboxes) {
     const box = st.boxes[name];
     if (!force && box && box.nextAt && now < box.nextAt) continue;
     if (box && box.state === 'bad-name' && !force) continue;
     if (st.budgetUsed >= s.dailyBudget) { st.budgetSpent = true; break; }
     st.budgetUsed += 1; polled += 1;
-    const r = await pollBox(storage, s, st, name, { fetchImpl, now, rand });
+    const r = await pollBox(storage, s, st, name, { fetchImpl, now, rand, oauth });
     if (r.fresh.length) fresh.push({ mailbox: name, items: r.fresh });
     if (st.tokenRejected) break;
   }
@@ -226,7 +252,9 @@ export async function pollScribe(storage, { fetchImpl, now = Date.now(), online 
   await writeState(storage, st);
   if (st.tokenRejected) return { skipped: 'token-rejected' };
   if (!polled) return { skipped: st.budgetSpent && st.budgetUsed >= s.dailyBudget ? 'budget-spent' : 'not-due', unread };
-  return { unread, fresh: s.notify ? fresh : [], serverState: st.serverState };
+  // `mail` is every fresh item (ids, from, subject only) for the auto-nudge policy;
+  // `fresh` is only for notices, which are off by default.
+  return { unread, fresh: s.notify ? fresh : [], mail: fresh, showBadge: s.showBadge, serverState: st.serverState };
 }
 
 /** Popup view of the inbox: counts and subjects only. */
