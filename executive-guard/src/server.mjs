@@ -30,6 +30,8 @@ import { memoryState } from './state.mjs';
 
 export const MAX_BODY_BYTES = 32 * 1024;
 export const APPROVAL_TTL_SECONDS = 15 * 60;
+// Upper bound for a configured approval window (EXEC_GUARD_APPROVAL_TTL_SECONDS).
+export const MAX_APPROVAL_TTL_SECONDS = 24 * 60 * 60;
 // An outcome may be reported until this long after the decision expires
 // (a long-running tool can finish after its decision's 300 s lifetime).
 export const OUTCOME_WINDOW_SECONDS = 24 * 60 * 60;
@@ -127,7 +129,9 @@ export function createExecutiveGuard({
   policy = DEFAULT_POLICY,
   now = Date.now,
   state = memoryState(),
+  approvalTtlSeconds = APPROVAL_TTL_SECONDS,
 } = {}) {
+  const APPROVAL_TTL = Math.min(MAX_APPROVAL_TTL_SECONDS, Math.max(60, Math.floor(Number(approvalTtlSeconds)) || APPROVAL_TTL_SECONDS));
   if (!key) throw new Error('createExecutiveGuard needs a signing key');
   if (!audit) throw new Error('createExecutiveGuard needs an audit store');
   validatePolicy(policy);
@@ -277,7 +281,7 @@ export function createExecutiveGuard({
       }
       throw error;
     }
-    const nonceExp = now() + Math.max(DECISION_TTL_SECONDS * 2, APPROVAL_TTL_SECONDS) * 1000;
+    const nonceExp = now() + Math.max(DECISION_TTL_SECONDS * 2, APPROVAL_TTL) * 1000;
     state.append({ t: 'nonce', h: nonceHash, exp: nonceExp });
     seenNonces.set(nonceHash, nonceExp);
     const hash = actionHash(action);
@@ -288,7 +292,7 @@ export function createExecutiveGuard({
         id: randomUUID(),
         status: 'pending',
         createdAt: nowSeconds(),
-        expiresAt: nowSeconds() + APPROVAL_TTL_SECONDS,
+        expiresAt: nowSeconds() + APPROVAL_TTL,
         deviceId,
         nonce,
         actionHash: hash,

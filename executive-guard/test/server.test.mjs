@@ -214,3 +214,25 @@ test('short tokens in config are ignored rather than accepted', async () => {
     assert.equal((await guard.call('POST', '/v1/decisions', { token: 'short', body: { action: action(), nonce: nonce() } })).status, 401);
   } finally { await guard.close(); }
 });
+
+test('a configured approval window (e.g. 12 h for AI-requested hands actions) keeps approvals open that long', async () => {
+  let clock = Date.parse('2026-10-30T09:00:00Z');
+  const guard = await startGuard({ now: () => clock, approvalTtlSeconds: 12 * 60 * 60 });
+  try {
+    const asked = await guard.call('POST', '/v1/decisions', { token: DEVICE_TOKEN, body: { action: action({ riskSignals: ['pii:ssn'] }), nonce: nonce() } });
+    clock += 11 * 60 * 60 * 1000;
+    assert.equal((await guard.call('GET', `/v1/approvals/${asked.body.approvalId}`, { token: DEVICE_TOKEN })).body.status, 'pending');
+    assert.equal((await guard.call('POST', `/v1/approvals/${asked.body.approvalId}/decide`, { token: APPROVER_TOKEN, body: { approve: true } })).status, 200);
+    assert.equal((await guard.call('GET', `/v1/approvals/${asked.body.approvalId}`, { token: DEVICE_TOKEN })).body.status, 'approved');
+  } finally { await guard.close(); }
+});
+
+test('a configured approval window still expires, and is capped at 24 h', async () => {
+  let clock = Date.parse('2026-10-30T09:00:00Z');
+  const guard = await startGuard({ now: () => clock, approvalTtlSeconds: 999 * 60 * 60 });
+  try {
+    const asked = await guard.call('POST', '/v1/decisions', { token: DEVICE_TOKEN, body: { action: action({ riskSignals: ['pii:ssn'] }), nonce: nonce() } });
+    clock += 25 * 60 * 60 * 1000;
+    assert.equal((await guard.call('GET', `/v1/approvals/${asked.body.approvalId}`, { token: DEVICE_TOKEN })).body.status, 'expired');
+  } finally { await guard.close(); }
+});
