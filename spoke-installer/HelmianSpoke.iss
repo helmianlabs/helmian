@@ -10,18 +10,20 @@
 [Setup]
 AppId={{EEE4DDE3-DB3E-453E-B88D-0C9146ECA332}
 AppName=Helmian Spoke
-AppVersion=1.0.3
+AppVersion=1.0.6
 AppPublisher=Helmian Labs
 DefaultDirName={localappdata}\Programs\HelmianSpoke
 DefaultGroupName=Helmian Spoke
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=output
-OutputBaseFilename=Helmian-Spoke-Setup-1.0.3-win-x64
+OutputBaseFilename=Helmian-Spoke-Setup-1.0.6-win-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=Helmian Spoke
+LicenseFile=..\LICENSE
+InfoBeforeFile=..\PRIVACY.md
 
 [Files]
 Source: "stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -48,12 +50,32 @@ var
 function SetEnvironmentVariable(lpName, lpValue: String): Boolean;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
 
+function IsUpgrade(): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{userappdata}\Helmian\hands-spoke.json'));
+end;
+
+{ Stop the running spoke (scheduled task and any node process running
+  hands-spoke.mjs, wherever it was started from) so the new files are the
+  ones that run. Only the spoke is stopped; other node processes are left alone. }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN HelmianSpoke', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name=''node.exe''\" | Where-Object { $_.CommandLine -like ''*hands-spoke.mjs*'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1000);
+  Result := '';
+end;
+
 procedure InitializeWizard;
 begin
   PairPage := CreateInputQueryPage(wpWelcome,
     'Pair this PC',
     'Paste the pairing code from helmian.cloud',
-    'In Helmian, open Settings and press "Set up this PC". Paste the 8-letter code it shows (it works once, for 10 minutes). Owners can type the hands passphrase instead. It is used once, here, and never stored.');
+    'In Helmian, open Settings and press "Set up this PC". Paste the 8-letter code it shows (it works once, for 10 minutes). Owners can type the hands passphrase instead. It is used once, here, and never stored. Already paired? Leave it blank to keep your current pairing.');
   PairPage.Add('Pairing code (or hands passphrase):', False);
   { Setup.exe /PAIRCODE=ABCD-EFGH fills it in for you. }
   PairPage.Values[0] := ExpandConstant('{param:PAIRCODE|}');
@@ -64,7 +86,7 @@ begin
   Result := True;
   if CurPageID = PairPage.ID then
   begin
-    if Trim(PairPage.Values[0]) = '' then
+    if (Trim(PairPage.Values[0]) = '') and not IsUpgrade() then
     begin
       MsgBox('Please paste the pairing code from helmian.cloud (Settings, Set up this PC), or your hands passphrase. It is used once, inside this install, and never stored.', mbError, MB_OK);
       Result := False;
@@ -79,9 +101,11 @@ begin
   if CurStep = ssPostInstall then
   begin
     SetEnvironmentVariable('HELMIAN_HANDS_PASSPHRASE', PairPage.Values[0]);
-    SetEnvironmentVariable('HELMIAN_SPOKE_ROOTS', ExpandConstant('{userprofile}'));
+    SetEnvironmentVariable('HELMIAN_SPOKE_ROOTS', ExpandConstant('{%USERPROFILE}'));
     Exec(ExpandConstant('{app}\node.exe'), ExpandConstant('"{app}\install-pair.mjs"'),
       ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    { Start (or restart) the spoke from the new files; harmless if install-pair already started it. }
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN HelmianSpoke', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
 end;
 
