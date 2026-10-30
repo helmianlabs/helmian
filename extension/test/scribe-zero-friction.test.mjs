@@ -189,10 +189,10 @@ test('popup: advanced fields live behind an Advanced disclosure; welcome page li
   assert.doesNotMatch(welcome, /id="[^"]*mailbox/i, 'no mailbox field to type into');
 });
 
-test('package: welcome page ships, version 0.6.6, options page, build-time --scribe-url rewrite', async () => {
+test('package: welcome page ships, version 0.6.7, options page, build-time --scribe-url rewrite', async () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(await readFile(path.join(EXT, f), 'utf8'));
-    assert.equal(m.version, '0.6.6');
+    assert.equal(m.version, '0.6.7');
     assert.deepEqual(m.options_ui, { page: 'popup/popup.html', open_in_tab: true });
   }
   const { applyScribeUrl } = await import('../../tools/package-guard.mjs');
@@ -263,4 +263,13 @@ test('0.6.6 Mistral row: nudge on, chat.mistral.ai matched, popup toggle; Muse s
     assert.ok(man.content_scripts[0].matches.includes('https://chat.mistral.ai/*'), f);
   }
   assert.match(await readFile(path.join(EXT, 'popup/popup.html'), 'utf8'), /id="nudgeSite-chat\.mistral\.ai"/);
+});
+
+test('0.6.7 worker: a tab on a lookalike or non-chat page is never registered for nudges; real chat is', async () => {
+  const hello = (url) => send({ type: 'helmion:nudge-hello' }, { id: chrome.runtime.id, url, tab: { id: 77, url } });
+  for (const url of ['https://grok.com/grok-app-builder/extensions', 'https://bots.grok.com/', 'https://grok.com/agents/paul', 'https://chat.chatgpt.com/']) {
+    assert.equal((await hello(url)).ok, false, url);
+  }
+  assert.equal((await hello('https://grok.com/c/abc-123')).ok, true);
+  assert.equal((await hello('https://www.perplexity.ai/')).ok, true);
 });

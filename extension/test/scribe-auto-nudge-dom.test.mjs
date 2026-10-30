@@ -12,13 +12,14 @@ await installWorker();
 const TEXT = nudgeText('claude.ai');
 const LATER = Date.now() + 60 * 60000; // user idle for an hour
 
-async function loadNudge(host, children, { streaming = false } = {}) {
+const CHAT_PATH = { 'gemini.google.com': '/app', 'chat.mistral.ai': '/chat' };
+async function loadNudge(host, children, { streaming = false, pathname = CHAT_PATH[host] || '/' } = {}) {
   const doc = createDocument(children);
-  doc.location = { hostname: host };
+  doc.location = { hostname: host, pathname };
   const sb = await loadContentScripts(['content/nudge.js'], {
     __helmionNudgeNoAutoInstall: true,
     HelmionStreamWatch: { isStreaming: () => streaming },
-    location: { hostname: host },
+    location: { hostname: host, pathname },
   });
   return { doc, N: sb.HelmionNudge };
 }
@@ -133,4 +134,47 @@ test('mistral: clicks the Send button, not the unlabeled submit button beside it
   const { doc, N } = await loadNudge('chat.mistral.ai', f.page);
   const r = await N.tryNudge(doc, msg());
   assert.equal(r.reason, 'sent', JSON.stringify(r)); assert.ok(clicked);
+});
+
+// 0.6.7 bug: Grok nudge fired inside the Grok Bot agent app. Only exact chat host + chat path may nudge.
+test('0.6.7 lookalikes never nudge: Grok Bot app style pages, grok subdomains, non-chat grok.com paths', async () => {
+  const f = () => FIXTURES['grok.com']();
+  const bad = [
+    ['grok.com', '/grok-app-builder/extensions'], ['grok.com', '/agents'], ['grok.com', '/bot/paul'], ['grok.com', '/imagine'],
+    ['bots.grok.com', '/'], ['app.grok.com', '/c/abc'], ['agents.grok.com', '/'], ['auth.grok.me', '/'], ['og.grok.me', '/'],
+    ['grok.com.evil.example', '/'], ['notgrok.com', '/'], ['grokbot.app', '/'], ['localhost', '/'],
+    ['chat.chatgpt.com', '/'], ['evil-claude.ai', '/'], ['x.gemini.google.com', '/app'], ['api.perplexity.ai', '/'], ['mistral.ai', '/chat'],
+    ['claude.ai', '/settings'], ['chatgpt.com', '/gpts'], ['gemini.google.com', '/'], ['www.perplexity.ai', '/discover'],
+  ];
+  for (const [host, pathname] of bad) {
+    const x = f(); let clicked = false; x.b.click = () => { clicked = true; };
+    const { doc, N } = await loadNudge(host, x.page, { pathname });
+    const r = await N.tryNudge(doc, msg());
+    assert.equal(r.ok, false, host + pathname); assert.equal(r.reason, 'refused', host + pathname);
+    assert.equal(x.c.value, '', 'nothing typed on ' + host + pathname); assert.ok(!clicked);
+    assert.equal(N.siteKey(host, pathname), null, host + pathname);
+  }
+});
+
+test('0.6.7 real chats still nudge: grok.com home and a conversation', async () => {
+  for (const pathname of ['/', '/c/0b1c2d3e-aaaa-bbbb-cccc-1234567890ab']) {
+    const x = FIXTURES['grok.com']();
+    const { doc, N } = await loadNudge('grok.com', x.page, { pathname });
+    assert.equal((await N.tryNudge(doc, msg())).reason, 'sent', pathname);
+  }
+});
+
+test('0.6.7 content-side CHAT_PAGES matches background CHAT_PAGES exactly; background URL check agrees', async () => {
+  const D = await import('../background/defaults.js');
+  const x = FIXTURES['grok.com']();
+  const { N } = await loadNudge('grok.com', x.page);
+  assert.deepEqual(JSON.parse(JSON.stringify(N.CHAT_PAGES)), JSON.parse(JSON.stringify(D.CHAT_PAGES)));
+  assert.equal(D.chatSiteForUrl('https://grok.com/'), 'grok.com');
+  assert.equal(D.chatSiteForUrl('https://grok.com/c/abc-123'), 'grok.com');
+  assert.equal(D.chatSiteForUrl('https://www.perplexity.ai/search/foo'), 'perplexity.ai');
+  assert.equal(D.chatSiteForUrl('https://chat.mistral.ai/chat/abc'), 'chat.mistral.ai');
+  for (const u of ['https://grok.com/grok-app-builder/extensions', 'https://bots.grok.com/', 'http://grok.com/', 'https://grok.com:8443/',
+    'https://grok.com.evil.example/', 'https://x.com/i/grok', 'https://user@grok.com/', 'not a url']) assert.equal(D.chatSiteForUrl(u), null, u);
+  const P = await import('../background/nudge-policy.js');
+  assert.equal(P.siteForHost('bots.grok.com'), null); assert.equal(P.siteForHost('www.perplexity.ai'), 'perplexity.ai'); assert.equal(P.siteForHost('grok.com'), 'grok.com');
 });

@@ -39,7 +39,7 @@ import {
 import { AI_CHOICES, mailboxesForAis, nudgeSitesForAis, redirectUrlFor, DEFAULT_NUDGE_IDLE_MIN, DEFAULT_NUDGE_DAILY_CAP, SCRIBE_DEFAULT_URL } from './defaults.js';
 import { getAuth as getScribeAuth, signIn as scribeSignIn, signOut as scribeSignOut } from './scribe-auth.js';
 import {
-  getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost,
+  getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost, siteForUrl,
 } from './nudge-policy.js';
 import { scanProse } from './claims.js';
 import {
@@ -270,8 +270,20 @@ export async function runScribePoll(opts = {}) {
 // ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
 // Queue fresh letters (ids only), then let the policy decide per open chat tab.
 // The text is fixed (nudge-policy.js nudgeText); letter content never leaves here.
-function sendToTab(tabId, message) {
+function tabUrl(tabId) {
   return new Promise((resolve) => {
+    try { chrome.tabs.get(tabId, (tab) => { void chrome.runtime.lastError; resolve(tab && tab.url ? tab.url : ''); }); }
+    catch { resolve(''); }
+  });
+}
+function sendToTab(tabId, message) {
+  return new Promise(async (resolve) => {
+    // 0.6.7: re-check the tab's CURRENT url just before typing. A tab that moved
+    // to any non-chat page (or a lookalike app) is refused, never typed into.
+    if (message && message.type === 'helmion:nudge-try' && chrome.tabs && typeof chrome.tabs.get === 'function') {
+      const url = await tabUrl(tabId);
+      if (!siteForUrl(url)) { resolve({ ok: false, reason: 'refused', detail: 'not a chat page' }); return; }
+    }
     try {
       chrome.tabs.sendMessage(tabId, message, (answer) => { void chrome.runtime.lastError; resolve(answer || null); });
     } catch { resolve(null); }
@@ -558,7 +570,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (type === 'helmion:nudge-hello') {
       // Any of the four chat origins registers its tab. Not privileged: it only
       // says "a chat tab exists here"; the policy and switches still decide.
-      const site = sender && sender.tab && sender.tab.url ? siteForHost(new URL(sender.tab.url).hostname) : null;
+      const site = sender && sender.tab && sender.tab.url ? siteForUrl(sender.tab.url) : null; // 0.6.7: exact host + chat path
       if (site && sender.tab.id != null) noteTab(ledger, sender.tab.id, site, Date.now()).catch(() => {});
       sendResponse({ ok: Boolean(site) });
       return false;

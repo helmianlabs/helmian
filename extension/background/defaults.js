@@ -60,3 +60,27 @@ export function redirectUrlFor(runtimeId, identity) {
   try { if (identity && typeof identity.getRedirectURL === 'function') return identity.getRedirectURL(); } catch { /* fall through */ }
   return runtimeId ? `https://${runtimeId}.chromiumapp.org/` : '';
 }
+
+// 0.6.7: the ONLY pages Guard may nudge. Exact host (no subdomain or substring
+// matching) plus the real consumer-chat paths. Anything else is refused, so a
+// lookalike app (e.g. the Grok Bot agent app) never gets typed into.
+// Keep in sync with CHAT_PAGES in content/nudge.js (a test checks they match).
+export const CHAT_PAGES = Object.freeze({
+  'chatgpt.com': { hosts: ['chatgpt.com'], paths: ['^/$', '^/c/[A-Za-z0-9-]+/?$', '^/g/[A-Za-z0-9-]+(/c/[A-Za-z0-9-]+)?/?$'] },
+  'claude.ai': { hosts: ['claude.ai'], paths: ['^/$', '^/new/?$', '^/chat/[A-Za-z0-9-]+/?$'] },
+  'grok.com': { hosts: ['grok.com'], paths: ['^/$', '^/c/[A-Za-z0-9-]+/?$', '^/chat/[A-Za-z0-9-]+/?$'] },
+  'gemini.google.com': { hosts: ['gemini.google.com'], paths: ['^(/u/[0-9]+)?/app(/[A-Za-z0-9]+)?/?$', '^(/u/[0-9]+)?/gem/[A-Za-z0-9-]+(/[A-Za-z0-9]+)?/?$'] },
+  'perplexity.ai': { hosts: ['www.perplexity.ai', 'perplexity.ai'], paths: ['^/$', '^/search/[A-Za-z0-9._-]+/?$'] },
+  'chat.mistral.ai': { hosts: ['chat.mistral.ai'], paths: ['^/chat(/[A-Za-z0-9-]+)?/?$'] },
+});
+/** Nudge site key for a full page URL, or null. https only, exact host, allow-listed path. */
+export function chatSiteForUrl(url) {
+  let u; try { u = new URL(String(url || '')); } catch { return null; }
+  if (u.protocol !== 'https:' || u.port || u.username || u.password) return null;
+  const host = u.hostname.toLowerCase();
+  for (const [site, rule] of Object.entries(CHAT_PAGES)) {
+    if (!rule.hosts.includes(host)) continue;
+    return rule.paths.some((p) => new RegExp(p).test(u.pathname)) ? site : null;
+  }
+  return null;
+}
