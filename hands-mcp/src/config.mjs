@@ -39,7 +39,11 @@ export function loadConfig(env = process.env) {
     spokeToken,
     pairCodeIssuerToken: (env.PAIR_CODE_ISSUER_TOKEN || '').trim().length >= 32 ? env.PAIR_CODE_ISSUER_TOKEN.trim() : null,
     handsEnabled: String(env.HANDS_ENABLED || '').toLowerCase() === 'true',
-    holdOpenWaitMs: Number(env.HANDS_HOLD_OPEN_WAIT_MS || 840000) || 840000,
+    // 40 s default: ChatGPT's connector/code-mode call times out long before
+    // 14 minutes, so an unanswered Guard approval used to surface as an opaque
+    // "Code Mode execution timed out". After 40 s the call now returns a clear
+    // "waiting for approval, call resume_action" message instead.
+    holdOpenWaitMs: Number(env.HANDS_HOLD_OPEN_WAIT_MS || 40000) || 40000,
     guard: Object.freeze({
       url: guardUrl,
       deviceToken: (env.GUARD_DEVICE_TOKEN || '').trim() || null,
