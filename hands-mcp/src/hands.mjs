@@ -18,27 +18,39 @@
 
 import { randomUUID } from 'node:crypto';
 import { decideComputeRoute } from '../../src/core/compute-routing.mjs';
-import { ArgError, POWERSHELL_READ_CAPABILITY, TOOLS, isReadOnlyCall, validateArgs } from './shared/protocol.mjs';
+import { ArgError, POWERSHELL_READ_CAPABILITY, TOOLS, describeHandsAction, isReadOnlyCall, validateArgs } from './shared/protocol.mjs';
+import { normalizeMailbox } from './scribe-mailer.mjs';
 
-const PENDING_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_PENDING_TTL_MS = 15 * 60 * 1000;
 // Hold-open: after Guard answers "ask", the SAME tool call waits for the human
 // decision instead of returning immediately and making the caller relay a
 // resume_action. Slices keep disconnect/deadline checks responsive; the
 // guard client polls Guard every pollMs inside each slice.
 const HOLD_OPEN_SLICE_MS = 30 * 1000;
-const HOLD_OPEN_DEFAULT_MS = PENDING_TTL_MS - 60 * 1000;
+const HOLD_OPEN_DEFAULT_MS = DEFAULT_PENDING_TTL_MS - 60 * 1000;
 
-export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = {}) {
-  // requestId -> { tool, args, nonce, approvalId, clientId, createdAt, state }
+// Long-lived approvals (mail-back): when a chat call returns before the human
+// decides, the request stays pending for config.pendingTtlMs (default 12 h,
+// HANDS_PENDING_TTL_MS). A background watcher polls Guard; on approval the job
+// runs THEN and the result is mailed to the requesting AI's Scribe mailbox.
+// Denied / expired are mailed too. The claim() single-winner gate still makes
+// one approval run exactly once (held-open call, resume_action or watcher).
+const WATCH_DEFAULT_MS = 15 * 1000;
+
+export function createHands({ config, guard, hub, audit, mailer = null, mailboxFor = null }, { holdOpenWaitMs, watchIntervalMs } = {}) {
+  // requestId -> { tool, args, nonce, approvalId, clientId, createdAt, state, mailTo, holding }
   // state: 'waiting' (undecided) -> 'claimed' (one completion path won) -> 'done' (tombstone)
   const pending = new Map();
   const holdOpenMs = holdOpenWaitMs ?? config.holdOpenWaitMs ?? HOLD_OPEN_DEFAULT_MS;
+  const PENDING_TTL_MS = Number(config.pendingTtlMs) > 0 ? Number(config.pendingTtlMs) : DEFAULT_PENDING_TTL_MS;
+  const ttlLabel = PENDING_TTL_MS >= 3600000 ? `${Math.round(PENDING_TTL_MS / 3600000)} hours` : `${Math.round(PENDING_TTL_MS / 60000)} minutes`;
 
   const text = (t, isError = false) => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) });
 
   function sweep() {
     const t = Date.now();
-    for (const [k, v] of pending) if (t - v.createdAt > PENDING_TTL_MS) pending.delete(k);
+    // Mail-back entries still waiting are expired by the watcher (it mails the expiry).
+    for (const [k, v] of pending) if (t - v.createdAt > PENDING_TTL_MS && !(v.mailTo && v.state === 'waiting')) pending.delete(k);
   }
 
   // Single-winner claim on a pending entry. Synchronous check-and-set, so exactly
@@ -193,17 +205,25 @@ export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = 
       audit.append({ event: 'read-only.needs-guard', requestId, tool, commandId: args.commandId, reason: `spoke does not report ${POWERSHELL_READ_CAPABILITY} (old spoke still running?)`, capabilities: Array.isArray(caps) ? caps : [] });
     }
 
+    // Where to mail the outcome if the chat call returns before the human decides:
+    // an explicit `mailbox` argument, else the connection's AI (OAuth client name).
+    const mailTo = mailer ? (normalizeMailbox(rawArgs?.mailbox) || normalizeMailbox(mailboxFor?.(clientId))) : null;
+
     const decision = await guard.authorize({ tool, args });
     if (decision.outcome === 'pending') {
-      const entry = { tool, args, nonce: decision.nonce, approvalId: decision.approvalId, clientId, createdAt: Date.now(), state: 'waiting', targetDeviceId: target?.deviceId || null };
+      const entry = { tool, args, nonce: decision.nonce, approvalId: decision.approvalId, clientId, createdAt: Date.now(), state: 'waiting', targetDeviceId: target?.deviceId || null, mailTo, holding: true };
       pending.set(requestId, entry);
-      audit.append({ event: 'pending.guard', requestId, tool, clientId, approvalId: decision.approvalId, ...(target ? { deviceId: target.deviceId } : {}) });
+      audit.append({ event: 'pending.guard', requestId, tool, clientId, approvalId: decision.approvalId, ...(mailTo ? { mailTo } : {}), ...(target ? { deviceId: target.deviceId } : {}) });
       // Hold the call open for the human's decision. Losing the hold (budget
-      // lapsed, caller disconnected) degrades to exactly the old behaviour:
-      // the pending text + requestId, with the entry kept for resume_action.
-      const settled = await holdOpen(entry, signal);
+      // lapsed, caller disconnected) returns quickly; with mail-back the watcher
+      // takes over, otherwise the entry is kept for resume_action.
+      let settled;
+      try { settled = await holdOpen(entry, signal); } finally { entry.holding = false; }
       if (settled === 'aborted' || settled.outcome === 'pending') {
-        return text(`Waiting for a human approval in Executive Guard (approval ${decision.approvalId}). Nothing has run. After it is approved, call resume_action with requestId "${requestId}" (valid 15 minutes).`);
+        if (mailTo) {
+          return text(`Waiting for Troy's approval in Executive Guard; request ${requestId} (approval ${decision.approvalId}). Nothing has run yet. You do not need to wait: when it is approved the job runs then, and the result will be mailed to your Scribe mailbox "${mailTo}" (check_inbox). The request stays open for ${ttlLabel}.`);
+        }
+        return text(`Waiting for a human approval in Executive Guard (approval ${decision.approvalId}). Nothing has run. After it is approved, call resume_action with requestId "${requestId}" (valid ${ttlLabel}).`);
       }
       if (settled.outcome !== 'allow') {
         pending.delete(requestId);
@@ -247,6 +267,11 @@ export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = 
       await reportRefused({ requestId, tool: p.tool, decisionId: decision.unusedDecisionId, nonce: p.nonce, reason: decision.reason });
       return text(`Denied: ${decision.reason} Nothing ran.`, true);
     }
+    return finishApproved(requestId, p, decision, clientId);
+  }
+
+  // An approved, claimed entry: re-validate its device and routing, then run it once.
+  async function finishApproved(requestId, p, decision, clientId) {
     // A targeted action resumes onto its named device: re-validate that device
     // against live presence (it may have gone away while awaiting approval)
     // and re-check routing with it as the addressed spoke, exactly as call did.
@@ -268,6 +293,68 @@ export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = 
     }
   }
 
+  // ─── mail-back watcher ────────────────────────────────────────────────
+  async function mail(requestId, p, kind, detail) {
+    const what = describeHandsAction(p.tool, p.args, { snippets: false });
+    const subjects = { ran: 'ran', failed: 'ran with an error', denied: 'denied', expired: 'expired' };
+    const subject = `Hands request ${requestId}: ${p.tool} ${subjects[kind]}`;
+    const head = {
+      ran: 'Troy approved it in Executive Guard and it ran. Result:',
+      failed: 'Troy approved it in Executive Guard, but it did not complete. Error:',
+      denied: 'It was denied in Executive Guard, so nothing ran.',
+      expired: `Nobody approved it within ${ttlLabel}, so it expired and nothing ran. Ask again if it is still needed.`,
+    }[kind];
+    const body = `Request: ${requestId}\nGuard approval: ${p.approvalId}\nAction: ${what}\n\n${head}${detail ? `\n\n${detail}` : ''}\n\n(Sent by Helmian hands; this request is finished and will not run again.)`;
+    const recipients = [p.mailTo, ...(config.mailCcPaul && p.mailTo !== 'paul' ? ['paul'] : [])];
+    for (const to of recipients) {
+      const r = await mailer.send({ to, subject, body, priority: kind === 'ran' ? 'normal' : 'high' });
+      audit.append({ event: r.sent ? 'mailed' : 'mail-failed', requestId, tool: p.tool, to, kind, messageId: r.messageId ?? undefined, error: r.sent ? undefined : r.error });
+    }
+  }
+
+  let watching = false;
+  /** One watcher pass over mail-back entries (exported for tests). */
+  async function watchOnce() {
+    if (watching || !mailer) return;
+    watching = true;
+    try {
+      for (const [requestId, p] of [...pending]) {
+        if (!p.mailTo || p.state !== 'waiting' || p.holding) continue;
+        if (Date.now() - p.createdAt > PENDING_TTL_MS) {
+          if (!claim(p)) continue;
+          audit.append({ event: 'expired.local', requestId, tool: p.tool, clientId: p.clientId });
+          pending.delete(requestId);
+          await mail(requestId, p, 'expired');
+          continue;
+        }
+        let decision;
+        try { decision = await guard.awaitApproval({ approvalId: p.approvalId, tool: p.tool, args: p.args, nonce: p.nonce, waitMs: 0 }); }
+        catch { continue; }
+        if (decision.outcome === 'pending') continue;
+        if (!claim(p)) continue; // resume_action got it first
+        if (decision.outcome !== 'allow') {
+          pending.delete(requestId);
+          const expired = /expired/i.test(decision.reason || '');
+          audit.append({ event: 'denied.guard', requestId, tool: p.tool, clientId: p.clientId, reason: decision.reason });
+          await reportRefused({ requestId, tool: p.tool, decisionId: decision.unusedDecisionId, nonce: p.nonce, reason: decision.reason });
+          await mail(requestId, p, expired ? 'expired' : 'denied', expired ? '' : decision.reason);
+          continue;
+        }
+        let r;
+        try { r = await finishApproved(requestId, p, decision, p.clientId); }
+        catch (e) { p.state = 'done'; r = text(`Nothing confirmed: ${e?.message || 'internal error'}`, true); }
+        const out = (r.content || []).map((c) => c.text).join('\n');
+        await mail(requestId, p, r.isError ? 'failed' : 'ran', out);
+      }
+    } finally {
+      watching = false;
+    }
+  }
+  const watchMs = watchIntervalMs ?? config.pendingWatchMs ?? WATCH_DEFAULT_MS;
+  const timer = mailer && watchMs > 0 ? setInterval(() => { void watchOnce(); }, watchMs) : null;
+  timer?.unref?.();
+  const stop = () => { if (timer) clearInterval(timer); };
+
   function status() {
     const pres = hub.presence();
     // `pc` keeps its exact legacy shape for existing consumers (door, /app);
@@ -283,5 +370,5 @@ export function createHands({ config, guard, hub, audit }, { holdOpenWaitMs } = 
     };
   }
 
-  return { call, resume, status };
+  return { call, resume, status, watchOnce, stop };
 }

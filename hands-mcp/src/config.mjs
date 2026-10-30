@@ -15,6 +15,14 @@
 //                     Guard decision stays open before it degrades to the
 //                     pending + resume_action answer (default 840000 = 14 min,
 //                     inside the 15-minute approval TTL)
+//   HANDS_PENDING_TTL_MS  how long an AI-requested action waits for Troy in
+//                     Guard before it expires (default 43200000 = 12 h). Guard's
+//                     own GUARD_APPROVAL_TTL_SECONDS must be at least as long.
+//   HANDS_PENDING_WATCH_MS  how often pending mail-back requests are re-checked (default 15000)
+//   SCRIBE_MCP_URL    Scribe MCP endpoint for mail-back (unset = mail-back off)
+//   SCRIBE_MAIL_TOKEN / SCRIBE_REFRESH_TOKEN + SCRIBE_CLIENT_ID  Scribe credentials (memory.write)
+//   SCRIBE_MAIL_FROM  sender mailbox name (default 'hands')
+//   HANDS_MAIL_CC_PAUL  'true' to also mail every outcome to 'paul' (default off)
 //   GUARD_URL         Executive Guard base URL. Unset = Guard not live = every
 //                     mutating tool is denied (fail closed).
 //   GUARD_DEVICE_TOKEN  this server's device token at Guard
@@ -44,6 +52,16 @@ export function loadConfig(env = process.env) {
     // "Code Mode execution timed out". After 40 s the call now returns a clear
     // "waiting for approval, call resume_action" message instead.
     holdOpenWaitMs: Number(env.HANDS_HOLD_OPEN_WAIT_MS || 40000) || 40000,
+    pendingTtlMs: Number(env.HANDS_PENDING_TTL_MS || 12 * 60 * 60 * 1000) || 12 * 60 * 60 * 1000,
+    pendingWatchMs: Number(env.HANDS_PENDING_WATCH_MS || 15000) || 15000,
+    mailCcPaul: String(env.HANDS_MAIL_CC_PAUL || '').toLowerCase() === 'true',
+    scribe: Object.freeze({
+      url: (env.SCRIBE_MCP_URL || '').trim() || null,
+      token: (env.SCRIBE_MAIL_TOKEN || '').trim() || null,
+      refreshToken: (env.SCRIBE_REFRESH_TOKEN || '').trim() || null,
+      clientId: (env.SCRIBE_CLIENT_ID || '').trim() || null,
+      from: (env.SCRIBE_MAIL_FROM || 'hands').trim(),
+    }),
     guard: Object.freeze({
       url: guardUrl,
       deviceToken: (env.GUARD_DEVICE_TOKEN || '').trim() || null,
