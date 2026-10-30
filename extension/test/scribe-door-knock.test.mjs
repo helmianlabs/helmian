@@ -26,12 +26,17 @@ async function ready(api, extra = {}) {
   return s;
 }
 
-test('off by default: no request without opt-in, URL, token and a mailbox', async () => {
+test('0.6.2 defaults: knock on and hosted URL prefilled, but no request until signed in (or token) and a mailbox', async () => {
   const s = memoryStorage();
   let calls = 0;
   const fetchImpl = async () => { calls += 1; throw new Error('no'); };
-  assert.equal((await getScribeSettings(s)).enabled, false);
-  assert.equal((await pollScribe(s, { fetchImpl })).skipped, 'not-enabled');
+  const d = await getScribeSettings(s);
+  assert.equal(d.enabled, true);
+  assert.equal(d.baseUrl, 'https://5-78-222-178.sslip.io');
+  assert.equal(d.signedIn, false);
+  assert.equal((await pollScribe(s, { fetchImpl })).skipped, 'not-configured');
+  await setScribeSettings(s, { enabled: false });
+  assert.equal((await pollScribe(s, { fetchImpl })).skipped, 'not-enabled', 'turning it off sticks');
   await setScribeSettings(s, { enabled: true, baseUrl: 'https://scribe.example.com', token: MOCK_SCRIBE_TOKEN });
   assert.equal((await pollScribe(s, { fetchImpl })).skipped, 'not-configured', 'no mailbox chosen');
   assert.equal(calls, 0);

@@ -25,6 +25,7 @@ export const LEGACY_MIN_S = 300; // contract: include_legacy at most every 5 min
 export const DEFAULT_DAILY_BUDGET = 2000; // requests per UTC day across all mailboxes
 export const MAX_MAILBOXES = 8;
 export const TIMEOUT_MS = 5000;
+import { SCRIBE_DEFAULT_URL } from './defaults.js';
 import { accessToken as oauthAccessToken, getAuth as getOAuth, inboxStatusViaMcp } from './scribe-auth.js';
 const TOKEN = /^[A-Za-z0-9._~+/=-]{16,512}$/;
 
@@ -69,7 +70,11 @@ const UNREAD_PATH = /^\/[A-Za-z0-9/_.-]{1,100}$/;
 async function readSettings(storage) {
   const s = await readObj(storage, SCRIBE_SETTINGS_KEY);
   return {
-    enabled: s.enabled === true, baseUrl: typeof s.baseUrl === 'string' ? s.baseUrl : '',
+    // 0.6.2: knock is ON unless the user turned it off. It still does nothing
+    // until Scribe sign-in (or a token) and at least one mailbox exist.
+    enabled: s.enabled !== false,
+    // 0.6.2: the hosted Scribe server is prefilled (background/defaults.js).
+    baseUrl: typeof s.baseUrl === 'string' && s.baseUrl ? s.baseUrl : SCRIBE_DEFAULT_URL,
     token: typeof s.token === 'string' ? s.token : '',
     mailboxes: Array.isArray(s.mailboxes) ? s.mailboxes.filter(Boolean) : [],
     includeLegacy: s.includeLegacy === true,

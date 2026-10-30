@@ -36,6 +36,7 @@ import {
   pollScribe,
   setScribeSettings,
 } from './scribe-client.js';
+import { AI_CHOICES, mailboxesForAis, nudgeSitesForAis, redirectUrlFor, DEFAULT_NUDGE_IDLE_MIN, DEFAULT_NUDGE_DAILY_CAP, SCRIBE_DEFAULT_URL } from './defaults.js';
 import { getAuth as getScribeAuth, signIn as scribeSignIn, signOut as scribeSignOut } from './scribe-auth.js';
 import {
   getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost,
@@ -187,19 +188,23 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:scribe-nudge',
   'helmion:scribe-signin',
   'helmion:nudge-settings',
+  'helmion:onboarding',
 ]);
 
-// 0.6.2 FIX: this used to refuse any sender with a `tab`. The popup opened as
-// a full tab (chrome-extension://<id>/popup/popup.html) has a tab, so every
-// settings save and the Scribe sign-in were refused with "only accepted from
-// the extension popup" (reproduced in Chromium 141 with the 0.6.0 build).
-// What matters is the sender's URL: our own popup page. A content script's
-// sender.url is the web page's URL, so it is still refused.
-export function isFromOwnPopup(sender, runtime = chrome.runtime) {
+// 0.6.2 FIX: this used to refuse any sender with a `tab`. The popup opened
+// as a full tab (chrome-extension://<id>/popup/popup.html), the options page
+// and the welcome page all have a tab, so every settings save and the Scribe
+// sign-in were refused with "only accepted from the extension popup"
+// (reproduced in Chromium 141 with the 0.6.0 build). What matters is WHO
+// sent it: our own extension page, by URL. A content script's sender.url is the
+// web page's URL, never chrome-extension://<our id>/, so it is still refused.
+export const OWN_PAGE_DIRS = Object.freeze(['popup/', 'onboarding/']);
+export function isOwnExtensionPage(sender, runtime = chrome.runtime) {
   if (!sender) return false;
   if (sender.id !== runtime.id) return false;
   try {
-    return String(sender.url || '').startsWith(runtime.getURL('popup/'));
+    const url = String(sender.url || '');
+    return OWN_PAGE_DIRS.some((dir) => url.startsWith(runtime.getURL(dir)));
   } catch {
     // getURL unavailable. Fail CLOSED — an unverifiable sender does not get the
     // ledger. A safety tool's evidence log is the last thing to hand out on a
@@ -278,7 +283,7 @@ export async function runAutoNudge(result = {}, { now = Date.now() } = {}) {
 }
 export function plainLaunchError(raw) {
   const m = String(raw || '');
-  if (!m || /did not approve|closed|cancel/i.test(m)) return 'The Scribe sign-in window was closed before sign-in finished. Click Sign in to Scribe to try again.';
+  if (!m || /did not approve|closed|cancel/i.test(m)) return 'The Scribe sign-in window was closed before sign-in finished. Click Connect Scribe to try again.';
   if (/could not be loaded/i.test(m)) return `The Scribe sign-in page could not be loaded (browser said: ${m}). Check your internet connection and that the Scribe server is up, then try again.`;
   return `The browser could not open the Scribe sign-in window (browser said: ${m}).`;
 }
@@ -315,15 +320,44 @@ if (chrome.notifications && chrome.notifications.onClicked) {
   });
 }
 if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncScribeAlarm(); });
-if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => { syncScribeAlarm(); });
+export const ONBOARDING_PAGE = 'onboarding/onboarding.html';
+export function handleInstalled(details, api = chrome) {
+  syncScribeAlarm();
+  // 0.6.2: first install opens the welcome page. Updates and browser updates do not.
+  if (details && details.reason === 'install') {
+    try { api.tabs.create({ url: api.runtime.getURL(ONBOARDING_PAGE) }); } catch (error) { console.warn('[Helmion Guard] could not open the welcome page:', error && error.message); }
+    return true;
+  }
+  return false;
+}
+if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener((details) => { handleInstalled(details); });
+
+// ─── WELCOME PAGE (0.6.2) ─────────────────────────────────────────────────
+export const PROFILE_KEY = 'helmion.profile';
+export async function saveOnboarding(storage, { name, ais } = {}) {
+  const who = String(name || '').trim().slice(0, 200);
+  if (!who) throw new Error('Type your name or email first.');
+  const keys = (Array.isArray(ais) ? ais : []).filter((k) => AI_CHOICES.some((c) => c.key === k));
+  if (!keys.length) throw new Error('Tick at least one AI you use.');
+  const mailboxes = mailboxesForAis(keys);
+  await storage.set(PROFILE_KEY, { name: who, ais: keys, savedAt: new Date().toISOString() });
+  const s = await getScribeSettings(storage);
+  await setScribeSettings(storage, { mailboxes, ...(s.baseUrl ? {} : { baseUrl: SCRIBE_DEFAULT_URL }) });
+  await setNudgeSettings(storage, { enabled: true, sites: nudgeSitesForAis(keys), idleMinutes: DEFAULT_NUDGE_IDLE_MIN, dailyCapPerSite: DEFAULT_NUDGE_DAILY_CAP });
+  return { name: who, ais: keys, mailboxes };
+}
+export async function readOnboarding(storage) {
+  const p = await storage.get(PROFILE_KEY);
+  return p && typeof p === 'object' ? p : null;
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
     const type = message && message.type;
 
-    if (PRIVILEGED_TYPES.has(type) && !isFromOwnPopup(sender)) {
+    if (PRIVILEGED_TYPES.has(type) && !isOwnExtensionPage(sender)) {
       console.warn('[Helmion Guard] refused a privileged ledger message from an unexpected sender:', type);
-      sendResponse({ ok: false, error: 'this message is only accepted from the extension popup' });
+      sendResponse({ ok: false, error: 'this message is only accepted from Guard\'s own pages (popup, options, welcome)' });
       return false;
     }
 
@@ -544,16 +578,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const run = async () => {
         if (action === 'status') return getScribeAuth(ledger);
         if (action === 'signout') return scribeSignOut(ledger);
+        if (action === 'redirect') return { redirectUrl: redirectUrlFor(chrome.runtime.id, chrome.identity || (globalThis.browser && globalThis.browser.identity)) };
         const s = await getScribeSettings(ledger);
-        if (!s.baseUrl) throw new Error('Save the Scribe URL first');
+        if (!s.baseUrl) throw new Error('No Scribe server address is set. Open Advanced and enter it.');
         const id = identityApi();
-        if (!id) throw new Error('The browser did not give Guard the "identity" permission, so it cannot open the Scribe sign-in window. Click Sign in to Scribe again and choose Allow.');
+        if (!id) throw new Error('The browser did not give Guard the "identity" permission, so it cannot open the Scribe sign-in window. Click Connect Scribe again and choose Allow.');
         const view = await scribeSignIn(ledger, s.baseUrl, { launch: id.launch, redirectUri: id.redirect });
-        await setScribeSettings(ledger, { clearRejected: true });
+        // 0.6.2: knock is on by default once signed in.
+        await setScribeSettings(ledger, { clearRejected: true, enabled: true });
         await syncScribeAlarm();
         return view;
       };
       run().then((auth) => sendResponse({ ok: true, auth })).catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:onboarding') {
+      (message.action === 'save' ? saveOnboarding(ledger, message.profile || {}) : readOnboarding(ledger))
+        .then((profile) => sendResponse({ ok: true, profile }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }
 
