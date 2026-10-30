@@ -74,6 +74,7 @@ test('the content scripts load in the order guard.js depends on', () => {
     'content/extract.js',
     'content/stream-watch.js',
     'content/ui.js',
+    'content/nudge.js',
     'content/guard.js',
   ]);
   assert.equal(manifest.content_scripts[0].run_at, 'document_start');
@@ -104,7 +105,9 @@ test('it asks for exactly ONE permission, and that one is storage', () => {
   // warning and is needed for MV3 polling. 'notifications' is OPTIONAL and only
   // requested from the popup when the user turns the door-knock on.
   assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'idle']);
-  assert.deepEqual(manifest.optional_permissions, ['notifications']);
+  // 0.6.0 (Scribe sign-in): + OPTIONAL 'identity' (Chrome/Edge), requested only
+  // from the popup's Sign in click. Chrome lists no install warning for it.
+  assert.deepEqual(manifest.optional_permissions, ['notifications', 'identity']);
   // Optional host permissions (2026-10-22): requested from the popup, in a user
   // gesture, only for the Executive Guard / Flags URL the user typed. Nothing is
   // granted at install. Pinned so the list cannot quietly grow.
@@ -213,7 +216,7 @@ function isShippedFile(file) {
 //   background/flags-client.js  Flags reports to the Flags API
 // Each has its own tests (executive-loop.test.mjs, flags-client.test.mjs) that
 // prove it does nothing on the network until configured.
-const NETWORK_ALLOWLIST = ['background/upload.js', 'background/executive.js', 'background/flags-client.js', 'background/scribe-client.js'];
+const NETWORK_ALLOWLIST = ['background/upload.js', 'background/executive.js', 'background/flags-client.js', 'background/scribe-client.js', 'background/scribe-auth.js'];
 
 function isAllowlisted(file) {
   const relative = path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/');
@@ -239,8 +242,8 @@ test('nothing in the extension calls out to the network', async () => {
   }
 });
 
-test('the network allowlist holds exactly the four opt-in modules (scribe-client added 0.5.0, off by default)', async () => {
-  assert.deepEqual(NETWORK_ALLOWLIST, ['background/upload.js', 'background/executive.js', 'background/flags-client.js', 'background/scribe-client.js']);
+test('the network allowlist holds exactly the five opt-in modules (scribe-client 0.5.0, scribe-auth 0.6.0, off by default)', async () => {
+  assert.deepEqual(NETWORK_ALLOWLIST, ['background/upload.js', 'background/executive.js', 'background/flags-client.js', 'background/scribe-client.js', 'background/scribe-auth.js']);
   const files = await listJsFiles(EXTENSION_ROOT);
   const shipped = files.filter(isShippedFile).map((file) => path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/'));
   for (const allowed of NETWORK_ALLOWLIST) {

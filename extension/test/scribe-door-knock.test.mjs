@@ -57,7 +57,7 @@ test('poll: exact request shape, cursor round-trip, notices only for new', async
   try {
     api.send({ to: 'muse', from: 'paul', subject: 'One' });
     api.send({ to: 'faith-and-light-news', from: 'grok-bot', subject: 'Two', priority: 'high' });
-    const s = await ready(api);
+    const s = await ready(api, { notify: true });
     const now = 1_000_000;
     const r1 = await pollScribe(s, { now, rand: noJitter });
     assert.equal(r1.unread, 2);
@@ -216,7 +216,7 @@ test('worker: popup-only messages, alarm lifecycle, global badge, notification, 
     api.send({ to: 'claude.ai', from: 'paul', subject: 'Door-knock contract' });
     api.send({ to: 'claude-ai', from: 'troy', subject: 'Second' });
     fake.alarmCalls.length = 0;
-    const saved = await send({ type: 'helmion:scribe-settings', settings: { enabled: true, baseUrl: api.url, token: MOCK_SCRIBE_TOKEN, mailboxes: 'claude.ai' } }, POPUP);
+    const saved = await send({ type: 'helmion:scribe-settings', settings: { enabled: true, baseUrl: api.url, token: MOCK_SCRIBE_TOKEN, mailboxes: 'claude.ai', notify: true, showBadge: true } }, POPUP);
     assert.equal(saved.ok, true, saved.error);
     assert.doesNotMatch(JSON.stringify(saved), /mock-mailbox-status-token/);
     assert.deepEqual(fake.alarmCalls.at(-1), { call: 'create', name: 'helmion-scribe-poll', periodInMinutes: 1, delayInMinutes: 0.5 });
@@ -255,7 +255,7 @@ test('without notifications permission, no notification is shown', async () => {
 test('manifests: alarms + idle required, notifications optional, no new install-time hosts', () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url)));
-    assert.deepEqual(m.permissions, ['storage', 'alarms', 'idle']);
+    assert.deepEqual(m.permissions, f === 'manifest.json' ? ['storage', 'alarms', 'idle'] : ['storage', 'alarms', 'idle', 'identity']);
     assert.ok(m.optional_permissions.includes('notifications'));
     assert.deepEqual(m.host_permissions || [], f === 'manifest.json' ? ['https://helmian.cloud/*'] : []);
   }

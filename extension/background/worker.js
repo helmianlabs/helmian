@@ -36,6 +36,10 @@ import {
   pollScribe,
   setScribeSettings,
 } from './scribe-client.js';
+import { getAuth as getScribeAuth, signIn as scribeSignIn, signOut as scribeSignOut } from './scribe-auth.js';
+import {
+  getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost,
+} from './nudge-policy.js';
 import { scanProse } from './claims.js';
 import {
   getUploadSettings,
@@ -181,6 +185,8 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:scribe-settings',
   'helmion:scribe-inbox',
   'helmion:scribe-nudge',
+  'helmion:scribe-signin',
+  'helmion:nudge-settings',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -244,10 +250,41 @@ export async function runScribePoll(opts = {}) {
   const online = typeof navigator === 'undefined' || navigator.onLine !== false;
   const idle = (await idleState()) !== 'active';
   const result = await pollScribe(ledger, { online, idle, ...opts });
-  if (typeof result.unread === 'number') setScribeBadge(result.unread);
+  // 0.6.0: the badge and notices are off by default (Troy: no doorbell to click).
+  if (typeof result.unread === 'number') setScribeBadge(result.showBadge ? result.unread : 0);
   if (result.fresh) await notifyFresh(result.fresh);
+  await runAutoNudge(result).catch((error) => console.warn('[Helmion Guard] auto-nudge pass failed:', error && error.message));
   return result;
 }
+// ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
+// Queue fresh letters (ids only), then let the policy decide per open chat tab.
+// The text is fixed (nudge-policy.js nudgeText); letter content never leaves here.
+function sendToTab(tabId, message) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, message, (answer) => { void chrome.runtime.lastError; resolve(answer || null); });
+    } catch { resolve(null); }
+  });
+}
+export async function runAutoNudge(result = {}, { now = Date.now() } = {}) {
+  for (const { mailbox, items } of (result && result.mail) || []) await queuePending(ledger, mailbox, items, now);
+  return runNudges(ledger, { sendToTab, now });
+}
+function identityApi() {
+  const b = globalThis.browser && globalThis.browser.identity;
+  if (b && typeof b.launchWebAuthFlow === 'function') return { launch: (url) => b.launchWebAuthFlow({ url, interactive: true }), redirect: b.getRedirectURL() };
+  const c = chrome.identity;
+  if (c && typeof c.launchWebAuthFlow === 'function') {
+    return {
+      launch: (url) => new Promise((resolve, reject) => chrome.identity.launchWebAuthFlow({ url, interactive: true }, (final) => {
+        const err = chrome.runtime.lastError; if (err || !final) reject(new Error((err && err.message) || 'Sign-in was cancelled')); else resolve(final);
+      })),
+      redirect: c.getRedirectURL(),
+    };
+  }
+  return null;
+}
+
 // The nudge: open (or focus) the AI that owns the mailbox so it runs check_inbox.
 function openMailboxSite(mailbox) {
   const url = MAILBOX_SITES[mailbox];
@@ -457,7 +494,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (type === 'helmion:scribe-settings') {
       const payload = message.settings || {};
-      const isWrite = ['enabled', 'baseUrl', 'token', 'mailboxes', 'includeLegacy', 'dailyBudget', 'notify', 'clearToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      const isWrite = ['enabled', 'baseUrl', 'token', 'mailboxes', 'includeLegacy', 'dailyBudget', 'notify', 'showBadge', 'unreadPath', 'clearToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
       (isWrite ? setScribeSettings(ledger, payload).then(async (r) => { await syncScribeAlarm(); return r; }) : getScribeSettings(ledger))
         .then((settings) => sendResponse({ ok: true, settings }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
@@ -469,6 +506,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (force ? runScribePoll({ force: true }) : Promise.resolve({}))
         .then(async (poll) => sendResponse({ ok: true, skipped: poll.skipped, ...(await inboxView(ledger)) }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:nudge-hello') {
+      // Any of the four chat origins registers its tab. Not privileged: it only
+      // says "a chat tab exists here"; the policy and switches still decide.
+      const site = sender && sender.tab && sender.tab.url ? siteForHost(new URL(sender.tab.url).hostname) : null;
+      if (site && sender.tab.id != null) noteTab(ledger, sender.tab.id, site, Date.now()).catch(() => {});
+      sendResponse({ ok: Boolean(site) });
+      return false;
+    }
+
+    if (type === 'helmion:nudge-settings') {
+      const payload = message.settings || {};
+      const write = Object.keys(payload).length > 0;
+      (write ? setNudgeSettings(ledger, payload) : getNudgeSettings(ledger))
+        .then(async (settings) => sendResponse({ ok: true, settings, log: (await readNudgeLog(ledger)).slice(-20).reverse() }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-signin') {
+      const action = message.action;
+      const run = async () => {
+        if (action === 'status') return getScribeAuth(ledger);
+        if (action === 'signout') return scribeSignOut(ledger);
+        const s = await getScribeSettings(ledger);
+        if (!s.baseUrl) throw new Error('Save the Scribe URL first');
+        const id = identityApi();
+        if (!id) throw new Error('This browser did not grant the identity permission needed for sign-in');
+        const view = await scribeSignIn(ledger, s.baseUrl, { launch: id.launch, redirectUri: id.redirect });
+        await setScribeSettings(ledger, { clearRejected: true });
+        await syncScribeAlarm();
+        return view;
+      };
+      run().then((auth) => sendResponse({ ok: true, auth })).catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }
 
