@@ -37,6 +37,7 @@ export function loadConfig(env = process.env) {
     publicUrl: required(env, 'PUBLIC_URL').replace(/\/+$/, ''),
     passphrase: required(env, 'AUTH_PASSPHRASE'),
     spokeToken,
+    pairCodeIssuerToken: (env.PAIR_CODE_ISSUER_TOKEN || '').trim().length >= 32 ? env.PAIR_CODE_ISSUER_TOKEN.trim() : null,
     handsEnabled: String(env.HANDS_ENABLED || '').toLowerCase() === 'true',
     holdOpenWaitMs: Number(env.HANDS_HOLD_OPEN_WAIT_MS || 840000) || 840000,
     guard: Object.freeze({

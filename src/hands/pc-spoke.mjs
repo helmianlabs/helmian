@@ -699,8 +699,8 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
 }
 
 /** Exchange the hands passphrase for a spoke token and save the local config. */
-export async function pairSpoke({ url = DEFAULT_HANDS_URL, passphrase, roots, configPath = defaultConfigPath(), fetchImpl = fetch, deviceId = defaultSpokeDeviceId() }) {
-  const res = await fetchImpl(`${url}/spoke/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase, deviceId }) });
+export async function pairSpoke({ url = DEFAULT_HANDS_URL, passphrase, pairCode, roots, configPath = defaultConfigPath(), fetchImpl = fetch, deviceId = defaultSpokeDeviceId() }) {
+  const res = await fetchImpl(`${url}/spoke/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(pairCode ? { pairCode, deviceId } : { passphrase, deviceId }) });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.token) throw new Error(body.error || `pairing failed (${res.status})`);
   const existing = (await readSpokeConfig(configPath)) || {};
