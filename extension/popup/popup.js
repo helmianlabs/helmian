@@ -445,7 +445,7 @@ askWithPayload('helmion:scribe-signin', { action: 'redirect' }).then((r) => {
 });
 
 // ─── Auto-nudge ────────────────────────────────────────────────────────────
-const NUDGE_SITES = ['chatgpt.com', 'claude.ai', 'grok.com', 'gemini.google.com', 'perplexity.ai'];
+const NUDGE_SITES = ['chatgpt.com', 'claude.ai', 'grok.com', 'gemini.google.com', 'perplexity.ai', 'chat.mistral.ai'];
 function renderNudge(r) {
   if (!r || !r.ok) { $('nudgeStatus').textContent = `Could not load: ${r && r.error}`; return; }
   const s = r.settings;
