@@ -19,12 +19,7 @@
 
     <section>
       <h2><span class="step">2</span> Which AIs do you use?</h2>
-      <div class="ais">
-        <label class="ai"><input type="checkbox" name="ai" value="chatgpt" /> ChatGPT</label>
-        <label class="ai"><input type="checkbox" name="ai" value="claude" /> Claude</label>
-        <label class="ai"><input type="checkbox" name="ai" value="grok" /> Grok</label>
-        <label class="ai"><input type="checkbox" name="ai" value="gemini" /> Gemini</label>
-      </div>
+      <div class="ais" id="ais"></div>
       <p class="note">Guard will gently remind the AIs you tick to check their Scribe mail when their tab sits idle. Automatic typing into AI chats may conflict with some sites' terms (for example Anthropic's and xAI's rules on automated use). You can turn it off any time in Guard's settings.</p>
     </section>
 
@@ -37,6 +32,6 @@
     <p class="small">You can change anything later from the Guard button in your toolbar, under Advanced.</p>
   </main>
   <script src="../popup/connect.js"></script>
-  <script src="onboarding.js"></script>
+  <script type="module" src="onboarding.js"></script>
 </body>
 </html>

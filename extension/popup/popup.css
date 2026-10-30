@@ -128,3 +128,6 @@ footer { margin-top: 14px; border-top: 1px solid var(--stroke); padding-top: 10p
 button.primary { font-size: 16px; font-weight: 700; padding: 8px 16px; background: #2f7cf6; color: #fff; border: 0; }
 .loud-error { font-size: 15px; font-weight: 700; background: #5c1010; color: #fff; border: 3px solid #ff5b5b; border-radius: 8px; padding: 10px 12px; }
 details > summary { font-size: 15px; font-weight: 700; cursor: pointer; margin: 10px 0; }
+
+/* 0.6.4: explanation text larger and higher contrast (Troy's vision). */
+.muted { font-size: 14px !important; color: #e3e8ee !important; line-height: 1.45; }
