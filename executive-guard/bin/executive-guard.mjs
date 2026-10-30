@@ -48,7 +48,7 @@ if (!Object.keys(deviceTokens).length || !Object.keys(approverTokens).length) {
   console.error('Set EXEC_GUARD_DEVICE_TOKENS and EXEC_GUARD_APPROVER_TOKENS (id=token, tokens at least 24 characters).');
   process.exit(2);
 }
-const { server } = createExecutiveGuard({ key, audit: fileAudit(auditPath), state: fileState(statePath), deviceTokens, approverTokens, policy });
+const { server } = createExecutiveGuard({ key, audit: fileAudit(auditPath), state: fileState(statePath), deviceTokens, approverTokens, policy, approvalTtlSeconds: Number(process.env.EXEC_GUARD_APPROVAL_TTL_SECONDS || 0) || undefined });
 const port = Number(process.env.EXEC_GUARD_PORT || 8787);
 const host = process.env.EXEC_GUARD_HOST || '127.0.0.1';
 for (const signal of ['SIGTERM', 'SIGINT']) {
