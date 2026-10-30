@@ -6,6 +6,7 @@ import { createAudit } from './audit.mjs';
 import { createHands } from './hands.mjs';
 import { createApp } from './server.mjs';
 import { createSpokeTokens } from './spoke-tokens.mjs';
+import { createScribeMailer, mailboxForClient } from './scribe-mailer.mjs';
 
 const config = loadConfig();
 const oauth = createOAuth({ resourceId: `${config.publicUrl}${config.mcpPath}`, stateFile: `${config.stateDir}/oauth-state.json` });
@@ -22,9 +23,10 @@ const hub = createSpokeHub({
     changed, ...(first ? { first: true } : {}), ...(previous ? { previous } : {}),
   }),
 });
-const hands = createHands({ config, guard, hub, audit });
+const mailer = createScribeMailer({ ...config.scribe, stateFile: `${config.stateDir}/scribe-mail-token.json` });
+const hands = createHands({ config, guard, hub, audit, mailer, mailboxFor: (clientId) => mailboxForClient(oauth.clientName(clientId)) });
 const spokeTokens = createSpokeTokens({ file: `${config.stateDir}/spoke-tokens.json`, passphrase: config.passphrase, staticToken: config.spokeToken });
 const app = createApp({ config, oauth, hands, hub, spokeTokens });
 app.listen(config.port, () => {
-  console.error(`helmian-hands-mcp on :${config.port} public=${config.publicUrl} hands=${config.handsEnabled ? 'on' : 'off'} guard=${guard.live ? 'live' : 'NOT LIVE (mutating denied)'}`);
+  console.error(`helmian-hands-mcp on :${config.port} public=${config.publicUrl} hands=${config.handsEnabled ? 'on' : 'off'} guard=${guard.live ? 'live' : 'NOT LIVE (mutating denied)'} mailback=${mailer ? 'on' : 'off'}`);
 });
