@@ -28,7 +28,7 @@ test('sign-in without identity API fails loudly with what to do', async () => {
   const saved = chrome.identity; delete chrome.identity;
   try {
     const r = await send({ type: 'helmion:scribe-signin', action: 'signin' }, POPUP_AS_TAB);
-    assert.equal(r.ok, false); assert.match(r.error, /identity.*Click Sign in to Scribe again and choose Allow/);
+    assert.equal(r.ok, false); assert.match(r.error, /identity.*Click Connect Scribe again and choose Allow/);
   } finally { if (saved) chrome.identity = saved; }
 });
 test('identity errors become plain sentences', () => {
@@ -37,9 +37,10 @@ test('identity errors become plain sentences', () => {
   assert.match(worker.plainLaunchError('x'), /browser said: x/);
 });
 test('popup: permission request starts before any await, failures go to a loud #scribeError', async () => {
-  const js = await readFile(new URL('../popup/popup.js', import.meta.url), 'utf8');
-  const h = js.slice(js.indexOf("$('scribeSignIn').addEventListener"));
-  assert.ok(h.indexOf('requestSignInPermissions(url)') < h.indexOf('await perm'), 'permission request precedes the first await');
+  // 0.6.3: the click goes through popup/connect.js, which starts the request first.
+  const js = await readFile(new URL('../popup/connect.js', import.meta.url), 'utf8');
+  const h = js.slice(js.indexOf('function connect('));
+  assert.ok(h.indexOf('requestSignInPermissions(url)') < h.indexOf('await'), 'permission request precedes the first await');
   const html = await readFile(new URL('../popup/popup.html', import.meta.url), 'utf8');
   assert.match(html, /id="scribeError" class="loud-error" role="alert"/);
 });

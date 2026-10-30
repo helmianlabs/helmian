@@ -56,7 +56,7 @@ function sameOrigin(a, b) { try { return new URL(a).origin === new URL(b).origin
 export async function discover(baseUrl, { fetchImpl } = {}) {
   let r;
   try { r = await req(fetchImpl, `${baseUrl}/.well-known/oauth-authorization-server`, { method: 'GET', headers: { accept: 'application/json' } }); }
-  catch (e) { throw new Error(`Could not reach the Scribe server at ${baseUrl} (${(e && e.name === 'AbortError') ? 'timed out' : 'network error'}). Check your internet connection and the Scribe URL.`); }
+  catch (e) { throw new Error(`Could not reach the Scribe server at ${baseUrl} (${(e && e.name === 'AbortError') ? 'timed out' : 'network error'}). Check your internet connection, or the address under Advanced.`); }
   const m = r.status === 200 ? parseJson(r.text) : null;
   if (!m || !m.authorization_endpoint || !m.token_endpoint) throw new Error('This Scribe server does not offer sign-in (no OAuth metadata)');
   for (const k of ['authorization_endpoint', 'token_endpoint', 'registration_endpoint']) {

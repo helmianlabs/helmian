@@ -360,7 +360,7 @@ const SCRIBE_STATE_TEXT = {
 };
 async function loadScribe() {
   const r = await askWithPayload('helmion:scribe-settings', { settings: {} });
-  if (!r || !r.ok) return;
+  if (!r || !r.ok) { const e = $('scribeError'); e.hidden = false; e.textContent = `Problem: Guard could not load its Scribe settings (${r && r.error}). Reload the extension and try again.`; return; }
   const s = r.settings;
   $('scribeEnabled').checked = s.enabled === true;
   $('scribeUrl').value = s.baseUrl || '';
@@ -369,7 +369,7 @@ async function loadScribe() {
   $('scribeNotify').checked = s.notify === true;
   $('scribeBadge').checked = s.showBadge === true;
   if ($('scribeUnreadPath')) $('scribeUnreadPath').value = s.unreadPath || '/mailbox/unread';
-  $('scribeAuth').textContent = s.signedIn ? 'Signed in (read-only).' : (s.hasToken ? 'Using a pasted token (fallback).' : 'Not signed in.');
+  $('scribeAuth').textContent = s.signedIn ? 'Scribe is connected (read-only).' : (s.hasToken ? 'Using a pasted token (fallback).' : 'Not connected yet. Click Connect Scribe.');
   $('scribeToken').placeholder = s.hasToken ? 'Token saved (paste a new one to replace it)' : 'MAILBOX_STATUS_TOKEN or smk_… (mailbox.read)';
   renderInbox(await askWithPayload('helmion:scribe-inbox', { options: {} }));
 }
@@ -418,45 +418,30 @@ $('scribeSave').addEventListener('click', async () => {
 $('scribeRefresh').addEventListener('click', async () => renderInbox(await askWithPayload('helmion:scribe-inbox', { options: { force: true } })));
 loadScribe();
 
-// ─── Scribe sign-in (OAuth, no pasted key) ─────────────────────────────────
-// ONE permissions.request in the click (a second await would lose the user
-// gesture in Chrome): the Scribe origin plus, on Chrome/Edge, the optional
-// 'identity' permission. On Firefox 'identity' is an install-time permission.
-function requestSignInPermissions(url) {
-  const origin = originFor(url);
-  if (!origin) return Promise.resolve(false);
-  const firefox = Boolean(globalThis.browser && globalThis.browser.runtime);
-  const want = firefox ? { origins: [origin] } : { permissions: ['identity'], origins: [origin] };
-  return new Promise((resolve) => {
-    try {
-      if (!chrome.permissions || typeof chrome.permissions.request !== 'function') { resolve(false); return; }
-      const result = chrome.permissions.request(want, (g) => { void chrome.runtime.lastError; resolve(Boolean(g)); });
-      if (result && typeof result.then === 'function') result.then((g) => resolve(Boolean(g)), () => resolve(false));
-    } catch { resolve(false); }
-  });
+// ─── Scribe sign-in (OAuth, no pasted key) — 0.6.2 ──────────────────────────
+// The shared HelmionConnect.connect() starts permissions.request synchronously
+// inside this click (an await first would lose the user gesture), then signs
+// in from the background worker. Every failure is shown in #scribeError.
+function scribeReport(kind, text) {
+  const err = $('scribeError');
+  if (kind === 'error') { err.hidden = false; err.textContent = `Problem: ${text}`; $('scribeAuth').textContent = 'Not connected.'; }
+  else { err.hidden = true; err.textContent = ''; $('scribeAuth').textContent = text; }
 }
-function scribeLoud(text) { const e = $('scribeError'); if (!text) { e.hidden = true; e.textContent = ''; return; } e.hidden = false; e.textContent = `Problem: ${text}`; $('scribeAuth').textContent = 'Not signed in.'; }
 $('scribeSignIn').addEventListener('click', () => {
-  // permissions.request is started SYNCHRONOUSLY here, before any await, so the
-  // click's user gesture is kept. Every failure below is shown in #scribeError.
   const url = $('scribeUrl').value.trim();
-  if (!url) { scribeLoud('Enter the Scribe URL first.'); return; }
-  const perm = requestSignInPermissions(url);
-  (async () => {
-    scribeLoud('');
-    const granted = await perm;
-    if (!granted) { scribeLoud('Guard was not allowed to reach Scribe and open its sign-in window. Click Sign in to Scribe again and choose Allow.'); return; }
-    const saved = await askWithPayload('helmion:scribe-settings', { settings: { baseUrl: url } });
-    if (!saved || !saved.ok) { scribeLoud(`Could not save the Scribe URL: ${saved && saved.error}`); return; }
-    $('scribeAuth').textContent = 'Opening the Scribe sign-in window…';
-    const r = await askWithPayload('helmion:scribe-signin', { action: 'signin' });
-    if (r && r.ok) { $('scribeAuth').textContent = 'Signed in (read-only).'; return; }
-    scribeLoud(`Not signed in. ${(r && r.error) || 'No answer from Guard\'s background service. Reload the extension and try again.'}`);
-  })().catch((e) => scribeLoud(`Sign-in stopped unexpectedly: ${e && e.message}`));
+  if (!url) { scribeReport('error', 'No Scribe server address. Open Advanced and enter it, or reload Guard to restore the default.'); return; }
+  globalThis.HelmionConnect.connect(url, scribeReport).then((r) => { if (r && r.ok) loadScribe(); });
 });
 $('scribeSignOut').addEventListener('click', async () => {
-  await askWithPayload('helmion:scribe-signin', { action: 'signout' });
-  $('scribeAuth').textContent = 'Signed out.';
+  const r = await askWithPayload('helmion:scribe-signin', { action: 'signout' });
+  if (!r || !r.ok) scribeReport('error', `Sign out failed: ${r && r.error}`); else scribeReport('ok', 'Signed out.');
+});
+$('openWelcome').addEventListener('click', () => {
+  try { chrome.tabs.create({ url: chrome.runtime.getURL('onboarding/onboarding.html') }); }
+  catch (e) { scribeReport('error', `Could not open the setup page (${e.message}).`); }
+});
+askWithPayload('helmion:scribe-signin', { action: 'redirect' }).then((r) => {
+  $('scribeRedirect').textContent = r && r.ok && r.auth && r.auth.redirectUrl ? r.auth.redirectUrl : `https://${chrome.runtime.id}.chromiumapp.org/`;
 });
 
 // ─── Auto-nudge ────────────────────────────────────────────────────────────

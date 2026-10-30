@@ -21,7 +21,22 @@ const TARGETS = Object.freeze({
   edge: { manifest: 'manifest.json', store: 'Microsoft Edge Add-ons or unpacked install' },
   firefox: { manifest: 'manifest.firefox.json', store: 'Mozilla AMO signing (web-ext) required' },
 });
-const SHIPPED_DIRS = ['background', 'content', 'generated', 'popup'];
+const SHIPPED_DIRS = ['background', 'content', 'generated', 'onboarding', 'popup'];
+const SCRIBE_URL_LINE = /^export const SCRIBE_DEFAULT_URL = '[^']*'; \/\/ @build:scribe-url$/m;
+
+/** Build-time Scribe server address: rewrites the one line in background/defaults.js. */
+export async function applyScribeUrl(output, scribeUrl) {
+  if (!scribeUrl) return null;
+  const u = new URL(scribeUrl);
+  if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) throw new Error('--scribe-url must be a plain https:// address');
+  const clean = u.toString().replace(/\/+$/, '');
+  if (clean.includes("'")) throw new Error('bad --scribe-url');
+  const file = join(output, 'background', 'defaults.js');
+  const text = await readFile(file, 'utf8');
+  if (!SCRIBE_URL_LINE.test(text)) throw new Error('background/defaults.js has no @build:scribe-url line');
+  await writeFile(file, text.replace(SCRIBE_URL_LINE, `export const SCRIBE_DEFAULT_URL = '${clean}'; // @build:scribe-url`));
+  return clean;
+}
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -106,7 +121,7 @@ export function zipFiles(entries) {
   return Buffer.concat([...locals, ...centrals, end]);
 }
 
-export async function packageGuard({ target = 'chromium', out, zip } = {}) {
+export async function packageGuard({ target = 'chromium', out, zip, scribeUrl = process.env.HELMIAN_SCRIBE_URL } = {}) {
   const spec = TARGETS[target];
   if (!spec) throw new Error(`Unknown target ${target}; use ${Object.keys(TARGETS).join(', ')}`);
   const manifest = JSON.parse(await readFile(join(EXTENSION, spec.manifest), 'utf8'));
@@ -115,6 +130,7 @@ export async function packageGuard({ target = 'chromium', out, zip } = {}) {
   await mkdir(output, { recursive: true });
   for (const entry of SHIPPED_DIRS) await cp(join(EXTENSION, entry), join(output, entry), { recursive: true });
   await cp(join(EXTENSION, spec.manifest), join(output, 'manifest.json'));
+  await applyScribeUrl(output, scribeUrl);
   const files = await filesUnder(output);
   await writeFile(join(output, 'STAGING-MANIFEST.json'), `${JSON.stringify({
     target, version: manifest.version, manifest: spec.manifest, signed: false, public: false, signing: spec.store, files,
@@ -136,6 +152,6 @@ export async function packageGuard({ target = 'chromium', out, zip } = {}) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const result = await packageGuard({ target: arg('--target', 'chromium'), out: arg('--out'), zip: arg('--zip') });
+  const result = await packageGuard({ target: arg('--target', 'chromium'), out: arg('--out'), zip: arg('--zip'), scribeUrl: arg('--scribe-url', process.env.HELMIAN_SCRIBE_URL) });
   console.log(JSON.stringify(result, null, 2));
 }
