@@ -1,5 +1,6 @@
 import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, friendlyWorkspace } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
+const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
 const shell = $('#shell');
@@ -508,10 +509,11 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   }
 
   function defaultKokoroLoader() {
-    // Resolves via the import map in index.html; the ~300MB model downloads
+    // Full URL (no inline import map: the page CSP forbids inline scripts, which
+    // silently broke the map). The ~300MB model downloads
     // once, on first use, and is cached by the browser afterwards.
     // Try WebGPU first (faster), fall back to WASM if it fails (mobile).
-    return import('kokoro-js').then(async (mod) => {
+    return import(KOKORO_URL).then(async (mod) => {
       const opts = { dtype: 'q8' };
       const hasGpu = typeof navigator !== 'undefined' && navigator.gpu;
       if (hasGpu) {
@@ -1397,7 +1399,7 @@ async function loadDevices() {
       : 'Tap a session to open Remote Control. Forget unpairs a Desktop so you can pair it again.');
   } catch (error) {
     renderDevices({ empty: true, rows: [] }, error.status === 401 || error.status === 403
-      ? 'Desktop list needs Clerk unify (owner checklist). You can still Connect phone or enroll below.'
+      ? 'Your linked PCs can\u2019t be listed from this page yet. You can still link a PC with the code from the Helmian desktop app or spoke below.'
       : (error.status === 503
         ? 'Remote Control is not configured yet.'
         : (error.message || 'Could not load Desktops.')));
@@ -1418,7 +1420,7 @@ $('#devices-enroll').onsubmit = async (e) => {
     await loadDevices();
   } catch (error) {
     toast(error.status === 401 || error.status === 403
-      ? 'Enrollment needs Clerk unify — try Connect phone, or open Remote Control'
+      ? 'Linking from this page isn\u2019t switched on yet. Try Connect phone, or open Remote Control'
       : (error.message || 'Enrollment failed'));
   }
 };
@@ -1472,7 +1474,18 @@ async function loadPcApprovals() {
   let body;
   try {
     const res = await fetch('/api/admin/guard/pc-approvals', { credentials: 'same-origin' });
-    if (res.status === 503 || res.status === 403 || res.status === 401) { panel.hidden = true; return; }
+    // Never a blank page: say why there is nothing to approve here. Guard's
+    // owner-only rule is unchanged; this only explains it.
+    if (res.status === 503 || res.status === 403 || res.status === 401) {
+      panel.hidden = false;
+      $('#pc-approvals-status').textContent = res.status === 503
+        ? 'PC approvals are not switched on for this workspace yet. Once your PC is linked, Guard asks you here before anything runs on it.'
+        : (res.status === 403
+          ? 'PC actions are approved by the PC owner\u2019s account. Sign in with that account to Allow or Deny them.'
+          : 'Sign in again to see PC actions waiting for you.');
+      $('#pc-approvals').replaceChildren();
+      return;
+    }
     body = await res.json();
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   } catch (error) { panel.hidden = false; $('#pc-approvals-status').textContent = `Guard is unreachable (${error.message}). Nothing will run until it answers.`; $('#pc-approvals').replaceChildren(); return; }
@@ -1818,7 +1831,7 @@ async function saveProfile() {
     });
     toast('Profile saved', 'ok');
   } catch (e) {
-    toast('Could not save profile', 'error');
+    toast(e?.status === 503 ? 'Profiles aren\u2019t switched on yet. The owner needs to run one database update.' : 'Could not save profile', 'error');
   }
 }
 
@@ -2560,6 +2573,26 @@ async function loadGuardCreateList() {
 
 const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, upcoming: loadUpcoming, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
+
+// ---- empty states: a new account sees what to do next, never a bare title ----
+function wireEmptyHints() {
+  for (const hint of document.querySelectorAll('.empty-hint[data-empty-for]')) {
+    const target = document.getElementById(hint.dataset.emptyFor);
+    if (!target) continue;
+    const update = () => { hint.hidden = target.children.length > 0 || target.textContent.trim() !== ''; };
+    update();
+    new MutationObserver(update).observe(target, { childList: true, subtree: true, characterData: true });
+  }
+}
+wireEmptyHints();
+{
+  const copy = document.getElementById('scribe-copy');
+  if (copy) copy.onclick = async () => {
+    const url = document.getElementById('scribe-url')?.value ?? '';
+    try { await navigator.clipboard.writeText(url); toast('Scribe link copied', 'ok'); }
+    catch { document.getElementById('scribe-url')?.select(); toast('Press Ctrl+C to copy'); }
+  };
+}
 
 // ---- boot ----
 async function boot() {

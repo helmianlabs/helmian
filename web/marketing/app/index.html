@@ -11,13 +11,6 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="/app/app.css">
   <link rel="stylesheet" href="/app/envoy.css">
-  <script type="importmap">
-  {
-    "imports": {
-      "kokoro-js": "https://esm.sh/kokoro-js@1.2.1"
-    }
-  }
-  </script>
   <script type="module" src="/app/app.js"></script>
 </head>
 <body>
@@ -101,7 +94,7 @@
         <h1>Your workspace, with guardrails.</h1>
         <p class="muted">Sign in to pick up your console, projects and approvals from anywhere. You stay signed in on this device for 30 days.</p>
         <a class="btn primary" href="/admin/auth/login?return=/app">Sign in →</a>
-        <a class="btn" href="/admin/auth/signup?return=/app">Create account</a>
+        <a class="btn" href="/admin/auth/signup?return=/app" id="create-account">Create account</a>
         <p class="muted sm">Got an invite link? Open it first so you join the right team.</p>
         <p id="membership-note" class="muted sm" hidden></p>
       </div>
@@ -382,15 +375,24 @@
     </section>
 
     <section id="view-home" class="view home" data-view-panel="home" hidden>
+      <div class="panel getting-started" id="getting-started"><div class="eyebrow">GET STARTED</div>
+        <ol class="gs-steps">
+          <li><strong>Link your PC.</strong> Install the Helmian spoke, then open <a href="#devices">Devices</a>. Agents run on your PC, so it needs to be on and linked.</li>
+          <li><strong>Add an agent.</strong> Open <a href="#desktop">Workspace</a>, pick the Team channel and press <em>+ Claude</em>, <em>+ ChatGPT</em>, <em>+ Grok</em> or <em>+ Gemini</em>.</li>
+          <li><strong>Connect shared memory.</strong> Add Scribe as a custom connector in your AI app. See <a href="#settings">Settings → Scribe shared memory</a>.</li>
+          <li><strong>Stay in charge.</strong> When an agent asks to do something on your PC, Guard asks you first in <a href="#approvals">Approvals</a>.</li>
+        </ol></div>
       <div class="panel"><div class="eyebrow">USAGE &amp; LIMITS</div><div id="home-usage"></div></div>
       <div class="panel"><div class="h-row"><span class="eyebrow">WHAT'S RUNNING</span><a href="#console" class="link-btn">Console →</a></div><div id="home-running"></div></div>
       <div class="panel"><div class="h-row"><span class="eyebrow">WAITING FOR YOU</span><a href="#approvals" class="link-btn">All approvals →</a></div><div id="home-approvals"></div></div>
       <div id="home-stats" class="cards3"></div>
+      <div class="empty empty-hint" data-empty-for="home-running" hidden><p class="t">Nothing running yet</p><p class="sm">When an agent starts work, it shows up here.</p><a class="btn sm" href="#desktop">Open Workspace</a></div>
     </section>
 
     <section id="view-overview" class="view" data-view-panel="overview" hidden>
       <h2>Overview</h2><div id="metrics" class="cards4"></div>
       <div class="panel"><div class="eyebrow">TODAY'S POSTURE</div><div id="posture" class="kv"></div></div>
+      <div class="empty empty-hint" data-empty-for="metrics" hidden><p class="t">No numbers yet</p><p class="sm">Your overview fills in once you link a PC and an agent does some work.</p><a class="btn sm" href="#devices">Link a PC</a></div>
     </section>
 
     <section id="view-workspace" class="view" data-view-panel="workspace" hidden>
@@ -404,7 +406,7 @@
       <div id="devices-empty" class="empty devices-empty">
         <p class="t">No Desktop connected yet</p>
         <p class="sm">Start with Connect phone, or type the eight-digit code from the Helmian desktop app.</p>
-        <p id="devices-clerk-note" class="sm devices-clerk-note">The live Desktop list fills in after the owner finishes the Clerk unify checklist.</p>
+        <p id="devices-clerk-note" class="sm devices-clerk-note">Your linked PCs will be listed here once you link one.</p>
         <div class="row-btns left" style="justify-content:center;margin-top:12px">
           <a class="btn primary sm" href="/app/pair">Connect phone</a>
           <a class="btn sm" href="/herald/">Open Remote Control</a>
@@ -419,7 +421,7 @@
       </div>
       <details class="panel show-details" id="devices-details">
         <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
-        <p class="muted sm">Until Clerk unify points Herald at the same keys as /app (see docs/CLERK_UNIFY.md in the repo), this list can stay empty or show a sign-in gap. Connect phone and enroll still work. After unify, reopen Devices to see live Desktops.</p>
+        <p class="muted sm">If this list stays empty after you link a PC, the PC list sign-in is not finished on the server yet (owner step: docs/CLERK_UNIFY.md). Connect phone and the eight-digit code still work.</p>
       </details>
     </section>
 
@@ -456,6 +458,17 @@
         <p class="muted sm">Use the plan you already pay for. You sign in on your own PC through each company's own app, so Helmian never sees your password or token. An API key still works as a backup.</p>
         <div id="providers-cards" class="cards"></div>
       </div>
+      <div class="panel scribe-card" id="scribe-panel"><div class="eyebrow">SCRIBE SHARED MEMORY</div>
+        <p class="muted sm">Scribe gives every AI you use the same memory and a shared mailbox. Add it once in each AI app as a custom connector.</p>
+        <div class="invite-new"><input id="scribe-url" readonly value="https://connect.helmian.cloud/mcp" aria-label="Scribe connector URL"><button id="scribe-copy" class="btn sm" type="button">Copy</button></div>
+        <ol class="gs-steps sm">
+          <li>In Claude, ChatGPT, Grok or Gemini, open the connectors settings and choose <em>Add custom connector</em>.</li>
+          <li>Paste the URL above and save.</li>
+          <li>Sign in when asked (OAuth), then type your own Scribe passphrase. Helmian never sees or stores it.</li>
+          <li>Back in chat, ask the AI to "check my Scribe mail" to test it.</li>
+        </ol>
+        <p class="muted sm">Your AI app may ask "allow this tool?" the first time. That is expected: you stay in charge.</p>
+      </div>
       <div class="panel"><div class="eyebrow">DESKTOP APP</div>
         <p class="muted sm">Link the desktop app for Team chat: press the button, then type the code in the EXE Team chat panel.</p>
         <div class="row-btns left"><button id="desktop-link" class="btn primary sm" type="button">Link desktop app</button></div>
@@ -473,6 +486,7 @@
 
     <section id="view-activity" class="view" data-view-panel="activity" hidden>
       <h2>Live activity</h2><div id="timeline" class="timeline"></div>
+      <div class="empty empty-hint" data-empty-for="timeline" hidden><p class="t">No activity yet</p><p class="sm">Every agent action and Guard decision appears here, live, as it happens.</p><a class="btn sm" href="#desktop">Start in Workspace</a></div>
     </section>
 
     <section id="view-evidence" class="view" data-view-panel="evidence" hidden>
@@ -483,6 +497,7 @@
       <h3>Checkpoints</h3>
       <div id="evidence-checkpoints" class="cards"></div>
       <p id="evidence-note" class="muted sm"></p>
+      <div class="empty empty-hint" data-empty-for="evidence" hidden><p class="t">No evidence yet</p><p class="sm">Evidence is the signed record of what agents did: actions, handoffs and checkpoints. It builds up as agents work.</p></div>
     </section>
 
     <section id="view-approvals" class="view" data-view-panel="approvals" hidden>
@@ -493,6 +508,7 @@
         <div id="pc-approvals" class="cards"></div>
       </div>
       <div id="approvals" class="cards"></div>
+      <div class="empty empty-hint" data-empty-for="approvals" hidden><p class="t">Nothing waiting for you</p><p class="sm">When an agent wants to do something that needs your OK, Guard puts it here with Allow and Deny. Nothing runs until you choose.</p></div>
     </section>
 
     <section id="view-upcoming" class="view" data-view-panel="upcoming" hidden>
@@ -509,6 +525,7 @@
       <h2>Integrations</h2>
       <p class="muted sm">Connect the things Helmian works with. Passwords and keys are never shown here.</p>
       <div id="integrations" class="int-page"></div>
+      <div class="empty empty-hint" data-empty-for="integrations" hidden><p class="t">Nothing connected yet</p><p class="sm">Link Discord or Slack from the Team channel, link a PC in Devices, and connect Scribe shared memory in Settings.</p><a class="btn sm" href="#settings">Open Settings</a></div>
     </section>
 
     
