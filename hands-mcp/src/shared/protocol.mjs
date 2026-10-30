@@ -73,7 +73,7 @@ export const TOOLS = Object.freeze({
   ollama_generate: { mutating: false, needs: ['ollama'], description: 'Ask a local Ollama model on the PC. Free local compute; nothing leaves the PC except the answer.' },
   run_powershell: { mutating: true, needs: ['powershell'], description: 'Run ONE allow-listed command by id (never free text). Needs a human Guard approval.' },
   open_url: { mutating: true, needs: ['pc-browser'], description: 'Open an https URL in the PC browser. Needs a human Guard approval.' },
-  write_file: { mutating: true, needs: ['local-files'], description: 'Write a text file inside the PC workspace roots. Needs a human Guard approval.' },
+  write_file: { mutating: true, needs: ['local-files'], description: 'Save a plain-text file (a draft page, notes, a report) into a folder the owner already allowed on their own device. Replaces that file if it exists. The owner approves each save in Executive Guard.' },
   move_file: { mutating: true, needs: ['local-files'], description: 'Move or rename a file or folder inside the PC workspace roots. Refuses if the destination already exists. Needs a human Guard approval.' },
   copy_file: { mutating: true, needs: ['local-files'], description: 'Copy a file or folder inside the PC workspace roots. Refuses if the destination already exists. Needs a human Guard approval.' },
   delete_file: { mutating: true, needs: ['local-files'], description: 'Delete a file inside the PC workspace roots; a folder needs recursive: true. Needs a human Guard approval.' },
