@@ -444,8 +444,18 @@
         <div id="invite-new" class="invite-new" hidden><input id="invite-url" readonly aria-label="Invite link"><button id="invite-copy" class="btn sm" type="button">Copy</button><a id="invite-sms" class="btn sm" href="#">Text it</a></div>
         <div id="invite-list" class="kv"></div>
       </div>
+      <div class="panel" id="setup-pc-panel"><div class="eyebrow">SET UP THIS PC</div>
+        <p class="muted sm">Installs the Helmian Spoke so your agents can work on this computer. Windows will ask you to allow the install; that is normal.</p>
+        <div class="row-btns left"><button id="setup-pc" class="btn primary" type="button">Set up this PC</button></div>
+        <ol id="setup-pc-steps" class="sm" hidden>
+          <li>Your download started: <span id="setup-pc-file">Helmian Spoke Setup</span>. Open it when it finishes.</li>
+          <li>When the installer asks, paste this pairing code: <code id="setup-pc-code" class="code">making code...</code> <button id="setup-pc-copy" class="btn ghost sm" type="button">Copy code</button></li>
+          <li>Press Next until it says Finished. The spoke starts by itself each time you sign in to Windows.</li>
+        </ol>
+        <p id="setup-pc-note" class="muted sm" role="status"></p>
+      </div>
       <div class="panel" id="providers-panel"><div class="eyebrow">AI PROVIDERS</div>
-        <p class="muted sm">Keys live on your runner or PC, never in the cloud. Connect a provider to let the bridge answer with it.</p>
+        <p class="muted sm">Use the plan you already pay for. You sign in on your own PC through each company's own app, so Helmian never sees your password or token. An API key still works as a backup.</p>
         <div id="providers-cards" class="cards"></div>
       </div>
       <div class="panel scribe-card" id="scribe-panel"><div class="eyebrow">SCRIBE SHARED MEMORY</div>

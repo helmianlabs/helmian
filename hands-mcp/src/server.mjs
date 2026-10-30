@@ -138,9 +138,23 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
     return next();
   };
   app.post('/spoke/v1/pair', express.json({ limit: '4kb' }), (req, res) => {
-    const r = spokeTokens.pair({ passphrase: String(req.body?.passphrase || ''), deviceId: req.body?.deviceId });
+    const r = spokeTokens.pair({ passphrase: String(req.body?.passphrase || ''), pairCode: req.body?.pairCode ? String(req.body.pairCode) : undefined, deviceId: req.body?.deviceId });
     if (!r.ok) return res.status(r.status).json({ error: r.error });
     return res.json({ token: r.token, deviceId: r.deviceId });
+  });
+  // Mint a 10-minute, single-use pairing code. Only the Helmian web app (holding
+  // PAIR_CODE_ISSUER_TOKEN, after checking the signed-in owner) may call this.
+  // Unset token = endpoint off (404), so nothing changes until the operator opts in.
+  app.post('/spoke/v1/pair-code', (req, res) => {
+    const issuer = config.pairCodeIssuerToken;
+    if (!issuer || typeof spokeTokens.issuePairCode !== 'function') return res.status(404).json({ error: 'not_enabled' });
+    const m = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || ''));
+    const a = createHash('sha256').update(m ? m[1] : '').digest();
+    const b = createHash('sha256').update(issuer).digest();
+    if (!m || !timingSafeEqual(a, b)) return res.status(401).json({ error: 'unauthorized' });
+    const r = spokeTokens.issuePairCode();
+    if (!r.ok) return res.status(r.status).json({ error: r.error });
+    return res.json({ code: r.code, expiresAt: r.expiresAt });
   });
   app.post('/spoke/v1/poll', spokeAuth, express.json({ limit: '16kb' }), async (req, res) => {
     const ctrl = new AbortController();

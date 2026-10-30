@@ -10,14 +10,14 @@
 [Setup]
 AppId={{EEE4DDE3-DB3E-453E-B88D-0C9146ECA332}
 AppName=Helmian Spoke
-AppVersion=1.0.2
+AppVersion=1.0.3
 AppPublisher=Helmian Labs
 DefaultDirName={localappdata}\Programs\HelmianSpoke
 DefaultGroupName=Helmian Spoke
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=output
-OutputBaseFilename=Helmian-Spoke-Setup-1.0.2-win-x64
+OutputBaseFilename=Helmian-Spoke-Setup-1.0.3-win-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -28,6 +28,11 @@ Source: "stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createa
 
 [Icons]
 Name: "{group}\Pair the Helmian Spoke"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" pair"; WorkingDir: "{app}"; Comment: "Recovery only: pair this PC again if pairing did not finish during setup."
+
+Name: "{group}\Sign in to Claude (your plan)"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" login claude"; WorkingDir: "{app}"
+Name: "{group}\Sign in to ChatGPT (your plan)"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" login chatgpt"; WorkingDir: "{app}"
+Name: "{group}\Sign in to Gemini (your Google account)"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" login gemini"; WorkingDir: "{app}"
+Name: "{group}\Sign in to SuperGrok (your plan)"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" login grok"; WorkingDir: "{app}"
 
 [UninstallRun]
 Filename: "schtasks.exe"; Parameters: "/Delete /TN HelmianSpoke /F"; Flags: runhidden; RunOnceId: "DelSpokeTask"
@@ -47,9 +52,11 @@ procedure InitializeWizard;
 begin
   PairPage := CreateInputQueryPage(wpWelcome,
     'Pair this PC',
-    'One passphrase, asked once, inside this install',
-    'The spoke pairs with your Helmian account using your hands passphrase - the same one as the memory connector. It is used once, here, and never stored.');
-  PairPage.Add('Hands passphrase:', True);
+    'Paste the pairing code from helmian.cloud',
+    'In Helmian, open Settings and press "Set up this PC". Paste the 8-letter code it shows (it works once, for 10 minutes). Owners can type the hands passphrase instead. It is used once, here, and never stored.');
+  PairPage.Add('Pairing code (or hands passphrase):', False);
+  { Setup.exe /PAIRCODE=ABCD-EFGH fills it in for you. }
+  PairPage.Values[0] := ExpandConstant('{param:PAIRCODE|}');
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -59,7 +66,7 @@ begin
   begin
     if Trim(PairPage.Values[0]) = '' then
     begin
-      MsgBox('Please enter your hands passphrase to pair this PC. It is asked once, inside this install, and never stored.', mbError, MB_OK);
+      MsgBox('Please paste the pairing code from helmian.cloud (Settings, Set up this PC), or your hands passphrase. It is used once, inside this install, and never stored.', mbError, MB_OK);
       Result := False;
     end;
   end;

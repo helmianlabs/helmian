@@ -3,6 +3,12 @@
 //   node bin/hands-spoke.mjs pair [--url https://hands.5-78-222-178.sslip.io] [--roots "E:\Helmion;D:\work"]
 //       asks for the hands passphrase (the same one as the memory connector) and saves
 //       %APPDATA%\Helmian\hands-spoke.json. Run once. The passphrase is never stored.
+//   node bin/hands-spoke.mjs pair --code ABCD-EFGH
+//       pairs with a 10-minute code from helmian.cloud (Settings, Set up this PC) instead of the passphrase.
+//   node bin/hands-spoke.mjs providers [--json]
+//       shows which official AI CLIs (Claude Code, Codex, Gemini CLI, Grok) are installed and signed in.
+//   node bin/hands-spoke.mjs login <claude|chatgpt|gemini|grok>
+//       opens that provider's own sign-in in a visible window (your subscription, no API key).
 //   node bin/hands-spoke.mjs pin-guard <ed25519 x>
 //       pins the Executive Guard public key. Until this is done every mutating job is refused.
 //   node bin/hands-spoke.mjs request-root <absolute folder> --reason "why"
@@ -22,6 +28,7 @@ import { readHidden } from '../src/hands/hidden-input.mjs';
 import { DEFAULT_HANDS_URL, defaultConfigPath, defaultRootGrantsPath, defaultSpokeDeviceId, pairSpoke, readSpokeConfig, startSpoke } from '../src/hands/pc-spoke.mjs';
 import { activateRootGrant, createRootRequest, loadRootGrants, revokeRootGrant, saveRootRequest } from '../src/hands/root-grants.mjs';
 import { verifyRootGrant } from '../hands-mcp/src/shared/protocol.mjs';
+import { looksLikePairCode, openProviderLogin, providerStatus } from '../src/hands/provider-cli.mjs';
 
 function flag(name) {
   const i = process.argv.indexOf(`--${name}`);
@@ -38,9 +45,26 @@ const cmd = process.argv[2];
 if (cmd === 'pair') {
   const url = (flag('url') || DEFAULT_HANDS_URL).replace(/\/+$/, '');
   const roots = (flag('roots') || process.env.HELMIAN_ROOT || process.cwd()).split(';').map((s) => s.trim()).filter(Boolean);
-  const passphrase = process.env.HELMIAN_HANDS_PASSPHRASE || (await readHidden('Hands passphrase: ')).trim();
-  const r = await pairSpoke({ url, passphrase, roots });
+  // Preferred: the 10-minute code from helmian.cloud (Settings, Set up this PC).
+  // Fallback: the hands passphrase. Either may be typed at the one prompt.
+  let pairCode = (flag('code') || process.env.HELMIAN_PAIR_CODE || '').trim();
+  let passphrase = process.env.HELMIAN_HANDS_PASSPHRASE || '';
+  if (!pairCode && !passphrase) {
+    const typed = (await readHidden('Pairing code from helmian.cloud (or hands passphrase): ')).trim();
+    if (looksLikePairCode(typed)) pairCode = typed; else passphrase = typed;
+  } else if (!pairCode && looksLikePairCode(passphrase)) { pairCode = passphrase; passphrase = ''; }
+  const r = await pairSpoke({ url, passphrase, pairCode: pairCode || undefined, roots });
   console.log(`Paired as ${r.deviceId}. Workspace roots: ${r.roots.join(', ')}. Saved ${r.configPath}. Restart the HelmianBridge service (or run this without "pair").`);
+} else if (cmd === 'providers') {
+  // Which official AI CLIs are on this PC and signed in (file presence only; contents are never read).
+  const rows = await providerStatus();
+  if (process.argv.includes('--json')) console.log(JSON.stringify({ providers: rows }));
+  else for (const r of rows) console.log(`${r.label.padEnd(22)} ${r.installed ? 'installed' : 'not installed'}${r.installed ? (r.signedIn ? ', signed in' : ', not signed in') : ''}${r.note ? `  (${r.note})` : ''}`);
+} else if (cmd === 'login') {
+  // Opens the provider's OWN sign-in (its official CLI) in a visible window. Helmian never sees the credential.
+  const r = await openProviderLogin(process.argv[3]);
+  console.log(r.message);
+  process.exit(r.ok ? 0 : 2);
 } else if (cmd === 'pin-guard') {
   const x = process.argv[3];
   if (!/^[A-Za-z0-9_-]{43}$/.test(x || '')) { console.error('Usage: pin-guard <43-char base64url Ed25519 x from Guard GET /v1/keys>'); process.exit(2); }
