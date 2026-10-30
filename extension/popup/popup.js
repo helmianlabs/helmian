@@ -435,15 +435,24 @@ function requestSignInPermissions(url) {
     } catch { resolve(false); }
   });
 }
-$('scribeSignIn').addEventListener('click', async () => {
+function scribeLoud(text) { const e = $('scribeError'); if (!text) { e.hidden = true; e.textContent = ''; return; } e.hidden = false; e.textContent = `Problem: ${text}`; $('scribeAuth').textContent = 'Not signed in.'; }
+$('scribeSignIn').addEventListener('click', () => {
+  // permissions.request is started SYNCHRONOUSLY here, before any await, so the
+  // click's user gesture is kept. Every failure below is shown in #scribeError.
   const url = $('scribeUrl').value.trim();
-  if (!url) { $('scribeAuth').textContent = 'Enter and save the Scribe URL first.'; return; }
-  const granted = await requestSignInPermissions(url);
-  if (!granted) { $('scribeAuth').textContent = 'Sign-in needs permission to reach Scribe and to open its sign-in window.'; return; }
-  await askWithPayload('helmion:scribe-settings', { settings: { baseUrl: url } });
-  $('scribeAuth').textContent = 'Opening the Scribe sign-in window…';
-  const r = await askWithPayload('helmion:scribe-signin', { action: 'signin' });
-  $('scribeAuth').textContent = r && r.ok ? 'Signed in (read-only).' : `Not signed in: ${r && r.error}`;
+  if (!url) { scribeLoud('Enter the Scribe URL first.'); return; }
+  const perm = requestSignInPermissions(url);
+  (async () => {
+    scribeLoud('');
+    const granted = await perm;
+    if (!granted) { scribeLoud('Guard was not allowed to reach Scribe and open its sign-in window. Click Sign in to Scribe again and choose Allow.'); return; }
+    const saved = await askWithPayload('helmion:scribe-settings', { settings: { baseUrl: url } });
+    if (!saved || !saved.ok) { scribeLoud(`Could not save the Scribe URL: ${saved && saved.error}`); return; }
+    $('scribeAuth').textContent = 'Opening the Scribe sign-in window…';
+    const r = await askWithPayload('helmion:scribe-signin', { action: 'signin' });
+    if (r && r.ok) { $('scribeAuth').textContent = 'Signed in (read-only).'; return; }
+    scribeLoud(`Not signed in. ${(r && r.error) || 'No answer from Guard\'s background service. Reload the extension and try again.'}`);
+  })().catch((e) => scribeLoud(`Sign-in stopped unexpectedly: ${e && e.message}`));
 });
 $('scribeSignOut').addEventListener('click', async () => {
   await askWithPayload('helmion:scribe-signin', { action: 'signout' });

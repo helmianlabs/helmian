@@ -122,3 +122,6 @@ footer { margin-top: 14px; border-top: 1px solid var(--stroke); padding-top: 10p
 .alerts { list-style: none; padding: 0; margin: 6px 0 0; max-height: 180px; overflow-y: auto; }
 .alerts .alert { border-left: 3px solid var(--faint); padding: 4px 6px; margin-bottom: 6px; font-size: 11px; overflow-wrap: anywhere; }
 .alerts .sev-critical, .alerts .sev-high { border-left-color: #d64545; }
+
+/* 0.6.2: sign-in failures are loud. */
+.loud-error { font-size: 15px; font-weight: 700; background: #5c1010; color: #fff; border: 3px solid #ff5b5b; border-radius: 8px; padding: 10px 12px; }
