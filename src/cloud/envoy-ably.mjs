@@ -189,6 +189,10 @@ export async function handleEnvoyAblyRoute({
     const { handleUserOAuthRoute } = await import('./user-oauth.mjs');
     if (await handleUserOAuthRoute({ request, response, requestUrl, send })) return true;
   }
+  if (requestUrl?.pathname?.startsWith('/api/admin/spoke/')) {
+    const { handleSpokeSetupRoute } = await import('./spoke-setup.mjs');
+    if (await handleSpokeSetupRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
+  }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleToolConnectionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleTenantAgentStateRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;

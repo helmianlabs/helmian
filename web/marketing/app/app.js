@@ -1637,75 +1637,116 @@ $('#desktop-link').onclick = async () => {
   catch { toast('Could not create a code — try again'); }
 };
 // ---- providers (runner vault presence) ----
+// Each provider is connected the way that provider officially allows (see
+// docs/NEW_USER_SETUP.md for sources). Subscription sign-in happens on the
+// user's PC, inside the provider's own CLI, started from the Helmian Spoke's
+// Start menu entry or `hands-spoke login <id>`. Helmian never collects the
+// subscription token (Anthropic and Google forbid that outright).
 const PROVIDER_META = [
-  ['gemini', 'Gemini'],
-  ['claude', 'Claude'],
-  ['openai', 'ChatGPT'],
-  ['grok', 'Grok'],
-  ['xai', 'xAI'],
+  { key: 'claude', label: 'Claude', plan: 'Claude Pro / Max', how: 'pc', login: 'claude', start: 'Sign in to Claude (your plan)', cli: 'Claude Code' },
+  { key: 'openai', label: 'ChatGPT', plan: 'ChatGPT Plus / Pro', how: 'pc', login: 'chatgpt', start: 'Sign in to ChatGPT (your plan)', cli: 'Codex CLI' },
+  { key: 'grok', label: 'Grok', plan: 'SuperGrok', how: 'pc', login: 'grok', start: 'Sign in to SuperGrok (your plan)', cli: 'Grok CLI' },
+  { key: 'gemini', label: 'Gemini', plan: 'Google account', how: 'pc', login: 'gemini', start: 'Sign in to Gemini (your Google account)', cli: 'Gemini CLI', keyNote: 'A free Gemini API key from Google AI Studio also works and costs nothing.' },
+  { key: 'antigravity', label: 'Antigravity', plan: 'Google Antigravity', how: 'none', note: 'Google does not allow other apps to use Antigravity sign-in. Keep using Antigravity in its own app; Helmian can still show its status from the desktop app.' },
+  { key: 'xai', label: 'xAI API', plan: 'xAI API key', how: 'key' },
 ];
+function providerKeyHelp(card, key) {
+  if (card.querySelector('.connect-help')) { card.querySelector('.connect-help').remove(); return; }
+  const help = el('div', 'connect-help');
+  help.append(el('p', 'muted sm', 'Your key never touches the cloud. On your PC, run:'));
+  const code = el('code', 'code', `node bin/runner-vault.mjs store ${key}`);
+  const copy = el('button', 'btn ghost sm', 'Copy command');
+  copy.type = 'button';
+  copy.onclick = async () => { try { await navigator.clipboard.writeText(code.textContent); toast('Command copied', 'ok'); } catch { toast('Copy failed'); } };
+  help.append(code, copy, el('p', 'muted sm', 'Paste your key when asked (input is hidden), then restart the bridge.'));
+  card.append(help);
+}
+function providerPcHelp(card, meta) {
+  if (card.querySelector('.connect-help')) { card.querySelector('.connect-help').remove(); return; }
+  const help = el('div', 'connect-help');
+  help.append(el('p', 'sm', `On the PC you set up: open the Start menu, find "Helmian Spoke", and click "${meta.start}".`));
+  help.append(el('p', 'muted sm', `${meta.cli} opens in its own window and asks you to sign in with ${meta.plan}. Finish there. If ${meta.cli} is missing, the window tells you the one command to install it.`));
+  const code = el('code', 'code', `node bin/hands-spoke.mjs login ${meta.login}`);
+  const copy = el('button', 'btn ghost sm', 'Copy command');
+  copy.type = 'button';
+  copy.onclick = async () => { try { await navigator.clipboard.writeText(code.textContent); toast('Command copied', 'ok'); } catch { toast('Copy failed'); } };
+  help.append(el('p', 'muted sm', 'Or run this in the spoke folder:'), code, copy);
+  card.append(help);
+}
 async function loadProviders() {
   const box = $('#providers-cards');
   let presence = [];
   try { const body = await api('/api/admin/envoy/runner/presence'); presence = Array.isArray(body.presence) ? body.presence : []; }
-  catch { box.replaceChildren(el('p', 'muted sm', 'Provider status is unavailable right now.')); return; }
-  const byProvider = new Map(presence.map((r) => [String(r.provider).toLowerCase(), r]));
-  box.replaceChildren(...PROVIDER_META.map(([key, label]) => {
+  catch { presence = null; }
+  const byProvider = new Map((presence || []).map((r) => [String(r.provider).toLowerCase(), r]));
+  box.replaceChildren(...PROVIDER_META.map((meta) => {
+    const { key, label } = meta;
     const row = byProvider.get(key);
     const connected = row?.connected === true;
     const card = el('article', 'card');
     const icon = agentIconFor(label);
     card.append(el('div', 'title', icon ? `${icon} ${label}` : label));
-    const meta = el('div', 'meta');
-    meta.append(el('span', `status ${connected ? 'ok' : ''}`, connected ? 'Connected' : 'Not connected'));
-    card.append(meta);
+    const status = meta.how === 'none' ? 'Not supported' : presence === null ? 'Status unavailable' : connected ? 'Connected' : 'Not connected';
+    const metaRow = el('div', 'meta');
+    metaRow.append(el('span', `status ${connected ? 'ok' : ''}`, status));
+    card.append(metaRow);
     if (connected && row?.updatedAt) card.append(el('div', 'meta muted sm', `since ${formatTime(row.updatedAt)}`));
-    if (!connected) {
-      const oauthBtn = el('button', 'btn primary sm', '');
-      oauthBtn.type = 'button';
-      // OAuth label per provider
-      const oauthLabels = {
-        gemini: 'Login with Google',
-        claude: 'Claude Subscription',
-        openai: 'Login with ChatGPT',
-        grok: 'Login with X',
-        xai: 'Login with X',
-      };
-      oauthBtn.textContent = oauthLabels[key] || 'Connect with OAuth';
-      oauthBtn.onclick = () => {
-        if (key === 'gemini') {
-          location.href = '/api/provider-oauth/gemini/start';
-        } else if (key === 'openai') {
-          location.href = '/api/provider-oauth/openai/start';
-        } else if (key === 'grok' || key === 'xai') {
-          location.href = '/api/provider-oauth/grok/start';
-        } else if (key === 'claude') {
-          toast('Run "claude setup-token" in your terminal, then paste the token using "Use API key" below.', 'info', 8000);
-        } else {
-          toast(`${label} OAuth is not available. Use API key below.`, 'info');
-        }
-      };
-      const keyBtn = el('button', 'btn ghost sm', 'Use API key');
-      keyBtn.type = 'button';
-      keyBtn.onclick = () => {
-        if (card.querySelector('.connect-help')) { card.querySelector('.connect-help').remove(); return; }
-        const help = el('div', 'connect-help');
-        help.append(el('p', 'muted sm', 'Your key never touches the cloud. On your runner or PC, run:'));
-        const code = el('code', 'code', `node bin/runner-vault.mjs store ${key}`);
-        const copy = el('button', 'btn ghost sm', 'Copy command');
-        copy.type = 'button';
-        copy.onclick = async () => { try { await navigator.clipboard.writeText(code.textContent); toast('Command copied', 'ok'); } catch { toast('Copy failed'); } };
-        help.append(code, copy);
-        help.append(el('p', 'muted sm', 'Paste your key when asked (input is hidden), then restart the bridge. Status updates on next start.'));
-        card.append(help);
-      };
-      const actions = el('div', 'row-btns left');
-      actions.append(oauthBtn, keyBtn);
-      card.append(actions);
+    if (meta.how === 'none') { card.append(el('p', 'muted sm', meta.note)); return card; }
+    if (connected) return card;
+    const actions = el('div', 'row-btns left');
+    if (meta.how === 'pc') {
+      const b = el('button', 'btn primary sm', `Sign in with ${meta.plan}`);
+      b.type = 'button';
+      b.onclick = () => providerPcHelp(card, meta);
+      actions.append(b);
     }
+    const keyBtn = el('button', meta.how === 'key' ? 'btn primary sm' : 'btn ghost sm', 'Use API key');
+    keyBtn.type = 'button';
+    keyBtn.onclick = () => providerKeyHelp(card, key);
+    actions.append(keyBtn);
+    card.append(actions);
+    if (meta.keyNote) card.append(el('p', 'muted sm', meta.keyNote));
     return card;
   }));
 }
+
+// ---- set up this PC (spoke download + one-time pairing code) ----
+function detectOs() {
+  const ua = `${navigator.userAgentData?.platform || ''} ${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+  if (ua.includes('win')) return 'windows';
+  if (ua.includes('mac')) return 'macos';
+  if (ua.includes('linux') || ua.includes('x11')) return 'linux';
+  return 'unknown';
+}
+if ($('#setup-pc')) $('#setup-pc').onclick = async () => {
+  const os = detectOs();
+  const note = $('#setup-pc-note');
+  if (os !== 'windows') {
+    note.textContent = os === 'macos' ? 'The Mac spoke is coming soon. Windows is ready now.' : os === 'linux' ? 'The Linux spoke is coming soon. Windows is ready now.' : 'Open this page on the Windows PC you want to set up.';
+    return;
+  }
+  $('#setup-pc-steps').hidden = false;
+  note.textContent = '';
+  const a = document.createElement('a');
+  a.href = '/api/admin/spoke/download?os=windows';
+  a.rel = 'noopener';
+  document.body.append(a); a.click(); a.remove();
+  const codeEl = $('#setup-pc-code');
+  codeEl.textContent = 'making code...';
+  try {
+    const r = await post('/api/admin/spoke/pair-code', {});
+    codeEl.textContent = r.code;
+    note.textContent = 'The code works once and runs out in 10 minutes. Press Set up this PC again for a new one.';
+  } catch (error) {
+    codeEl.textContent = 'not available';
+    note.textContent = error.status === 503 ? 'Pairing codes are not switched on yet. When the installer asks, type your hands passphrase instead.' : 'Could not make a pairing code right now. When the installer asks, type your hands passphrase instead.';
+  }
+};
+if ($('#setup-pc-copy')) $('#setup-pc-copy').onclick = async () => {
+  const t = $('#setup-pc-code').textContent;
+  if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(t)) return;
+  try { await navigator.clipboard.writeText(t); toast('Code copied', 'ok'); } catch { toast('Copy failed'); }
+};
 
 // ---- onboarding checklist (first run) ----
 async function loadOnboarding() {
