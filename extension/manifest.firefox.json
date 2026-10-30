@@ -22,6 +22,7 @@
         "https://chatgpt.com/*",
         "https://gemini.google.com/*",
         "https://grok.com/*",
+        "https://chat.mistral.ai/*",
         "https://www.perplexity.ai/*",
         "https://perplexity.ai/*"
       ],
