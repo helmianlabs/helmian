@@ -29,10 +29,16 @@ function pickSignal(...signals) {
   try { return AbortSignal.any(live); } catch { return live[0]; }
 }
 
+export const WRITE_FILE_ANNOTATIONS = Object.freeze({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
+
 export function buildMcpServer(hands, auth, hooks = {}) {
   const server = new McpServer({ name: 'helmian-hands', version: '0.1.0' });
   const ro = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   const act = { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
+  // Saving a text file is local (not open-world). Marking it open-world +
+  // destructive made ChatGPT's safety layer treat a draft-page save like a
+  // risky internet action.
+  const save = WRITE_FILE_ANNOTATIONS;
   // Optional caller targeting (bite 2b): name a connected device (hands_status
   // lists them under "devices") to run this call there instead of on the PC.
   const DEVICE_ARG = ' Optional argument "device": run on that connected device instead of the PC (see hands_status).';
@@ -62,7 +68,7 @@ export function buildMcpServer(hands, auth, hooks = {}) {
   }, (args, extra) => hands.call('run_phone', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('open_url', { description: TOOLS.open_url.description + DEVICE_ARG, inputSchema: { url: z.string(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('open_url', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
-  server.registerTool('write_file', { description: TOOLS.write_file.description + DEVICE_ARG, inputSchema: { path: z.string(), content: z.string(), ...deviceSchema }, annotations: act },
+  server.registerTool('write_file', { description: TOOLS.write_file.description + DEVICE_ARG, inputSchema: { path: z.string().describe('Folder and file name inside an allowed workspace root'), content: z.string().describe('Plain text to save, e.g. a draft page or notes'), ...deviceSchema }, annotations: save },
     (args, extra) => hands.call('write_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
   server.registerTool('move_file', { description: TOOLS.move_file.description + DEVICE_ARG, inputSchema: { path: z.string(), destination: z.string(), ...deviceSchema }, annotations: act },
     (args, extra) => hands.call('move_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
