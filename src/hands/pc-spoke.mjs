@@ -180,21 +180,47 @@ function runBinary(file, args, { timeoutMs = 30000, spawnImpl = spawn, maxBytes 
 
 const NO_PHONE = 'no phone found: no Android phone is connected to this PC, or the phone has not allowed USB debugging on it';
 
+// The bridge binary, found once per spoke run. The spoke runs as a
+// sign-in task, not from the owner's terminal, so its PATH may not carry
+// the Android SDK even when the owner uses adb every day; after the bare
+// name, look in the places the SDK installer and the usual package
+// managers put it. Null when nothing answers (callers then fall back to
+// the bare name so the error they report is the honest spawn failure).
+let adbBinCache = null;
+async function adbBin(spawnImpl) {
+  if (adbBinCache) return adbBinCache;
+  const candidates = ['adb'];
+  if (platform() === 'win32') {
+    const local = process.env.LOCALAPPDATA;
+    const home = process.env.USERPROFILE;
+    const pf = process.env['ProgramFiles(x86)'] || process.env.ProgramFiles;
+    if (local) candidates.push(join(local, 'Android', 'Sdk', 'platform-tools', 'adb.exe'));
+    if (home) candidates.push(join(home, 'scoop', 'apps', 'adb', 'current', 'adb.exe'));
+    if (pf) candidates.push(join(pf, 'Android', 'android-sdk', 'platform-tools', 'adb.exe'));
+  }
+  for (const bin of candidates) {
+    const r = await run(bin, ['version'], { timeoutMs: 5000, spawnImpl }).catch(() => ({ ok: false }));
+    if (r.ok) { adbBinCache = bin; return bin; }
+  }
+  return null;
+}
+
 async function phoneSerial(spawnImpl) {
-  const r = await run('adb', ['devices'], { spawnImpl });
+  const adb = (await adbBin(spawnImpl)) ?? 'adb';
+  const r = await run(adb, ['devices'], { spawnImpl });
   if (!r.ok) return { error: `the Android bridge (adb) did not answer on this PC: ${r.error}` };
   const serials = r.output.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\tdevice$/.test(l)).map((l) => l.split(/\s+/)[0]);
   if (!serials.length) return { error: NO_PHONE };
-  return { serial: serials[0], count: serials.length };
+  return { serial: serials[0], count: serials.length, adb };
 }
 
 async function phoneStatus(spawnImpl) {
   const found = await phoneSerial(spawnImpl);
   if (found.error) return { ok: false, error: found.error };
   const s = found.serial;
-  const model = await run('adb', ['-s', s, 'shell', 'getprop', 'ro.product.model'], { spawnImpl });
-  const battery = await run('adb', ['-s', s, 'shell', 'dumpsys', 'battery'], { spawnImpl });
-  const power = await run('adb', ['-s', s, 'shell', 'dumpsys', 'power'], { spawnImpl });
+  const model = await run(found.adb, ['-s', s, 'shell', 'getprop', 'ro.product.model'], { spawnImpl });
+  const battery = await run(found.adb, ['-s', s, 'shell', 'dumpsys', 'battery'], { spawnImpl });
+  const power = await run(found.adb, ['-s', s, 'shell', 'dumpsys', 'power'], { spawnImpl });
   const level = /level:\s*(\d+)/.exec(battery.output || '')?.[1];
   const awake = /mWakefulness=(\w+)/.exec(power.output || '')?.[1];
   return {
@@ -206,6 +232,30 @@ async function phoneStatus(spawnImpl) {
       `screen: ${awake ? (awake === 'Awake' ? 'on' : 'off') : 'unknown'}`,
     ].join('\n'),
   };
+}
+
+// The phone system log (logcat), dumped as it stands (-d: print and
+// exit, never a live tail the spoke would have to babysit). Read from
+// the end when it is too big for one result: keep the newest bytes and
+// say what was cut, the same honesty as the screen picture's shrink.
+async function phoneLogcat(spawnImpl, lines) {
+  const found = await phoneSerial(spawnImpl);
+  if (found.error) return { ok: false, error: found.error };
+  const r = await runBinary(found.adb, ['-s', found.serial, 'logcat', '-d', '-v', 'threadtime', '-t', String(lines)], { spawnImpl, timeoutMs: 45000, maxBytes: 16 * 1024 * 1024 });
+  if (!r.ok) return { ok: false, error: `the phone would not give its log: ${r.error}` };
+  const text = r.buffer.toString('utf8');
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.length <= MAX_OUTPUT_BYTES) return { ok: true, output: text };
+  const tail = buf.subarray(buf.length - (MAX_OUTPUT_BYTES - 128)).toString('utf8');
+  const nl = tail.indexOf('\n');
+  return { ok: true, output: `…[older log lines cut; showing the newest part of the last ${lines} lines]\n${nl >= 0 ? tail.slice(nl + 1) : tail}` };
+}
+
+async function phoneLogcatClear(spawnImpl) {
+  const found = await phoneSerial(spawnImpl);
+  if (found.error) return { ok: false, error: found.error };
+  const r = await run(found.adb, ['-s', found.serial, 'logcat', '-c'], { spawnImpl });
+  return r.ok ? { ok: true, output: 'phone log cleared' } : r;
 }
 
 function decodeXmlText(s) {
@@ -241,7 +291,7 @@ function phoneScreenScript(pngPath) {
 async function phoneScreen(spawnImpl) {
   const found = await phoneSerial(spawnImpl);
   if (found.error) return { ok: false, error: found.error };
-  const shot = await runBinary('adb', ['-s', found.serial, 'exec-out', 'screencap', '-p'], { spawnImpl, timeoutMs: 45000 });
+  const shot = await runBinary(found.adb, ['-s', found.serial, 'exec-out', 'screencap', '-p'], { spawnImpl, timeoutMs: 45000 });
   if (!shot.ok) return { ok: false, error: `the phone would not give its screen picture: ${shot.error}` };
   if (!shot.buffer.length) return { ok: false, error: 'the phone returned an empty screen picture (its screen may be off or locked)' };
   const tmp = join(tmpdir(), `helmian-phone-screen-${process.pid}.png`);
@@ -454,23 +504,24 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
             case 'phone-layout': {
               const found = await phoneSerial(spawnImpl);
               if (found.error) return { ok: false, error: found.error };
-              const dump = await runBinary('adb', ['-s', found.serial, 'exec-out', 'uiautomator', 'dump', '/dev/tty'], { spawnImpl });
+              const dump = await runBinary(found.adb, ['-s', found.serial, 'exec-out', 'uiautomator', 'dump', '/dev/tty'], { spawnImpl });
               if (!dump.ok) return { ok: false, error: `the phone would not describe its screen: ${dump.error}` };
               const lines = layoutLines(dump.buffer.toString('utf8'));
               return lines.length
                 ? { ok: true, output: cap(lines.join('\n')) }
                 : { ok: false, error: 'the phone described an empty screen (it may be locked or still waking up)' };
             }
+            case 'phone-logcat': return phoneLogcat(spawnImpl, a.lines);
             case 'phone-tap': {
               const found = await phoneSerial(spawnImpl);
               if (found.error) return { ok: false, error: found.error };
-              const r = await run('adb', ['-s', found.serial, 'shell', 'input', 'tap', String(a.x), String(a.y)], { spawnImpl });
+              const r = await run(found.adb, ['-s', found.serial, 'shell', 'input', 'tap', String(a.x), String(a.y)], { spawnImpl });
               return r.ok ? { ok: true, output: `tapped at ${a.x}, ${a.y}` } : r;
             }
             case 'phone-swipe': {
               const found = await phoneSerial(spawnImpl);
               if (found.error) return { ok: false, error: found.error };
-              const r = await run('adb', ['-s', found.serial, 'shell', 'input', 'swipe', String(a.fromX), String(a.fromY), String(a.toX), String(a.toY), '300'], { spawnImpl });
+              const r = await run(found.adb, ['-s', found.serial, 'shell', 'input', 'swipe', String(a.fromX), String(a.fromY), String(a.toX), String(a.toY), '300'], { spawnImpl });
               return r.ok ? { ok: true, output: `swiped from ${a.fromX}, ${a.fromY} to ${a.toX}, ${a.toY}` } : r;
             }
             case 'phone-type': {
@@ -478,9 +529,10 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
               if (found.error) return { ok: false, error: found.error };
               const typed = phoneTypeArg(a.text);
               if (typed == null) return { ok: false, error: "phone-type can only type plain letters, numbers, spaces and . , ! ? @ ' _ - + / : ; ( ) — one of those characters was in the text" };
-              const r = await run('adb', ['-s', found.serial, 'shell', 'input', 'text', typed], { spawnImpl });
+              const r = await run(found.adb, ['-s', found.serial, 'shell', 'input', 'text', typed], { spawnImpl });
               return r.ok ? { ok: true, output: `typed ${a.text.length} characters` } : r;
             }
+            case 'phone-logcat-clear': return phoneLogcatClear(spawnImpl);
             default:
               return { ok: false, error: 'command not on the PC allow-list' };
           }
@@ -630,8 +682,8 @@ async function detectCapabilities(fetchImpl) {
   if (platform() === 'win32') caps.push('powershell', POWERSHELL_READ_CAPABILITY, 'pc-browser');
   // The phone capability means the Android bridge answers on this PC; an
   // actually-connected phone is a per-call question (phone-status).
-  const adb = await run('adb', ['version'], { timeoutMs: 5000 }).catch(() => ({ ok: false }));
-  if (adb.ok) caps.push('phone');
+  const adb = await adbBin().catch(() => null);
+  if (adb) caps.push('phone');
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 1500);
