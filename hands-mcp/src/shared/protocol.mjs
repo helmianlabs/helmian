@@ -70,14 +70,17 @@ export function isReadOnlyCall(tool, args) {
 // like run_powershell. One registry, split by each entry's `mutating` flag;
 // validateArgs refuses a command on the wrong tool, fail closed.
 // Arg kinds: 'coord' = a screen coordinate (integer 0..12000, no default);
-// 'text' = words to type (plain string, capped in validateArgs).
+// 'text' = words to type (plain string, capped in validateArgs);
+// 'lines' = a log line count (integer 100..20000, defaults to 2000).
 export const PHONE_COMMANDS = Object.freeze({
   'phone-status': { mutating: false, args: {}, summary: 'is the phone there: connected or not, which phone, battery, screen on or off' },
   'phone-screen': { mutating: false, args: {}, summary: 'a picture of the phone screen right now (small JPEG, base64, with its size)' },
   'phone-layout': { mutating: false, args: {}, summary: 'what is on the phone screen in words: the text, buttons and fields, and where each one sits' },
+  'phone-logcat': { mutating: false, args: { lines: 'lines' }, summary: 'the phone system log (logcat): what the phone and its apps have been doing and saying, newest last' },
   'phone-tap': { mutating: true, args: { x: 'coord', y: 'coord' }, summary: 'tap the phone screen at one spot' },
   'phone-swipe': { mutating: true, args: { fromX: 'coord', fromY: 'coord', toX: 'coord', toY: 'coord' }, summary: 'swipe the phone screen from one spot to another' },
   'phone-type': { mutating: true, args: { text: 'text' }, summary: 'type words into the phone where the cursor already sits' },
+  'phone-logcat-clear': { mutating: true, args: {}, summary: 'clear the phone system log so the next look starts clean' },
 });
 
 export const PHONE_READ_COMMANDS = Object.freeze(Object.keys(PHONE_COMMANDS).filter((id) => !PHONE_COMMANDS[id].mutating));
@@ -125,6 +128,11 @@ function validatePhoneArgs(a, wantMutating) {
     if (kind === 'coord') {
       const n = Number(inArgs[k]);
       if (!Number.isInteger(n) || n < 0 || n > 12000) throw new ArgError(`args.${k} must be a screen coordinate (integer 0..12000)`);
+      out[k] = n;
+    }
+    if (kind === 'lines') {
+      const n = inArgs[k] == null ? 2000 : Number(inArgs[k]);
+      if (!Number.isInteger(n) || n < 100 || n > 20000) throw new ArgError(`args.${k} must be a line count (integer 100..20000)`);
       out[k] = n;
     }
     if (kind === 'text') out[k] = str(inArgs[k], `args.${k}`, 1000);
