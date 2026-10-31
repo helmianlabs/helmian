@@ -22,7 +22,7 @@
 
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { constants as fsConstants } from 'node:fs';
+import { constants as fsConstants, existsSync } from 'node:fs';
 import { copyFile, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, platform, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -487,6 +487,12 @@ export function createExecutor({ roots, grantedRoots = [], rootGrantsPath = null
             const script = `$log = Get-ChildItem -LiteralPath '${q}' -Filter '.helmian-eas-build-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if (!$log) { 'no spoke-started EAS build log in this repo' } else { "log: $($log.Name) - last write $($log.LastWriteTime)"; Get-Content -LiteralPath $log.FullName -Tail 40 }`;
             return run('powershell.exe', [...PS, script], { spawnImpl });
           }
+          // Free text (Troy's full-access order): the script text arrives as
+          // an argument and runs through the same spawn path as every table
+          // script — one -Command argument, shell: false. It reached here
+          // only behind a verified human Guard approval for these exact
+          // arguments (the gate above), never on the read-only fast path.
+          if (commandId === 'run-command') return run('powershell.exe', [...PS, a.command], { spawnImpl });
           if (PS_SCRIPTS[commandId]) return run('powershell.exe', [...PS, PS_SCRIPTS[commandId]], { spawnImpl });
           return { ok: false, error: 'command not on the PC allow-list' };
         }
@@ -677,6 +683,37 @@ export async function buildScopeSummary({ roots = [], rootGrantsPath = null, gua
   });
 }
 
+// ─── Full-PC scope: the pick made real ───────────────────────────────────────
+//
+// Until now the scope pick was report-only: deriveScopeTier named the tier
+// for the hub report and confinePath never looked at it. Troy's full-access
+// order makes the full-pc pick real: when the pick is full-pc, the spoke's
+// roots expand AT STARTUP to every drive root that exists on this machine,
+// in addition to the configured roots — a drive plugged in later joins on
+// the next Bridge start. Any other pick (or none) leaves the configured
+// roots exactly as they were. The secret-path refusal inside confinePath is
+// untouched: widened roots widen reach, not the secrets fence.
+
+/** Every drive root that exists right now (win32: probe A:\ through Z:\). */
+export function existingDriveRoots({ platformName = platform(), exists = existsSync } = {}) {
+  if (platformName !== 'win32') return [];
+  const drives = [];
+  for (let code = 65; code <= 90; code += 1) {
+    const root = `${String.fromCharCode(code)}:\\`;
+    let there = false;
+    try { there = !!exists(root); } catch { there = false; }
+    if (there) drives.push(root);
+  }
+  return drives;
+}
+
+/** The roots in force for a spoke start: full-pc expands, everything else is identity. */
+export function expandRootsForScope({ roots = [], scopePick = null, driveRoots = null } = {}) {
+  if (deriveScopeTier({ scopePick }) !== 'full-pc') return [...roots];
+  const drives = driveRoots ?? existingDriveRoots();
+  return [...new Set([...roots, ...drives])];
+}
+
 async function detectCapabilities(fetchImpl) {
   const caps = ['local-files'];
   if (platform() === 'win32') caps.push('powershell', POWERSHELL_READ_CAPABILITY, 'pc-browser');
@@ -695,11 +732,13 @@ async function detectCapabilities(fetchImpl) {
 }
 
 /** Long-poll loop. Returns { stop }. */
-export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor, scopeProvider = null, heartbeat = null } = {}) {
-  // heartbeat({ connected, status }) after each poll answer, so the installer can
-  // check the spoke really reached the hub. It must never break polling.
-  const beat = (connected, status) => { try { heartbeat?.({ connected, status }); } catch { /* ignore */ } };
-  const roots = config.roots?.length ? config.roots : [process.env.HELMIAN_ROOT || process.cwd()];
+export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor, scopeProvider = null } = {}) {
+  // A full-pc scope pick expands the configured roots to every drive root
+  // that exists (expandRootsForScope); any other pick leaves them untouched.
+  const roots = expandRootsForScope({
+    roots: config.roots?.length ? config.roots : [process.env.HELMIAN_ROOT || process.cwd()],
+    scopePick: config.scope ?? null,
+  });
   const deviceId = config.deviceId || defaultSpokeDeviceId();
   const rootGrantsPath = config.rootGrantsPath || defaultRootGrantsPath();
   const exec = executor || createExecutor({ roots, rootGrantsPath, rootGrantDeviceId: deviceId, guardPublicKeyX: config.guardPublicKeyX || null, guardDeviceId: config.guardDeviceId || 'hands-mcp', fetchImpl, usedDecisionsPath: config.usedDecisionsPath || defaultUsedDecisionsPath() });
@@ -734,7 +773,6 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
         if (stopped) break;
         ctrl = new AbortController();
         const res = await post('/spoke/v1/poll', { deviceId, capabilities: caps, ...(pollScope ? { scope: pollScope } : {}) }, ctrl.signal);
-        beat(res.ok, res.status);
         if (res.status === 401) { log('the hands server rejected this PC (401). Re-pair with: node bin/hands-spoke.mjs pair'); await new Promise((r) => setTimeout(r, 60000)); continue; }
         if (!res.ok) throw new Error(`poll ${res.status}`);
         const { job } = await res.json();
@@ -746,7 +784,6 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
         await post('/spoke/v1/result', { jobId: job.id, ...result });
       } catch (e) {
         if (stopped) break;
-        beat(false, 0);
         log(`connection problem (${e.message}); retrying in ${backoff / 1000}s`);
         await new Promise((r) => setTimeout(r, backoff));
         backoff = Math.min(backoff * 2, 60000);

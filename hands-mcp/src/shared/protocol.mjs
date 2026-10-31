@@ -43,6 +43,12 @@ export const POWERSHELL_COMMANDS = Object.freeze({
   'toolchain-versions': { readOnly: true, args: {}, summary: 'node, npm, npx and eas versions on the PC' },
   'eas-build': { args: { repo: 'path' }, summary: 'start an EAS Android preview build in a repo (detached; output logged in the repo)' },
   'eas-build-status': { readOnly: true, args: { repo: 'path' }, summary: 'tail of the latest spoke-started EAS build log in a repo, with its exit marker' },
+  // Free text (Troy's full-access order, 2026-10-31): the command text is an
+  // argument, not a table entry. Deliberately NOT readOnly — every run is a
+  // change-class action behind a human Guard approval whose card quotes the
+  // exact text (see describeHandsAction), and the spoke re-verifies that
+  // approval against its pinned Guard key before anything runs.
+  'run-command': { args: { command: 'text' }, summary: 'run one PowerShell command given as free text (Guard-approved; the card quotes the text)' },
 });
 
 // Read-only allow-list (Troy, 2026-10-30: "if it's read-only, the user doesn't
@@ -91,7 +97,7 @@ export const TOOLS = Object.freeze({
   read_file: { mutating: false, needs: ['local-files'], description: 'Read a text file inside the PC workspace roots (secrets paths refused, 64 KB cap).' },
   search_files: { mutating: false, needs: ['local-files'], description: 'Search inside the PC workspace roots: match file names by glob and/or file text by a plain-text query (secrets paths refused, results capped).' },
   ollama_generate: { mutating: false, needs: ['ollama'], description: 'Ask a local Ollama model on the PC. Free local compute; nothing leaves the PC except the answer.' },
-  run_powershell: { mutating: true, needs: ['powershell'], description: 'Run ONE allow-listed command by id (never free text). Needs a human Guard approval.' },
+  run_powershell: { mutating: true, needs: ['powershell'], description: 'Run ONE command by id: an allow-listed command, or free PowerShell text via the run-command id. Needs a human Guard approval (read-only allow-listed commands excepted).' },
   open_url: { mutating: true, needs: ['pc-browser'], description: 'Open an https URL in the PC browser. Needs a human Guard approval.' },
   write_file: { mutating: true, needs: ['local-files'], description: 'Save a plain-text file (a draft page, notes, a report) into a folder the owner already allowed on their own device. Replaces that file if it exists. The owner approves each save in Executive Guard.' },
   move_file: { mutating: true, needs: ['local-files'], description: 'Move or rename a file or folder inside the PC workspace roots. Refuses if the destination already exists. Needs a human Guard approval.' },
@@ -165,6 +171,7 @@ export function validateArgs(tool, args = {}) {
       const out = {};
       for (const [k, kind] of Object.entries(spec.args)) {
         if (kind === 'path') out[k] = str(inArgs[k], `args.${k}`, 1024);
+        if (kind === 'text') out[k] = str(inArgs[k], `args.${k}`, 2000);
         if (kind === 'int') {
           const n = inArgs[k] == null ? 10 : Number(inArgs[k]);
           if (!Number.isInteger(n) || n < 1 || n > 50) throw new ArgError(`args.${k} must be 1..50`);
@@ -251,6 +258,10 @@ export function validateArgs(tool, args = {}) {
 
 const SUMMARY_MAX_CHARS = 460; // Guard's hard limit is 500; keep margin.
 const SNIPPET_MAX_CHARS = 80;
+// A free-text run-command is approved BY its text, so the card quotes far
+// more of it than a content snippet: enough to read the whole command in
+// the normal case, inside the summary cap with the prefix and cut marker.
+const COMMAND_QUOTE_MAX_CHARS = 300;
 
 // Detection-only port of the secret shapes Executive Guard refuses in a
 // summary (action.mjs via extension/background/redact.js: every redaction
@@ -327,6 +338,24 @@ export function describeHandsAction(tool, args, { snippets = true } = {}) {
       rich = `hands make_dir → ${displayPath(args.path)}`;
       break;
     case 'run_powershell': {
+      if (args.commandId === 'run-command') {
+        // The command text IS what the human approves: quote it on the card,
+        // never a bare 'run-command' label. A command longer than the quote
+        // is cut at the quote limit and marked with an explicit '…cut' (and
+        // a command whose text trips Guard's secret shapes degrades through
+        // the normal path below: snippets off, then the byte count only).
+        const command = String(args.args?.command ?? '');
+        if (!snippets) {
+          rich = `hands run_powershell run-command (${Buffer.byteLength(command, 'utf8')} bytes; command text not shown)`;
+          break;
+        }
+        const cleaned = command.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
+        const quoted = sanitizeSnippet(command, COMMAND_QUOTE_MAX_CHARS);
+        rich = quoted
+          ? `hands run_powershell run-command: "${quoted}"${cleaned.length > COMMAND_QUOTE_MAX_CHARS ? ' …cut' : ''}`
+          : `hands run_powershell run-command (${Buffer.byteLength(command, 'utf8')} bytes; command text not shown)`;
+        break;
+      }
       const bits = Object.entries(args.args || {}).map(([k, v]) => `${k}: ${v}`);
       rich = bits.length ? `hands run_powershell ${args.commandId} (${bits.join(', ')})` : legacy;
       break;
@@ -518,15 +547,4 @@ export function scopeSummariesEqual(a, b) {
   return a.tier === b.tier
     && a.roots.length === b.roots.length && a.roots.every((r, i) => r === b.roots[i])
     && a.grants.length === b.grants.length && a.grants.every((r, i) => r === b.grants[i]);
-}
-
-/**
- * Mask every secret shape Guard refuses (same list as above) so text can be
- * mailed: used for the result/error bodies hands mails back through Scribe.
- * Scribe redacts again on its side; this is the hub's own first pass.
- */
-export function redactSecrets(text) {
-  let out = String(text ?? '');
-  for (const p of GUARD_REFUSED_PATTERNS) out = out.replace(new RegExp(p.source, p.flags.includes('g') ? p.flags : `${p.flags}g`), '[redacted]');
-  return out;
 }
