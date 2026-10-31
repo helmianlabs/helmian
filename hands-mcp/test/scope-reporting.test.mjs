@@ -20,7 +20,7 @@ import { createApp } from '../src/server.mjs';
 import { createSpokeTokens } from '../src/spoke-tokens.mjs';
 import { loadConfig } from '../src/config.mjs';
 import { cleanScopeSummary } from '../src/shared/protocol.mjs';
-import { buildScopeSummary, deriveScopeTier, pairSpoke, readSpokeConfig, startSpoke } from '../../src/hands/pc-spoke.mjs';
+import { buildScopeSummary, deriveScopeTier, existingDriveRoots, expandRootsForScope, pairSpoke, readSpokeConfig, startSpoke } from '../../src/hands/pc-spoke.mjs';
 import { activateRootGrant } from '../../src/hands/root-grants.mjs';
 import { ROOT_GRANT_AUDIENCE } from '../src/shared/protocol.mjs';
 import { mockGuard } from './helpers.mjs';
@@ -317,4 +317,45 @@ test('end to end: a real spoke\'s scope lands in the audit once, and a wider res
   assert.equal(app.audit.rows().filter((r) => r.event === 'scope.reported').length, 2);
   second.stop();
   await app.close();
+});
+
+// ─── Full-PC made real: the pick expands the roots at spoke start ───────────
+
+test('existingDriveRoots probes A: through Z: and keeps only the drives that answer (mocked)', () => {
+  const present = new Set(['C:\\', 'D:\\', 'F:\\']);
+  assert.deepEqual(existingDriveRoots({ platformName: 'win32', exists: (p) => present.has(p) }), ['C:\\', 'D:\\', 'F:\\']);
+  assert.deepEqual(existingDriveRoots({ platformName: 'win32', exists: () => false }), []);
+  assert.deepEqual(existingDriveRoots({ platformName: 'linux', exists: () => true }), []);
+  assert.deepEqual(existingDriveRoots({ platformName: 'win32', exists: () => { throw new Error('nope'); } }), []);
+});
+
+test('expandRootsForScope: full-pc expands to existing drives only; every other pick changes nothing', () => {
+  const configured = ['C:\\Users\\troyh'];
+  const drives = ['C:\\', 'D:\\', 'F:\\'];
+  assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'full-pc', driveRoots: drives }), ['C:\\Users\\troyh', 'C:\\', 'D:\\', 'F:\\']);
+  assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'full', driveRoots: drives }), ['C:\\Users\\troyh', 'C:\\', 'D:\\', 'F:\\']);
+  assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'folders', driveRoots: drives }), configured);
+  assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'none', driveRoots: drives }), configured);
+  assert.deepEqual(expandRootsForScope({ roots: configured, driveRoots: drives }), configured);
+  // A configured root that is also a drive root is not duplicated.
+  assert.deepEqual(expandRootsForScope({ roots: ['D:\\'], scopePick: 'full-pc', driveRoots: drives }), ['D:\\', 'C:\\', 'F:\\']);
+});
+
+test('startSpoke: a full-pc pick reports the full-pc tier on every poll', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scope-poll-'));
+  const root = join(dir, 'root');
+  await mkdir(root);
+  const bodies = [];
+  const spoke = startSpoke({
+    config: { url: 'http://hub.test', token: 't', deviceId: 'pc-test', roots: [root], scope: 'full-pc', rootGrantsPath: join(dir, 'roots.grants.json'), usedDecisionsPath: join(dir, 'used.json') },
+    fetchImpl: fakeHubFetch(bodies),
+    log: () => {},
+  });
+  await sleep(200);
+  spoke.stop();
+  assert.ok(bodies.length >= 1, 'expected at least one poll');
+  for (const body of bodies) {
+    assert.equal(body.scope.tier, 'full-pc');
+    assert.ok(body.scope.roots.includes(root), 'the configured root stays in force under the expansion');
+  }
 });

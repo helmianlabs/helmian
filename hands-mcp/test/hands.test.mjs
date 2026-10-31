@@ -18,7 +18,7 @@ import { createHands } from '../src/hands.mjs';
 import { createApp } from '../src/server.mjs';
 import { createSpokeTokens } from '../src/spoke-tokens.mjs';
 import { confinePath, createExecutor, pairSpoke, readSpokeConfig, startSpoke } from '../../src/hands/pc-spoke.mjs';
-import { buildGuardAction, describeHandsAction, guardActionHash, PHONE_ACT_COMMANDS, PHONE_READ_COMMANDS, POWERSHELL_COMMANDS, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
+import { buildGuardAction, describeHandsAction, guardActionHash, isReadOnlyCall, PHONE_ACT_COMMANDS, PHONE_READ_COMMANDS, POWERSHELL_COMMANDS, POWERSHELL_READ_COMMANDS, TOOLS, validateArgs } from '../src/shared/protocol.mjs';
 import { listen, mockGuard, pkce } from './helpers.mjs';
 
 const PASS = 'correct horse battery staple';
@@ -670,7 +670,7 @@ function fakeSpawnChild(output = '') {
 }
 
 test('the powershell allow-list carries restart-bridge with no arguments, and run_powershell stays Guard-gated', () => {
-  assert.deepEqual(Object.keys(POWERSHELL_COMMANDS).sort(), ['disk-free', 'eas-build', 'eas-build-status', 'git-log', 'git-status', 'list-processes', 'ollama-list', 'restart-bridge', 'toolchain-versions']);
+  assert.deepEqual(Object.keys(POWERSHELL_COMMANDS).sort(), ['disk-free', 'eas-build', 'eas-build-status', 'git-log', 'git-status', 'list-processes', 'ollama-list', 'restart-bridge', 'run-command', 'toolchain-versions']);
   assert.deepEqual(POWERSHELL_COMMANDS['restart-bridge'].args, {});
   assert.equal(TOOLS.run_powershell.mutating, true);
   assert.deepEqual(validateArgs('run_powershell', { commandId: 'restart-bridge' }), { commandId: 'restart-bridge', args: {} });
@@ -700,6 +700,68 @@ test('restart-bridge runs its one fixed script, and only behind a human Guard ap
   assert.equal(calls[0].file, 'powershell.exe');
   assert.deepEqual(calls[0].argv.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
   assert.equal(calls[0].argv[3], RESTART_BRIDGE_SCRIPT);
+});
+
+// ---- run_powershell free text: run-command (Troy's full-access order) ----
+// One free-text entry joins the registry: the command text is an argument,
+// deliberately NOT read-only — every run is a change-class action behind a
+// human Guard approval — and the approval card quotes the actual text.
+
+test('run-command validates its free-text command argument and rejects empty or oversized text', () => {
+  assert.deepEqual(
+    validateArgs('run_powershell', { commandId: 'run-command', args: { command: 'Get-Date' } }),
+    { commandId: 'run-command', args: { command: 'Get-Date' } },
+  );
+  assert.throws(() => validateArgs('run_powershell', { commandId: 'run-command' }), /command is required/);
+  assert.throws(() => validateArgs('run_powershell', { commandId: 'run-command', args: {} }), /command is required/);
+  assert.throws(() => validateArgs('run_powershell', { commandId: 'run-command', args: { command: '   ' } }), /command is required/);
+  assert.throws(() => validateArgs('run_powershell', { commandId: 'run-command', args: { command: 'x'.repeat(2001) } }), /longer than 2000 characters/);
+  assert.throws(() => validateArgs('run_powershell', { commandId: 'run-command', args: { command: 'Get-Date', extra: 1 } }), /unexpected argument args\.extra/);
+});
+
+test('run-command is not read-only: no Guard approval, no run; with one, the text reaches powershell unchanged', async () => {
+  assert.equal(POWERSHELL_COMMANDS['run-command'].readOnly, undefined);
+  assert.ok(!POWERSHELL_READ_COMMANDS.includes('run-command'));
+  assert.equal(isReadOnlyCall('run_powershell', validateArgs('run_powershell', { commandId: 'run-command', args: { command: 'Get-Date' } })), false);
+
+  const guard = mockGuard();
+  const root = await workspace();
+  const calls = [];
+  const spawnImpl = (file, argv, opts) => { calls.push({ file, argv, opts }); return fakeSpawnChild('done'); };
+  const exec = createExecutor({ roots: [root], guardPublicKeyX: guard.x, spawnImpl });
+  const text = "Get-ChildItem -LiteralPath 'E:\\' | Select-Object -First 3";
+  const args = { commandId: 'run-command', args: { command: text } };
+
+  // No decision: refused, and powershell never spawns.
+  const refused = await exec.execute({ tool: 'run_powershell', args, nonce: 'c'.repeat(20), guardDecision: null });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /malformed/);
+  assert.equal(calls.length, 0);
+
+  // A human approval for these exact arguments: the text runs unchanged,
+  // through the same single-argument, no-shell spawn as every table script.
+  const iat = Math.floor(Date.now() / 1000);
+  const job = { tool: 'run_powershell', args, nonce: 'c'.repeat(20), guardDecision: guard.forge({ decisionId: 'rc-1', verdict: 'allow', actionHash: guardActionHash(buildGuardAction('run_powershell', args)), deviceId: 'hands-mcp', nonce: 'c'.repeat(20), iat, exp: iat + 300, approvalId: 'a', decidedBy: 'troy' }) };
+  const done = await exec.execute(job);
+  assert.equal(done.ok, true, done.error);
+  assert.equal(done.execution.status, 'succeeded');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, 'powershell.exe');
+  assert.deepEqual(calls[0].argv, ['-NoProfile', '-NonInteractive', '-Command', text]);
+  assert.equal(calls[0].opts.shell, false);
+});
+
+test('the run-command approval card quotes the command itself, cut with an explicit marker when long', () => {
+  assert.equal(
+    buildGuardAction('run_powershell', { commandId: 'run-command', args: { command: 'Get-Date' } }).summary,
+    'hands run_powershell run-command: "Get-Date"',
+  );
+  const longText = `Write-Output '${'x'.repeat(400)}'`;
+  const longCard = buildGuardAction('run_powershell', { commandId: 'run-command', args: { command: longText } }).summary;
+  assert.ok(longCard.startsWith('hands run_powershell run-command: "Write-Output'), longCard);
+  assert.ok(longCard.includes('…cut'), longCard);
+  assert.ok(longCard.length <= 460, `summary was ${longCard.length} chars`);
+  assert.ok(!longCard.includes('x'.repeat(400)), 'the card quoted the whole command instead of cutting it');
 });
 
 // ─── Approval-summary enrichment (folded in from the deployed hub) ──────────

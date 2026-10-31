@@ -13,9 +13,9 @@ const READS = ['git-status', 'git-log', 'disk-free', 'list-processes', 'ollama-l
 
 test('read-only allow-list is exactly the look-only commands', () => {
   assert.deepEqual([...POWERSHELL_READ_COMMANDS].sort(), [...READS].sort());
-  for (const id of ['restart-bridge', 'eas-build']) {
+  for (const id of ['restart-bridge', 'eas-build', 'run-command']) {
     assert.equal(POWERSHELL_COMMANDS[id].readOnly, undefined);
-    assert.equal(isReadOnlyCall('run_powershell', { commandId: id, args: {} }), false);
+    assert.equal(isReadOnlyCall('run_powershell', { commandId: id, args: id === 'run-command' ? { command: 'Get-Date' } : {} }), false);
   }
   assert.equal(isReadOnlyCall('write_file', { commandId: 'disk-free' }), false);
   assert.equal(isReadOnlyCall('run_phone', { commandId: 'disk-free' }), false);
@@ -55,11 +55,11 @@ test('hub: read-only commands run with no Guard ask and an audit row', async () 
 
 test('hub: changing commands and tools still go to Guard', async () => {
   const { hands, guardCalls, dispatched } = setup(caps);
-  for (const [tool, args] of [['run_powershell', { commandId: 'restart-bridge' }], ['run_powershell', { commandId: 'eas-build', args: { repo: 'C:\\code\\x' } }], ['write_file', { path: 'C:\\code\\a.txt', content: 'x' }], ['open_url', { url: 'https://example.com' }]]) {
+  for (const [tool, args] of [['run_powershell', { commandId: 'restart-bridge' }], ['run_powershell', { commandId: 'eas-build', args: { repo: 'C:\\code\\x' } }], ['run_powershell', { commandId: 'run-command', args: { command: 'Get-Date' } }], ['write_file', { path: 'C:\\code\\a.txt', content: 'x' }], ['open_url', { url: 'https://example.com' }]]) {
     const r = await hands.call(tool, args, auth);
     assert.ok(r.isError, `${tool} must be denied by the test guard`);
   }
-  assert.equal(guardCalls.length, 4);
+  assert.equal(guardCalls.length, 5);
   assert.equal(dispatched.length, 0);
 });
 
@@ -96,5 +96,9 @@ test('spoke: read-only command runs without a Guard decision; restart-bridge wit
   const bad = await exec.execute({ tool: 'run_powershell', args: { commandId: 'restart-bridge' } });
   assert.equal(bad.ok, false);
   assert.match(bad.error, /refused by the PC/);
+  assert.equal(calls.length, 1);
+  const free = await exec.execute({ tool: 'run_powershell', args: { commandId: 'run-command', args: { command: 'Get-Date' } } });
+  assert.equal(free.ok, false);
+  assert.match(free.error, /refused by the PC/);
   assert.equal(calls.length, 1);
 });
