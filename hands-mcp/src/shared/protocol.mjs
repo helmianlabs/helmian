@@ -548,3 +548,14 @@ export function scopeSummariesEqual(a, b) {
     && a.roots.length === b.roots.length && a.roots.every((r, i) => r === b.roots[i])
     && a.grants.length === b.grants.length && a.grants.every((r, i) => r === b.grants[i]);
 }
+
+/**
+ * Mask every secret shape Guard refuses (same list as above) so text can be
+ * mailed: used for the result/error bodies hands mails back through Scribe.
+ * Scribe redacts again on its side; this is the hub's own first pass.
+ */
+export function redactSecrets(text) {
+  let out = String(text ?? '');
+  for (const p of GUARD_REFUSED_PATTERNS) out = out.replace(new RegExp(p.source, p.flags.includes('g') ? p.flags : `${p.flags}g`), '[redacted]');
+  return out;
+}
