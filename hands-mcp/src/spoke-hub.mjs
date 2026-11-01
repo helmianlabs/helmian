@@ -36,7 +36,7 @@ export function cleanExecution(e) {
 const cleanId = (id) => String(id || 'pc').slice(0, 64);
 const isPcName = (id) => id === 'pc' || id.startsWith('pc-') || id.startsWith('pc.');
 
-export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 30000, onScopeReport = null, onCapabilitiesReport = null } = {}) {
+export function createSpokeHub({ pollWaitMs = 25000, resultWaitMs = 120000, onScopeReport = null, onCapabilitiesReport = null } = {}) {
   const devices = new Map(); // deviceId -> { capabilities, lastSeenAt, scope? }
   const queues = new Map(); // deviceId -> [job] waiting for that device's next poll
   const waiters = new Map(); // deviceId -> [waiter] long-polls parked by that device

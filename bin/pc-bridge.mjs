@@ -24,6 +24,7 @@ import { openVault, readDeviceToken, defaultVaultPath, PROVIDER_KEY_ENV } from '
 import { resolveGrokVaultInjection } from '../src/agent/supergrok-credentials.mjs';
 import { parseApprovalReply } from '../src/mcp/local-exec-server.mjs';
 import { agentPrompt, normalizeProvider } from '../src/cloud/envoy-agents.mjs';
+import { providerStatus } from '../src/hands/provider-cli.mjs';
 import { discoverCommands, expandCommand, parseSlashInput, resolveCommand } from '../src/agent/commands.mjs';
 import { discoverTenantCommands, ensureTenantStarterCommands, tenantWorkspacePath } from '../src/agent/tenant-workspace.mjs';
 import { loadEnabledPlugins } from '../src/agent/plugins.mjs';
@@ -159,6 +160,21 @@ function startAgent(deps, extraEnv = {}) {
 // Reports vault presence to the cloud (presence-only booleans, never secrets)
 // so Settings can show which providers are connected. Best-effort: never
 // throws, never blocks startup.
+async function cliSignedInProviders() {
+  try {
+    const list = providerStatus({ home: homedir() });
+    const out = [];
+    for (const p of list) {
+      if (!p.signedIn) continue;
+      if (p.id === 'chatgpt') out.push('openai');
+      else out.push(String(p.id).toLowerCase());
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 async function reportPresence(deps, token) {
   try {
     const vaultPath = deps.vaultPath || defaultVaultPath(homedir());
@@ -167,6 +183,7 @@ async function reportPresence(deps, token) {
     const vault = await openVault({ vaultPath, deviceToken });
     const rows = await vault.status();
     const providers = new Set(rows.map((r) => String(r.provider).toLowerCase()));
+    for (const cliProv of await cliSignedInProviders()) providers.add(cliProv);
     // The env-configured provider counts too when the vault does not have it.
     const envName = PROVIDER_KEY_ENV[String(deps.provider || '').toLowerCase()];
     if (envName && process.env[envName]) providers.add(String(deps.provider).toLowerCase());
@@ -187,7 +204,9 @@ async function vaultProviders(deps) {
     const token = await readDeviceToken(deps.tokenPath);
     if (!token) return [];
     const vault = await openVault({ vaultPath: deps.vaultPath || defaultVaultPath(homedir()), deviceToken: token });
-    return (await vault.status()).map((r) => String(r.provider).toLowerCase());
+    const fromVault = (await vault.status()).map((r) => String(r.provider).toLowerCase());
+    const fromCli = await cliSignedInProviders();
+    return [...new Set([...fromVault, ...fromCli])];
   } catch { return []; }
 }
 

@@ -10,6 +10,7 @@ import { recordCompletion, recordFailure } from '../core/provenance-log.mjs';
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const XAI_URL = 'https://api.x.ai/v1/chat/completions';
+const MISTRAL_URL = 'https://api.mistral.ai/v1/chat/completions';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const GEMINI_URL_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -303,11 +304,11 @@ export async function chatWithTools({
     });
   }
 
-  if (providerId === 'openai' || providerId === 'xai') {
-    const resolvedUrl = providerId === 'xai' ? XAI_URL : OPENAI_URL;
+  if (providerId === 'openai' || providerId === 'xai' || providerId === 'mistral') {
+    const resolvedUrl = providerId === 'xai' ? XAI_URL : providerId === 'mistral' ? MISTRAL_URL : OPENAI_URL;
     // Fallback fires only when no model was routed (unrecognized caller path).
     // Keep in sync with the standard tier in model-router.mjs.
-    const resolvedModel = model || (providerId === 'xai' ? 'grok-4.3' : 'gpt-5.6-terra');
+    const resolvedModel = model || (providerId === 'xai' ? 'grok-4.3' : providerId === 'mistral' ? 'mistral-large-latest' : 'gpt-5.6-terra');
     const attempt = (key) => openAiCompatibleTurn({
       url: resolvedUrl,
       apiKey: key,

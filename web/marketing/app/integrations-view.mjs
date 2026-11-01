@@ -18,11 +18,17 @@ export function integrationSections({ presence = null, connectors = {}, provider
     ['openai', 'openai', 'ChatGPT', 'Sign in with your ChatGPT account.'],
     ['gemini', 'google', 'Gemini', 'Sign in with your Google account.'],
     ['grok', 'xai', 'Grok', 'Sign in with your X account.'],
+    ['mistral', 'mistral', 'Mistral Le Chat', 'Use your Mistral account or key on your PC.'],
+    ['runway', 'runway', 'Runway', 'Use your Runway account for video and image generation.'],
   ].map(([key, cloudKey, name, blurb]) => {
     const row = truth.get(cloudKey);
-    const connected = row?.connected === true;
-    return { key, name, blurb, icon: { img: `/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png` }, status: connected ? 'on' : 'off', statusText: row?.statusText ?? 'Not checked',
-      action: connected ? { label: 'Manage', href: '#agents' } : OAUTH[key] ? { label: 'Connect', href: OAUTH[key] } : { label: 'Connect', act: 'claude-help' } };
+    const connected = row?.connected === true || online.has(key);
+    const statusText = row?.statusText ?? (online.has(key) ? 'Connected' : (Array.isArray(presence) && Array.isArray(providers?.connections) ? 'Not connected' : 'Not checked'));
+    const icon = ['claude', 'openai', 'gemini', 'grok'].includes(key)
+      ? { img: `/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png` }
+      : { glyph: key === 'mistral' ? '🦊' : '🎬' };
+    return { key, name, blurb, icon, status: connected ? 'on' : 'off', statusText,
+      action: connected ? { label: 'Manage', href: '#agents' } : OAUTH[key] ? { label: 'Connect', href: OAUTH[key] } : { label: 'Connect', act: key === 'claude' ? 'claude-help' : 'keys-help' } };
   });
   const discord = truth.get('discord');
   const github = truth.get('github');

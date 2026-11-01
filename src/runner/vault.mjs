@@ -26,6 +26,8 @@ export const PROVIDER_KEY_ENV = {
   openai: 'OPENAI_API_KEY',
   grok: 'XAI_API_KEY',
   xai: 'XAI_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+  runway: 'RUNWAYML_API_SECRET',
 };
 
 function deriveDataKey(deviceToken, salt) {

@@ -258,3 +258,73 @@ test('discord bot status exposes only a public invite url and a yes/no', async (
   assert.ok(!JSON.stringify(s).includes('xxxx'));
   assert.equal(discordBotStatus({ HELMIAN_DISCORD_CLIENT_ID: 'evil&x=1' }).inviteUrl, null);
 });
+
+test('custom agents: sanitizeCustomAgent normalizes handle, emoji, jobTitle, jobPrompt, provider, authMode and round-trips through config', async () => {
+  const { sanitizeCustomAgent, sanitizeGithubLink } = await import('../src/cloud/envoy-agents.mjs');
+  const agent = sanitizeCustomAgent({
+    handle: '@Rusty_Bot!',
+    name: 'Rusty',
+    emoji: '🦀',
+    jobTitle: 'Rust Systems Architect',
+    jobPrompt: 'Review memory safety and zero-copy paths.',
+    provider: 'mistral',
+    authMode: 'subscription',
+  });
+  assert.ok(agent);
+  assert.equal(agent.id, 'rusty_bot');
+  assert.equal(agent.handle, 'rusty_bot');
+  assert.equal(agent.name, 'Rusty');
+  assert.equal(agent.emoji, '🦀');
+  assert.equal(agent.jobTitle, 'Rust Systems Architect');
+  assert.equal(agent.provider, 'mistral');
+  assert.equal(agent.authMode, 'subscription');
+
+  const cfg = emptyConfig();
+  cfg.customAgents = [agent];
+  cfg.agents = ['claude', agent.id];
+  cfg.debateMode = 'free-willy';
+  cfg.maxRoundTurns = 14;
+  cfg.github = sanitizeGithubLink({ repo: ' TroyHelm/Helmion ', events: ['push', 'pull_request'], linkedAt: '2026-11-01T00:00:00.000Z' });
+
+  const back = parseConfig(serializeConfig(cfg));
+  assert.equal(back.customAgents.length, 1);
+  assert.equal(back.customAgents[0].id, 'rusty_bot');
+  assert.equal(back.debateMode, 'free-willy');
+  assert.equal(back.maxRoundTurns, 14);
+  assert.equal(back.github.repo, 'TroyHelm/Helmion');
+
+  const pub = publicConfig(back);
+  assert.equal(pub.customAgents[0].emoji, '🦀');
+  assert.equal(pub.debateMode, 'free-willy');
+  assert.equal(pub.github.repo, 'TroyHelm/Helmion');
+  assert.equal(describeAuthor('agent:rusty_bot', 'agent', back.customAgents).name, '🦀 Rusty');
+  assert.equal(describeAuthor('agent:rusty_bot', 'agent', back.customAgents).engine, 'mistral');
+});
+
+test('free-willy debate mode: human message dispatches all seated agents; agent message continues debate until maxRoundTurns', () => {
+  const customAgents = [{ id: 'rusty_bot', handle: 'rusty_bot', name: 'Rusty', emoji: '🦀', provider: 'mistral' }];
+  const roster = ['claude', 'gemini', 'rusty_bot'];
+  // Human message in free-willy mode dispatches all seated agents even without @all
+  assert.deepEqual(
+    agentsToAnswer(human('design the consensus protocol'), roster, { debateMode: 'free-willy', roundTurns: 0, maxRoundTurns: 6, customAgents }),
+    ['claude', 'gemini', 'rusty_bot'],
+  );
+  // Agent turn in free-willy mode triggers peers (excluding speaker) while roundTurns < maxRoundTurns
+  assert.deepEqual(
+    agentsToAnswer(
+      { authorKind: 'agent', authorSubject: 'agent:claude', body: 'Here is my proposal.' },
+      roster,
+      { debateMode: 'free-willy', roundTurns: 2, maxRoundTurns: 6, customAgents },
+    ),
+    ['gemini', 'rusty_bot'],
+  );
+  // Once roundTurns >= maxRoundTurns, agent turns stop dispatching
+  assert.deepEqual(
+    agentsToAnswer(
+      { authorKind: 'agent', authorSubject: 'agent:claude', body: 'Final thought.' },
+      roster,
+      { debateMode: 'free-willy', roundTurns: 6, maxRoundTurns: 6, customAgents },
+    ),
+    [],
+  );
+});

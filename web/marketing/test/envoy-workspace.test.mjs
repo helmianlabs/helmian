@@ -735,3 +735,46 @@ test('bite 2: an older server payload (no link fields) still falls back to the c
   assert.equal(channels[0]._discord, true);
   assert.equal(channels[0]._agents, 1);
 });
+
+test('monday launch: custom agent creator, free-willy debate, github link, phone QR, and mobile bottom nav exist and derive header states', async () => {
+  const { githubLinkHeader, debateHeaderState, CUSTOM_AGENT_EMOJIS } = await import('../app/envoy-workspace.js');
+  assert.ok(Array.isArray(CUSTOM_AGENT_EMOJIS) && CUSTOM_AGENT_EMOJIS.length >= 20, 'smiley/emoji picker has 20+ avatars');
+
+  const ghUnlinked = githubLinkHeader({ github: null, admin: true });
+  assert.equal(ghUnlinked.badgeHidden, true);
+  assert.equal(ghUnlinked.buttonLabel, 'Link GitHub');
+
+  const ghLinked = githubLinkHeader({ github: { repo: 'troyhelm/helmion', events: ['push', 'pull_request'] }, admin: false });
+  assert.equal(ghLinked.badgeHidden, false);
+  assert.equal(ghLinked.badgeText, 'GitHub troyhelm/helmion');
+  assert.equal(ghLinked.buttonLabel, 'GitHub linked');
+
+  const debateOff = debateHeaderState({ debateMode: 'off', maxRoundTurns: 12 });
+  assert.equal(debateOff.active, false);
+  assert.equal(debateOff.badgeHidden, true);
+  assert.equal(debateOff.stopHidden, true);
+
+  const debateOn = debateHeaderState({ debateMode: 'free-willy', maxRoundTurns: 15 });
+  assert.equal(debateOn.active, true);
+  assert.equal(debateOn.badgeHidden, false);
+  assert.equal(debateOn.stopHidden, false);
+  assert.match(debateOn.badgeText, /15 turns/);
+
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /id: 'ew-left-create-agent'/, 'envoy-workspace.js renders #ew-left-create-agent in left rail');
+  for (const id of [
+    'ew-create-agent-btn',
+    'ew-foot-create-agent',
+    'ew-link-github',
+    'ew-github-badge',
+    'ew-debate-toggle',
+    'ew-debate-badge',
+    'ew-debate-stop',
+    'ew-phone-qr',
+    'ew-foot-phone-qr',
+    'ew-mobile-nav',
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `index.html has #${id}`);
+  }
+});

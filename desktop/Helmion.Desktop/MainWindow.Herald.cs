@@ -403,7 +403,7 @@ public partial class MainWindow
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return;
         var cloud = uri.Scheme == Uri.UriSchemeHttps
             && string.Equals(uri.Host, HeraldRemoteOrigin.Host, StringComparison.OrdinalIgnoreCase)
-            && uri.AbsolutePath.StartsWith("/herald", StringComparison.Ordinal);
+            && (uri.AbsolutePath.StartsWith("/herald", StringComparison.Ordinal) || uri.AbsolutePath.StartsWith("/app", StringComparison.Ordinal));
         if (!cloud && !HeraldPairingLink.IsPrivateLanHttp(uri)) return;
 
         var png = PngByteQRCodeHelper.GetQRCode(candidate, QRCodeGenerator.ECCLevel.Q, 8);

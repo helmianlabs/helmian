@@ -28,13 +28,25 @@
 // nobody in the desk too.
 
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini']);
-export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' });
+export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI' });
+export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'custom']);
+export const CUSTOM_AGENT_AUTH_MODES = Object.freeze(['subscription', 'browser-free', 'browser-paid', 'api-key', 'cli']);
+export const MAX_CHANNEL_AGENTS = 50;
+export const MAX_DEBATE_TURNS = 50;
+export const DEFAULT_DEBATE_TURNS = 10;
 const ALIASES = Object.freeze({
   maestro: 'maestro', manager: 'maestro',
   claude: 'claude', anthropic: 'claude',
   chatgpt: 'openai', openai: 'openai', gpt: 'openai', codex: 'openai',
-  grok: 'grok', xai: 'grok',
+  grok: 'grok', xai: 'grok', supergrok: 'grok',
   gemini: 'gemini', google: 'gemini',
+});
+const ENGINE_ALIASES = Object.freeze({
+  ...ALIASES,
+  mistral: 'mistral', lechat: 'mistral',
+  runway: 'runway', runwayml: 'runway',
+  ollama: 'ollama', local: 'ollama',
+  custom: 'custom',
 });
 
 export const CONFIG_SUBJECT = 'system:envoy-config';
@@ -55,14 +67,69 @@ export function normalizeProvider(value) {
   return ALIASES[key] ?? null;
 }
 
-export function agentSubject(provider) {
+export function normalizeEngine(value) {
+  const key = String(value ?? '').trim().toLowerCase().replace(/^@/, '');
+  const engine = ENGINE_ALIASES[key] ?? null;
+  return engine && engine !== 'maestro' ? engine : null;
+}
+
+const CUSTOM_HANDLE_RE = /^[a-z][a-z0-9_-]{1,31}$/;
+const RESERVED_HANDLES = new Set(['all', 'everyone', 'here', 'maestro', 'manager', 'system', 'helmian']);
+
+export function normalizeCustomHandle(value) {
+  const key = String(value ?? '').trim().toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 32);
+  if (!CUSTOM_HANDLE_RE.test(key) || RESERVED_HANDLES.has(key)) return null;
+  return key;
+}
+
+export function sanitizeCustomAgent(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const handle = normalizeCustomHandle(raw.handle ?? raw.id ?? raw.name);
+  if (!handle) return null;
+  const provider = normalizeEngine(raw.provider) ?? 'claude';
+  const name = String(raw.name ?? handle).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 48) || handle;
+  const emoji = String(raw.emoji ?? '🤖').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 16) || '🤖';
+  const authRaw = String(raw.authMode ?? 'subscription').trim().toLowerCase();
+  const authMode = CUSTOM_AGENT_AUTH_MODES.includes(authRaw) ? authRaw : 'subscription';
+  const jobTitle = String(raw.jobTitle ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
+  const jobPrompt = String(raw.jobPrompt ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 600);
+  return { id: handle, handle, name, emoji, provider, authMode, jobTitle, jobPrompt };
+}
+
+export const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+const GITHUB_EVENTS = new Set(['push', 'pull_request', 'issues']);
+
+export function sanitizeGithubLink(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const repo = String(raw.repo ?? '').trim();
+  if (!GITHUB_REPO_RE.test(repo)) return null;
+  const eventsRaw = Array.isArray(raw.events) ? raw.events.map((e) => String(e).trim()).filter((e) => GITHUB_EVENTS.has(e)) : [];
+  const events = eventsRaw.length ? [...new Set(eventsRaw)] : ['push', 'pull_request', 'issues'];
+  return { repo, events, linkedAt: raw.linkedAt ? String(raw.linkedAt) : null };
+}
+
+export function agentSubject(provider, customAgents = []) {
   const p = normalizeProvider(provider);
-  if (!p) throw new Error('agent provider is unsupported');
-  return `agent:${p}`;
+  if (p) return `agent:${p}`;
+  const h = normalizeCustomHandle(provider);
+  if (h && Array.isArray(customAgents) && customAgents.some((a) => (a.handle || a.id) === h)) return `agent:${h}`;
+  throw new Error('agent provider is unsupported');
 }
 
 export function emptyConfig() {
-  return { format: CONFIG_FORMAT, agents: [], joined: {}, discord: null, slack: null, pendingLink: null, desk: false };
+  return {
+    format: CONFIG_FORMAT,
+    agents: [],
+    joined: {},
+    discord: null,
+    slack: null,
+    github: null,
+    pendingLink: null,
+    desk: false,
+    customAgents: [],
+    debateMode: 'off',
+    maxRoundTurns: DEFAULT_DEBATE_TURNS,
+  };
 }
 
 // Slack ids: team T…, channel C…, user U…/W… — uppercase letters and digits.
@@ -76,19 +143,37 @@ export function parseConfig(body) {
   try {
     const raw = JSON.parse(String(body ?? ''));
     if (raw?.format !== CONFIG_FORMAT) return null;
-    const agents = [...new Set((Array.isArray(raw.agents) ? raw.agents : []).map(normalizeProvider).filter(Boolean))];
+    const customAgents = [];
+    const seenCustom = new Set();
+    for (const item of Array.isArray(raw.customAgents) ? raw.customAgents : []) {
+      const clean = sanitizeCustomAgent(item);
+      if (clean && !seenCustom.has(clean.handle) && customAgents.length < MAX_CHANNEL_AGENTS) {
+        seenCustom.add(clean.handle);
+        customAgents.push(clean);
+      }
+    }
+    const agents = [...new Set((Array.isArray(raw.agents) ? raw.agents : []).map((a) => {
+      const std = normalizeProvider(a);
+      if (std) return std;
+      const h = normalizeCustomHandle(a);
+      return h && seenCustom.has(h) ? h : null;
+    }).filter(Boolean))].slice(0, MAX_CHANNEL_AGENTS);
     const discord = raw.discord && /^\d{5,25}$/.test(String(raw.discord.guildId)) && /^\d{5,25}$/.test(String(raw.discord.channelId))
       ? { guildId: String(raw.discord.guildId), channelId: String(raw.discord.channelId), channelName: String(raw.discord.channelName ?? '').slice(0, 100), guildName: String(raw.discord.guildName ?? '').slice(0, 100), linkedAt: raw.discord.linkedAt ?? null }
       : null;
     const slack = raw.slack && isSlackId(raw.slack.teamId) && isSlackId(raw.slack.channelId)
       ? { teamId: String(raw.slack.teamId), channelId: String(raw.slack.channelId), channelName: String(raw.slack.channelName ?? '').slice(0, 100), teamName: String(raw.slack.teamName ?? '').slice(0, 100), linkedAt: raw.slack.linkedAt ?? null }
       : null;
+    const github = sanitizeGithubLink(raw.github);
     const pendingLink = raw.pendingLink && /^[a-f0-9]{64}$/.test(String(raw.pendingLink.codeHash)) && raw.pendingLink.expiresAt
       ? { codeHash: String(raw.pendingLink.codeHash), expiresAt: String(raw.pendingLink.expiresAt) }
       : null;
     const joined = {};
     for (const p of agents) { const t = raw.joined?.[p]; if (t && Number.isFinite(Date.parse(t))) joined[p] = String(t); }
-    return { format: CONFIG_FORMAT, agents, joined, discord, slack, pendingLink, desk: raw.desk === true };
+    const debateMode = raw.debateMode === 'free-willy' ? 'free-willy' : 'off';
+    const rawTurns = Number(raw.maxRoundTurns);
+    const maxRoundTurns = Number.isFinite(rawTurns) ? Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(rawTurns))) : DEFAULT_DEBATE_TURNS;
+    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, customAgents, debateMode, maxRoundTurns };
   } catch { return null; }
 }
 
@@ -98,9 +183,15 @@ export function serializeConfig(config) {
   // slack is written only when set, so every config stored before the
   // Slack link existed keeps its exact bytes.
   if (config.slack) stored.slack = config.slack;
+  if (config.github) stored.github = config.github;
   // desk is written only when true, so every config stored before the
   // desk existed keeps its exact bytes.
   if (config.desk === true) stored.desk = true;
+  if (Array.isArray(config.customAgents) && config.customAgents.length > 0) stored.customAgents = config.customAgents;
+  if (config.debateMode === 'free-willy') {
+    stored.debateMode = 'free-willy';
+    stored.maxRoundTurns = Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(Number(config.maxRoundTurns) || DEFAULT_DEBATE_TURNS)));
+  }
   const body = JSON.stringify(stored);
   if (body.length > 4000) throw new Error('channel config is too large');
   return body;
@@ -109,21 +200,44 @@ export function serializeConfig(config) {
 // What the browser may see: never the link code hash.
 export function publicConfig(config, now = Date.now()) {
   const c = config ?? emptyConfig();
+  const customMap = new Map((c.customAgents ?? []).map((a) => [a.handle || a.id, a]));
   return {
-    agents: c.agents.map((p) => ({ provider: p, name: AGENT_NAMES[p], joinedAt: c.joined?.[p] ?? null })),
+    agents: c.agents.map((p) => {
+      const custom = customMap.get(p);
+      if (custom) {
+        return {
+          provider: p,
+          engine: custom.provider,
+          name: custom.name,
+          emoji: custom.emoji,
+          authMode: custom.authMode,
+          jobTitle: custom.jobTitle,
+          jobPrompt: custom.jobPrompt,
+          custom: true,
+          joinedAt: c.joined?.[p] ?? null,
+        };
+      }
+      return { provider: p, name: AGENT_NAMES[p], joinedAt: c.joined?.[p] ?? null };
+    }),
+    customAgents: c.customAgents ?? [],
+    debateMode: c.debateMode === 'free-willy' ? 'free-willy' : 'off',
+    maxRoundTurns: c.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
     desk: c.desk === true,
     discord: c.discord,
     slack: c.slack ?? null,
+    github: c.github ?? null,
     pendingLink: c.pendingLink && Date.parse(c.pendingLink.expiresAt) > now ? { expiresAt: c.pendingLink.expiresAt } : null,
   };
 }
 
-export function mentionsIn(text) {
+export function mentionsIn(text, customHandles = []) {
   const found = new Set();
+  const customSet = new Set((customHandles ?? []).map((h) => String(h).toLowerCase()));
   let all = false;
-  for (const m of String(text ?? '').matchAll(/(^|[^\w@])@([a-z][a-z0-9_-]{1,20})\b/gi)) {
+  for (const m of String(text ?? '').matchAll(/(^|[^\w@])@([a-z][a-z0-9_-]{1,31})\b/gi)) {
     const word = m[2].toLowerCase();
     if (word === 'all' || word === 'everyone' || word === 'here') { all = true; continue; }
+    if (customSet.has(word)) { found.add(word); continue; }
     const p = normalizeProvider(word.replace(/\d+$/, ''));
     if (p) found.add(p);
   }
@@ -139,17 +253,45 @@ export const ANSWERING_PROVIDERS = Object.freeze(AGENT_PROVIDERS.filter((p) => p
 // `desk: true` turns on the desk dispatch rules for human sends;
 // `room: true` marks a private agent room, whose unnamed prompts go to
 // the room's one agent (see the header note).
-export function agentsToAnswer(message, members, { desk = false, room = false } = {}) {
-  const roster = [...new Set((members ?? []).map(normalizeProvider).filter(Boolean))];
+// `debateMode: 'free-willy'` allows agents to debate each other up to `maxRoundTurns`.
+export function agentsToAnswer(message, members, { desk = false, room = false, debateMode = 'off', roundTurns = 0, maxRoundTurns = DEFAULT_DEBATE_TURNS, customAgents = [] } = {}) {
+  const customSet = new Set((customAgents ?? []).map((a) => String(a?.handle ?? a?.id ?? a ?? '').toLowerCase()).filter(Boolean));
+  const roster = [...new Set((members ?? []).map((m) => {
+    const std = normalizeProvider(m);
+    if (std) return std;
+    const h = normalizeCustomHandle(m);
+    return h && customSet.has(h) ? h : null;
+  }).filter(Boolean))];
   const team = roster.filter((p) => p !== 'maestro');
   if (team.length === 0) return [];
   const text = String(message?.body ?? '');
   const kind = String(message?.authorKind ?? '');
-  const { all, providers } = mentionsIn(text);
+  const { all, providers } = mentionsIn(text, [...customSet]);
   if (desk && kind === 'human') {
     if (all) return team;
     if (providers.length) return team.filter((p) => providers.includes(p));
     return team;
+  }
+  if (debateMode === 'free-willy') {
+    const cap = Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(Number(maxRoundTurns) || DEFAULT_DEBATE_TURNS)));
+    if (kind === 'human') {
+      if (all) return team;
+      if (providers.length) return team.filter((p) => providers.includes(p));
+      return team;
+    }
+    if (kind === 'agent') {
+      if (roundTurns >= cap) return [];
+      const subj = String(message?.authorSubject ?? '');
+      const rawAuthor = subj.startsWith('agent:') ? subj.slice(6).toLowerCase() : '';
+      const authorId = normalizeProvider(rawAuthor) ?? (customSet.has(rawAuthor) ? rawAuthor : rawAuthor);
+      if (!authorId || authorId === 'maestro') return [];
+      const peers = team.filter((p) => p !== authorId);
+      if (peers.length === 0) return [];
+      if (all) return peers;
+      const namedPeers = peers.filter((p) => providers.includes(p));
+      return namedPeers.length ? namedPeers : peers;
+    }
+    return [];
   }
   // Agent-authored and system messages earn nobody a turn: dispatch is
   // the human's act, and no agent (Maestro included) relays for them.
@@ -162,11 +304,15 @@ export function agentsToAnswer(message, members, { desk = false, room = false } 
 }
 
 // Display name + source for any stored author subject.
-export function describeAuthor(subject, kind) {
+export function describeAuthor(subject, kind, customAgents = []) {
   const s = String(subject ?? '');
   if (s.startsWith('agent:')) {
-    const p = normalizeProvider(s.slice(6));
-    return { name: AGENT_NAMES[p] ?? 'Agent', source: 'helmian', provider: p };
+    const raw = s.slice(6);
+    const p = normalizeProvider(raw);
+    if (p) return { name: AGENT_NAMES[p] ?? 'Agent', source: 'helmian', provider: p };
+    const custom = Array.isArray(customAgents) ? customAgents.find((a) => (a.handle || a.id) === raw.toLowerCase()) : null;
+    if (custom) return { name: `${custom.emoji} ${custom.name}`, source: 'helmian', provider: custom.handle, engine: custom.provider };
+    return { name: raw || 'Agent', source: 'helmian', provider: raw || null };
   }
   if (s.startsWith('discord:')) {
     const rest = s.slice(8);
@@ -201,15 +347,29 @@ export function slackSubject(userId, displayName) {
 
 // Text an agent gets for its turn: who it is, who else is here, the recent
 // conversation, and the message it is answering.
-export function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian' }) {
-  const p = normalizeProvider(provider);
+export function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian', customAgents = [], debateMode = 'off' }) {
+  const customMap = new Map((customAgents ?? []).map((a) => [a.handle || a.id, a]));
+  const p = normalizeProvider(provider) ?? (customMap.has(String(provider ?? '').toLowerCase()) ? String(provider).toLowerCase() : null);
   // There is no Maestro prompt: no turn is ever composed for 'maestro',
   // because Maestro is the human's seat, not an agent (Bite 2).
   if (p === 'maestro') throw new Error('maestro is not an agent provider');
-  const me = AGENT_NAMES[p] ?? 'Agent';
-  const others = (members ?? []).map(normalizeProvider).filter((x) => x && x !== p && x !== 'maestro').map((x) => AGENT_NAMES[x]);
+  const custom = customMap.get(p);
+  const me = custom ? `${custom.emoji} ${custom.name} (@${custom.handle})` : (AGENT_NAMES[p] ?? 'Agent');
+  const others = (members ?? []).map((x) => {
+    const std = normalizeProvider(x);
+    if (std && std !== p && std !== 'maestro') return AGENT_NAMES[std];
+    const c = customMap.get(String(x).toLowerCase());
+    if (c && c.handle !== p) return `${c.emoji} ${c.name} (@${c.handle})`;
+    return null;
+  }).filter(Boolean);
   const where = source === 'discord' ? `the #${channelTitle} channel (mirrored with Discord)` : source === 'slack' ? `the #${channelTitle} channel (mirrored with Slack)` : `the #${channelTitle} channel in Helmian Envoy`;
-  const role = `You are ${me}, an agent member of ${where}. Other agents here: ${others.join(', ') || 'none'}. If you were given a slice of work, start your reply with "Claim:" and the slice you are taking, so you do not overlap the others. Be concise.`;
+  const jobLine = custom && (custom.jobTitle || custom.jobPrompt)
+    ? ` Your assigned job: ${custom.jobTitle ? `${custom.jobTitle} — ` : ''}${custom.jobPrompt || 'Fulfill your role.'}`
+    : '';
+  const debateLine = debateMode === 'free-willy'
+    ? ' Free-Willy Debate Mode is active: debate directly with the other agents, challenge weak points, @mention peers when responding to them, and converge on the strongest solution.'
+    : '';
+  const role = `You are ${me}, an agent member of ${where}.${jobLine} Other agents here: ${others.join(', ') || 'none'}. If you were given a slice of work, start your reply with "Claim:" and the slice you are taking, so you do not overlap the others.${debateLine} Be concise.`;
   const history = context.slice(-12).map((m) => `${m.authorName || m.authorKind}: ${String(m.body ?? '').slice(0, 600)}`).join('\n');
   const from = message?.authorName || (message?.authorKind === 'agent' ? 'Agent' : 'Member');
   return `${role}\n\nRecent conversation:\n${history || '(none)'}\n\nReply to this message from ${from}:\n${String(message?.body ?? '')}`;

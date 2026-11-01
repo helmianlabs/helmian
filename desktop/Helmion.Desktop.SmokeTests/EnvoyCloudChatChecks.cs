@@ -13,6 +13,13 @@ internal static class EnvoyCloudChatChecks
         var threw = false;
         try { _ = new EnvoyCloudChatClient(new HttpClient(), new Uri("http://helmian.cloud")); } catch (ArgumentException) { threw = true; }
         Assert(threw, "plain HTTP cloud origins are refused");
+        Assert(EnvoyCloudChatClient.DescribeAuthor("agent:claude", "agent") == "Claude", "built-in agent Claude is described");
+        Assert(EnvoyCloudChatClient.DescribeAuthor("agent:mistral", "agent") == "Mistral Le Chat", "Mistral Le Chat is described");
+        Assert(EnvoyCloudChatClient.DescribeAuthor("agent:custom:rusty", "agent") == "@rusty", "custom Envoy agent handle is described");
+        Assert(EnvoyCloudChatClient.DescribeAuthor("discord:123456:Troy", "human") == "Troy · Discord", "Discord mirrored author is described");
+        Assert(EnvoyCloudChatClient.DescribeAuthor("slack:U0ABC:Troy", "human") == "Troy · Slack", "Slack mirrored author is described");
+        var client = new EnvoyCloudChatClient(new HttpClient(), new Uri("https://helmian.cloud"));
+        Assert(client.BuildFullCloneUri("chan_42").AbsoluteUri == "https://helmian.cloud/app?channel=chan_42#desktop", "full clone URI carries channel deep-link");
         Console.WriteLine("Envoy cloud chat checks passed.");
     }
 

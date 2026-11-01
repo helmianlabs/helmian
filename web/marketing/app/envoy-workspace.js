@@ -9,7 +9,32 @@ import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-me
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' };
 const AVATAR = { maestro: 'maestro', claude: 'claude', openai: 'chatgpt', grok: 'grok', gemini: 'gemini' };
-const ALIAS = { maestro: 'maestro', manager: 'maestro', claude: 'claude', chatgpt: 'openai', openai: 'openai', gpt: 'openai', grok: 'grok', xai: 'grok', gemini: 'gemini' };
+const ALIAS = { maestro: 'maestro', manager: 'maestro', claude: 'claude', chatgpt: 'openai', openai: 'openai', gpt: 'openai', grok: 'grok', xai: 'grok', gemini: 'gemini', mistral: 'mistral', lechat: 'mistral', runway: 'runway', ollama: 'ollama' };
+export const CUSTOM_AGENT_EMOJIS = ['🤖', '🦀', '🧐', '🤠', '🔥', '🧠', '⚡', '🛡️', '🎯', '🚀', '🦊', '🦉', '🐝', '🛠️', '📊', '🎨', '😀', '😎', '🤓', '🥷', '🧙', '🦾', '🐉', '🌟'];
+export const CUSTOM_PROVIDER_OPTIONS = [
+  ['claude', 'Claude (Anthropic)'],
+  ['openai', 'ChatGPT (OpenAI)'],
+  ['grok', 'SuperGrok (xAI)'],
+  ['mistral', 'Mistral (Le Chat)'],
+  ['gemini', 'Gemini (Google)'],
+  ['runway', 'Runway (Gen-4 Media)'],
+  ['ollama', 'Local Ollama (Free on PC)'],
+];
+export const CUSTOM_AUTH_OPTIONS = [
+  ['subscription', 'Subscription Sign-In (Pro / Max / Plus / SuperGrok)'],
+  ['browser-free', 'Free Browser Seat (Web Session)'],
+  ['browser-paid', 'Paid Browser Seat (Web Session)'],
+  ['api-key', 'API Key / SDK (PC Vault)'],
+  ['cli', 'Local CLI Seat (Claude Code / Codex / Gemini CLI)'],
+];
+const CUSTOM_PROVIDER_LABELS = Object.fromEntries(CUSTOM_PROVIDER_OPTIONS);
+const CUSTOM_AUTH_LABELS = {
+  subscription: 'Subscription',
+  'browser-free': 'Browser (Free)',
+  'browser-paid': 'Browser (Paid)',
+  'api-key': 'API Key',
+  cli: 'Local CLI',
+};
 const QUICK = [
   ['Helmian demo video', 'https://www.youtube.com/watch?v=OC2Y82gv6co'],
   ['Helmian demo video', 'https://www.youtube.com/watch?v=_yUtw9YOzy8'],
@@ -329,7 +354,8 @@ function setPane(name, open, { user = false } = {}) {
     if (split) split.classList.toggle('hidden', !open);
     if (user && name !== 'agents') ls.set(`open.${name}`, open);
   }
-  for (const b of document.querySelectorAll(`[data-toggle="${name}"]`)) b.setAttribute('aria-pressed', String(open));
+  for (const b of document.querySelectorAll(`[data-toggle="${name}"]`)) { b.setAttribute('aria-pressed', String(open)); if (b.classList.contains('ew-mnav-btn')) b.classList.toggle('on', open); }
+  if (narrow()) { const mc = $('ew-mnav-chat'); if (mc) mc.classList.toggle('on', !document.querySelector('.ew-pane.sheet-open')); }
   syncSplitterAria(name);
 }
 // Keep a separator's aria-valuenow honest across collapse/restore: 0 while
@@ -342,7 +368,7 @@ function syncSplitterAria(name) {
   split.setAttribute('aria-valuenow', String(Math.round(w)));
 }
 const paneOpen = (name) => { const p = $(`ew-${name}`); return narrow() ? p.classList.contains('sheet-open') : !p.classList.contains('collapsed'); };
-function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.sheet-open')) p.classList.remove('sheet-open'); $('ew-scrim').classList.remove('open'); for (const b of document.querySelectorAll('[data-toggle]')) b.setAttribute('aria-pressed', 'false'); }
+function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.sheet-open')) p.classList.remove('sheet-open'); $('ew-scrim').classList.remove('open'); for (const b of document.querySelectorAll('[data-toggle]')) b.setAttribute('aria-pressed', 'false'); const mc = $('ew-mnav-chat'); if (mc) mc.classList.add('on'); }
 
 function applyLayout() {
   const root = document.documentElement;
@@ -573,7 +599,8 @@ async function loadChannels() {
   // The open channel is remembered per network mode: Envoy restores its
   // own last channel (the legacy 'channel' key is its fallback), Discord
   // mode restores its last linked channel.
-  const saved = ls.get(`netChannel.${ws.mode}`, null) ?? (ws.mode === 'envoy' ? ls.get('channel', null) : null);
+  const urlChannel = (() => { try { return new URLSearchParams(location.search).get('channel'); } catch { return null; } })();
+  const saved = (urlChannel && ws.channels.some((c) => c.id === urlChannel || c.slug === urlChannel) ? (ws.channels.find((c) => c.id === urlChannel || c.slug === urlChannel)?.id ?? null) : null) ?? ls.get(`netChannel.${ws.mode}`, null) ?? (ws.mode === 'envoy' ? ls.get('channel', null) : null);
   const pool = modeChannels();
   if (!pool.some((c) => c.id === ws.channelId)) ws.channelId = pool.some((c) => c.id === saved) ? saved : pool[0]?.id ?? null;
   renderChannels();
@@ -736,10 +763,28 @@ function renderChannels() {
     h('div', { class: 'ew-src-head' }, h('img', { src: '/assets/agents/maestro.png', alt: '', width: 14, height: 14 }), 'ENVOY'),
     ...(regular.length ? regular.map(row) : [h('p', { class: 'ew-note' }, 'No channels yet.')]),
     ...(rooms.length ? [h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-room-mark', 'aria-hidden': 'true' }), 'AGENT ROOMS'), ...rooms.map(row)] : []),
+    h('div', { class: 'ew-src-head' },
+      h('span', { class: 'ew-room-mark', 'aria-hidden': 'true' }),
+      'CUSTOM AGENTS',
+      h('button', { type: 'button', id: 'ew-left-create-agent', class: 'ew-icon sm', title: 'Create a custom agent (+)', 'aria-label': 'Create custom agent', style: 'margin-left:auto;', onclick: (e) => { e.stopPropagation(); openCreateAgentModal(); } }, '+')
+    ),
+    ...((ws.config?.customAgents ?? []).length
+      ? (ws.config.customAgents).map((ca) => h('button', {
+          type: 'button',
+          class: 'ew-channel custom-agent-row',
+          title: `${ca.name} (@${ca.handle})${ca.jobTitle ? ' · ' + ca.jobTitle : ''}`,
+          onclick: () => insertMention(ca.handle),
+        },
+        h('span', { class: 'ew-avatar emoji-ava' }, ca.emoji || '🤖'),
+        h('span', { class: 'name' }, ca.name),
+        h('span', { class: 'tags' }, h('span', { class: 'ew-mini custom-tag' }, `@${ca.handle}`))))
+      : [h('p', { class: 'ew-note' }, 'Click + to create a custom agent with a face, name, and real job.')]),
     h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
     ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Use Link Discord in a chat.' : 'Bot not connected yet. Linked channels mirror here.')]),
     h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-gh-mark', 'aria-hidden': 'true' }), 'GITHUB'),
-    h('p', { class: 'ew-note' }, 'Repo activity is not wired in yet. ', h('a', { href: '#integrations' }, 'Integrations'))
+    ws.config?.github?.repo
+      ? h('p', { class: 'ew-note' }, `Linked to ${ws.config.github.repo}.`)
+      : h('p', { class: 'ew-note' }, 'Use Link GitHub in a channel header to stream commits, PRs & issues. ', h('a', { href: '#integrations' }, 'Integrations'))
   );
 }
 async function selectChannel(id) {
@@ -771,6 +816,27 @@ export function mirrorLinkHeader({ link = null, pending = false, bot = null, adm
     buttonLabel: link ? `${label} linked` : `Link ${label}`,
     buttonHidden: !admin && !link,
     statusText: bot?.configured ? (link ? `linked to #${name}` : 'ready to link') : 'bot not set up yet',
+  };
+}
+export function githubLinkHeader({ github = null, admin = false } = {}) {
+  const repo = github?.repo || null;
+  return {
+    badgeHidden: !repo,
+    badgeClass: 'github',
+    badgeText: repo ? `GitHub ${repo}` : '',
+    buttonLabel: repo ? 'GitHub linked' : 'Link GitHub',
+    buttonHidden: !admin && !repo,
+    statusText: repo ? `linked to ${repo}` : 'ready to link',
+  };
+}
+export function debateHeaderState({ debateMode = 'off', maxRoundTurns = 12 } = {}) {
+  const active = debateMode === 'free-willy';
+  return {
+    active,
+    badgeHidden: !active,
+    badgeText: active ? `🔥 Free-Willy Debate (${maxRoundTurns} turns)` : '',
+    buttonLabel: active ? '🔥 Debate: ON' : '🔥 Free-Willy',
+    stopHidden: !active,
   };
 }
 async function loadConfig() {
@@ -814,7 +880,21 @@ function renderHeader() {
   const sLink = $('ew-link-slack');
   sLink.querySelector('.lbl').textContent = sh.buttonLabel;
   sLink.hidden = sh.buttonHidden;
-  $('ew-agent-count').textContent = String(ws.config?.agents?.length ?? 0);
+  const ghBadge = $('ew-github-badge');
+  const ghLink = $('ew-link-github');
+  const gh = githubLinkHeader({ github: ws.config?.github, admin });
+  if (ghBadge) { ghBadge.hidden = gh.badgeHidden; ghBadge.textContent = gh.badgeText; }
+  if (ghLink) { const l = ghLink.querySelector('.lbl'); if (l) l.textContent = gh.buttonLabel; ghLink.hidden = gh.buttonHidden; }
+  const ghStatus = $('ew-github-status-text');
+  if (ghStatus) ghStatus.textContent = gh.statusText;
+  const deb = debateHeaderState({ debateMode: ws.config?.debateMode, maxRoundTurns: ws.config?.maxRoundTurns });
+  const debBadge = $('ew-debate-badge');
+  const debBtn = $('ew-debate-toggle');
+  const debStop = $('ew-debate-stop');
+  if (debBadge) { debBadge.hidden = deb.badgeHidden; debBadge.textContent = deb.badgeText; }
+  if (debBtn) { const l = debBtn.querySelector('.lbl'); if (l) l.textContent = deb.buttonLabel; debBtn.setAttribute('aria-pressed', String(deb.active)); }
+  if (debStop) debStop.hidden = deb.stopHidden;
+  $('ew-agent-count').textContent = String((ws.config?.agents?.length ?? 0));
   $('ew-discord-status-text').textContent = dh.statusText;
   $('ew-slack-status-text').textContent = sh.statusText;
   renderNetStrip();
@@ -874,16 +954,14 @@ async function loadDeskLists() {
 function renderAgents() {
   const desk = inMaestroMode();
   const raw = (ws.config?.agents ?? []).map((a) => a.provider);
-  // The roster shown is always the answering team: 'maestro' is never
-  // on it — in the desk Maestro is the sender, and in ordinary channels
-  // Maestro is not an agent at all (Bite 2). A historical 'maestro'
-  // entry in a stored config simply does not render as a peer.
+  const customList = ws.config?.customAgents ?? [];
   const roster = deskRoster(raw);
   const states = agentStates(ws.messages, roster, ws.online, Date.now(), desk ? deskTargets : addressed);
+  const totalCount = roster.length + customList.length;
   $('ew-agents-summary').textContent = desk
-    ? (roster.length ? `${roster.length} on the desk` : 'the desk is empty')
-    : (roster.length ? `${roster.length} in this channel` : 'none in this channel');
-  $('ew-agent-cards').replaceChildren(...roster.map((p) => {
+    ? (totalCount ? `${totalCount} on the desk` : 'the desk is empty')
+    : (totalCount ? `${totalCount} in this channel` : 'none in this channel');
+  const builtinCards = roster.map((p) => {
     const s = states[p];
     const label = s.state === 'offline' ? 'OFFLINE' : s.state === 'working' ? 'WORKING' : 'IDLE';
     return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: desk ? `Dispatch to @${NAMES[p]}` : `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
@@ -891,13 +969,28 @@ function renderAgents() {
       h('button', { type: 'button', class: 'ew-icon remove', title: desk ? `Remove ${NAMES[p]} from the desk` : `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×'),
       h('span', { class: `ew-state ${s.state}` }, label),
       h('span', { class: 'last' }, s.state === 'offline' ? 'Offline. Start the Helmian bridge on your PC to bring it online.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
-  }));
-  if (!roster.length) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one below — everyone on the desk receives your dispatches.' : 'No agents in this channel. Add one below to make it an agent chat.'));
-  $('ew-agent-add').replaceChildren(...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
-  // Channel composer mention pills: agents in this channel are @mention pills; the rest add in one click.
-  // In the desk, @all is the broadcast pill and shows whenever anyone is seated.
-  $('ew-mention-pills').replaceChildren(...((desk ? roster.length >= 1 : roster.length > 1) ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
+  });
+  const customCards = customList.map((ca) => {
+    const engineOnline = ws.online.has(ca.provider) || ca.provider === 'ollama';
+    const state = engineOnline ? 'idle' : 'offline';
+    const provLabel = CUSTOM_PROVIDER_LABELS[ca.provider] || ca.provider;
+    const authLabel = CUSTOM_AUTH_LABELS[ca.authMode] || ca.authMode;
+    return h('div', { class: 'ew-agent custom-agent-card', role: 'button', tabindex: 0, title: `Mention @${ca.handle} (${ca.jobTitle || provLabel})`, onclick: () => insertMention(ca.handle), onkeydown: (e) => { if (e.key === 'Enter') insertMention(ca.handle); } },
+      h('div', { class: 'ew-avatar emoji-ava' }, ca.emoji || '🤖'),
+      h('strong', {}, `${ca.name} (@${ca.handle})`),
+      h('button', { type: 'button', class: 'ew-icon remove', title: `Retire @${ca.handle}`, 'aria-label': `Retire @${ca.handle}`, onclick: (e) => { e.stopPropagation(); removeCustomAgent(ca.handle); } }, '×'),
+      h('span', { class: `ew-state ${state}` }, engineOnline ? 'READY' : 'CONNECT SEAT'),
+      h('span', { class: 'last' }, `${ca.jobTitle ? ca.jobTitle + ' · ' : ''}${provLabel} · ${authLabel}`));
+  });
+  $('ew-agent-cards').replaceChildren(...builtinCards, ...customCards);
+  if (!totalCount) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one below or click + Create Agent.' : 'No agents in this channel. Add one below or click + Create Agent to build your team.'));
+  $('ew-agent-add').replaceChildren(
+    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)),
+    h('button', { type: 'button', class: 'ew-pill create-custom', title: 'Create a custom agent with emoji, name, job & AI provider', onclick: openCreateAgentModal }, '✨ + Custom Agent')
+  );
+  $('ew-mention-pills').replaceChildren(...((desk ? totalCount >= 1 : totalCount > 1) ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
     ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention @${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
+    ...customList.map((ca) => h('button', { type: 'button', class: 'ew-pill custom-pill', title: `Mention @${ca.handle}${ca.jobTitle ? ' · ' + ca.jobTitle : ''}`, onclick: () => insertMention(ca.handle) }, h('span', {}, ca.emoji || '🤖'), `@${ca.handle}`)),
     ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
   $('ew-mention-pills').hidden = false;
 }
@@ -1212,7 +1305,11 @@ async function loadMessages() {
 function whoOf(m) {
   const me = ws.ctx.state.actor?.subject;
   if (m.authorKind === 'human' && m.authorSubject === me) return { name: 'You', kind: 'me' };
-  if (m.agentProvider || m.authorSubject?.startsWith('agent:')) return { name: m.authorName || 'Agent', kind: 'agent', provider: m.agentProvider || m.authorSubject.slice(6) };
+  if (m.agentProvider || m.authorSubject?.startsWith('agent:')) {
+    const handle = m.authorSubject?.startsWith('agent:') ? m.authorSubject.slice(6) : m.agentProvider;
+    const custom = m.metadata?.customAgent || (ws.config?.customAgents ?? []).find((a) => a.handle === handle) || null;
+    return { name: m.authorName || custom?.name || 'Agent', kind: 'agent', provider: m.agentProvider || handle, custom };
+  }
   if (m.authorSubject?.endsWith(':bridge')) return { name: 'PC bridge', kind: 'agent', provider: null };
   if (m.source === 'discord') return { name: m.authorName || 'Discord member', kind: 'discord' };
   if (m.source === 'slack') return { name: m.authorName || 'Slack member', kind: 'slack' };
@@ -1241,9 +1338,13 @@ function renderMessages() {
     if (m.authorKind === 'system') { out.push(h('div', { class: 'ew-notice' }, h('span', {}, m.body))); prev = null; continue; }
     const who = whoOf(m);
     const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
-    const avatar = who.kind === 'agent' ? h('div', { class: 'ew-avatar' }, avatarImg(who.provider)) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase());
+    const avatar = who.kind === 'agent'
+      ? (who.custom ? h('div', { class: 'ew-avatar emoji-ava' }, who.custom.emoji || '🤖') : h('div', { class: 'ew-avatar' }, avatarImg(who.provider)))
+      : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase());
     const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
-    const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : who.kind === 'discord' ? h('span', { class: 'ew-src discord' }, 'DISCORD') : who.kind === 'slack' ? h('span', { class: 'ew-src slack' }, `SLACK${slackChannel}`) : null;
+    const src = who.kind === 'agent'
+      ? h('span', { class: 'ew-src agent' }, who.custom?.jobTitle ? `AGENT · ${who.custom.jobTitle}` : 'AGENT')
+      : who.kind === 'discord' ? h('span', { class: 'ew-src discord' }, 'DISCORD') : who.kind === 'slack' ? h('span', { class: 'ew-src slack' }, `SLACK${slackChannel}`) : null;
     // In the desk, a manager send carries its dispatch line; agent
     // replies render as themselves, under their own names, as anywhere.
     const dispatch = desk && m.authorKind === 'human' ? deskDispatchLine(m) : null;
@@ -1566,6 +1667,222 @@ async function linkSlack() {
   }, 3000);
 }
 
+async function removeCustomAgent(handle) {
+  if (!handle || !ws.channelId) return;
+  try {
+    const body = await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'remove-custom-agent', channelId: ws.channelId, handle });
+    ws.config = body.config;
+    await loadConfig(); await loadMessages();
+    ws.ctx.toast(`Retired @${handle}`, 'ok');
+  } catch (e) {
+    ws.ctx.toast(e?.body?.code === 'ENVOY_ROLE_FORBIDDEN' ? 'Auditors cannot retire agents.' : 'Could not retire agent.');
+  }
+}
+
+function openCreateAgentModal() {
+  if (!ws.channelId) { ws.ctx.toast('Select a channel first.'); return; }
+  let pickedEmoji = '🦀';
+  const emojiInput = h('input', { class: 'ew-input sm', maxlength: 4, value: pickedEmoji, style: 'width:56px;text-align:center;font-size:18px;', 'aria-label': 'Custom emoji' });
+  const emojiGrid = h('div', { class: 'ew-emoji-grid', role: 'radiogroup', 'aria-label': 'Pick an agent face' });
+  const drawEmojis = () => {
+    emojiGrid.replaceChildren(...CUSTOM_AGENT_EMOJIS.map((em) => h('button', {
+      type: 'button',
+      class: `ew-emoji-btn${pickedEmoji === em ? ' on' : ''}`,
+      'aria-checked': String(pickedEmoji === em),
+      onclick: () => { pickedEmoji = em; emojiInput.value = em; drawEmojis(); },
+    }, em)));
+  };
+  emojiInput.addEventListener('input', () => { const v = emojiInput.value.trim(); if (v) { pickedEmoji = v; drawEmojis(); } });
+  drawEmojis();
+
+  const nameInput = h('input', { id: 'ew-ca-name', placeholder: 'e.g. Rusty, Security Auditor, Buzz', maxlength: 40, required: true, 'aria-label': 'Agent name' });
+  const handleInput = h('input', { id: 'ew-ca-handle', placeholder: 'e.g. rusty', maxlength: 24, required: true, 'aria-label': 'Agent @handle' });
+  let handleTouched = false;
+  handleInput.addEventListener('input', () => { handleTouched = true; });
+  nameInput.addEventListener('input', () => {
+    if (!handleTouched) {
+      handleInput.value = nameInput.value.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[^a-z]+/, '').replace(/-+/g, '-').slice(0, 20);
+    }
+  });
+
+  const jobTitleInput = h('input', { id: 'ew-ca-job-title', placeholder: 'e.g. Senior Rust Borrow-Checker & Architect', maxlength: 80, 'aria-label': 'Job title' });
+  const jobPromptInput = h('textarea', { id: 'ew-ca-job-prompt', rows: 3, placeholder: 'Define this agent\'s real job, personality, rules, and mission. They live and work by these instructions in this channel.', maxlength: 1200, 'aria-label': 'Job instructions' });
+  const providerSelect = h('select', { id: 'ew-ca-provider', 'aria-label': 'AI provider' },
+    ...CUSTOM_PROVIDER_OPTIONS.map(([val, label]) => h('option', { value: val }, label)));
+  const authSelect = h('select', { id: 'ew-ca-auth', 'aria-label': 'Seat or connection mode' },
+    ...CUSTOM_AUTH_OPTIONS.map(([val, label]) => h('option', { value: val }, label)));
+
+  const statusNote = h('p', { class: 'muted sm' }, 'Runs on your connected subscription, browser seat, or PC bridge key.');
+  const connectLink = h('a', { href: '#integrations', class: 'ew-btn ghost sm', onclick: () => closeModal() }, '🔌 Connect provider / sign in →');
+
+  const form = h('form', { class: 'ew-modal-form', onsubmit: async (e) => {
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    const handle = handleInput.value.trim().toLowerCase().replace(/^@+/, '');
+    if (!name || !handle) { statusNote.textContent = 'Enter a name and @handle.'; return; }
+    try {
+      const body = await ws.ctx.post('/api/admin/envoy/channel-config', {
+        action: 'create-custom-agent',
+        channelId: ws.channelId,
+        agent: {
+          handle,
+          name,
+          emoji: emojiInput.value.trim() || pickedEmoji || '🤖',
+          provider: providerSelect.value,
+          authMode: authSelect.value,
+          jobTitle: jobTitleInput.value.trim(),
+          jobPrompt: jobPromptInput.value.trim(),
+        },
+      });
+      ws.config = body.config;
+      closeModal();
+      await loadConfig(); await loadMessages();
+      ws.ctx.toast(`Created ${emojiInput.value.trim() || pickedEmoji} ${name} (@${handle})`, 'ok');
+    } catch (err) {
+      statusNote.textContent = err?.body?.message || 'Could not create custom agent. Check the @handle and try again.';
+    }
+  } },
+    h('div', { class: 'ew-field' }, '1. Pick a smiley face or emoji', h('div', { class: 'ew-row' }, emojiGrid, emojiInput)),
+    h('div', { class: 'ew-grid-2' },
+      h('label', { class: 'ew-field' }, '2. Agent name', nameInput),
+      h('label', { class: 'ew-field' }, '@handle (mention tag)', handleInput)
+    ),
+    h('label', { class: 'ew-field' }, '3. Job title (badge shown in chat)', jobTitleInput),
+    h('label', { class: 'ew-field' }, '4. Real job instructions & system mission', jobPromptInput),
+    h('div', { class: 'ew-grid-2' },
+      h('label', { class: 'ew-field' }, '5. AI Provider', providerSelect),
+      h('label', { class: 'ew-field' }, '6. Seat / Connection Mode', authSelect)
+    ),
+    h('div', { class: 'ew-row' }, connectLink, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: closeModal }, 'Cancel'), h('button', { type: 'submit', class: 'ew-btn primary sm' }, 'Spawn Agent'))
+  );
+
+  openModal('Create Custom Agent', [
+    h('p', { class: 'muted sm' }, 'Give your agent a face, a name, a real job, and pick which AI brain and seat it runs on.'),
+    form,
+    statusNote,
+  ]);
+  nameInput.focus();
+}
+
+async function stopDebateNow() {
+  if (!ws.channelId) return;
+  try {
+    const body = await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'stop-debate', channelId: ws.channelId });
+    ws.config = body.config;
+    renderHeader();
+    await loadMessages();
+    ws.ctx.toast('Free-Willy debate stopped.', 'ok');
+  } catch {
+    ws.ctx.toast('Could not stop debate.');
+  }
+}
+
+function openDebateModal() {
+  if (!ws.channelId) return;
+  const currentOn = ws.config?.debateMode === 'free-willy';
+  const currentTurns = ws.config?.maxRoundTurns ?? 12;
+  const turnsInput = h('input', { type: 'number', min: 1, max: 50, value: String(currentTurns), style: 'width:84px;', 'aria-label': 'Max agent turns per round' });
+  const save = async (mode) => {
+    try {
+      const body = await ws.ctx.post('/api/admin/envoy/channel-config', {
+        action: 'set-debate-mode',
+        channelId: ws.channelId,
+        debateMode: mode,
+        maxRoundTurns: Number.parseInt(turnsInput.value, 10) || 12,
+      });
+      ws.config = body.config;
+      closeModal();
+      await loadConfig(); await loadMessages();
+      ws.ctx.toast(mode === 'free-willy' ? '🔥 Free-Willy Debate Mode is ON' : 'Debate mode set to @mention only', 'ok');
+    } catch {
+      ws.ctx.toast('Could not update debate mode.');
+    }
+  };
+  openModal('🔥 Free-Willy Multi-Agent Debate Mode', [
+    h('p', {}, 'When Free-Willy mode is ON, every agent in this channel (up to 50 built-in and custom agents) can jump in on a human message AND debate, critique, or build on each other\'s replies automatically.'),
+    h('label', { class: 'ew-field' }, 'Max agent turns per human prompt (1–50 safety cap)', turnsInput),
+    h('div', { class: 'ew-row' },
+      currentOn ? h('button', { type: 'button', class: 'ew-btn danger sm', onclick: async () => { closeModal(); await stopDebateNow(); } }, '⏹ Stop Debate Now') : null,
+      h('span', { class: 'ew-spacer' }),
+      currentOn ? h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => save('off') }, 'Turn Off (@mention only)') : null,
+      h('button', { type: 'button', class: 'ew-btn primary sm', onclick: () => save('free-willy') }, currentOn ? 'Update Turn Limit' : '🔥 Turn On Free-Willy Mode')
+    ),
+  ]);
+}
+
+async function linkGithub() {
+  if (!ws.channelId) return;
+  const gh = ws.config?.github;
+  const admin = ['owner', 'admin'].includes(ws.ctx.state.actor?.role);
+  const ch = ws.channels.find((c) => c.id === ws.channelId);
+  const webhookUrl = `${location.origin}/api/admin/webhooks/github`;
+  const copyWebhook = h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: async () => { try { await navigator.clipboard.writeText(webhookUrl); ws.ctx.toast('Webhook URL copied', 'ok'); } catch {} } }, 'Copy webhook URL');
+  if (gh?.repo) {
+    openModal('GitHub Repository Link', [
+      h('p', {}, `#${ch?.title || 'channel'} is linked to GitHub repository ${gh.repo} (${gh.branch || 'all branches'}). Pushes, pull requests, merges, and issues stream right into this channel.`),
+      h('div', { class: 'ew-field' }, 'GitHub Webhook URL (for repo settings)', h('div', { class: 'ew-code sm' }, webhookUrl)),
+      h('div', { class: 'ew-row' }, copyWebhook, h('span', { class: 'ew-spacer' }),
+        admin ? h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: async () => {
+          try { await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'unlink-github', channelId: ws.channelId }); closeModal(); await loadConfig(); await loadMessages(); } catch { ws.ctx.toast('Could not unlink GitHub repo.'); }
+        } }, 'Unlink repo') : null),
+    ]);
+    return;
+  }
+  if (!admin) { ws.ctx.toast('Only workspace owners and admins can link a GitHub repository.'); return; }
+  const repoInput = h('input', { id: 'ew-gh-repo', placeholder: 'owner/repo (e.g. troy/helmion)', maxlength: 140, required: true, 'aria-label': 'GitHub repository owner/repo' });
+  const branchInput = h('input', { id: 'ew-gh-branch', placeholder: 'main (leave blank for all branches)', maxlength: 80, 'aria-label': 'Branch filter' });
+  const form = h('form', { class: 'ew-modal-form', onsubmit: async (e) => {
+    e.preventDefault();
+    const repo = repoInput.value.trim();
+    if (!repo) return;
+    try {
+      await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'link-github', channelId: ws.channelId, repo, branch: branchInput.value.trim() || '*' });
+      closeModal();
+      await loadConfig(); await loadMessages();
+      ws.ctx.toast(`Linked GitHub ${repo}`, 'ok');
+    } catch (err) {
+      ws.ctx.toast(err?.body?.message || 'Enter a valid owner/repo (e.g. octocat/hello-world).');
+    }
+  } },
+    h('label', { class: 'ew-field' }, 'GitHub Repository (owner/repo)', repoInput),
+    h('label', { class: 'ew-field' }, 'Branch filter (optional)', branchInput),
+    h('div', { class: 'ew-field' }, 'Webhook endpoint (paste in GitHub → Settings → Webhooks)', h('div', { class: 'ew-code sm' }, webhookUrl)),
+    h('div', { class: 'ew-row' }, copyWebhook, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: closeModal }, 'Cancel'), h('button', { type: 'submit', class: 'ew-btn primary sm' }, 'Link GitHub Repo'))
+  );
+  openModal('Link GitHub Repository', [
+    h('p', { class: 'muted sm' }, 'Stream commits, pull requests, merges, and issues into this channel so your agents can review and act on them.'),
+    form,
+  ]);
+  repoInput.focus();
+}
+
+async function openPhoneCloneModal() {
+  const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
+  const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
+  try {
+    const { default: qrcode } = await import('./vendor/qrcode.mjs');
+    const qr = qrcode(0, 'M');
+    qr.addData(cloneUrl);
+    qr.make();
+    qrBox.innerHTML = qr.createSvgTag({ scalable: true, margin: 2 });
+  } catch {
+    qrBox.textContent = cloneUrl;
+  }
+  const copyBtn = h('button', { type: 'button', class: 'ew-btn primary sm', onclick: async () => { try { await navigator.clipboard.writeText(cloneUrl); ws.ctx.toast('Phone clone link copied', 'ok'); } catch {} } }, 'Copy phone link');
+  const heraldBtn = h('a', { href: '/herald', class: 'ew-btn ghost sm' }, 'Open Herald Cockpit (/herald) →');
+  openModal('📱 Phone Remote — 1:1 Workspace Clone', [
+    h('p', { class: 'muted sm' }, 'Scan with your phone camera to open a live 1:1 clone of this exact Envoy channel, your custom agents, and your terminal on your phone.'),
+    qrBox,
+    h('ol', { class: 'ew-steps sm' },
+      h('li', {}, 'Point your phone camera at the QR code above and tap the link.'),
+      h('li', {}, 'Sign in once (your phone stays signed in for 30 days).'),
+      h('li', {}, 'Use the bottom navigation bar on your phone to flip between Chat, Channels, Agent CLI, Custom Agents, Guard, and Workbench.')
+    ),
+    h('div', { class: 'ew-row' }, copyBtn, h('span', { class: 'ew-spacer' }), heraldBtn),
+  ]);
+}
+
+
 // ---------- workbench ----------
 function openBench(tab) {
   if (!paneOpen('bench')) setPane('bench', true, { user: true });
@@ -1705,6 +2022,14 @@ function wire() {
   ws.ctx.wireCliVoice?.();
   $('ew-link-discord').addEventListener('click', linkDiscord);
   $('ew-link-slack').addEventListener('click', linkSlack);
+  $('ew-link-github')?.addEventListener('click', linkGithub);
+  $('ew-debate-toggle')?.addEventListener('click', openDebateModal);
+  $('ew-debate-stop')?.addEventListener('click', stopDebateNow);
+  $('ew-phone-qr')?.addEventListener('click', openPhoneCloneModal);
+  $('ew-create-agent-btn')?.addEventListener('click', openCreateAgentModal);
+  $('ew-foot-create-agent')?.addEventListener('click', openCreateAgentModal);
+  $('ew-foot-phone-qr')?.addEventListener('click', openPhoneCloneModal);
+  $('ew-mnav-chat')?.addEventListener('click', () => { closeSheets(); $('maestro-input')?.focus({ preventScroll: true }); });
   $('ew-maestro-exit').addEventListener('click', leaveMaestroSeat);
   $('ew-modal-close').addEventListener('click', closeModal);
   $('ew-modal').addEventListener('click', (e) => { if (e.target === $('ew-modal')) closeModal(); });
