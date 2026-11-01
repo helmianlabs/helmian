@@ -29,7 +29,7 @@ test('integrations: plain cards, no internal jargon, honest states', () => {
   }
   for (const [title, lines] of Object.values(HELP)) for (const t of [title, ...lines]) assert.doesNotMatch(t, JARGON, t);
   const by = Object.fromEntries(cards.map((c) => [c.key, c]));
-  assert.equal(by.grok.statusText, 'Connected'); assert.equal(by.grok.action.label, 'Manage');
+  assert.equal(by.grok.statusText, 'Synced', 'a presence row alone reads Synced, never Connected (connection-truth correction, 2026-11-01)'); assert.equal(by.grok.action.href, '/api/provider-oauth/grok/start', 'not connected → the Connect action, not Manage');
   assert.equal(by.openai.action.href, '/api/provider-oauth/openai/start');
   assert.equal(by.claude.action.act, 'claude-help');
   assert.equal(by.pc.statusText, 'Online');

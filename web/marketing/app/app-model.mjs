@@ -150,14 +150,19 @@ export function maskSecret(hint = '') { const tail = String(hint).replace(/[^A-Z
 //   live exactly when its registration is lifecycle 'enabled' and enabled,
 //   the same test the inbound gateway resolves by. An env "configured"
 //   flag or a half-finished registration never reads as linked.
-// - The AI providers are NOT tool connections either: their truth is the
-//   agent's own runner link — a provider connection saved as verified
-//   (sql/031) or the runner presence feed saying that provider is
-//   answering right now. When neither source answered, the row reads
-//   "Not checked" — never a guessed "Not connected".
+// - The AI providers are NOT tool connections either: their truth is a
+//   saved provider connection (sql/031) — the same store the Agents page
+//   reads, under the same rule it reads it with (a saved row IS the
+//   connection; the row's lifecycle rides along as detail, exactly as
+//   the Agents page prints it). The runner presence feed can never make
+//   a provider "Connected": it is a device report and a sync stamp, so
+//   a presence row earns a provider the state "Synced" — a device
+//   reported it, or a sync stamped it, and nothing more is claimed.
+//   When neither source answered, the row reads "Not checked" — never a
+//   guessed "Not connected".
 // Rows keep `connected` (the boolean the attach gate uses): it is true
 // only for a verified+fresh tool connection, a live mirror link, or a
-// provider with a live runner link.
+// provider with a saved connection row.
 
 // How long a probe receipt still counts as "Connected" on screen. The
 // probe-wiring follow-on should check connections at least this often.
@@ -220,15 +225,34 @@ function providerRow(p, providers, presence) {
   const saved = connectionsAnswered
     ? connections.find((c) => names.connections.includes(String(c?.providerId ?? c?.provider ?? c?.providerKey ?? '').toLowerCase()))
     : null;
+  // "Connected" comes from the connections store alone — the same store
+  // and the same rule the Agents page reads (any saved row is the
+  // connection; lifecycle is detail the Agents page prints next to it).
+  // Nothing in the cloud promotes a row's lifecycle to 'verified', so
+  // gating the word on 'verified' left every real connection reading
+  // "Not connected" on this page while the Agents page said "Connected".
+  if (saved) return { ...p, connected: true, status: 'connected', statusText: 'Connected', source: 'provider-connection' };
   const presenceAnswered = Array.isArray(presence);
-  const live = presenceAnswered && presence.some((r) => r?.connected === true && names.presence.includes(String(r?.provider ?? r?.providerName ?? '').toLowerCase()));
-  if (live) return { ...p, connected: true, status: 'connected', statusText: 'Connected', source: 'runner-presence' };
-  if (saved && saved.lifecycle === 'verified') return { ...p, connected: true, status: 'connected', statusText: 'Connected', source: 'provider-connection' };
+  const stamp = presenceAnswered
+    ? presence.find((r) => names.presence.includes(String(r?.provider ?? r?.providerName ?? '').toLowerCase()))
+    : null;
+  // Presence is a device report / sync stamp (see the header): it can
+  // prove a device reported this provider or a sync stamped it, never a
+  // connection. With the connections read answered empty, the whole
+  // honest sentence is "Synced · Not connected"; without that read, only
+  // "Synced" is earned — "Not connected" is a claim the connections read
+  // must have answered to make.
+  if (stamp) {
+    const syncedAt = stamp.updatedAt ?? stamp.updated_at ?? null;
+    return connectionsAnswered
+      ? { ...p, connected: false, status: 'synced', statusText: 'Synced · Not connected', source: 'runner-presence', syncedAt }
+      : { ...p, connected: false, status: 'synced', statusText: 'Synced', source: 'runner-presence', syncedAt };
+  }
   // "Not connected" is a claim both sources must have answered to make:
   // if either read never arrived, a working link could be sitting in the
   // one we didn't see — the row says "Not checked" instead of guessing.
   if (!connectionsAnswered || !presenceAnswered) return { ...p, connected: false, status: 'unchecked', statusText: 'Not checked', source: 'none' };
-  return { ...p, connected: false, status: 'not-connected', statusText: 'Not connected', source: saved ? 'provider-connection' : 'runner-presence' };
+  return { ...p, connected: false, status: 'not-connected', statusText: 'Not connected', source: 'none' };
 }
 
 // connectors: GET /api/admin/cora/connectors body; providers: GET

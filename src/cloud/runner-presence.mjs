@@ -1,6 +1,14 @@
-// Runner provider presence: presence-only booleans for the Settings UI.
+// Runner provider presence: presence-only rows for the Settings UI.
 // The cloud never holds provider credentials (migration 019 contract); this
-// module carries connected true/false plus a timestamp, nothing secret.
+// module carries a connected true/false plus a timestamp, nothing secret.
+//
+// The boolean is a device claim only: the PC bridge sets it when it finds
+// a provider signed in or keyed on the PC it runs on. A profile sync must
+// never set it — sync writes profile files, it does not connect anything —
+// so the sync branch below stamps the row's timestamp through markSynced
+// and leaves the boolean exactly as it found it. No surface may render
+// this feed as "Connected"; connection truth lives in the provider
+// connections store (sql/031), the same store the Agents page reads.
 //
 // Wiring note: live-admin.mjs is frozen at the push size limit, so this
 // route hangs off the existing envoy-ably hook (envoy-ably.mjs delegates
@@ -49,6 +57,19 @@ export function createRunnerPresenceStore(pool) {
     }
   };
 
+  // One presence upsert, with the standing repair for databases whose
+  // provider-name check predates a provider rename: widen it and retry.
+  const upsert = async (client, sql, params) => {
+    try {
+      await client.query(sql, params);
+    } catch (err) {
+      if (err?.code !== '23514') throw err;
+      await client.query(`alter table helmion.runner_provider_presence drop constraint if exists runner_provider_presence_provider_name_check`);
+      await client.query(`alter table helmion.runner_provider_presence add constraint runner_provider_presence_provider_name_check check (provider_name in ('gemini', 'claude', 'openai', 'grok', 'xai', 'mistral', 'runway', 'ollama'))`);
+      await client.query(sql, params);
+    }
+  };
+
   return {
     async list(tenantId) {
       try {
@@ -74,23 +95,34 @@ export function createRunnerPresenceStore(pool) {
       if (!PROVIDERS.has(p)) throw Object.assign(new Error('unknown provider'), { status: 400 });
       try {
         await withTenant(tenantId, async (client) => {
-          const upsertSql = `insert into helmion.runner_provider_presence(tenant_id, provider_name, connected, updated_at)
+          await upsert(client, `insert into helmion.runner_provider_presence(tenant_id, provider_name, connected, updated_at)
              values (current_setting('helmion.tenant_id', true), $1, $2, clock_timestamp())
              on conflict (tenant_id, provider_name)
-             do update set connected = excluded.connected, updated_at = clock_timestamp()`;
-          try {
-            await client.query(upsertSql, [p, connected === true]);
-          } catch (err) {
-            if (err?.code === '23514') {
-              await client.query(`alter table helmion.runner_provider_presence drop constraint if exists runner_provider_presence_provider_name_check`);
-              await client.query(`alter table helmion.runner_provider_presence add constraint runner_provider_presence_provider_name_check check (provider_name in ('gemini', 'claude', 'openai', 'grok', 'xai', 'mistral', 'runway', 'ollama'))`);
-              await client.query(upsertSql, [p, connected === true]);
-            } else {
-              throw err;
-            }
-          }
+             do update set connected = excluded.connected, updated_at = clock_timestamp()`, [p, connected === true]);
         });
         return { ok: true, provider: p, connected: connected === true };
+      } catch (error) {
+        if (isMissingTable(error)) throw Object.assign(new Error('presence store unavailable'), { status: 503 });
+        throw error;
+      }
+    },
+
+    // Stamp a profile sync's time for one provider WITHOUT making or
+    // erasing a connection claim: a fresh row starts at connected = false,
+    // and an existing row keeps whatever the bridge last reported — only
+    // its updated_at moves. Surfaces read that row as "Synced", never as
+    // "Connected".
+    async markSynced(tenantId, provider) {
+      const p = String(provider || '').toLowerCase();
+      if (!PROVIDERS.has(p)) throw Object.assign(new Error('unknown provider'), { status: 400 });
+      try {
+        await withTenant(tenantId, async (client) => {
+          await upsert(client, `insert into helmion.runner_provider_presence(tenant_id, provider_name, connected, updated_at)
+             values (current_setting('helmion.tenant_id', true), $1, false, clock_timestamp())
+             on conflict (tenant_id, provider_name)
+             do update set updated_at = clock_timestamp()`, [p]);
+        });
+        return { ok: true, provider: p, synced: true };
       } catch (error) {
         if (isMissingTable(error)) throw Object.assign(new Error('presence store unavailable'), { status: 503 });
         throw error;
@@ -123,9 +155,13 @@ export async function handleRunnerPresenceRoute({
       let body = {};
       try { body = (await readJson(request)) ?? {}; } catch {}
       if (body.syncProfile === true) {
+        // A sync distributes the profile; it connects nothing. Stamp each
+        // provider's presence row with the sync time (markSynced) so the
+        // surfaces can say "Synced" — the connected boolean is the
+        // bridge's claim to make, and this branch never touches it.
         const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama'];
         for (const prov of syncedProviders) {
-          await store.report(actor.tenantId, prov, true).catch(() => {});
+          await store.markSynced(actor.tenantId, prov).catch(() => {});
         }
         const syncedFiles = [
           '~/.claude/CLAUDE.md (+ agent-os/AGENT_OS.md, LESSONS.md, LEARNINGS.md, MEMORY.md, hooks)',

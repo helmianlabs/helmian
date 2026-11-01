@@ -78,3 +78,58 @@ test('route returns false for other paths', async () => {
 test('presence path constant lives under envoy for device auth', async () => {
   assert.ok(RUNNER_PRESENCE_PATH.startsWith('/api/admin/envoy/'));
 });
+
+// markSynced (connection-truth fix, 2026-11-01): the stamp a profile sync
+// leaves. A dedicated fake that models the two upsert shapes apart —
+// report() sets the boolean; markSynced's conflict clause moves only the
+// timestamp, so an existing device claim survives it.
+function makeSyncFakePool() {
+  const rows = new Map(); // provider -> { connected, updated_at }
+  const client = {
+    query: async (sql, params) => {
+      if (sql.includes('set_config')) return { rows: [] };
+      if (sql.startsWith('select provider_name')) {
+        return { rows: [...rows.entries()].map(([provider_name, v]) => ({ provider_name, ...v })) };
+      }
+      if (sql.includes('insert into helmion.runner_provider_presence')) {
+        const prev = rows.get(params[0]);
+        if (sql.includes('do update set updated_at = clock_timestamp()')) {
+          rows.set(params[0], { connected: prev ? prev.connected : false, updated_at: new Date().toISOString() });
+        } else {
+          rows.set(params[0], { connected: params[1] === true, updated_at: new Date().toISOString() });
+        }
+        return { rowCount: 1 };
+      }
+      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return {};
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release: () => {},
+  };
+  return { connect: async () => client, _rows: rows };
+}
+
+test('markSynced stamps a fresh row unconnected, with a timestamp', async () => {
+  const store = createRunnerPresenceStore(makeSyncFakePool());
+  const out = await store.markSynced('t1', 'claude');
+  assert.equal(out.synced, true);
+  const rows = await store.list('t1');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].provider, 'claude');
+  assert.equal(rows[0].connected, false, 'a sync stamp is not a connection claim');
+  assert.ok(rows[0].updatedAt, 'the stamp carries its time');
+});
+
+test('markSynced never erases a bridge report', async () => {
+  const store = createRunnerPresenceStore(makeSyncFakePool());
+  await store.report('t1', 'gemini', true);
+  await store.markSynced('t1', 'gemini');
+  const rows = await store.list('t1');
+  assert.equal(rows[0].connected, true, 'the device claim survives a later sync stamp');
+});
+
+test('markSynced rejects unknown providers and 503s without the table', async () => {
+  const store = createRunnerPresenceStore(makeSyncFakePool());
+  await assert.rejects(() => store.markSynced('t1', 'nope'), /unknown provider/);
+  const missing = createRunnerPresenceStore(makeFakePool({ missingTable: true }));
+  await assert.rejects(() => missing.markSynced('t1', 'gemini'), (e) => e?.status === 503);
+});
