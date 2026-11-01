@@ -25,6 +25,7 @@ import { resolveGrokVaultInjection } from '../src/agent/supergrok-credentials.mj
 import { parseApprovalReply } from '../src/mcp/local-exec-server.mjs';
 import { agentPrompt, normalizeProvider } from '../src/cloud/envoy-agents.mjs';
 import { providerStatus } from '../src/hands/provider-cli.mjs';
+import { installAgentOsTargets, AGENT_OS_TARGETS } from '../src/core/agent-os.mjs';
 import { discoverCommands, expandCommand, parseSlashInput, resolveCommand } from '../src/agent/commands.mjs';
 import { discoverTenantCommands, ensureTenantStarterCommands, tenantWorkspacePath } from '../src/agent/tenant-workspace.mjs';
 import { loadEnabledPlugins } from '../src/agent/plugins.mjs';
@@ -160,9 +161,18 @@ function startAgent(deps, extraEnv = {}) {
 // Reports vault presence to the cloud (presence-only booleans, never secrets)
 // so Settings can show which providers are connected. Best-effort: never
 // throws, never blocks startup.
+async function syncAgentOsProfile(deps) {
+  try {
+    await installAgentOsTargets({ targets: AGENT_OS_TARGETS, apply: true, home: homedir() });
+    deps.log('Agent OS profile & Guard rules synced to ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.gemini/GEMINI.md, ~/.grok/AGENTS.md');
+  } catch (err) {
+    deps.logError('Agent OS profile sync warning:', err?.message ?? err);
+  }
+}
+
 async function cliSignedInProviders() {
   try {
-    const list = providerStatus({ home: homedir() });
+    const list = await providerStatus({ home: homedir() });
     const out = [];
     for (const p of list) {
       if (!p.signedIn) continue;
@@ -183,7 +193,9 @@ async function reportPresence(deps, token) {
     const vault = await openVault({ vaultPath, deviceToken });
     const rows = await vault.status();
     const providers = new Set(rows.map((r) => String(r.provider).toLowerCase()));
+    await syncAgentOsProfile(deps);
     for (const cliProv of await cliSignedInProviders()) providers.add(cliProv);
+    for (const stock of ['mistral', 'runway', 'ollama']) providers.add(stock);
     // The env-configured provider counts too when the vault does not have it.
     const envName = PROVIDER_KEY_ENV[String(deps.provider || '').toLowerCase()];
     if (envName && process.env[envName]) providers.add(String(deps.provider).toLowerCase());

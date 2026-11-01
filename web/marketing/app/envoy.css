@@ -608,7 +608,12 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-mobile-nav { display:none; }
 
 @media (max-width: 900px) {
-  #ew-link-github { display:none; }
+  /* Keep Link GitHub accessible; hide duplicate pane toggles that live in #ew-mobile-nav */
+  .ew-chat-head .ew-toggle[data-toggle="cli"],
+  .ew-chat-head .ew-toggle[data-toggle="agents"],
+  .ew-chat-head .ew-toggle[data-toggle="guard"],
+  .ew-chat-head .ew-toggle[data-toggle="bench"] { display:none; }
+  .ew-chat-head .ew-badge { flex-shrink:0; max-width:160px; }
   .view.desktop { display:flex; flex-direction:column; height:calc(100dvh - 52px); }
   .view.desktop > .ew { flex:1 1 auto; min-height:0; height:auto; }
   .ew-mobile-nav {
@@ -648,3 +653,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   /* Prevent iOS Safari zoom on input focus */
   input, select, textarea, .ew-composer textarea { font-size:16px; }
 }
+
+/* Crisp SVG navigation & mobile bar icons */
+.nav-item .nav-svg { width:16px; height:16px; flex:none; opacity:.85; transition:opacity .15s, color .15s; }
+.nav-item:hover .nav-svg, .nav-item.active .nav-svg { opacity:1; color:var(--accent); }
+.sidebar.rail .nav-item .nav-svg { width:18px; height:18px; }
+.ew-mnav-ico { display:inline-grid; place-items:center; height:18px; }
+.ew-mnav-ico svg { width:17px; height:17px; }

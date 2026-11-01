@@ -781,10 +781,19 @@ function renderChannels() {
       : [h('p', { class: 'ew-note' }, 'Click + to create a custom agent with a face, name, and real job.')]),
     h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
     ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Use Link Discord in a chat.' : 'Bot not connected yet. Linked channels mirror here.')]),
-    h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-gh-mark', 'aria-hidden': 'true' }), 'GITHUB'),
+    h('div', { class: 'ew-src-head' },
+      h('span', { class: 'ew-gh-mark', 'aria-hidden': 'true' }),
+      'GITHUB',
+      h('button', { type: 'button', class: 'ew-icon sm', title: 'Link a GitHub repository to this channel', 'aria-label': 'Link GitHub repository', style: 'margin-left:auto;', onclick: (e) => { e.stopPropagation(); if (narrow()) closeSheets(); linkGithub(); } }, '+')
+    ),
     ws.config?.github?.repo
-      ? h('p', { class: 'ew-note' }, `Linked to ${ws.config.github.repo}.`)
-      : h('p', { class: 'ew-note' }, 'Use Link GitHub in a channel header to stream commits, PRs & issues. ', h('a', { href: '#integrations' }, 'Integrations'))
+      ? h('button', { type: 'button', class: 'ew-channel', title: `Linked to ${ws.config.github.repo} — click to manage`, onclick: () => { if (narrow()) closeSheets(); linkGithub(); } },
+          h('span', { class: 'ew-gh-mark', 'aria-hidden': 'true' }),
+          h('span', { class: 'name' }, ws.config.github.repo),
+          h('span', { class: 'tags' }, h('span', { class: 'ew-ca-tag' }, 'Linked')))
+      : h('button', { type: 'button', class: 'ew-channel', title: 'Connect a GitHub repository to stream commits, PRs & issues into this channel', onclick: () => { if (narrow()) closeSheets(); linkGithub(); } },
+          h('span', { class: 'ew-gh-mark', 'aria-hidden': 'true' }),
+          h('span', { class: 'name' }, '+ Link GitHub repo'))
   );
 }
 async function selectChannel(id) {
@@ -834,8 +843,8 @@ export function debateHeaderState({ debateMode = 'off', maxRoundTurns = 12 } = {
   return {
     active,
     badgeHidden: !active,
-    badgeText: active ? `🔥 Free-Willy Debate (${maxRoundTurns} turns)` : '',
-    buttonLabel: active ? '🔥 Debate: ON' : '🔥 Free-Willy',
+    badgeText: active ? `Free-Willy Debate (${maxRoundTurns} turns)` : '',
+    buttonLabel: active ? 'Debate: ON' : 'Free-Willy',
     stopHidden: !active,
   };
 }

@@ -14,6 +14,27 @@ public sealed record EnvoyChannel(string Id, string Slug, string Title, string K
 /// <summary>A team chat message from helmian.cloud (Envoy).</summary>
 public sealed record EnvoyMessage(string Id, string ChannelId, string AuthorSubject, string AuthorKind, string Body, DateTimeOffset? CreatedAt);
 
+/// <summary>A custom specialist agent configured on an Envoy channel.</summary>
+public sealed record EnvoyCustomAgent(
+    string Id,
+    string Name,
+    string Handle,
+    string Emoji,
+    string Provider,
+    string AuthMode,
+    string JobTitle,
+    string SystemPrompt);
+
+/// <summary>A GitHub repository link on an Envoy channel.</summary>
+public sealed record EnvoyGithubLink(string Repo, IReadOnlyList<string>? Events, string? LinkedAt);
+
+/// <summary>Channel configuration for an Envoy channel (agents, custom agents, Free-Willy debate, GitHub link).</summary>
+public sealed record EnvoyChannelConfig(
+    string DebateMode,
+    int MaxRoundTurns,
+    EnvoyGithubLink? Github,
+    IReadOnlyList<EnvoyCustomAgent> CustomAgents);
+
 /// <summary>
 /// Desktop link to helmian.cloud team chat. The user presses "Link desktop app" in
 /// helmian.cloud/app (Settings), types the 8-character code here, and the cloud
@@ -163,6 +184,85 @@ public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
         return body.Messages ?? [];
     }
 
+    public async Task<EnvoyChannelConfig> GetChannelConfigAsync(string token, string channelId, CancellationToken cancellationToken = default)
+    {
+        var path = $"/api/admin/envoy/channel-config?channel_id={Uri.EscapeDataString(channelId)}";
+        var reply = await SendAsync<ConfigReply>(HttpMethod.Get, path, token, null, cancellationToken);
+        var cfg = reply?.Config;
+        return new EnvoyChannelConfig(
+            cfg?.DebateMode ?? "off",
+            cfg?.MaxRoundTurns is > 0 ? cfg.MaxRoundTurns : 12,
+            cfg?.Github,
+            cfg?.CustomAgents ?? []);
+    }
+
+    public async Task<EnvoyChannelConfig> SetDebateModeAsync(string token, string channelId, bool enabled, int maxRoundTurns = 12, CancellationToken cancellationToken = default)
+    {
+        var payload = new
+        {
+            channelId,
+            action = enabled ? "set-debate" : "stop-debate",
+            debateMode = enabled ? "free-willy" : "off",
+            maxRoundTurns = Math.Clamp(maxRoundTurns, 2, 24)
+        };
+        var reply = await SendAsync<ConfigReply>(HttpMethod.Post, "/api/admin/envoy/channel-config", token, payload, cancellationToken);
+        var cfg = reply?.Config;
+        return new EnvoyChannelConfig(
+            cfg?.DebateMode ?? (enabled ? "free-willy" : "off"),
+            cfg?.MaxRoundTurns is > 0 ? cfg.MaxRoundTurns : maxRoundTurns,
+            cfg?.Github,
+            cfg?.CustomAgents ?? []);
+    }
+
+    public async Task<EnvoyChannelConfig> LinkGitHubAsync(string token, string channelId, string repo, IReadOnlyList<string>? events = null, CancellationToken cancellationToken = default)
+    {
+        var trimmed = (repo ?? string.Empty).Trim();
+        if (!GitHubRepoPattern().IsMatch(trimmed))
+            throw new ArgumentException("Enter a valid GitHub repository in owner/repo format.");
+        var payload = new
+        {
+            channelId,
+            action = "link-github",
+            repo = trimmed,
+            events = events ?? ["push", "pull_request", "issues"]
+        };
+        var reply = await SendAsync<ConfigReply>(HttpMethod.Post, "/api/admin/envoy/channel-config", token, payload, cancellationToken);
+        var cfg = reply?.Config;
+        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? 12, cfg?.Github, cfg?.CustomAgents ?? []);
+    }
+
+    public async Task<EnvoyChannelConfig> UnlinkGitHubAsync(string token, string channelId, CancellationToken cancellationToken = default)
+    {
+        var payload = new { channelId, action = "unlink-github" };
+        var reply = await SendAsync<ConfigReply>(HttpMethod.Post, "/api/admin/envoy/channel-config", token, payload, cancellationToken);
+        var cfg = reply?.Config;
+        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? 12, cfg?.Github, cfg?.CustomAgents ?? []);
+    }
+
+    public async Task<EnvoyChannelConfig> UpsertCustomAgentAsync(string token, string channelId, EnvoyCustomAgent agent, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+        var payload = new
+        {
+            channelId,
+            action = "upsert-custom-agent",
+            customAgent = new
+            {
+                id = string.IsNullOrWhiteSpace(agent.Id) ? $"ca_{Guid.NewGuid():N}"[..15] : agent.Id,
+                name = agent.Name,
+                handle = agent.Handle,
+                emoji = string.IsNullOrWhiteSpace(agent.Emoji) ? "🤖" : agent.Emoji,
+                provider = string.IsNullOrWhiteSpace(agent.Provider) ? "claude" : agent.Provider,
+                authMode = string.IsNullOrWhiteSpace(agent.AuthMode) ? "subscription" : agent.AuthMode,
+                jobTitle = agent.JobTitle ?? string.Empty,
+                systemPrompt = agent.SystemPrompt ?? string.Empty
+            }
+        };
+        var reply = await SendAsync<ConfigReply>(HttpMethod.Post, "/api/admin/envoy/channel-config", token, payload, cancellationToken);
+        var cfg = reply?.Config;
+        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? 12, cfg?.Github, cfg?.CustomAgents ?? []);
+    }
+
     public async Task SendMessageAsync(string token, string channelId, string text, CancellationToken cancellationToken = default)
     {
         var trimmed = (text ?? string.Empty).Trim();
@@ -200,7 +300,12 @@ public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
     [GeneratedRegex("^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$")]
     private static partial Regex LinkCodePattern();
 
+    [GeneratedRegex("^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")]
+    private static partial Regex GitHubRepoPattern();
+
     private sealed record LinkReply(string Token, string? TenantId);
     private sealed record ChannelsReply(IReadOnlyList<EnvoyChannel>? Channels);
     private sealed record MessagesReply(IReadOnlyList<EnvoyMessage>? Messages);
+    private sealed record ConfigDto(string? DebateMode, int MaxRoundTurns, EnvoyGithubLink? Github, IReadOnlyList<EnvoyCustomAgent>? CustomAgents);
+    private sealed record ConfigReply(ConfigDto? Config);
 }

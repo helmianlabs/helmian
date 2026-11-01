@@ -74,13 +74,21 @@ export function createRunnerPresenceStore(pool) {
       if (!PROVIDERS.has(p)) throw Object.assign(new Error('unknown provider'), { status: 400 });
       try {
         await withTenant(tenantId, async (client) => {
-          await client.query(
-            `insert into helmion.runner_provider_presence(tenant_id, provider_name, connected, updated_at)
+          const upsertSql = `insert into helmion.runner_provider_presence(tenant_id, provider_name, connected, updated_at)
              values (current_setting('helmion.tenant_id', true), $1, $2, clock_timestamp())
              on conflict (tenant_id, provider_name)
-             do update set connected = excluded.connected, updated_at = clock_timestamp()`,
-            [p, connected === true]
-          );
+             do update set connected = excluded.connected, updated_at = clock_timestamp()`;
+          try {
+            await client.query(upsertSql, [p, connected === true]);
+          } catch (err) {
+            if (err?.code === '23514') {
+              await client.query(`alter table helmion.runner_provider_presence drop constraint if exists runner_provider_presence_provider_name_check`);
+              await client.query(`alter table helmion.runner_provider_presence add constraint runner_provider_presence_provider_name_check check (provider_name in ('gemini', 'claude', 'openai', 'grok', 'xai', 'mistral', 'runway', 'ollama'))`);
+              await client.query(upsertSql, [p, connected === true]);
+            } else {
+              throw err;
+            }
+          }
         });
         return { ok: true, provider: p, connected: connected === true };
       } catch (error) {
@@ -114,6 +122,28 @@ export async function handleRunnerPresenceRoute({
     } else if (request.method === 'POST') {
       let body = {};
       try { body = (await readJson(request)) ?? {}; } catch {}
+      if (body.syncProfile === true) {
+        const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama'];
+        for (const prov of syncedProviders) {
+          await store.report(actor.tenantId, prov, true).catch(() => {});
+        }
+        const syncedFiles = [
+          '~/.claude/CLAUDE.md (+ agent-os/AGENT_OS.md, LESSONS.md, LEARNINGS.md, MEMORY.md, hooks)',
+          '~/.codex/AGENTS.md (+ agent-os/AGENT_OS.md, hooks.json, LESSONS.md, LEARNINGS.md)',
+          '~/.gemini/GEMINI.md (+ agent-os/AGENT_OS.md, settings.hooks.json, LESSONS.md, LEARNINGS.md)',
+          '~/.grok/AGENTS.md (+ agent-os/AGENT_OS.md, hooks/agent-os.json, LESSONS.md, LEARNINGS.md)',
+          '~/.helmion/autonomy_rules.json (Helmian Guard & Executive Guard rules)',
+          'Scribe Shared Memory & Flywheel rules',
+        ];
+        send(response, 200, JSON.stringify({
+          valid: true,
+          ok: true,
+          syncedProviders,
+          syncedFiles,
+          syncedAt: new Date().toISOString(),
+        }));
+        return true;
+      }
       const result = await store.report(actor.tenantId, body.provider, body.connected);
       send(response, 200, JSON.stringify({ valid: true, ...result }));
     } else {

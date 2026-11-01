@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,28 +11,32 @@ using Helmion.Desktop.Core;
 namespace Helmion.Desktop;
 
 /// <summary>
-/// Envoy team chat inside the desktop app, using the same helmian.cloud channel and
-/// message APIs as helmian.cloud/app. Polls every few seconds while visible.
+/// Envoy team chat inside the desktop app, using the same helmian.cloud channel,
+/// message, Free-Willy debate, GitHub link, and Custom Agent APIs as helmian.cloud/app.
 /// </summary>
 public partial class TeamChatPanel : UserControl
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly EnvoyCloudLinkStore _store = new();
     private readonly ObservableCollection<ChatLine> _lines = [];
+    private readonly ObservableCollection<CustomMentionPill> _customPills = [];
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(4) };
     private EnvoyCloudChatClient? _client;
     private EnvoyCloudLink? _link;
     private string? _channelId;
+    private EnvoyChannelConfig? _channelConfig;
     private bool _busy;
 
     public TeamChatPanel()
     {
         InitializeComponent();
         MessagesList.ItemsSource = _lines;
+        CustomMentionList.ItemsSource = _customPills;
         _poll.Tick += async (_, _) => await RefreshMessagesAsync();
     }
 
     public sealed record ChatLine(string Who, string When, string Body);
+    public sealed record CustomMentionPill(string Label, string Mention, string Tooltip);
 
     private EnvoyCloudChatClient Client(Uri origin) => _client ??= new EnvoyCloudChatClient(Http, origin);
 
@@ -47,8 +52,19 @@ public partial class TeamChatPanel : UserControl
     {
         LinkCard.Visibility = linked ? Visibility.Collapsed : Visibility.Visible;
         MessagesCard.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
+        MentionBar.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
         Composer.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
+        FreeWillyButton.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
+        LinkGitHubButton.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
+        NewCustomAgentButton.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
         UnlinkButton.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
+        if (!linked)
+        {
+            GitHubDrawer.Visibility = Visibility.Collapsed;
+            CustomAgentDrawer.Visibility = Visibility.Collapsed;
+            DebateBadge.Visibility = Visibility.Collapsed;
+            GitHubBadge.Visibility = Visibility.Collapsed;
+        }
         ChatStatus.Text = linked ? $"Linked to {_link?.Organization ?? "your team"} on helmian.cloud" : "Not linked";
     }
 
@@ -119,7 +135,46 @@ public partial class TeamChatPanel : UserControl
         _channelId = channel.Id;
         ChatTitle.Text = channel.Title;
         _lines.Clear();
-        await RefreshMessagesAsync();
+        await Task.WhenAll(RefreshChannelConfigAsync(), RefreshMessagesAsync());
+    }
+
+    private async Task RefreshChannelConfigAsync()
+    {
+        if (_link is null || _channelId is null) return;
+        try
+        {
+            _channelConfig = await Client(new Uri(_link.Origin)).GetChannelConfigAsync(_link.Token, _channelId);
+            ApplyChannelConfig(_channelConfig);
+        }
+        catch
+        {
+            /* non-fatal: keep last known config */
+        }
+    }
+
+    private void ApplyChannelConfig(EnvoyChannelConfig cfg)
+    {
+        var debateOn = string.Equals(cfg.DebateMode, "free-willy", StringComparison.OrdinalIgnoreCase);
+        DebateBadge.Visibility = debateOn ? Visibility.Visible : Visibility.Collapsed;
+        DebateBadgeText.Text = $"Free-Willy ({cfg.MaxRoundTurns} turns)";
+        FreeWillyButton.Content = debateOn ? "⚡ Debate: ON" : "⚡ Free-Willy";
+
+        var repo = cfg.Github?.Repo;
+        var hasRepo = !string.IsNullOrWhiteSpace(repo);
+        GitHubBadge.Visibility = hasRepo ? Visibility.Visible : Visibility.Collapsed;
+        GitHubBadgeText.Text = hasRepo ? $"GitHub {repo}" : "GitHub";
+        LinkGitHubButton.Content = hasRepo ? "GitHub Linked" : "Link GitHub";
+        if (hasRepo && string.IsNullOrWhiteSpace(GitHubRepoBox.Text)) GitHubRepoBox.Text = repo!;
+
+        _customPills.Clear();
+        foreach (var ca in cfg.CustomAgents)
+        {
+            var emoji = string.IsNullOrWhiteSpace(ca.Emoji) ? "🤖" : ca.Emoji;
+            _customPills.Add(new CustomMentionPill(
+                $"{emoji} @{ca.Handle}",
+                $"@{ca.Handle}",
+                $"{ca.Name} (@{ca.Handle}) · {ca.Provider}" + (string.IsNullOrWhiteSpace(ca.JobTitle) ? string.Empty : $" · {ca.JobTitle}")));
+        }
     }
 
     private async Task RefreshMessagesAsync()
@@ -146,6 +201,135 @@ public partial class TeamChatPanel : UserControl
         {
             ChatStatus.Text = "Team chat is reconnecting…";
         }
+    }
+
+    private async void FreeWillyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_link is null || _channelId is null || _busy) return;
+        var nextOn = !string.Equals(_channelConfig?.DebateMode, "free-willy", StringComparison.OrdinalIgnoreCase);
+        _busy = true;
+        try
+        {
+            _channelConfig = await Client(new Uri(_link.Origin)).SetDebateModeAsync(_link.Token, _channelId, nextOn, 12);
+            ApplyChannelConfig(_channelConfig);
+            ChatStatus.Text = nextOn ? "Free-Willy Debate Mode enabled (12 turns max)." : "Free-Willy Debate Mode turned off.";
+            await RefreshMessagesAsync();
+        }
+        catch (Exception ex)
+        {
+            ChatStatus.Text = $"Could not update Free-Willy mode: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    private void LinkGitHubButton_Click(object sender, RoutedEventArgs e)
+    {
+        CustomAgentDrawer.Visibility = Visibility.Collapsed;
+        GitHubDrawer.Visibility = GitHubDrawer.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        if (GitHubDrawer.Visibility == Visibility.Visible)
+        {
+            GitHubRepoBox.Text = _channelConfig?.Github?.Repo ?? GitHubRepoBox.Text;
+            GitHubRepoBox.Focus();
+        }
+    }
+
+    private async void SaveGitHubButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_link is null || _channelId is null || _busy) return;
+        _busy = true;
+        try
+        {
+            _channelConfig = await Client(new Uri(_link.Origin)).LinkGitHubAsync(_link.Token, _channelId, GitHubRepoBox.Text);
+            ApplyChannelConfig(_channelConfig);
+            GitHubDrawer.Visibility = Visibility.Collapsed;
+            ChatStatus.Text = $"Linked GitHub repository {_channelConfig.Github?.Repo}.";
+            await RefreshMessagesAsync();
+        }
+        catch (Exception ex)
+        {
+            ChatStatus.Text = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+
+    private async void RemoveGitHubButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_link is null || _channelId is null || _busy) return;
+        _busy = true;
+        try
+        {
+            _channelConfig = await Client(new Uri(_link.Origin)).UnlinkGitHubAsync(_link.Token, _channelId);
+            GitHubRepoBox.Clear();
+            ApplyChannelConfig(_channelConfig);
+            GitHubDrawer.Visibility = Visibility.Collapsed;
+            ChatStatus.Text = "GitHub repository unlinked.";
+            await RefreshMessagesAsync();
+        }
+        catch (Exception ex)
+        {
+            ChatStatus.Text = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+
+    private void NewCustomAgentButton_Click(object sender, RoutedEventArgs e)
+    {
+        GitHubDrawer.Visibility = Visibility.Collapsed;
+        CustomAgentDrawer.Visibility = CustomAgentDrawer.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        if (CustomAgentDrawer.Visibility == Visibility.Visible) CustomAgentNameBox.Focus();
+    }
+
+    private void CancelCustomAgentButton_Click(object sender, RoutedEventArgs e) =>
+        CustomAgentDrawer.Visibility = Visibility.Collapsed;
+
+    private async void SaveCustomAgentButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_link is null || _channelId is null || _busy) return;
+        var name = CustomAgentNameBox.Text.Trim();
+        var rawHandle = string.IsNullOrWhiteSpace(CustomAgentHandleBox.Text) ? name : CustomAgentHandleBox.Text;
+        var handle = Regex.Replace(rawHandle.ToLowerInvariant(), "[^a-z0-9_-]+", "-").Trim('-');
+        if (string.IsNullOrWhiteSpace(name) || handle.Length < 2)
+        {
+            ChatStatus.Text = "Enter a name and @handle (at least 2 characters) for the custom agent.";
+            return;
+        }
+        var provider = (CustomAgentProviderBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "claude";
+        var agent = new EnvoyCustomAgent(
+            $"ca_{handle}",
+            name,
+            handle,
+            "🤖",
+            provider,
+            "subscription",
+            CustomAgentJobBox.Text.Trim(),
+            CustomAgentPromptBox.Text.Trim());
+        _busy = true;
+        try
+        {
+            _channelConfig = await Client(new Uri(_link.Origin)).UpsertCustomAgentAsync(_link.Token, _channelId, agent);
+            ApplyChannelConfig(_channelConfig);
+            CustomAgentNameBox.Clear();
+            CustomAgentHandleBox.Clear();
+            CustomAgentJobBox.Clear();
+            CustomAgentPromptBox.Clear();
+            CustomAgentDrawer.Visibility = Visibility.Collapsed;
+            ChatStatus.Text = $"Created custom agent {name} (@{handle}).";
+            await RefreshMessagesAsync();
+        }
+        catch (Exception ex)
+        {
+            ChatStatus.Text = ex.Message;
+        }
+        finally { _busy = false; }
+    }
+
+    private void MentionPill_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string mention } || string.IsNullOrWhiteSpace(mention)) return;
+        var prefix = MessageBox.Text.Length > 0 && !MessageBox.Text.EndsWith(' ') ? " " : string.Empty;
+        MessageBox.Text += $"{prefix}{mention} ";
+        MessageBox.CaretIndex = MessageBox.Text.Length;
+        MessageBox.Focus();
     }
 
     private async void SendButton_Click(object sender, RoutedEventArgs e) => await SendAsync();
@@ -201,8 +385,9 @@ public partial class TeamChatPanel : UserControl
     {
         _poll.Stop();
         _store.Clear();
-        _link = null; _channelId = null;
+        _link = null; _channelId = null; _channelConfig = null;
         _lines.Clear();
+        _customPills.Clear();
         ShowLinked(false);
         ShowLinkError(message);
     }

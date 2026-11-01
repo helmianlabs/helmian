@@ -28,22 +28,22 @@ export function integrationSections({ presence = null, connectors = {}, provider
       ? { img: `/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png` }
       : { glyph: key === 'mistral' ? '🦊' : '🎬' };
     return { key, name, blurb, icon, status: connected ? 'on' : 'off', statusText,
-      action: connected ? { label: 'Manage', href: '#agents' } : OAUTH[key] ? { label: 'Connect', href: OAUTH[key] } : { label: 'Connect', act: key === 'claude' ? 'claude-help' : 'keys-help' } };
+      action: connected ? { label: 'Manage', href: '#agents' } : OAUTH[key] ? { label: 'Connect', href: OAUTH[key] } : { label: 'Connect', act: key === 'claude' ? 'claude-help' : 'keys-help', provider: key } };
   });
   const discord = truth.get('discord');
   const github = truth.get('github');
   const slack = truth.get('slack');
   const chat = [
     { key: 'discord', name: 'Discord', blurb: 'Mirror a team channel with Discord.', icon: { mark: 'discord' }, status: discord?.connected ? 'on' : 'off', statusText: discord?.statusText ?? 'Not checked', action: { label: discord?.connected ? 'Manage' : 'Link a channel', href: '#desktop' } },
-    // GitHub is a tool connection: once a row exists its card renders the
-    // probe truth; before that, the honest "Coming soon" it always had.
+    // GitHub is a tool connection or channel repo link.
     github?.source === 'tool-connections'
-      ? { key: 'github', name: 'GitHub', blurb: 'See repo activity next to your chats.', icon: { mark: 'github' }, status: github.connected ? 'on' : 'off', statusText: github.statusText, action: null }
-      : { key: 'github', name: 'GitHub', blurb: 'See repo activity next to your chats.', icon: { mark: 'github' }, status: 'soon', statusText: 'Coming soon', action: null },
-    { key: 'slack', name: 'Slack', blurb: 'Mirror a team channel with Slack.', icon: { mark: 'slack' }, status: slack?.connected ? 'on' : 'off', statusText: slack?.statusText ?? 'Not checked', action: null },
+      ? { key: 'github', name: 'GitHub', blurb: 'See repo activity next to your chats.', icon: { mark: 'github' }, status: github.connected ? 'on' : 'off', statusText: github.statusText, action: { label: 'Link a channel', href: '#desktop' } }
+      : { key: 'github', name: 'GitHub', blurb: 'Stream commits, pull requests and issues into any Envoy channel.', icon: { mark: 'github' }, status: 'info', statusText: 'Ready to link', action: { label: 'Link a channel', href: '#desktop' } },
+    { key: 'slack', name: 'Slack', blurb: 'Mirror a team channel with Slack.', icon: { mark: 'slack' }, status: slack?.connected ? 'on' : 'off', statusText: slack?.statusText ?? 'Not checked', action: { label: slack?.connected ? 'Manage' : 'Link a channel', href: '#desktop' } },
   ];
   const pcOnline = online.size > 0;
   const devices = [
+    { key: 'profile-sync', name: 'Sync Profile and Guard', blurb: 'One-push sync of your rules, flywheel, markdown files and Guard hooks.', icon: { glyph: '⚡' }, status: 'on', statusText: 'Ready', action: { label: 'Sync now', act: 'sync-profile' } },
     { key: 'pc', name: 'Your PC', blurb: pcOnline ? 'Online. Agents can answer from your PC.' : 'Offline. Install Helmian on your PC so agents can work there.', icon: { glyph: '🖥️' }, status: pcOnline ? 'on' : 'off', statusText: pcOnline ? 'Online' : 'Offline', action: pcOnline ? { label: 'Manage', href: '#devices' } : { label: 'Set up', act: 'pc-help' } },
     { key: 'phone', name: 'Your phone', blurb: 'Scan with your phone camera, sign in, done.', icon: { glyph: '📱' }, status: 'qr', statusText: 'Scan to open', action: null, qr: PHONE_URL },
   ];

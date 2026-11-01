@@ -265,6 +265,33 @@ public static class ProfileSyncEngine
                 syncedItems.Add("Gemini global rules (GEMINI.md) created");
             }
 
+            // 7b. Sync Codex (AGENTS.md) and Grok (AGENTS.md) global rules (create once, never overwrite user content)
+            var codexDir = Path.Combine(userProfile, ".codex");
+            var codexRulesPath = Path.Combine(codexDir, "AGENTS.md");
+            Directory.CreateDirectory(codexDir);
+            if (File.Exists(codexRulesPath))
+            {
+                syncedItems.Add("Codex global rules (AGENTS.md) left untouched — your file, not ours");
+            }
+            else
+            {
+                await File.WriteAllTextAsync(codexRulesPath, GeminiRulesContent.Replace("Helmion Gemini Rules", "Helmion Codex & Agent OS Rules"), cancellationToken);
+                syncedItems.Add("Codex global rules (~/.codex/AGENTS.md) created");
+            }
+
+            var grokDir = Path.Combine(userProfile, ".grok");
+            var grokRulesPath = Path.Combine(grokDir, "AGENTS.md");
+            Directory.CreateDirectory(grokDir);
+            if (File.Exists(grokRulesPath))
+            {
+                syncedItems.Add("Grok global rules (AGENTS.md) left untouched — your file, not ours");
+            }
+            else
+            {
+                await File.WriteAllTextAsync(grokRulesPath, GeminiRulesContent.Replace("Helmion Gemini Rules", "Helmion SuperGrok & Agent OS Rules"), cancellationToken);
+                syncedItems.Add("Grok global rules (~/.grok/AGENTS.md) created");
+            }
+
             // 8. Sync Codex Rules & Hooks
             var helmionConfigDir = Path.Combine(projectRoot, ".helmion");
             var helmionHookDir = Path.Combine(helmionConfigDir, "hooks");
