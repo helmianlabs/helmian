@@ -38,6 +38,16 @@ import {
 } from './scribe-client.js';
 import { getAuth as getScribeAuth, signIn as scribeSignIn, signOut as scribeSignOut } from './scribe-auth.js';
 import {
+  APPROVALS_ALARM,
+  approvalsView,
+  badgeTextFor as approvalsBadgeText,
+  decideApproval,
+  getApprovalsState,
+  pollApprovals,
+  setApprovalsBadgeOwned,
+  signInToApprovals,
+} from './approvals-client.js';
+import {
   getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost,
 } from './nudge-policy.js';
 import { scanProse } from './claims.js';
@@ -187,6 +197,9 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:scribe-nudge',
   'helmion:scribe-signin',
   'helmion:nudge-settings',
+  'helmion:approvals-view',
+  'helmion:approvals-signin',
+  'helmion:approvals-decide',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -256,6 +269,43 @@ export async function runScribePoll(opts = {}) {
   await runAutoNudge(result).catch((error) => console.warn('[Helmion Guard] auto-nudge pass failed:', error && error.message));
   return result;
 }
+// ─── SCRIBE APPROVALS POP-UP (0.7.0) ───────────────────────────────────────
+// The door (connect.helmian.cloud/approvals) holds the list and takes the
+// decisions; this is only its poll + badge + popup plumbing. See
+// background/approvals-client.js for the contract and the rule that the
+// passphrase is never stored. The badge is the whole signal: amber, global,
+// count only. Nothing opens, sounds or steals focus — the pop-up appears
+// when Troy clicks the icon, which is the point of the feature.
+const APPROVALS_BADGE = '#c77700';
+async function syncApprovalsAlarm() {
+  try {
+    if (!chrome.alarms) return;
+    const s = await getApprovalsState(ledger);
+    if (s.session === 'in') chrome.alarms.create(APPROVALS_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
+    else chrome.alarms.clear(APPROVALS_ALARM);
+  } catch (error) { console.warn('[Helmion Guard] approvals alarm sync failed:', error.message); }
+}
+async function paintApprovalsBadge() {
+  try {
+    const s = await getApprovalsState(ledger);
+    const text = approvalsBadgeText(s.session === 'in' ? s.count : 0);
+    if (!text && !s.badgeOwned) return;
+    chrome.action.setBadgeText({ text });
+    if (text) {
+      chrome.action.setBadgeBackgroundColor({ color: APPROVALS_BADGE });
+      chrome.action.setTitle({ title: `Helmian Guard: ${s.count} approval(s) waiting for your decision` });
+      await setApprovalsBadgeOwned(ledger, true);
+    } else {
+      await setApprovalsBadgeOwned(ledger, false);
+    }
+  } catch { /* badge is best effort */ }
+}
+export async function runApprovalsPoll(opts = {}) {
+  const result = await pollApprovals(ledger, opts);
+  await paintApprovalsBadge();
+  if (result.session === 'out') await syncApprovalsAlarm();
+  return result;
+}
 // ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
 // Queue fresh letters (ids only), then let the policy decide per open chat tab.
 // The text is fixed (nudge-policy.js nudgeText); letter content never leaves here.
@@ -292,7 +342,10 @@ function openMailboxSite(mailbox) {
   try { chrome.tabs.create({ url }); return true; } catch { return false; }
 }
 if (chrome.alarms && chrome.alarms.onAlarm) {
-  chrome.alarms.onAlarm.addListener((alarm) => { if (alarm && alarm.name === SCRIBE_ALARM) runScribePoll().catch(() => {}); });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm && alarm.name === SCRIBE_ALARM) runScribePoll().catch(() => {});
+    if (alarm && alarm.name === APPROVALS_ALARM) runApprovalsPoll().catch(() => {});
+  });
 }
 if (chrome.notifications && chrome.notifications.onClicked) {
   chrome.notifications.onClicked.addListener((id) => {
@@ -302,8 +355,8 @@ if (chrome.notifications && chrome.notifications.onClicked) {
     try { chrome.notifications.clear(id); } catch { /* ignore */ }
   });
 }
-if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncScribeAlarm(); });
-if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => { syncScribeAlarm(); });
+if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); });
+if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
@@ -542,6 +595,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return view;
       };
       run().then((auth) => sendResponse({ ok: true, auth })).catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-view') {
+      const force = message.options && message.options.force === true;
+      runApprovalsPoll({ force })
+        .then(async () => sendResponse({ ok: true, view: approvalsView(await getApprovalsState(ledger)) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-signin') {
+      // The passphrase exists only inside this call and the client's one
+      // POST. It is never written to storage (approvals-client.js).
+      signInToApprovals(ledger, String(message.passphrase || ''))
+        .then(async (result) => {
+          await syncApprovalsAlarm();
+          await paintApprovalsBadge();
+          sendResponse(result);
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-decide') {
+      decideApproval(ledger, String(message.id || ''), message.verdict === 'approve' ? 'approve' : 'deny')
+        .then(async (result) => {
+          await paintApprovalsBadge();
+          if (result.view && result.view.session === 'out') await syncApprovalsAlarm();
+          sendResponse(result);
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }
 

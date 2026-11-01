@@ -118,7 +118,12 @@ test('it asks for exactly ONE permission, and that one is storage', () => {
   // opt-in plus a device token. It needs Troy's manual browser testing before
   // it is treated as verified. This assertion pins the exception to exactly
   // helmian.cloud and nothing broader — it must never quietly grow.
-  assert.deepEqual(manifest.host_permissions, ['https://helmian.cloud/*']);
+  // 0.7.0 (Scribe approvals pop-up, 2026-11-01): + connect.helmian.cloud, the
+  // approvals DOOR itself — the one host the approvals feature talks to, and
+  // only after Troy signs in there with his Scribe passphrase. The door holds
+  // the Guard approver credential; the extension never talks to the Guard.
+  // Deliberate growth, reviewed in this bite, not a quiet one.
+  assert.deepEqual(manifest.host_permissions, ['https://helmian.cloud/*', 'https://connect.helmian.cloud/*']);
 });
 
 test('the only thing that uses the storage permission is the ledger', async () => {
@@ -216,7 +221,14 @@ function isShippedFile(file) {
 //   background/flags-client.js  Flags reports to the Flags API
 // Each has its own tests (executive-loop.test.mjs, flags-client.test.mjs) that
 // prove it does nothing on the network until configured.
-const NETWORK_ALLOWLIST = ['background/upload.js', 'background/executive.js', 'background/flags-client.js', 'background/scribe-client.js', 'background/scribe-auth.js'];
+//
+// 2026-11-01 (0.7.0): one more —
+//   background/approvals-client.js  the Scribe approvals pop-up client. It
+// reaches exactly one host (the approvals door, connect.helmian.cloud) and
+// only after Troy signs in at that door; signed out, it makes no requests.
+// Its tests (approvals-popup.test.mjs) prove the same nothing-until-signed-in
+// property against a stub door.
+const NETWORK_ALLOWLIST = ['background/upload.js', 'background/executive.js', 'background/flags-client.js', 'background/scribe-client.js', 'background/scribe-auth.js', 'background/approvals-client.js'];
 
 function isAllowlisted(file) {
   const relative = path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/');
@@ -242,8 +254,8 @@ test('nothing in the extension calls out to the network', async () => {
   }
 });
 
-test('the network allowlist holds exactly the five opt-in modules (scribe-client 0.5.0, scribe-auth 0.6.0, off by default)', async () => {
-  assert.deepEqual(NETWORK_ALLOWLIST, ['background/upload.js', 'background/executive.js', 'background/flags-client.js', 'background/scribe-client.js', 'background/scribe-auth.js']);
+test('the network allowlist holds exactly the six opt-in modules (scribe-client 0.5.0, scribe-auth 0.6.0, approvals-client 0.7.0, off by default)', async () => {
+  assert.deepEqual(NETWORK_ALLOWLIST, ['background/upload.js', 'background/executive.js', 'background/flags-client.js', 'background/scribe-client.js', 'background/scribe-auth.js', 'background/approvals-client.js']);
   const files = await listJsFiles(EXTENSION_ROOT);
   const shipped = files.filter(isShippedFile).map((file) => path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/'));
   for (const allowed of NETWORK_ALLOWLIST) {

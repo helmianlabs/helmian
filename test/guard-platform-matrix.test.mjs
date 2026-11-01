@@ -15,8 +15,11 @@ test('Chromium and Firefox packages keep the minimal permission boundary', () =>
     assert.deepEqual(manifest.content_scripts[0].matches, ['https://claude.ai/*', 'https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://grok.com/*']);
     assert.ok(!JSON.stringify(manifest).includes('<all_urls>'));
   }
-  // The one install-time host: the opt-in helmian.cloud findings upload (Chromium only).
-  assert.deepEqual(chromium.host_permissions, ['https://helmian.cloud/*']);
+  // The install-time hosts (Chromium only): the opt-in helmian.cloud findings
+  // upload, and — 0.7.0, 2026-11-01, the Scribe approvals pop-up — the
+  // approvals door connect.helmian.cloud, which the extension reaches only
+  // after Troy signs in there. Deliberate growth, reviewed in that bite.
+  assert.deepEqual(chromium.host_permissions, ['https://helmian.cloud/*', 'https://connect.helmian.cloud/*']);
   assert.equal(firefox.host_permissions, undefined);
   // Optional origins for Executive Guard / Flags, granted only from a popup click.
   assert.deepEqual(chromium.optional_host_permissions, OPTIONAL_ORIGINS);

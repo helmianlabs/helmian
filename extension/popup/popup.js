@@ -343,6 +343,100 @@ refreshExecutiveSettings();
 refreshFlagsSettings().then((s) => { if (s && s.enabled) refreshAlerts(false); });
 
 
+// ─── Scribe approvals pop-up ────────────────────────────────────────────────
+// The list and the decisions belong to the door (connect.helmian.cloud); this
+// only renders what the worker reports and sends back the one tap. The
+// passphrase is read from the field, handed to the worker in one message and
+// cleared from the field immediately — it is never stored anywhere.
+function requestDoorPermission() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.request !== 'function') { resolve(true); return; }
+      const r = chrome.permissions.request({ origins: ['https://connect.helmian.cloud/*'] }, (g) => { void chrome.runtime.lastError; resolve(Boolean(g)); });
+      if (r && typeof r.then === 'function') r.then((g) => resolve(Boolean(g)), () => resolve(false));
+    } catch { resolve(false); }
+  });
+}
+
+function approvalRow(item) {
+  const li = document.createElement('li');
+  li.className = 'alert approval-row';
+
+  const sum = document.createElement('div');
+  sum.className = 'approval-sum';
+  sum.textContent = item.summary || 'Action';
+  li.appendChild(sum);
+
+  if (item.meta) {
+    const meta = document.createElement('div');
+    meta.className = 'matched';
+    meta.textContent = item.meta;
+    li.appendChild(meta);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const approve = document.createElement('button');
+  approve.type = 'button';
+  approve.textContent = 'Approve';
+  approve.addEventListener('click', () => decideFromPopup(item.id, 'approve', [approve, deny]));
+  const deny = document.createElement('button');
+  deny.type = 'button';
+  deny.textContent = 'Deny';
+  deny.addEventListener('click', () => decideFromPopup(item.id, 'deny', [approve, deny]));
+  actions.appendChild(approve);
+  actions.appendChild(deny);
+  li.appendChild(actions);
+  return li;
+}
+
+function renderApprovals(r) {
+  const status = $('approvalsStatus');
+  const list = $('approvalsList');
+  list.textContent = '';
+  if (!r || !r.ok && !r.view) {
+    $('approvalsSignIn').hidden = false;
+    status.textContent = (r && r.error) || 'Approvals could not be loaded.';
+    return;
+  }
+  const view = r.view || {};
+  if (view.session !== 'in') {
+    $('approvalsSignIn').hidden = false;
+    status.textContent = view.lastError || 'Sign in to see what is waiting for your decision.';
+    return;
+  }
+  $('approvalsSignIn').hidden = true;
+  for (const item of view.items || []) list.appendChild(approvalRow(item));
+  if (r.error) status.textContent = r.error;
+  else if (view.state === 'unavailable') status.textContent = view.lastError || 'Approvals are unavailable right now. Please try again.';
+  else if (view.flash) status.textContent = view.flash;
+  else if ((view.items || []).length === 0) status.textContent = 'Nothing is waiting for a decision.';
+  else status.textContent = `${view.count} waiting for your decision.`;
+}
+
+async function decideFromPopup(id, verdict, buttons) {
+  for (const b of buttons) b.disabled = true;
+  const r = await askWithPayload('helmion:approvals-decide', { id, verdict });
+  renderApprovals(r);
+}
+
+async function refreshApprovals(force) {
+  renderApprovals(await askWithPayload('helmion:approvals-view', { options: { force: force === true } }));
+}
+
+$('approvalsSignInBtn').addEventListener('click', async () => {
+  const field = $('approvalsPassphrase');
+  const passphrase = field.value;
+  if (!passphrase) { $('approvalsStatus').textContent = 'Type your Scribe passphrase first.'; return; }
+  if (!await requestDoorPermission()) { $('approvalsStatus').textContent = 'Permission to reach the approvals door was not granted, so sign-in did not happen.'; return; }
+  field.value = '';
+  $('approvalsStatus').textContent = 'Signing in…';
+  renderApprovals(await askWithPayload('helmion:approvals-signin', { passphrase }));
+});
+$('approvalsPassphrase').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('approvalsSignInBtn').click(); });
+
+refreshApprovals(false);
+
 // ─── Scribe door-knock ──────────────────────────────────────────────────────
 function requestNotifications() {
   return new Promise((resolve) => {

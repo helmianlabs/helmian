@@ -2,14 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Helmion Guard</title>
+  <title>Helmian Guard</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
   <header>
-    <h1>Helmion Guard</h1>
+    <h1>Helmian Guard</h1>
     <p id="tagline">Every flag it raises is logged on this machine. Cloud upload is opt-in.</p>
   </header>
+
+  <section id="approvals" aria-live="polite">
+    <h2>Approvals</h2>
+    <p class="muted">Actions your AIs take through Scribe wait for your decision here. Nothing runs until you approve it.</p>
+    <div id="approvalsSignIn">
+      <label class="row">Scribe passphrase <input id="approvalsPassphrase" type="password" autocomplete="off" placeholder="Your Scribe passphrase"></label>
+      <div class="actions">
+        <button id="approvalsSignInBtn" type="button">Sign in to approvals</button>
+      </div>
+    </div>
+    <p id="approvalsStatus" class="muted" role="status"></p>
+    <ul id="approvalsList" class="alerts"></ul>
+  </section>
 
   <section id="guardStatus" class="guard-status" aria-live="polite">
     <h2>Current status</h2>

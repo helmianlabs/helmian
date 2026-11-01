@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Helmion Guard",
-  "version": "0.6.0",
+  "name": "Helmian Guard",
+  "version": "0.7.0",
   "description": "Catches destructive commands, keeps secrets out of AI chats, flags evasive, leaky or harmful replies, and keeps a durable local log of every flag.",
   "permissions": [
     "storage",
@@ -9,7 +9,8 @@
     "idle"
   ],
   "host_permissions": [
-    "https://helmian.cloud/*"
+    "https://helmian.cloud/*",
+    "https://connect.helmian.cloud/*"
   ],
   "background": {
     "service_worker": "background/worker.js",
@@ -41,7 +42,7 @@
     }
   ],
   "action": {
-    "default_title": "Helmion Guard",
+    "default_title": "Helmian Guard",
     "default_popup": "popup/popup.html"
   },
   "optional_host_permissions": [

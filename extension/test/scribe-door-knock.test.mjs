@@ -252,12 +252,14 @@ test('without notifications permission, no notification is shown', async () => {
   } finally { await api.close(); }
 });
 
-test('manifests: alarms + idle required, notifications optional, no new install-time hosts', () => {
+test('manifests: alarms + idle required, notifications optional, install-time hosts pinned to the deliberate two', () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url)));
     assert.deepEqual(m.permissions, f === 'manifest.json' ? ['storage', 'alarms', 'idle'] : ['storage', 'alarms', 'idle', 'identity']);
     assert.ok(m.optional_permissions.includes('notifications'));
-    assert.deepEqual(m.host_permissions || [], f === 'manifest.json' ? ['https://helmian.cloud/*'] : []);
+    // 2026-11-01 (0.7.0): + connect.helmian.cloud for the approvals pop-up —
+    // the door itself, reached only after sign-in. See package.test.mjs.
+    assert.deepEqual(m.host_permissions || [], f === 'manifest.json' ? ['https://helmian.cloud/*', 'https://connect.helmian.cloud/*'] : []);
   }
 });
 

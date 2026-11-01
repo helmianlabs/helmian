@@ -122,3 +122,5 @@ footer { margin-top: 14px; border-top: 1px solid var(--stroke); padding-top: 10p
 .alerts { list-style: none; padding: 0; margin: 6px 0 0; max-height: 180px; overflow-y: auto; }
 .alerts .alert { border-left: 3px solid var(--faint); padding: 4px 6px; margin-bottom: 6px; font-size: 11px; overflow-wrap: anywhere; }
 .alerts .sev-critical, .alerts .sev-high { border-left-color: #d64545; }
+.approval-row .approval-sum { font-size: 12px; overflow-wrap: anywhere; }
+.approval-row .actions { margin-top: 6px; }
