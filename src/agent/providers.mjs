@@ -1,3 +1,4 @@
+import { spawn as spawnCli } from 'node:child_process';
 /**
  * Provider adapters for the Helmion coding agent.
  * OpenAI + xAI: OpenAI-compatible chat.completions + tools.
@@ -83,7 +84,7 @@ Rules:
   const actionRules = safeWorkbench
     ? `- Start workspace work with workspace_context so you see the bounded file inventory, declared tasks, artifacts, and boundaries.
 - Use create_file only for a new file and edit_file only for an exact, unambiguous replacement. Never claim a change unless the tool returned completed.
-- Execution is limited to run_project_task entries declared by the selected project. You have no arbitrary terminal or OS command tool.
+- Execution is limited to run_project_task entries declared by the selected project${tools.has('run_powershell') ? ' (plus run_powershell, ollama_generate, and ollama_list on the paired PC)' : '. You have no arbitrary terminal or OS command tool.'}
 - Preview: call start_project_preview with a relative HTML path; Helmian opens 127.0.0.1 in the right Browser panel. One live preview at a time in that panel. You have no general browser-control tool.
 - Images: you cannot generate images via tools here. Troy uses the Create workbench (OpenAI Images) for image generation with human approve.`
     : `- Use tools to inspect and change the workspace. Do not claim you edited a file unless write_file succeeded.
@@ -208,6 +209,28 @@ async function runProviderTurn(call, metadata) {
  *   `isLocal` is deliberately NOT taken from here: it is derived below from the
  *   endpoint that was actually called.
  */
+
+function cliSubscriptionTurn({ providerId, messages, signal }) {
+  const userText = (messages || []).filter((m) => m.role !== 'system').map((m) => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n\n');
+  const bin = providerId === 'gemini' ? 'gemini' : providerId === 'anthropic' ? 'claude' : 'codex';
+  const args = providerId === 'openai' ? ['exec', userText] : ['-p', userText];
+  return new Promise((resolvePromise, rejectPromise) => {
+    let out = '';
+    let err = '';
+    const child = spawnCli(bin, args, { shell: process.platform === 'win32', windowsHide: true });
+    const timer = setTimeout(() => { try { child.kill(); } catch {} rejectPromise(new Error(`${bin} CLI timed out`)); }, 90000);
+    if (signal) signal.addEventListener('abort', () => { clearTimeout(timer); try { child.kill(); } catch {} }, { once: true });
+    child.stdout?.on('data', (d) => { out += d.toString(); });
+    child.stderr?.on('data', (d) => { err += d.toString(); });
+    child.on('error', (e) => { clearTimeout(timer); rejectPromise(e); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0 || out.trim()) resolvePromise({ content: out.trim() || '(no output)', toolCalls: [] });
+      else rejectPromise(new Error(`${bin} CLI exited ${code}: ${err.slice(0, 400)}`));
+    });
+  });
+}
+
 export async function chatWithTools({
   providerId,
   apiKey = '',
@@ -266,6 +289,9 @@ export async function chatWithTools({
   }
 
   const startedAt = Date.now();
+  if (credentialType === 'cli' || apiKey === 'cli-subscription') {
+    return runProviderTurn(() => cliSubscriptionTurn({ providerId, messages, signal }), { providerId, model: model || `${providerId}-cli`, url: `cli://${providerId}`, isLocal: true, provenance, startedAt });
+  }
 
   // User-defined OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, DeepSeek, …).
   // Same wire format as OpenAI; only the base URL and model differ.

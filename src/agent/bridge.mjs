@@ -1,3 +1,7 @@
+import { spawn as spawnChild } from 'node:child_process';
+import { existsSync as fileExistsSync } from 'node:fs';
+import { evaluateToolCall, governanceRefusalMessage } from '../core/governance-gate.mjs';
+import { redactSecrets } from './redact.mjs';
 import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -62,6 +66,105 @@ import { resolveTurnAttachments } from './attachments.mjs';
  * turn that is waiting for it, which would deadlock that turn until its
  * approval timed out.
  */
+
+function hasSignedInCliSync(providerId, home = homedir()) {
+  try {
+    if (providerId === 'gemini') return fileExistsSync(join(home, '.gemini', 'oauth_creds.json'));
+    if (providerId === 'anthropic') return fileExistsSync(join(home, '.claude', '.credentials.json'));
+    if (providerId === 'openai') return fileExistsSync(join(home, '.codex', 'auth.json'));
+  } catch {}
+  return false;
+}
+
+function createBridgeExtraTools(getWorkspace) {
+  return {
+    ollama_list: {
+      readOnly: true,
+      description: 'List local quantized models installed in Ollama on this PC (e.g. qwen3.5:4b).',
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        try {
+          const res = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(5000) });
+          const data = await res.json().catch(() => ({}));
+          const models = (data.models || []).map((m) => ({ name: m.name, sizeGB: m.size ? +(m.size / 1e9).toFixed(2) : null, modifiedAt: m.modified_at }));
+          return JSON.stringify({ ok: true, endpoint: 'http://127.0.0.1:11434', models });
+        } catch (err) {
+          return JSON.stringify({ ok: false, error: err?.message || 'Ollama not reachable on 127.0.0.1:11434' });
+        }
+      },
+    },
+    ollama_generate: {
+      readOnly: true,
+      description: 'Run a prompt against the local quantized Ollama model on this PC (automatically selects qwen3.5:4b if model is omitted or aliased).',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'Prompt to send to the local quantized model' },
+          model: { type: 'string', description: 'Optional model name (defaults to installed qwen3.5:4b)' },
+        },
+        required: ['prompt'],
+      },
+      async execute({ prompt, model }) {
+        try {
+          let targetModel = String(model || '').trim();
+          const tagsRes = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(4000) }).catch(() => null);
+          const tagsData = tagsRes ? await tagsRes.json().catch(() => ({})) : {};
+          const installed = (tagsData.models || []).map((m) => m.name);
+          if (!targetModel || !installed.includes(targetModel)) {
+            targetModel = installed[0] || targetModel || 'qwen3.5:4b';
+          }
+          const res = await fetch('http://127.0.0.1:11434/api/generate', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model: targetModel, prompt: String(prompt || ''), stream: false, options: { num_predict: 512 } }),
+            signal: AbortSignal.timeout(90000),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) return JSON.stringify({ ok: false, model: targetModel, error: body.error || `HTTP ${res.status}` });
+          return JSON.stringify({ ok: true, model: targetModel, response: String(body.response || '').trim() });
+        } catch (err) {
+          return JSON.stringify({ ok: false, error: err?.message || 'Local Ollama call failed' });
+        }
+      },
+    },
+    run_powershell: {
+      readOnly: true,
+      description: 'Execute a PowerShell command on this Windows PC inside the workspace (governed by the Helmian Governance Kernel; secrets are automatically redacted).',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'PowerShell command to execute' },
+        },
+        required: ['command'],
+      },
+      async execute({ command }) {
+        const cmdText = String(command || '').trim();
+        if (!cmdText) return 'Error: empty command';
+        const ws = getWorkspace();
+        const gov = evaluateToolCall({ tool: 'run_command', args: { command: cmdText }, workspace: ws });
+        if (!gov.allowed) return redactSecrets(governanceRefusalMessage('run_powershell', gov));
+        return new Promise((resolvePromise) => {
+          let out = '';
+          let err = '';
+          const child = spawnChild('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmdText], {
+            cwd: ws,
+            windowsHide: true,
+          });
+          const timer = setTimeout(() => { try { child.kill(); } catch {} resolvePromise(redactSecrets(`Timed out after 45s\n${out}\n${err}`)); }, 45000);
+          child.stdout?.on('data', (d) => { if (out.length < 48000) out += d.toString(); });
+          child.stderr?.on('data', (d) => { if (err.length < 16000) err += d.toString(); });
+          child.on('error', (e) => { clearTimeout(timer); resolvePromise(`Error: ${e.message}`); });
+          child.on('close', (code) => {
+            clearTimeout(timer);
+            const combined = [out.trimEnd(), err.trimEnd() ? `STDERR:\n${err.trimEnd()}` : '', `exit_code=${code}`].filter(Boolean).join('\n');
+            resolvePromise(redactSecrets(combined));
+          });
+        });
+      },
+    },
+  };
+}
+
 export async function runAgentBridge() {
   const env = loadHelmionEnv(process.cwd());
   let workspace = env.workspace || process.cwd();
@@ -117,6 +220,7 @@ export async function runAgentBridge() {
     // The account/Desktop path never exposes the legacy arbitrary shell and
     // whole-file overwrite catalog. It receives the typed project workbench.
     safeWorkspaceTools: true,
+    extraTools: createBridgeExtraTools(() => workspace),
   });
 
   const state = createSessionState(workspace, runtimeOptions());
@@ -222,6 +326,9 @@ export async function runAgentBridge() {
   const reconfigure = () => {
     const envNow = loadHelmionEnv(workspace);
     provider = resolveProvider(providerName, envNow, customProviders);
+    if (!provider.key && hasSignedInCliSync(provider.id)) {
+      provider = { ...provider, key: 'cli-subscription', credentialType: 'cli' };
+    }
     if (!provider.key
       && !(provider.id === 'xai' && supergrokResolver?.hasSessionSync())) {
       throw new Error(

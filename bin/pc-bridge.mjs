@@ -505,7 +505,7 @@ export async function runBridge(overrides = {}) {
     const runProvider = provider;
     try {
       log(`agent ${provider} (${runProvider}) answering ${item.message.id} in #${item.channel.slug}`);
-      await sendAndWait(child, { cmd: 'configure', provider: runProvider, workspace: deps.workspace, permission: deps.toolsMode }, 'ready');
+      await sendAndWait(child, { cmd: 'configure', provider: runProvider, workspace: deps.workspace, permission: deps.toolsMode === 'read-only' ? (process.env.HELMION_BRIDGE_AGENT_TOOLS || 'full') : deps.toolsMode }, 'ready');
       await sendAndWait(child, { cmd: 'reset' }, 'ready');
       const prepared = await expandAgentWorkBody(String(item.message?.body ?? ''));
       const message = prepared.body === String(item.message?.body ?? '') ? item.message : { ...item.message, body: prepared.body };

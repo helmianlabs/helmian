@@ -208,6 +208,21 @@ export function resolveProvider(name, env, overrides = null) {
   if (n === 'grok' || n === 'xai') {
     return { id: 'xai', key: env.xai, label: 'xAI Grok', credentialType: env.xaiCredentialType === 'oauth' ? 'oauth' : 'api_key' };
   }
+  if (n === 'ollama' || n === 'local') {
+    return {
+      id: 'custom',
+      key: 'no-key-required',
+      apiKey: '',
+      label: 'Local Ollama (qwen3.5:4b)',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      url: 'http://127.0.0.1:11434/v1/chat/completions',
+      model: process.env.HELMION_OLLAMA_MODEL || 'qwen3.5:4b',
+      models: null,
+    };
+  }
+  if (n === 'mistral') {
+    return { id: 'mistral', key: process.env.MISTRAL_API_KEY || env.openai || '', label: 'Mistral Le Chat' };
+  }
 
   const pools = [
     Array.isArray(overrides) ? overrides : [],
