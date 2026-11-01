@@ -2288,7 +2288,13 @@ $('#browser-form').onsubmit = async (e) => {
         return;
       }
     } catch {}
-    viewport.src = embedUrl;
+    if (result.embedHtml && embedUrl === result.url) {
+      viewport.removeAttribute('src');
+      viewport.srcdoc = result.embedHtml;
+    } else {
+      viewport.removeAttribute('srcdoc');
+      viewport.src = embedUrl;
+    }
     wrap.hidden = false;
     viewport.dataset.externalUrl = result.url;
     status.textContent = 'Loaded inside Helmian. Recorded in the audit trail.';

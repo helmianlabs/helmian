@@ -1838,7 +1838,12 @@ async function linkGithub() {
     return;
   }
   if (!admin) { ws.ctx.toast('Only workspace owners and admins can link a GitHub repository.'); return; }
-  const repoInput = h('input', { id: 'ew-gh-repo', placeholder: 'owner/repo (e.g. troy/helmion)', maxlength: 140, required: true, 'aria-label': 'GitHub repository owner/repo' });
+  const repoInput = h('input', { id: 'ew-gh-repo', placeholder: 'owner/repo (e.g. helmianlabs/helmian)', maxlength: 140, required: true, 'aria-label': 'GitHub repository owner/repo' });
+  const quickRepos = h('div', { class: 'ew-row', style: 'flex-wrap:wrap;gap:6px;margin-bottom:8px;' },
+    ...['helmianlabs/helmian', 'troy83352/faith-n-light-live', 'troy83352/dairyforge', 'troy83352/forge-tms'].map((r) =>
+      h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => { repoInput.value = r; } }, r)
+    )
+  );
   const branchInput = h('input', { id: 'ew-gh-branch', placeholder: 'main (leave blank for all branches)', maxlength: 80, 'aria-label': 'Branch filter' });
   const form = h('form', { class: 'ew-modal-form', onsubmit: async (e) => {
     e.preventDefault();
@@ -1853,7 +1858,7 @@ async function linkGithub() {
       ws.ctx.toast(err?.body?.message || 'Enter a valid owner/repo (e.g. octocat/hello-world).');
     }
   } },
-    h('label', { class: 'ew-field' }, 'GitHub Repository (owner/repo)', repoInput),
+    h('label', { class: 'ew-field' }, 'GitHub Repository (owner/repo — click a quick repo or type any owner/repo)', quickRepos, repoInput),
     h('label', { class: 'ew-field' }, 'Branch filter (optional)', branchInput),
     h('div', { class: 'ew-field' }, 'Webhook endpoint (paste in GitHub → Settings → Webhooks)', h('div', { class: 'ew-code sm' }, webhookUrl)),
     h('div', { class: 'ew-row' }, copyWebhook, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: closeModal }, 'Cancel'), h('button', { type: 'submit', class: 'ew-btn primary sm' }, 'Link GitHub Repo'))
@@ -1926,23 +1931,58 @@ function toAddress(input) {
   if (/^[\w-]+(\.[\w-]+)+(\/|$|\?|#|:)/.test(v)) return `https://${v}`;
   return `https://en.wikipedia.org/w/index.php?search=${encodeURIComponent(v)}`;
 }
+function buildYoutubeLauncherHtml() {
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    body { margin: 0; padding: 24px; background: #0b1120; color: #e2e8f0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    h2 { margin: 0 0 6px; font-size: 18px; color: #f8fafc; }
+    p { margin: 0 0 16px; color: #94a3b8; font-size: 13px; }
+    .row { display: flex; gap: 8px; margin-bottom: 18px; }
+    input { flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid #1e293b; background: #0f172a; color: #f8fafc; font-size: 13px; }
+    button { padding: 9px 14px; border-radius: 8px; border: 0; background: #0284c7; color: #fff; font-weight: 600; cursor: pointer; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+    .card { padding: 12px; border-radius: 10px; background: #1e293b; border: 1px solid #334155; cursor: pointer; text-align: left; color: #e2e8f0; }
+    .card:hover { border-color: #38bdf8; }
+    .card strong { display: block; margin-bottom: 4px; font-size: 13px; color: #f8fafc; }
+    .card span { font-size: 11px; color: #94a3b8; }
+  </style></head><body>
+    <h2>YouTube Player</h2>
+    <p>YouTube's homepage requires a video URL to embed inside another app. Paste any YouTube video link or pick one below:</p>
+    <form class="row" onsubmit="event.preventDefault(); var v=document.getElementById('yt-in').value.trim(); if(v) parent.postMessage({type:'helmian-browser-navigate',url:v},'*');">
+      <input id="yt-in" placeholder="Paste https://www.youtube.com/watch?v=... or video ID" required>
+      <button type="submit">Play Video</button>
+    </form>
+    <div class="grid">
+      <button class="card" type="button" onclick="parent.postMessage({type:'helmian-browser-navigate',url:'https://www.youtube.com/watch?v=OC2Y82gv6co'},'*')"><strong>Helmian Demo 1</strong><span>youtube.com/watch?v=OC2Y82gv6co</span></button>
+      <button class="card" type="button" onclick="parent.postMessage({type:'helmian-browser-navigate',url:'https://www.youtube.com/watch?v=_yUtw9YOzy8'},'*')"><strong>Helmian Demo 2</strong><span>youtube.com/watch?v=_yUtw9YOzy8</span></button>
+      <button class="card" type="button" onclick="parent.postMessage({type:'helmian-browser-navigate',url:'https://www.youtube.com/watch?v=r3vWiOC3bKw'},'*')"><strong>Helmian Demo 3</strong><span>youtube.com/watch?v=r3vWiOC3bKw</span></button>
+    </div>
+  </body></html>`;
+}
 async function navigate(input, { push = true } = {}) {
   const status = $('ew-browser-status');
   const address = toAddress(input);
   if (!address) return;
   $('ew-browser-url').value = address;
   status.textContent = 'Checking address…';
-  let url;
-  try { url = (await ws.ctx.post('/api/admin/browser/navigate', { url: address })).url; }
+  let navRes;
+  try { navRes = await ws.ctx.post('/api/admin/browser/navigate', { url: address }); }
   catch (e) { status.textContent = e?.body?.message || 'That address was not accepted. Only public HTTPS sites open here.'; return; }
+  const url = navRes.url;
   const yt = youtubeEmbed(url);
   if (new URL(url).origin === location.origin) { status.textContent = 'Helmian pages open in their own tab. Use ↗.'; window.open(url, '_blank', 'noopener'); return; }
   const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch { return ''; } })();
   const frame = $('ew-browser-frame');
+  frame.hidden = false; $('ew-browser-start').hidden = true;
   if (/(^|\.)youtube\.com$|^youtu\.be$/.test(host) && !yt) {
-    status.textContent = 'YouTube only allows video pages inside other apps. Paste a video link, or use ↗.';
+    frame.removeAttribute('src');
+    frame.srcdoc = buildYoutubeLauncherHtml();
+    status.textContent = 'Pick or paste a YouTube video link below, or use ↗ to open youtube.com in a full tab.';
+  } else if (navRes.embedHtml && !yt) {
+    frame.removeAttribute('src');
+    frame.srcdoc = navRes.embedHtml;
+    status.textContent = `${host} · rendered in Helmian Reader (recorded in the audit trail). Use ↗ for full interactive tab.`;
   } else {
-    frame.hidden = false; $('ew-browser-start').hidden = true;
+    frame.removeAttribute('srcdoc');
     frame.src = yt ?? url;
     status.textContent = `${host} · recorded in the audit trail. Blank page? The site blocks embedding; use ↗.`;
   }

@@ -230,6 +230,91 @@ async function recordNavigation(pool, actor, url) {
 
 // HTTP route handling for the browser launcher. Returns true when the
 // request was handled, false when it is not a browser route.
+
+function buildSafeEmbedHtml(rawHtml, finalUrl) {
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let html = String(rawHtml || '');
+  // Remove module/crossorigin scripts that fail on about:srcdoc and wipe SSR content
+  html = html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, '');
+  // Strip crossorigin attribute from <link rel="stylesheet"> so stylesheets load without CORS failure
+  html = html.replace(/(<link\b[^>]*?)\scrossorigin(?:=["'][^"']*["'])?([^>]*>)/gi, '$1$2');
+  const baseTag = `<base href="${esc(finalUrl)}" target="_blank">
+<style id="helmian-embed-style">
+  html { background: #fff; color: #111; }
+  #helmian-embed-bar {
+    position: sticky; top: 0; z-index: 2147483647;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 8px 14px; background: #0b1120; color: #e2e8f0;
+    font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    border-bottom: 1px solid #1e293b;
+  }
+  #helmian-embed-bar a {
+    color: #38bdf8; text-decoration: none; font-weight: 600;
+    padding: 4px 10px; border-radius: 6px; background: rgba(56,189,248,0.12);
+  }
+</style>
+<script>
+  document.addEventListener('click', function(e) {
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    var href = a.href;
+    if (href && /^https:\/\//i.test(href) && !a.hasAttribute('data-external')) {
+      e.preventDefault();
+      window.parent.postMessage({ type: 'helmian-browser-navigate', url: href }, '*');
+    }
+  }, true);
+<\/script>`;
+  const banner = `<div id="helmian-embed-bar"><span>Rendered by Helmian Reader (this site blocks direct iframe embedding)</span><a href="${esc(finalUrl)}" target="_blank" rel="noopener" data-external="1">Open Live Site ↗</a></div>`;
+  if (/<head\b[^>]*>/i.test(html)) {
+    html = html.replace(/<head\b[^>]*>/i, (m) => m + baseTag);
+  } else {
+    html = baseTag + html;
+  }
+  if (/<body\b[^>]*>/i.test(html)) {
+    html = html.replace(/<body\b[^>]*>/i, (m) => m + banner);
+  } else {
+    html = banner + html;
+  }
+  return html;
+}
+
+async function probeFramingAndHtml(targetUrl) {
+  try {
+    const u = new URL(targetUrl);
+    const host = u.hostname.toLowerCase();
+    // Never fetch IP literals (keeps unit tests instant & offline) or YouTube watch URLs
+    if (isPublicIpLiteral(host) === true || /(^|\.)youtube\.com$|^youtu\.be$/.test(host)) return null;
+    const res = await fetch(targetUrl, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(3800),
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    const finalUrl = res.url || targetUrl;
+    const recheck = await validateBrowserUrl(finalUrl);
+    if (!recheck.allowed) return null;
+    const xfo = (res.headers.get('x-frame-options') || '').toLowerCase();
+    const csp = (res.headers.get('content-security-policy') || '').toLowerCase();
+    const blocksFraming = Boolean(
+      (xfo && (xfo.includes('deny') || xfo.includes('sameorigin'))) ||
+      (csp.includes('frame-ancestors') && !csp.includes('helmian.cloud') && !csp.includes('*'))
+    );
+    if (!blocksFraming) return { blocksFraming: false, finalUrl };
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!ct.includes('text/html')) return { blocksFraming: true, finalUrl };
+    const rawHtml = (await res.text()).slice(0, 350_000);
+    return {
+      blocksFraming: true,
+      finalUrl,
+      embedHtml: buildSafeEmbedHtml(rawHtml, finalUrl),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function handleBrowserRoute({ request, response, requestUrl, pool, activeTenantActor, send, readJsonObject, exactKeys, TenantAuthorizationError }) {
   if (request.method !== 'POST' || requestUrl.pathname !== BROWSER_NAVIGATE_PATH) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
@@ -248,7 +333,8 @@ export async function handleBrowserRoute({ request, response, requestUrl, pool, 
       return true;
     }
     const receipt = await recordNavigation(pool, actor, decision.url);
-    send(response, 200, JSON.stringify({ valid: true, ok: true, url: decision.url, receiptId: receipt.receiptId }));
+    const probe = await probeFramingAndHtml(decision.url);
+    send(response, 200, JSON.stringify({ valid: true, ok: true, url: probe?.finalUrl || decision.url, receiptId: receipt.receiptId, ...(probe?.embedHtml ? { embedHtml: probe.embedHtml, blocksFraming: true } : {}) }));
   } catch (error) {
     const status = membershipError(error) ? 403 : 400;
     send(response, status, JSON.stringify({ valid: false, code: membershipError(error) ? 'BROWSER_MEMBERSHIP_REQUIRED' : 'BROWSER_NAVIGATE_INVALID' }));
