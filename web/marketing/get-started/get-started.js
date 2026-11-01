@@ -1,4 +1,5 @@
 import { loadClerkBrowser } from '/herald/account-runtime.js?v=14';
+
 import { planDownloads } from './downloads.mjs';
 
 const PRODUCTS = {
@@ -21,7 +22,7 @@ async function exeRelease() {
 
 function startDownload(url) { const a = el('a', { href: url, download: '' }); document.body.append(a); a.click(); a.remove(); }
 
-async function deliver(email) {
+async function deliver(clerk, email) {
   $('#gs-clerk').replaceChildren();
   $('#gs-title').textContent = 'Setting up your workspace...';
   $('#gs-lede').textContent = email ? `Signed in as ${email}.` : 'Signed in.';
@@ -79,7 +80,7 @@ async function deliver(email) {
 }
 
 async function main() {
-  $('#gs-title').textContent = `Create your free account to get ${product.name}`;
+  $('#gs-title').textContent = 'Create your free account';
   let clerk;
   try {
     const cfg = await (await fetch('/api/herald-config', { headers: { accept: 'application/json' } })).json();
@@ -91,7 +92,7 @@ async function main() {
     return;
   }
   const render = () => {
-    if (clerk.isSignedIn) return void deliver(clerk.user?.primaryEmailAddress?.emailAddress ?? '');
+    if (clerk.isSignedIn) return void deliver(clerk, clerk.user?.primaryEmailAddress?.emailAddress ?? '');
     status('Already have an account? Use the “Sign in” link inside the form.');
     const mount = $('#gs-clerk'); mount.replaceChildren();
     const opts = { forceRedirectUrl: location.href, signInForceRedirectUrl: location.href };
