@@ -1,0 +1,50 @@
+// Configuration from the environment, same style as the hands server.
+// Secrets live in /opt/helmian-door-test/app.env (chmod 600) on the box.
+//
+// Required:
+//   PUBLIC_URL             canonical https URL of the door, no trailing slash
+//                          (test: https://scribe.helmian.cloud/door)
+//   AUTH_PASSPHRASE        the same passphrase as the memory/hands connectors
+//   MEMORY_BACKEND_RESOURCE  canonical resource id of the memory backend
+//   HANDS_BACKEND_RESOURCE   canonical resource id of the hands backend
+// Optional:
+//   PORT                   default 8098
+//   STATE_DIR              default /data
+//   MEMORY_BACKEND_BASE    loopback base of the memory backend (default http://127.0.0.1:8081)
+//   HANDS_BACKEND_BASE     loopback base of the hands backend (default http://127.0.0.1:8090)
+
+function required(env, name) {
+  const v = env[name];
+  if (!v || !String(v).trim()) throw new Error(`Missing required environment variable: ${name}`);
+  return String(v).trim();
+}
+
+export function loadConfig(env = process.env) {
+  return Object.freeze({
+    publicUrl: required(env, 'PUBLIC_URL').replace(/\/+$/, ''),
+    passphrase: required(env, 'AUTH_PASSPHRASE'),
+    port: parseInt(env.PORT || '8098', 10),
+    mcpPath: '/mcp',
+    stateDir: (env.STATE_DIR || '/data').replace(/\/+$/, ''),
+    backends: Object.freeze({
+      memory: Object.freeze({
+        base: (env.MEMORY_BACKEND_BASE || 'http://127.0.0.1:8081').replace(/\/+$/, ''),
+        resource: required(env, 'MEMORY_BACKEND_RESOURCE'),
+      }),
+      hands: Object.freeze({
+        base: (env.HANDS_BACKEND_BASE || 'http://127.0.0.1:8090').replace(/\/+$/, ''),
+        resource: required(env, 'HANDS_BACKEND_RESOURCE'),
+      }),
+    }),
+  });
+}
+
+export const AUTH_CODE_TTL_SECONDS = 600;
+export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
+export const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+// One door, four scopes: two per backend, exactly the scopes the backends
+// themselves already use.
+export const SCOPES = Object.freeze(['memory.read', 'memory.write', 'hands.read', 'hands.act']);
+// No scopes requested on the consent URL -> read-only door.
+export const DEFAULT_SCOPES = Object.freeze(['memory.read', 'hands.read']);
