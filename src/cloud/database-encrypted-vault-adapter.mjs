@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
+import { createCredentialVault } from './credential-vault.mjs';
 
 const VAULT_REFERENCE = /^vault:\/\/tenant\/[a-z0-9][a-z0-9._:-]{0,127}\/[a-z0-9._:-]{1,96}(?:\/[a-z0-9._:-]{1,96})?$/u;
 const TOKEN_TYPE = /^[A-Za-z][A-Za-z0-9._-]{0,31}$/u;
@@ -45,10 +46,16 @@ function decryptTokenBundle(input, row, key) {
   }
 }
 
-export function createDatabaseEncryptedVaultAdapter({ pool, key } = {}) {
+export function createDatabaseEncryptedVaultAdapter({ pool, key, auditSink = null, guardGate = null } = {}) {
   const masterKey = keyBytes(key);
   if (!pool || typeof pool.connect !== 'function') throw new TypeError('database encrypted vault requires a pool');
   if (!masterKey) throw new TypeError('HELMION_OAUTH_VAULT_KEY must be a base64url-encoded 32-byte key');
+  // The generalized vault (credential-vault.mjs, migration 063) shares this
+  // adapter's pool and master key. Its surface is additive: the OAuth
+  // methods below keep their exact legacy behavior against
+  // helmion.provider_oauth_tokens; the *VaultCredential methods serve every
+  // credential kind for any provider id against helmion.provider_credentials.
+  const generalized = createCredentialVault({ pool, masterKey: key, auditSink, guardGate });
   return Object.freeze({
     async prepareReference({ tenantId, providerId, credentialReference } = {}) {
       validateReference({ tenantId, providerId, credentialReference });
@@ -83,11 +90,15 @@ export function createDatabaseEncryptedVaultAdapter({ pool, key } = {}) {
         return { status: 'credential_resolved_for_adapter', accepted: true, credential: bundle.accessToken, tokenType: result.rows[0].token_type ?? 'Bearer', credentialReference: input.credentialReference, secretMaterial: 'adapter_only', providerInvocation: 'not_performed' };
       });
     },
+    async storeCredential(input = {}) { return generalized.storeCredential(input); },
+    async resolveVaultCredential(input = {}) { return generalized.resolveCredential(input); },
+    async revokeVaultCredential(input = {}) { return generalized.revokeCredential(input); },
+    async shredTenantVault(input = {}) { return generalized.shredTenant(input); },
   });
 }
 
-export function createEncryptedVaultAdapterFromEnv({ pool, env = process.env } = {}) {
+export function createEncryptedVaultAdapterFromEnv({ pool, env = process.env, auditSink = null, guardGate = null } = {}) {
   const key = String(env.HELMION_OAUTH_VAULT_KEY ?? '').trim();
   if (!key) return null;
-  return createDatabaseEncryptedVaultAdapter({ pool, key });
+  return createDatabaseEncryptedVaultAdapter({ pool, key, auditSink, guardGate });
 }
