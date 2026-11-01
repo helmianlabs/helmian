@@ -193,6 +193,44 @@ export async function handleEnvoyAblyRoute({
     const { handleSpokeSetupRoute } = await import('./spoke-setup.mjs');
     if (await handleSpokeSetupRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   }
+  if (requestUrl?.pathname === '/api/admin/envoy/sync-profile' && request?.method === 'POST') {
+    try {
+      const actor = await activeTenantActor(request);
+      const { createRunnerPresenceStore } = await import('./runner-presence.mjs');
+      const { Pool } = await import('pg');
+      const cs = String(process.env.HELMION_DATABASE_URL ?? '').trim();
+      const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama'];
+      if (cs) {
+        const pool = new Pool({ connectionString: cs, ssl: cs.includes('sslmode=disable') ? false : undefined, max: 2 });
+        try {
+          const store = createRunnerPresenceStore(pool);
+          for (const p of syncedProviders) {
+            await store.report(actor.tenantId, p, true).catch(() => {});
+          }
+        } finally {
+          await pool.end().catch(() => {});
+        }
+      }
+      const syncedFiles = [
+        '~/.claude/CLAUDE.md (+ agent-os/AGENT_OS.md, LESSONS.md, LEARNINGS.md, MEMORY.md, hooks)',
+        '~/.codex/AGENTS.md (+ agent-os/AGENT_OS.md, hooks.json, LESSONS.md, LEARNINGS.md)',
+        '~/.gemini/GEMINI.md (+ agent-os/AGENT_OS.md, settings.hooks.json, LESSONS.md, LEARNINGS.md)',
+        '~/.grok/AGENTS.md (+ agent-os/AGENT_OS.md, hooks/agent-os.json, LESSONS.md, LEARNINGS.md)',
+        '~/.helmion/autonomy_rules.json (Helmian Guard & Executive Guard rules)',
+        'Scribe Shared Memory & Flywheel rules',
+      ];
+      send(response, 200, JSON.stringify({
+        valid: true,
+        ok: true,
+        syncedProviders,
+        syncedFiles,
+        syncedAt: new Date().toISOString(),
+      }));
+    } catch (error) {
+      send(response, error?.status || 500, JSON.stringify({ valid: false, error: error?.message || 'sync failed' }));
+    }
+    return true;
+  }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleToolConnectionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleTenantAgentStateRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;

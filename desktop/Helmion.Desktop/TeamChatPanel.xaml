@@ -5,32 +5,114 @@
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
-    <!-- Header: channel + link status -->
-    <Grid Margin="0,0,0,12">
+    <!-- Header: channel + link status + Envoy controls (Free-Willy, GitHub, Custom Agent, Full Clone) -->
+    <Grid Margin="0,0,0,10">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <StackPanel>
-        <TextBlock Text="TEAM CHAT" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
-        <TextBlock x:Name="ChatTitle" Text="Team" FontSize="18" FontWeight="SemiBold" Margin="0,2,0,0" />
+        <TextBlock Text="ENVOY TEAM CHAT" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" />
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,0">
+          <TextBlock x:Name="ChatTitle" Text="Team" FontSize="18" FontWeight="SemiBold" />
+          <Border x:Name="DebateBadge" Visibility="Collapsed" CornerRadius="6" Padding="7,2" Margin="8,0,0,0"
+                  Background="#26F59E0B" BorderBrush="#8CF59E0B" BorderThickness="1" VerticalAlignment="Center">
+            <TextBlock x:Name="DebateBadgeText" Text="Free-Willy Debate" Foreground="{DynamicResource AmberBrush}" FontSize="10.5" FontWeight="SemiBold" />
+          </Border>
+          <Border x:Name="GitHubBadge" Visibility="Collapsed" CornerRadius="6" Padding="7,2" Margin="8,0,0,0"
+                  Background="{DynamicResource PanelSubtleBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" VerticalAlignment="Center">
+            <TextBlock x:Name="GitHubBadgeText" Text="GitHub" Foreground="{DynamicResource SoftTextBrush}" FontSize="10.5" FontWeight="SemiBold" />
+          </Border>
+        </StackPanel>
         <TextBlock x:Name="ChatStatus" Text="Not linked" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" Margin="0,2,0,0" />
       </StackPanel>
-      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-        <ComboBox x:Name="ChannelBox" MinWidth="140" DisplayMemberPath="Title" SelectionChanged="ChannelBox_SelectionChanged" Visibility="Collapsed" Margin="0,0,8,0" />
-        <Button x:Name="OpenCloneButton" Content="Full Clone (/app)" Click="OpenCloneButton_Click" Padding="10,5" Margin="0,0,8,0"
+      <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+        <ComboBox x:Name="ChannelBox" MinWidth="140" DisplayMemberPath="Title" SelectionChanged="ChannelBox_SelectionChanged" Visibility="Collapsed" Margin="0,0,6,6" />
+        <Button x:Name="FreeWillyButton" Content="⚡ Free-Willy" Click="FreeWillyButton_Click" Visibility="Collapsed" Padding="10,5" Margin="0,0,6,6"
+                Style="{DynamicResource ConsoleNeutralButtonStyle}" ToolTip="Toggle Free-Willy multi-agent debate mode on this channel" />
+        <Button x:Name="LinkGitHubButton" Content="Link GitHub" Click="LinkGitHubButton_Click" Visibility="Collapsed" Padding="10,5" Margin="0,0,6,6"
+                Style="{DynamicResource ConsoleNeutralButtonStyle}" ToolTip="Link a GitHub repository (owner/repo) to stream commits, PRs and issues" />
+        <Button x:Name="NewCustomAgentButton" Content="+ Custom Agent" Click="NewCustomAgentButton_Click" Visibility="Collapsed" Padding="10,5" Margin="0,0,6,6"
+                Style="{DynamicResource ConsoleNeutralButtonStyle}" ToolTip="Create a custom @handle specialist agent in this channel" />
+        <Button x:Name="OpenCloneButton" Content="Full Clone (/app)" Click="OpenCloneButton_Click" Padding="10,5" Margin="0,0,6,6"
                 Style="{DynamicResource ConsoleNeutralButtonStyle}" ToolTip="Open the 1:1 full Envoy workspace clone in your browser or phone" />
-        <Button x:Name="UnlinkButton" Content="Unlink" Click="UnlinkButton_Click" Visibility="Collapsed" Padding="10,5"
+        <Button x:Name="UnlinkButton" Content="Unlink" Click="UnlinkButton_Click" Visibility="Collapsed" Padding="10,5" Margin="0,0,0,6"
                 Style="{DynamicResource ConsoleNeutralButtonStyle}" ToolTip="Stop using team chat on this computer" />
-      </StackPanel>
+      </WrapPanel>
     </Grid>
 
+    <!-- Inline drawers for GitHub Repo Linking & Custom Agent Creation -->
+    <StackPanel Grid.Row="1">
+      <Border x:Name="GitHubDrawer" Visibility="Collapsed" Margin="0,0,0,10" Padding="12" CornerRadius="10"
+              Background="{DynamicResource PanelSubtleBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="220" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="GitHub Repo (owner/repo):" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12" FontWeight="SemiBold" />
+          <TextBox x:Name="GitHubRepoBox" Grid.Column="1" FontFamily="Consolas" FontSize="12.5" Padding="6,4"
+                   ToolTip="Example: helmianlabs/helmian" AutomationProperties.Name="GitHub repository owner/repo" />
+          <Button x:Name="SaveGitHubButton" Grid.Column="2" Content="Save Link" Click="SaveGitHubButton_Click" Margin="8,0,0,0" Padding="10,4"
+                  Style="{DynamicResource ConsoleNeutralButtonStyle}" />
+          <Button x:Name="RemoveGitHubButton" Grid.Column="3" Content="Unlink Repo" Click="RemoveGitHubButton_Click" Margin="6,0,0,0" Padding="10,4"
+                  Style="{DynamicResource ConsoleNeutralButtonStyle}" />
+        </Grid>
+      </Border>
+
+      <Border x:Name="CustomAgentDrawer" Visibility="Collapsed" Margin="0,0,0,10" Padding="12" CornerRadius="10"
+              Background="{DynamicResource PanelSubtleBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1">
+        <StackPanel>
+          <TextBlock Text="CREATE CUSTOM SPECIALIST AGENT" Foreground="{DynamicResource FaintTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,6" />
+          <WrapPanel Orientation="Horizontal" Margin="0,0,0,6">
+            <StackPanel Width="150" Margin="0,0,8,4">
+              <TextBlock Text="Display Name" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" />
+              <TextBox x:Name="CustomAgentNameBox" Padding="6,4" Margin="0,2,0,0" ToolTip="e.g. Rust Auditor" />
+            </StackPanel>
+            <StackPanel Width="130" Margin="0,0,8,4">
+              <TextBlock Text="@Handle" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" />
+              <TextBox x:Name="CustomAgentHandleBox" FontFamily="Consolas" Padding="6,4" Margin="0,2,0,0" ToolTip="e.g. rust-auditor" />
+            </StackPanel>
+            <StackPanel Width="130" Margin="0,0,8,4">
+              <TextBlock Text="Provider" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" />
+              <ComboBox x:Name="CustomAgentProviderBox" SelectedIndex="0" Margin="0,2,0,0">
+                <ComboBoxItem Content="claude" />
+                <ComboBoxItem Content="openai" />
+                <ComboBoxItem Content="grok" />
+                <ComboBoxItem Content="gemini" />
+                <ComboBoxItem Content="mistral" />
+                <ComboBoxItem Content="runway" />
+                <ComboBoxItem Content="ollama" />
+              </ComboBox>
+            </StackPanel>
+            <StackPanel Width="180" Margin="0,0,8,4">
+              <TextBlock Text="Job Title" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" />
+              <TextBox x:Name="CustomAgentJobBox" Padding="6,4" Margin="0,2,0,0" ToolTip="e.g. Systems Security Reviewer" />
+            </StackPanel>
+          </WrapPanel>
+          <TextBlock Text="System Prompt / Role Instructions" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" />
+          <TextBox x:Name="CustomAgentPromptBox" MinHeight="44" MaxHeight="80" AcceptsReturn="True" TextWrapping="Wrap" Margin="0,2,0,8" Padding="6,4" />
+          <StackPanel Orientation="Horizontal">
+            <Button x:Name="SaveCustomAgentButton" Content="Create Agent" Click="SaveCustomAgentButton_Click" Padding="12,5"
+                    Style="{DynamicResource ConsoleNeutralButtonStyle}" />
+            <Button x:Name="CancelCustomAgentButton" Content="Close" Click="CancelCustomAgentButton_Click" Margin="8,0,0,0" Padding="10,5"
+                    Style="{DynamicResource ConsoleNeutralButtonStyle}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
     <!-- Link step (shown until linked) -->
-    <Border x:Name="LinkCard" Grid.Row="1" Style="{DynamicResource CardStyle}" VerticalAlignment="Top">
+    <Border x:Name="LinkCard" Grid.Row="2" Style="{DynamicResource CardStyle}" VerticalAlignment="Top">
       <StackPanel>
         <TextBlock Text="Link this desktop to your Helmian team" FontSize="16" FontWeight="SemiBold" />
         <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" Margin="0,6,0,12"
@@ -46,7 +128,7 @@
     </Border>
 
     <!-- Messages -->
-    <Border x:Name="MessagesCard" Grid.Row="1" Visibility="Collapsed"
+    <Border x:Name="MessagesCard" Grid.Row="2" Visibility="Collapsed"
             Background="{DynamicResource PanelInsetBrush}" BorderBrush="{DynamicResource StrokeBrush}" BorderThickness="1" CornerRadius="8">
       <ScrollViewer x:Name="MessagesScroll" VerticalScrollBarVisibility="Auto" Padding="12">
         <ItemsControl x:Name="MessagesList">
@@ -64,8 +146,31 @@
       </ScrollViewer>
     </Border>
 
+    <!-- Quick @mention & Custom Agent Roster Bar -->
+    <WrapPanel x:Name="MentionBar" Grid.Row="3" Margin="0,8,0,0" Visibility="Collapsed" Orientation="Horizontal">
+      <Button Content="@all" Tag="@all" Click="MentionPill_Click" Padding="8,3" Margin="0,0,5,4" Style="{DynamicResource ShelfCompactButtonStyle}" />
+      <Button Content="@Claude" Tag="@Claude" Click="MentionPill_Click" Padding="8,3" Margin="0,0,5,4" Style="{DynamicResource ShelfCompactButtonStyle}" />
+      <Button Content="@ChatGPT" Tag="@ChatGPT" Click="MentionPill_Click" Padding="8,3" Margin="0,0,5,4" Style="{DynamicResource ShelfCompactButtonStyle}" />
+      <Button Content="@Grok" Tag="@Grok" Click="MentionPill_Click" Padding="8,3" Margin="0,0,5,4" Style="{DynamicResource ShelfCompactButtonStyle}" />
+      <Button Content="@Gemini" Tag="@Gemini" Click="MentionPill_Click" Padding="8,3" Margin="0,0,5,4" Style="{DynamicResource ShelfCompactButtonStyle}" />
+      <Button Content="@Mistral" Tag="@Mistral" Click="MentionPill_Click" Padding="8,3" Margin="0,0,5,4" Style="{DynamicResource ShelfCompactButtonStyle}" />
+      <ItemsControl x:Name="CustomMentionList">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Button Content="{Binding Label}" Tag="{Binding Mention}" Click="MentionPill_Click" Padding="8,3" Margin="0,0,5,4"
+                    ToolTip="{Binding Tooltip}" Style="{DynamicResource ShelfCompactButtonStyle}" />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </WrapPanel>
+
     <!-- Composer -->
-    <Grid x:Name="Composer" Grid.Row="2" Margin="0,10,0,0" Visibility="Collapsed">
+    <Grid x:Name="Composer" Grid.Row="4" Margin="0,6,0,0" Visibility="Collapsed">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="Auto" />

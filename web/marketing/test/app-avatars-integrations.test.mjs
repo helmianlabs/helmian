@@ -35,7 +35,7 @@ test('integrations: plain cards, no internal jargon, honest states', () => {
   assert.equal(by.pc.statusText, 'Online');
   assert.equal(by.discord.statusText, 'Linked', 'Discord is a channel mirror: linked, not tool-connected');
   assert.equal(by.slack.statusText, 'Not linked');
-  assert.equal(by.github.statusText, 'Coming soon'); assert.equal(by.github.action, null);
+  assert.equal(by.github.statusText, 'Ready to link'); assert.deepEqual(by.github.action, { label: 'Link a channel', href: '#desktop' });
   assert.equal(by.phone.qr, PHONE_URL); assert.match(PHONE_URL, /^https:\/\/helmian\.cloud\/app$/);
   const off = Object.fromEntries(integrationSections({}).flatMap((s) => s.cards).map((c) => [c.key, c]));
   assert.equal(off.pc.statusText, 'Offline'); assert.equal(off.pc.action.act, 'pc-help');

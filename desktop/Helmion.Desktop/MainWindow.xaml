@@ -2193,7 +2193,7 @@
                       Click="Navigation_Click" />
               <Button x:Name="TeamChatNav"
                       Tag="TeamChat"
-                      Content="💬   Team chat"
+                      Content="◈   Team chat"
                       Style="{StaticResource PilotNavButtonStyle}"
                       ToolTip="Team chat on helmian.cloud (Envoy)"
                       Click="Navigation_Click" />

@@ -24,15 +24,21 @@ function row(k, v, cls) { const r = el('div', 'row'); r.append(el('span', null, 
 let toastTimer; function toast(msg, kind) { const t = $('#toast'); const prefix = kind === 'ok' && !isPlainEmojiMode(state.emojiMode) ? '✅ ' : ''; t.textContent = prefix + msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600); }
 
 // ---- emoji mode preference (playful vs plain) ----
+function stripLeadingEmoji(label) {
+  const m = String(label ?? '').match(/^(\S+)\s+(.+)$/u);
+  return (m && !/[A-Za-z0-9]/.test(m[1])) ? m[2] : String(label ?? '');
+}
 function setNavLabel(btn, label) {
   for (const node of [...btn.childNodes]) if (node.nodeType === 3) node.remove();
   const span = btn.querySelector('.label');
-  if (!span) { btn.prepend(document.createTextNode(label)); return; }
-  // "🏠 Home" -> icon text + label span (the span is what the rail hides).
-  const m = String(label).match(/^(\S+)\s+(.+)$/u);
-  const icon = m && !/[A-Za-z0-9]/.test(m[1]) ? m[1] : '';
-  span.textContent = icon ? m[2] : label;
-  if (icon) btn.prepend(document.createTextNode(`${icon} `));
+  const clean = stripLeadingEmoji(label);
+  if (!span) { btn.prepend(document.createTextNode(clean)); return; }
+  span.textContent = clean;
+  if (!btn.querySelector('.nav-svg')) {
+    const m = String(label).match(/^(\S+)\s+(.+)$/u);
+    const icon = m && !/[A-Za-z0-9]/.test(m[1]) ? m[1] : '';
+    if (icon) btn.prepend(document.createTextNode(`${icon} `));
+  }
   btn.dataset.tip = span.textContent; btn.setAttribute('aria-label', span.textContent);
 }
 function applyEmojiMode(mode) {
@@ -51,7 +57,7 @@ function applyEmojiMode(mode) {
   if (shelfEmpty) shelfEmpty.textContent = es('No projects yet.', 'No projects yet.');
   renderAgentIcons();
   const current = document.querySelector('.nav-item.active')?.dataset.view;
-  if (current) $('#view-title').textContent = titles[current] ?? '';
+  if (current) $('#view-title').textContent = stripLeadingEmoji(titles[current] ?? '');
   const sel = $('#emoji-mode');
   if (sel) sel.value = state.emojiMode;
 }
@@ -232,7 +238,7 @@ function show(view) {
   shell.dataset.view = view;
   for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view && !p.closest('#chat-panel');
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
-  $('#view-title').textContent = viewTitles(state.emojiMode)[view];
+  $('#view-title').textContent = stripLeadingEmoji(viewTitles(state.emojiMode)[view]);
   // ADVANCED is never forced by navigation: it offers itself once when a
   // view inside it is opened directly, and after that it simply keeps the
   // state it was left in (wireCollapsibles restores + remembers it).
@@ -1615,8 +1621,19 @@ function integrationCard(card) {
   if (card.qr && matchMedia('(max-width: 900px) and (pointer: coarse)').matches) card = { ...card, blurb: 'Keep Helmian one tap away on this phone.', statusText: 'Add to Home Screen' };
   const a = el('article', `int-card ${card.qr ? 'wide' : ''}`.trim()); a.dataset.key = card.key;
   const icon = el('span', 'int-icon');
+  const INT_SVG = {
+    'profile-sync': '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>',
+    mistral: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#F97316" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5l8 8 8-8v14"/><path d="M4 19h4"/><path d="M16 19h4"/></svg>',
+    runway: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polygon points="10 9 15 12 10 15 10 9" fill="#38BDF8"/></svg>',
+    pc: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+    phone: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>',
+    usage: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>',
+    keys: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>',
+    data: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+  };
   if (card.icon?.img) { const img = el('img'); img.src = card.icon.img; img.alt = ''; img.width = 26; img.height = 26; icon.append(img); }
   else if (card.icon?.mark) icon.append(el('span', `ew-${card.icon.mark === 'github' ? 'gh' : card.icon.mark}-mark`));
+  else if (INT_SVG[card.key]) icon.innerHTML = INT_SVG[card.key];
   else icon.textContent = card.icon?.glyph ?? '';
   const text = el('div', 'int-text'); text.append(el('div', 'int-name', card.name), el('div', 'int-blurb', card.blurb));
   const status = el('span', `int-status ${card.status}`, card.statusText);
@@ -1625,7 +1642,38 @@ function integrationCard(card) {
   if (card.action) {
     const row = el('div', 'int-actions');
     if (card.action.href) { const link = el('a', `btn sm ${card.status === 'on' ? '' : 'primary'}`.trim(), card.action.label); link.href = card.action.href; row.append(link); }
-    else { const b = el('button', 'btn sm primary', card.action.label); b.type = 'button'; b.onclick = () => { const open = a.querySelector('.int-help'); if (open) { open.remove(); return; } const [title, lines] = integrationsMod.HELP[card.action.act] ?? ['', []]; const help = el('div', 'int-help'); help.append(el('strong', '', title), ...lines.map((t) => el('p', 'muted sm', t))); if (card.action.act === 'pc-help') { const g = el('a', 'btn sm', 'Get started'); g.href = '/get-started'; help.append(g); } a.append(help); }; row.append(b); }
+    else {
+      const b = el('button', 'btn sm primary', card.action.label);
+      b.type = 'button';
+      b.onclick = async () => {
+        if (card.action.act === 'sync-profile') {
+          b.disabled = true; b.textContent = 'Syncing…';
+          await triggerProfileSync();
+          b.disabled = false; b.textContent = 'Synced ✓';
+          await loadIntegrations();
+          return;
+        }
+        if ((card.action.act === 'one-click-connect' || card.action.act === 'keys-help' || card.action.act === 'claude-help') && card.action.provider) {
+          b.disabled = true; b.textContent = 'Enabling…';
+          try {
+            await post('/api/admin/envoy/runner/presence', { provider: card.action.provider, connected: true });
+            toast(`${card.name} enabled!`, 'ok');
+            await loadIntegrations();
+          } catch {
+            b.disabled = false; b.textContent = card.action.label;
+            toast('Could not enable provider right now');
+          }
+          return;
+        }
+        const open = a.querySelector('.int-help'); if (open) { open.remove(); return; }
+        const [title, lines] = integrationsMod.HELP[card.action.act] ?? ['', []];
+        const help = el('div', 'int-help');
+        help.append(el('strong', '', title), ...lines.map((t) => el('p', 'muted sm', t)));
+        if (card.action.act === 'pc-help') { const g = el('a', 'btn sm', 'Get started'); g.href = '/get-started'; help.append(g); }
+        a.append(help);
+      };
+      row.append(b);
+    }
     a.append(row);
   }
   return a;
@@ -1727,7 +1775,21 @@ async function loadProviders() {
       b.onclick = () => providerPcHelp(card, meta);
       actions.append(b);
     }
-    const keyBtn = el('button', meta.how === 'key' ? 'btn primary sm' : 'btn ghost sm', 'Use API key');
+    const oneClickBtn = el('button', meta.how === 'key' ? 'btn primary sm' : 'btn ghost sm', 'One-click enable');
+    oneClickBtn.type = 'button';
+    oneClickBtn.onclick = async () => {
+      oneClickBtn.disabled = true; oneClickBtn.textContent = 'Enabling…';
+      try {
+        await post('/api/admin/envoy/runner/presence', { provider: key, connected: true });
+        toast(`${label} enabled!`, 'ok');
+        await loadProviders();
+      } catch {
+        oneClickBtn.disabled = false; oneClickBtn.textContent = 'One-click enable';
+        toast('Could not enable provider');
+      }
+    };
+    actions.append(oneClickBtn);
+    const keyBtn = el('button', 'btn ghost sm', 'Use API key');
     keyBtn.type = 'button';
     keyBtn.onclick = () => providerKeyHelp(card, key);
     actions.append(keyBtn);
@@ -1736,6 +1798,28 @@ async function loadProviders() {
     return card;
   }));
 }
+
+async function triggerProfileSync() {
+  const statusEl = $('#sync-profile-status');
+  const filesEl = $('#sync-profile-files');
+  if (statusEl) statusEl.textContent = 'Syncing rules, flywheel & Guard hooks to all AIs…';
+  try {
+    const r = await post('/api/admin/envoy/runner/presence', { syncProfile: true });
+    const list = Array.isArray(r.syncedFiles) ? r.syncedFiles : [];
+    if (statusEl) statusEl.textContent = `Synced ${list.length} targets (${formatTime(r.syncedAt || new Date().toISOString())})`;
+    if (filesEl && list.length) {
+      filesEl.hidden = false;
+      filesEl.replaceChildren(...list.map((item) => el('div', 'sm', `✓ ${item}`)));
+    }
+    toast('Profile, MD files & Guard rules synced to all AIs!', 'ok');
+    await loadProviders().catch(() => {});
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `Sync failed: ${err.message || 'try again'}`;
+    toast('Could not sync profile right now');
+  }
+}
+if ($('#sync-profile-btn')) $('#sync-profile-btn').onclick = () => triggerProfileSync();
+if ($('#ew-foot-sync-profile')) $('#ew-foot-sync-profile').onclick = () => triggerProfileSync();
 
 // ---- set up this PC (spoke download + one-time pairing code) ----
 function detectOs() {

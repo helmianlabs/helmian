@@ -31,6 +31,7 @@ import { DEFAULT_HANDS_URL, defaultConfigPath, defaultRootGrantsPath, defaultSpo
 import { activateRootGrant, createRootRequest, loadRootGrants, revokeRootGrant, saveRootRequest } from '../src/hands/root-grants.mjs';
 import { verifyRootGrant } from '../hands-mcp/src/shared/protocol.mjs';
 import { looksLikePairCode, openProviderLogin, providerStatus } from '../src/hands/provider-cli.mjs';
+import { installAgentOsTargets, AGENT_OS_TARGETS } from '../src/core/agent-os.mjs';
 
 function flag(name) {
   const i = process.argv.indexOf(`--${name}`);
@@ -57,6 +58,9 @@ if (cmd === 'pair') {
   } else if (!pairCode && looksLikePairCode(passphrase)) { pairCode = passphrase; passphrase = ''; }
   const r = await pairSpoke({ url, passphrase, pairCode: pairCode || undefined, roots });
   console.log(`Paired as ${r.deviceId}. Workspace roots: ${r.roots.join(', ')}. Saved ${r.configPath}. Restart the HelmianBridge service (or run this without "pair").`);
+} else if (cmd === 'sync-profile') {
+  const res = await installAgentOsTargets({ targets: AGENT_OS_TARGETS, apply: true });
+  console.log(JSON.stringify({ ok: true, ...res }, null, 2));
 } else if (cmd === 'providers') {
   // Which official AI CLIs are on this PC and signed in (file presence only; contents are never read).
   const rows = await providerStatus();
