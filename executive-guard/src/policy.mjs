@@ -22,6 +22,8 @@ export const DEFAULT_POLICY = Object.freeze({
       reason: 'A social security number would be sent to an AI.' },
     { id: 'destructive-needs-approval', when: { kinds: ['prompt.send', 'code.reveal', 'agent.tool'], anySignal: ['destructive-intent', 'destructive-command'] }, verdict: 'ask',
       reason: 'This could permanently erase files, data or a device. A human must approve it.' },
+    { id: 'injection-needs-approval', when: { kinds: ['prompt.send', 'prompt.paste', 'agent.tool'], anySignal: ['injection:override'] }, verdict: 'ask',
+      reason: 'This message tries to override the assistant\'s instructions. A human must approve it.' },
     { id: 'personal-info-needs-approval', when: { kinds: ['prompt.send', 'prompt.paste'], anySignal: ['pii:email', 'pii:phone', 'pii:ipv4'] }, verdict: 'ask',
       reason: 'Personal contact details would be sent to an AI.' },
     { id: 'blocked-hosts', when: { kinds: ['network.request'], anySignal: ['host:denylisted'] }, verdict: 'deny',

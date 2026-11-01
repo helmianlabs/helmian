@@ -27,6 +27,7 @@ import { ActionError, actionHash, normalizeAction } from './action.mjs';
 import { DEFAULT_POLICY, evaluatePolicy, validatePolicy } from './policy.mjs';
 import { DECISION_TTL_SECONDS, signDecision } from './signing.mjs';
 import { memoryState } from './state.mjs';
+import { memoryCandidates } from './candidates.mjs';
 
 export const MAX_BODY_BYTES = 32 * 1024;
 export const APPROVAL_TTL_SECONDS = 15 * 60;
@@ -129,6 +130,7 @@ export function createExecutiveGuard({
   policy = DEFAULT_POLICY,
   now = Date.now,
   state = memoryState(),
+  candidates = memoryCandidates(),
   approvalTtlSeconds = APPROVAL_TTL_SECONDS,
 } = {}) {
   const APPROVAL_TTL = Math.min(MAX_APPROVAL_TTL_SECONDS, Math.max(60, Math.floor(Number(approvalTtlSeconds)) || APPROVAL_TTL_SECONDS));
@@ -286,6 +288,37 @@ export function createExecutiveGuard({
     seenNonces.set(nonceHash, nonceExp);
     const hash = actionHash(action);
     const result = evaluatePolicy(action, policy);
+
+    // The learning loop (src/candidates.mjs): a denied or held action that
+    // carries an injection signal is captured as a candidate — the
+    // abstracted skeleton only, deduped by fingerprint — and the capture
+    // is written to the audit trail like every other Guard event, BEFORE
+    // the response goes out. Clean allows teach nothing and record none.
+    // This runs after normalizeAction, so a summary the intake refused
+    // (unredacted-content) can never reach the store.
+    if ((result.verdict === 'ask' || result.verdict === 'deny')
+      && action.riskSignals.some((signal) => signal.startsWith('injection:'))) {
+      const { candidate, created } = candidates.record({
+        summary: action.summary,
+        contentHash: action.contentHash,
+        signals: action.riskSignals,
+        ruleId: result.ruleId,
+        verdict: result.verdict,
+        principalId: deviceId,
+        surface: 'server',
+      }, now);
+      audit.append({
+        event: created ? 'candidate.recorded' : 'candidate.sighted',
+        candidateId: candidate.candidateId,
+        fingerprint: candidate.fingerprint,
+        deviceId,
+        actionHash: hash,
+        ruleId: result.ruleId,
+        verdict: result.verdict,
+        riskSignals: action.riskSignals,
+        sightingCount: candidate.evidence.sightingCount,
+      });
+    }
 
     if (result.verdict === 'ask') {
       const approval = {
@@ -488,5 +521,5 @@ export function createExecutiveGuard({
   }
 
   const server = http.createServer((req, res) => { handle(req, res); });
-  return { server, approvals, handle, issuedDecisions };
+  return { server, approvals, handle, issuedDecisions, candidates };
 }
