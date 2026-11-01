@@ -599,9 +599,10 @@ test('bite 3: agent row says Not connected only when both sources answered and n
   assert.equal(row.stateLabel, 'Not connected');
 });
 
-test('bite 3: agent row still says Works when the runner presence or a verified connection shows it', () => {
+test('bite 3: agent row says Works on a saved connection; presence alone no longer does (connection-truth correction, 2026-11-01)', () => {
   const live = pickerModel({ providers: { connections: [] }, presence: [{ provider: 'claude', connected: true }] });
-  assert.equal(agentRowOf(live, 'claude').stateLabel, 'Works');
+  assert.equal(agentRowOf(live, 'claude').statusText, 'Synced · Not connected', 'a presence row is a device report / sync stamp — the row carries the truth model\u2019s synced verdict');
+  assert.equal(agentRowOf(live, 'claude').stateLabel, 'Not connected');
   const saved = pickerModel({ providers: { connections: [{ providerId: 'anthropic', lifecycle: 'verified' }] }, presence: [] });
   assert.equal(agentRowOf(saved, 'claude').stateLabel, 'Works');
 });

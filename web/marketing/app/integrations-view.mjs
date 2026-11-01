@@ -12,6 +12,11 @@ const OAUTH = { openai: '/api/provider-oauth/openai/start', gemini: '/api/provid
 // integrationsModel (app-model.mjs) — this page invents no state of its own.
 export function integrationSections({ presence = null, connectors = {}, providers = {}, toolConnections = null, usage = null, overview = null, now = Date.now() } = {}) {
   const online = new Set((Array.isArray(presence) ? presence : []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; }));
+  // Every presence row, whatever its boolean says: a row means a device
+  // reported this provider or a sync stamped it. That earns "Synced" —
+  // never "Connected"; that word belongs to the connections store, via
+  // the truth rows below.
+  const stamped = new Set((Array.isArray(presence) ? presence : []).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; }));
   const truth = new Map(integrationsModel(connectors, providers, { toolConnections, presence, now }).map((i) => [i.key, i]));
   const ai = [
     ['claude', 'anthropic', 'Claude', 'Use your Claude subscription.'],
@@ -22,8 +27,14 @@ export function integrationSections({ presence = null, connectors = {}, provider
     ['runway', 'runway', 'Runway', 'Use your Runway account for video and image generation.'],
   ].map(([key, cloudKey, name, blurb]) => {
     const row = truth.get(cloudKey);
-    const connected = row?.connected === true || online.has(key);
-    const statusText = row?.statusText ?? (online.has(key) ? 'Connected' : (Array.isArray(presence) && Array.isArray(providers?.connections) ? 'Not connected' : 'Not checked'));
+    const connected = row?.connected === true;
+    // Providers with no registry row of their own (Mistral, Runway) get
+    // the same truth from the raw feeds: a presence stamp earns "Synced",
+    // and "Not connected" waits for the connections read, like everywhere.
+    const fallbackText = stamped.has(key)
+      ? (Array.isArray(providers?.connections) ? 'Synced · Not connected' : 'Synced')
+      : (Array.isArray(presence) && Array.isArray(providers?.connections) ? 'Not connected' : 'Not checked');
+    const statusText = row?.statusText ?? fallbackText;
     const icon = ['claude', 'openai', 'gemini', 'grok'].includes(key)
       ? { img: `/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png` }
       : { glyph: key === 'mistral' ? '🦊' : '🎬' };

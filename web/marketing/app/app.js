@@ -1748,24 +1748,55 @@ function providerPcHelp(card, meta) {
   help.append(el('p', 'muted sm', 'Or run this in the spoke folder:'), code, copy);
   card.append(help);
 }
+// The word "Connected" on these cards comes from the provider
+// connections store alone — the same store, and the same rule, the
+// Agents page reads (a saved row is the connection). The runner
+// presence feed can only add "Synced": it is a device report and a sync
+// stamp, and a sync connects nothing, so a presence row on its own
+// reads "Synced · Not connected". When the connections read never
+// arrives, no "Not connected" is claimed either — the card says so.
+// The names each provider is saved under in that store — the same lists
+// app-model.mjs keeps for the Integrations rows.
+const PROVIDER_CONNECTION_NAMES = Object.freeze({
+  claude: ['anthropic', 'claude'], openai: ['openai'], grok: ['xai', 'grok'], gemini: ['google', 'gemini'],
+  xai: ['xai'], mistral: ['mistral'], runway: ['runway'], ollama: ['ollama'],
+});
 async function loadProviders() {
   const box = $('#providers-cards');
   let presence = [];
   try { const body = await api('/api/admin/envoy/runner/presence'); presence = Array.isArray(body.presence) ? body.presence : []; }
   catch { presence = null; }
+  let connections = null;
+  try { const body = await api('/api/admin/provider-connections'); connections = Array.isArray(body.connections) ? body.connections : null; }
+  catch { connections = null; }
   const byProvider = new Map((presence || []).map((r) => [String(r.provider).toLowerCase(), r]));
   box.replaceChildren(...PROVIDER_META.map((meta) => {
     const { key, label } = meta;
     const row = byProvider.get(key);
-    const connected = row?.connected === true;
+    const conn = connections
+      ? connections.find((c) => (PROVIDER_CONNECTION_NAMES[key] ?? [key]).includes(String(c?.providerId ?? c?.provider ?? c?.providerKey ?? '').toLowerCase())) ?? null
+      : null;
+    const connected = Boolean(conn);
     const card = el('article', 'card');
     const icon = agentIconFor(label);
     card.append(el('div', 'title', icon ? `${icon} ${label}` : label));
-    const status = meta.how === 'none' ? 'Not supported' : presence === null ? 'Status unavailable' : connected ? 'Connected' : 'Not connected';
+    // What may be claimed, in order: a saved connection (the Agents
+    // rule) → Connected. A presence row with the connections read
+    // answered → Synced · Not connected. The connections read answered
+    // and no row anywhere → Not connected. A presence row alone →
+    // Synced. A read that never arrived claims nothing.
+    let status;
+    if (meta.how === 'none') status = 'Not supported';
+    else if (conn) status = 'Connected';
+    else if (connections && row) status = 'Synced · Not connected';
+    else if (connections) status = 'Not connected';
+    else if (row) status = 'Synced';
+    else status = 'Status unavailable';
     const metaRow = el('div', 'meta');
     metaRow.append(el('span', `status ${connected ? 'ok' : ''}`, status));
     card.append(metaRow);
-    if (connected && row?.updatedAt) card.append(el('div', 'meta muted sm', `since ${formatTime(row.updatedAt)}`));
+    if (connected && (conn.updatedAt || conn.updated_at)) card.append(el('div', 'meta muted sm', `since ${formatTime(conn.updatedAt || conn.updated_at)}`));
+    if (!connected && row?.updatedAt && (status === 'Synced' || status === 'Synced · Not connected')) card.append(el('div', 'meta muted sm', `synced ${formatTime(row.updatedAt)}`));
     if (meta.how === 'none') { card.append(el('p', 'muted sm', meta.note)); return card; }
     if (connected) return card;
     const actions = el('div', 'row-btns left');

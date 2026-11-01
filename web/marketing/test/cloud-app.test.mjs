@@ -49,7 +49,7 @@ test('models', () => {
   assert.equal(approvalsModel({ items: [{ approvalRequired: true }] }, 'member').items[0].canDecide, false);
   assert.deepEqual(logLines({ messages: [{ id: 1, body: 'hi', authorKind: 'human', authorSubject: 'u1' }] }, 'u1').map((l) => [l.mine, l.text]), [[true, 'hi']]);
   assert.equal(maskSecret('sk-abc123XYZ9'), '••••••••XYZ9'); assert.equal(maskSecret(), '••••••••');
-  assert.deepEqual(integrationsModel({ verifierStatus: { slack: { configured: true } } }, { connections: [{ provider: 'openai' }] }).filter((i) => i.connected).map((i) => i.key), [], 'an env configured flag and an unverified provider row connect nothing (bite 1b)');
+  assert.deepEqual(integrationsModel({ verifierStatus: { slack: { configured: true } } }, { connections: [{ provider: 'openai' }] }).filter((i) => i.connected).map((i) => i.key), ['openai'], 'an env configured flag connects nothing; a saved provider connection row is the connection (the Agents rule — connection-truth correction, 2026-11-01: this line previously asserted the row connected nothing, the bite-1b stance the Agents page never shared)');
   assert.equal(metricsModel({ counts: { members: 2 } })[1][1], 2);
   assert.equal(postureModel({ settings: { database: true } })[1][1], 'Connected');
   assert.equal(isAdminRole('Admin'), true);
@@ -98,21 +98,30 @@ test('connection truth: Slack/Discord rows are channel mirrors — linked or not
   assert.equal(unchecked.statusText, 'Not checked', 'registrations never read → not checked, not a guessed Not linked');
 });
 
-test('connection truth: provider rows read the runner link, not tool_connections', () => {
+// Connection-truth correction (2026-11-01): presence used to make a
+// provider "Connected" in this test — that was the sync stamp wearing
+// the word, and it is what made Settings/Integrations disagree with
+// the Agents page. "Connected" now comes only from the provider
+// connections store, under the same rule the Agents page reads (a
+// saved row is the connection; its lifecycle is detail, and nothing in
+// the cloud ever promotes it to 'verified'). Presence earns "Synced"
+// and nothing more. Assertions that encoded the old claim are updated
+// below and say so.
+test('connection truth: provider rows read the connections store — never tool_connections, never presence', () => {
   const now = Date.parse('2026-10-25T18:00:00.000Z');
   const geminiToolRow = { serviceId: 'google', state: 'verified', lastVerifiedAt: '2026-10-25T17:59:00.000Z' };
   const fromPresence = integrationsModel({}, {}, { toolConnections: [geminiToolRow], presence: [{ provider: 'gemini', connected: true }], now }).find((i) => i.key === 'google');
-  assert.deepEqual([fromPresence.connected, fromPresence.statusText, fromPresence.source], [true, 'Connected', 'runner-presence'], 'Gemini answering in its room reads Connected from presence');
+  assert.deepEqual([fromPresence.connected, fromPresence.statusText, fromPresence.source], [false, 'Synced', 'runner-presence'], 'presence alone never connects: Gemini reads Synced from its presence row (the connections read never answered)');
   const toolRowOnly = integrationsModel({}, { connections: [] }, { toolConnections: [geminiToolRow], presence: [], now }).find((i) => i.key === 'google');
   assert.deepEqual([toolRowOnly.connected, toolRowOnly.statusText], [false, 'Not connected'], 'a tool_connections row never connects an AI provider');
   const savedVerified = integrationsModel({}, { connections: [{ providerId: 'gemini', lifecycle: 'verified' }] }, { presence: [], now }).find((i) => i.key === 'google');
   assert.deepEqual([savedVerified.connected, savedVerified.source], [true, 'provider-connection'], 'a verified sql/031 provider connection is the saved runner link');
   const pending = integrationsModel({}, { connections: [{ providerId: 'gemini', lifecycle: 'pending' }] }, { presence: [], now }).find((i) => i.key === 'google');
-  assert.equal(pending.statusText, 'Not connected', 'a pending provider connection is not a working link');
+  assert.deepEqual([pending.connected, pending.statusText, pending.source], [true, 'Connected', 'provider-connection'], 'a saved provider connection is the connection (the Agents rule): the writers store lifecycle pending and nothing promotes it, so gating on verified read every real connection as Not connected');
   const noSources = integrationsModel({}, {}, { now }).find((i) => i.key === 'google');
   assert.equal(noSources.statusText, 'Not checked', 'neither source answered → Not checked, never a guessed Not connected');
   const grokLive = integrationsModel({}, {}, { presence: [{ provider: 'xai', connected: true }], now }).find((i) => i.key === 'xai');
-  assert.equal(grokLive.connected, true, 'presence names fold (xai feed → Grok row)');
+  assert.deepEqual([grokLive.connected, grokLive.statusText], [false, 'Synced'], 'presence names fold (xai feed → Grok row) — and presence alone never connects');
 });
 
 test('Guard Feed: approvals critical, denials warn, acknowledge turns amber, filters and clear', () => {
