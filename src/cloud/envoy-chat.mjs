@@ -190,6 +190,6 @@ import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
 export function attachChannelLinks(channels, configsByChannelId = new Map()) {
   return channels.map((channel) => {
     const config = configsByChannelId.get(String(channel.id)) ?? null;
-    return Object.freeze({ ...channel, discord: config?.discord ?? null, slack: config?.slack ?? null });
+    return Object.freeze({ ...channel, discord: config?.discord ?? null, slack: config?.slack ?? null, github: config?.github ?? null });
   });
 }

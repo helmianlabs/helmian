@@ -88,6 +88,57 @@ public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
         return LinkCodePattern().IsMatch(code) ? code : null;
     }
 
+    /// <summary>
+    /// Formats an Envoy message authorSubject + authorKind into a display label matching
+    /// helmian.cloud/app (built-in agents, custom @handle agents, Discord/Slack mirrors, PC bridge).
+    /// </summary>
+    public static string DescribeAuthor(string? authorSubject, string? authorKind)
+    {
+        var subject = authorSubject ?? string.Empty;
+        var kind = authorKind ?? string.Empty;
+        if (kind == "agent" || subject.StartsWith("agent:", StringComparison.Ordinal))
+        {
+            if (subject.EndsWith(":bridge", StringComparison.Ordinal)) return "PC bridge";
+            if (subject.StartsWith("agent:custom:", StringComparison.Ordinal))
+            {
+                var handle = subject["agent:custom:".Length..].Trim();
+                return handle.Length > 0 ? $"@{handle}" : "Custom agent";
+            }
+            var id = subject.StartsWith("agent:", StringComparison.Ordinal) ? subject["agent:".Length..] : subject;
+            return id switch
+            {
+                "claude" => "Claude",
+                "openai" => "ChatGPT",
+                "grok" => "SuperGrok",
+                "gemini" => "Gemini",
+                "mistral" => "Mistral Le Chat",
+                "runway" => "Runway",
+                "ollama" => "Local Ollama",
+                _ => id.Length > 0 ? char.ToUpperInvariant(id[0]) + id[1..] : "Agent"
+            };
+        }
+        if (subject.StartsWith("discord:", StringComparison.Ordinal))
+        {
+            var parts = subject.Split(':', 3);
+            var name = parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]) ? parts[2] : "Discord member";
+            return $"{name} · Discord";
+        }
+        if (subject.StartsWith("slack:", StringComparison.Ordinal))
+        {
+            var parts = subject.Split(':', 3);
+            var name = parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]) ? parts[2] : "Slack member";
+            return $"{name} · Slack";
+        }
+        if (kind == "system" || subject.StartsWith("system:", StringComparison.Ordinal)) return "Helmian";
+        if (kind == "human") return "Member";
+        return string.IsNullOrWhiteSpace(kind) ? "Member" : kind;
+    }
+
+    /// <summary>Builds the 1:1 Full Workspace Clone URL (/app#desktop or /app?channel=id#desktop).</summary>
+    public Uri BuildFullCloneUri(string? channelId = null) =>
+        new(HeraldPairingLink.BuildFullCloneUrl(Origin.AbsoluteUri, channelId, Origin.Host)
+            ?? new Uri(Origin, "/app#desktop").AbsoluteUri);
+
     public async Task<EnvoyCloudLink> LinkAsync(string code, CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeLinkCode(code) ?? throw new ArgumentException("That code doesn't look right. It has 8 letters and numbers, like ABCD-EFGH.");

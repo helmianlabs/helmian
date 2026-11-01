@@ -27,6 +27,26 @@ public static class HeraldPairingLink
         return builder.Uri.AbsoluteUri;
     }
 
+    /// <summary>
+    /// Builds the 1:1 Full Workspace Clone URL (/app#desktop or /app?channel=&lt;id&gt;#desktop)
+    /// for phone/browser remote control on a trusted HTTPS origin.
+    /// </summary>
+    public static string? BuildFullCloneUrl(string? originUrl = null, string? channelId = null, string trustedHost = TrustedHost)
+    {
+        var rawOrigin = string.IsNullOrWhiteSpace(originUrl) ? $"https://{trustedHost}" : originUrl.Trim();
+        if (!Uri.TryCreate(rawOrigin, UriKind.Absolute, out var uri)) return null;
+        if (uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo)) return null;
+        if (!string.Equals(uri.Host, trustedHost, StringComparison.OrdinalIgnoreCase)) return null;
+        var cleanChannel = (channelId ?? string.Empty).Trim();
+        var query = cleanChannel.Length > 0 ? $"channel={Uri.EscapeDataString(cleanChannel)}" : string.Empty;
+        var builder = new UriBuilder(uri.Scheme, uri.Host, uri.IsDefaultPort ? -1 : uri.Port, "/app")
+        {
+            Query = query,
+            Fragment = "desktop"
+        };
+        return builder.Uri.AbsoluteUri;
+    }
+
     /// <summary>Parses "Pairing code: 12345678 (expires …)" from the Herald CLI.</summary>
     public static string? ParseCliPairingCode(string? line)
     {

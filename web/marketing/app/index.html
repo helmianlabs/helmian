@@ -124,6 +124,8 @@
             <div class="ew-source"><img src="/assets/agents/maestro.png" alt="" width="14" height="14"> Helmian Envoy</div>
             <div class="ew-source" id="ew-discord-status"><span class="ew-discord-mark" aria-hidden="true"></span> Discord: <span id="ew-discord-status-text">checking…</span></div>
             <div class="ew-source" id="ew-slack-status"><span class="ew-slack-mark" aria-hidden="true"></span> Slack: <span id="ew-slack-status-text">checking…</span></div>
+            <div class="ew-source" id="ew-github-status"><span class="ew-gh-mark" aria-hidden="true"></span> GitHub: <span id="ew-github-status-text">ready to link</span></div>
+            <div class="ew-foot-actions"><button type="button" id="ew-foot-create-agent" class="ew-btn ghost sm">+ Custom Agent</button><button type="button" id="ew-foot-phone-qr" class="ew-btn ghost sm">📱 Phone QR</button></div>
           </footer>
         </aside>
         <div class="ew-split" data-split="channels" role="separator" aria-orientation="vertical" aria-label="Resize channels" tabindex="0"></div>
@@ -134,9 +136,15 @@
             <button id="ew-chat-ava" class="ew-ava-btn" type="button" title="Change this chat's look" aria-label="Change this chat's look"><span class="ew-hash">#</span></button><strong id="ew-channel-title">…</strong>
             <span id="ew-discord-badge" class="ew-badge discord" hidden></span>
             <span id="ew-slack-badge" class="ew-badge slack" hidden></span>
+            <span id="ew-github-badge" class="ew-badge github" hidden></span>
+            <span id="ew-debate-badge" class="ew-badge debate" hidden></span>
             <span class="ew-spacer"></span>
             <button id="ew-link-discord" class="ew-btn sm" type="button" title="Mirror this channel with a Discord channel"><span class="ew-discord-mark" aria-hidden="true"></span><span class="lbl">Link Discord</span></button>
             <button id="ew-link-slack" class="ew-btn sm" type="button" title="Mirror this channel with a Slack channel"><span class="ew-slack-mark" aria-hidden="true"></span><span class="lbl">Link Slack</span></button>
+            <button id="ew-link-github" class="ew-btn sm" type="button" title="Link a GitHub repository to stream pushes, PRs and issues"><span class="ew-gh-mark" aria-hidden="true"></span><span class="lbl">Link GitHub</span></button>
+            <button id="ew-debate-toggle" class="ew-btn sm" type="button" aria-pressed="false" title="Free-Willy Debate Mode: let agents debate and collaborate on each other's replies"><span aria-hidden="true">🔥</span><span class="lbl">Free-Willy</span></button>
+            <button id="ew-debate-stop" class="ew-btn sm danger" type="button" hidden title="Stop multi-agent debate immediately"><span aria-hidden="true">⏹</span><span class="lbl">Stop</span></button>
+            <button id="ew-phone-qr" class="ew-btn sm" type="button" title="Open 1:1 full workspace clone on your phone via QR code"><span aria-hidden="true">📱</span><span class="lbl">Phone QR</span></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="cli" aria-pressed="true" title="Agent chat: talk to one agent" aria-label="Agent chat"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3.4 4.1a1 1 0 0 0 0 1.4l2.5 2.5-2.5 2.5a1 1 0 1 0 1.4 1.4l3.2-3.2a1 1 0 0 0 0-1.4L8.8 8.1a1 1 0 0 0-1.4 0ZM13 15.5a1 1 0 1 0 0 2h4a1 1 0 1 0 0-2h-4Z"/></svg><span class="lbl">Agent chat</span></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="agents" aria-pressed="false" title="Agents in this channel" aria-label="Agents"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM9 13c-3.3 0-7 1.6-7 4.5V20h14v-2.5C16 14.6 12.3 13 9 13Zm7.5.2c1.6.8 2.5 2.1 2.5 4.3V20h3v-2.4c0-2.3-2.6-3.9-5.5-4.4Z"/></svg><span class="lbl">Agents</span> <b id="ew-agent-count">0</b></button>
             <button class="ew-btn sm ew-toggle" type="button" data-toggle="guard" aria-pressed="true" title="Guard: warnings, findings and approvals" aria-label="Guard"><span class="ew-shield" aria-hidden="true"></span><span class="lbl">Guard</span> <b id="ew-guard-count" class="ew-count" hidden></b></button>
@@ -210,6 +218,7 @@
             <span class="ew-spacer"></span>
             <button class="ew-icon" type="button" data-collapse="agents" aria-label="Hide agents" title="Hide agents">›</button>
           </header>
+          <button id="ew-create-agent-btn" class="ew-btn primary full" type="button">+ Create custom agent</button>
           <div id="ew-agent-cards" class="ew-agent-cards"></div>
           <div class="ew-subhead">ADD TO THIS CHANNEL</div>
           <div id="ew-agent-add" class="ew-agent-add"></div>
@@ -304,6 +313,14 @@
           </div>
         </aside>
       </div>
+      <nav id="ew-mobile-nav" class="ew-mobile-nav" aria-label="Mobile workspace navigation">
+        <button type="button" class="ew-mnav-btn on" id="ew-mnav-chat" data-mnav="chat"><span class="ew-mnav-ico" aria-hidden="true">💬</span><span>Chat</span></button>
+        <button type="button" class="ew-mnav-btn" data-toggle="channels" aria-pressed="false"><span class="ew-mnav-ico" aria-hidden="true">#</span><span>Channels</span></button>
+        <button type="button" class="ew-mnav-btn" data-toggle="cli" aria-pressed="false"><span class="ew-mnav-ico" aria-hidden="true">⌨️</span><span>CLI</span></button>
+        <button type="button" class="ew-mnav-btn" data-toggle="agents" aria-pressed="false"><span class="ew-mnav-ico" aria-hidden="true">🤖</span><span>Agents +</span></button>
+        <button type="button" class="ew-mnav-btn" data-toggle="guard" aria-pressed="false"><span class="ew-mnav-ico" aria-hidden="true">🛡️</span><span>Guard</span></button>
+        <button type="button" class="ew-mnav-btn" data-toggle="bench" aria-pressed="false"><span class="ew-mnav-ico" aria-hidden="true">🌐</span><span>Bench</span></button>
+      </nav>
       <div class="ew-scrim" id="ew-scrim"></div>
       <div class="ew-modal" id="ew-modal" role="dialog" aria-modal="true" aria-labelledby="ew-modal-title">
         <div class="ew-modal-card">

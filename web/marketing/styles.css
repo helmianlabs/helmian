@@ -407,3 +407,11 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
    guard added across Troy's other sites. `clip` (unlike `hidden`) keeps
    position: sticky working. No layout or design change. */
 html, body { overflow-x: clip; }
+
+/* Mobile pass (2026-11-01): full-width touch-friendly hero CTAs and crisp card spacing on phones */
+@media (max-width: 680px) {
+  .hero-actions { width: 100%; }
+  .hero-actions .button { width: 100%; min-height: 48px; font-size: 14px; }
+  .cockpit-panel { padding: 14px 12px 18px; }
+  .radar-node { width: 40px; height: 40px; font-size: 10px; }
+}

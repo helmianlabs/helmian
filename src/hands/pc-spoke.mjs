@@ -732,7 +732,7 @@ async function detectCapabilities(fetchImpl) {
 }
 
 /** Long-poll loop. Returns { stop }. */
-export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor, scopeProvider = null } = {}) {
+export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.log('[hands-spoke]', ...a), executor, scopeProvider = null, heartbeat = null } = {}) {
   // A full-pc scope pick expands the configured roots to every drive root
   // that exists (expandRootsForScope); any other pick leaves them untouched.
   const roots = expandRootsForScope({
@@ -772,9 +772,12 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
         // same synchronous run, so nothing can slip between them.
         if (stopped) break;
         ctrl = new AbortController();
+        // Long-poll holds open for 25s when idle; emit initial heartbeat once capabilities + scope are ready and we open the poll.
+        try { heartbeat?.({ connected: true, status: 200 }); } catch {}
         const res = await post('/spoke/v1/poll', { deviceId, capabilities: caps, ...(pollScope ? { scope: pollScope } : {}) }, ctrl.signal);
-        if (res.status === 401) { log('the hands server rejected this PC (401). Re-pair with: node bin/hands-spoke.mjs pair'); await new Promise((r) => setTimeout(r, 60000)); continue; }
-        if (!res.ok) throw new Error(`poll ${res.status}`);
+        if (res.status === 401) { try { heartbeat?.({ connected: false, status: 401 }); } catch {} log('the hands server rejected this PC (401). Re-pair with: node bin/hands-spoke.mjs pair'); await new Promise((r) => setTimeout(r, 60000)); continue; }
+        if (!res.ok) { try { heartbeat?.({ connected: false, status: res.status }); } catch {} throw new Error(`poll ${res.status}`); }
+        try { heartbeat?.({ connected: true, status: 200 }); } catch {}
         const { job } = await res.json();
         backoff = 1000;
         if (!job) continue;
@@ -784,6 +787,7 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
         await post('/spoke/v1/result', { jobId: job.id, ...result });
       } catch (e) {
         if (stopped) break;
+        try { heartbeat?.({ connected: false, status: 0 }); } catch {}
         log(`connection problem (${e.message}); retrying in ${backoff / 1000}s`);
         await new Promise((r) => setTimeout(r, backoff));
         backoff = Math.min(backoff * 2, 60000);

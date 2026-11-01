@@ -24,9 +24,9 @@ import { Pool } from 'pg';
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
 import { publishEnvoyMessage } from './envoy-ably.mjs';
 import {
-  AGENT_NAMES, AGENT_PROVIDERS, CONFIG_SUBJECT, DESK_ROSTER_FALLBACK, MAESTRO_DESK_SLUG, NOTICE_SUBJECT,
+  AGENT_NAMES, AGENT_PROVIDERS, CONFIG_SUBJECT, DESK_ROSTER_FALLBACK, MAESTRO_DESK_SLUG, MAX_CHANNEL_AGENTS, MAX_DEBATE_TURNS, DEFAULT_DEBATE_TURNS, NOTICE_SUBJECT,
   agentSubject, agentsToAnswer, describeAuthor, discordSubject, isSlackId, slackSubject,
-  emptyConfig, normalizeProvider, parseConfig, publicConfig, serializeConfig,
+  emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
 
@@ -154,11 +154,75 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         const config = (await readConfig(client, actor.tenantId, channelId)) ?? emptyConfig();
         if (action === 'add-agent' || action === 'remove-agent') {
           if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
-          const provider = normalizeProvider(input?.provider);
+          const customHandles = new Map((config.customAgents ?? []).map((a) => [a.handle || a.id, a]));
+          const provider = normalizeProvider(input?.provider) ?? (customHandles.has(String(input?.provider ?? '').toLowerCase()) ? String(input?.provider).toLowerCase() : null);
           if (!provider) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
           const has = config.agents.includes(provider);
-          if (action === 'add-agent' && !has) { config.agents = [...config.agents, provider]; config.joined = { ...(config.joined ?? {}), [provider]: new Date(now()).toISOString() }; await writeConfig(client, actor.tenantId, channelId, config); posted = await notice(client, actor.tenantId, channelId, `${AGENT_NAMES[provider]} joined #${channel.title}.`); }
-          if (action === 'remove-agent' && has) { config.agents = config.agents.filter((p) => p !== provider); await writeConfig(client, actor.tenantId, channelId, config); posted = await notice(client, actor.tenantId, channelId, `${AGENT_NAMES[provider]} left #${channel.title}.`); }
+          const label = customHandles.get(provider)?.name ?? AGENT_NAMES[provider] ?? provider;
+          if (action === 'add-agent' && !has) {
+            if (config.agents.length >= MAX_CHANNEL_AGENTS) throw fail(400, 'ENVOY_AGENT_LIMIT_REACHED');
+            config.agents = [...config.agents, provider];
+            config.joined = { ...(config.joined ?? {}), [provider]: new Date(now()).toISOString() };
+            await writeConfig(client, actor.tenantId, channelId, config);
+            posted = await notice(client, actor.tenantId, channelId, `${label} joined #${channel.title}.`);
+          }
+          if (action === 'remove-agent' && has) {
+            config.agents = config.agents.filter((p) => p !== provider);
+            await writeConfig(client, actor.tenantId, channelId, config);
+            posted = await notice(client, actor.tenantId, channelId, `${label} left #${channel.title}.`);
+          }
+        } else if (action === 'create-custom-agent') {
+          if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
+          const custom = sanitizeCustomAgent(input?.agent ?? input);
+          if (!custom) throw fail(400, 'ENVOY_CUSTOM_AGENT_INVALID');
+          if ((config.customAgents ?? []).length >= MAX_CHANNEL_AGENTS) throw fail(400, 'ENVOY_AGENT_LIMIT_REACHED');
+          const filtered = (config.customAgents ?? []).filter((a) => (a.handle || a.id) !== custom.handle);
+          config.customAgents = [...filtered, custom];
+          if (!config.agents.includes(custom.handle)) config.agents = [...config.agents, custom.handle];
+          config.joined = { ...(config.joined ?? {}), [custom.handle]: new Date(now()).toISOString() };
+          await writeConfig(client, actor.tenantId, channelId, config);
+          const roleNote = custom.jobTitle ? ` (${custom.jobTitle})` : '';
+          posted = await notice(client, actor.tenantId, channelId, `${custom.emoji} ${custom.name} (@${custom.handle})${roleNote} joined #${channel.title}.`);
+        } else if (action === 'remove-custom-agent') {
+          if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
+          const handle = normalizeCustomHandle(input?.handle ?? input?.provider ?? input?.id);
+          if (!handle) throw fail(400, 'ENVOY_CUSTOM_AGENT_INVALID');
+          const existing = (config.customAgents ?? []).find((a) => (a.handle || a.id) === handle);
+          config.customAgents = (config.customAgents ?? []).filter((a) => (a.handle || a.id) !== handle);
+          config.agents = (config.agents ?? []).filter((p) => p !== handle);
+          await writeConfig(client, actor.tenantId, channelId, config);
+          if (existing) posted = await notice(client, actor.tenantId, channelId, `${existing.emoji} ${existing.name} (@${existing.handle}) retired from #${channel.title}.`);
+        } else if (action === 'set-debate-mode') {
+          if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
+          const mode = input?.debateMode === 'free-willy' ? 'free-willy' : 'off';
+          const turnsRaw = Number(input?.maxRoundTurns);
+          const turns = Number.isFinite(turnsRaw) ? Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(turnsRaw))) : (config.maxRoundTurns || DEFAULT_DEBATE_TURNS);
+          config.debateMode = mode;
+          config.maxRoundTurns = turns;
+          await writeConfig(client, actor.tenantId, channelId, config);
+          posted = await notice(client, actor.tenantId, channelId, mode === 'free-willy'
+            ? `Free-Willy multi-agent debate mode enabled in #${channel.title} (up to ${turns} agent turns per round).`
+            : `Free-Willy debate mode turned off in #${channel.title}.`);
+        } else if (action === 'stop-debate') {
+          if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
+          config.debateMode = 'off';
+          await writeConfig(client, actor.tenantId, channelId, config);
+          posted = await notice(client, actor.tenantId, channelId, `Multi-agent debate stopped in #${channel.title}.`);
+        } else if (action === 'link-github') {
+          if (!admin) throw fail(403, 'ENVOY_ADMIN_REQUIRED');
+          const gh = sanitizeGithubLink({ repo: input?.repo, events: input?.events, linkedAt: new Date(now()).toISOString() });
+          if (!gh) throw fail(400, 'ENVOY_GITHUB_REPO_INVALID');
+          config.github = gh;
+          await writeConfig(client, actor.tenantId, channelId, config);
+          posted = await notice(client, actor.tenantId, channelId, `#${channel.title} is now linked to GitHub repository ${gh.repo}.`);
+        } else if (action === 'unlink-github') {
+          if (!admin) throw fail(403, 'ENVOY_ADMIN_REQUIRED');
+          if (config.github) {
+            const was = config.github;
+            config.github = null;
+            await writeConfig(client, actor.tenantId, channelId, config);
+            posted = await notice(client, actor.tenantId, channelId, `#${channel.title} is no longer linked to GitHub repository ${was.repo}.`);
+          }
         } else if (action === 'link-discord') {
           if (!admin) throw fail(403, 'ENVOY_ADMIN_REQUIRED');
           linkCode = newLinkCode();
@@ -197,8 +261,10 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     // Messages in this tenant that one of `providers` should answer and has not.
     async agentWork(actor, providers) {
       if (actor.viaDeviceToken !== true) throw fail(403, 'ENVOY_DEVICE_TOKEN_REQUIRED');
-      const wanted = [...new Set(String(providers ?? '').split(',').map(normalizeProvider).filter(Boolean))];
-      if (!wanted.length) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
+      const rawTokens = String(providers ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+      const wantedStd = [...new Set(rawTokens.map(normalizeProvider).filter(Boolean))];
+      const wantedHandles = new Set(rawTokens.map(normalizeCustomHandle).filter(Boolean));
+      if (!wantedStd.length && !wantedHandles.size) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
       return tx(actor, async (client) => {
         // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
         // readiness signal — a registered runner, a presence report, a
@@ -220,7 +286,14 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         const work = [];
         for (const cfgRow of cfgRows.rows) {
           const config = parseConfig(cfgRow.body);
-          if (!config || !config.agents.some((p) => wanted.includes(p))) continue;
+          if (!config) continue;
+          const customByHandle = new Map((config.customAgents ?? []).map((a) => [a.handle || a.id, a]));
+          const isWanted = (p) => {
+            if (wantedStd.includes(p) || wantedHandles.has(p)) return true;
+            const c = customByHandle.get(p);
+            return Boolean(c && wantedStd.includes(c.provider));
+          };
+          if (!config.agents.some(isWanted)) continue;
           const channel = await channelRow(client, actor.tenantId, String(cfgRow.channel_id));
           const recent = await client.query(
             `select ${MSG_COLS} from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject <> $3 and created_at > $4 order by created_at desc, id desc limit 40`,
@@ -228,18 +301,52 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           );
           const rows = recent.rows.reverse();
           const answered = new Set(rows.filter((r) => String(r.idempotency_key).startsWith('reply:')).map((r) => `${r.author_subject}|${String(r.idempotency_key).slice(6)}`));
+          // Count consecutive agent turns since the last human message for Free-Willy debate mode.
+          let roundTurns = 0;
+          for (const r of rows) {
+            if (r.author_kind === 'human') roundTurns = 0;
+            else if (r.author_kind === 'agent') roundTurns += 1;
+          }
           // Only messages after the agent joined count.
           for (const row of rows) {
             const message = messageOut(row);
             const at = new Date(row.created_at).getTime();
-            let due = agentsToAnswer(message, config.agents, { desk: config.desk === true, room: channel.kind === 'agent' && config.desk !== true }).filter((p) => wanted.includes(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
+            let due = agentsToAnswer(message, config.agents, {
+              desk: config.desk === true,
+              room: channel.kind === 'agent' && config.desk !== true,
+              debateMode: config.debateMode ?? 'off',
+              roundTurns,
+              maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
+              customAgents: config.customAgents ?? [],
+            }).filter((p) => isWanted(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
             if (gate) {
-              for (const p of due) if (!gate.has(p)) withheld.set(p, state.reason ?? 'no-provider');
-              due = due.filter((p) => gate.has(p));
+              const gateAllows = (p) => {
+                if (gate.has(p)) return true;
+                const c = customByHandle.get(p);
+                return Boolean(c && gate.has(c.provider));
+              };
+              for (const p of due) if (!gateAllows(p)) withheld.set(p, state.reason ?? 'no-provider');
+              due = due.filter(gateAllows);
             }
             if (!due.length) continue;
             const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
-            work.push({ channel: { id: String(channel.id), slug: channel.slug, title: channel.title, linkedToDiscord: Boolean(config.discord), linkedToSlack: Boolean(config.slack) }, members: config.agents, message, agents: due, context });
+            work.push({
+              channel: {
+                id: String(channel.id),
+                slug: channel.slug,
+                title: channel.title,
+                linkedToDiscord: Boolean(config.discord),
+                linkedToSlack: Boolean(config.slack),
+                linkedToGithub: Boolean(config.github),
+                debateMode: config.debateMode ?? 'off',
+                maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
+              },
+              members: config.agents,
+              ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
+              message,
+              agents: due,
+              context,
+            });
           }
         }
         return {
@@ -252,7 +359,9 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
 
     async postAsAgent(actor, input) {
       if (actor.viaDeviceToken !== true) throw fail(403, 'ENVOY_DEVICE_TOKEN_REQUIRED');
-      const provider = normalizeProvider(input?.provider);
+      const stdProvider = normalizeProvider(input?.provider);
+      const customHandle = normalizeCustomHandle(input?.provider);
+      const provider = stdProvider ?? customHandle;
       if (!provider) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
       // No reply is ever authored by Maestro: Maestro is the human's
       // seat, not an agent, so a 'maestro' post is refused outright —
@@ -268,8 +377,11 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       const result = await tx(actor, async (client) => {
         const channel = await channelRow(client, actor.tenantId, String(input?.channelId ?? ''));
         const config = await readConfig(client, actor.tenantId, String(channel.id));
+        if (!stdProvider && !(config?.customAgents ?? []).some((a) => (a.handle || a.id) === provider)) {
+          throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
+        }
         if (!config?.agents.includes(provider)) throw fail(403, 'ENVOY_AGENT_NOT_MEMBER');
-        const { row, replayed } = await insertMessage(client, { tenantId: actor.tenantId, channelId: String(channel.id), subject: agentSubject(provider), kind: 'agent', body, key });
+        const { row, replayed } = await insertMessage(client, { tenantId: actor.tenantId, channelId: String(channel.id), subject: agentSubject(provider, config?.customAgents ?? []), kind: 'agent', body, key });
         if (!row) throw fail(500, 'ENVOY_RECEIPT_NOT_DURABLE');
         if (!replayed) out = row;
         return { receipt: { durable: true, replayed, message: messageOut(row) } };

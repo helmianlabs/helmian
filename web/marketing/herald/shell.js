@@ -313,6 +313,7 @@ function confirmEnrollmentCode(code) {
     $('#enrollmentCode').value = '';
     showToast('Desktop enrollment confirmed. Helmian Desktop will finish connecting in a moment.');
     await refreshDesktopList();
+  void loadHeraldEnvoyFeed();
   }).catch((error) => {
     forgetPendingEnrollment(code);
     showToast(error.message);
@@ -577,4 +578,32 @@ function escapeHtml(value) {
   const node = document.createElement('span');
   node.textContent = String(value ?? '');
   return node.innerHTML;
+}
+
+async function loadHeraldEnvoyFeed() {
+  const box = $('#heraldEnvoyFeed');
+  if (!box) return;
+  try {
+    const chRes = await fetch('/api/admin/envoy/channels', { credentials: 'include' });
+    if (!chRes.ok) return;
+    const chBody = await chRes.json();
+    const channels = Array.isArray(chBody.channels) ? chBody.channels : [];
+    const first = channels[0];
+    if (!first) return;
+    const msgRes = await fetch(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(first.id)}&limit=20`, { credentials: 'include' });
+    if (!msgRes.ok) return;
+    const msgBody = await msgRes.json();
+    const msgs = (Array.isArray(msgBody.messages) ? msgBody.messages : []).filter((m) => m.authorKind !== 'system');
+    box.hidden = false;
+    const status = $('.team-pane .quiet-status');
+    if (status) status.textContent = `Envoy #${first.title || first.slug}`;
+    const footerSpan = $('.team-pane .pane-footer > span');
+    if (footerSpan) footerSpan.textContent = `${msgs.length} live message(s) in #${first.title || first.slug}`;
+    box.replaceChildren(...msgs.slice(-8).map((m) => {
+      const art = document.createElement('article');
+      art.className = 'message';
+      art.innerHTML = `<div class="message-body"><div class="message-meta"><strong>${escapeHtml(m.authorName || m.authorKind || 'Member')}</strong><span>#${escapeHtml(first.title || first.slug)}</span></div><p>${escapeHtml(String(m.body || '').slice(0, 280))}</p></div>`;
+      return art;
+    }));
+  } catch { /* Envoy feed is optional in Herald cockpit */ }
 }

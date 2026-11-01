@@ -22,6 +22,8 @@
       </StackPanel>
       <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
         <ComboBox x:Name="ChannelBox" MinWidth="140" DisplayMemberPath="Title" SelectionChanged="ChannelBox_SelectionChanged" Visibility="Collapsed" Margin="0,0,8,0" />
+        <Button x:Name="OpenCloneButton" Content="Full Clone (/app)" Click="OpenCloneButton_Click" Padding="10,5" Margin="0,0,8,0"
+                Style="{DynamicResource ConsoleNeutralButtonStyle}" ToolTip="Open the 1:1 full Envoy workspace clone in your browser or phone" />
         <Button x:Name="UnlinkButton" Content="Unlink" Click="UnlinkButton_Click" Visibility="Collapsed" Padding="10,5"
                 Style="{DynamicResource ConsoleNeutralButtonStyle}" ToolTip="Stop using team chat on this computer" />
       </StackPanel>

@@ -148,6 +148,29 @@ export function createGithubWebhookStore({ pool, publishImpl = null } = {}) {
       const row = r.rows[0];
       return { channel: { id: String(row.id), tenantId: String(row.tenant_id), slug: String(row.slug), title: String(row.title) }, reason: null };
     },
+    // Resolve channels linked via channel-config `github.repo` in the UI.
+    async resolveChannelsByGithubRepo(repoFullName) {
+      const target = String(repoFullName ?? '').trim().toLowerCase();
+      if (!REPO_FULL_NAME.test(repoFullName)) return [];
+      const r = await pool.query(
+        `select c.id, c.tenant_id, c.slug, c.title, m.body
+         from (select distinct on (tenant_id, channel_id) tenant_id, channel_id, body
+               from helmion.envoy_messages where author_subject = 'system:envoy-config'
+               order by tenant_id, channel_id, created_at desc, id desc) m
+         join helmion.envoy_channels c on c.tenant_id = m.tenant_id and c.id = m.channel_id`,
+      );
+      const matched = [];
+      for (const row of r.rows) {
+        try {
+          const cfg = JSON.parse(String(row.body ?? ''));
+          const repo = String(cfg?.github?.repo ?? '').trim().toLowerCase();
+          if (repo && repo === target) {
+            matched.push({ id: String(row.id), tenantId: String(row.tenant_id), slug: String(row.slug), title: String(row.title) });
+          }
+        } catch { /* ignore malformed row */ }
+      }
+      return matched;
+    },
     // The envoy-mesh insert, verbatim: same table, same ON CONFLICT key
     // (tenant, channel, author, idempotency key), same receipt shape.
     async postEventCard({ channel, deliveryId, text }) {
@@ -219,7 +242,7 @@ export async function handleGithubWebhookRoute({ request, response, requestUrl, 
   const { map, error: mapError } = parseRepoChannelMap(env?.[GITHUB_REPO_CHANNEL_MAP_ENV]);
   if (mapError) log(`github webhook: ${GITHUB_REPO_CHANNEL_MAP_ENV} is unusable (${mapError}); treating every repo as unmapped`);
   const slug = map[repoFullName];
-  if (!slug) {
+  if (!slug && (store !== null && typeof store?.resolveChannelsByGithubRepo !== 'function')) {
     log(`github webhook: delivery ${deliveryId} for unmapped repo ${repoFullName} (${event}); no post`);
     reply(200, { valid: true, posted: false, reason: 'repo_not_mapped' });
     return true;
@@ -227,17 +250,41 @@ export async function handleGithubWebhookRoute({ request, response, requestUrl, 
   let storeImpl = store;
   if (!storeImpl) {
     try { storeImpl = createGithubWebhookStore({ pool: getPool() }); }
-    catch { reply(503, { valid: false, code: 'GITHUB_WEBHOOK_STORE_UNAVAILABLE' }); return true; }
-  }
-  try {
-    const { channel, reason } = await storeImpl.resolveChannelBySlug(slug);
-    if (!channel) {
-      log(`github webhook: delivery ${deliveryId} for ${repoFullName} maps to slug ${slug}, which did not resolve (${reason}); no post`);
-      reply(200, { valid: true, posted: false, reason });
+    catch {
+      if (!slug) {
+        reply(200, { valid: true, posted: false, reason: 'repo_not_mapped' });
+        return true;
+      }
+      reply(503, { valid: false, code: 'GITHUB_WEBHOOK_STORE_UNAVAILABLE' });
       return true;
     }
-    const result = await storeImpl.postEventCard({ channel, deliveryId, text: formatted.text });
-    reply(200, { valid: true, posted: true, replayed: result.replayed === true });
+  }
+  try {
+    if (slug) {
+      const { channel, reason } = await storeImpl.resolveChannelBySlug(slug);
+      if (!channel) {
+        log(`github webhook: delivery ${deliveryId} for ${repoFullName} maps to slug ${slug}, which did not resolve (${reason}); no post`);
+        reply(200, { valid: true, posted: false, reason });
+        return true;
+      }
+      const result = await storeImpl.postEventCard({ channel, deliveryId, text: formatted.text });
+      reply(200, { valid: true, posted: true, replayed: result.replayed === true });
+      return true;
+    }
+    const linkedChannels = typeof storeImpl.resolveChannelsByGithubRepo === 'function'
+      ? await storeImpl.resolveChannelsByGithubRepo(repoFullName)
+      : [];
+    if (!linkedChannels.length) {
+      log(`github webhook: delivery ${deliveryId} for unmapped repo ${repoFullName} (${event}); no post`);
+      reply(200, { valid: true, posted: false, reason: 'repo_not_mapped' });
+      return true;
+    }
+    let anyReplayed = false;
+    for (const ch of linkedChannels) {
+      const r = await storeImpl.postEventCard({ channel: ch, deliveryId, text: formatted.text });
+      if (r.replayed === true) anyReplayed = true;
+    }
+    reply(200, { valid: true, posted: true, replayed: anyReplayed, channels: linkedChannels.length });
   } catch (error) {
     log(`github webhook: delivery ${deliveryId} for ${repoFullName} failed: ${error?.message ?? error}`);
     reply(500, { valid: false, code: 'GITHUB_WEBHOOK_FAILED' });

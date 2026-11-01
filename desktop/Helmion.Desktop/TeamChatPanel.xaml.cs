@@ -134,7 +134,7 @@ public partial class TeamChatPanel : UserControl
             foreach (var m in messages.OrderBy(m => m.CreatedAt))
             {
                 _lines.Add(new ChatLine(
-                    m.AuthorKind == "human" ? "Member" : m.AuthorKind,
+                    EnvoyCloudChatClient.DescribeAuthor(m.AuthorSubject, m.AuthorKind),
                     m.CreatedAt?.ToLocalTime().ToString("MMM d, h:mm tt") ?? string.Empty,
                     m.Body));
             }
@@ -172,6 +172,23 @@ public partial class TeamChatPanel : UserControl
             ChatStatus.Text = "Not sent — your message is still in the box.";
         }
         finally { _busy = false; SendButton.IsEnabled = true; }
+    }
+
+    private void OpenCloneButton_Click(object sender, RoutedEventArgs e)
+    {
+        var origin = _link is not null && Uri.TryCreate(_link.Origin, UriKind.Absolute, out var o)
+            ? o
+            : EnvoyCloudChatClient.OriginFromEnvironment();
+        var cloneUri = Client(origin).BuildFullCloneUri(_channelId);
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cloneUri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch
+        {
+            Clipboard.SetText(cloneUri.AbsoluteUri);
+            ChatStatus.Text = $"Copied full clone URL: {cloneUri.AbsoluteUri}";
+        }
     }
 
     private async void UnlinkButton_Click(object sender, RoutedEventArgs e)

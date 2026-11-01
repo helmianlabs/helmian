@@ -583,3 +583,68 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .gs-steps a { color:var(--accent); }
 .scribe-card .invite-new { display:flex; gap:8px; margin:8px 0; }
 .scribe-card input { flex:1 1 auto; min-width:0; font-family:ui-monospace, monospace; }
+
+/* ---- Monday Launch: Custom Agents, Free-Willy Debate, GitHub Link & Full Mobile Clone Pass ---- */
+.ew-badge.github { background:rgba(148,163,184,.18); color:#E2E8F0; border:1px solid rgba(148,163,184,.45); }
+.ew-badge.debate { background:rgba(245,158,11,.18); color:#FBBF24; border:1px solid rgba(245,158,11,.55); animation:ew-pulse 1.6s ease-in-out infinite; }
+.ew-btn.danger { background:rgba(239,68,68,.18); border-color:rgba(239,68,68,.55); color:#FCA5A5; }
+.ew-btn.danger:hover { background:rgba(239,68,68,.3); border-color:#EF4444; }
+.ew-custom-ava, .ew-avatar.custom { width:30px; height:30px; border-radius:50%; background:var(--panel); border:1px solid rgba(56,189,248,.4); display:grid; place-items:center; font-size:17px; grid-row:span 2; }
+.ew-avatar.custom { width:36px; height:36px; font-size:19px; grid-row:auto; }
+.ew-pill-emoji { font-size:15px; line-height:1; padding-left:4px; }
+.ew-ca-tag { font-size:10px; font-weight:700; color:var(--accent); background:rgba(14,165,233,.12); border:1px solid rgba(14,165,233,.3); border-radius:999px; padding:1px 6px; max-width:96px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-foot-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+.ew-foot-actions .ew-btn { flex:1 1 auto; text-align:center; justify-content:center; }
+.ew-emoji-grid { display:grid; grid-template-columns:repeat(8, minmax(0, 1fr)); gap:4px; flex:1; }
+.ew-emoji-btn { border:1px solid var(--border); background:var(--bg); border-radius:8px; height:34px; font-size:17px; cursor:pointer; display:grid; place-items:center; transition:border-color .15s, transform .1s; }
+.ew-emoji-btn:hover { border-color:var(--accent); transform:scale(1.06); }
+.ew-emoji-btn.on { border-color:var(--accent); background:rgba(14,165,233,.16); box-shadow:0 0 0 2px rgba(14,165,233,.35); }
+.ew-modal-form { display:flex; flex-direction:column; gap:10px; }
+.ew-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.ew-code.sm { font-size:12px; letter-spacing:.02em; padding:8px 10px; word-break:break-all; }
+.ew-icon.sm { width:22px; height:22px; font-size:15px; font-weight:700; }
+
+/* Mobile bottom navigation bar (hidden on desktop) */
+.ew-mobile-nav { display:none; }
+
+@media (max-width: 900px) {
+  #ew-link-github { display:none; }
+  .view.desktop { display:flex; flex-direction:column; height:calc(100dvh - 52px); }
+  .view.desktop > .ew { flex:1 1 auto; min-height:0; height:auto; }
+  .ew-mobile-nav {
+    display:grid;
+    grid-template-columns:repeat(6, minmax(0, 1fr));
+    gap:2px;
+    background:var(--panel);
+    border-top:1px solid var(--border);
+    padding:4px 6px calc(4px + env(safe-area-inset-bottom));
+    flex:none;
+    z-index:45;
+  }
+  .ew-mnav-btn {
+    border:0;
+    background:transparent;
+    color:var(--muted);
+    border-radius:8px;
+    min-height:46px;
+    padding:4px 2px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:2px;
+    font-size:10.5px;
+    font-weight:650;
+    cursor:pointer;
+  }
+  .ew-mnav-btn.on, .ew-mnav-btn[aria-pressed="true"] {
+    color:var(--accent);
+    background:rgba(14,165,233,.12);
+  }
+  .ew-mnav-ico { font-size:15px; line-height:1; }
+  .ew-modal-card { max-height:calc(100dvh - 24px); overflow-y:auto; width:calc(100vw - 16px); }
+  .ew-grid-2 { grid-template-columns:1fr; }
+  .ew-emoji-grid { grid-template-columns:repeat(8, minmax(0, 1fr)); }
+  /* Prevent iOS Safari zoom on input focus */
+  input, select, textarea, .ew-composer textarea { font-size:16px; }
+}

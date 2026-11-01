@@ -25,6 +25,10 @@ internal static class HeraldPairingLinkChecks
             "fully set-up legacy relay keeps the relay path");
         Assert(HeraldPairingFallback.IsMissingOwnerEnrollmentExit(3) && !HeraldPairingFallback.IsMissingOwnerEnrollmentExit(4)
             && !HeraldPairingFallback.IsMissingOwnerEnrollmentExit(null), "only exit 3 means no owner enrollment");
+        Assert(HeraldPairingLink.BuildFullCloneUrl("https://helmian.cloud", "chan_99") == "https://helmian.cloud/app?channel=chan_99#desktop", "full clone URL builds with channel deep-link");
+        Assert(HeraldPairingLink.BuildFullCloneUrl("https://helmian.cloud", null) == "https://helmian.cloud/app#desktop", "full clone URL builds without channel");
+        Assert(HeraldPairingLink.BuildFullCloneUrl("http://helmian.cloud", "chan_99") is null, "full clone URL refuses plain HTTP");
+        Assert(HeraldPairingLink.BuildFullCloneUrl("https://evil.example", "chan_99") is null, "full clone URL refuses untrusted host");
         Console.WriteLine("Herald pairing link checks passed.");
     }
 

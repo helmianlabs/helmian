@@ -32,6 +32,7 @@
       </div>
       <div class="top-actions">
         <span class="connection-state" id="connectionState"><span></span>Desktop not connected</span>
+        <a class="text-button" id="openFullClone" href="/app#desktop" title="Switch to the 1:1 Full Envoy Workspace Clone">Full Clone (/app)</a>
         <button class="text-button" id="accountButton" data-action="account">Sign in</button>
         <button class="icon-button theme-button" data-menu-trigger="theme" aria-label="Choose theme" aria-haspopup="menu" aria-expanded="false" title="Theme">
           <svg aria-hidden="true"><use href="/herald/icons.svg#sun"></use></svg>
@@ -116,13 +117,14 @@
               <button class="icon-button" data-open-drawer="integrations" aria-label="Open integrations" title="Integrations"><svg><use href="/herald/icons.svg#plug"></use></svg></button>
             </div>
           </header>
-          <div class="pane-scroll">
+          <div class="pane-scroll" id="heraldTeamScroll"><div id="heraldEnvoyFeed" hidden style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
             <section class="empty-hero">
               <div class="empty-icon"><svg><use href="/herald/icons.svg#users"></use></svg></div>
               <p class="eyebrow">READY WHEN YOU CONNECT</p>
               <h2>Bring the project conversation into focus</h2>
               <p>Helmian will place one relevant project thread here without channel sprawl, reactions, agent avatars, or agent chatter.</p>
               <button class="secondary-button" data-open-drawer="integrations">View connection options</button>
+              <a class="secondary-button" href="/app#desktop" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;margin-top:8px;">Open 1:1 Full Envoy Clone (/app) →</a>
             </section>
             <section class="local-card">
               <div class="card-heading"><span>Local project brief</span><span class="local-tag">Presentation</span></div>

@@ -1537,9 +1537,12 @@ async function loadUpcoming() {
   catch (error) { status.textContent = `Guard is unreachable (${error.message}). Nothing will run until it answers.`; box.replaceChildren(); expired.hidden = true; return; }
   if (!body) { status.textContent = 'PC approvals are not set up for your account. Only the PC owner sees this queue.'; box.replaceChildren(); expired.hidden = true; setUpcomingBadge(0); return; }
   const queue = Array.isArray(body.queue) ? body.queue : [];
-  setUpcomingBadge(body.counts?.total ?? queue.length);
-  status.textContent = queue.length ? 'Soonest expiry first. Pending items wait on you; approved items are waiting for your PC to run them.' : 'Nothing is waiting. When an AI asks to act on your PC, it shows up here.';
-  box.replaceChildren(...queue.map((a) => {
+  const nowMs = Date.now();
+  const activeQueue = queue.filter((a) => !a.expiresAt || Date.parse(a.expiresAt) > nowMs);
+  const expiredQueue = queue.filter((a) => a.expiresAt && Date.parse(a.expiresAt) <= nowMs);
+  setUpcomingBadge(activeQueue.length);
+  status.textContent = activeQueue.length ? 'Soonest expiry first. Pending items wait on you; approved items are waiting for your PC to run them.' : 'Nothing is waiting right now. When an AI asks to act on your PC, it shows up here.';
+  const renderCard = (a) => {
     const card = el('div', 'card');
     const who = [a.tool, a.site, a.deviceId ? `asked by ${a.deviceId}` : ''].filter(Boolean).join(' · ');
     const cd = el('span', null, a.expiresAt ? countdownLabel(a.expiresAt) : '');
@@ -1549,7 +1552,15 @@ async function loadUpcoming() {
     card.append(el('strong', null, a.summary || a.tool || 'PC action'), meta);
     if (a.status === 'pending') card.append(pcDecideButtons(a, loadUpcoming));
     return card;
-  }));
+  };
+  const nodes = activeQueue.map(renderCard);
+  if (expiredQueue.length) {
+    const details = el('details', 'card muted sm');
+    const summary = el('summary', null, `${expiredQueue.length} older expired item${expiredQueue.length === 1 ? '' : 's'} (hidden)`);
+    details.append(summary, ...expiredQueue.map(renderCard));
+    nodes.push(details);
+  }
+  box.replaceChildren(...nodes);
   const n = body.counts?.expiredRecent || 0;
   expired.hidden = !n;
   if (n) expired.textContent = `${n} approval${n === 1 ? '' : 's'} expired in the last 24 hours before anyone decided.`;
@@ -1662,6 +1673,9 @@ const PROVIDER_META = [
   { key: 'gemini', label: 'Gemini', plan: 'Google account', how: 'pc', login: 'gemini', start: 'Sign in to Gemini (your Google account)', cli: 'Gemini CLI', keyNote: 'A free Gemini API key from Google AI Studio also works and costs nothing.' },
   { key: 'antigravity', label: 'Antigravity', plan: 'Google Antigravity', how: 'none', note: 'Google does not allow other apps to use Antigravity sign-in. Keep using Antigravity in its own app; Helmian can still show its status from the desktop app.' },
   { key: 'xai', label: 'xAI API', plan: 'xAI API key', how: 'key' },
+  { key: 'mistral', label: 'Mistral Le Chat', plan: 'Mistral Le Chat / API', how: 'key', keyNote: 'Works with your Mistral key or Le Chat browser session on your PC.' },
+  { key: 'runway', label: 'Runway', plan: 'Runway Gen-4 / API', how: 'key', keyNote: 'Works with your Runway key or browser session on your PC.' },
+  { key: 'ollama', label: 'Local Ollama', plan: 'Free local models', how: 'pc', login: 'ollama', start: 'Start local Ollama', cli: 'Ollama', keyNote: 'Runs 100% free on your PC with zero cloud cost.' },
 ];
 function providerKeyHelp(card, key) {
   if (card.querySelector('.connect-help')) { card.querySelector('.connect-help').remove(); return; }
@@ -1726,6 +1740,8 @@ async function loadProviders() {
 // ---- set up this PC (spoke download + one-time pairing code) ----
 function detectOs() {
   const ua = `${navigator.userAgentData?.platform || ''} ${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+  if (ua.includes('android')) return 'android';
+  if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('ipod')) return 'ios';
   if (ua.includes('win')) return 'windows';
   if (ua.includes('mac')) return 'macos';
   if (ua.includes('linux') || ua.includes('x11')) return 'linux';
@@ -1734,22 +1750,27 @@ function detectOs() {
 if ($('#setup-pc')) $('#setup-pc').onclick = async () => {
   const os = detectOs();
   const note = $('#setup-pc-note');
-  if (os !== 'windows') {
+  const isPhone = os === 'android' || os === 'ios';
+  if (os !== 'windows' && !isPhone) {
     note.textContent = os === 'macos' ? 'The Mac spoke is coming soon. Windows is ready now.' : os === 'linux' ? 'The Linux spoke is coming soon. Windows is ready now.' : 'Open this page on the Windows PC you want to set up.';
     return;
   }
   $('#setup-pc-steps').hidden = false;
   note.textContent = '';
-  const a = document.createElement('a');
-  a.href = '/api/admin/spoke/download?os=windows';
-  a.rel = 'noopener';
-  document.body.append(a); a.click(); a.remove();
+  if (os === 'windows') {
+    const a = document.createElement('a');
+    a.href = '/api/admin/spoke/download?os=windows';
+    a.rel = 'noopener';
+    document.body.append(a); a.click(); a.remove();
+  }
   const codeEl = $('#setup-pc-code');
   codeEl.textContent = 'making code...';
   try {
     const r = await post('/api/admin/spoke/pair-code', {});
     codeEl.textContent = r.code;
-    note.textContent = 'The code works once and runs out in 10 minutes. Press Set up this PC again for a new one.';
+    note.textContent = isPhone
+      ? 'You are on your phone — enter this 10-minute code in the Helmian Spoke installer on your Windows PC.'
+      : 'The code works once and runs out in 10 minutes. Press Set up this PC again for a new one.';
   } catch (error) {
     codeEl.textContent = 'not available';
     note.textContent = error.status === 503 ? 'Pairing codes are not switched on yet. When the installer asks, type your hands passphrase instead.' : 'Could not make a pairing code right now. When the installer asks, type your hands passphrase instead.';
