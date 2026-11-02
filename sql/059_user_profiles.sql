@@ -20,9 +20,13 @@ create policy user_profiles_current_context on helmion.user_profiles
   using (true)
   with check (true);
 
--- Updated_at trigger
-drop trigger if exists user_profiles_updated_at on helmion.user_profiles;
-create trigger user_profiles_updated_at
-  before update on helmion.user_profiles
-  for each row
-  execute function helmion.set_updated_at();
+-- No updated_at trigger. The original version of this file ended with a
+-- trigger calling helmion.set_updated_at() — a function no migration
+-- defines — so Postgres refused the CREATE TRIGGER, the whole file
+-- failed, and helmion.user_profiles was never created: GET/POST
+-- /api/admin/profile (Settings > Envoy profile) could not persist
+-- anything. 062_user_profiles_repair.sql records the same finding and
+-- repairs databases that never got the table; this file is fixed in
+-- place because it was never successfully applied anywhere.
+-- user-profile.mjs sets updated_at = now() on every write, so no
+-- trigger is needed.

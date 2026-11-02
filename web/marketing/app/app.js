@@ -2049,7 +2049,7 @@ function renderAgentSessions(container, sessions) {
   const count = el('span', 'muted sm', `${sessions.length} session${sessions.length === 1 ? '' : 's'}`);
   const newBtn = el('button', 'btn primary sm', '+ New session');
   newBtn.type = 'button';
-  newBtn.onclick = showNewSessionDialog;
+  newBtn.onclick = () => showNewSessionDialog();
   head.append(count, newBtn);
 
   if (!sessions.length) {
