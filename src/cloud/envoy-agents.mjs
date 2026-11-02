@@ -27,7 +27,7 @@
 // behind the name to answer. Agent-authored and system messages route
 // nobody in the desk too.
 
-export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini']);
+export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral']);
 export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI' });
 export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'custom']);
 // One connect road (owner's law, 2026-11-01): a custom agent's account
@@ -45,6 +45,7 @@ const ALIASES = Object.freeze({
   chatgpt: 'openai', openai: 'openai', gpt: 'openai', codex: 'openai',
   grok: 'grok', xai: 'grok', supergrok: 'grok',
   gemini: 'gemini', google: 'gemini',
+  mistral: 'mistral', lechat: 'mistral',
 });
 const ENGINE_ALIASES = Object.freeze({
   ...ALIASES,
