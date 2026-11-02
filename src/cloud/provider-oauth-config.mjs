@@ -1,3 +1,13 @@
+// FENCED — retired as a connect road (one-road removal pass, Bite 12,
+// 2026-11-02). Under the owner's one-road law an AI connects with its
+// account email and password on its Integrations card
+// (password_session); no surface links to OAuth as a way to connect,
+// and the user-level /api/provider-oauth/* road is stood down
+// (envoy-ably.mjs answers 410; user-oauth.mjs is a fence). This module
+// remains only because the frozen live-admin.mjs and
+// provider-connection-repository.mjs import helpers from it; it dies
+// with the admin Gemini OAuth block when live-admin gets a sanctioned
+// edit. Do not wire it to any new surface.
 import { createHash, randomBytes } from 'node:crypto';
 import { GEMINI_SCOPES, getCloudProviderOAuthAuthority } from './provider-oauth-authority.mjs';
 

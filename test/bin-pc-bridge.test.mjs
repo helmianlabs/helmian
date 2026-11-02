@@ -626,3 +626,48 @@ test('agent work: an unresolvable slash command rides through unexpanded and is 
   assert.deepEqual(turn.slashExpansion, { name: 'nosuchcmd', expanded: false });
   await handle.stop();
 });
+
+test('bridge presence claims only what this PC actually holds — never mistral/runway/ollama by default', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-presence-'));
+  const cloud = makeFakeCloud();
+  // Pre-pair with the same token the vault is sealed under (the vault
+  // test's pattern), and give the vault exactly one real key: gemini.
+  await writeFile(join(tmp, 'token.json'), JSON.stringify({ token: 'test-device-token-0123456789abcdef' }));
+  const vaultPath = join(tmp, 'vault.json');
+  const { openVault } = await import('../src/runner/vault.mjs');
+  const vault = await openVault({ vaultPath, deviceToken: 'test-device-token-0123456789abcdef' });
+  await vault.set('gemini', 'api_key', 'vault-key-xyz');
+  const handle = await runBridge({
+    fetchImpl: cloud.fetchImpl,
+    spawnImpl: () => makeFakeChild().child,
+    execPath: 'node',
+    helmionBin: 'fake-helmion.mjs',
+    bridgeDir: tmp,
+    tokenPath: join(tmp, 'token.json'),
+    cursorPath: join(tmp, 'cursor.json'),
+    vaultPath,
+    provider: 'gemini',
+    pollMs: 50,
+    log: () => {},
+    logError: () => {},
+    noAbly: true,
+  });
+  t.after(() => handle.stop());
+  assert.equal(handle.ok, true);
+  // Presence is fire-and-forget at startup; wait for the gemini claim to
+  // land in the fake cloud (proving the pipe works), then read the
+  // whole set of providers this PC claimed.
+  const deadline = Date.now() + 5000;
+  let claimed = [];
+  while (Date.now() < deadline) {
+    claimed = cloud.calls
+      .filter((c) => c.method === 'POST' && new URL(c.url).pathname === '/api/admin/envoy/runner/presence')
+      .map((c) => JSON.parse(c.body).provider);
+    if (claimed.includes('gemini')) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.ok(claimed.includes('gemini'), 'the vault-held provider is claimed');
+  for (const stock of ['mistral', 'runway', 'ollama']) {
+    assert.ok(!claimed.includes(stock), `${stock} is never claimed without a real local check passing`);
+  }
+});

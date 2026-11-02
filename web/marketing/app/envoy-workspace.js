@@ -5,6 +5,7 @@ import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './
 import { addSession, sessionsFromServer } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
+import { createConnectFields } from './connect-fields.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' };
@@ -14,27 +15,13 @@ export const CUSTOM_AGENT_EMOJIS = ['🤖', '🦀', '🧐', '🤠', '🔥', '�
 export const CUSTOM_PROVIDER_OPTIONS = [
   ['claude', 'Claude (Anthropic)'],
   ['openai', 'ChatGPT (OpenAI)'],
-  ['grok', 'SuperGrok (xAI)'],
+  ['grok', 'Grok (xAI)'],
   ['mistral', 'Mistral (Le Chat)'],
   ['gemini', 'Gemini (Google)'],
   ['runway', 'Runway (Gen-4 Media)'],
   ['ollama', 'Local Ollama (Free on PC)'],
 ];
-export const CUSTOM_AUTH_OPTIONS = [
-  ['subscription', 'Subscription Sign-In (Pro / Max / Plus / SuperGrok)'],
-  ['browser-free', 'Free Browser Seat (Web Session)'],
-  ['browser-paid', 'Paid Browser Seat (Web Session)'],
-  ['api-key', 'API Key / SDK (PC Vault)'],
-  ['cli', 'Local CLI Seat (Claude Code / Codex / Gemini CLI)'],
-];
 const CUSTOM_PROVIDER_LABELS = Object.fromEntries(CUSTOM_PROVIDER_OPTIONS);
-const CUSTOM_AUTH_LABELS = {
-  subscription: 'Subscription',
-  'browser-free': 'Browser (Free)',
-  'browser-paid': 'Browser (Paid)',
-  'api-key': 'API Key',
-  cli: 'Local CLI',
-};
 const QUICK = [
   ['Helmian demo video', 'https://www.youtube.com/watch?v=OC2Y82gv6co'],
   ['Helmian demo video', 'https://www.youtube.com/watch?v=_yUtw9YOzy8'],
@@ -983,13 +970,12 @@ function renderAgents() {
     const engineOnline = ws.online.has(ca.provider) || ca.provider === 'ollama';
     const state = engineOnline ? 'idle' : 'offline';
     const provLabel = CUSTOM_PROVIDER_LABELS[ca.provider] || ca.provider;
-    const authLabel = CUSTOM_AUTH_LABELS[ca.authMode] || ca.authMode;
     return h('div', { class: 'ew-agent custom-agent-card', role: 'button', tabindex: 0, title: `Mention @${ca.handle} (${ca.jobTitle || provLabel})`, onclick: () => insertMention(ca.handle), onkeydown: (e) => { if (e.key === 'Enter') insertMention(ca.handle); } },
       h('div', { class: 'ew-avatar emoji-ava' }, ca.emoji || '🤖'),
       h('strong', {}, `${ca.name} (@${ca.handle})`),
       h('button', { type: 'button', class: 'ew-icon remove', title: `Retire @${ca.handle}`, 'aria-label': `Retire @${ca.handle}`, onclick: (e) => { e.stopPropagation(); removeCustomAgent(ca.handle); } }, '×'),
       h('span', { class: `ew-state ${state}` }, engineOnline ? 'READY' : 'CONNECT SEAT'),
-      h('span', { class: 'last' }, `${ca.jobTitle ? ca.jobTitle + ' · ' : ''}${provLabel} · ${authLabel}`));
+      h('span', { class: 'last' }, `${ca.jobTitle ? ca.jobTitle + ' · ' : ''}${provLabel}`));
   });
   $('ew-agent-cards').replaceChildren(...builtinCards, ...customCards);
   if (!totalCount) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one below or click + Create Agent.' : 'No agents in this channel. Add one below or click + Create Agent to build your team.'));
@@ -1688,10 +1674,30 @@ async function removeCustomAgent(handle) {
   }
 }
 
+// The create-agent dialog's connect step (owner's law, 2026-11-01):
+// the shared ConnectFields component for the provider currently picked
+// — an email field and a password field right in the dialog. The dialog
+// calls this again on every provider switch, so the fields always name
+// the provider they will connect.
+export function dialogConnectFields(provider, post, doc) {
+  return createConnectFields({ provider, post, doc });
+}
+
+// The create-custom-agent request body. There is no seat-mode choice to
+// send: authMode carries the one road's single value, 'password_session'
+// (the auth mode sql/063 defined), whatever the dialog showed before.
+export function customAgentCreateBody({ channelId, handle, name, emoji, provider, jobTitle, jobPrompt }) {
+  return {
+    action: 'create-custom-agent',
+    channelId,
+    agent: { handle, name, emoji, provider, authMode: 'password_session', jobTitle, jobPrompt },
+  };
+}
+
 function openCreateAgentModal() {
   if (!ws.channelId) { ws.ctx.toast('Select a channel first.'); return; }
   let pickedEmoji = '🦀';
-  const emojiInput = h('input', { class: 'ew-input sm', maxlength: 4, value: pickedEmoji, style: 'width:56px;text-align:center;font-size:18px;', 'aria-label': 'Custom emoji' });
+  const emojiInput = h('input', { class: 'ew-input sm ew-emoji-input', maxlength: 4, value: pickedEmoji, 'aria-label': 'Custom emoji' });
   const emojiGrid = h('div', { class: 'ew-emoji-grid', role: 'radiogroup', 'aria-label': 'Pick an agent face' });
   const drawEmojis = () => {
     emojiGrid.replaceChildren(...CUSTOM_AGENT_EMOJIS.map((em) => h('button', {
@@ -1718,31 +1724,35 @@ function openCreateAgentModal() {
   const jobPromptInput = h('textarea', { id: 'ew-ca-job-prompt', rows: 3, placeholder: 'Define this agent\'s real job, personality, rules, and mission. They live and work by these instructions in this channel.', maxlength: 1200, 'aria-label': 'Job instructions' });
   const providerSelect = h('select', { id: 'ew-ca-provider', 'aria-label': 'AI provider' },
     ...CUSTOM_PROVIDER_OPTIONS.map(([val, label]) => h('option', { value: val }, label)));
-  const authSelect = h('select', { id: 'ew-ca-auth', 'aria-label': 'Seat or connection mode' },
-    ...CUSTOM_AUTH_OPTIONS.map(([val, label]) => h('option', { value: val }, label)));
+  // The connect step: ConnectFields for the provider currently picked,
+  // re-rendered on every provider switch. This replaces the old link
+  // that sent the person to another page — the fields ARE the
+  // connection, here.
+  const connectBox = h('div', { class: 'ew-ca-connect', id: 'ew-ca-connect' });
+  const renderConnectFields = () => {
+    const fields = dialogConnectFields(providerSelect.value, (path, data) => ws.ctx.post(path, data));
+    connectBox.replaceChildren(...(fields ? [fields] : []));
+  };
+  providerSelect.addEventListener('change', renderConnectFields);
+  renderConnectFields();
 
-  const statusNote = h('p', { class: 'muted sm' }, 'Runs on your connected subscription, browser seat, or PC bridge key.');
-  const connectLink = h('a', { href: '#integrations', class: 'ew-btn ghost sm', onclick: () => closeModal() }, '🔌 Connect provider / sign in →');
+  const statusNote = h('p', { class: 'muted sm ew-ca-note' }, 'Runs on the account you connect with your email and password.');
 
-  const form = h('form', { class: 'ew-modal-form', onsubmit: async (e) => {
+  const form = h('form', { class: 'ew-modal-form ew-ca-form', onsubmit: async (e) => {
     e.preventDefault();
     const name = nameInput.value.trim();
     const handle = handleInput.value.trim().toLowerCase().replace(/^@+/, '');
     if (!name || !handle) { statusNote.textContent = 'Enter a name and @handle.'; return; }
     try {
-      const body = await ws.ctx.post('/api/admin/envoy/channel-config', {
-        action: 'create-custom-agent',
+      const body = await ws.ctx.post('/api/admin/envoy/channel-config', customAgentCreateBody({
         channelId: ws.channelId,
-        agent: {
-          handle,
-          name,
-          emoji: emojiInput.value.trim() || pickedEmoji || '🤖',
-          provider: providerSelect.value,
-          authMode: authSelect.value,
-          jobTitle: jobTitleInput.value.trim(),
-          jobPrompt: jobPromptInput.value.trim(),
-        },
-      });
+        handle,
+        name,
+        emoji: emojiInput.value.trim() || pickedEmoji || '🤖',
+        provider: providerSelect.value,
+        jobTitle: jobTitleInput.value.trim(),
+        jobPrompt: jobPromptInput.value.trim(),
+      }));
       ws.config = body.config;
       closeModal();
       await loadConfig(); await loadMessages();
@@ -1751,24 +1761,22 @@ function openCreateAgentModal() {
       statusNote.textContent = err?.body?.message || 'Could not create custom agent. Check the @handle and try again.';
     }
   } },
-    h('div', { class: 'ew-field' }, '1. Pick a smiley face or emoji', h('div', { class: 'ew-row' }, emojiGrid, emojiInput)),
+    h('div', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, '1. Pick a smiley face or emoji'), h('div', { class: 'ew-row' }, emojiGrid, emojiInput)),
     h('div', { class: 'ew-grid-2' },
-      h('label', { class: 'ew-field' }, '2. Agent name', nameInput),
-      h('label', { class: 'ew-field' }, '@handle (mention tag)', handleInput)
+      h('label', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, '2. Agent name'), nameInput),
+      h('label', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, '@handle (mention tag)'), handleInput)
     ),
-    h('label', { class: 'ew-field' }, '3. Job title (badge shown in chat)', jobTitleInput),
-    h('label', { class: 'ew-field' }, '4. Real job instructions & system mission', jobPromptInput),
-    h('div', { class: 'ew-grid-2' },
-      h('label', { class: 'ew-field' }, '5. AI Provider', providerSelect),
-      h('label', { class: 'ew-field' }, '6. Seat / Connection Mode', authSelect)
-    ),
-    h('div', { class: 'ew-row' }, connectLink, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: closeModal }, 'Cancel'), h('button', { type: 'submit', class: 'ew-btn primary sm' }, 'Spawn Agent'))
+    h('label', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, '3. Job title (badge shown in chat)'), jobTitleInput),
+    h('label', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, '4. Real job instructions & system mission'), jobPromptInput),
+    h('label', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, '5. AI Provider'), providerSelect),
+    h('div', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, '6. Connect the account — email and password'), connectBox),
+    statusNote,
+    h('div', { class: 'ew-modal-actions' }, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn ghost', onclick: closeModal }, 'Cancel'), h('button', { type: 'submit', class: 'ew-btn primary' }, 'Spawn Agent'))
   );
 
   openModal('Create Custom Agent', [
-    h('p', { class: 'muted sm' }, 'Give your agent a face, a name, a real job, and pick which AI brain and seat it runs on.'),
+    h('p', {}, 'Give your agent a face, a name, a real job, and pick which AI brain it runs on.'),
     form,
-    statusNote,
   ]);
   nameInput.focus();
 }

@@ -29,6 +29,7 @@ import {
   emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
+import { createRunnerPresenceStore } from './runner-presence.mjs';
 
 // The bot status functions live in bot-status.mjs (import-free, so the
 // channels store can carry them too); re-exported here for the callers
@@ -122,6 +123,34 @@ function contextFor(actor) {
 }
 
 const publish = (tenantId, row, publishImpl) => { if (row) void (publishImpl ?? publishEnvoyMessage)({ tenantId, channelId: String(row.channel_id), message: messageOut(row) }); };
+
+// The answer stamp (honest-connection fix, 2026-11-01): after a runner
+// posts an agent reply, record when that provider last answered on the
+// tenant's presence row (sql/066) — the one event that proves the road
+// works, and the stamp the provider cards read as "Answered".
+// Best-effort by contract: a reply that landed must never fail because
+// the stamp could not be written. The store's markAnswered is
+// update-only, so an answer never creates a presence row for a tenant
+// that has none (a row's existence is itself a readiness signal).
+export async function stampAgentAnswered(pool, tenantId, provider) {
+  if (!pool || !tenantId || !provider) return false;
+  try {
+    const result = await createRunnerPresenceStore(pool).markAnswered(tenantId, provider);
+    return result?.answered === true;
+  } catch {
+    return false;
+  }
+}
+
+// A custom agent answers through its engine provider (the entry's
+// .provider, e.g. a "coder" seat running on claude). The stamp belongs
+// to the engine — it is the engine's road that just proved itself.
+function answeredEngineFor(customAgents, handle) {
+  const entry = (customAgents ?? []).find((a) => (a?.handle || a?.id) === handle);
+  const engine = String(entry?.provider ?? '').toLowerCase();
+  if (!engine) return null;
+  return normalizeProvider(engine) ?? engine;
+}
 
 export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
@@ -374,6 +403,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       const key = replyTo ? `reply:${replyTo}` : String(input?.idempotencyKey ?? '').trim();
       if (key.length < 8 || key.length > 200) throw fail(400, 'ENVOY_IDEMPOTENCY_INVALID');
       let out = null;
+      let answeredProvider = null;
       const result = await tx(actor, async (client) => {
         const channel = await channelRow(client, actor.tenantId, String(input?.channelId ?? ''));
         const config = await readConfig(client, actor.tenantId, String(channel.id));
@@ -383,10 +413,17 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         if (!config?.agents.includes(provider)) throw fail(403, 'ENVOY_AGENT_NOT_MEMBER');
         const { row, replayed } = await insertMessage(client, { tenantId: actor.tenantId, channelId: String(channel.id), subject: agentSubject(provider, config?.customAgents ?? []), kind: 'agent', body, key });
         if (!row) throw fail(500, 'ENVOY_RECEIPT_NOT_DURABLE');
-        if (!replayed) out = row;
+        if (!replayed) {
+          out = row;
+          answeredProvider = stdProvider ?? answeredEngineFor(config?.customAgents ?? [], provider);
+        }
         return { receipt: { durable: true, replayed, message: messageOut(row) } };
       });
       publish(actor.tenantId, out, publishImpl);
+      // A fresh (non-replayed) reply just proved this provider's road:
+      // stamp the answer time on its presence row, after the reply's own
+      // transaction has committed.
+      if (answeredProvider) await stampAgentAnswered(pool, actor.tenantId, answeredProvider);
       return result;
     },
 

@@ -10,6 +10,16 @@
 // this feed as "Connected"; connection truth lives in the provider
 // connections store (sql/031), the same store the Agents page reads.
 //
+// Honest-connection fix (2026-11-01): the route now honors a report only
+// from a device-token caller. A signed-in member's POST used to write
+// connected = true on nothing but a click; it degrades to markSynced —
+// the member's write can move a timestamp, never the boolean, in either
+// direction. The row also carries last_answered_at (sql/066), written
+// only by markAnswered from the reply-posting path when a runner posts
+// an agent reply: the one event that proves the road works. Surfaces
+// read that stamp as "Answered"; a provider without it has never
+// answered and does not read as connected.
+//
 // Wiring note: live-admin.mjs is frozen at the push size limit, so this
 // route hangs off the existing envoy-ably hook (envoy-ably.mjs delegates
 // here). Device-token auth applies because the path lives under
@@ -70,17 +80,42 @@ export function createRunnerPresenceStore(pool) {
     }
   };
 
+  // sql/066 adds last_answered_at; until that migration lands the column
+  // does not exist and every stamp reads as "never answered". Probe once
+  // per store, outside any transaction (a failed query would poison one),
+  // and let list/markAnswered shape themselves to what the schema has.
+  let answeredColumnPromise = null;
+  const hasAnsweredColumn = () => {
+    if (!answeredColumnPromise) {
+      answeredColumnPromise = (async () => {
+        if (typeof pool?.query !== 'function') return true; // test fakes model the migrated schema
+        try {
+          await pool.query('select last_answered_at from helmion.runner_provider_presence limit 0');
+          return true;
+        } catch (error) {
+          if (error?.code === '42703' || error?.code === '42P01') return false;
+          throw error;
+        }
+      })();
+    }
+    return answeredColumnPromise;
+  };
+
   return {
     async list(tenantId) {
       try {
+        const answered = await hasAnsweredColumn();
         return await withTenant(tenantId, async (client) => {
           const r = await client.query(
-            'select provider_name, connected, updated_at from helmion.runner_provider_presence where tenant_id = current_setting(\'helmion.tenant_id\', true)'
+            answered
+              ? 'select provider_name, connected, updated_at, last_answered_at from helmion.runner_provider_presence where tenant_id = current_setting(\'helmion.tenant_id\', true)'
+              : 'select provider_name, connected, updated_at from helmion.runner_provider_presence where tenant_id = current_setting(\'helmion.tenant_id\', true)'
           );
           return r.rows.map((row) => ({
             provider: String(row.provider_name),
             connected: row.connected === true,
             updatedAt: row.updated_at,
+            lastAnsweredAt: row.last_answered_at ?? null,
           }));
         });
       } catch (error) {
@@ -128,6 +163,30 @@ export function createRunnerPresenceStore(pool) {
         throw error;
       }
     },
+
+    // Stamp the moment an agent reply was actually posted for this
+    // provider (called from envoy-mesh's postAsAgent). UPDATE-only: an
+    // answer never creates a presence row — a tenant with no device
+    // report (the hand-wired case) must not gain one, because a row's
+    // mere existence is one of the tenant agent state's readiness
+    // signals. The boolean is untouched: answering does not by itself
+    // rewrite the device's connection claim either.
+    async markAnswered(tenantId, provider) {
+      const p = String(provider || '').toLowerCase();
+      if (!PROVIDERS.has(p)) throw Object.assign(new Error('unknown provider'), { status: 400 });
+      try {
+        if (!(await hasAnsweredColumn())) return { ok: true, provider: p, answered: false, unavailable: true };
+        return await withTenant(tenantId, async (client) => {
+          const r = await client.query(
+            `update helmion.runner_provider_presence set last_answered_at = clock_timestamp()
+             where tenant_id = current_setting('helmion.tenant_id', true) and provider_name = $1`, [p]);
+          return { ok: true, provider: p, answered: (r.rowCount ?? 0) > 0 };
+        });
+      } catch (error) {
+        if (isMissingTable(error)) throw Object.assign(new Error('presence store unavailable'), { status: 503 });
+        throw error;
+      }
+    },
   };
 }
 
@@ -142,10 +201,11 @@ export async function handleRunnerPresenceRoute({
   send,
   TenantAuthorizationError,
   readJson,
+  store: injectedStore,
 } = {}) {
   if (!requestUrl || requestUrl.pathname !== RUNNER_PRESENCE_PATH) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
-  const store = createRunnerPresenceStore(getPool());
+  const store = injectedStore ?? createRunnerPresenceStore(getPool());
   try {
     const actor = await activeTenantActor(request);
     if (request.method === 'GET') {
@@ -180,7 +240,18 @@ export async function handleRunnerPresenceRoute({
         }));
         return true;
       }
-      const result = await store.report(actor.tenantId, body.provider, body.connected);
+      if (actor.viaDeviceToken === true) {
+        // The runner/worker reporting the seats it actually holds — the
+        // only caller whose connected claim means anything.
+        const result = await store.report(actor.tenantId, body.provider, body.connected);
+        send(response, 200, JSON.stringify({ valid: true, ...result }));
+        return true;
+      }
+      // A member browser session cannot verify a connection, so its
+      // write degrades to a timestamp-only sync stamp: it records that
+      // the user looked, and it can neither set nor clear the boolean
+      // the device reported. (Honest-connection fix, 2026-11-01.)
+      const result = await store.markSynced(actor.tenantId, body.provider);
       send(response, 200, JSON.stringify({ valid: true, ...result }));
     } else {
       send(response, 405, JSON.stringify({ valid: false, code: 'METHOD_NOT_ALLOWED' }));

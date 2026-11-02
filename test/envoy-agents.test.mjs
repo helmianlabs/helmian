@@ -277,7 +277,7 @@ test('custom agents: sanitizeCustomAgent normalizes handle, emoji, jobTitle, job
   assert.equal(agent.emoji, '🦀');
   assert.equal(agent.jobTitle, 'Rust Systems Architect');
   assert.equal(agent.provider, 'mistral');
-  assert.equal(agent.authMode, 'subscription');
+  assert.equal(agent.authMode, 'password_session', 'the legacy input collapses to the one road on sanitize');
 
   const cfg = emptyConfig();
   cfg.customAgents = [agent];
@@ -289,6 +289,7 @@ test('custom agents: sanitizeCustomAgent normalizes handle, emoji, jobTitle, job
   const back = parseConfig(serializeConfig(cfg));
   assert.equal(back.customAgents.length, 1);
   assert.equal(back.customAgents[0].id, 'rusty_bot');
+  assert.equal(back.customAgents[0].authMode, 'password_session', 'the round-trip keeps the single mode');
   assert.equal(back.debateMode, 'free-willy');
   assert.equal(back.maxRoundTurns, 14);
   assert.equal(back.github.repo, 'TroyHelm/Helmion');
@@ -299,6 +300,30 @@ test('custom agents: sanitizeCustomAgent normalizes handle, emoji, jobTitle, job
   assert.equal(pub.github.repo, 'TroyHelm/Helmion');
   assert.equal(describeAuthor('agent:rusty_bot', 'agent', back.customAgents).name, '🦀 Rusty');
   assert.equal(describeAuthor('agent:rusty_bot', 'agent', back.customAgents).engine, 'mistral');
+});
+
+test('custom agents: every legacy authMode collapses to password_session, and stored records still load (one-road Bite 5)', async () => {
+  const { sanitizeCustomAgent, CUSTOM_AGENT_AUTH_MODE } = await import('../src/cloud/envoy-agents.mjs');
+  assert.equal(CUSTOM_AGENT_AUTH_MODE, 'password_session');
+  for (const legacy of ['subscription', 'browser-free', 'browser-paid', 'api-key', 'cli', 'SUBSCRIPTION', 'nonsense', '', undefined]) {
+    const a = sanitizeCustomAgent({ handle: 'rusty', provider: 'claude', authMode: legacy });
+    assert.ok(a, `record with authMode ${String(legacy)} still sanitizes`);
+    assert.equal(a.authMode, 'password_session', `authMode ${String(legacy)} collapses to the one road`);
+  }
+  // A record stored by an old build, carrying a legacy mode in its
+  // saved JSON, still loads through parseConfig — and comes out
+  // carrying the single mode, its other fields untouched.
+  const stored = JSON.stringify({
+    format: 'helmian.envoy.channel-config.v1',
+    agents: ['rusty'],
+    customAgents: [{ handle: 'rusty', name: 'Rusty', emoji: '🦀', provider: 'mistral', authMode: 'cli', jobTitle: 'Rust Systems Architect', jobPrompt: 'Review memory safety.' }],
+  });
+  const back = parseConfig(stored);
+  assert.ok(back, 'stored record parses');
+  assert.equal(back.customAgents.length, 1, 'the stored agent still loads');
+  assert.equal(back.customAgents[0].authMode, 'password_session');
+  assert.equal(back.customAgents[0].jobTitle, 'Rust Systems Architect');
+  assert.equal(publicConfig(back).customAgents[0].authMode, 'password_session', 'the public view carries the single mode too');
 });
 
 test('free-willy debate mode: human message dispatches all seated agents; agent message continues debate until maxRoundTurns', () => {

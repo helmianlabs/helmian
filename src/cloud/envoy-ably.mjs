@@ -14,6 +14,7 @@
 import { handleEnvoyMeshRoute } from './envoy-mesh.mjs';
 import { createHmac, randomBytes } from 'node:crypto';
 import { handleRunnerPresenceRoute } from './runner-presence.mjs';
+import { handleCredentialConnectRoute } from './credential-connect.mjs';
 import { handleToolConnectionsRoute } from './tool-connections-read.mjs';
 import { handleTenantAgentStateRoute } from './tenant-agent-state.mjs';
 import { handleAgentSessionsRoute } from './agent-sessions.mjs';
@@ -184,10 +185,15 @@ export async function handleEnvoyAblyRoute({
     if (requestUrl?.pathname === GITHUB_WEBHOOK_PATH
       && await handleGithubWebhookRoute({ request, response, requestUrl, send })) return true;
   }
-  // User-level OAuth (Gemini/Google): token goes to browser, not cloud storage
+  // Provider OAuth connect roads: RETIRED (one-road removal pass,
+  // Bite 12, 2026-11-02). /api/provider-oauth/* used to start the
+  // Gemini and ChatGPT OAuth flows and the Grok device-code flow.
+  // Under the owner's one-road law an AI connects with its account
+  // email and password on its Integrations card; these paths answer
+  // 410 so no shadow connect road stays reachable.
   if (requestUrl?.pathname?.startsWith('/api/provider-oauth/')) {
-    const { handleUserOAuthRoute } = await import('./user-oauth.mjs');
-    if (await handleUserOAuthRoute({ request, response, requestUrl, send })) return true;
+    send(response, 410, JSON.stringify({ error: 'provider_oauth_retired', code: 'PROVIDER_OAUTH_RETIRED' }));
+    return true;
   }
   if (requestUrl?.pathname?.startsWith('/api/admin/spoke/')) {
     const { handleSpokeSetupRoute } = await import('./spoke-setup.mjs');
@@ -205,7 +211,13 @@ export async function handleEnvoyAblyRoute({
         try {
           const store = createRunnerPresenceStore(pool);
           for (const p of syncedProviders) {
-            await store.report(actor.tenantId, p, true).catch(() => {});
+            // A sync connects nothing, for any caller: stamp the sync
+            // time and leave the device's connected claim untouched.
+            // This route used to write report(p, true) for all seven
+            // providers, manufacturing a connected state out of a
+            // member's "Sync now" click. (Honest-connection fix,
+            // 2026-11-01 — same contract as the presence route.)
+            await store.markSynced(actor.tenantId, p).catch(() => {});
           }
         } finally {
           await pool.end().catch(() => {});
@@ -232,6 +244,7 @@ export async function handleEnvoyAblyRoute({
     return true;
   }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
+  if (await handleCredentialConnectRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleToolConnectionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleTenantAgentStateRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleAgentSessionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;

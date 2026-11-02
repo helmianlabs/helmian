@@ -29,9 +29,15 @@ test('integrations: plain cards, no internal jargon, honest states', () => {
   }
   for (const [title, lines] of Object.values(HELP)) for (const t of [title, ...lines]) assert.doesNotMatch(t, JARGON, t);
   const by = Object.fromEntries(cards.map((c) => [c.key, c]));
-  assert.equal(by.grok.statusText, 'Synced', 'a presence row alone reads Synced, never Connected (connection-truth correction, 2026-11-01)'); assert.equal(by.grok.action.href, '/api/provider-oauth/grok/start', 'not connected → the Connect action, not Manage');
-  assert.equal(by.openai.action.href, '/api/provider-oauth/openai/start');
-  assert.equal(by.claude.action.act, 'claude-help');
+  assert.equal(by.grok.statusText, 'Synced', 'a presence row alone reads Synced, never Connected (connection-truth correction, 2026-11-01)');
+  // One connect road (2026-11-01, Bite 4): a not-connected AI card
+  // carries the email + password fields, not a link out or a help act.
+  assert.deepEqual(by.grok.connect, { provider: 'grok' }, 'not connected → the connect fields, not Manage');
+  assert.equal(by.grok.action, null);
+  assert.deepEqual(by.openai.connect, { provider: 'openai' });
+  assert.equal(by.openai.action, null);
+  assert.deepEqual(by.claude.connect, { provider: 'claude' });
+  assert.equal(by.claude.action, null);
   assert.equal(by.pc.statusText, 'Online');
   assert.equal(by.discord.statusText, 'Linked', 'Discord is a channel mirror: linked, not tool-connected');
   assert.equal(by.slack.statusText, 'Not linked');
@@ -40,6 +46,24 @@ test('integrations: plain cards, no internal jargon, honest states', () => {
   const off = Object.fromEntries(integrationSections({}).flatMap((s) => s.cards).map((c) => [c.key, c]));
   assert.equal(off.pc.statusText, 'Offline'); assert.equal(off.pc.action.act, 'pc-help');
   assert.equal(off.data.statusText, 'Managed by Helmian');
+});
+
+test('integrations: AI card icons are settled letter tiles — asset images or the plain letter tile, never emoji glyphs (polish pass)', () => {
+  const ai = integrationSections({}).find((s) => s.id === 'ai').cards;
+  const by = Object.fromEntries(ai.map((c) => [c.key, c]));
+  for (const [key, file] of [['claude', 'claude'], ['openai', 'chatgpt'], ['gemini', 'gemini'], ['grok', 'grok']]) {
+    assert.deepEqual(by[key].icon, { img: `/assets/agents/${file}.png` }, `${key} renders its settled asset tile`);
+  }
+  // Mistral and Runway have no asset file under /assets/agents/; their
+  // cards carry the app's plain letter tile (avatars.mjs) in the same
+  // construction — an initial on a name-stable colour from COLORS.
+  assert.equal(by.mistral.icon.tile.kind, 'plain');
+  assert.equal(by.mistral.icon.tile.glyph, 'M');
+  assert.ok(COLORS.includes(by.mistral.icon.tile.color), 'mistral tile colour comes from the plain-avatar palette');
+  assert.equal(by.runway.icon.tile.kind, 'plain');
+  assert.equal(by.runway.icon.tile.glyph, 'R');
+  assert.ok(COLORS.includes(by.runway.icon.tile.color), 'runway tile colour comes from the plain-avatar palette');
+  for (const c of ai) assert.equal(c.icon.glyph, undefined, `${c.key} carries no emoji glyph icon`);
 });
 
 test('integrations: tool-connection cards render probe truth; unchecked providers say so (bite 1b)', () => {

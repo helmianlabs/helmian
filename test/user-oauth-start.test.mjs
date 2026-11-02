@@ -3,16 +3,21 @@ import test from 'node:test';
 import {
   handleUserOAuthRoute,
   USER_GEMINI_OAUTH_START,
+  USER_GROK_OAUTH_POLL,
   USER_GROK_OAUTH_START,
   USER_OPENAI_OAUTH_START,
 } from '../src/cloud/user-oauth.mjs';
 
-// The Integrations "Connect" buttons navigate the browser to these start
-// paths. Each start must either send the user to the provider's real sign-in
-// door (302 with the right parameters) or fail honestly (503 configuration
-// error) — never strand the user. Gemini's start/callback pair is covered
-// in provider-oauth-vault.test.mjs; this file covers the other two doors
-// plus the honest not-configured answers.
+// The /api/provider-oauth/* connect roads are RETIRED (one-road
+// removal pass, Bite 12, 2026-11-02): an AI connects with its account
+// email and password on its Integrations card, never through an OAuth
+// redirect or a device code. user-oauth.mjs remains only as a fence —
+// every retired path answers 410, whatever the environment claims is
+// configured, and no provider endpoint is ever contacted. (The router
+// in envoy-ably.mjs answers 410 for the whole prefix before this
+// handler is even consulted; these tests pin the handler's own fence.)
+// Gemini's start/callback pair is also covered in
+// provider-oauth-vault.test.mjs.
 
 async function callUserOAuth(path, { method = 'GET' } = {}) {
   const calls = [];
@@ -23,104 +28,60 @@ async function callUserOAuth(path, { method = 'GET' } = {}) {
   return { handled, calls };
 }
 
-function withEnv(values, fn) {
-  const saved = {};
-  for (const key of Object.keys(values)) { saved[key] = process.env[key]; process.env[key] = values[key]; }
-  return fn().finally(() => {
-    for (const key of Object.keys(values)) {
-      if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
-    }
-  });
+function assertRetired({ handled, calls }) {
+  assert.equal(handled, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].status, 410);
+  assert.equal(JSON.parse(calls[0].body).code, 'PROVIDER_OAUTH_RETIRED');
 }
 
-test('Gemini user OAuth start answers an honest 503 (not a dead end) when the client is not configured', async () => {
-  await withEnv({ HELMION_GEMINI_OAUTH_CLIENT_ID: '' }, async () => {
+test('Gemini user OAuth start is retired: 410 even when a client is configured', async () => {
+  process.env.HELMION_GEMINI_OAUTH_CLIENT_ID = 'client.apps.googleusercontent.com';
+  try {
+    assertRetired(await callUserOAuth(USER_GEMINI_OAUTH_START));
+  } finally {
     delete process.env.HELMION_GEMINI_OAUTH_CLIENT_ID;
-    const { handled, calls } = await callUserOAuth(USER_GEMINI_OAUTH_START);
-    assert.equal(handled, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].status, 503);
-    assert.equal(JSON.parse(calls[0].body).code, 'GEMINI_OAUTH_CLIENT_NOT_CONFIGURED');
-  });
+  }
 });
 
-test('OpenAI user OAuth start redirects to the ChatGPT sign-in door with PKCE parameters', async () => {
-  await withEnv({ HELMION_OPENAI_OAUTH_CLIENT_ID: 'openai-client-123' }, async () => {
-    const { handled, calls } = await callUserOAuth(USER_OPENAI_OAUTH_START);
-    assert.equal(handled, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].status, 302);
-    const location = new URL(calls[0].headers.location);
-    assert.equal(location.origin, 'https://auth.openai.com');
-    assert.equal(location.pathname, '/api/accounts/authorize');
-    assert.equal(location.searchParams.get('client_id'), 'openai-client-123');
-    assert.equal(location.searchParams.get('redirect_uri'), 'https://helmian.cloud/api/provider-oauth/openai/callback');
-    assert.equal(location.searchParams.get('response_type'), 'code');
-    assert.match(location.searchParams.get('scope') ?? '', /openid/u);
-    assert.equal(location.searchParams.get('code_challenge_method'), 'S256');
-    assert.ok(location.searchParams.get('code_challenge'));
-    assert.ok(location.searchParams.get('state'));
-    const cookies = calls[0].headers['set-cookie'].join('\n');
-    assert.match(cookies, /helmion_user_openai_state=/u);
-    assert.match(cookies, /helmion_user_openai_verifier=/u);
-  });
-});
-
-test('OpenAI user OAuth start answers an honest 503 when the client is not configured', async () => {
-  await withEnv({ HELMION_OPENAI_OAUTH_CLIENT_ID: '' }, async () => {
+test('OpenAI user OAuth start is retired: 410 even when a client is configured', async () => {
+  process.env.HELMION_OPENAI_OAUTH_CLIENT_ID = 'openai-client-123';
+  try {
+    assertRetired(await callUserOAuth(USER_OPENAI_OAUTH_START));
+  } finally {
     delete process.env.HELMION_OPENAI_OAUTH_CLIENT_ID;
-    const { handled, calls } = await callUserOAuth(USER_OPENAI_OAUTH_START);
-    assert.equal(handled, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].status, 503);
-    assert.equal(JSON.parse(calls[0].body).error, 'ChatGPT OAuth not configured');
-  });
+  }
 });
 
-test('Grok user OAuth start shows the device code page for the user to approve on X', async () => {
+test('Grok user OAuth start is retired: 410 and xAI is never contacted for a device code', async () => {
   const realFetch = globalThis.fetch;
-  const requests = [];
-  globalThis.fetch = async (url, options) => {
-    requests.push({ url: String(url), body: new URLSearchParams(String(options.body)) });
-    return {
-      ok: true,
-      async json() {
-        return { device_code: 'device-code-1', user_code: 'ABCD-EFGH', verification_uri: 'https://accounts.x.ai/oauth2/device', interval: 5 };
-      },
-    };
-  };
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error('must not be called'); };
   try {
-    const { handled, calls } = await callUserOAuth(USER_GROK_OAUTH_START);
-    assert.equal(handled, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].status, 200);
-    assert.match(calls[0].body, /ABCD-EFGH/u);
-    assert.match(calls[0].body, /accounts\.x\.ai\/oauth2\/device/u);
-    assert.match(calls[0].body, /\/api\/provider-oauth\/grok\/poll/u);
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0].url, 'https://auth.x.ai/oauth2/device/code');
-    assert.equal(requests[0].body.get('grant_type'), null);
-    assert.ok(requests[0].body.get('client_id'));
+    assertRetired(await callUserOAuth(USER_GROK_OAUTH_START));
+    assert.equal(fetches, 0);
   } finally {
     globalThis.fetch = realFetch;
   }
 });
 
-test('Grok user OAuth start reports an honest failure when xAI refuses the device code', async () => {
+test('Grok user OAuth poll is retired: 410 and xAI is never contacted', async () => {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: false, async json() { return { error_description: 'invalid_client' }; } });
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error('must not be called'); };
   try {
-    const { handled, calls } = await callUserOAuth(USER_GROK_OAUTH_START);
-    assert.equal(handled, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].status, 500);
-    assert.match(calls[0].body, /invalid_client/u);
+    assertRetired(await callUserOAuth(USER_GROK_OAUTH_POLL, { method: 'POST' }));
+    assert.equal(fetches, 0);
   } finally {
     globalThis.fetch = realFetch;
   }
 });
 
-test('an unknown provider-oauth path is not handled (the router answers, not the handler)', async () => {
+test('OpenAI user OAuth callback is retired: 410, no code exchange is attempted', async () => {
+  assertRetired(await callUserOAuth('/api/provider-oauth/openai/callback?code=x&state=y'));
+});
+
+test('an unknown provider-oauth path is not handled by the fence (the router answers 410 for the prefix)', async () => {
   const { handled, calls } = await callUserOAuth('/api/provider-oauth/unknown/start');
   assert.equal(handled, false);
   assert.equal(calls.length, 0);
