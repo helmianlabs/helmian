@@ -195,7 +195,12 @@ async function reportPresence(deps, token) {
     const providers = new Set(rows.map((r) => String(r.provider).toLowerCase()));
     await syncAgentOsProfile(deps);
     for (const cliProv of await cliSignedInProviders()) providers.add(cliProv);
-    for (const stock of ['mistral', 'runway', 'ollama']) providers.add(stock);
+    // Presence is claimed only for what this PC actually holds: a vault
+    // key (the rows above), a real CLI sign-in (cliSignedInProviders),
+    // or the env-configured key below. Nothing is added unconditionally —
+    // an earlier version stamped mistral/runway/ollama present on every
+    // PC whether or not any of them was signed in, and the cloud read
+    // that stamp as a connection. (Honest-connection fix, 2026-11-01.)
     // The env-configured provider counts too when the vault does not have it.
     const envName = PROVIDER_KEY_ENV[String(deps.provider || '').toLowerCase()];
     if (envName && process.env[envName]) providers.add(String(deps.provider).toLowerCase());

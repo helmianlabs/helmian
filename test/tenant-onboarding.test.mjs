@@ -59,6 +59,19 @@ test('agent state: a connection without a vault reference is not a credential', 
   assert.deepEqual(s.connectedProviders, []);
 });
 
+test('claim gate: a presence row without an affirmative connected is not a credential signal', () => {
+  // Honest-connection fix (2026-11-01): only connected === true counts.
+  // A sync stamp (connected: false) never did; a row whose boolean never
+  // arrived must not either — the old "not false counts" reading let an
+  // unset stamp open the gate.
+  for (const presence of [[{ provider: 'claude', connected: false }], [{ provider: 'claude' }], [{ provider: 'claude', connected: undefined }]]) {
+    const state = computeTenantAgentState({ tenantId: 't', runners: 1, presence, connections: [] });
+    assert.deepEqual(state.connectedProviders, []);
+    assert.equal(state.awake, false);
+    assert.deepEqual([...claimGateFor(state)], []);
+  }
+});
+
 test('claim gate: no signals = ungated (hand-wired tenants unchanged); signals = authoritative', () => {
   assert.equal(claimGateFor(computeTenantAgentState({})), null);
   const gate = claimGateFor(computeTenantAgentState({ runners: 1, presence: [{ provider: 'gemini', connected: true }], connections: [] }));

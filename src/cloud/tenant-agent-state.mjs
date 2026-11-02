@@ -47,7 +47,11 @@ const uniq = (list) => [...new Set(list.filter(Boolean))];
  */
 export function computeTenantAgentState({ runners = 0, presence = [], connections = [] } = {}) {
   const hasRunner = Number(runners) > 0;
-  const presenceProviders = uniq(presence.filter((p) => p?.connected !== false).map((p) => normalizeProvider(p?.provider ?? p?.providerName)));
+  // Only an affirmative device report (connected === true) is a
+  // credential signal. A sync stamp row (connected = false) is not, and
+  // neither is a row whose boolean never arrived — the earlier
+  // "not false counts" reading let an unset stamp pass this gate.
+  const presenceProviders = uniq(presence.filter((p) => p?.connected === true).map((p) => normalizeProvider(p?.provider ?? p?.providerName)));
   const connectionProviders = uniq(connections
     .filter((c) => String(c?.credential_reference ?? c?.credentialReference ?? '').startsWith('vault://'))
     .map((c) => connectionProvider(c?.provider_id ?? c?.providerId)));

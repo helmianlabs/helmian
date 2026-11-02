@@ -1602,9 +1602,10 @@ async function loadEvidence() {
   const denied = (h.status === 'rejected' && h.reason?.status === 403) || (c.status === 'rejected' && c.reason?.status === 403);
   note.textContent = denied ? 'Handoffs and checkpoints are visible to owners and admins.' : '';
 }
-let integrationsMod = null; let qrMod = null;
+let integrationsMod = null; let qrMod = null; let connectFieldsMod = null;
 async function loadIntegrations() {
   integrationsMod ??= await import('./integrations-view.mjs');
+  connectFieldsMod ??= await import('./connect-fields.mjs');
   const [c, p, pr, u, o, tc] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview'), api('/api/admin/tool-connections')]);
   const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
@@ -1623,8 +1624,6 @@ function integrationCard(card) {
   const icon = el('span', 'int-icon');
   const INT_SVG = {
     'profile-sync': '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>',
-    mistral: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#F97316" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5l8 8 8-8v14"/><path d="M4 19h4"/><path d="M16 19h4"/></svg>',
-    runway: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polygon points="10 9 15 12 10 15 10 9" fill="#38BDF8"/></svg>',
     pc: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
     phone: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>',
     usage: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>',
@@ -1632,6 +1631,7 @@ function integrationCard(card) {
     data: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
   };
   if (card.icon?.img) { const img = el('img'); img.src = card.icon.img; img.alt = ''; img.width = 26; img.height = 26; icon.append(img); }
+  else if (card.icon?.tile) { const tile = el('span', 'int-tile', card.icon.tile.glyph); tile.style.setProperty('--ava', card.icon.tile.color); icon.append(tile); }
   else if (card.icon?.mark) icon.append(el('span', `ew-${card.icon.mark === 'github' ? 'gh' : card.icon.mark}-mark`));
   else if (INT_SVG[card.key]) icon.innerHTML = INT_SVG[card.key];
   else icon.textContent = card.icon?.glyph ?? '';
@@ -1639,6 +1639,14 @@ function integrationCard(card) {
   const status = el('span', `int-status ${card.status}`, card.statusText);
   const top = el('div', 'int-top'); top.append(icon, text, status); a.append(top);
   if (card.qr) { const q = el('div', 'int-qr'); q.dataset.qr = card.qr; q.setAttribute('role', 'img'); q.setAttribute('aria-label', 'QR code that opens Helmian on your phone'); const steps = el('ol', 'int-steps'); const onPhone = matchMedia('(max-width: 900px) and (pointer: coarse)').matches; for (const t of onPhone ? ['You are on your phone already.', 'Tap Share, then Add to Home Screen to keep Helmian one tap away.'] : ['Point your phone camera at the code.', 'Sign in with this same account.', 'Tap Share, then Add to Home Screen.']) steps.append(el('li', '', t)); const row = el('div', 'int-qr-row'); row.append(q, steps); a.append(row); }
+  // The one connect road (2026-11-01): a not-connected AI card carries
+  // the shared email + password fields. A successful store re-reads the
+  // page from the connections store — the card's next status is the
+  // store's, never the click's.
+  if (card.connect && connectFieldsMod) {
+    const fields = connectFieldsMod.createConnectFields({ provider: card.connect.provider, post, onStored: () => loadIntegrations() });
+    if (fields) a.append(fields);
+  }
   if (card.action) {
     const row = el('div', 'int-actions');
     if (card.action.href) { const link = el('a', `btn sm ${card.status === 'on' ? '' : 'primary'}`.trim(), card.action.label); link.href = card.action.href; row.append(link); }
@@ -1653,18 +1661,13 @@ function integrationCard(card) {
           await loadIntegrations();
           return;
         }
-        if ((card.action.act === 'one-click-connect' || card.action.act === 'keys-help' || card.action.act === 'claude-help') && card.action.provider) {
-          b.disabled = true; b.textContent = 'Enabling…';
-          try {
-            await post('/api/admin/envoy/runner/presence', { provider: card.action.provider, connected: true });
-            toast(`${card.name} enabled!`, 'ok');
-            await loadIntegrations();
-          } catch {
-            b.disabled = false; b.textContent = card.action.label;
-            toast('Could not enable provider right now');
-          }
-          return;
-        }
+        // The help act (pc-help) opens the guidance panel below.
+        // There is deliberately no branch here that POSTs a presence
+        // claim: a click in a browser cannot verify a connection, and
+        // the server now degrades any member presence write to a sync
+        // stamp anyway. (Honest-connection fix, 2026-11-01 — the old
+        // one-click branch manufactured "connected" out of nothing
+        // but the click.)
         const open = a.querySelector('.int-help'); if (open) { open.remove(); return; }
         const [title, lines] = integrationsMod.HELP[card.action.act] ?? ['', []];
         const help = el('div', 'int-help');
@@ -1708,46 +1711,27 @@ $('#desktop-link').onclick = async () => {
   try { const r = await post('/api/admin/desktop/link/start', { label: 'Helmian desktop' }); const c = $('#desktop-code'); c.hidden = false; c.textContent = r.code; toast('Code is valid for 10 minutes'); }
   catch { toast('Could not create a code — try again'); }
 };
-// ---- providers (runner vault presence) ----
-// Each provider is connected the way that provider officially allows (see
-// docs/NEW_USER_SETUP.md for sources). Subscription sign-in happens on the
-// user's PC, inside the provider's own CLI, started from the Helmian Spoke's
-// Start menu entry or `hands-spoke login <id>`. Helmian never collects the
-// subscription token (Anthropic and Google forbid that outright).
+// ---- providers (connection status) ----
+// Every AI connects the same one way (the owner's law, 2026-11-01):
+// with its account email and password, entered right on its card on
+// the Integrations page (or in the Create Custom Agent dialog). The
+// seat then works off that sign-in. These Settings cards are status
+// only — they render the same truth the Integrations page reads, and
+// offer no connect road of their own. The old roads that used to live
+// here (PC-spoke CLI sign-in instructions, runner-vault API-key
+// instructions, plan steering) were removed in the one-road removal
+// pass (Bite 12, 2026-11-02).
 const PROVIDER_META = [
-  { key: 'claude', label: 'Claude', plan: 'Claude Pro / Max', how: 'pc', login: 'claude', start: 'Sign in to Claude (your plan)', cli: 'Claude Code' },
-  { key: 'openai', label: 'ChatGPT', plan: 'ChatGPT Plus / Pro', how: 'pc', login: 'chatgpt', start: 'Sign in to ChatGPT (your plan)', cli: 'Codex CLI' },
-  { key: 'grok', label: 'Grok', plan: 'SuperGrok', how: 'pc', login: 'grok', start: 'Sign in to SuperGrok (your plan)', cli: 'Grok CLI' },
-  { key: 'gemini', label: 'Gemini', plan: 'Google account', how: 'pc', login: 'gemini', start: 'Sign in to Gemini (your Google account)', cli: 'Gemini CLI', keyNote: 'A free Gemini API key from Google AI Studio also works and costs nothing.' },
-  { key: 'antigravity', label: 'Antigravity', plan: 'Google Antigravity', how: 'none', note: 'Google does not allow other apps to use Antigravity sign-in. Keep using Antigravity in its own app; Helmian can still show its status from the desktop app.' },
-  { key: 'xai', label: 'xAI API', plan: 'xAI API key', how: 'key' },
-  { key: 'mistral', label: 'Mistral Le Chat', plan: 'Mistral Le Chat / API', how: 'key', keyNote: 'Works with your Mistral key or Le Chat browser session on your PC.' },
-  { key: 'runway', label: 'Runway', plan: 'Runway Gen-4 / API', how: 'key', keyNote: 'Works with your Runway key or browser session on your PC.' },
-  { key: 'ollama', label: 'Local Ollama', plan: 'Free local models', how: 'pc', login: 'ollama', start: 'Start local Ollama', cli: 'Ollama', keyNote: 'Runs 100% free on your PC with zero cloud cost.' },
+  { key: 'claude', label: 'Claude' },
+  { key: 'openai', label: 'ChatGPT' },
+  { key: 'grok', label: 'Grok' },
+  { key: 'gemini', label: 'Gemini' },
+  { key: 'antigravity', label: 'Antigravity', how: 'none', note: 'Google does not allow other apps to use Antigravity sign-in. Keep using Antigravity in its own app; Helmian can still show its status from the desktop app.' },
+  { key: 'xai', label: 'xAI API' },
+  { key: 'mistral', label: 'Mistral Le Chat' },
+  { key: 'runway', label: 'Runway' },
+  { key: 'ollama', label: 'Local Ollama' },
 ];
-function providerKeyHelp(card, key) {
-  if (card.querySelector('.connect-help')) { card.querySelector('.connect-help').remove(); return; }
-  const help = el('div', 'connect-help');
-  help.append(el('p', 'muted sm', 'Your key never touches the cloud. On your PC, run:'));
-  const code = el('code', 'code', `node bin/runner-vault.mjs store ${key}`);
-  const copy = el('button', 'btn ghost sm', 'Copy command');
-  copy.type = 'button';
-  copy.onclick = async () => { try { await navigator.clipboard.writeText(code.textContent); toast('Command copied', 'ok'); } catch { toast('Copy failed'); } };
-  help.append(code, copy, el('p', 'muted sm', 'Paste your key when asked (input is hidden), then restart the bridge.'));
-  card.append(help);
-}
-function providerPcHelp(card, meta) {
-  if (card.querySelector('.connect-help')) { card.querySelector('.connect-help').remove(); return; }
-  const help = el('div', 'connect-help');
-  help.append(el('p', 'sm', `On the PC you set up: open the Start menu, find "Helmian Spoke", and click "${meta.start}".`));
-  help.append(el('p', 'muted sm', `${meta.cli} opens in its own window and asks you to sign in with ${meta.plan}. Finish there. If ${meta.cli} is missing, the window tells you the one command to install it.`));
-  const code = el('code', 'code', `node bin/hands-spoke.mjs login ${meta.login}`);
-  const copy = el('button', 'btn ghost sm', 'Copy command');
-  copy.type = 'button';
-  copy.onclick = async () => { try { await navigator.clipboard.writeText(code.textContent); toast('Command copied', 'ok'); } catch { toast('Copy failed'); } };
-  help.append(el('p', 'muted sm', 'Or run this in the spoke folder:'), code, copy);
-  card.append(help);
-}
 // The word "Connected" on these cards comes from the provider
 // connections store alone — the same store, and the same rule, the
 // Agents page reads (a saved row is the connection). The runner
@@ -1755,6 +1739,11 @@ function providerPcHelp(card, meta) {
 // stamp, and a sync connects nothing, so a presence row on its own
 // reads "Synced · Not connected". When the connections read never
 // arrives, no "Not connected" is claimed either — the card says so.
+// One more state presence can earn (2026-11-01): "Answered". The reply
+// path stamps the row when an agent actually posts a reply back, so a
+// provider carrying a last-answered time has proven its road works —
+// the card says that, and a provider that has never answered does not
+// read as connected.
 // The names each provider is saved under in that store — the same lists
 // app-model.mjs keeps for the Integrations rows.
 const PROVIDER_CONNECTION_NAMES = Object.freeze({
@@ -1781,51 +1770,34 @@ async function loadProviders() {
     const icon = agentIconFor(label);
     card.append(el('div', 'title', icon ? `${icon} ${label}` : label));
     // What may be claimed, in order: a saved connection (the Agents
-    // rule) → Connected. A presence row with the connections read
-    // answered → Synced · Not connected. The connections read answered
-    // and no row anywhere → Not connected. A presence row alone →
-    // Synced. A read that never arrived claims nothing.
+    // rule) → Connected. A presence row carrying a last-answered stamp
+    // → Answered (the agent has replied through this road before). A
+    // presence row with the connections read answered → Synced · Not
+    // connected. The connections read answered and no row anywhere →
+    // Not connected. A presence row alone → Synced. A read that never
+    // arrived claims nothing.
     let status;
     if (meta.how === 'none') status = 'Not supported';
     else if (conn) status = 'Connected';
+    else if (row?.lastAnsweredAt) status = 'Answered';
     else if (connections && row) status = 'Synced · Not connected';
     else if (connections) status = 'Not connected';
     else if (row) status = 'Synced';
     else status = 'Status unavailable';
     const metaRow = el('div', 'meta');
-    metaRow.append(el('span', `status ${connected ? 'ok' : ''}`, status));
+    metaRow.append(el('span', `status ${connected || status === 'Answered' ? 'ok' : ''}`, status));
     card.append(metaRow);
     if (connected && (conn.updatedAt || conn.updated_at)) card.append(el('div', 'meta muted sm', `since ${formatTime(conn.updatedAt || conn.updated_at)}`));
     if (!connected && row?.updatedAt && (status === 'Synced' || status === 'Synced · Not connected')) card.append(el('div', 'meta muted sm', `synced ${formatTime(row.updatedAt)}`));
+    if (!connected && row?.lastAnsweredAt) card.append(el('div', 'meta muted sm', `last answered ${formatTime(row.lastAnsweredAt)}`));
     if (meta.how === 'none') { card.append(el('p', 'muted sm', meta.note)); return card; }
     if (connected) return card;
-    const actions = el('div', 'row-btns left');
-    if (meta.how === 'pc') {
-      const b = el('button', 'btn primary sm', `Sign in with ${meta.plan}`);
-      b.type = 'button';
-      b.onclick = () => providerPcHelp(card, meta);
-      actions.append(b);
-    }
-    const oneClickBtn = el('button', meta.how === 'key' ? 'btn primary sm' : 'btn ghost sm', 'One-click enable');
-    oneClickBtn.type = 'button';
-    oneClickBtn.onclick = async () => {
-      oneClickBtn.disabled = true; oneClickBtn.textContent = 'Enabling…';
-      try {
-        await post('/api/admin/envoy/runner/presence', { provider: key, connected: true });
-        toast(`${label} enabled!`, 'ok');
-        await loadProviders();
-      } catch {
-        oneClickBtn.disabled = false; oneClickBtn.textContent = 'One-click enable';
-        toast('Could not enable provider');
-      }
-    };
-    actions.append(oneClickBtn);
-    const keyBtn = el('button', 'btn ghost sm', 'Use API key');
-    keyBtn.type = 'button';
-    keyBtn.onclick = () => providerKeyHelp(card, key);
-    actions.append(keyBtn);
-    card.append(actions);
-    if (meta.keyNote) card.append(el('p', 'muted sm', meta.keyNote));
+    // Status only: connecting happens on the Integrations page, with
+    // the account's email and password on the provider's card — the
+    // one road. (The connect buttons that used to sit here — PC-spoke
+    // sign-in, API key, and the one-click presence claim before them —
+    // are gone; Bite 12, 2026-11-02.)
+    card.append(el('p', 'muted sm', 'Connect it on the Integrations page — email and password, right on its card.'));
     return card;
   }));
 }

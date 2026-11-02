@@ -242,8 +242,15 @@ function providerRow(p, providers, presence) {
   // honest sentence is "Synced · Not connected"; without that read, only
   // "Synced" is earned — "Not connected" is a claim the connections read
   // must have answered to make.
+  // One stamp outranks the sync reading (2026-11-01): lastAnsweredAt is
+  // written by the reply path itself when an agent posts a reply back,
+  // so a row carrying it has proven the road works. The row reads
+  // "Answered" — still not "Connected" (that word stays with the saved
+  // connection above), and `connected` stays false.
   if (stamp) {
     const syncedAt = stamp.updatedAt ?? stamp.updated_at ?? null;
+    const lastAnsweredAt = stamp.lastAnsweredAt ?? stamp.last_answered_at ?? null;
+    if (lastAnsweredAt) return { ...p, connected: false, status: 'answered', statusText: 'Answered', source: 'runner-presence', syncedAt, lastAnsweredAt };
     return connectionsAnswered
       ? { ...p, connected: false, status: 'synced', statusText: 'Synced · Not connected', source: 'runner-presence', syncedAt }
       : { ...p, connected: false, status: 'synced', statusText: 'Synced', source: 'runner-presence', syncedAt };

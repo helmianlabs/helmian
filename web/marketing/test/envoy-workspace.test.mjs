@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, addressed, agentRoomFor, agentRoomThread, deskChannelFor, deskPending, deskRoster, deskTargets, dragLayout, isDeskChannel, mirrorLinkHeader, pendingAgentWork, pickerAgentContext, roomAddressed } from '../app/envoy-workspace.js';
+import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskPending, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, mirrorLinkHeader, pendingAgentWork, pickerAgentContext, roomAddressed } from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -777,4 +777,71 @@ test('monday launch: custom agent creator, free-willy debate, github link, phone
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `index.html has #${id}`);
   }
+});
+
+// One-road Bite 5 (2026-11-01): the create-agent dialog's connect step
+// is the shared ConnectFields (email + password) for the provider
+// currently picked, and the seat-mode select is dead — there is no
+// mode choice anywhere in the dialog, and the create submit carries
+// the single authMode 'password_session'.
+test('bite 5: the create-agent dialog renders no seat-mode select and embeds the connect fields', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.ok(!js.includes('CUSTOM_AUTH_OPTIONS'), 'the seat-mode options constant is gone');
+  assert.ok(!js.includes('CUSTOM_AUTH_LABELS'), 'the seat-mode card labels are gone');
+  assert.ok(!js.includes('ew-ca-auth'), 'no seat-mode select is rendered in the dialog');
+  assert.ok(!js.includes('Seat / Connection Mode'), 'the seat-mode field label is gone');
+  for (const mode of ['browser-free', 'browser-paid', 'api-key']) {
+    assert.ok(!js.includes(mode), `legacy mode value ${mode} is gone from the workspace`);
+  }
+  for (const label of ['Subscription Sign-In (Pro / Max / Plus / SuperGrok)', 'Free Browser Seat (Web Session)', 'Paid Browser Seat (Web Session)', 'API Key / SDK (PC Vault)', 'Local CLI Seat (Claude Code / Codex / Gemini CLI)']) {
+    assert.ok(!js.includes(label), `legacy mode label "${label}" is gone`);
+  }
+  assert.ok(!js.includes('Runs on your connected subscription, browser seat, or PC bridge key.'), 'the old footer copy is gone');
+  assert.ok(js.includes('Runs on the account you connect with your email and password.'), 'the footer states the one road');
+  assert.ok(js.includes("import { createConnectFields } from './connect-fields.mjs';"), 'the dialog imports the shared ConnectFields component');
+  assert.match(js, /providerSelect\.addEventListener\('change', renderConnectFields\)/, 'provider switches re-render the connect fields');
+  assert.match(js, /'6\. Connect the account — email and password'/, 'step 6 is the connect step, in the law\u2019s words');
+});
+
+// ---- minimal DOM for the component factory (only what it touches) ----
+class FakeElement {
+  constructor(tag) {
+    this.tagName = tag.toUpperCase();
+    this.children = [];
+    this.className = '';
+    this._text = '';
+    this.dataset = {};
+    this.value = '';
+    this.disabled = false;
+    this.hidden = false;
+  }
+  set textContent(v) { this._text = String(v); this.children = []; }
+  get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); }
+  append(...kids) { this.children.push(...kids); }
+  setAttribute() {}
+}
+const fakeDoc = { createElement: (tag) => new FakeElement(tag) };
+function* walk(node) { yield node; for (const c of node.children) yield* walk(c); }
+const findAll = (root, pred) => [...walk(root)].filter(pred);
+
+test('bite 5: dialogConnectFields renders email + password for the chosen provider and follows provider switches', () => {
+  const post = async () => ({});
+  const forClaude = dialogConnectFields('claude', post, fakeDoc);
+  assert.ok(forClaude, 'fields render for the picked provider');
+  assert.equal(forClaude.dataset.provider, 'claude');
+  assert.deepEqual(findAll(forClaude, (n) => n.tagName === 'INPUT').map((i) => [i.name, i.type]), [['username', 'email'], ['password', 'password']]);
+  // A provider switch re-renders through the same function the dialog's
+  // change handler calls — the fields then name the new provider.
+  const forGrok = dialogConnectFields('grok', post, fakeDoc);
+  assert.equal(forGrok.dataset.provider, 'grok', 'the re-rendered fields are for the newly picked provider');
+  assert.notEqual(forGrok, forClaude, 'a switch produces a fresh fields form');
+});
+
+test('bite 5: the create submit body carries authMode password_session and nothing mode-shaped', () => {
+  const body = customAgentCreateBody({ channelId: 'chan-1', handle: 'rusty', name: 'Rusty', emoji: '🦀', provider: 'mistral', jobTitle: 'Rust Systems Architect', jobPrompt: 'Review memory safety.' });
+  assert.deepEqual(body, {
+    action: 'create-custom-agent',
+    channelId: 'chan-1',
+    agent: { handle: 'rusty', name: 'Rusty', emoji: '🦀', provider: 'mistral', authMode: 'password_session', jobTitle: 'Rust Systems Architect', jobPrompt: 'Review memory safety.' },
+  });
 });

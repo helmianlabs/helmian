@@ -448,6 +448,9 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-approvals-open { display:inline-block; margin:8px 10px 0; text-decoration:none; }
 .ew-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); }
 .ew-field select { width:100%; }
+/* A field's caption line: full-strength, so labels read as labels
+   instead of as faint helper text (Create Agent dialog, polish pass). */
+.ew-field-label { font-size:12px; font-weight:600; color:var(--text); }
 /* CLI agent picker */
 .ew-pills { display:flex; gap:6px; flex-wrap:wrap; }
 .ew-pill.add { opacity:.7; border-style:dashed; }
@@ -508,6 +511,11 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .int-top { display:grid; grid-template-columns:36px minmax(0,1fr) auto; gap:10px; align-items:start; }
 .int-icon { width:36px; height:36px; border-radius:10px; background:var(--panel-2); border:1px solid var(--border); display:grid; place-items:center; font-size:19px; }
 .int-icon img { border-radius:7px; }
+/* Letter tile for AI cards with no settled asset file (Mistral,
+   Runway): the same construction as the /assets/agents/ tiles — a
+   filled circle, dark ring, near-black initial — coloured from the
+   app's plain-avatar palette (avatars.mjs, via --ava). */
+.int-tile { width:26px; height:26px; box-sizing:border-box; border-radius:50%; background:var(--ava); border:2px solid #141a22; color:#0d1117; display:grid; place-items:center; font-size:13px; font-weight:800; line-height:1; }
 .int-icon .ew-discord-mark, .int-icon .ew-gh-mark, .int-icon .ew-slack-mark { width:18px; height:18px; }
 .int-name { font-weight:700; font-size:14px; }
 .int-blurb { color:var(--muted); font-size:12.5px; line-height:1.35; margin-top:2px; }
@@ -519,6 +527,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .int-actions { display:flex; gap:8px; margin-top:auto; }
 .int-help { border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:4px; animation:ew-in .2s var(--ease); }
 .int-help p { margin:0; }
+.connect-fields { display:flex; flex-direction:column; gap:8px; margin-top:auto; }
+.connect-fields-label { display:flex; flex-direction:column; gap:4px; font-size:12px; font-weight:600; color:var(--muted); }
+.connect-fields-input { width:100%; box-sizing:border-box; }
+.connect-fields-note { margin:0; }
 .int-qr-row { display:flex; gap:16px; align-items:center; }
 .int-qr { width:148px; height:148px; flex:none; border-radius:12px; overflow:hidden; background:#fff; }
 .int-qr svg { width:100%; height:100%; display:block; }
@@ -603,6 +615,21 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .ew-code.sm { font-size:12px; letter-spacing:.02em; padding:8px 10px; word-break:break-all; }
 .ew-icon.sm { width:22px; height:22px; font-size:15px; font-weight:700; }
+
+/* ---- Create Custom Agent dialog (polish pass) ----
+   Presentation only: the dialog's fields, order, and submit are the
+   Bite 5 build. Scoped to .ew-ca-form so the sibling modals that share
+   .ew-modal-form (Debate, GitHub link) keep their existing look. */
+.ew-ca-form { gap:12px; }
+.ew-ca-form .ew-field { gap:6px; }
+.ew-ca-form input, .ew-ca-form select, .ew-ca-form textarea { font-size:13.5px; }
+.ew-emoji-input { width:56px; text-align:center; font-size:18px; }
+/* The connect step is a form inside the form; an inset panel groups it
+   as its own step, the way .ew-desk-item groups desk rows. */
+.ew-ca-connect { background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:10px 12px 12px; }
+.ew-ca-note { margin:0; }
+/* The dialog's footer: a divided action row, standard-size buttons. */
+.ew-modal-actions { display:flex; align-items:center; gap:6px; border-top:1px solid var(--border); padding-top:12px; margin-top:2px; }
 
 /* Mobile bottom navigation bar (hidden on desktop) */
 .ew-mobile-nav { display:none; }

@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { createEnvoyMesh, handleEnvoyMeshRoute, bridgeTokenOk } from '../src/cloud/envoy-mesh.mjs';
+import { createEnvoyMesh, handleEnvoyMeshRoute, bridgeTokenOk, stampAgentAnswered } from '../src/cloud/envoy-mesh.mjs';
+import { createRunnerPresenceStore } from '../src/cloud/runner-presence.mjs';
 import { createEnvoyStore } from '../src/cloud/envoy-chat.mjs';
 
 const url = process.env.HELMIAN_TEST_PG_URL;
@@ -261,4 +262,59 @@ test('mesh desk: the seat seeds its roster once, refuses other channels, and dis
     await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
     await pool.end();
   }
+});
+
+// ---------- last answered (honest-connection fix, 2026-11-01) ----------
+// postAsAgent calls stampAgentAnswered after a fresh reply commits: the
+// provider's presence row gains its answer time. The stamp is
+// update-only — an answer never creates a presence row — and
+// best-effort: nothing about the reply path may fail because of it.
+function makePresenceFakePool() {
+  const rows = new Map(); // provider -> { connected, updated_at, last_answered_at }
+  const client = {
+    query: async (sql, params = []) => {
+      const text = String(sql);
+      if (text.includes('set_config')) return { rows: [] };
+      if (text.startsWith('select provider_name')) {
+        return { rows: [...rows.entries()].map(([provider_name, v]) => ({ provider_name, ...v })) };
+      }
+      if (text.includes('insert into helmion.runner_provider_presence')) {
+        const prev = rows.get(params[0]) ?? { connected: false, updated_at: null, last_answered_at: null };
+        const next = { ...prev, updated_at: new Date() };
+        if (text.includes('connected = excluded.connected')) next.connected = params[1] === true;
+        rows.set(params[0], next);
+        return { rowCount: 1 };
+      }
+      if (text.includes('update helmion.runner_provider_presence')) {
+        const row = rows.get(params[0]);
+        if (!row) return { rows: [], rowCount: 0 };
+        row.last_answered_at = new Date();
+        return { rows: [], rowCount: 1 };
+      }
+      if (text === 'begin' || text === 'commit' || text === 'rollback') return {};
+      throw new Error(`unexpected query: ${text}`);
+    },
+    release: () => {},
+  };
+  return {
+    connect: async () => client,
+    query: async (sql) => (String(sql).includes('last_answered_at') ? { rows: [] } : client.query(sql)),
+    _rows: rows,
+  };
+}
+
+test('stampAgentAnswered stamps an existing presence row and never creates one', async () => {
+  const pool = makePresenceFakePool();
+  const store = createRunnerPresenceStore(pool);
+  assert.equal(await stampAgentAnswered(pool, 'tenant-mesh', 'gemini'), false, 'no row yet — nothing to stamp');
+  assert.deepEqual(await store.list('tenant-mesh'), [], 'the failed stamp created no row');
+  await store.report('tenant-mesh', 'gemini', true);
+  assert.equal(await stampAgentAnswered(pool, 'tenant-mesh', 'gemini'), true);
+  const rows = await store.list('tenant-mesh');
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].lastAnsweredAt instanceof Date, 'the answer time is on the row the cards read');
+  // Best-effort contract: bad inputs resolve false, never throw.
+  assert.equal(await stampAgentAnswered(null, 'tenant-mesh', 'gemini'), false);
+  assert.equal(await stampAgentAnswered(pool, 'tenant-mesh', 'not-a-provider'), false);
+  assert.equal(await stampAgentAnswered(pool, 'tenant-mesh', null), false);
 });

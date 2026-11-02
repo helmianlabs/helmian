@@ -1,3 +1,12 @@
+// FENCED — retired as a connect road (one-road removal pass, Bite 12,
+// 2026-11-02). Under the owner's one-road law an AI connects with its
+// account email and password on its Integrations card
+// (password_session); no surface links to OAuth as a way to connect,
+// and the user-level /api/provider-oauth/* road is stood down
+// (envoy-ably.mjs answers 410; user-oauth.mjs is a fence). This
+// descriptor table remains only because the other fenced OAuth
+// modules import it; it dies with them when live-admin gets a
+// sanctioned edit. Do not wire it to any new surface.
 const GEMINI_AUTHORIZATION_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GEMINI_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 export const GEMINI_SCOPES = Object.freeze([

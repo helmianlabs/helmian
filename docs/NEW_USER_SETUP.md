@@ -1,10 +1,13 @@
 # New user setup (helmian.cloud)
 
-Plain steps for a new person (for example a demo partner) who already pays for
-Claude, ChatGPT, SuperGrok, Gemini and/or Antigravity and does not want to buy
-API keys. Every subscription sign-in happens through the provider's **own**
-app on the user's **own** PC. Helmian never sees, stores or relays the
-subscription password or token.
+Plain steps for a new person (for example a demo partner) who already has
+accounts with Claude, ChatGPT, Grok, Gemini and/or Mistral. Every AI
+connects the same one way: with its account email and password, entered
+right on its card in Helmian's Integrations page (or in the Create
+Custom Agent dialog). The pair is stored in the tenant's credential
+vault behind the Guard approval gate, and the seat then works off that
+sign-in. There are no API keys, device codes, or CLI sign-ins as
+connect roads.
 
 ## 1. Make an account
 
@@ -29,48 +32,69 @@ person, never in chat). macOS and Linux spokes are coming; Windows is ready.
 Browsers cannot install software silently. One download plus one Windows
 "allow" prompt is the shortest legitimate path.
 
-## 3. Connect each AI plan
+## 3. Connect each AI
 
-Open the Start menu, find **Helmian Spoke**, and click the entry for each plan.
-Each one opens that company's official tool in its own window; sign in there.
-If the tool is missing, the window prints the one install command.
+There is one road for every AI:
 
-| Plan | Start menu entry | Official tool it runs | Notes |
-| --- | --- | --- | --- |
-| Claude Pro/Max | Sign in to Claude (your plan) | Claude Code (`claude`, then `/login`) | Allowed: you sign in to Anthropic's unmodified Claude Code. Helmian must never ask you to paste a Claude token. |
-| ChatGPT Plus/Pro | Sign in to ChatGPT (your plan) | Codex CLI (`codex login`) | OpenAI's own "Sign in with ChatGPT". |
-| SuperGrok | Sign in to SuperGrok (your plan) | Grok CLI (`grok login`, or `--device-auth`) | xAI's own sign-in. See the caution below. |
-| Gemini | Sign in to Gemini (your Google account) | Gemini CLI (`gemini`, choose Login with Google) | Or a free Gemini API key from Google AI Studio (no charge). |
-| Antigravity | none | none | Google does not allow other apps to use Antigravity sign-in. Use Antigravity in its own app. |
+1. Open **Integrations**. The "Sign in to your AI" cards each carry an
+   email field and a password field, right on the card. (The same two
+   fields appear in the Create Custom Agent dialog when you connect an
+   AI while building an agent.)
+2. Type the account's email and password and press **Connect**.
+3. The pair is stored in your tenant's credential vault — every read
+   of it passes the Guard approval gate — and Helmian's seat for that
+   AI works off that sign-in from then on. The card shows "Connected"
+   once the connection is saved.
 
-Same thing from a terminal in the spoke folder:
-`node bin/hands-spoke.mjs providers` (shows installed / signed in) and
-`node bin/hands-spoke.mjs login claude|chatgpt|grok|gemini`.
+Notes per AI:
 
-**API key fallback:** every card in Settings > AI Providers keeps **Use API key**.
+| AI | What the fields take | Notes |
+| --- | --- | --- |
+| Claude | Your Claude account email and password | If your account was created with Google, the fields hold your Google identity email and password; the seat performs the provider's Continue-with-Google sign-in inside the held session. |
+| ChatGPT | Your ChatGPT account email and password | Same Google note, if your account is Google-born. |
+| Gemini | Your Google account email and password | Gemini's sign-in is Google's sign-in; there is no separate Gemini form. |
+| Grok | Your Grok account email and password | Sign in on grok.com with your account — not an X sign-in. |
+| Mistral Le Chat | Your Mistral account email and password | |
+| Antigravity | — | Google does not allow other apps to use Antigravity sign-in. Use Antigravity in its own app; Helmian only shows its status. |
 
-### Why it is built this way (sources, checked Oct 29, 2026)
+A first connect can meet a verification step only you can pass — a
+device check, a 2-Step prompt, or an emailed sign-in link. That step
+belongs to the provider's own sign-in defenses; it happens once, in
+the sitting, and the session is kept afterwards so you are not asked
+again and again.
 
-- Anthropic: third parties may not offer Claude.ai login or collect/route
-  Free/Pro/Max credentials; an end user signing in to the unmodified Claude
-  Code binary is allowed. <https://code.claude.com/docs/en/legal-and-compliance>
+Settings > AI Providers shows the same connection status as the
+Integrations page. It has no connect buttons of its own — connecting
+happens on the cards above.
+
+### The exposure this road carries (sources, checked Oct 29, 2026)
+
+Signing a seat into a provider's consumer web app with the account's
+own credentials is the design the owner chose; it is not hidden that
+the providers' published terms were written against credential
+collection and automated access by third parties. The record:
+
+- Anthropic: third parties may not offer Claude.ai login or
+  collect/route Free/Pro/Max credentials.
+  <https://code.claude.com/docs/en/legal-and-compliance>
 - OpenAI: "Sign in with ChatGPT" plan usage is for participating apps;
-  Helmian is not a registered partner, so we run the official Codex CLI.
+  Helmian is not a registered partner.
   <https://help.openai.com/en/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites>
-- Google: other software piggybacking on Gemini CLI / Antigravity OAuth is a
-  violation and can suspend the account.
+- Google: other software piggybacking on Gemini CLI / Antigravity
+  OAuth is a violation and can suspend the account.
   <https://geminicli.com/docs/resources/tos-privacy/>, <https://antigravity.google/terms/>
-- xAI: no published permission for third-party apps to use SuperGrok sign-in;
-  the acceptable use policy bars unauthorized automated access.
-  <https://x.ai/legal/acceptable-use-policy>. The older cloud "Connect Grok"
-  page (`/api/provider-oauth/grok/start`) and "ChatGPT" page
-  (`/api/provider-oauth/openai/start`) reuse those vendors' CLI client IDs;
-  their buttons were removed from Settings and the routes should be retired
-  unless the vendor approves.
+- xAI: no published permission for third-party apps to use Grok
+  sign-in; the acceptable use policy bars unauthorized automated
+  access. <https://x.ai/legal/acceptable-use-policy>
 
-**Governance:** Claude Code and Codex still show their own "allow this tool?"
-prompts, and Guard's human-in-the-loop Allow/Deny still gates every mutating
-PC action. That is intended.
+The earlier roads are retired: the PC-spoke CLI sign-ins (Claude Code,
+Codex, Grok CLI, Gemini CLI), the runner-vault API keys, and the cloud
+OAuth pages under `/api/provider-oauth/` (Gemini, ChatGPT, and the
+Grok device-code flow) — the cloud routes answer 410 since the
+one-road removal pass (Bite 12, 2026-11-02).
+
+**Governance:** Guard's human-in-the-loop Allow/Deny still gates every
+credential read and every mutating PC action. That is intended.
 
 ## 4. Link Slack and Discord (Envoy)
 

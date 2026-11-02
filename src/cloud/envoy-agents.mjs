@@ -30,7 +30,12 @@
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini']);
 export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI' });
 export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'custom']);
-export const CUSTOM_AGENT_AUTH_MODES = Object.freeze(['subscription', 'browser-free', 'browser-paid', 'api-key', 'cli']);
+// One connect road (owner's law, 2026-11-01): a custom agent's account
+// connects with an email and a password, and the seat works off that
+// sign-in — the 'password_session' auth mode sql/063 defined. The old
+// seat-mode menu no longer exists; sanitizeCustomAgent collapses every
+// stored or incoming authMode value to this single mode.
+export const CUSTOM_AGENT_AUTH_MODE = 'password_session';
 export const MAX_CHANNEL_AGENTS = 50;
 export const MAX_DEBATE_TURNS = 50;
 export const DEFAULT_DEBATE_TURNS = 10;
@@ -89,8 +94,10 @@ export function sanitizeCustomAgent(raw) {
   const provider = normalizeEngine(raw.provider) ?? 'claude';
   const name = String(raw.name ?? handle).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 48) || handle;
   const emoji = String(raw.emoji ?? '🤖').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 16) || '🤖';
-  const authRaw = String(raw.authMode ?? 'subscription').trim().toLowerCase();
-  const authMode = CUSTOM_AGENT_AUTH_MODES.includes(authRaw) ? authRaw : 'subscription';
+  // Every legacy authMode collapses to the one road — stored records
+  // keep loading (parseConfig runs them through here) and come out
+  // carrying 'password_session', whatever they were saved with.
+  const authMode = CUSTOM_AGENT_AUTH_MODE;
   const jobTitle = String(raw.jobTitle ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
   const jobPrompt = String(raw.jobPrompt ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 600);
   return { id: handle, handle, name, emoji, provider, authMode, jobTitle, jobPrompt };
