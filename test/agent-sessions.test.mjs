@@ -33,6 +33,52 @@ test('sessions store validates update inputs', async () => {
   await assert.rejects(() => store.update('t1', 'id1', { status: 'bogus' }), /unknown status/);
 });
 
+// Stateful fake: actually stores inserted rows so create -> list round-trips.
+function statefulPool() {
+  const rows = [];
+  let seq = 0;
+  return {
+    rows,
+    async connect() {
+      let tenant = null;
+      return {
+        async query(text, vals = []) {
+          if (text.includes("set_config('helmion.tenant_id'")) { tenant = vals[0]; return { rows: [] }; }
+          if (text.trim() === 'begin' || text.trim() === 'commit' || text.trim() === 'rollback') return { rows: [] };
+          if (text.includes('insert into helmion.workspace_agent_sessions')) {
+            const row = {
+              id: `sess-${++seq}`, tenant_id: tenant,
+              name: vals[0], provider: vals[1], routing_tier: vals[2],
+              status: 'idle', last_message: null,
+              created_at: new Date(), updated_at: new Date(),
+            };
+            rows.push(row);
+            return { rows: [row] };
+          }
+          if (text.includes('select * from helmion.workspace_agent_sessions')) {
+            return { rows: rows.filter((r) => r.tenant_id === tenant) };
+          }
+          throw new Error(`unexpected query: ${text.slice(0, 60)}`);
+        },
+        release() {},
+      };
+    },
+  };
+}
+
+test('sessions store: a created session exists in the tenant list afterward', async () => {
+  const store = createSessionsStore(statefulPool());
+  const created = await store.create('tenant-a', { name: 'Claude muse', provider: 'maestro', routingTier: 'auto' });
+  assert.equal(created.name, 'Claude muse');
+  assert.equal(created.provider, 'maestro');
+  assert.equal(created.routingTier, 'auto');
+  assert.equal(created.status, 'idle');
+  const listA = await store.list('tenant-a');
+  assert.deepEqual(listA.map((s) => s.id), [created.id], 'the created session is listed for its tenant');
+  const listB = await store.list('tenant-b');
+  assert.deepEqual(listB, [], 'and not for any other tenant');
+});
+
 test('sessions route paths are correct', async () => {
   const { handleAgentSessionsRoute } = await import('../src/cloud/agent-sessions.mjs');
   const sent = [];
