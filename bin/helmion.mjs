@@ -787,7 +787,7 @@ async function relay() {
   // life and only pauses CPU billing during I/O, so a held-open WebSocket is
   // nearly free on CPU and expensive on memory: 2 GB x 24h = 48 GB-hrs a day
   // against a 360 GB-hr monthly Hobby allowance — the whole month in about a
-  // week, on the same plan as the live ThinkinBuddy app. Polling holds an
+  // week, on the same plan as the live Capstone Foundry app. Polling holds an
   // instance for one small query and costs a couple of percent of that, so it
   // is what can simply stay on.
   const live = hasFlag('--live');

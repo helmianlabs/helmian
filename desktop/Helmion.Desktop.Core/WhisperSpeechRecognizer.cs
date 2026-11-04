@@ -82,7 +82,7 @@ public sealed class WhisperSpeechRecognizer : IDisposable
         "Glanbia, Chobani, Lactalis, DFA, Caldmere, SiteVector, Vercel, Fly.io, "
         + "Neon, Clerk, Ollama, ONNX, WASAPI, MCP, LLM, Ably, Herald, Discord, Slack, "
         + "GitHub, Whisper, Qwen, Gemini, ChatGPT, Codex, Maestro, DairyForge, AimForge, "
-        + "ThinkinBuddy, Claude, Grok, Cora, Brandon. "
+        + "Capstone Foundry, Claude, Grok, Cora, Brandon. "
         + "Helmian Room is local chat. Guard blocks destructive commands. "
         + "Helmion uses Kokoro for speech and Whisper for listening. "
         + "We are talking about Helmion and Kokoro.";
