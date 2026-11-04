@@ -450,3 +450,12 @@ export function friendlyWorkspace(id) {
   const s = String(id || '');
   return !s || /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s) ? 'your workspace' : s;
 }
+
+// The name a person should see for the session's workspace: the real
+// display name the server read from helmion.tenants (actor.tenantName)
+// when the session carries one; the tenant-id rule above is only the
+// fallback for sessions that predate the name.
+export function workspaceName(actor = {}) {
+  const named = String(actor?.tenantName ?? '').trim();
+  return named || friendlyWorkspace(actor?.tenantId);
+}

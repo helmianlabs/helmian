@@ -9,10 +9,14 @@
 //   browser session before landing back on /app/. This menu builds no
 //   second sign-out path; LOGOUT_HREF below is that road, verbatim.
 // - Settings shows the signed-in identity the app already holds: the
-//   session actor (workspace + role, from /api/admin/session) plus the
-//   Clerk browser user (name + email) when the app's lazy Clerk load
-//   resolves one. Nothing is invented: with no Clerk user yet, the
-//   panel shows workspace and role only.
+//   session actor (the workspace's real display name, read server-side
+//   from helmion.tenants and carried as actor.tenantName, plus the
+//   role) and the Clerk browser user (name + email) when the app's lazy
+//   Clerk load resolves one. Nothing is invented: while that load is
+//   still settling the panel says so, and when it settles without a
+//   user the panel says in plain words that the signed-in details
+//   could not be loaded (the model's `notice`) — placeholders are
+//   never presented as the final answer.
 // - Download apps reads /api/latest-release — the same live release
 //   read the Get started page plans from (its handler returns
 //   { available, name, url, version } only when a real Windows
@@ -26,7 +30,7 @@
 //   panel says so before the button is pressed.
 // - Keyboard shortcuts lists only bindings the app handles today;
 //   each row names the surface where the binding lives.
-import { friendlyWorkspace } from './app-model.mjs';
+import { workspaceName } from './app-model.mjs';
 
 // The shipped sign-out road (see header). The menu's Log out anchor in
 // index.html carries this exact href; the unit test pins the two
@@ -46,15 +50,19 @@ export const ACCOUNT_MENU_ITEMS = Object.freeze([
 
 /**
  * The identity the Settings pop-out shows. `actor` is the session actor
- * ({ tenantId, role }) the shell already holds; `user` is the Clerk
- * browser user when it has loaded, else null. Rows carry only what
- * actually exists — an email row appears only with a real email.
+ * ({ tenantId, tenantName, role }) the shell already holds; `user` is
+ * the Clerk browser user when it has loaded, else null. Rows carry only
+ * what actually exists — an email row appears only with a real email.
+ * When the caller has settled the identity lookup WITHOUT a user
+ * (`identityUnavailable`), the model carries the plain-words notice
+ * the panel shows instead of silently presenting the workspace and
+ * role rows as the whole answer.
  */
-export function accountIdentityModel(actor = {}, user = null) {
+export function accountIdentityModel(actor = {}, user = null, { identityUnavailable = false } = {}) {
   const email = String(user?.primaryEmailAddress?.emailAddress ?? '').trim();
   const named = String(user?.fullName ?? '').trim()
     || [user?.firstName, user?.lastName].map((s) => String(s ?? '').trim()).filter(Boolean).join(' ');
-  const workspace = friendlyWorkspace(actor?.tenantId);
+  const workspace = workspaceName(actor);
   const role = String(actor?.role ?? '').trim();
   const rows = [];
   if (named) rows.push(Object.freeze({ label: 'Name', value: named }));
@@ -66,6 +74,7 @@ export function accountIdentityModel(actor = {}, user = null) {
     initial: (named || email || 'A').charAt(0).toUpperCase(),
     email,
     hasEmail: Boolean(email),
+    notice: identityUnavailable ? 'Signed-in details could not be loaded.' : null,
     rows: Object.freeze(rows),
   });
 }

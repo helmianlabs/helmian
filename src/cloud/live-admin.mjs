@@ -735,7 +735,19 @@ export async function createLiveHelmianCloudAdminHandler({
       try {
         try { await claimFirstOwner({ pool, env, session: sessionIdentity(request), logger: noteAttempt }); } catch { /* claim is best-effort; membership check below decides */ }
         const actor = requestUrl.searchParams.get('scope') === 'member' ? await activeTenantActor(request) : await activeActor(request);
-        send(response, 200, JSON.stringify({ authenticated: true, actor: { subject: actor.subject, tenantId: actor.tenantId, role: actor.role } }));
+        // The workspace's own name rides the session read: helmion.tenants
+        // holds it (the control surface reads the same row), and without it
+        // the client can only show the tenant UUID's placeholder. Best-
+        // effort — a failed lookup must never fail the session read itself.
+        let tenantName = null;
+        try {
+          const client = await pool.connect();
+          try {
+            const tenant = await client.query('select display_name from helmion.tenants where tenant_id=$1', [actor.tenantId]);
+            tenantName = String(tenant.rows[0]?.display_name ?? '').trim() || null;
+          } finally { client.release(); }
+        } catch { /* the name is decoration on the session read */ }
+        send(response, 200, JSON.stringify({ authenticated: true, actor: { subject: actor.subject, tenantId: actor.tenantId, role: actor.role, ...(tenantName ? { tenantName } : {}) } }));
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         const signedIn = sessionIdentity(request);

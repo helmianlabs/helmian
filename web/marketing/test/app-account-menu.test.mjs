@@ -10,6 +10,7 @@ import {
   downloadsModel,
   reportIssueHref,
 } from '../app/account-menu.mjs';
+import { workspaceName } from '../app/app-model.mjs';
 
 // The bottom-corner account menu: Troy's spec (2026-11-04) is Settings,
 // Keyboard shortcuts, Download apps, Report an issue, Log out — in that
@@ -76,6 +77,57 @@ test('identity model falls back to first + last name, then to email', () => {
   const byEmail = accountIdentityModel({ tenantId: 'x', role: 'admin' }, { primaryEmailAddress: { emailAddress: 'ada@example.com' } });
   assert.equal(byEmail.headline, 'ada@example.com');
   assert.deepEqual(byEmail.rows.map((r) => r.label), ['Email', 'Workspace', 'Your role']);
+});
+
+// The live failure (2026-11-04 15:55): the actor's tenant is a raw UUID,
+// so the panel read "your workspace" — even though helmion.tenants holds
+// the workspace's real display name and the session now carries it as
+// actor.tenantName. The name must win over the UUID placeholder.
+test('identity model shows the real workspace name from the session', () => {
+  const m = accountIdentityModel(
+    { tenantId: '0d7ca4d3-a2f4-458a-936b-d8a002a569e0', tenantName: 'Helmian HQ', role: 'owner' },
+    { fullName: 'Troy Shoemaker', primaryEmailAddress: { emailAddress: 'troy@example.com' } },
+  );
+  assert.deepEqual(m.rows.map((r) => [r.label, r.value]), [
+    ['Name', 'Troy Shoemaker'],
+    ['Email', 'troy@example.com'],
+    ['Workspace', 'Helmian HQ'],
+    ['Your role', 'owner'],
+  ]);
+  const slug = accountIdentityModel({ tenantId: 'acme-team', tenantName: 'Acme', role: 'member' }, null);
+  assert.equal(slug.rows.find((r) => r.label === 'Workspace').value, 'Acme');
+});
+
+test('workspaceName prefers the session name and falls back honestly', () => {
+  assert.equal(workspaceName({ tenantId: '0d7ca4d3-a2f4-458a-936b-d8a002a569e0', tenantName: 'Helmian HQ' }), 'Helmian HQ');
+  assert.equal(workspaceName({ tenantId: '0d7ca4d3-a2f4-458a-936b-d8a002a569e0', tenantName: '  ' }), 'your workspace');
+  assert.equal(workspaceName({ tenantId: 'acme-team' }), 'acme-team');
+  assert.equal(workspaceName({}), 'your workspace');
+});
+
+// When the Clerk identity settles without a user, the panel must say so
+// in plain words (the model's notice) instead of silently presenting
+// the workspace + role rows as the complete identity.
+test('identity model carries the plain-words notice only when unavailable', () => {
+  const missing = accountIdentityModel({ tenantId: 'x', role: 'owner' }, null, { identityUnavailable: true });
+  assert.equal(missing.notice, 'Signed-in details could not be loaded.');
+  const pending = accountIdentityModel({ tenantId: 'x', role: 'owner' }, null);
+  assert.equal(pending.notice, null);
+  const loaded = accountIdentityModel({ tenantId: 'x', role: 'owner' }, { fullName: 'Ada Lynn' });
+  assert.equal(loaded.notice, null);
+});
+
+// The renderer half of the honesty contract, pinned in app.js: the
+// Settings panel draws a loading state first, settles to the identity
+// or the unavailable notice, and asks the lazy Clerk load to survive
+// ClerkJS's asynchronous session settle (addListener) with the pinned
+// module URL every other Clerk consumer in the product uses.
+test('the settings renderer never presents placeholders as final', async () => {
+  const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  assert.match(js, /Loading your signed-in details…/);
+  assert.match(js, /identityUnavailable: phase === 'unavailable'/);
+  assert.match(js, /addListener/);
+  assert.match(js, /import\('\/herald\/account-runtime\.js\?v=15'\)/);
 });
 
 test('downloads model offers Windows only on a vouched https release', () => {

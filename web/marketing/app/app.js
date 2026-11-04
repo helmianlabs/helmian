@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, friendlyWorkspace } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
@@ -1327,7 +1327,7 @@ async function heraldToken() {
       const cfg = await (await fetch('/api/herald-config', { credentials: 'same-origin' })).json();
       const pk = cfg?.accountIdentity?.configured ? cfg.accountIdentity.publishableKey : null;
       if (!pk) return null;
-      const { loadClerkBrowser } = await import('/herald/account-runtime.js');
+      const { loadClerkBrowser } = await import('/herald/account-runtime.js?v=15');
       heraldClerk = await loadClerkBrowser(pk);
     }
     return (await heraldClerk?.session?.getToken?.()) ?? null;
@@ -2714,9 +2714,14 @@ const acctBtn = $('#account-menu-btn');
 const acctMenu = $('#account-menu');
 const acctPanel = $('#account-panel');
 const acctPanelBody = $('#account-panel-body');
+// Bumped on every panel open/close: an async panel draw that lands after
+// the person has moved on (another panel, or closed) must not overwrite
+// what is on screen now.
+let acctPanelSeq = 0;
 function closeAccountMenu() { acctMenu.hidden = true; acctBtn.setAttribute('aria-expanded', 'false'); }
-function closeAccountPanel() { acctPanel.hidden = true; }
+function closeAccountPanel() { acctPanelSeq++; acctPanel.hidden = true; }
 function openAccountPanel(title) {
+  acctPanelSeq++;
   $('#account-panel-title').textContent = title;
   acctPanel.hidden = false;
   closeAccountMenu();
@@ -2733,26 +2738,51 @@ $('#account-panel-close').onclick = closeAccountPanel;
 async function clerkUser() {
   // The shell's lazy Clerk load (Devices section): asking it for a
   // session token also settles its user. Not configured / signed out →
-  // null, and the identity panel simply shows workspace + role.
+  // null, and the identity panel says so in plain words.
   await heraldToken().catch(() => null);
+  if (heraldClerk && !heraldClerk.user && typeof heraldClerk.addListener === 'function') {
+    // ClerkJS restores its session asynchronously around load(): a
+    // signed-in user can land a beat after the load resolves. Give
+    // that settle one bounded chance — the listener fires when the
+    // client state changes — before reporting the identity as
+    // unavailable; never wait on it forever.
+    await new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (done) return; done = true; clearTimeout(timer); try { unsub?.(); } catch {} resolve(); };
+      const timer = setTimeout(finish, 2500);
+      let unsub = null;
+      try { unsub = heraldClerk.addListener(finish); } catch { finish(); }
+    });
+  }
   return heraldClerk?.user ?? null;
 }
 
 function renderAccountSettings() {
   openAccountPanel('Settings');
-  const draw = (user) => {
-    const m = accountIdentityModel(state.actor ?? {}, user);
+  const seq = acctPanelSeq;
+  const draw = (user, phase) => {
+    if (seq !== acctPanelSeq || acctPanel.hidden) return;
+    const m = accountIdentityModel(state.actor ?? {}, user, { identityUnavailable: phase === 'unavailable' });
     if (user) { $('#account-name').textContent = m.headline; $('#account-avatar').textContent = m.initial; }
     const kv = el('div', 'kv');
     for (const r of m.rows) kv.append(row(r.label, r.value));
+    const parts = [kv];
+    // The panel never presents the workspace + role rows as the final
+    // answer while the identity is still loading — and when the load
+    // settles without a user it says so, in plain words.
+    if (phase === 'pending') parts.push(el('p', 'muted sm', 'Loading your signed-in details…'));
+    else if (m.notice) parts.push(el('p', 'muted sm', m.notice));
     const foot = el('div', 'row-btns left'); foot.style.marginTop = '12px';
     const open = el('a', 'btn sm', 'Open the Settings page'); open.href = '#settings';
     open.onclick = () => closeAccountPanel();
     foot.append(open);
-    acctPanelBody.replaceChildren(kv, foot);
+    parts.push(foot);
+    acctPanelBody.replaceChildren(...parts);
   };
-  draw(null);
-  clerkUser().then(draw).catch(() => {});
+  draw(null, 'pending');
+  clerkUser()
+    .then((user) => draw(user, user ? 'ready' : 'unavailable'))
+    .catch(() => draw(null, 'unavailable'));
 }
 
 function renderAccountShortcuts() {
@@ -2845,12 +2875,12 @@ async function boot() {
   wireRail();
   state.actor = model.actor;
   $('#svc-dot').classList.add('live'); $('#svc-text').textContent = 'Connected';
-  { const ws = friendlyWorkspace(model.actor.tenantId); $('#account').textContent = ws === 'your workspace' ? `Signed in · ${model.actor.role}` : `${ws} · ${model.actor.role}`; $('#account-name').textContent = ws === 'your workspace' ? 'Account' : ws; $('#account-avatar').textContent = $('#account-name').textContent.charAt(0).toUpperCase(); }
+  { const ws = workspaceName(model.actor); $('#account').textContent = ws === 'your workspace' ? `Signed in · ${model.actor.role}` : `${ws} · ${model.actor.role}`; $('#account-name').textContent = ws === 'your workspace' ? 'Account' : ws; $('#account-avatar').textContent = $('#account-name').textContent.charAt(0).toUpperCase(); }
   $('#admin-link').hidden = !isAdminRole(model.actor.role);
   renderSessions(); loadSessions();
   loadEmojiMode().catch(() => {});
   loadAgentIcons().catch(() => {});
-  if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${friendlyWorkspace(model.actor.tenantId)}!`, 'ok'); history.replaceState(null, '', location.pathname + location.hash); }
+  if (new URLSearchParams(location.search).get('joined') === '1') { toast(`Welcome to ${workspaceName(model.actor)}!`, 'ok'); history.replaceState(null, '', location.pathname + location.hash); }
   const initialView = viewFromHash(location.hash, { phone: narrow() });
   show(initialView);
   if (hashIsGuard()) openGuardPanel();
