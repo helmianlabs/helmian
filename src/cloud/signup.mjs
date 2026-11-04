@@ -57,6 +57,10 @@ function cookieValue(request, name) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+// Matches REMEMBERED_SESSION_MS in identity-gateway.mjs and the OIDC
+// callback's cookie in live-admin.mjs: /app sign-ins are remembered 30 days.
+const APP_SESSION_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
 export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBearer = verifyClerkSessionBearer, getPoolImpl = getPool } = {}) {
   return async function handleSignup(request, response) {
     if (request.method !== 'POST') {
@@ -65,19 +69,23 @@ export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBeare
       return;
     }
 
-    // Verify session: try cookie first, then Bearer token
+    // Verify session: the Clerk Bearer token is the identity that just
+    // signed up, so it decides. The app-session cookie is only a fallback
+    // for callers presenting no token — cookie-first let a stale remembered
+    // session in this browser outrank the fresh signup's own identity.
     let claimed = null;
+    let identity = null;
     try {
-      const identity = getIdentityImpl();
-      const cookieSession = cookieValue(request, 'helmion_admin_session');
-      if (cookieSession) {
-        claimed = identity.getSession(cookieSession);
+      identity = getIdentityImpl();
+      const auth = request.headers?.authorization || '';
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+      if (token) {
+        try { claimed = await verifyBearer(token); } catch { claimed = null; }
       }
       if (!claimed?.subject) {
-        const auth = request.headers?.authorization || '';
-        const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-        if (token) {
-          claimed = await verifyBearer(token);
+        const cookieSession = cookieValue(request, 'helmion_admin_session');
+        if (cookieSession) {
+          claimed = identity.getSession(cookieSession);
         }
       }
     } catch {
@@ -90,6 +98,25 @@ export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBeare
       response.end(JSON.stringify({ error: 'Not authenticated' }));
       return;
     }
+
+    // Rotate the browser's app session onto the subject that just proved
+    // itself here. /app resolves identity and workspace from the
+    // helmion_admin_session cookie alone, and that cookie is otherwise set
+    // only by the OIDC callback — without this rotation, a browser holding
+    // a previous user's remembered session keeps landing in that user's
+    // workspace after a fresh signup, and its writes land in that tenant.
+    // Cookie shape mirrors the OIDC callback's (live-admin.mjs): same name
+    // at both paths, remembered lifetime. Best-effort: the tenant outcome
+    // below is already decided and must not fail with the rotation.
+    const appSessionCookies = async () => {
+      try {
+        if (typeof identity?.createSession !== 'function') return [];
+        const { sessionId } = await identity.createSession({ subject, remember: true });
+        if (!sessionId) return [];
+        const options = (path) => `Path=${path}; HttpOnly; Secure; SameSite=Lax`;
+        return ['/admin', '/api/admin'].map((path) => `helmion_admin_session=${sessionId}; Max-Age=${APP_SESSION_COOKIE_MAX_AGE_SECONDS}; ${options(path)}`);
+      } catch { return []; }
+    };
 
     let client;
     try {
@@ -107,7 +134,8 @@ export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBeare
         [subject]
       );
       if (existing.rowCount > 0) {
-        response.writeHead(200, { 'content-type': 'application/json' });
+        const cookies = await appSessionCookies();
+        response.writeHead(200, { 'content-type': 'application/json', ...(cookies.length ? { 'set-cookie': cookies } : {}) });
         response.end(JSON.stringify({
           tenantId: existing.rows[0].tenant_id,
           created: false,
@@ -154,7 +182,8 @@ export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBeare
 
       await client.query('commit');
 
-      response.writeHead(201, { 'content-type': 'application/json' });
+      const cookies = await appSessionCookies();
+      response.writeHead(201, { 'content-type': 'application/json', ...(cookies.length ? { 'set-cookie': cookies } : {}) });
       response.end(JSON.stringify({
         tenantId,
         created: true,

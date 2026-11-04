@@ -36,6 +36,17 @@ test('sealed mode: login and session survive a different gateway instance', asyn
   await assert.rejects(() => b.finishLogin('code', done.sessionId), /state invalid/, 'session token is not a login state');
 });
 
+test('createSession mints a remembered session any gateway instance can open', async () => {
+  const a = createIdentityGateway({ env, fetchImpl });
+  const b = createIdentityGateway({ env, fetchImpl });
+  const { sessionId } = a.createSession({ subject: 'user_newbie1', remember: true });
+  const session = b.getSession(sessionId);
+  assert.equal(session.subject, 'user_newbie1');
+  assert.equal(session.remembered, true);
+  assert.ok(session.expiresAt > Date.now() + 29 * 24 * 60 * 60_000, 'remembered session lives ~30 days');
+  assert.throws(() => a.createSession({}), /subject is required/);
+});
+
 test('sealed mode refuses short secrets', () => {
   assert.throws(() => createIdentityGateway({ env: { ...env, HELMION_ADMIN_SESSION_SECRET: 'short' }, fetchImpl }), /32 characters/);
 });

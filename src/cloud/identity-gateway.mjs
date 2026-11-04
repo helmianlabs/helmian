@@ -206,18 +206,38 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     if (typeof tokenBody?.id_token !== 'string') throw Object.assign(new Error('OIDC token response has no id_token'), { stage: 'id_token_missing' });
     const claims = await stage('id_token_invalid', () => verifyJwt(tokenBody.id_token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl }));
     const tokenExpiry = Number(claims.exp) * 1_000;
-    const session = { subject: claims.sub, email: typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : null, emailVerified: claims.email_verified === true, expiresAt: remember ? Date.now() + lifetime : Math.min(Date.now() + lifetime, tokenExpiry), ...(remember ? { remembered: true } : {}) };
+    const minted = createSession({
+      subject: claims.sub,
+      email: typeof claims.email === 'string' ? claims.email.trim().toLowerCase() : null,
+      emailVerified: claims.email_verified === true,
+      remember,
+      // Unsealed, non-remembered sessions stay capped by the ID token's
+      // own expiry (the pre-extraction finishLogin behavior, unchanged).
+      ...(sealed || remember ? {} : { expiresAtCap: tokenExpiry }),
+    });
+    return { sessionId: minted.sessionId, identity: { subject: claims.sub } };
+  }
+
+  // Mint an app session for an already-proven subject. finishLogin uses it
+  // after the OIDC exchange; the signup handler uses it to rotate the
+  // browser's app session onto the account that just signed up, so /app
+  // resolves the workspace from the new user instead of whoever held a
+  // remembered session in this browser before.
+  function createSession({ subject, email = null, emailVerified = false, remember = false, expiresAtCap = null } = {}) {
+    if (typeof subject !== 'string' || !subject) throw new Error('session subject is required');
+    const lifetime = remember ? REMEMBERED_SESSION_MS : ADMIN_SESSION_MS;
+    const session = { subject, email, emailVerified: emailVerified === true, expiresAt: Date.now() + lifetime, ...(remember ? { remembered: true } : {}) };
     if (sealed) {
       // Sessions outlive the short ID token: 8h for owner-console logins,
       // 30 days for /app (consumer) logins so testers stay signed in.
-      session.expiresAt = Date.now() + lifetime;
-      return { sessionId: sealed.seal('session', session), identity: { subject: claims.sub } };
+      return { sessionId: sealed.seal('session', session) };
     }
+    if (Number.isFinite(expiresAtCap)) session.expiresAt = Math.min(session.expiresAt, expiresAtCap);
     const sessionId = randomUUID();
     prune();
     if (sessions.size >= MAX_IDENTITY_STATE_ENTRIES) throw new Error('OIDC session capacity reached');
     sessions.set(sessionId, session);
-    return { sessionId, identity: { subject: claims.sub } };
+    return { sessionId };
   }
 
   function getSession(sessionId) {
@@ -234,6 +254,7 @@ export function createIdentityGateway({ env = process.env, fetchImpl = fetch } =
     redirectUri,
     beginLogin,
     finishLogin,
+    createSession,
     getSession,
     revokeSession: (sessionId) => sessions.delete(sessionId),
     verifyAccessToken: (token) => metadata().then((endpoints) => verifyJwt(token, { issuer, audience: clientId, jwksUri: endpoints.jwksUri, fetchImpl })),
