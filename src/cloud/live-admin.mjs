@@ -660,11 +660,14 @@ export async function createLiveHelmianCloudAdminHandler({
       send(response, 403, JSON.stringify({ valid: false, code: 'ADMIN_ORIGIN_REQUIRED' }));
       return true;
     }
-    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_PAGE_PATH) { send(response, 308, '', 'text/plain; charset=utf-8', { location: `${LIVE_ADMIN_PAGE_PATH}/` }); return true; }
-    if (request.method === 'GET' && requestUrl.pathname === `${LIVE_ADMIN_PAGE_PATH}/`) { send(response, 200, page, 'text/html; charset=utf-8'); return true; }
-    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_SCRIPT_PATH) { send(response, 200, script, 'text/javascript; charset=utf-8'); return true; }
-    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ENVOY_CLIENT_PATH) { send(response, 200, envoyClientScript, 'text/javascript; charset=utf-8'); return true; }
-    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH) { send(response, 200, coraConfigClientScript, 'text/javascript; charset=utf-8'); return true; }
+    // The /admin console pages are HIDDEN (Troy's order, 2026-11-04): the
+    // console is the first mock-up, retired from view — not deleted. Its
+    // page and asset routes 302 to the workbench (/app/) so nobody can go
+    // to it; the page files and this handler's plumbing stay in place. The
+    // plumbing under the same prefix is NOT hidden: /admin/auth/* (the
+    // workbench's own sign-in/sign-out) and /api/admin/* (its session and
+    // Envoy APIs) keep behaving exactly as before.
+    if (request.method === 'GET' && (requestUrl.pathname === LIVE_ADMIN_PAGE_PATH || requestUrl.pathname === `${LIVE_ADMIN_PAGE_PATH}/` || requestUrl.pathname === LIVE_ADMIN_SCRIPT_PATH || requestUrl.pathname === LIVE_ADMIN_ENVOY_CLIENT_PATH || requestUrl.pathname === LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH)) { send(response, 302, '', 'text/plain; charset=utf-8', { location: `${LIVE_APP_PAGE_PATH}/` }); return true; }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGIN_PATH) {
       try {
         const login = await identity.beginLogin();
