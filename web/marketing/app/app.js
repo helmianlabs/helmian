@@ -303,7 +303,7 @@ $('#new-project-form').onsubmit = async (e) => {
 
 // ---- sessions (local) ----
 const SESSIONS_SHOWN = 4;
-const PROVIDER_LABEL = { gemini: 'Gemini', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', xai: 'Grok' };
+const PROVIDER_LABEL = { gemini: 'Gemini', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', xai: 'Grok', mistral: 'Mistral' };
 // Default names ("Gemini session") say nothing; show provider + when it started instead.
 function sessionTitle(s) {
   const prov = PROVIDER_LABEL[String(s.provider).toLowerCase()] ?? s.provider;
