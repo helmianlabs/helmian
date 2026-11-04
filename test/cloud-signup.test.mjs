@@ -43,6 +43,70 @@ test('returning user (already has a workspace) also gets the rotated app session
   assert.equal(r.status, 200); assert.deepEqual(minted, ['user_x1234']);
   assert.equal((r.headers?.['set-cookie'] ?? []).length, 2);
 });
+test('two concurrent signups for one subject create exactly one workspace', async () => {
+  // Fake pool with Postgres semantics for this path: membership reads see
+  // only committed rows, inserts stage until commit, and the per-subject
+  // advisory lock blocks until the holding transaction ends. Both racers
+  // pass the outside-transaction pre-check; without the in-lock re-check
+  // both would commit a tenant (the 2026-11-04 live duplicates).
+  const committed = { tenants: [], memberships: [] };
+  let lockOwner = null;
+  const lockWaiters = [];
+  const acquireLock = (client) => new Promise((resolve) => {
+    if (!lockOwner) { lockOwner = client; resolve(); } else lockWaiters.push(() => { lockOwner = client; resolve(); });
+  });
+  const releaseLock = (client) => {
+    if (lockOwner !== client) return;
+    lockOwner = null;
+    const next = lockWaiters.shift();
+    if (next) next();
+  };
+  const makeClient = () => {
+    const staged = { tenants: [], memberships: [] };
+    const client = {
+      async query(sql, args = []) {
+        const s = String(sql).trim().toLowerCase();
+        if (s === 'begin') return {};
+        if (s === 'commit') {
+          committed.tenants.push(...staged.tenants); committed.memberships.push(...staged.memberships);
+          staged.tenants = []; staged.memberships = []; releaseLock(client); return {};
+        }
+        if (s === 'rollback') { staged.tenants = []; staged.memberships = []; releaseLock(client); return {}; }
+        if (s.includes('pg_advisory_xact_lock')) { await acquireLock(client); return { rowCount: 1, rows: [] }; }
+        if (s.startsWith('select tenant_id from helmion.tenant_memberships')) {
+          const rows = committed.memberships
+            .filter((m) => m.subject === args[0] && m.active)
+            .sort((a, b) => (a.created_at - b.created_at) || (a.tenant_id < b.tenant_id ? -1 : 1))
+            .map((m) => ({ tenant_id: m.tenant_id }));
+          return { rowCount: rows.length, rows: rows.slice(0, 1) };
+        }
+        if (s.startsWith('insert into helmion.tenants')) { staged.tenants.push({ tenant_id: args[0] }); return { rowCount: 1, rows: [] }; }
+        if (s.startsWith('insert into helmion.tenant_memberships')) {
+          staged.memberships.push({ tenant_id: args[0], subject: args[1], active: true, created_at: committed.memberships.length + staged.memberships.length + 1 });
+          return { rowCount: 1, rows: [] };
+        }
+        if (s.startsWith('insert into helmion.envoy_channels')) return { rowCount: 1, rows: [{ id: 'chan-1' }] };
+        return { rowCount: 1, rows: [] };
+      },
+      release() {},
+    };
+    return client;
+  };
+  const h = createSignupHandler({
+    getIdentityImpl: () => ({ getSession: (c) => (c === 'sealed' ? { subject: 'user_racer1' } : null) }),
+    getPoolImpl: () => ({ connect: async () => makeClient() }),
+  });
+  const req = () => ({ method: 'POST', headers: { cookie: 'helmion_admin_session=sealed' } });
+  const r1 = res(); const r2 = res();
+  await Promise.all([h(req(), r1), h(req(), r2)]);
+  assert.deepEqual([r1.status, r2.status].sort((a, b) => a - b), [200, 201]);
+  assert.equal(committed.tenants.length, 1);
+  assert.equal(committed.memberships.length, 1);
+  const winner = JSON.parse(r1.status === 201 ? r1.body : r2.body).tenantId;
+  const loser = JSON.parse(r1.status === 200 ? r1.body : r2.body).tenantId;
+  assert.equal(winner, committed.tenants[0].tenant_id);
+  assert.equal(loser, winner);
+});
 test('database down is a clean 503, not a crash', async () => {
   const h = createSignupHandler({ getIdentityImpl: () => ({ getSession: () => ({ subject: 'user_abc123' }) }), getPoolImpl: () => { throw new Error('HELMION_DATABASE_URL not set'); } });
   const r = res(); await h({ method: 'POST', headers: { cookie: 'helmion_admin_session=x' } }, r); assert.equal(r.status, 503);

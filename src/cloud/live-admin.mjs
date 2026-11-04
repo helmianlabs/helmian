@@ -412,10 +412,15 @@ export async function createLiveHelmianCloudAdminHandler({
     const client = await pool.connect();
     try {
       const membership = await client.query(
-        `select tenant_id, role from helmion.tenant_memberships where subject=$1 and active order by tenant_id`,
+        `select tenant_id, role from helmion.tenant_memberships where subject=$1 and active order by created_at asc, tenant_id asc`,
         [claimed.subject],
       );
-      if (membership.rowCount !== 1) throw Object.assign(new Error('Exactly one active organization membership is required'), { status: 403 });
+      // Duplicate active memberships can exist (signups that raced before
+      // creation took a per-subject advisory lock). Refusing them locked
+      // the account out of its own workspace forever, so resolution picks
+      // deterministically instead: the earliest-created membership — the
+      // same pick signup's checks make. Only zero memberships refuses.
+      if (membership.rowCount === 0) throw Object.assign(new Error('Exactly one active organization membership is required'), { status: 403 });
       const actor = { subject: claimed.subject, tenantId: membership.rows[0].tenant_id, role: membership.rows[0].role };
       if (claimed.viaDeviceToken === true) actor.viaDeviceToken = true;
       return actor;

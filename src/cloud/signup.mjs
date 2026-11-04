@@ -128,9 +128,12 @@ export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBeare
       return;
     }
     try {
-      // Check if user already has a tenant
+      // Check if user already has a tenant. The ordering is the resolver's
+      // pick (live-admin.mjs deriveTenantActor): earliest-created active
+      // membership wins, so this pre-check and workspace resolution always
+      // name the same workspace even if duplicate rows exist.
       const existing = await client.query(
-        'select tenant_id from helmion.tenant_memberships where subject=$1 and active order by tenant_id limit 1',
+        'select tenant_id from helmion.tenant_memberships where subject=$1 and active order by created_at asc, tenant_id asc limit 1',
         [subject]
       );
       if (existing.rowCount > 0) {
@@ -149,6 +152,31 @@ export function createSignupHandler({ getIdentityImpl = getIdentity, verifyBeare
       const displayName = `Trial workspace`;
 
       await client.query('begin');
+
+      // Race-proofing: the pre-check above runs outside a transaction, so
+      // two concurrent signups for one subject can both pass it and each
+      // create a workspace (seen live 2026-11-04: two owner rows for one
+      // subject, 59 ms apart). Serialize creation per subject with a
+      // transaction-scoped advisory lock, then re-run the membership
+      // check inside the lock — under READ COMMITTED the re-check sees
+      // the winner's committed row, and the loser takes the already-have
+      // path instead of creating a twin.
+      await client.query('select pg_advisory_xact_lock(hashtext($1))', [subject]);
+      const recheck = await client.query(
+        'select tenant_id from helmion.tenant_memberships where subject=$1 and active order by created_at asc, tenant_id asc limit 1',
+        [subject]
+      );
+      if (recheck.rowCount > 0) {
+        await client.query('commit');
+        const cookies = await appSessionCookies();
+        response.writeHead(200, { 'content-type': 'application/json', ...(cookies.length ? { 'set-cookie': cookies } : {}) });
+        response.end(JSON.stringify({
+          tenantId: recheck.rows[0].tenant_id,
+          created: false,
+          message: 'Already have a workspace'
+        }));
+        return;
+      }
 
       await client.query(
         'insert into helmion.tenants(tenant_id, display_name) values ($1,$2)',
