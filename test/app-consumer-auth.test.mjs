@@ -38,10 +38,19 @@ test('signup with return=/app remembers the app; other returns are ignored', asy
   assert.doesNotMatch(evil.headers.getSetCookie().join('\n'), /helmion_admin_return/);
 });
 
-test('logout with return=/app lands on /app/, otherwise /admin/', async (t) => {
+test('logout clears the Helmian session and continues through the Clerk sign-out handoff', async (t) => {
   const base = await harness(t);
-  assert.equal((await fetch(`${base}/admin/auth/logout?return=/app`, { redirect: 'manual' })).headers.get('location'), '/app/');
-  assert.equal((await fetch(`${base}/admin/auth/logout?return=//evil.example.com`, { redirect: 'manual' })).headers.get('location'), '/admin/');
+  // The handoff page is where the Clerk session ends (ClerkJS signOut);
+  // it lands on /app/ only for return=/app, and on /admin/ otherwise —
+  // an attacker-supplied return never reaches the handoff.
+  const app = await fetch(`${base}/admin/auth/logout?return=/app`, { redirect: 'manual' });
+  assert.equal(app.status, 302);
+  assert.equal(app.headers.get('location'), '/sign-out?return=%2Fapp%2F');
+  const cookies = app.headers.getSetCookie().join('\n');
+  assert.match(cookies, /helmion_admin_session=; Max-Age=0; Path=\/admin/);
+  assert.match(cookies, /helmion_admin_session=; Max-Age=0; Path=\/api\/admin/);
+  assert.equal((await fetch(`${base}/admin/auth/logout?return=//evil.example.com`, { redirect: 'manual' })).headers.get('location'), '/sign-out?return=%2Fadmin%2F');
+  assert.equal((await fetch(`${base}/admin/auth/logout`, { redirect: 'manual' })).headers.get('location'), '/sign-out?return=%2Fadmin%2F');
 });
 
 test('sealed gateway: remembered sessions last 30 days, default 8h', async () => {

@@ -91,16 +91,58 @@ async function main() {
     status('Sign-up is temporarily unavailable. Please try again shortly.');
     return;
   }
-  const render = () => {
-    if (clerk.isSignedIn) return void deliver(clerk, clerk.user?.primaryEmailAddress?.emailAddress ?? '');
+  let delivered = false;
+  // True while the already-signed-in choice below is on screen: the Clerk
+  // listener must not mistake the pre-existing session for a just-completed
+  // sign-up and deliver behind the visitor's back.
+  let gatePending = false;
+  const deliverOnce = () => {
+    if (delivered) return;
+    delivered = true;
+    void deliver(clerk, clerk.user?.primaryEmailAddress?.emailAddress ?? '');
+  };
+  const mountAuthForm = () => {
+    gatePending = false;
     status('Already have an account? Use the “Sign in” link inside the form.');
     const mount = $('#gs-clerk'); mount.replaceChildren();
     const opts = { forceRedirectUrl: location.href, signInForceRedirectUrl: location.href };
     if (clerk.mountSignUp) clerk.mountSignUp(mount, opts); else clerk.mountSignIn(mount, opts);
   };
-  let delivered = false;
-  clerk.addListener?.(() => { if (clerk.isSignedIn && !delivered) { delivered = true; render(); } });
-  if (clerk.isSignedIn) delivered = true;
+  // Arriving already signed in must not sweep the visitor into the existing
+  // workspace: get-started is also how a signed-in user deliberately starts
+  // a NEW account. Delivering is one explicit click, and the new-account
+  // path ends the current Clerk session first so the sign-up form can
+  // register someone else.
+  const showSignedInGate = () => {
+    gatePending = true;
+    const email = clerk.user?.primaryEmailAddress?.emailAddress ?? '';
+    $('#gs-title').textContent = 'You are already signed in';
+    $('#gs-lede').textContent = email ? `Signed in as ${email}.` : 'Signed in.';
+    status('Open your workspace, or sign out here to create a different account.');
+    const mount = $('#gs-clerk'); mount.replaceChildren();
+    const open = el('button', { type: 'button' }, 'Open my workspace');
+    open.addEventListener('click', deliverOnce);
+    const fresh = el('button', { type: 'button' }, 'Create a new account');
+    fresh.addEventListener('click', async () => {
+      open.disabled = true;
+      fresh.disabled = true;
+      try {
+        await clerk.signOut();
+      } catch {
+        showSignedInGate();
+        status('Still signed in — the sign-out did not complete. Try again, or open your workspace.');
+        return;
+      }
+      $('#gs-title').textContent = 'Create your free account';
+      mountAuthForm();
+    });
+    mount.append(open, fresh);
+  };
+  const render = () => {
+    if (clerk.isSignedIn) return void showSignedInGate();
+    mountAuthForm();
+  };
+  clerk.addListener?.(() => { if (clerk.isSignedIn && !delivered && !gatePending) deliverOnce(); });
   render();
 }
 void main();
