@@ -466,7 +466,9 @@ test('live admin is mounted under /admin on the CLM port and never replaces /llm
     redirect: 'manual', headers: { cookie: 'helmion_admin_session=active-session' },
   });
   assert.equal(logout.status, 302);
-  assert.equal(logout.headers.get('location'), '/admin/');
+  // Logout continues through the sign-out handoff, which ends the Clerk
+  // session before landing on the console.
+  assert.equal(logout.headers.get('location'), '/sign-out?return=%2Fadmin%2F');
 });
 
 test('session and readiness routes require live Neon owner/admin membership and remain tenant scoped', async (t) => {

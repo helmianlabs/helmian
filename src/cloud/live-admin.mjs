@@ -79,6 +79,9 @@ export const LIVE_APP_PAGE_PATH = '/app';
 export const LIVE_ADMIN_SIGNUP_PATH = '/admin/auth/signup';
 export const LIVE_ADMIN_CALLBACK_PATH = '/admin/auth/callback';
 export const LIVE_ADMIN_LOGOUT_PATH = '/admin/auth/logout';
+// Marketing page that finishes a sign-out on the Clerk side (see the logout
+// handler): the browser step that ends the Clerk session itself.
+export const LIVE_SIGN_OUT_HANDOFF_PATH = '/sign-out';
 export const LIVE_ADMIN_OVERVIEW_PATH = '/api/admin/overview';
 export const LIVE_ADMIN_RELEASE_PATH = '/api/admin/release';
 let releaseCache = { at: 0, body: null };
@@ -793,7 +796,15 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_LOGOUT_PATH) {
       identity.revokeSession?.(cookieValue(request, 'helmion_admin_session'));
       const after = requestUrl.searchParams.get('return') === LIVE_APP_PAGE_PATH ? `${LIVE_APP_PAGE_PATH}/` : `${LIVE_ADMIN_PAGE_PATH}/`;
-      send(response, 302, '', 'text/plain; charset=utf-8', { location: after, 'set-cookie': [
+      // Clearing the Helmian cookie is only half a sign-out: the Clerk
+      // browser session on the account host survives it, and the next login
+      // silently re-authenticates the same Clerk user. Logout therefore
+      // continues through the sign-out handoff page, which ends the Clerk
+      // session with ClerkJS signOut() (the call the Herald shell already
+      // uses) and then lands on `after`. The handoff honors only the two
+      // destinations minted here, so it cannot become an open redirect.
+      const location = `${LIVE_SIGN_OUT_HANDOFF_PATH}?return=${encodeURIComponent(after)}`;
+      send(response, 302, '', 'text/plain; charset=utf-8', { location, 'set-cookie': [
         `helmion_admin_session=; Max-Age=0; ${cookieOptions('/admin')}`,
         `helmion_admin_session=; Max-Age=0; ${cookieOptions('/api/admin')}`,
       ] });
