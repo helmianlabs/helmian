@@ -1,5 +1,5 @@
 // Workspace agent icons: per-user custom emoji for the fixed provider list
-// (Maestro, Claude, ChatGPT, Grok, Gemini). Personal customization only —
+// (Maestro, Claude, ChatGPT, Grok, Gemini, Mistral). Personal customization only —
 // presentation, never authority. Plain emoji_mode does not strip these:
 // they are the user's own choice.
 //
@@ -11,7 +11,7 @@ import { appendAuditEvent } from './audit-event-repository.mjs';
 
 export const AGENT_ICONS_PATH = '/api/admin/workspace/agent-icons';
 
-export const AGENT_PROVIDERS = Object.freeze(['Maestro', 'Claude', 'ChatGPT', 'Grok', 'Gemini']);
+export const AGENT_PROVIDERS = Object.freeze(['Maestro', 'Claude', 'ChatGPT', 'Grok', 'Gemini', 'Mistral']);
 
 const GRAPHEME = new Intl.Segmenter('en', { granularity: 'grapheme' });
 

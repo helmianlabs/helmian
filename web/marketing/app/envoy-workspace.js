@@ -7,8 +7,8 @@ import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, p
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
 import { createConnectFields } from './connect-fields.mjs';
 
-const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini'];
-const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini' };
+const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral'];
+const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral' };
 const AVATAR = { maestro: 'maestro', claude: 'claude', openai: 'chatgpt', grok: 'grok', gemini: 'gemini' };
 const ALIAS = { maestro: 'maestro', manager: 'maestro', claude: 'claude', chatgpt: 'openai', openai: 'openai', gpt: 'openai', grok: 'grok', xai: 'grok', gemini: 'gemini', mistral: 'mistral', lechat: 'mistral', runway: 'runway', ollama: 'ollama' };
 export const CUSTOM_AGENT_EMOJIS = ['🤖', '🦀', '🧐', '🤠', '🔥', '🧠', '⚡', '🛡️', '🎯', '🚀', '🦊', '🦉', '🐝', '🛠️', '📊', '🎨', '😀', '😎', '🤓', '🥷', '🧙', '🦾', '🐉', '🌟'];
