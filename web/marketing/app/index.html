@@ -74,10 +74,29 @@
 
     <footer class="side-foot">
       <div class="svc"><span id="svc-dot" class="dot"></span><span id="svc-text">Cloud service · Connecting…</span></div>
-      <div id="account" class="faint sm"></div>
-      <div class="foot-links"><a id="admin-link" href="/admin/" hidden>Owner console</a><a id="signout" href="/admin/auth/logout?return=/app" hidden>Sign out</a></div>
+      <div class="acct-wrap">
+        <button id="account-menu-btn" class="acct-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">
+          <span id="account-avatar" class="acct-avatar" aria-hidden="true">A</span>
+          <span class="acct-btn-text"><span id="account-name" class="acct-name">Account</span><span id="account" class="faint sm"></span></span>
+          <span class="acct-chev" aria-hidden="true">▾</span>
+        </button>
+        <div id="account-menu" class="acct-menu" role="menu" aria-label="Account" hidden>
+          <button class="acct-item" type="button" role="menuitem" data-acct-item="settings">Settings</button>
+          <button class="acct-item" type="button" role="menuitem" data-acct-item="shortcuts">Keyboard shortcuts</button>
+          <button class="acct-item" type="button" role="menuitem" data-acct-item="downloads">Download apps</button>
+          <button class="acct-item" type="button" role="menuitem" data-acct-item="report">Report an issue</button>
+          <a class="acct-item" role="menuitem" href="/admin/auth/logout?return=/app">Log out</a>
+        </div>
+      </div>
+      <div class="foot-links"><a id="admin-link" href="/admin/" hidden>Owner console</a></div>
     </footer>
   </aside>
+
+  <!-- Bottom-corner account panel: Settings / shortcuts / downloads / report render here (app.js). -->
+  <div id="account-panel" class="acct-panel" role="dialog" aria-labelledby="account-panel-title" hidden>
+    <header class="acct-panel-head"><strong id="account-panel-title">Settings</strong><button id="account-panel-close" class="icon-btn sm" type="button" aria-label="Close panel">✕</button></header>
+    <div id="account-panel-body" class="acct-panel-body"></div>
+  </div>
 
   <!-- CENTER -->
   <main id="main" class="center">

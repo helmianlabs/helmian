@@ -1,5 +1,6 @@
 import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, friendlyWorkspace } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2708,6 +2709,114 @@ wireEmptyHints();
   };
 }
 
+// ---- bottom-corner account menu (sidebar foot; model: account-menu.mjs) ----
+const acctBtn = $('#account-menu-btn');
+const acctMenu = $('#account-menu');
+const acctPanel = $('#account-panel');
+const acctPanelBody = $('#account-panel-body');
+function closeAccountMenu() { acctMenu.hidden = true; acctBtn.setAttribute('aria-expanded', 'false'); }
+function closeAccountPanel() { acctPanel.hidden = true; }
+function openAccountPanel(title) {
+  $('#account-panel-title').textContent = title;
+  acctPanel.hidden = false;
+  closeAccountMenu();
+}
+acctBtn.onclick = (e) => {
+  e.stopPropagation();
+  if (acctMenu.hidden) { acctMenu.hidden = false; acctBtn.setAttribute('aria-expanded', 'true'); }
+  else closeAccountMenu();
+};
+document.addEventListener('click', (e) => { if (!e.target.closest('.acct-wrap')) closeAccountMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeAccountMenu(); closeAccountPanel(); } });
+$('#account-panel-close').onclick = closeAccountPanel;
+
+async function clerkUser() {
+  // The shell's lazy Clerk load (Devices section): asking it for a
+  // session token also settles its user. Not configured / signed out →
+  // null, and the identity panel simply shows workspace + role.
+  await heraldToken().catch(() => null);
+  return heraldClerk?.user ?? null;
+}
+
+function renderAccountSettings() {
+  openAccountPanel('Settings');
+  const draw = (user) => {
+    const m = accountIdentityModel(state.actor ?? {}, user);
+    if (user) { $('#account-name').textContent = m.headline; $('#account-avatar').textContent = m.initial; }
+    const kv = el('div', 'kv');
+    for (const r of m.rows) kv.append(row(r.label, r.value));
+    const foot = el('div', 'row-btns left'); foot.style.marginTop = '12px';
+    const open = el('a', 'btn sm', 'Open the Settings page'); open.href = '#settings';
+    open.onclick = () => closeAccountPanel();
+    foot.append(open);
+    acctPanelBody.replaceChildren(kv, foot);
+  };
+  draw(null);
+  clerkUser().then(draw).catch(() => {});
+}
+
+function renderAccountShortcuts() {
+  openAccountPanel('Keyboard shortcuts');
+  const list = el('div');
+  for (const s of SHORTCUTS) {
+    const d = el('div', 'acct-shortcut');
+    d.append(el('kbd', null, s.keys), el('span', 'what', s.action), el('span', 'faint sm', s.where));
+    list.append(d);
+  }
+  acctPanelBody.replaceChildren(list);
+}
+
+async function renderAccountDownloads() {
+  openAccountPanel('Download apps');
+  acctPanelBody.replaceChildren(el('p', 'muted sm', 'Checking for the latest installer…'));
+  let release = null;
+  try { release = await (await fetch('/api/latest-release', { credentials: 'same-origin' })).json(); } catch {}
+  const list = el('div');
+  for (const d of downloadsModel(release)) {
+    const line = el('div', 'acct-dl');
+    line.append(el('span', 'plat', d.platform));
+    if (d.ready) {
+      const a = el('a', 'btn primary sm', 'Download'); a.href = d.url;
+      line.append(el('span', 'note muted sm', d.version ? `${d.name} · ${d.version}` : d.name), a);
+    } else {
+      line.append(el('span', 'note muted sm', d.note));
+    }
+    list.append(line);
+  }
+  if (!acctPanel.hidden) acctPanelBody.replaceChildren(list);
+}
+
+function renderAccountReport() {
+  openAccountPanel('Report an issue');
+  const form = el('form', 'acct-issue');
+  const subLabel = el('label', null, 'What is it about?');
+  const subject = el('input'); subject.type = 'text'; subject.maxLength = 120; subject.placeholder = 'Short summary';
+  subLabel.append(subject);
+  const detLabel = el('label', null, 'What happened?');
+  const details = el('textarea'); details.maxLength = 4000; details.placeholder = 'What you did, what you expected, and what happened instead.';
+  detLabel.append(details);
+  const note = el('p', 'muted sm', 'This opens your email app, addressed to the Helmian team. Nothing is sent until you press send there.');
+  const send = el('button', 'btn primary', 'Open email to send'); send.type = 'submit';
+  form.append(subLabel, detLabel, note, send);
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    location.href = reportIssueHref({ subject: subject.value, details: details.value, page: location.hash || location.pathname });
+    closeAccountPanel();
+  };
+  acctPanelBody.replaceChildren(form);
+  subject.focus();
+}
+
+for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
+  b.onclick = () => {
+    const item = b.dataset.acctItem;
+    if (item === 'settings') renderAccountSettings();
+    else if (item === 'shortcuts') renderAccountShortcuts();
+    else if (item === 'downloads') renderAccountDownloads();
+    else if (item === 'report') renderAccountReport();
+  };
+}
+
 // ---- boot ----
 async function boot() {
   let model;
@@ -2736,8 +2845,8 @@ async function boot() {
   wireRail();
   state.actor = model.actor;
   $('#svc-dot').classList.add('live'); $('#svc-text').textContent = 'Connected';
-  { const ws = friendlyWorkspace(model.actor.tenantId); $('#account').textContent = ws === 'your workspace' ? `Signed in · ${model.actor.role}` : `${ws} · ${model.actor.role}`; }
-  $('#admin-link').hidden = !isAdminRole(model.actor.role); $('#signout').hidden = false;
+  { const ws = friendlyWorkspace(model.actor.tenantId); $('#account').textContent = ws === 'your workspace' ? `Signed in · ${model.actor.role}` : `${ws} · ${model.actor.role}`; $('#account-name').textContent = ws === 'your workspace' ? 'Account' : ws; $('#account-avatar').textContent = $('#account-name').textContent.charAt(0).toUpperCase(); }
+  $('#admin-link').hidden = !isAdminRole(model.actor.role);
   renderSessions(); loadSessions();
   loadEmojiMode().catch(() => {});
   loadAgentIcons().catch(() => {});
