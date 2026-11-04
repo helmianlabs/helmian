@@ -2,7 +2,7 @@
 
 Herald is Helmian on a phone. The phone is a paired view and deliberate input
 surface for one running desktop-owned session. It is not a terminal, file
-browser, provider client, or a dependency on the Thinking Buddy product.
+browser, provider client, or a dependency on the Capstone Foundry product.
 
 ## Files
 
@@ -36,7 +36,7 @@ The existing `../relay/` polling protocol is the starting transport layer. It
 already proved cursor replay, presence, reconnect/outbox, and bounded text-frame
 delivery through Vercel/Neon. Herald must put its own pairing, device identity,
 typed session messages, scopes, context checks, and audit around that transport.
-It must not directly reuse Thinking Buddy's public proxy, fixed channel, shared
+It must not directly reuse Capstone Foundry's public proxy, fixed channel, shared
 authority, or `hands.mjs` execution path.
 
 The real adapter must provide only:

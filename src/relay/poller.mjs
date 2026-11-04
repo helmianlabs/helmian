@@ -8,7 +8,7 @@
 // held-open WebSocket is nearly free on CPU and expensive on memory: at Standard
 // (2 GB) in iad1, one socket open around the clock reserves 48 GB-hrs a day
 // against a Hobby allowance of 360 GB-hrs a month — the entire month in about
-// seven and a half days, on the same plan as Troy's live ThinkinBuddy app.
+// seven and a half days, on the same plan as Troy's live Capstone Foundry app.
 //
 // A poll holds an instance for the length of one small query. At the cold
 // interval that is a couple of percent of the monthly allowance, so this can

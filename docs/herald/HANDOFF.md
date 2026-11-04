@@ -43,18 +43,18 @@ Desktop-owned Maestro session
 Official provider API / approved local capability
 ```
 
-Thinking Buddy must not remain a required product in this chain. Its proven
+Capstone Foundry must not remain a required product in this chain. Its proven
 relay transport is a useful starting point, but `hands.mjs`, the anonymous
 browser proxy, direct provider secrets, a generic shell, file browser,
 installer, or hidden command path do not belong in Herald.
 
 ## Existing relay: reuse it, but do not expose it unchanged
 
-The connection previously proven with Thinking Buddy is real. Its deployed path
+The connection previously proven with Capstone Foundry is real. Its deployed path
 is HTTP polling, not the pending WebSocket implementation:
 
 ```text
-Thinking Buddy browser
+Capstone Foundry browser
   -> Vercel /api/relay-proxy
   -> authenticated /api/relay-http
   -> Neon relay message/presence tables
@@ -171,7 +171,7 @@ selected-project/session checks, explicit approvals, and immutable audit.
   phone/relay/desktop fixture now passes.
 - A first-party cloud ingress endpoint that validates Herald's device identity
   before calling the new trusted-ingress polling adapter. The adapter and typed
-  messages exist; no existing Thinking Buddy endpoint was changed.
+  messages exist; no existing Capstone Foundry endpoint was changed.
 - Reconnection/status synchronization and push notification delivery.
 - Live phone Voice input integration.
 
