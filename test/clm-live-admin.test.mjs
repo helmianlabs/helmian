@@ -186,13 +186,15 @@ test('Cora capability explorer exposes fixed policy classes, hides admin routing
   const injected = await fetch(`${adminApp.url}${LIVE_ADMIN_CORA_CAPABILITIES_PATH}?provider=x`, { headers: { cookie: 'helmion_admin_session=active-session' } }); assert.equal(injected.status, 400);
 });
 
-test('cloud admin serves every ES module imported by the browser entrypoint', async (t) => {
+test('cloud admin console assets are hidden with the console (302 to /app/)', async (t) => {
+  // The console is hidden, not deleted (Troy's order, 2026-11-04): the ES
+  // modules the console page imported are no longer served — every console
+  // asset path redirects to the workbench like the page itself.
   const app = await fixture(); t.after(app.close);
   for (const path of [LIVE_ADMIN_SCRIPT_PATH, LIVE_ADMIN_ENVOY_CLIENT_PATH, LIVE_ADMIN_CORA_CONFIG_CLIENT_PATH]) {
-    const response = await fetch(`${app.url}${path}`);
-    assert.equal(response.status, 200, path);
-    assert.match(response.headers.get('content-type') ?? '', /javascript/);
-    assert.notEqual((await response.text()).trim(), '');
+    const response = await fetch(`${app.url}${path}`, { redirect: 'manual' });
+    assert.equal(response.status, 302, path);
+    assert.equal(response.headers.get('location'), '/app/', path);
   }
 });
 
@@ -433,16 +435,16 @@ test('live admin is mounted under /admin on the CLM port and never replaces /llm
   const root = await fetch(`${app.url}/`);
   const llm = await fetch(`${app.url}/llm`);
   const mount = await fetch(`${app.url}${LIVE_ADMIN_PAGE_PATH}`, { redirect: 'manual' });
-  const page = await fetch(`${app.url}${LIVE_ADMIN_PAGE_PATH}/`);
+  const page = await fetch(`${app.url}${LIVE_ADMIN_PAGE_PATH}/`, { redirect: 'manual' });
   assert.equal(root.status, 426);
   assert.equal(llm.status, 426);
-  assert.equal(mount.status, 308);
-  assert.equal(mount.headers.get('location'), '/admin/');
-  assert.equal(page.status, 200);
-  assert.match(page.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/u);
-  assert.match(page.headers.get('content-security-policy') ?? '', /script-src 'self'/u);
-  assert.doesNotMatch(page.headers.get('content-security-policy') ?? '', /script-src 'unsafe-inline'/u);
-  assert.equal(page.headers.get('x-frame-options'), 'DENY');
+  // The console pages are hidden (Troy's order, 2026-11-04): /admin and
+  // /admin/ 302 to the workbench instead of serving the mock-up console.
+  // The auth plumbing asserted below is unchanged.
+  assert.equal(mount.status, 302);
+  assert.equal(mount.headers.get('location'), '/app/');
+  assert.equal(page.status, 302);
+  assert.equal(page.headers.get('location'), '/app/');
   assert.equal((await fetch(`${app.url}/auth/login`)).status, 426);
   for (const sibling of ['/administrator', '/administer', '/api/administrator']) {
     assert.equal((await fetch(`${app.url}${sibling}`)).status, 426, `${sibling} must remain outside the admin mount`);
