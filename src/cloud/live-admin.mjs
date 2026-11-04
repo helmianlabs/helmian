@@ -390,10 +390,17 @@ export async function createLiveHelmianCloudAdminHandler({
       const membership = await client.query(
         `select tenant_id, role from helmion.tenant_memberships
          where subject=$1 and active and role in ('owner','admin')
-         order by tenant_id`,
+         order by created_at asc, tenant_id asc`,
         [claimed.subject],
       );
-      const role = membership.rowCount === 1 ? membership.rows[0]?.role : null;
+      // Duplicate active memberships can exist (signups that raced before
+      // creation took a per-subject advisory lock). Demanding exactly one
+      // locked such an account out of every admin path forever, so pick
+      // deterministically instead: the earliest-created membership — the
+      // same pick deriveTenantActor and signup's checks make. Only zero
+      // memberships refuses, with the same 403 as before.
+      if (membership.rowCount === 0) throw Object.assign(new Error('Admin tenant membership required'), { status: 403 });
+      const role = membership.rows[0].role;
       if (!['owner', 'admin'].includes(role)) throw Object.assign(new Error('Admin tenant membership required'), { status: 403 });
       return { subject: claimed.subject, tenantId: membership.rows[0].tenant_id, role };
     } finally { client.release(); }
