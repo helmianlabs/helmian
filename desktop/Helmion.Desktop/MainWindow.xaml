@@ -4749,7 +4749,8 @@
         <!-- Integrations — modern simple form (connect + key enroll only) -->
         <ScrollViewer x:Name="IntegrationsPage"
                       Visibility="Collapsed"
-                      VerticalScrollBarVisibility="Auto">
+                      VerticalScrollBarVisibility="Auto"
+                      IsVisibleChanged="IntegrationsPage_IsVisibleChanged">
           <StackPanel Margin="28,22,28,36" MaxWidth="560" HorizontalAlignment="Left">
             <TextBlock Text="Integrations"
                        FontSize="22"
@@ -4760,6 +4761,21 @@
                        Foreground="{DynamicResource FaintTextBrush}"
                        FontSize="12"
                        Margin="0,4,0,18" />
+
+            <!-- Sign in to your AI: parity with the helmian.cloud/app
+                 Integrations cards. Seat sign-ins (Email + Password +
+                 Connect) and the API-key slots write to the same cloud
+                 credential vault as the web cards; nothing is stored on
+                 this PC. Cards are built in code — see
+                 MainWindow.IntegrationsCredentials.cs. -->
+            <Border Style="{StaticResource SettingsGlassCardStyle}">
+              <StackPanel>
+                <TextBlock Text="Sign in to your AI" Style="{StaticResource SectionTitleStyle}" />
+                <TextBlock Text="Passwords and keys are stored in your workspace vault, not on this PC."
+                           Style="{StaticResource MutedStyle}" Margin="0,6,0,0" />
+                <StackPanel x:Name="CredentialCardsHost" Margin="0,4,0,0" />
+              </StackPanel>
+            </Border>
 
             <!-- Team -->
             <Border Style="{StaticResource SettingsGlassCardStyle}">

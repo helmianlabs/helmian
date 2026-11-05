@@ -89,6 +89,9 @@ public sealed partial class EnvoyCloudLinkStore
 
 public sealed record EnvoyCloudLink(string Token, string Origin, string? Organization, DateTimeOffset LinkedAt);
 
+/// <summary>One provider connection row as the Integrations cards read it — status only, never secret material.</summary>
+public sealed record EnvoyProviderConnection(string ProviderId, string AuthMode, string Lifecycle, DateTimeOffset? UpdatedAt);
+
 /// <summary>HTTP client for helmian.cloud Envoy team chat (same APIs as helmian.cloud/app).</summary>
 public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
 {
@@ -287,6 +290,59 @@ public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
         try { await SendAsync<JsonElement>(HttpMethod.Post, "/api/admin/desktop/link/revoke", token, new { }, cancellationToken); }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException) { /* best effort; local copy is cleared by the caller */ }
     }
+
+    // ---- Integrations credential cards ---------------------------------
+    // The same shared credential vault the web cards write: the cloud
+    // route stores the secret in the credential service and records the
+    // provider_connections row. The desktop link token carries the
+    // owner's subject and membership role, so the route's owner/admin
+    // gate is the person themselves. Nothing is stored on this PC.
+
+    private const string CredentialConnectPath = "/api/admin/envoy/credential/connect";
+
+    /// <summary>Lists the workspace's provider connection rows (status only) for the Integrations cards.</summary>
+    public async Task<IReadOnlyList<EnvoyProviderConnection>> ListConnectionsAsync(string token, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        var reply = await SendAsync<ConnectionListReply>(HttpMethod.Get, CredentialConnectPath, token, null, cancellationToken).ConfigureAwait(false);
+        if (reply?.Connections is null) return [];
+        return reply.Connections
+            .Where(row => !string.IsNullOrWhiteSpace(row.ProviderId))
+            .Select(row => new EnvoyProviderConnection(row.ProviderId!, row.AuthMode ?? "", row.Lifecycle ?? "", row.UpdatedAt))
+            .ToArray();
+    }
+
+    /// <summary>Stores a seat sign-in (username + password) in the shared vault. Returns the recorded connection row.</summary>
+    public async Task<EnvoyProviderConnection?> ConnectCredentialAsync(string token, string provider, string username, string password, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(username);
+        ArgumentException.ThrowIfNullOrWhiteSpace(password);
+        var reply = await SendAsync<ConnectionWriteReply>(HttpMethod.Post, CredentialConnectPath, token,
+            new { provider, username, password }, cancellationToken).ConfigureAwait(false);
+        return MapConnection(reply?.Connection);
+    }
+
+    /// <summary>Stores an API key in the shared vault (a seat's backup door, or a tool service's only road).</summary>
+    public async Task<EnvoyProviderConnection?> StoreApiKeyAsync(string token, string provider, string apiKey, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
+        var reply = await SendAsync<ConnectionWriteReply>(HttpMethod.Post, CredentialConnectPath, token,
+            new { provider, apiKey }, cancellationToken).ConfigureAwait(false);
+        return MapConnection(reply?.Connection);
+    }
+
+    private static EnvoyProviderConnection? MapConnection(ConnectionDto? row) =>
+        row is null || string.IsNullOrWhiteSpace(row.ProviderId)
+            ? null
+            : new EnvoyProviderConnection(row.ProviderId!, row.AuthMode ?? "", row.Lifecycle ?? "", row.UpdatedAt);
+
+    private sealed record ConnectionDto(string? ProviderId, string? AuthMode, string? Lifecycle, DateTimeOffset? UpdatedAt);
+    private sealed record ConnectionListReply(IReadOnlyList<ConnectionDto>? Connections);
+    private sealed record ConnectionWriteReply(ConnectionDto? Connection);
 
     private async Task<T> SendAsync<T>(HttpMethod method, string path, string token, object? payload, CancellationToken cancellationToken)
     {
