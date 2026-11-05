@@ -125,7 +125,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-badge.slack { background:rgba(74,21,75,.35); color:#E3B7E8; border:1px solid rgba(227,183,232,.4); }
 .ew-badge.pending { background:rgba(245,158,11,.12); color:var(--amber); border:1px solid rgba(245,158,11,.4); }
 .ew-messages { flex:1 1 auto; overflow-y:auto; padding:14px 18px 8px; scroll-behavior:smooth; }
-.ew-msg { display:grid; grid-template-columns:36px minmax(0,1fr); gap:10px; padding:4px 6px; border-radius:8px; animation:ew-in .22s var(--ease); }
+.ew-msg { position:relative; display:grid; grid-template-columns:36px minmax(0,1fr); gap:10px; padding:4px 6px; border-radius:8px; animation:ew-in .22s var(--ease); }
 .ew-msg:hover { background:rgba(255,255,255,.025); }
 .ew-msg.cont { padding-top:0; }
 .ew-msg.cont .ew-avatar, .ew-msg.cont .ew-meta { display:none; }
@@ -629,6 +629,26 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-ca-form .ew-field { gap:6px; }
 .ew-ca-form input, .ew-ca-form select, .ew-ca-form textarea { font-size:13.5px; }
 .ew-emoji-input { width:56px; text-align:center; font-size:18px; }
+/* Message reactions (emoji bite 3): chips under a message carry bite
+   1's own art plus the count; the member's own reaction is accent-lit.
+   The row is display:none while empty so an unreacted thread keeps its
+   density. The add control floats at the message's top-right — it
+   appears on hover/focus and stays half-visible on touch. */
+.ew-reactions { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
+.ew-reactions:empty { display:none; }
+.ew-rchip { display:inline-flex; align-items:center; gap:5px; padding:2px 8px 2px 4px; border:1px solid var(--border); border-radius:999px; background:var(--panel); color:var(--text); font-size:12px; font-weight:600; line-height:1; cursor:pointer; transition:border-color .15s, background .15s; }
+.ew-rchip:hover { border-color:var(--accent); }
+.ew-rchip.mine { border-color:var(--accent); background:rgba(14,165,233,.14); }
+.ew-rchip .ew-rchip-face { width:16px; height:16px; }
+.ew-react-add { position:absolute; top:2px; right:6px; z-index:2; display:inline-flex; align-items:center; gap:1px; padding:3px 6px; border:1px solid var(--border); border-radius:999px; background:var(--panel); color:var(--muted); cursor:pointer; opacity:0; pointer-events:none; transition:opacity .15s, border-color .15s, color .15s; }
+.ew-react-add .hx-emoji { width:15px; height:15px; }
+.ew-react-plus { font-size:12px; font-weight:700; line-height:1; }
+.ew-msg:hover .ew-react-add, .ew-msg:focus-within .ew-react-add { opacity:1; pointer-events:auto; }
+.ew-react-add:hover { border-color:var(--accent); color:var(--text); }
+@media (pointer:coarse) { .ew-react-add { opacity:.55; pointer-events:auto; } }
+.ew-react-pop { position:fixed; z-index:70; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:8px; box-shadow:0 16px 40px rgba(0,0,0,.45); }
+.ew-react-pop-head { display:flex; align-items:center; justify-content:space-between; font-size:13px; font-weight:650; padding:0 2px 6px; }
+.ew-react-grid { max-height:264px; overflow:auto; }
 /* The connect step is a form inside the form; an inset panel groups it
    as its own step, the way .ew-desk-item groups desk rows. */
 .ew-ca-connect { background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:10px 12px 12px; }
@@ -736,6 +756,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 [data-theme="light"] .ew-avatar img { box-shadow:0 0 0 2px rgba(11,110,153,.35); }
 [data-theme="light"] .ew-custom-ava, [data-theme="light"] .ew-avatar.custom { border-color:rgba(11,110,153,.4); }
 [data-theme="light"] .ew-emoji-btn.on { background:rgba(11,110,153,.14); box-shadow:0 0 0 2px rgba(11,110,153,.3); }
+[data-theme="light"] .ew-rchip.mine { background:rgba(11,110,153,.12); }
 [data-theme="light"] .ew-mnav-btn.on, [data-theme="light"] .ew-mnav-btn[aria-pressed="true"] { background:rgba(11,110,153,.12); }
 [data-theme="light"] .empty-hint { background:linear-gradient(180deg, rgba(11,110,153,.06), transparent); }
 [data-theme="light"] .getting-started { background:linear-gradient(135deg, rgba(11,110,153,.08), rgba(167,139,250,.08)); border-color:rgba(11,110,153,.35); }
