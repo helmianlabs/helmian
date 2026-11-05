@@ -255,8 +255,12 @@ function inline(text, into, onLink, linkTitle) {
   let at = 0; let m;
   while ((m = re.exec(text))) {
     into.append(text.slice(at, m.index));
-    if (m[3]) into.append(h('button', { type: 'button', class: 'link', title: linkTitle ?? m[3], onclick: () => onLink?.(m[3]) }, m[2]));
-    else if (m[4]) into.append(h('button', { type: 'button', class: 'link', title: linkTitle ?? 'Open in the workbench browser', onclick: () => onLink?.(m[4]) }, m[4]));
+    // The click closure must capture this match's URL in its own binding:
+    // m is the shared loop variable and is null by the time any click lands
+    // (the exec loop's final call), so closing over m[3]/m[4] threw on click
+    // and no link ever opened.
+    if (m[3]) { const url = m[3]; into.append(h('button', { type: 'button', class: 'link', title: linkTitle ?? url, onclick: () => onLink?.(url) }, m[2])); }
+    else if (m[4]) { const url = m[4]; into.append(h('button', { type: 'button', class: 'link', title: linkTitle ?? 'Open in the workbench browser', onclick: () => onLink?.(url) }, url)); }
     else if (m[5]) into.append(h('span', { class: 'mention' }, m[5]));
     else { into.append(m[6]); into.append(h('span', { class: 'claim' }, m[7])); }
     at = re.lastIndex;
