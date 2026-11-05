@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { CALM_POLL_MS, MAESTRO_DESK_SLUG, activityCue, activityCueText, activityCues, activityElapsed, activityLive, activityName, activityProviderNames, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, latestActivity, mirrorLinkHeader, pickerAgentContext, roomAddressed } from '../app/envoy-workspace.js';
+import { CALM_POLL_MS, MAESTRO_DESK_SLUG, activityCue, activityCueText, activityCues, activityElapsed, activityLive, activityName, activityProviderNames, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, latestActivity, mergeReactionPost, mirrorLinkHeader, pickerAgentContext, reactionActorLabel, reactionChar, reactionChipModel, roomAddressed } from '../app/envoy-workspace.js';
 import * as envoyWorkspace from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
@@ -811,4 +811,68 @@ test('bite 5: the create submit body carries authMode password_session and nothi
     channelId: 'chan-1',
     agent: { handle: 'rusty', name: 'Rusty', emoji: '🦀', provider: 'mistral', authMode: 'password_session', jobTitle: 'Rust Systems Architect', jobPrompt: 'Review memory safety.' },
   });
+});
+
+// Emoji bite 3 (reactions UI): the desk renders bite 2's summaries as
+// chips. The data contract lives in src/cloud/envoy-reactions.mjs —
+// emoji is bite 1's slug there; these pure helpers are the whole
+// client-side translation (slug -> shipped art, summary -> chip model,
+// POST response -> stored state).
+
+test('reactions: a stored slug resolves to its character only when the art ships', () => {
+  assert.equal(reactionChar('fire'), '🔥');
+  assert.equal(reactionChar('crab'), '🦀');
+  assert.equal(reactionChar('middle-finger'), '🖕');
+  assert.equal(reactionChar('not-a-slug'), null);
+  assert.equal(reactionChar(''), null);
+  assert.equal(reactionChar(undefined), null);
+});
+
+test('reactions: actor labels prefer server names, then provider names, then kind', () => {
+  assert.equal(reactionActorLabel([{ name: 'Gemini', kind: 'agent' }, { name: 'You', kind: 'human' }]), 'Gemini, You');
+  assert.equal(reactionActorLabel([{ provider: 'grok', kind: 'agent' }]), 'Grok');
+  assert.equal(reactionActorLabel([{ kind: 'agent' }]), 'Agent');
+  assert.equal(reactionActorLabel([{ kind: 'human' }]), 'Member');
+  assert.equal(reactionActorLabel([]), '');
+  assert.equal(reactionActorLabel(undefined), '');
+});
+
+test('reactions: the chip model keeps server order, flags mine, and drops what cannot render', () => {
+  const summary = [
+    { emoji: 'fire', pack: 'default', count: 2, actors: [{ name: 'Gemini', kind: 'agent' }, { name: 'You', kind: 'human' }] },
+    { emoji: 'heart-red', pack: 'default', count: 1, actors: [{ name: 'Claude', kind: 'agent' }] },
+    { emoji: 'future-pack-slug', pack: 'future', count: 5, actors: [] },
+    { emoji: 'check', pack: 'default', count: 0, actors: [] },
+  ];
+  assert.deepEqual(reactionChipModel(summary, ['fire']), [
+    { slug: 'fire', char: '🔥', count: 2, mine: true, actors: 'Gemini, You' },
+    { slug: 'heart-red', char: '❤', count: 1, mine: false, actors: 'Claude' },
+  ]);
+  assert.deepEqual(reactionChipModel([], []), []);
+  assert.deepEqual(reactionChipModel(undefined, undefined), []);
+});
+
+test('reactions: a POST toggle response folds into the store without mutating it', () => {
+  const state = { byId: { m1: [{ emoji: 'fire', count: 1, actors: [] }], m2: [{ emoji: 'check', count: 3, actors: [] }] }, mine: { m1: [], m2: ['check'] } };
+  const added = mergeReactionPost(state, { messageId: 'm1', emoji: 'fire', reacted: true, reactions: [{ emoji: 'fire', count: 2, actors: [] }] });
+  assert.deepEqual(added.byId.m1, [{ emoji: 'fire', count: 2, actors: [] }], 'the message summary is replaced wholesale');
+  assert.deepEqual(added.mine.m1, ['fire']);
+  assert.deepEqual(added.byId.m2, state.byId.m2, 'other messages are untouched');
+  assert.deepEqual(state.mine.m1, [], 'the input state is not mutated');
+  const removed = mergeReactionPost(added, { messageId: 'm1', emoji: 'fire', reacted: false, reactions: [{ emoji: 'fire', count: 1, actors: [] }] });
+  assert.deepEqual(removed.mine.m1, []);
+  assert.deepEqual(removed.byId.m1, [{ emoji: 'fire', count: 1, actors: [] }]);
+  assert.deepEqual(mergeReactionPost(state, {}), state, 'a response without a message id changes nothing');
+});
+
+test('reactions: the desk wires bite 2\'s route, the chips, and the bite-1 grid as the picker', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  for (const needle of ['/api/admin/envoy/message-reactions', 'ew-reactions', 'ew-rchip', 'ew-react-add', 'ew-react-pop', 'loadReactions', 'toggleReaction', 'syncReactionChips']) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
+  assert.ok(js.includes("'ew-emoji-grid ew-react-grid'"), 'the reaction picker reuses the bite-1 emoji grid classes');
+  for (const needle of ['.ew-rchip', '.ew-rchip.mine', '.ew-react-add', '.ew-react-pop', '.ew-reactions:empty']) {
+    assert.ok(css.includes(needle), `envoy.css has ${needle}`);
+  }
 });

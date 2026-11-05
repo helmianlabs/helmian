@@ -6,7 +6,7 @@ import { addSession, sessionsFromServer } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
 import { createConnectFields } from './connect-fields.mjs';
-import { emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
+import { EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral' };
@@ -392,7 +392,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), activity: [], agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), activity: [], agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -919,6 +919,7 @@ function renderChannels() {
 async function selectChannel(id) {
   if (!id) return;
   ws.channelId = id; ls.set('channel', id); ls.set(`netChannel.${ws.mode}`, id); ws.sig = null; ws.messages = [];
+  ws.reactions = { channelId: null, byId: {}, mine: {} }; ws.reactionsStamp = 0; closeReactionPicker();
   setComposer(true);
   renderChannels();
   $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Loading…'));
@@ -1426,10 +1427,12 @@ async function loadMessages() {
   const sig = messages.map((m) => m.id).join(',');
   if (sig === ws.sig) {
     renderAgents(); renderCliThread();
+    loadReactions(); // throttled — a reaction lands without any message change
     return;
   }
   ws.sig = sig; ws.messages = messages;
   renderMessages(); renderAgents(); renderCliThread();
+  loadReactions({ force: true });
 }
 function whoOf(m) {
   const me = ws.ctx.state.actor?.subject;
@@ -1483,7 +1486,9 @@ function renderMessages() {
     const dispatch = desk && m.authorKind === 'human' ? deskDispatchLine(m) : null;
     out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}`, 'data-id': m.id }, avatar,
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
-        h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })), dispatch)));
+        h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })),
+        h('div', { class: 'ew-reactions' }, ...reactionChipKids(m.id)), dispatch),
+      m._pending ? null : reactionAddButton(m)));
     prev = m;
   }
   // Real runner activity rows (activity desk bite): one per seat whose
@@ -1497,6 +1502,131 @@ function renderMessages() {
     : (ws.config?.agents?.length ? 'Say hello. Name an agent with @ to get an answer — a message that names nobody is just posted, for people.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.')));
   box.replaceChildren(...out);
   if (atBottom || ws.messages.at(-1)?._pending || ws.messages.at(-1)?.authorSubject === ws.ctx.state.actor?.subject) box.scrollTop = box.scrollHeight;
+}
+
+// ---------- message reactions (emoji bites 2 + 3) ----------
+// Bite 2's store owns the data (route /api/admin/envoy/message-reactions:
+// a bulk GET summary per message, a POST toggle that answers with the
+// message's full new summary). Unicode stays the data there too — the
+// store keeps bite 1's SLUG, the desk renders the slug's own art, and a
+// slug this build ships no art for never renders as a broken image.
+// Live updates: the desk has no Ably client (the server's `reaction`
+// mirror event has no subscriber here), so agent reactions land via the
+// message poll — loadMessages refreshes the summaries on a throttle
+// even when the message list itself did not change.
+const REACTIONS_REFRESH_MS = 5000;
+const REACTION_CHARS = Object.freeze(Object.fromEntries(Object.entries(EMOJI_MAP).map(([ch, slug]) => [slug, ch])));
+export function reactionChar(slug) { return REACTION_CHARS[slug] ?? null; }
+export function reactionActorLabel(actors = []) {
+  return (actors ?? []).map((a) => a?.name || (a?.provider ? (NAMES[a.provider] ?? a.provider) : null) || (a?.kind === 'agent' ? 'Agent' : 'Member')).join(', ');
+}
+// One message's chip model from a bite-2 summary entry list: server
+// order preserved, unknown slugs and empty counts dropped, the slugs
+// the signed-in member has on flagged as mine.
+export function reactionChipModel(summary = [], mine = []) {
+  const mineSet = new Set(mine ?? []);
+  const out = [];
+  for (const e of summary ?? []) {
+    const char = reactionChar(e?.emoji);
+    if (!char || !(e?.count > 0)) continue;
+    out.push({ slug: e.emoji, char, count: e.count, mine: mineSet.has(e.emoji), actors: reactionActorLabel(e.actors) });
+  }
+  return out;
+}
+// Fold a POST toggle response into the stored summaries: the response
+// carries the message's full new summary plus the caller's own state
+// for the toggled slug, so both maps move in one step. Pure — the
+// input state is not mutated.
+export function mergeReactionPost(state, body) {
+  const byId = { ...(state?.byId ?? {}) };
+  const mine = { ...(state?.mine ?? {}) };
+  if (body?.messageId) {
+    byId[body.messageId] = Array.isArray(body.reactions) ? body.reactions : (byId[body.messageId] ?? []);
+    const cur = new Set(mine[body.messageId] ?? []);
+    if (body.emoji) { if (body.reacted) cur.add(body.emoji); else cur.delete(body.emoji); }
+    mine[body.messageId] = [...cur];
+  }
+  return { byId, mine };
+}
+const reactionFace = (slug) => h('img', { class: 'hx-emoji ew-rchip-face', src: emojiAssetUrl(slug, { still: emojiStill() }), alt: '', 'aria-hidden': 'true', loading: 'lazy' });
+function reactionChipKids(messageId) {
+  if (ws.reactions.channelId !== ws.channelId) return [];
+  return reactionChipModel(ws.reactions.byId[messageId], ws.reactions.mine[messageId]).map((c) => h('button', {
+    type: 'button', class: `ew-rchip${c.mine ? ' mine' : ''}`,
+    title: c.actors || 'Reaction', 'aria-pressed': String(c.mine),
+    'aria-label': `${c.char} reaction, ${c.count} ${c.count === 1 ? 'person' : 'people'}${c.mine ? ', including you' : ''} — activate to ${c.mine ? 'remove yours' : 'add yours'}`,
+    onclick: () => toggleReaction(messageId, c.slug),
+  }, reactionFace(c.slug), h('span', { class: 'ew-rchip-count' }, String(c.count))));
+}
+function reactionAddButton(m) {
+  return h('button', { type: 'button', class: 'ew-react-add', title: 'Add a reaction', 'aria-label': 'Add a reaction', 'aria-haspopup': 'dialog',
+    onclick: (e) => openReactionPicker(m.id, e.currentTarget) },
+    emojiNode('🙂'), h('span', { class: 'ew-react-plus', 'aria-hidden': 'true' }, '+'));
+}
+// Patch every visible message's chip row in place from the store —
+// the message DOM itself is never rebuilt for a reaction change.
+function syncReactionChips() {
+  const box = $('ew-messages'); if (!box) return;
+  for (const el of box.querySelectorAll('.ew-msg[data-id]')) {
+    const row = el.querySelector('.ew-reactions');
+    if (row) row.replaceChildren(...reactionChipKids(el.dataset.id));
+  }
+}
+async function loadReactions({ force = false } = {}) {
+  const channelId = ws.channelId; if (!channelId) return;
+  const now = Date.now();
+  if (!force && ws.reactions.channelId === channelId && now - ws.reactionsStamp < REACTIONS_REFRESH_MS) return;
+  const ids = ws.messages.map((m) => m.id).filter((id) => id && !id.startsWith('pending-'));
+  if (!ids.length) return;
+  ws.reactionsStamp = now;
+  try {
+    const body = await ws.ctx.api(`/api/admin/envoy/message-reactions?channel_id=${encodeURIComponent(channelId)}&message_ids=${encodeURIComponent(ids.join(','))}`);
+    if (channelId !== ws.channelId) return;
+    ws.reactions = { channelId, byId: body.reactions ?? {}, mine: body.mine ?? {} };
+    syncReactionChips();
+  } catch { /* reactions decorate the message list — a failed read keeps the last good chips and never toasts */ }
+}
+async function toggleReaction(messageId, slug) {
+  const channelId = ws.channelId; if (!channelId || !messageId || !slug) return;
+  try {
+    const body = await ws.ctx.post('/api/admin/envoy/message-reactions', { channelId, messageId, emoji: slug });
+    if (channelId !== ws.channelId) return;
+    const merged = mergeReactionPost(ws.reactions, body);
+    ws.reactions = { channelId, byId: merged.byId, mine: merged.mine };
+    syncReactionChips();
+  } catch { ws.ctx.toast('That reaction did not land.'); }
+}
+// The bite-1 emoji grid (ew-emoji-grid / ew-emoji-btn, the same art and
+// classes as the agent-face grid) as a pick-one popover anchored to the
+// message's add control. One instance, reused; closes on pick, Escape,
+// or an outside press.
+let reactionPop = null;
+function closeReactionPicker() {
+  ws.reactionPopFor = null;
+  if (reactionPop) reactionPop.hidden = true;
+}
+function openReactionPicker(messageId, anchor) {
+  if (ws.reactionPopFor === messageId && reactionPop && !reactionPop.hidden) { closeReactionPicker(); return; }
+  ws.reactionPopFor = messageId;
+  if (!reactionPop) {
+    reactionPop = h('div', { class: 'ew-react-pop', role: 'dialog', 'aria-label': 'Pick a reaction', hidden: true });
+    document.body.append(reactionPop);
+    document.addEventListener('pointerdown', (e) => { if (reactionPop && !reactionPop.hidden && !reactionPop.contains(e.target)) closeReactionPicker(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeReactionPicker(); });
+  }
+  const mine = new Set(ws.reactions.mine[messageId] ?? []);
+  const grid = h('div', { class: 'ew-emoji-grid ew-react-grid', role: 'group', 'aria-label': 'Emoji' },
+    ...Object.entries(EMOJI_MAP).map(([ch, slug]) => h('button', { type: 'button', class: `ew-emoji-btn${mine.has(slug) ? ' on' : ''}`, title: slug, 'aria-label': `React with ${slug}`, 'aria-pressed': String(mine.has(slug)), onclick: () => { closeReactionPicker(); toggleReaction(messageId, slug); } }, emojiNode(ch))));
+  reactionPop.replaceChildren(
+    h('div', { class: 'ew-react-pop-head' }, h('span', {}, 'React'), h('button', { type: 'button', class: 'ew-chip-x', 'aria-label': 'Close reaction picker', onclick: closeReactionPicker }, '×')),
+    grid);
+  reactionPop.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const w = Math.min(324, window.innerWidth - 16);
+  reactionPop.style.width = `${w}px`;
+  const popH = reactionPop.offsetHeight;
+  reactionPop.style.top = `${r.bottom + 6 + popH <= window.innerHeight ? r.bottom + 6 : Math.max(8, r.top - 6 - popH)}px`;
+  reactionPop.style.left = `${Math.min(Math.max(8, r.left), window.innerWidth - w - 8)}px`;
 }
 const grow = () => { const t = $('maestro-input'); t.style.height = 'auto'; t.style.height = `${Math.min(t.scrollHeight, 200)}px`; };
 async function send(e) {
