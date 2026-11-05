@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { EMOJI_MAP, EMOJI_ASSET_BASE, emojiAssetSlug, emojiAssetUrl, stripVariationSelectors } from '../app/emoji-map.mjs';
+import { EMOJI_MAP, EMOJI_ASSET_BASE, emojiAssetSlug, emojiAssetUrl, stripVariationSelectors, AGENT_FACE_DEFAULTS, AGENT_FACE_PROVIDERS, agentFaceDefault, isFaceEmoji } from '../app/emoji-map.mjs';
 import { CUSTOM_AGENT_EMOJIS } from '../app/envoy-workspace.js';
 import { CHARACTERS } from '../app/avatars.mjs';
 
@@ -70,4 +70,28 @@ test('asset urls honor the base path and the still variant', () => {
   assert.equal(EMOJI_ASSET_BASE, '/assets/emoji/');
   assert.equal(emojiAssetUrl('fire'), '/assets/emoji/fire.svg');
   assert.equal(emojiAssetUrl('fire', { still: true }), '/assets/emoji/fire-still.svg');
+});
+
+// ---------- seat face defaults (emoji bite 5) ----------
+
+test('every built-in seat ships a default face with Helmian art', () => {
+  assert.deepEqual([...AGENT_FACE_PROVIDERS].sort(), ['claude', 'gemini', 'grok', 'mistral', 'openai']);
+  assert.deepEqual(Object.keys(AGENT_FACE_DEFAULTS).sort(), [...AGENT_FACE_PROVIDERS].sort());
+  for (const provider of AGENT_FACE_PROVIDERS) {
+    assert.ok(emojiAssetSlug(AGENT_FACE_DEFAULTS[provider]), `${provider}'s default face is drawn`);
+    assert.equal(agentFaceDefault(provider), AGENT_FACE_DEFAULTS[provider]);
+  }
+  assert.equal(agentFaceDefault('maestro'), null, 'Maestro is the human seat — no agent face');
+  assert.equal(agentFaceDefault('qwen'), null, 'custom agents carry their own faces');
+  assert.equal(new Set(Object.values(AGENT_FACE_DEFAULTS)).size, 5);
+});
+
+test('isFaceEmoji admits exactly the single drawn tokens', () => {
+  assert.equal(isFaceEmoji('🦀'), true);
+  assert.equal(isFaceEmoji('❤️'), true, 'FE0F forms count, like the renderer');
+  assert.equal(isFaceEmoji('🍕'), false);
+  assert.equal(isFaceEmoji('🦀🦀'), false);
+  assert.equal(isFaceEmoji('fire'), false, 'slugs are not faces');
+  assert.equal(isFaceEmoji(''), false);
+  assert.equal(isFaceEmoji(null), false);
 });

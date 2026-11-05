@@ -318,3 +318,41 @@ test('stampAgentAnswered stamps an existing presence row and never creates one',
   assert.equal(await stampAgentAnswered(pool, 'tenant-mesh', 'not-a-provider'), false);
   assert.equal(await stampAgentAnswered(pool, 'tenant-mesh', null), false);
 });
+
+test('mesh on Postgres: set-channel-avatar stores the channel face on its config', { skip }, async () => {
+  const pg = (await import('pg')).default;
+  const pool = new pg.Pool({ connectionString: url, max: 4 });
+  const tenantId = `t-${randomUUID().slice(0, 8)}`;
+  const owner = { tenantId, subject: `user_${randomUUID().replaceAll('-', '').slice(0, 20)}`, role: 'owner', get sessionId() { return randomUUID(); }, get requestId() { return randomUUID(); } };
+  const memberActor = { tenantId, subject: `user_${randomUUID().replaceAll('-', '').slice(0, 20)}`, role: 'member', get sessionId() { return randomUUID(); }, get requestId() { return randomUUID(); } };
+  const auditorActor = { tenantId, subject: `user_${randomUUID().replaceAll('-', '').slice(0, 20)}`, role: 'auditor', get sessionId() { return randomUUID(); }, get requestId() { return randomUUID(); } };
+  await pool.query('insert into helmion.tenants(tenant_id, display_name) values ($1,$2)', [tenantId, 'Mesh avatar test']);
+  for (const [actor, role] of [[owner, 'owner'], [memberActor, 'member'], [auditorActor, 'auditor']]) {
+    await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, actor.subject, role]);
+  }
+  const mesh = createEnvoyMesh({ pool, publishImpl: async () => {}, nameLookup: async () => 'Troy' });
+  const chat = createEnvoyStore(pool);
+  try {
+    const { channel } = await chat.createChannel(owner, { slug: 'look', title: 'look', kind: 'team' });
+    let cfg = await mesh.getConfig(owner, channel.id);
+    assert.equal(cfg.config.avatar, null, 'a new channel has no face yet');
+    // Any non-auditor member may set it; the config answer carries it.
+    const set = await mesh.changeConfig(memberActor, { action: 'set-channel-avatar', channelId: channel.id, avatar: { k: 'char', id: 'fox' } });
+    assert.deepEqual(set.config.avatar, { k: 'char', id: 'fox' });
+    // The channel list payload carries it too (the desk renders from it).
+    const listed = await chat.listChannels(owner);
+    assert.deepEqual(listed.channels.find((c) => c.id === channel.id)?.avatar, { k: 'char', id: 'fox' });
+    // A junk choice sanitizes to none; an auditor may not write at all.
+    const junk = await mesh.changeConfig(owner, { action: 'set-channel-avatar', channelId: channel.id, avatar: { k: 'char', id: 'dragon' } });
+    assert.equal(junk.config.avatar, null);
+    await assert.rejects(
+      mesh.changeConfig(auditorActor, { action: 'set-channel-avatar', channelId: channel.id, avatar: { k: 'char', id: 'fox' } }),
+      /ENVOY_ROLE_FORBIDDEN/,
+    );
+    cfg = await mesh.getConfig(owner, channel.id);
+    assert.equal(cfg.config.avatar, null, 'the refused write changed nothing');
+  } finally {
+    await pool.query('delete from helmion.tenants where tenant_id=$1', [tenantId]).catch(() => {});
+    await pool.end();
+  }
+});

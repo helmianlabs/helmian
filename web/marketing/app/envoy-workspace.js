@@ -6,7 +6,7 @@ import { addSession, sessionsFromServer } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
 import { createConnectFields } from './connect-fields.mjs';
-import { EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral' };
@@ -305,7 +305,7 @@ function activityRow(provider, event, customAgents = [], now = Date.now()) {
   const custom = (customAgents ?? []).find((a) => a.handle === provider);
   const avatar = custom
     ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(custom.emoji || '🤖'))
-    : h('div', { class: 'ew-avatar' }, avatarImg(provider));
+    : seatAvatar(provider);
   return h('div', { class: 'ew-msg ew-answering', role: 'status' },
     avatar,
     h('div', {}, h('div', { class: 'ew-body ew-activity-body' },
@@ -361,6 +361,144 @@ function appendText(into, str) {
   if (at < str.length) into.append(str.slice(at));
 }
 
+// ---------- faces (emoji bite 5) ----------
+// The built-in seats' faces: one character per seat per workspace,
+// stored server-side (route /api/admin/envoy/agent-faces) so the
+// whole room sees the same face — the shape a custom agent's face
+// already has on its record (Qwen's crab). ws.faces is the server's
+// effective map (the workspace's stored choice over the shipped
+// default); before it loads, the shipped defaults from the emoji map
+// render — the same values the server answers — so a seat never
+// flashes the stock picture and then swaps. A provider with no face
+// at all (Maestro, the human's seat) keeps the stock PNG.
+export function seatFaceFor(faces, provider) {
+  const stored = faces?.[provider];
+  if (typeof stored === 'string' && emojiAssetSlug(stored)) return stored;
+  return AGENT_FACE_DEFAULTS[provider] ?? null;
+}
+const seatFace = (provider) => seatFaceFor(ws.faces, provider);
+// Avatar nodes for a built-in seat: the face — bite-1 art through
+// emojiNode, so plain mode and reduced motion get the still frame —
+// in the same .ew-avatar.emoji-ava shell custom agents wear, or the
+// stock picture when the seat has no face.
+function seatAvatar(provider) {
+  const face = seatFace(provider);
+  return face ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(face)) : h('div', { class: 'ew-avatar' }, avatarImg(provider));
+}
+function seatFaceImg(provider) {
+  const face = seatFace(provider);
+  return face ? emojiNode(face) : avatarImg(provider);
+}
+
+function renderFaceViews() { renderAgents(); renderMessages(); renderCliChips(); renderCliSessions(); renderCliThread(); }
+
+async function loadFaces() {
+  try {
+    const body = await ws.ctx.api('/api/admin/envoy/agent-faces');
+    const next = body?.faces ?? null;
+    const changed = JSON.stringify(next) !== JSON.stringify(ws.faces);
+    ws.faces = next;
+    if (changed) renderFaceViews();
+  } catch { /* the shipped defaults render until the map loads */ }
+}
+
+// The picker's shared shape with the custom-agent create modal: the
+// curated face set as a grid of bite-1 art.
+function faceGrid(label, picked, onPick) {
+  const grid = h('div', { class: 'ew-emoji-grid', role: 'radiogroup', 'aria-label': label });
+  const draw = () => {
+    grid.replaceChildren(...CUSTOM_AGENT_EMOJIS.map((em) => h('button', {
+      type: 'button', class: `ew-emoji-btn${picked() === em ? ' on' : ''}`, 'aria-checked': String(picked() === em),
+      onclick: () => { onPick(em); draw(); },
+    }, emojiNode(em))));
+  };
+  draw();
+  return grid;
+}
+
+function openSeatFaceModal(provider) {
+  if (!provider || !(provider in AGENT_FACE_DEFAULTS)) return;
+  let picked = seatFace(provider);
+  openModal(`${NAMES[provider]}'s face`, [
+    h('p', { class: 'muted sm' }, `${NAMES[provider]}'s face shows on their messages, their Agents card and their activity rows — for everyone in this workspace.`),
+    h('div', { class: 'ew-row' }, faceGrid(`Pick a face for ${NAMES[provider]}`, () => picked, (em) => { picked = em; })),
+    h('div', { class: 'ew-row' },
+      h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => saveSeatFace(provider, null) }, 'Reset to default'),
+      h('span', { class: 'ew-spacer' }),
+      h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: closeModal }, 'Cancel'),
+      h('button', { type: 'button', class: 'ew-btn primary sm', onclick: () => saveSeatFace(provider, picked) }, 'Save')),
+  ]);
+}
+
+async function saveSeatFace(provider, emoji) {
+  try {
+    const body = await ws.ctx.post('/api/admin/envoy/agent-faces', { provider, emoji });
+    ws.faces = body?.faces ?? ws.faces;
+    closeModal();
+    renderFaceViews();
+    ws.ctx.toast(`${NAMES[provider]}'s face ${emoji ? 'updated' : 'reset'}`, 'ok');
+  } catch (e) {
+    ws.ctx.toast(e?.body?.code === 'ENVOY_FACE_FORBIDDEN' ? 'Only the owner or an admin can change a seat face.' : 'Could not save the face. Try again.');
+  }
+}
+
+// ---------- the member's own face ----------
+// The desk's identity corner: the member's name and face at the foot
+// of the channels pane, one click from their face control. The face
+// itself lives on the member's profile record (Settings > Envoy
+// profile, helmion.user_profiles.avatar_emoji), so it is the same
+// face everywhere, and their messages carry it back down (authorEmoji
+// on the message rows) for every client to render.
+function myFace() {
+  const em = ws.profile?.avatarEmoji;
+  return typeof em === 'string' && em ? em : null;
+}
+
+async function loadProfile() {
+  try {
+    const body = await ws.ctx.api('/api/admin/profile');
+    ws.profile = { nickname: body?.nickname ?? null, avatarEmoji: body?.avatarEmoji ?? null };
+  } catch { ws.profile = null; }
+  renderMeFace();
+}
+
+function renderMeFace() {
+  const box = document.getElementById('ew-me-face');
+  if (!box) return;
+  const face = myFace();
+  const name = ws.profile?.nickname || 'You';
+  box.replaceChildren(
+    face ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(face)) : h('div', { class: 'ew-avatar' }, name.slice(0, 1).toUpperCase()),
+    h('span', { class: 'name' }, name),
+    h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: openMyFaceModal }, face ? 'Change face' : 'Pick a face'),
+  );
+}
+
+function openMyFaceModal() {
+  let picked = myFace();
+  openModal('Your face', [
+    h('p', { class: 'muted sm' }, 'Your face shows next to your name here and on your messages, for everyone in this workspace.'),
+    h('div', { class: 'ew-row' }, faceGrid('Pick your face', () => picked, (em) => { picked = em; })),
+    h('div', { class: 'ew-row' },
+      h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => saveMyFace(null) }, 'No face — use my initial'),
+      h('span', { class: 'ew-spacer' }),
+      h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: closeModal }, 'Cancel'),
+      h('button', { type: 'button', class: 'ew-btn primary sm', onclick: () => saveMyFace(picked) }, 'Save')),
+  ]);
+}
+
+async function saveMyFace(emoji) {
+  try {
+    await ws.ctx.post('/api/admin/profile', { avatarEmoji: emoji ?? '' });
+    ws.profile = { ...(ws.profile ?? {}), avatarEmoji: emoji };
+    closeModal();
+    renderMeFace();
+    ws.sig = null;
+    await loadMessages();
+    ws.ctx.toast(emoji ? 'Your face is set' : 'Your face is cleared', 'ok');
+  } catch { ws.ctx.toast('Could not save your face. Try again.'); }
+}
+
 export function renderBody(text, { onLink, onCanvas, linkTitle } = {}) {
   const frag = document.createDocumentFragment();
   const parts = String(text ?? '').split(/```(\w+)?\n?([\s\S]*?)```/g);
@@ -392,12 +530,15 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), activity: [], agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
 function chatAvatar(c, cls = '') {
-  const a = avatarFor(sanitizeChoice(ws.avatars[c?.id]), c?.title || c?.slug);
+  // The channel's face lives on its server config (emoji bite 5) so
+  // every member and device sees the same look; this device's saved
+  // choice is only the fallback for a channel whose config has none.
+  const a = avatarFor(sanitizeChoice(c?.avatar) ?? sanitizeChoice(ws.avatars[c?.id]), c?.title || c?.slug);
   return h('span', { class: `ew-ava ${a.kind} ${cls}`.trim(), style: a.kind === 'plain' ? `--ava:${a.color}` : null, 'aria-hidden': 'true' }, a.kind === 'char' ? emojiNode(a.glyph) : a.glyph);
 }
 function saveAvatar(id, choice) { const v = sanitizeChoice(choice); if (!id || !v) return; ws.avatars[id] = v; ls.set('avatars', ws.avatars); }
@@ -419,11 +560,19 @@ function avatarPicker(choice, title, onPick) {
 }
 function openAvatarModal() {
   const c = ws.channels.find((x) => x.id === ws.channelId); if (!c) return;
-  let pick = sanitizeChoice(ws.avatars[c.id]) ?? defaultChoice(c.title || c.slug, 'plain'); // matches what the list shows today
+  let pick = sanitizeChoice(c.avatar) ?? sanitizeChoice(ws.avatars[c.id]) ?? defaultChoice(c.title || c.slug, 'plain'); // the server's look first, then this device's, then the default
   openModal(`Look for #${c.title || c.slug}`, [
-    h('p', { class: 'muted sm' }, 'Pick a character, or switch to Simple for a plain letter icon. Saved on this device.'),
+    h('p', { class: 'muted sm' }, 'Pick a character, or switch to Simple for a plain letter icon. Saved for the whole workspace.'),
     avatarPicker(pick, () => c.title || c.slug, (v) => { pick = v; }),
-    h('div', { class: 'ew-row' }, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn primary sm', onclick: () => { saveAvatar(c.id, pick); renderChannels(); renderHeadAvatar(); closeModal(); } }, 'Save')),
+    h('div', { class: 'ew-row' }, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn primary sm', onclick: async () => {
+      saveAvatar(c.id, pick); // this device's cache, as before
+      try {
+        const body = await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'set-channel-avatar', channelId: c.id, avatar: pick });
+        if (body.config) { ws.config = body.config; ws.configured = true; }
+        const ch = ws.channels.find((x) => x.id === c.id); if (ch) ch.avatar = pick;
+      } catch { ws.ctx.toast('Saved on this device — the workspace copy did not save.'); }
+      renderChannels(); renderHeadAvatar(); closeModal();
+    } }, 'Save')),
   ]);
 }
 function renderHeadAvatar() {
@@ -986,7 +1135,7 @@ async function loadConfig() {
     if (!ws.config) { ws.config = { agents: [], discord: null, slack: null }; ws.configured = false; }
   }
   const ch = ws.channels.find((c) => c.id === id);
-  if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack }; ls.set('chanMeta', seen); }
+  if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); if ('avatar' in (ws.config ?? {})) ch.avatar = ws.config.avatar; const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack }; ls.set('chanMeta', seen); }
   renderHeader(); renderAgents(); renderChannels(); syncAgentsPane();
 }
 function renderHeader() {
@@ -1096,12 +1245,15 @@ function renderAgents() {
   $('ew-agents-summary').textContent = desk
     ? (totalCount ? `${totalCount} on the desk` : 'the desk is empty')
     : (totalCount ? `${totalCount} in this channel` : 'none in this channel');
+  const canFace = ['owner', 'admin'].includes(ws.ctx.state.actor?.role);
   const builtinCards = roster.map((p) => {
     const s = states[p];
     const label = s.state === 'offline' ? 'OFFLINE' : 'IDLE';
     return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: desk ? `Dispatch to @${NAMES[p]}` : `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
-      avatarImg(p), h('strong', {}, NAMES[p]),
-      h('button', { type: 'button', class: 'ew-icon remove', title: desk ? `Remove ${NAMES[p]} from the desk` : `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×'),
+      seatAvatar(p), h('strong', {}, NAMES[p]),
+      h('span', { class: 'ew-agent-btns' },
+        ...(canFace ? [h('button', { type: 'button', class: 'ew-icon face', title: `Change ${NAMES[p]}'s face`, 'aria-label': `Change ${NAMES[p]}'s face`, onclick: (e) => { e.stopPropagation(); openSeatFaceModal(p); } }, emojiNode(seatFace(p) ?? '🤖'))] : []),
+        h('button', { type: 'button', class: 'ew-icon remove', title: desk ? `Remove ${NAMES[p]} from the desk` : `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×')),
       h('span', { class: `ew-state ${s.state}` }, label),
       h('span', { class: 'last' }, s.state === 'offline' ? 'Offline. Start the Helmian bridge on your PC to bring it online.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
   });
@@ -1119,13 +1271,13 @@ function renderAgents() {
   $('ew-agent-cards').replaceChildren(...builtinCards, ...customCards);
   if (!totalCount) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one below or click + Create Agent.' : 'No agents in this channel. Add one below or click + Create Agent to build your team.'));
   $('ew-agent-add').replaceChildren(
-    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)),
+    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)),
     h('button', { type: 'button', class: 'ew-pill create-custom', title: 'Create a custom agent with emoji, name, job & AI provider', onclick: openCreateAgentModal }, '✨ + Custom Agent')
   );
   $('ew-mention-pills').replaceChildren(...((desk ? totalCount >= 1 : totalCount > 1) ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
-    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention @${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, avatarImg(p), NAMES[p])),
-    ...customList.map((ca) => h('button', { type: 'button', class: 'ew-pill custom-pill', title: `Mention @${ca.handle}${ca.jobTitle ? ' · ' + ca.jobTitle : ''}`, onclick: () => insertMention(ca.handle) }, h('span', {}, ca.emoji || '🤖'), `@${ca.handle}`)),
-    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, avatarImg(p), `+ ${NAMES[p]}`)));
+    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention @${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, seatFaceImg(p), NAMES[p])),
+    ...customList.map((ca) => h('button', { type: 'button', class: 'ew-pill custom-pill', title: `Mention @${ca.handle}${ca.jobTitle ? ' · ' + ca.jobTitle : ''}`, onclick: () => insertMention(ca.handle) }, emojiNode(ca.emoji || '🤖'), `@${ca.handle}`)),
+    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)));
   $('ew-mention-pills').hidden = false;
 }
 async function changeAgent(action, provider) {
@@ -1436,7 +1588,7 @@ async function loadMessages() {
 }
 function whoOf(m) {
   const me = ws.ctx.state.actor?.subject;
-  if (m.authorKind === 'human' && m.authorSubject === me) return { name: 'You', kind: 'me' };
+  if (m.authorKind === 'human' && m.authorSubject === me) return { name: 'You', kind: 'me', authorEmoji: m.authorEmoji ?? null };
   if (m.agentProvider || m.authorSubject?.startsWith('agent:')) {
     const handle = m.authorSubject?.startsWith('agent:') ? m.authorSubject.slice(6) : m.agentProvider;
     const custom = m.metadata?.customAgent || (ws.config?.customAgents ?? []).find((a) => a.handle === handle) || null;
@@ -1445,7 +1597,7 @@ function whoOf(m) {
   if (m.authorSubject?.endsWith(':bridge')) return { name: 'PC bridge', kind: 'agent', provider: null };
   if (m.source === 'discord') return { name: m.authorName || 'Discord member', kind: 'discord' };
   if (m.source === 'slack') return { name: m.authorName || 'Slack member', kind: 'slack' };
-  return { name: m.authorName || 'Member', kind: 'human' };
+  return { name: m.authorName || 'Member', kind: 'human', authorEmoji: m.authorEmoji ?? null };
 }
 // The line under a manager's desk send naming who it dispatched to —
 // the same computation the server routes with (deskTargets), so the
@@ -1475,8 +1627,8 @@ function renderMessages() {
     const who = whoOf(m);
     const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
     const avatar = who.kind === 'agent'
-      ? (who.custom ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.custom.emoji || '🤖')) : h('div', { class: 'ew-avatar' }, avatarImg(who.provider)))
-      : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase());
+      ? (who.custom ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.custom.emoji || '🤖')) : seatAvatar(who.provider))
+      : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
     const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
     const src = who.kind === 'agent'
       ? h('span', { class: 'ew-src agent' }, who.custom?.jobTitle ? `AGENT · ${who.custom.jobTitle}` : 'AGENT')
@@ -1662,7 +1814,7 @@ function cliTarget() {
 }
 function renderCliChips() {
   const active = cliTarget().key;
-  $('ew-cli-chips').replaceChildren(...AGENTS.filter((p) => p !== 'maestro').map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: `Show your conversation with ${NAMES[p]}`, onclick: () => pickCliProvider(p) }, avatarImg(p), NAMES[p])));
+  $('ew-cli-chips').replaceChildren(...AGENTS.filter((p) => p !== 'maestro').map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: `Show your conversation with ${NAMES[p]}`, onclick: () => pickCliProvider(p) }, seatFaceImg(p), NAMES[p])));
 }
 function renderCliTo() {
   const { key, session } = cliTarget();
@@ -1676,7 +1828,7 @@ function renderCliSessions() {
     const key = CLI_KEY_BY_PROVIDER[s.provider] ?? 'claude';
     const prog = s.progress && s.progress.total ? `${s.progress.done}/${s.progress.total} steps${s.progress.current ? ` · now: ${s.progress.current}` : ''}` : clock(s.createdAt);
     return h('button', { type: 'button', class: `ew-cli-session${s.id === ws.cli.activeId ? ' active' : ''}`, title: `${s.name} (${s.provider})`, onclick: () => selectCliSession(s.id) },
-      avatarImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
+      seatFaceImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
   }));
 }
 // ---------- private agent rooms ----------
@@ -1777,7 +1929,7 @@ function renderCliThread() {
   for (const m of list) {
     const who = whoOf(m);
     const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
-    const avatar = who.kind === 'agent' ? h('div', { class: 'ew-avatar' }, avatarImg(who.provider)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase());
+    const avatar = who.kind === 'agent' ? seatAvatar(who.provider) : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase()));
     const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : null;
     out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}` }, avatar,
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
@@ -2313,7 +2465,14 @@ function wire() {
     try {
       const made = await ws.ctx.post('/api/admin/envoy/channels', { slug, title, kind: 'team' });
       $('ew-new-channel').hidden = true; $('ew-add-channel').hidden = false; $('ew-new-channel-name').value = '';
-      if (made.channel?.id && made.inserted !== false) saveAvatar(made.channel.id, ws.pendingAvatar);
+      if (made.channel?.id && made.inserted !== false) {
+        saveAvatar(made.channel.id, ws.pendingAvatar);
+        // The picked look is the channel's face for the whole
+        // workspace (emoji bite 5): store it on the channel config
+        // too. Best-effort — the device copy above already shows it
+        // here, and a failed store must not fail the creation.
+        await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'set-channel-avatar', channelId: made.channel.id, avatar: ws.pendingAvatar }).catch(() => {});
+      }
       await loadChannels(); ws.channelId = made.channel?.id ?? ws.channelId;
       await selectChannel(ws.channelId);
     } catch { ws.ctx.toast('Channel not created.'); }
@@ -2369,6 +2528,12 @@ function wire() {
   for (const b of document.querySelectorAll('[data-cmode]')) b.addEventListener('click', () => { for (const x of document.querySelectorAll('[data-cmode]')) x.classList.toggle('active', x === b); $('ew-canvas-body').className = `ew-canvas-body ${b.dataset.cmode}`; });
   $('ew-canvas-code').addEventListener('input', () => { clearTimeout(canvasTimer); $('ew-canvas-saved').textContent = ''; canvasTimer = setTimeout(() => { ls.set(canvasKey(), $('ew-canvas-code').value); $('ew-canvas-live').srcdoc = $('ew-canvas-code').value; $('ew-canvas-saved').textContent = 'Saved on this device'; }, 350); });
   $('ew-canvas-share').addEventListener('click', () => { const code = $('ew-canvas-code').value.slice(0, 3900); $('maestro-input').value = `\`\`\`html\n${code}\n\`\`\``; grow(); $('maestro-input').focus(); });
+  // The member's identity corner (emoji bite 5), built here so the
+  // static shell needs no new element ids: name + face + face control
+  // at the foot of the channels pane, above the source lines.
+  const channelsFoot = document.querySelector('#ew-channels .ew-foot');
+  if (channelsFoot && !document.getElementById('ew-me-face')) channelsFoot.prepend(h('div', { class: 'ew-me-face', id: 'ew-me-face' }));
+  renderMeFace();
   // Guard
   $('guard-ackall').addEventListener('click', () => ws.ctx.ackAll?.());
   $('ew-guard-refresh').addEventListener('click', async () => { await ws.ctx.loadFeedData?.(); ws.ctx.renderFeed?.(); });
@@ -2403,7 +2568,7 @@ export async function mountWorkspace(ctx) {
   if (ctx.benchTab) { openBench(ctx.benchTab); ctx.benchTab = null; }
   ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
-  await Promise.allSettled([loadPresence(), loadAgentState(), loadConfig(), loadMessages(), loadCliSessions()]);
+  await Promise.allSettled([loadPresence(), loadAgentState(), loadConfig(), loadMessages(), loadCliSessions(), loadFaces(), loadProfile()]);
   if (inMaestroMode()) loadDeskLists();
   await openCliRoom().catch(() => {});
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
@@ -2428,5 +2593,5 @@ export async function mountWorkspace(ctx) {
     ws.timer = setTimeout(tick, live ? ACTIVITY_POLL_MS : CALM_POLL_MS);
   };
   ws.timer = setTimeout(tick, CALM_POLL_MS);
-  ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadAgentState(); loadConfig(); if (inMaestroMode()) loadDeskLists(); } }, 15000);
+  ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadAgentState(); loadConfig(); loadFaces(); if (inMaestroMode()) loadDeskLists(); } }, 15000);
 }

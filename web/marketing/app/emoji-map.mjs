@@ -66,3 +66,36 @@ export function emojiAssetSlug(token) {
 export function emojiAssetUrl(slug, { still = false } = {}) {
   return `${EMOJI_ASSET_BASE}${slug}${still ? '-still' : ''}.svg`;
 }
+
+// Built-in seat faces (emoji bite 5): the character each provider seat
+// wears until the workspace owner picks another in the Agents panel
+// (stored per tenant in helmion.workspace_agent_faces, sql/069). Keys
+// are the envoy provider vocabulary — 'openai' is ChatGPT's seat.
+// Every default is a key of the map above, so a default can never point
+// at art that does not exist; the character is the data and the desk
+// renders it through this same map, exactly like a custom agent's
+// emoji (Qwen's crab is the same shape, on his own record). Maestro
+// has no entry: Maestro is the human's seat, never an agent face.
+export const AGENT_FACE_DEFAULTS = Object.freeze({
+  claude: '\u{1F9E0}', // brain
+  openai: '\u{1F916}', // robot
+  grok: '\u{26A1}', // bolt
+  gemini: '\u{1F31F}', // glow-star
+  mistral: '\u{1F989}', // owl
+});
+export const AGENT_FACE_PROVIDERS = Object.freeze(Object.keys(AGENT_FACE_DEFAULTS));
+
+/** The shipped default face for a provider seat, or null when it has none. */
+export function agentFaceDefault(provider) {
+  return AGENT_FACE_DEFAULTS[String(provider ?? '')] ?? null;
+}
+
+/**
+ * A storable face: exactly one emoji token the shipped set draws.
+ * Anything else — an unmapped emoji, a ZWJ sequence, two emoji in a
+ * row (the map lookup simply misses), plain text — is refused, so a
+ * stored face can never point at an asset that does not exist.
+ */
+export function isFaceEmoji(token) {
+  return emojiAssetSlug(token) !== null;
+}
