@@ -4,6 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0B1120">
+  <script>
+    /* Pre-paint theme: apply the stored choice before the stylesheets
+       land so a light-theme user never gets a dark flash. Mirrors
+       app.js's store (helmian.app.theme, JSON) and its 'system'
+       resolution; app.js re-asserts the same value at boot. */
+    try {
+      var helmianTheme = JSON.parse(localStorage.getItem('helmian.app.theme')) || 'midnight';
+      if (helmianTheme === 'system') helmianTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'midnight';
+      document.documentElement.dataset.theme = helmianTheme;
+      if (helmianTheme === 'light') document.querySelector('meta[name="theme-color"]').content = '#F4F6F8';
+    } catch (e) {}
+  </script>
   <title>Helmian</title>
   <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
   <link rel="manifest" href="/app/manifest.webmanifest">
@@ -67,7 +79,7 @@
 
     <details class="side-group accordion" id="appearance">
       <summary class="side-head"><span>APPEARANCE</span><span class="chev">▾</span></summary>
-      <label class="field">Theme<select id="theme-quick"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
+      <label class="field">Theme<select id="theme-quick"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option><option value="light">Light</option><option value="system">System</option></select></label>
     </details>
 
     <button id="rail-more" class="nav-item rail-more" type="button" data-tip="More">⋯ <span class="label">More</span></button>
@@ -464,7 +476,7 @@
     <section id="view-settings" class="view" data-view-panel="settings" hidden>
       <h2>Settings</h2>
       <div class="panel kv">
-        <label class="row"><span>Theme</span><select id="theme"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option></select></label>
+        <label class="row"><span>Theme</span><select id="theme"><option value="midnight">Midnight</option><option value="black">Black</option><option value="slate">Slate</option><option value="light">Light</option><option value="system">System</option></select></label>
         <label class="row"><span>Emoji style</span><select id="emoji-mode"><option value="playful">Playful</option><option value="plain">Plain</option></select></label>
       </div>
       <div class="panel" id="profile-panel"><div class="eyebrow">ENVOY PROFILE</div>

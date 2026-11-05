@@ -7,6 +7,62 @@
 }
 [data-theme="black"] { --bg:#000; --panel:#0A0A0A; --panel-2:#171717; --border:#2A2A2A; }
 [data-theme="slate"] { --bg:#0F172A; --panel:#1E293B; --panel-2:#273449; --border:#475569; }
+/* Light theme (B0 §2.2, verbatim): the one web light palette. --border is
+   the structural value, not the hairline — the three panes are separated
+   by this token alone, so it carries 3:1. --bg-secondary/--bg-hover give
+   the avatar picker (below) the spec's soft/hover fills it already names. */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #F4F6F8;
+  --panel: #FFFFFF;
+  --panel-2: #EEF1F4;
+  --border: #71869D;
+  --text: #121820;
+  --muted: #5C6B7A;
+  --faint: #5A6B7D;
+  --accent: #0B6E99;
+  --accent-hover: #085A80;
+  --red: #B33A36;
+  --amber: #895E0D;
+  --green: #1A774B;
+  --bg-secondary: #EEF1F4;
+  --bg-hover: #E6EAEF;
+}
+/* Light-theme literal triage (B0 §2.2 notes, §4.1): severity fills use the
+   flat tint pairs, never the dark themes' glow alphas; the amber badge and
+   the count pill keep dark ink on the LIGHT amber fill (#F6C453) — in this
+   theme --amber is a text color, too dark for the fill; the console .log
+   is a dark island (same call as the code blocks) and keeps the dark
+   palette's own colors; heavy black shadows soften to the spec's shadow
+   hue. Everything here is scoped to the light theme only. */
+[data-theme="light"] .badge { background:#F6C453; color:#1A1205; }
+[data-theme="light"] .alert.critical { background:#FDECEB; }
+[data-theme="light"] .alert.ack { background:#FBF0DA; }
+[data-theme="light"] .alert.tone-red.pulse { box-shadow:0 0 0 1px rgba(179,58,54,.35), 0 0 16px rgba(179,58,54,.18); }
+[data-theme="light"] .alert.tone-yellow.pulse { box-shadow:0 0 0 1px rgba(137,94,13,.35), 0 0 16px rgba(137,94,13,.18); }
+[data-theme="light"] .acct-menu { box-shadow:0 14px 40px rgba(13,42,67,.22); }
+[data-theme="light"] .acct-panel { box-shadow:0 18px 50px rgba(13,42,67,.25); }
+[data-theme="light"] .toast { box-shadow:0 8px 24px rgba(13,42,67,.20); }
+[data-theme="light"] .slide-panel { box-shadow:-12px 0 32px rgba(13,42,67,.18); }
+[data-theme="light"] .panel-toggle { box-shadow:0 4px 16px rgba(13,42,67,.22); }
+[data-theme="light"] .log { color:#CBD5E1; }
+[data-theme="light"] .log .ts { color:#64748B; }
+[data-theme="light"] .log .who { color:#0EA5E9; }
+[data-theme="light"] .log .me { color:#10B981; }
+[data-theme="light"] .log .sys { color:#94A3B8; }
+[data-theme="light"] .dot-count { color:#fff; }
+[data-theme="light"] .checklist li.failed { color:var(--red); }
+[data-theme="light"] .status-green { color:var(--green); }
+[data-theme="light"] .status-yellow { color:var(--amber); }
+[data-theme="light"] .status-red { color:var(--red); }
+[data-theme="light"] .severity.critical { color:var(--red); }
+[data-theme="light"] .severity.warning { color:var(--amber); }
+[data-theme="light"] .guard-card.critical { border-left-color:var(--red); }
+[data-theme="light"] .guard-card.warning { border-left-color:var(--amber); }
+[data-theme="light"] .member-status.green { background:var(--green); }
+[data-theme="light"] .member-status.yellow { background:var(--amber); }
+[data-theme="light"] .member-status.red { background:var(--red); }
+[data-theme="light"] .voice-engine.fallback { color:var(--amber); }
 * { box-sizing:border-box; }
 html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font:calc(14px * var(--scale))/1.45 var(--font); -webkit-font-smoothing:antialiased; }
 button,input,select,textarea { font:inherit; color:inherit; }
