@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, profileSyncResultModel } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
@@ -1810,16 +1810,57 @@ async function triggerProfileSync() {
   const statusEl = $('#sync-profile-status');
   const filesEl = $('#sync-profile-files');
   if (statusEl) statusEl.textContent = 'Syncing rules, flywheel & Guard hooks to all AIs…';
+  if (filesEl) { filesEl.hidden = true; filesEl.replaceChildren(); }
   try {
+    // The press enqueues a real profile-sync job for this tenant's PC
+    // (S1, 2026-11-05). The response carries no file list — the only
+    // list this surface may render is the device's own report, polled
+    // from the job below. Before S1 this handler rendered the server's
+    // hardcoded syncedFiles as if files had been written; none had.
     const r = await post('/api/admin/envoy/runner/presence', { syncProfile: true });
-    const list = Array.isArray(r.syncedFiles) ? r.syncedFiles : [];
-    if (statusEl) statusEl.textContent = `Synced ${list.length} targets (${formatTime(r.syncedAt || new Date().toISOString())})`;
-    if (filesEl && list.length) {
-      filesEl.hidden = false;
-      filesEl.replaceChildren(...list.map((item) => el('div', 'sm', `✓ ${item}`)));
+    const jobId = r?.syncJob?.id ?? null;
+    if (!jobId) {
+      if (statusEl) statusEl.textContent = 'Sync did not start: the server did not queue a job for your PC.';
+      toast('Could not sync profile right now');
+      return;
     }
-    toast('Profile, MD files & Guard rules synced to all AIs!', 'ok');
-    await loadProviders().catch(() => {});
+    const render = (model) => {
+      if (statusEl) statusEl.textContent = model.statusText;
+      if (filesEl) {
+        if (model.lines.length) {
+          filesEl.hidden = false;
+          filesEl.replaceChildren(...model.lines.map((line) => el('div', 'sm', `✓ ${line}`)));
+        } else {
+          filesEl.hidden = true;
+          filesEl.replaceChildren();
+        }
+      }
+    };
+    render(profileSyncResultModel({ status: 'pending' }));
+    // Poll the job until the device reports or the wait gives out. A
+    // timeout is NOT a success: the surface keeps saying nothing has
+    // been reported, because nothing has.
+    const deadline = Date.now() + 120_000;
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      const s = await api(`/api/admin/envoy/profile-sync?job=${encodeURIComponent(jobId)}`);
+      const job = s?.job ?? null;
+      const model = profileSyncResultModel(job);
+      render(model);
+      if (model.state === 'done') {
+        toast(`Profile sync reported by your PC: ${job.files?.length ?? 0} file(s) written`, 'ok');
+        await loadProviders().catch(() => {});
+        return;
+      }
+      if (model.state === 'failed') {
+        toast('Profile sync failed on your PC');
+        return;
+      }
+      if (Date.now() > deadline) {
+        if (statusEl) statusEl.textContent = 'Still waiting for your PC — if the bridge is not running, nothing will land. Nothing has been reported yet.';
+        return;
+      }
+    }
   } catch (err) {
     if (statusEl) statusEl.textContent = `Sync failed: ${err.message || 'try again'}`;
     toast('Could not sync profile right now');

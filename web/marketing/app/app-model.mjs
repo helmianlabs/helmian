@@ -454,6 +454,37 @@ export function friendlyWorkspace(id) {
 // The name a person should see for the session's workspace: the real
 // display name the server read from helmion.tenants (actor.tenantName)
 // when the session carries one; the tenant-id rule above is only the
+// Profile sync result (S1, 2026-11-05): the ONLY thing the sync surface
+// may render is the device-reported job. A pending or claimed job is an
+// honest in-progress state — never a success list; a done job renders
+// exactly the files the PC reported writing (path + verb), and a done
+// job with an empty report says the PC wrote nothing; a failed job
+// renders the failure. The pre-S1 page rendered a hardcoded list the
+// server invented; this model has no path to one.
+export function profileSyncResultModel(job = null) {
+  if (!job || typeof job !== 'object') {
+    return { state: 'idle', statusText: '', lines: [] };
+  }
+  if (job.status === 'pending' || job.status === 'claimed') {
+    return { state: 'running', statusText: 'Sync running on your PC — waiting for its report…', lines: [] };
+  }
+  if (job.status === 'failed') {
+    return { state: 'failed', statusText: `Sync failed on your PC: ${job.error || 'unknown error'}`, lines: [] };
+  }
+  if (job.status === 'done') {
+    const files = Array.isArray(job.files) ? job.files : [];
+    if (!files.length) {
+      return { state: 'done', statusText: 'Your PC ran the sync and reported no files written — everything was already in place.', lines: [] };
+    }
+    return {
+      state: 'done',
+      statusText: `Synced ${files.length} file${files.length === 1 ? '' : 's'} — as reported by your PC`,
+      lines: files.map((f) => `${f.path} (${f.action})`),
+    };
+  }
+  return { state: 'idle', statusText: '', lines: [] };
+}
+
 // fallback for sessions that predate the name.
 export function workspaceName(actor = {}) {
   const named = String(actor?.tenantName ?? '').trim();

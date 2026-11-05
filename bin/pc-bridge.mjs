@@ -26,6 +26,7 @@ import { parseApprovalReply } from '../src/mcp/local-exec-server.mjs';
 import { agentPrompt, normalizeProvider } from '../src/cloud/envoy-agents.mjs';
 import { providerStatus } from '../src/hands/provider-cli.mjs';
 import { installAgentOsTargets, AGENT_OS_TARGETS } from '../src/core/agent-os.mjs';
+import { executeProfileSync } from '../src/core/profile-sync-report.mjs';
 import { discoverCommands, expandCommand, parseSlashInput, resolveCommand } from '../src/agent/commands.mjs';
 import { discoverTenantCommands, ensureTenantStarterCommands, tenantWorkspacePath } from '../src/agent/tenant-workspace.mjs';
 import { loadEnabledPlugins } from '../src/agent/plugins.mjs';
@@ -549,6 +550,50 @@ export async function runBridge(overrides = {}) {
     }
   };
 
+  // Profile sync jobs (S1, 2026-11-05): the cloud button enqueues a job
+  // (profile-sync.mjs, sql/070); this poll claims it with the device
+  // token — the same pull shape as agent work — runs the Agent OS
+  // installer for real, and posts back the per-file report (paths,
+  // created-or-updated, sha256 read back from disk). The job runs off
+  // the turn loop: it writes files, it never touches the agent child.
+  // A route that is not live yet on an older cloud build stays quiet,
+  // exactly like the agent-work poll treats a missing route.
+  let profileSyncInFlight = false;
+  const pollProfileSyncJobs = async () => {
+    if (shuttingDown || profileSyncInFlight) return;
+    let claimed;
+    try {
+      const res = await api(deps, '/api/admin/envoy/profile-sync?work=1', { token: creds.token });
+      claimed = res?.job ?? null;
+    } catch (err) {
+      if (!/ROUTE|404|405|503/.test(String(err?.message))) logError('profile sync poll failed:', err?.message ?? err);
+      return;
+    }
+    if (!claimed) return;
+    profileSyncInFlight = true;
+    try {
+      log(`profile sync job ${claimed.id}: running the Agent OS installer`);
+      const { files } = await executeProfileSync({ home: homedir() });
+      await api(deps, '/api/admin/envoy/profile-sync', {
+        method: 'POST', token: creds.token,
+        body: { jobId: claimed.id, status: 'done', files },
+      });
+      log(`profile sync job ${claimed.id}: reported ${files.length} file(s) written`);
+    } catch (err) {
+      logError(`profile sync job ${claimed.id} failed:`, err?.message ?? err);
+      try {
+        await api(deps, '/api/admin/envoy/profile-sync', {
+          method: 'POST', token: creds.token,
+          body: { jobId: claimed.id, status: 'failed', error: String(err?.message ?? err).slice(0, 500) },
+        });
+      } catch (reportErr) {
+        logError('profile sync failure report failed:', reportErr?.message ?? reportErr);
+      }
+    } finally {
+      profileSyncInFlight = false;
+    }
+  };
+
   const processOne = async (job) => {
     turnInFlight = true;
     if (job?.kind === 'agent') {
@@ -626,6 +671,7 @@ export async function runBridge(overrides = {}) {
     pollCount += 1;
     if (pollCount % 12 === 0) await refreshConfigured();
     await pollAgentWork();
+    void pollProfileSyncJobs();
     try {
       for (const ch of watched) {
         const res = await api(deps,
@@ -760,7 +806,7 @@ export async function runBridge(overrides = {}) {
     });
     // Catch anything posted between the seen-init fetch and the subscribe.
     await poll();
-    const agentTimer = setInterval(() => void pollAgentWork(), Math.max(deps.pollMs, 5000) * 3);
+    const agentTimer = setInterval(() => { void pollAgentWork(); void pollProfileSyncJobs(); }, Math.max(deps.pollMs, 5000) * 3);
     if (typeof agentTimer.unref === 'function') agentTimer.unref();
   } else {
     startPolling();
