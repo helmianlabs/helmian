@@ -64,7 +64,7 @@ export function mentions(text) {
   return { all, providers: [...out] };
 }
 
-// Same routing as the server (src/cloud/envoy-agents.mjs) for the "working" light.
+// Same routing as the server (src/cloud/envoy-agents.mjs) for pending-work routing.
 // Ordinary channels (Maestro Bite 2): only an explicit address earns a
 // turn — @name / @all — and an unnamed message is pending for nobody.
 // 'maestro' is never a target: Maestro is the human's seat, not an
@@ -82,25 +82,31 @@ export function addressed(message, roster) {
 const providerOnline = (p, online) => online.has(p);
 
 export function agentStates(messages, roster, online, now = Date.now(), route = addressed) {
+  // Presence only: connected or not, from the presence feed (the `online`
+  // set). This used to also derive a 'working' state from the age of the
+  // last routed message (fresh within 10 minutes and unanswered) — a
+  // guess that lit seats WORKING when no job was running. Removed on
+  // Troy's order (2026-11-04): the desk shows no work state it cannot
+  // prove; real seat activity arrives with the runner activity feed.
   const out = {};
   for (const p of roster) {
     const mine = messages.filter((m) => m.authorSubject === `agent:${p}`);
     const last = mine.at(-1) ?? null;
-    const lastAsk = [...messages].reverse().find((m) => route(m, roster).includes(p));
-    const answered = lastAsk && messages.some((m) => m.authorSubject === `agent:${p}` && m.idempotencyKey === `reply:${lastAsk.id}`);
-    const fresh = lastAsk && now - new Date(lastAsk.createdAt).getTime() < 10 * 60_000;
     const isOnline = providerOnline(p, online);
-    out[p] = { state: !isOnline ? 'offline' : (fresh && !answered ? 'working' : 'idle'), last: last?.body ?? '' };
+    out[p] = { state: !isOnline ? 'offline' : 'idle', last: last?.body ?? '' };
   }
   return out;
 }
 
 // The server's agent-work window (src/cloud/envoy-mesh.mjs agentWork): a
 // routed message stays waiting for its agent for 30 minutes, until the
-// reply lands. The roster light above is a 10-minute recency view; this is
-// the server's own definition of pending work, mirrored over the same
-// server-fed lists so the in-thread cue and the fast poll track pending
-// work itself — never a local timer's guess.
+// reply lands. pendingAgentWork/deskPending below mirror that definition
+// and stay exported as the test-pinned mirror of the server rule — but
+// the desk no longer derives any display from them: the in-thread
+// "answering" cue and the roster WORKING light that were computed from
+// message age were removed on Troy's order (2026-11-04) because they lit
+// seats that had no job running. Real seat activity renders from the
+// runner activity feed instead (activity desk bite).
 export const AGENT_WORK_WINDOW_MS = 30 * 60_000;
 export const FAST_POLL_MS = 800;
 export const CALM_POLL_MS = 2500;
@@ -224,14 +230,13 @@ export function agentRoomFor(channels, provider) {
   return (channels ?? []).find((c) => c.kind === 'agent' && c.slug === `agent-${provider}`) ?? null;
 }
 
-// Pending work in the open channel, from the live server-fed state.
-function currentWorking() {
-  const agents = ws.config?.agents ?? [];
-  const joined = Object.fromEntries(agents.map((a) => [a.provider, a.joinedAt]));
-  const roster = agents.map((a) => a.provider);
-  if (inMaestroMode()) return deskPending(ws.messages, roster, joined, ws.online);
-  return pendingAgentWork(ws.messages, roster, joined, ws.online);
-}
+// ACTIVITY ANCHOR (desk): this is where the desk's live seat-activity
+// rendering hooks in (activity desk bite — real runner events: started /
+// working / file-placed / published / done / failed, with an elapsed
+// clock). The age-derived pending-work computation that fed the old
+// "answering" cue (currentWorking over pendingAgentWork/deskPending) was
+// removed 2026-11-04 on Troy's order — the desk shows no work state it
+// cannot prove from real events.
 
 // Message text -> DOM: code fences, links, @mentions, Claim:.
 // Links render as buttons wired to onLink: the desk sends them to the
@@ -887,9 +892,6 @@ async function loadConfig() {
   const ch = ws.channels.find((c) => c.id === id);
   if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack }; ls.set('chanMeta', seen); }
   renderHeader(); renderAgents(); renderChannels(); syncAgentsPane();
-  // A roster or join change can start (or end) pending work without any
-  // new message arriving; keep the in-thread cue honest.
-  if (ws.messages.length && currentWorking().join(',') !== ws.cueSig) renderMessages();
 }
 function renderHeader() {
   const ch = ws.channels.find((c) => c.id === ws.channelId);
@@ -1000,7 +1002,7 @@ function renderAgents() {
     : (totalCount ? `${totalCount} in this channel` : 'none in this channel');
   const builtinCards = roster.map((p) => {
     const s = states[p];
-    const label = s.state === 'offline' ? 'OFFLINE' : s.state === 'working' ? 'WORKING' : 'IDLE';
+    const label = s.state === 'offline' ? 'OFFLINE' : 'IDLE';
     return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: desk ? `Dispatch to @${NAMES[p]}` : `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
       avatarImg(p), h('strong', {}, NAMES[p]),
       h('button', { type: 'button', class: 'ew-icon remove', title: desk ? `Remove ${NAMES[p]} from the desk` : `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×'),
@@ -1329,10 +1331,6 @@ async function loadMessages() {
   const sig = messages.map((m) => m.id).join(',');
   if (sig === ws.sig) {
     renderAgents(); renderCliThread();
-    // No new messages, but pending work can still start or expire on
-    // server state alone (a reply window lapsing, an agent coming online):
-    // redraw the thread if the in-thread working cue changed.
-    if (currentWorking().join(',') !== ws.cueSig) renderMessages();
     return;
   }
   ws.sig = sig; ws.messages = messages;
@@ -1393,19 +1391,10 @@ function renderMessages() {
         h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })), dispatch)));
     prev = m;
   }
-  // In-thread working cue: one row per agent with pending work in this
-  // channel, sitting where its reply will land. Driven entirely by the
-  // server-fed lists via currentWorking() — it appears when work becomes
-  // pending and clears when the reply posts or the work window lapses.
-  const working = currentWorking();
-  ws.cueSig = working.join(',');
-  for (const p of working) {
-    out.push(h('div', { class: 'ew-msg ew-answering', role: 'status' },
-      h('div', { class: 'ew-avatar' }, avatarImg(p)),
-      h('div', {}, h('div', { class: 'ew-body ew-answering-body' },
-        h('span', { class: 'ew-working-dot', 'aria-hidden': 'true' }),
-        `${NAMES[p]} is answering…`))));
-  }
+  // ACTIVITY ANCHOR (thread): the activity desk bite renders real runner
+  // activity rows here, after the message list. The age-derived
+  // "X is answering…" cue that stood here was removed 2026-11-04 on
+  // Troy's order — it lit seats from message age alone, job or no job.
   if (!ws.messages.length) out.push(h('div', { class: 'ew-empty' }, desk
     ? 'This is your desk. Send a dispatch — @name for one agent, @all for everyone, or name nobody and it goes to everyone on the desk.'
     : (ws.config?.agents?.length ? 'Say hello. Name an agent with @ to get an answer — a message that names nobody is just posted, for people.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.')));
@@ -1500,7 +1489,7 @@ async function openCliRoom() {
   else renderCliThread();
 }
 // The room's roster (exactly one agent, joined when the room was made) —
-// fetched once per room; it drives the in-thread answering cue.
+// fetched once per room.
 async function loadCliRoomConfig() {
   const id = ws.cli.roomId; if (!id) return;
   try {
@@ -1522,13 +1511,10 @@ async function loadCliRoom() {
   } catch { /* keep the last good room state */ }
   renderCliThread();
 }
-// Pending work inside the picked agent's room (the server's agent-work
-// rules over the room's own messages), for the fast-poll decision.
-function roomWorking() {
-  const { key } = cliTarget();
-  if (!key || ws.cli.roomFor !== key || !ws.cli.roomId) return [];
-  return pendingAgentWork(ws.cli.roomMessages, [key], ws.cli.roomJoined, ws.online, Date.now(), roomAddressed);
-}
+// ACTIVITY ANCHOR (room): the room's live activity rows hook in with the
+// activity desk bite. The age-derived roomWorking() that fed this pane's
+// "answering" cue and the fast-poll decision was removed 2026-11-04 on
+// Troy's order, together with the cue itself.
 
 // The pane's own conversation stream: the picked agent's room, rendered
 // where the human is looking instead of inside a shared channel.
@@ -1538,11 +1524,10 @@ function renderCliThread() {
   const { key } = cliTarget();
   const inRoom = ws.cli.roomFor === key && Boolean(ws.cli.roomId);
   const list = inRoom ? agentRoomThread(ws.cli.roomMessages) : [];
-  const showing = inRoom ? roomWorking() : [];
-  const sig = `${key}|${ws.cli.roomId ?? ''}|${list.map((m) => m.id).join(',')}|${showing.join(',')}`;
+  const sig = `${key}|${ws.cli.roomId ?? ''}|${list.map((m) => m.id).join(',')}`;
   if (sig === ws.cli.threadSig) return;
   ws.cli.threadSig = sig;
-  if (!list.length && !showing.length) {
+  if (!list.length) {
     box.replaceChildren(h('p', { class: 'ew-note' }, inRoom
       ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here, in ${NAMES[key]}'s own room.`
       : `Opening your room with ${NAMES[key]}…`));
@@ -1567,13 +1552,9 @@ function renderCliThread() {
         h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })))));
     prev = m;
   }
-  for (const p of showing) {
-    out.push(h('div', { class: 'ew-msg ew-answering', role: 'status' },
-      h('div', { class: 'ew-avatar' }, avatarImg(p)),
-      h('div', {}, h('div', { class: 'ew-body ew-answering-body' },
-        h('span', { class: 'ew-working-dot', 'aria-hidden': 'true' }),
-        `${NAMES[p]} is answering…`))));
-  }
+  // ACTIVITY ANCHOR (room thread): real runner activity rows render here
+  // with the activity desk bite; the age-derived "answering" cue that
+  // stood here was removed 2026-11-04 on Troy's order.
   box.replaceChildren(...out);
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
@@ -2191,18 +2172,18 @@ export async function mountWorkspace(ctx) {
   await openCliRoom().catch(() => {});
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
   const visible = () => document.visibilityState === 'visible' && document.getElementById('shell')?.dataset.view === 'desktop';
-  // Adaptive message poll: while any agent has pending work in the open
-  // channel (currentWorking, the server's agent-work rules mirrored
-  // client-side), poll fast so the reply lands the moment it posts; with
-  // nothing pending, fall back to the calm interval. The generation
-  // counter retires a chain whose mount has been superseded, so remounts
-  // never stack pollers.
+  // Message poll on the calm interval. This was adaptive — fast while
+  // the age-derived mirror said work was pending — until that mirror's
+  // display was killed (2026-11-04, Troy's order); event-driven refresh
+  // returns with the runner activity feed. The generation counter
+  // retires a chain whose mount has been superseded, so remounts never
+  // stack pollers.
   const gen = (ws.pollGen = (ws.pollGen ?? 0) + 1);
   const tick = async () => {
     if (gen !== ws.pollGen) return;
     if (visible()) { await loadMessages().catch(() => {}); await loadCliRoom().catch(() => {}); }
     if (gen !== ws.pollGen) return;
-    ws.timer = setTimeout(tick, (currentWorking().length || roomWorking().length) ? FAST_POLL_MS : CALM_POLL_MS);
+    ws.timer = setTimeout(tick, CALM_POLL_MS);
   };
   ws.timer = setTimeout(tick, CALM_POLL_MS);
   ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadAgentState(); loadConfig(); if (inMaestroMode()) loadDeskLists(); } }, 15000);
