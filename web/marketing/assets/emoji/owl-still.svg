@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><path d="M30 30 L44 14 L50 32 Z M98 30 L84 14 L78 32 Z" fill="#92400e"/><ellipse cx="64" cy="68" rx="44" ry="48" fill="#b45309"/><ellipse cx="64" cy="86" rx="26" ry="24" fill="#fde68a"/><circle cx="46" cy="56" r="14" fill="#fff"/><circle cx="82" cy="56" r="14" fill="#fff"/><ellipse cx="46" cy="57" rx="6" ry="7.6" fill="#2b2118"/><circle cx="47.8" cy="54.6" r="2.04" fill="#fff"/><ellipse cx="82" cy="57" rx="6" ry="7.6" fill="#2b2118"/><circle cx="83.8" cy="54.6" r="2.04" fill="#fff"/><polygon points="58,68 70,68 64,77" fill="#f59e0b"/></svg>

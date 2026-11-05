@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><g><animateTransform attributeName="transform" type="translate" values="0 0; 0 -5; 0 0" dur="1.2s" repeatCount="indefinite"/><circle cx="64" cy="66" r="48" fill="url(#face)"/><ellipse cx="48" cy="42" rx="17" ry="10" fill="#fff" opacity=".38" transform="rotate(-18 48 42)"/><path d="M23 101 A44 44 0 0 0 105 101 A57 57 0 0 1 23 101 Z" fill="#b45309" opacity=".16"/><path d="M34 58 Q45 48 56 58" fill="none" stroke="#2b2118" stroke-width="5" stroke-linecap="round"/><path d="M72 58 Q83 48 94 58" fill="none" stroke="#2b2118" stroke-width="5" stroke-linecap="round"/><path d="M36 84 A28 25 0 0 0 92 84 Z" fill="#7c2d12"/><path d="M39 85 A25 19 0 0 0 89 85 L89 82 L39 82 Z" fill="#fff"/><ellipse cx="64" cy="99" rx="14.56" ry="4.6" fill="#f87171"/><path d="M14 64 C21.0 73.0 22.0 77.0 22.0 80.0 A8.0 8.0 0 1 1 6.0 80.0 C6.0 77.0 7.0 73.0 14 64 Z" fill="#38bdf8"/><path d="M114 64 C107.0 73.0 106.0 77.0 106.0 80.0 A8.0 8.0 0 1 1 122.0 80.0 C122.0 77.0 121.0 73.0 114 64 Z" fill="#38bdf8"/><path d="M20 92 C24.9 98.3 25.6 101.1 25.6 103.2 A5.6 5.6 0 1 1 14.4 103.2 C14.4 101.1 15.100000000000001 98.3 20 92 Z" fill="#38bdf8"/><path d="M108 92 C103.1 98.3 102.4 101.1 102.4 103.2 A5.6 5.6 0 1 1 113.6 103.2 C113.6 101.1 112.9 98.3 108 92 Z" fill="#38bdf8"/></g></svg>

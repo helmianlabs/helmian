@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><path d="M64 4 q26 22 26 56 l-10 20 h-32 l-10 -20 q0 -34 26 -56 Z" fill="url(#steel)"/><circle cx="64" cy="44" r="12" fill="url(#ocean)" stroke="#64748b" stroke-width="3"/><path d="M38 66 q-14 10 -14 30 l16 -6 M90 66 q14 10 14 30 l-16 -6" fill="#ef4444"/><path d="M54 82 q10 22 10 34 q0 -12 10 -34 q-10 5 -20 0 Z" fill="#f97316"/><path d="M59 88 q5 12 5 20 q0 -8 5 -20 q-5 3 -10 0 Z" fill="#facc15"/></svg>

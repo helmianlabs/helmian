@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><g transform="translate(64 64)"><animateTransform attributeName="transform" type="scale" values="1; 1.06; 1" dur="1.6s" repeatCount="indefinite"/><g transform="translate(-64 -64)"><path d="M64 22 a16 15 0 0 1 22 10 a15 14 0 0 1 12 16 a15 15 0 0 1 -6 24 a16 15 0 0 1 -16 12 a15 14 0 0 1 -12 -4 a15 14 0 0 1 -12 4 a16 15 0 0 1 -16 -12 a15 15 0 0 1 -6 -24 a15 14 0 0 1 12 -16 a16 15 0 0 1 22 -10 Z" fill="url(#rose)"/><path d="M64 24 v76 M42 40 q8 4 4 12 M86 40 q-8 4 -4 12 M40 66 q8 0 10 8 M88 66 q-8 0 -10 8" fill="none" stroke="#be123c" stroke-width="3.4" stroke-linecap="round" opacity=".65"/><ellipse cx="44" cy="34" rx="13" ry="7" fill="#fff" opacity=".35" transform="rotate(-18 44 34)"/></g></g></svg>

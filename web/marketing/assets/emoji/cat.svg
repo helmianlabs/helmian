@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><g><animateTransform attributeName="transform" type="translate" values="0 2; 0 -2; 0 2" dur="1.8s" repeatCount="indefinite"/><path d="M28 44 L24 14 L52 30 Z" fill="#fb923c"/><path d="M100 44 L104 14 L76 30 Z" fill="#fb923c"/><path d="M31 38 L29 23 L44 31 Z" fill="#fda4af"/><path d="M97 38 L99 23 L84 31 Z" fill="#fda4af"/><ellipse cx="64" cy="70" rx="44" ry="40" fill="#fb923c"/><ellipse cx="46" cy="66" rx="5" ry="6.6" fill="#2b2118"/><circle cx="47.8" cy="63.6" r="1.7000000000000002" fill="#fff"/><ellipse cx="82" cy="66" rx="5" ry="6.6" fill="#2b2118"/><circle cx="83.8" cy="63.6" r="1.7000000000000002" fill="#fff"/><polygon points="59,80 69,80 64,86" fill="#9d174d"/><g stroke="#7c2d12" stroke-width="2.4" stroke-linecap="round"><path d="M14 74 l18 3 M16 88 l16 -2 M114 74 l-18 3 M112 88 l-16 -2"/></g></g></svg>

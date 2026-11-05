@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><g transform="translate(64 68) scale(1.13) translate(-64 -68)"><path d="M64 6 q6 22 16 34 q14 17 12 36 a30 30 0 0 1 -56 6 q-4 -14 4 -26 q2 6 8 8 q-2 -16 6 -28 q6 -9 10 -30 Z" fill="#f97316"/><path d="M64 44 q4 12 10 19 q8 10 6 20 a17 17 0 0 1 -33 3 q-2 -10 5 -17 q4 -5 12 -25 Z" fill="#fbbf24"/><path d="M64 74 q6 6 5 13 a8.5 8.5 0 0 1 -17 -2 q0 -6 6 -11 q4 -3 6 0 Z" fill="#fef3c7"/><ellipse cx="52" cy="62" rx="3.6" ry="5.2" fill="#2b2118"/><circle cx="53.8" cy="59.6" r="1.2240000000000002" fill="#fff"/><ellipse cx="76" cy="62" rx="3.6" ry="5.2" fill="#2b2118"/><circle cx="77.8" cy="59.6" r="1.2240000000000002" fill="#fff"/><path d="M56 76 Q64 81 72 76" fill="none" stroke="#7c2d12" stroke-width="3.4" stroke-linecap="round"/></g></svg>

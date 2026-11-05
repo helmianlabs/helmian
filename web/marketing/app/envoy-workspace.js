@@ -6,6 +6,7 @@ import { addSession, sessionsFromServer } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
 import { createConnectFields } from './connect-fields.mjs';
+import { emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral' };
@@ -237,6 +238,29 @@ function currentWorking() {
 // workbench browser; agent replies send them to a full tab instead (see
 // the render loops). Markdown links ([label](url)) render as one button
 // carrying the label — the form agent file deliveries arrive in.
+// Helmian's own emoji art (emoji-map.mjs): a mapped emoji renders as its
+// asset, an unmapped one keeps the platform glyph — Unicode stays the data.
+// Pictograph runs match whole (ZWJ/flag/keycap sequences included; the
+// asset lookup declines those) so a sequence is never split in two.
+const EMOJI_RUN_RE = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\uFE0F?\u20E3)(?:\uFE0F|[\u{1F3FB}-\u{1F3FF}]|\u200D(?:\p{Extended_Pictographic}|\p{Regional_Indicator})(?:\uFE0F|[\u{1F3FB}-\u{1F3FF}])*)*/gu;
+// "plain" emoji mode and reduced-motion systems get the static first frame.
+const emojiStill = () => isPlain() || (typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+function emojiNode(run) {
+  const slug = emojiAssetSlug(run);
+  if (!slug) return run;
+  return h('img', { class: 'hx-emoji', src: emojiAssetUrl(slug, { still: emojiStill() }), alt: run, title: run, loading: 'lazy' });
+}
+function appendText(into, str) {
+  if (!str) return;
+  let at = 0; let m; EMOJI_RUN_RE.lastIndex = 0;
+  while ((m = EMOJI_RUN_RE.exec(str))) {
+    if (m.index > at) into.append(str.slice(at, m.index));
+    into.append(emojiNode(m[0]));
+    at = EMOJI_RUN_RE.lastIndex;
+  }
+  if (at < str.length) into.append(str.slice(at));
+}
+
 export function renderBody(text, { onLink, onCanvas, linkTitle } = {}) {
   const frag = document.createDocumentFragment();
   const parts = String(text ?? '').split(/```(\w+)?\n?([\s\S]*?)```/g);
@@ -254,7 +278,7 @@ function inline(text, into, onLink, linkTitle) {
   const re = /(\[([^\]\n]+)\]\((https?:\/\/[^\s<>"')]+)\))|(https?:\/\/[^\s<>"')\]]+)|(@[A-Za-z][A-Za-z0-9_-]{1,20})|(^|\n)(Claim:)/g;
   let at = 0; let m;
   while ((m = re.exec(text))) {
-    into.append(text.slice(at, m.index));
+    appendText(into, text.slice(at, m.index));
     // The click closure must capture this match's URL in its own binding:
     // m is the shared loop variable and is null by the time any click lands
     // (the exec loop's final call), so closing over m[3]/m[4] threw on click
@@ -265,7 +289,7 @@ function inline(text, into, onLink, linkTitle) {
     else { into.append(m[6]); into.append(h('span', { class: 'claim' }, m[7])); }
     at = re.lastIndex;
   }
-  into.append(text.slice(at));
+  appendText(into, text.slice(at));
 }
 
 const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
@@ -274,7 +298,7 @@ const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, 
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
 function chatAvatar(c, cls = '') {
   const a = avatarFor(sanitizeChoice(ws.avatars[c?.id]), c?.title || c?.slug);
-  return h('span', { class: `ew-ava ${a.kind} ${cls}`.trim(), style: a.kind === 'plain' ? `--ava:${a.color}` : null, 'aria-hidden': 'true' }, a.glyph);
+  return h('span', { class: `ew-ava ${a.kind} ${cls}`.trim(), style: a.kind === 'plain' ? `--ava:${a.color}` : null, 'aria-hidden': 'true' }, a.kind === 'char' ? emojiNode(a.glyph) : a.glyph);
 }
 function saveAvatar(id, choice) { const v = sanitizeChoice(choice); if (!id || !v) return; ws.avatars[id] = v; ls.set('avatars', ws.avatars); }
 // Characters or simple letter icons; the switch remembers the person's preference.
@@ -286,7 +310,7 @@ function avatarPicker(choice, title, onPick) {
       ...[['char', 'Characters'], ['plain', 'Simple']].map(([k, label]) => h('button', { type: 'button', role: 'radio', 'aria-checked': String(look === k), class: look === k ? 'on' : '', onclick: () => { look = k; if ((choice?.k ?? 'char') !== k) { choice = defaultChoice(title(), k === 'plain' ? 'plain' : 'playful'); onPick(choice); } draw(); } }, label)));
     const grid = h('div', { class: look === 'char' ? 'ew-ava-grid' : 'ew-ava-grid plain', role: 'radiogroup', 'aria-label': look === 'char' ? 'Pick a character' : 'Pick a colour' },
       ...(look === 'char'
-        ? CHARACTERS.map(([id, glyph, label]) => h('button', { type: 'button', role: 'radio', class: `ew-ava char${choice?.id === id ? ' on' : ''}`, 'aria-checked': String(choice?.id === id), 'aria-label': label, title: label, onclick: () => { choice = { k: 'char', id }; onPick(choice); draw(); } }, glyph))
+        ? CHARACTERS.map(([id, glyph, label]) => h('button', { type: 'button', role: 'radio', class: `ew-ava char${choice?.id === id ? ' on' : ''}`, 'aria-checked': String(choice?.id === id), 'aria-label': label, title: label, onclick: () => { choice = { k: 'char', id }; onPick(choice); draw(); } }, emojiNode(glyph)))
         : COLORS.map((color, i) => h('button', { type: 'button', role: 'radio', class: `ew-ava plain${choice?.c === i ? ' on' : ''}`, style: `--ava:${color}`, 'aria-checked': String(choice?.c === i), 'aria-label': `Colour ${i + 1}`, title: `Colour ${i + 1}`, onclick: () => { choice = { k: 'plain', c: i }; onPick(choice); draw(); } }, avatarFor({ k: 'plain', c: i }, title()).glyph))));
     wrap.replaceChildren(seg, grid);
   };
@@ -771,7 +795,7 @@ function renderChannels() {
           title: `${ca.name} (@${ca.handle})${ca.jobTitle ? ' · ' + ca.jobTitle : ''}`,
           onclick: () => insertMention(ca.handle),
         },
-        h('span', { class: 'ew-avatar emoji-ava' }, ca.emoji || '🤖'),
+        h('span', { class: 'ew-avatar emoji-ava' }, emojiNode(ca.emoji || '🤖')),
         h('span', { class: 'name' }, ca.name),
         h('span', { class: 'tags' }, h('span', { class: 'ew-mini custom-tag' }, `@${ca.handle}`))))
       : [h('p', { class: 'ew-note' }, 'Click + to create a custom agent with a face, name, and real job.')]),
@@ -988,7 +1012,7 @@ function renderAgents() {
     const state = engineOnline ? 'idle' : 'offline';
     const provLabel = CUSTOM_PROVIDER_LABELS[ca.provider] || ca.provider;
     return h('div', { class: 'ew-agent custom-agent-card', role: 'button', tabindex: 0, title: `Mention @${ca.handle} (${ca.jobTitle || provLabel})`, onclick: () => insertMention(ca.handle), onkeydown: (e) => { if (e.key === 'Enter') insertMention(ca.handle); } },
-      h('div', { class: 'ew-avatar emoji-ava' }, ca.emoji || '🤖'),
+      h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(ca.emoji || '🤖')),
       h('strong', {}, `${ca.name} (@${ca.handle})`),
       h('button', { type: 'button', class: 'ew-icon remove', title: `Retire @${ca.handle}`, 'aria-label': `Retire @${ca.handle}`, onclick: (e) => { e.stopPropagation(); removeCustomAgent(ca.handle); } }, '×'),
       h('span', { class: `ew-state ${state}` }, engineOnline ? 'READY' : 'CONNECT SEAT'),
@@ -1355,7 +1379,7 @@ function renderMessages() {
     const who = whoOf(m);
     const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
     const avatar = who.kind === 'agent'
-      ? (who.custom ? h('div', { class: 'ew-avatar emoji-ava' }, who.custom.emoji || '🤖') : h('div', { class: 'ew-avatar' }, avatarImg(who.provider)))
+      ? (who.custom ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.custom.emoji || '🤖')) : h('div', { class: 'ew-avatar' }, avatarImg(who.provider)))
       : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase());
     const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
     const src = who.kind === 'agent'
@@ -1730,7 +1754,7 @@ function openCreateAgentModal() {
       class: `ew-emoji-btn${pickedEmoji === em ? ' on' : ''}`,
       'aria-checked': String(pickedEmoji === em),
       onclick: () => { pickedEmoji = em; emojiInput.value = em; drawEmojis(); },
-    }, em)));
+    }, emojiNode(em))));
   };
   emojiInput.addEventListener('input', () => { const v = emojiInput.value.trim(); if (v) { pickedEmoji = v; drawEmojis(); } });
   drawEmojis();
