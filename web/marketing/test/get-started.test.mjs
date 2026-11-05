@@ -6,7 +6,7 @@ import { planDownloads } from '../get-started/downloads.mjs';
 
 test('get-started page exists and prompts sign-up', () => {
   const html = readFileSync(new URL('../get-started/index.html', import.meta.url), 'utf8');
-  assert.match(html, /Create your free account/u);
+  assert.match(html, /Create your account/u);
   const js = readFileSync(new URL('../get-started/get-started.js', import.meta.url), 'utf8');
   assert.match(js, /mountSignUp/u);
   assert.match(js, /\/api\/signup/u);

@@ -7,7 +7,7 @@ if (checkoutStatus && checkoutState === 'cancelled') checkoutStatus.textContent 
 if (checkoutButtons.length && checkoutStatus) {
   checkoutButtons.forEach((checkoutButton) => checkoutButton.addEventListener('click', async () => {
     checkoutButtons.forEach((button) => { button.disabled = true; });
-    checkoutStatus.textContent = 'Opening free account sign-up…';
+    checkoutStatus.textContent = 'Opening account sign-up…';
     try {
       const response = await fetch('/api/billing/checkout', {
         method: 'POST',

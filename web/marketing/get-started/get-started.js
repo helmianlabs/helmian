@@ -80,7 +80,7 @@ async function deliver(clerk, email) {
 }
 
 async function main() {
-  $('#gs-title').textContent = 'Create your free account';
+  $('#gs-title').textContent = 'Create your account';
   let clerk;
   try {
     const cfg = await (await fetch('/api/herald-config', { headers: { accept: 'application/json' } })).json();
@@ -133,7 +133,7 @@ async function main() {
         status('Still signed in — the sign-out did not complete. Try again, or open your workspace.');
         return;
       }
-      $('#gs-title').textContent = 'Create your free account';
+      $('#gs-title').textContent = 'Create your account';
       mountAuthForm();
     });
     mount.append(open, fresh);
