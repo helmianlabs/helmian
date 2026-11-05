@@ -2,8 +2,6 @@ using System.Net;
 using System.Text;
 using Helmion.Desktop.Core;
 
-namespace Helmion.Desktop.SmokeTests;
-
 /// <summary>
 /// Source-level checks for the desktop Integrations credential cards: the
 /// catalog matches the web cards' providers, names, and sign-in lines
@@ -11,7 +9,7 @@ namespace Helmion.Desktop.SmokeTests;
 /// road, tool cards carry only the API-key slot, and the status words
 /// never claim more than a vault write earned.
 /// </summary>
-public static class ProviderCredentialCardsChecks
+internal static class ProviderCredentialCardsChecks
 {
     public static void Run()
     {
