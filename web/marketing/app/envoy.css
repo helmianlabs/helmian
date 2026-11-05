@@ -492,6 +492,11 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-seg { display:inline-flex; align-self:flex-start; border:1px solid var(--border); border-radius:999px; padding:2px; background:var(--panel-2); }
 .ew-seg button { border:0; background:transparent; color:var(--muted); font-weight:600; font-size:12px; padding:4px 12px; border-radius:999px; cursor:pointer; transition:background .15s, color .15s; }
 .ew-seg button.on { background:var(--accent); color:#04121c; }
+/* Helmian's own emoji art (emoji-map.mjs): inline in message text it sits
+   on the text line; inside the round/square avatar frames it stays glyph-
+   sized instead of filling the frame like the provider logos do. */
+.hx-emoji { width:1.3em; height:1.3em; vertical-align:-0.3em; object-fit:contain; }
+.ew-avatar .hx-emoji { width:25px; height:25px; vertical-align:middle; }
 .ew-ava-grid { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:6px; max-width:300px; }
 .ew-ava-grid.plain { grid-template-columns:repeat(4, minmax(0, 1fr)); max-width:200px; }
 .ew-ava-grid .ew-ava { width:100%; aspect-ratio:1; height:auto; cursor:pointer; font-size:19px; transition:transform .12s var(--ease), border-color .15s, box-shadow .15s; }

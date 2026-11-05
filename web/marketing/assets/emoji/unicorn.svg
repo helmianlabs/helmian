@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><g><animateTransform attributeName="transform" type="translate" values="0 2; 0 -2; 0 2" dur="1.8s" repeatCount="indefinite"/><polygon points="64,2 54,30 74,30" fill="#facc15"/><path d="M58 12 l12 0 M56 21 l16 0" stroke="#d97706" stroke-width="2.6"/><path d="M26 44 q-6 -22 10 -30 q2 16 8 24 Z" fill="#ec4899"/><path d="M102 44 q6 -22 -10 -30 q-2 16 -8 24 Z" fill="#ec4899"/><ellipse cx="64" cy="70" rx="42" ry="42" fill="#fdf4ff"/><path d="M30 40 q-8 30 2 48 M98 40 q8 30 -2 48" stroke="#ec4899" stroke-width="9" fill="none" stroke-linecap="round"/><ellipse cx="46" cy="66" rx="5" ry="6.6" fill="#2b2118"/><circle cx="47.8" cy="63.6" r="1.7000000000000002" fill="#fff"/><ellipse cx="82" cy="66" rx="5" ry="6.6" fill="#2b2118"/><circle cx="83.8" cy="63.6" r="1.7000000000000002" fill="#fff"/><ellipse cx="64" cy="90" rx="13" ry="9" fill="#fbcfe8"/><circle cx="59" cy="90" r="2.4" fill="#9d174d"/><circle cx="69" cy="90" r="2.4" fill="#9d174d"/></g></svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><circle cx="64" cy="66" r="48" fill="url(#face)"/><ellipse cx="48" cy="42" rx="17" ry="10" fill="#fff" opacity=".38" transform="rotate(-18 48 42)"/><path d="M23 101 A44 44 0 0 0 105 101 A57 57 0 0 1 23 101 Z" fill="#b45309" opacity=".16"/><rect x="34" y="37.4" width="22" height="5.2" rx="2.6" fill="#8a5a12" transform="rotate(-6 45 40)"/><rect x="72" y="37.4" width="22" height="5.2" rx="2.6" fill="#8a5a12" transform="rotate(6 83 40)"/><ellipse cx="45" cy="58" rx="8.5" ry="10.5" fill="#fff"/><ellipse cx="45" cy="59" rx="4.4" ry="5.6" fill="#2b2118"/><ellipse cx="83" cy="58" rx="8.5" ry="10.5" fill="#fff"/><ellipse cx="83" cy="59" rx="4.4" ry="5.6" fill="#2b2118"/><ellipse cx="64" cy="94" rx="9" ry="11.5" fill="#7c2d12"/><ellipse cx="64" cy="97.5" rx="6" ry="3" fill="#f87171"/></svg>

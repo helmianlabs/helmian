@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><circle cx="64" cy="66" r="48" fill="url(#face)"/><ellipse cx="48" cy="42" rx="17" ry="10" fill="#fff" opacity=".38" transform="rotate(-18 48 42)"/><path d="M23 101 A44 44 0 0 0 105 101 A57 57 0 0 1 23 101 Z" fill="#b45309" opacity=".16"/><g><polygon points="64,2 50,34 78,34" fill="#8b5cf6"/><circle cx="64" cy="4" r="5" fill="#ec4899"/><path d="M56 22 L72 22 L69 13 L59 13 Z" fill="#facc15"/></g><path d="M35 60 Q45 68 55 60" fill="none" stroke="#2b2118" stroke-width="5" stroke-linecap="round"/><path d="M73 60 Q83 68 93 60" fill="none" stroke="#2b2118" stroke-width="5" stroke-linecap="round"/><path d="M40 86 A24 21 0 0 0 88 86 Z" fill="#7c2d12"/><path d="M43 87 A21 15 0 0 0 85 87 L85 84 L43 84 Z" fill="#fff"/><ellipse cx="64" cy="97" rx="12.48" ry="4.6" fill="#f87171"/><path d="M88 92 q14 2 12 12 q-1 7 -9 6" fill="none" stroke="#38bdf8" stroke-width="5" stroke-linecap="round"/><g fill="#f472b6"><rect x="16" y="30" width="7" height="7" rx="1.5" transform="rotate(20 19 33)"/></g><g fill="#4ade80"><rect x="104" y="42" width="7" height="7" rx="1.5" transform="rotate(-15 107 45)"/></g><g fill="#38bdf8"><rect x="22" y="98" width="7" height="7" rx="1.5" transform="rotate(30 25 101)"/></g></svg>

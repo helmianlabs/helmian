@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs>
+<radialGradient id="face" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffec9e"/><stop offset="52%" stop-color="#ffc93c"/><stop offset="100%" stop-color="#f59e0b"/>
+</radialGradient>
+<radialGradient id="facred" cx="38%" cy="30%" r="85%">
+  <stop offset="0%" stop-color="#ffb199"/><stop offset="52%" stop-color="#f9552e"/><stop offset="100%" stop-color="#d92d0f"/>
+</radialGradient>
+<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="#ffd94d"/><stop offset="100%" stop-color="#f5a50b"/>
+</linearGradient>
+<linearGradient id="ocean" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#0369a1"/></linearGradient>
+<linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
+<linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><circle cx="64" cy="98" r="30" fill="url(#face)"/><ellipse cx="46" cy="92" rx="6.5" ry="8.1" fill="#2b2118"/><circle cx="47.8" cy="89.6" r="2.21" fill="#fff"/><ellipse cx="82" cy="92" rx="6.5" ry="8.1" fill="#2b2118"/><circle cx="83.8" cy="89.6" r="2.21" fill="#fff"/><ellipse cx="64" cy="110" rx="7" ry="9.5" fill="#7c2d12"/><ellipse cx="64" cy="113.5" rx="4" ry="3" fill="#f87171"/><g fill="#e7e5e4"><circle cx="40" cy="34" r="13"/><circle cx="58" cy="24" r="16"/><circle cx="78" cy="26" r="14"/><circle cx="92" cy="38" r="11"/><circle cx="64" cy="38" r="15"/></g><g fill="#d6d3d1"><circle cx="48" cy="38" r="9"/><circle cx="82" cy="40" r="8"/></g><polygon points="24.0,52.0 25.6,55.8 29.7,56.1 26.6,58.8 27.5,62.9 24.0,60.7 20.5,62.9 21.4,58.8 18.3,56.1 22.4,55.8" fill="#facc15"/><polygon points="106.0,54.0 107.6,57.8 111.7,58.1 108.6,60.8 109.5,64.9 106.0,62.7 102.5,64.9 103.4,60.8 100.3,58.1 104.4,57.8" fill="#facc15"/><polygon points="64.0,3.0 65.3,6.2 68.8,6.5 66.1,8.7 66.9,12.0 64.0,10.2 61.1,12.0 61.9,8.7 59.2,6.5 62.7,6.2" fill="#fb923c"/></svg>
