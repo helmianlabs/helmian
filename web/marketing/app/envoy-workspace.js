@@ -825,7 +825,7 @@ export function githubLinkHeader({ github = null, admin = false } = {}) {
     statusText: repo ? `linked to ${repo}` : 'ready to link',
   };
 }
-export function debateHeaderState({ debateMode = 'off', maxRoundTurns = 12 } = {}) {
+export function debateHeaderState({ debateMode = 'off', maxRoundTurns = 10 } = {}) {
   const active = debateMode === 'free-willy';
   return {
     active,
@@ -842,7 +842,15 @@ async function loadConfig() {
     const body = await ws.ctx.api(`/api/admin/envoy/channel-config?channel_id=${encodeURIComponent(id)}`);
     if (id !== ws.channelId) return;
     ws.config = body.config ?? { agents: [] }; ws.configured = Boolean(body.configured); ws.discordBot = body.discordBot ?? null; ws.slackBot = body.slackBot ?? null;
-  } catch { ws.config = { agents: [], discord: null, slack: null }; ws.configured = false; }
+  } catch {
+    // A failed refresh must not blank the room: keep the last good
+    // config (roster, debate state, turn cap) and seed the empty
+    // fallback only when nothing has loaded yet. The old catch swapped
+    // in { agents: [] } on any error, and the renderers below turned
+    // that into "none in this channel", '+' add-pills, a vanished
+    // debate badge, and a modal turn field reading the fallback 12.
+    if (!ws.config) { ws.config = { agents: [], discord: null, slack: null }; ws.configured = false; }
+  }
   const ch = ws.channels.find((c) => c.id === id);
   if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack }; ls.set('chanMeta', seen); }
   renderHeader(); renderAgents(); renderChannels(); syncAgentsPane();
@@ -1797,7 +1805,7 @@ async function stopDebateNow() {
 function openDebateModal() {
   if (!ws.channelId) return;
   const currentOn = ws.config?.debateMode === 'free-willy';
-  const currentTurns = ws.config?.maxRoundTurns ?? 12;
+  const currentTurns = ws.config?.maxRoundTurns ?? 10;
   const turnsInput = h('input', { type: 'number', min: 1, max: 50, value: String(currentTurns), style: 'width:84px;', 'aria-label': 'Max agent turns per round' });
   const save = async (mode) => {
     try {
@@ -1805,7 +1813,7 @@ function openDebateModal() {
         action: 'set-debate-mode',
         channelId: ws.channelId,
         debateMode: mode,
-        maxRoundTurns: Number.parseInt(turnsInput.value, 10) || 12,
+        maxRoundTurns: Number.parseInt(turnsInput.value, 10) || 10,
       });
       ws.config = body.config;
       closeModal();

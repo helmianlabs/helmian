@@ -196,10 +196,14 @@ export function serializeConfig(config) {
   // desk existed keeps its exact bytes.
   if (config.desk === true) stored.desk = true;
   if (Array.isArray(config.customAgents) && config.customAgents.length > 0) stored.customAgents = config.customAgents;
-  if (config.debateMode === 'free-willy') {
-    stored.debateMode = 'free-willy';
-    stored.maxRoundTurns = Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(Number(config.maxRoundTurns) || DEFAULT_DEBATE_TURNS)));
-  }
+  if (config.debateMode === 'free-willy') stored.debateMode = 'free-willy';
+  // The turn cap is the operator's setting, not part of the on/off state:
+  // it persists across off-writes (stop-debate, set 'off') whenever it
+  // differs from the default. Before this, serialize dropped the cap with
+  // the mode, and the stored setting read back as the default (10).
+  const turnsRaw = Number(config.maxRoundTurns);
+  const turns = Number.isFinite(turnsRaw) ? Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(turnsRaw))) : DEFAULT_DEBATE_TURNS;
+  if (config.debateMode === 'free-willy' || turns !== DEFAULT_DEBATE_TURNS) stored.maxRoundTurns = turns;
   const body = JSON.stringify(stored);
   if (body.length > 4000) throw new Error('channel config is too large');
   return body;
