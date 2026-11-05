@@ -605,6 +605,8 @@ public partial class MainWindow : Window
         _serviceConnector = LocalServiceHost.Connector;
 
         InitializeComponent();
+        // Account button + Settings identity card read the Envoy cloud link.
+        RefreshAccountIdentity();
         // Before the first UpdateSnapshot: the derived labels read the feed.
         InitializeGuardPanel();
         // Read-only summary only. This deliberately does not populate the fresh
