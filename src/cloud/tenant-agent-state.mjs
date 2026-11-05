@@ -19,18 +19,20 @@
 // /api/admin/envoy/agent-state returns the signed-in member's tenant
 // state; the mesh consults the same computation when handing out work.
 import { Pool } from 'pg';
-import { normalizeProvider } from './envoy-agents.mjs';
+import { normalizeEngine, normalizeProvider } from './envoy-agents.mjs';
 
 export const TENANT_AGENT_STATE_PATH = '/api/admin/envoy/agent-state';
 
 export const ASLEEP_NO_PROVIDER_LINE = 'Your agents wake up when you connect a subscription.';
 export const ASLEEP_NO_RUNNER_LINE = 'Your agents wake up when your computer connects — open Helmian on your PC to bring them online.';
 
-// provider_connections.provider_id -> the envoy agent vocabulary.
+// provider_connections.provider_id -> the envoy agent vocabulary. The
+// engine vocabulary is the fallback (as on the presence leg below): a
+// connection stored under an engine-only name (ollama) resolves too.
 const CONNECTION_PROVIDER_MAP = Object.freeze({ openai_codex: 'openai', chatgpt: 'openai' });
 export function connectionProvider(providerId) {
   const raw = String(providerId ?? '').trim().toLowerCase();
-  return CONNECTION_PROVIDER_MAP[raw] ?? normalizeProvider(raw);
+  return CONNECTION_PROVIDER_MAP[raw] ?? normalizeProvider(raw) ?? normalizeEngine(raw);
 }
 
 const uniq = (list) => [...new Set(list.filter(Boolean))];
@@ -51,7 +53,16 @@ export function computeTenantAgentState({ runners = 0, presence = [], connection
   // credential signal. A sync stamp row (connected = false) is not, and
   // neither is a row whose boolean never arrived — the earlier
   // "not false counts" reading let an unset stamp pass this gate.
-  const presenceProviders = uniq(presence.filter((p) => p?.connected === true).map((p) => normalizeProvider(p?.provider ?? p?.providerName)));
+  // Device-reported presence names resolve through the provider
+  // vocabulary first and the engine vocabulary second — the two agree
+  // on every standard name, so standard seats resolve exactly as
+  // before. A runner serving a custom agent's engine reports the
+  // engine's own name ('ollama'), which the provider vocabulary alone
+  // would drop on the floor.
+  const presenceProviders = uniq(presence.filter((p) => p?.connected === true).map((p) => {
+    const raw = p?.provider ?? p?.providerName;
+    return normalizeProvider(raw) ?? normalizeEngine(raw);
+  }));
   const connectionProviders = uniq(connections
     .filter((c) => String(c?.credential_reference ?? c?.credentialReference ?? '').startsWith('vault://'))
     .map((c) => connectionProvider(c?.provider_id ?? c?.providerId)));
