@@ -2285,6 +2285,23 @@
                        Visibility="Collapsed" />
           </Grid>
         </Button>
+
+        <!-- Bottom-corner account menu (parity with helmian.cloud/app's
+             sidebar foot): always visible in the foot row, carries the
+             linked workspace's name, opens Settings / Keyboard shortcuts /
+             Download apps / Report an issue / Log out. -->
+        <Button x:Name="AccountButton"
+                Grid.Row="2"
+                Height="28"
+                Margin="36,2,4,2"
+                Padding="10,3"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Left"
+                Content="Account"
+                Click="AccountButton_Click"
+                Style="{StaticResource ShelfCompactButtonStyle}"
+                ToolTip="Account"
+                AutomationProperties.Name="Account" />
       </Grid>
     </Border>
 
@@ -5687,6 +5704,38 @@
                        FontFamily="{StaticResource AppFont}"
                        Foreground="{DynamicResource TextBrush}"
                        Margin="0,0,0,18" />
+            <!-- Account identity (parity with the web Settings panel):
+                 who this computer is signed in as — the linked workspace. -->
+            <Border Style="{StaticResource SettingsGlassCardStyle}">
+              <StackPanel>
+                <TextBlock Text="Account" Style="{StaticResource SectionTitleStyle}" />
+                <TextBlock x:Name="SettingsAccountHeadline"
+                           Text="Not linked"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           FontFamily="{StaticResource AppFont}"
+                           Foreground="{DynamicResource TextBrush}"
+                           Margin="0,6,0,0" />
+                <TextBlock x:Name="SettingsAccountDetail"
+                           Text="Link this computer from Team Chat to connect your workspace."
+                           Style="{StaticResource MutedStyle}"
+                           Margin="0,4,0,0" />
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                  <Button x:Name="SettingsAccountLogOutButton"
+                          Content="Log out"
+                          Click="AccountLogOut_Click"
+                          Padding="12,5"
+                          Style="{StaticResource ShelfCompactButtonStyle}"
+                          Visibility="Collapsed"
+                          AutomationProperties.Name="Log out" />
+                </StackPanel>
+                <TextBlock Text="Log out revokes this computer's access token on helmian.cloud and removes it from this PC."
+                           Style="{StaticResource MutedStyle}"
+                           FontSize="11"
+                           Margin="0,8,0,0" />
+              </StackPanel>
+            </Border>
+
             <Border Style="{StaticResource SettingsGlassCardStyle}">
               <!-- Keep theme explanation and picker in one responsive column.
                    The former fixed 340px picker column reduced the explanation

@@ -59,6 +59,7 @@ if (args.Contains("--herald-desktop-only", StringComparer.OrdinalIgnoreCase))
     HeraldDesktopGatewayChecks.Run();
     HeraldPairingLinkChecks.Run();
     EnvoyCloudChatChecks.Run();
+    DesktopAccountMenuChecks.Run();
     return;
 }
 
@@ -1083,6 +1084,7 @@ ProjectActivityReviewChecks.Run();
 HeraldDesktopGatewayChecks.Run();
 HeraldPairingLinkChecks.Run();
 EnvoyCloudChatChecks.Run();
+DesktopAccountMenuChecks.Run();
 RemoteControlDesktopChecks.Run();
 
 ProjectOpenScaffoldChecks.Run();

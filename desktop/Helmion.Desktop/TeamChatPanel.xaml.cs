@@ -386,6 +386,13 @@ public partial class TeamChatPanel : UserControl
         Unlinked("Unlinked. Team chat is off on this computer.");
     }
 
+    /// <summary>
+    /// The shell account menu's Log out lands here: the token is already
+    /// revoked on the server and the local store cleared by the caller;
+    /// drop this panel's in-memory copy of the link too.
+    /// </summary>
+    internal void HandleAccountSignedOut() => Unlinked("Logged out. Team chat is off on this computer.");
+
     private void Unlinked(string message)
     {
         _poll.Stop();
