@@ -8,10 +8,10 @@ import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-me
 import { createConnectFields } from './connect-fields.mjs';
 import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
 
-const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral'];
-const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral' };
+const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
+const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
 const AVATAR = { maestro: 'maestro', claude: 'claude', openai: 'chatgpt', grok: 'grok', gemini: 'gemini' };
-const ALIAS = { maestro: 'maestro', manager: 'maestro', claude: 'claude', chatgpt: 'openai', openai: 'openai', gpt: 'openai', grok: 'grok', xai: 'grok', gemini: 'gemini', mistral: 'mistral', lechat: 'mistral', runway: 'runway', ollama: 'ollama' };
+const ALIAS = { maestro: 'maestro', manager: 'maestro', claude: 'claude', chatgpt: 'openai', openai: 'openai', gpt: 'openai', grok: 'grok', xai: 'grok', gemini: 'gemini', mistral: 'mistral', lechat: 'mistral', runway: 'runway', ollama: 'ollama', groq: 'groq', nvidia: 'nvidia', nim: 'nvidia', cloudflare: 'cloudflare', workersai: 'cloudflare', openrouter: 'openrouter' };
 export const CUSTOM_AGENT_EMOJIS = ['🤖', '🦀', '🧐', '🤠', '🔥', '🧠', '⚡', '🛡️', '🎯', '🚀', '🦊', '🦉', '🐝', '🛠️', '📊', '🎨', '😀', '😎', '🤓', '🥷', '🧙', '🦾', '🐉', '🌟'];
 export const CUSTOM_PROVIDER_OPTIONS = [
   ['claude', 'Claude (Anthropic)'],

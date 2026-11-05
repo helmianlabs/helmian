@@ -17,6 +17,11 @@ export const PROVIDERS = Object.freeze(['Claude', 'ChatGPT', 'Grok', 'Gemini']);
 export const PROVIDER_REGISTRY = Object.freeze([
   { key: 'slack', name: 'Slack', kind: 'Team chat mirror' }, { key: 'discord', name: 'Discord', kind: 'Team chat mirror' }, { key: 'github', name: 'GitHub', kind: 'Code' },
   { key: 'anthropic', name: 'Claude', kind: 'AI provider' }, { key: 'openai', name: 'ChatGPT', kind: 'AI provider' }, { key: 'xai', name: 'Grok', kind: 'AI provider' }, { key: 'google', name: 'Gemini', kind: 'AI provider' },
+  // The provider-catalog seats (src/cloud/provider-registry.mjs):
+  // API-key providers whose connections are saved under their own seat
+  // names. Their free terms ride the server registry row; this row is
+  // only the Integrations truth lookup.
+  { key: 'groq', name: 'Groq', kind: 'AI provider' }, { key: 'nvidia', name: 'NVIDIA', kind: 'AI provider' }, { key: 'cloudflare', name: 'Cloudflare', kind: 'AI provider' }, { key: 'openrouter', name: 'OpenRouter', kind: 'AI provider' },
 ]);
 
 // Phones open on Home; wider screens keep the desktop-style Console default.
@@ -208,6 +213,10 @@ const PROVIDER_SOURCE_NAMES = Object.freeze({
   openai: Object.freeze({ connections: ['openai'], presence: ['openai'] }),
   xai: Object.freeze({ connections: ['xai', 'grok'], presence: ['xai', 'grok'] }),
   google: Object.freeze({ connections: ['google', 'gemini'], presence: ['gemini', 'google'] }),
+  groq: Object.freeze({ connections: ['groq'], presence: ['groq'] }),
+  nvidia: Object.freeze({ connections: ['nvidia'], presence: ['nvidia'] }),
+  cloudflare: Object.freeze({ connections: ['cloudflare'], presence: ['cloudflare'] }),
+  openrouter: Object.freeze({ connections: ['openrouter'], presence: ['openrouter'] }),
 });
 
 function mirrorRow(p, connectors) {

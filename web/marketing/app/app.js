@@ -1606,10 +1606,11 @@ async function loadEvidence() {
   const denied = (h.status === 'rejected' && h.reason?.status === 403) || (c.status === 'rejected' && c.reason?.status === 403);
   note.textContent = denied ? 'Handoffs and checkpoints are visible to owners and admins.' : '';
 }
-let integrationsMod = null; let qrMod = null; let connectFieldsMod = null;
+let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let apiKeyFieldsMod = null;
 async function loadIntegrations() {
   integrationsMod ??= await import('./integrations-view.mjs');
   connectFieldsMod ??= await import('./connect-fields.mjs');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs');
   const [c, p, pr, u, o, tc] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview'), api('/api/admin/tool-connections')]);
   const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
@@ -1649,6 +1650,13 @@ function integrationCard(card) {
   // store's, never the click's.
   if (card.connect && connectFieldsMod) {
     const fields = connectFieldsMod.createConnectFields({ provider: card.connect.provider, post, onStored: () => loadIntegrations() });
+    if (fields) a.append(fields);
+  }
+  // The provider-catalog seats connect with a pasted key instead (one
+  // key, or Cloudflare's two pieces): same store, same re-read after a
+  // successful save — the card's next status is the store's.
+  if (card.apiKeyConnect && apiKeyFieldsMod) {
+    const fields = apiKeyFieldsMod.createApiKeyFields({ provider: card.apiKeyConnect.provider, fields: card.apiKeyConnect.fields, post, onStored: () => loadIntegrations() });
     if (fields) a.append(fields);
   }
   if (card.action) {
@@ -1716,10 +1724,11 @@ $('#desktop-link').onclick = async () => {
   catch { toast('Could not create a code — try again'); }
 };
 // ---- providers (connection status) ----
-// Every AI connects the same one way (the owner's law, 2026-11-01):
-// with its account email and password, entered right on its card on
-// the Integrations page (or in the Create Custom Agent dialog). The
-// seat then works off that sign-in. These Settings cards are status
+// Every AI connects on its card on the Integrations page (the owner's
+// law, 2026-11-01): the sign-in seats with their account email and
+// password (or in the Create Custom Agent dialog), and the
+// provider-catalog seats with a pasted key. The seat then works off
+// that saved connection. These Settings cards are status
 // only — they render the same truth the Integrations page reads, and
 // offer no connect road of their own. The old roads that used to live
 // here (PC-spoke CLI sign-in instructions, runner-vault API-key
@@ -1735,7 +1744,15 @@ const PROVIDER_META = [
   { key: 'mistral', label: 'Mistral Le Chat' },
   { key: 'runway', label: 'Runway' },
   { key: 'ollama', label: 'Local Ollama' },
+  { key: 'groq', label: 'Groq' },
+  { key: 'nvidia', label: 'NVIDIA' },
+  { key: 'cloudflare', label: 'Cloudflare' },
+  { key: 'openrouter', label: 'OpenRouter' },
 ];
+// The provider-catalog seats connect with a pasted key on their
+// Integrations card, not an email and password — their Settings note
+// says so instead of pointing at the sign-in road.
+const API_KEY_PROVIDER_KEYS = new Set(['groq', 'nvidia', 'cloudflare', 'openrouter']);
 // The word "Connected" on these cards comes from the provider
 // connections store alone — the same store, and the same rule, the
 // Agents page reads (a saved row is the connection). The runner
@@ -1753,6 +1770,7 @@ const PROVIDER_META = [
 const PROVIDER_CONNECTION_NAMES = Object.freeze({
   claude: ['anthropic', 'claude'], openai: ['openai'], grok: ['xai', 'grok'], gemini: ['google', 'gemini'],
   xai: ['xai'], mistral: ['mistral'], runway: ['runway'], ollama: ['ollama'],
+  groq: ['groq'], nvidia: ['nvidia'], cloudflare: ['cloudflare'], openrouter: ['openrouter'],
 });
 async function loadProviders() {
   const box = $('#providers-cards');
@@ -1801,7 +1819,9 @@ async function loadProviders() {
     // one road. (The connect buttons that used to sit here — PC-spoke
     // sign-in, API key, and the one-click presence claim before them —
     // are gone; Bite 12, 2026-11-02.)
-    card.append(el('p', 'muted sm', 'Connect it on the Integrations page — email and password, right on its card.'));
+    card.append(el('p', 'muted sm', API_KEY_PROVIDER_KEYS.has(key)
+      ? 'Connect it on the Integrations page — paste its key right on its card.'
+      : 'Connect it on the Integrations page — email and password, right on its card.'));
     return card;
   }));
 }

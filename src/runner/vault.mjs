@@ -29,6 +29,15 @@ export const PROVIDER_KEY_ENV = {
   mistral: 'MISTRAL_API_KEY',
   runway: 'RUNWAYML_API_SECRET',
   ollama: 'OLLAMA_API_KEY',
+  // The provider-catalog seats (src/cloud/provider-registry.mjs): one
+  // slot per provider, named for the provider. Cloudflare's stored
+  // value is the one bundle record {"account_id","api_token"} the
+  // runner reads — the env name stays the token's, exactly as the
+  // box copy of this map already carries it.
+  groq: 'GROQ_API_KEY',
+  nvidia: 'NVIDIA_API_KEY',
+  cloudflare: 'CLOUDFLARE_API_TOKEN',
+  openrouter: 'OPENROUTER_API_KEY',
 };
 
 function deriveDataKey(deviceToken, salt) {

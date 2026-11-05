@@ -27,9 +27,9 @@
 // behind the name to answer. Agent-authored and system messages route
 // nobody in the desk too.
 
-export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral']);
-export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI' });
-export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'custom']);
+export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'groq', 'nvidia', 'cloudflare', 'openrouter']);
+export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' });
+export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'custom']);
 // One connect road (owner's law, 2026-11-01): a custom agent's account
 // connects with an email and a password, and the seat works off that
 // sign-in — the 'password_session' auth mode sql/063 defined. The old
@@ -46,12 +46,23 @@ const ALIASES = Object.freeze({
   grok: 'grok', xai: 'grok', supergrok: 'grok',
   gemini: 'gemini', google: 'gemini',
   mistral: 'mistral', lechat: 'mistral',
+  // The provider-catalog seats (provider-registry.mjs): their seat
+  // names are their provider ids, so @groq / @nvidia / @cloudflare /
+  // @openrouter address them in a channel like any built-in seat.
+  groq: 'groq',
+  nvidia: 'nvidia', nim: 'nvidia',
+  cloudflare: 'cloudflare', workersai: 'cloudflare',
+  openrouter: 'openrouter',
 });
 const ENGINE_ALIASES = Object.freeze({
   ...ALIASES,
   mistral: 'mistral', lechat: 'mistral',
   runway: 'runway', runwayml: 'runway',
   ollama: 'ollama', local: 'ollama',
+  groq: 'groq',
+  nvidia: 'nvidia', nim: 'nvidia',
+  cloudflare: 'cloudflare', workersai: 'cloudflare',
+  openrouter: 'openrouter',
   custom: 'custom',
 });
 

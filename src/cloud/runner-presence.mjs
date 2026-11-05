@@ -167,7 +167,7 @@ export function createRunnerPresenceStore(pool) {
     } catch (err) {
       if (err?.code !== '23514') throw err;
       await client.query(`alter table helmion.runner_provider_presence drop constraint if exists runner_provider_presence_provider_name_check`);
-      await client.query(`alter table helmion.runner_provider_presence add constraint runner_provider_presence_provider_name_check check (provider_name in ('gemini', 'claude', 'openai', 'grok', 'xai', 'mistral', 'runway', 'ollama'))`);
+      await client.query(`alter table helmion.runner_provider_presence add constraint runner_provider_presence_provider_name_check check (provider_name in ('gemini', 'claude', 'openai', 'grok', 'xai', 'mistral', 'runway', 'ollama', 'groq', 'nvidia', 'cloudflare', 'openrouter'))`);
       await client.query(sql, params);
     }
   };
