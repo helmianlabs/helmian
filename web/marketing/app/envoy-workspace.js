@@ -232,12 +232,16 @@ function currentWorking() {
   return pendingAgentWork(ws.messages, roster, joined, ws.online);
 }
 
-// Message text -> DOM: code fences, links (open in the workbench browser), @mentions, Claim:.
-export function renderBody(text, { onLink, onCanvas } = {}) {
+// Message text -> DOM: code fences, links, @mentions, Claim:.
+// Links render as buttons wired to onLink: the desk sends them to the
+// workbench browser; agent replies send them to a full tab instead (see
+// the render loops). Markdown links ([label](url)) render as one button
+// carrying the label — the form agent file deliveries arrive in.
+export function renderBody(text, { onLink, onCanvas, linkTitle } = {}) {
   const frag = document.createDocumentFragment();
   const parts = String(text ?? '').split(/```(\w+)?\n?([\s\S]*?)```/g);
   for (let i = 0; i < parts.length; i += 3) {
-    inline(parts[i], frag, onLink);
+    inline(parts[i], frag, onLink, linkTitle);
     if (i + 2 < parts.length) {
       const lang = (parts[i + 1] || '').toLowerCase(); const code = parts[i + 2] ?? '';
       frag.append(h('pre', {}, h('code', { text: code })));
@@ -246,14 +250,15 @@ export function renderBody(text, { onLink, onCanvas } = {}) {
   }
   return frag;
 }
-function inline(text, into, onLink) {
-  const re = /(https?:\/\/[^\s<>"')\]]+)|(@[A-Za-z][A-Za-z0-9_-]{1,20})|(^|\n)(Claim:)/g;
+function inline(text, into, onLink, linkTitle) {
+  const re = /(\[([^\]\n]+)\]\((https?:\/\/[^\s<>"')]+)\))|(https?:\/\/[^\s<>"')\]]+)|(@[A-Za-z][A-Za-z0-9_-]{1,20})|(^|\n)(Claim:)/g;
   let at = 0; let m;
   while ((m = re.exec(text))) {
     into.append(text.slice(at, m.index));
-    if (m[1]) into.append(h('button', { type: 'button', class: 'link', title: 'Open in the workbench browser', onclick: () => onLink?.(m[1]) }, m[1]));
-    else if (m[2]) into.append(h('span', { class: 'mention' }, m[2]));
-    else { into.append(m[3]); into.append(h('span', { class: 'claim' }, m[4])); }
+    if (m[3]) into.append(h('button', { type: 'button', class: 'link', title: linkTitle ?? m[3], onclick: () => onLink?.(m[3]) }, m[2]));
+    else if (m[4]) into.append(h('button', { type: 'button', class: 'link', title: linkTitle ?? 'Open in the workbench browser', onclick: () => onLink?.(m[4]) }, m[4]));
+    else if (m[5]) into.append(h('span', { class: 'mention' }, m[5]));
+    else { into.append(m[6]); into.append(h('span', { class: 'claim' }, m[7])); }
     at = re.lastIndex;
   }
   into.append(text.slice(at));
@@ -1334,6 +1339,10 @@ function renderMessages() {
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   const out = []; let prev = null; let prevDay = '';
   const onLink = (url) => { openBench('browser'); navigate(url); };
+  // Agent replies open their links in a full tab: a build reveal is one
+  // click at full size and the desk stays put (navigate() gives Helmian's
+  // own pages the same treatment). Other links keep the bench browser.
+  const onAgentLink = (url) => { window.open(url, '_blank', 'noopener'); };
   const onCanvas = (code) => { openBench('canvas'); setCanvas(code); };
   for (const m of ws.messages) {
     const day = dayLabel(m.createdAt);
@@ -1353,7 +1362,7 @@ function renderMessages() {
     const dispatch = desk && m.authorKind === 'human' ? deskDispatchLine(m) : null;
     out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}`, 'data-id': m.id }, avatar,
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
-        h('div', { class: 'ew-body' }, renderBody(m.body, { onLink, onCanvas })), dispatch)));
+        h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })), dispatch)));
     prev = m;
   }
   // In-thread working cue: one row per agent with pending work in this
@@ -1513,6 +1522,10 @@ function renderCliThread() {
   }
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   const onLink = (url) => { openBench('browser'); navigate(url); };
+  // Agent replies open their links in a full tab: a build reveal is one
+  // click at full size and the desk stays put (navigate() gives Helmian's
+  // own pages the same treatment). Other links keep the bench browser.
+  const onAgentLink = (url) => { window.open(url, '_blank', 'noopener'); };
   const onCanvas = (code) => { openBench('canvas'); setCanvas(code); };
   const out = [];
   let prev = null;
@@ -1523,7 +1536,7 @@ function renderCliThread() {
     const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : null;
     out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}` }, avatar,
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
-        h('div', { class: 'ew-body' }, renderBody(m.body, { onLink, onCanvas })))));
+        h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })))));
     prev = m;
   }
   for (const p of showing) {
