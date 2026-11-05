@@ -26,8 +26,90 @@
 // /api/admin/envoy/.
 import { Pool } from 'pg';
 import { PROVIDER_KEY_ENV } from '../runner/vault.mjs';
+import { connectionProvider } from './tenant-agent-state.mjs';
 
 export const RUNNER_PRESENCE_PATH = '/api/admin/envoy/runner/presence';
+
+// Live activity (demo-night bite A, 2026-11-04): the room must show what
+// a seat is DOING, not a bare "answering…" for five minutes. The worker
+// posts one event per real milestone of a job over this same route —
+// { provider, channelId, stage, detail, at } with stage one of
+// ACTIVITY_STAGES — and the desk reads the unexpired events back on the
+// GET payload it already polls (a new `activity` field; every existing
+// presence field keeps its meaning). REAL events only: an event exists
+// because the worker emitted it at the milestone, never because a timer
+// or a message's age suggests one. Same honesty rules as presence: only
+// a device-token caller may post (a member's activity write degrades to
+// the sync stamp, exactly like its connected claim), and no event may
+// create or move a presence row. Events live in helmion.runner_activity
+// (sql/067) under a short TTL: when a worker dies mid-job its last event
+// expires and the seat stops claiming work — nothing has to clean up
+// after it. Until sql/067 is applied, reads answer [] and writes report
+// unavailable, exactly like presence before its own migration.
+export const ACTIVITY_STAGES = Object.freeze(['started', 'working', 'file-placed', 'published', 'done', 'failed']);
+export const ACTIVITY_TTL_MS = 5 * 60_000;
+const ACTIVITY_STAGE_SET = new Set(ACTIVITY_STAGES);
+const ACTIVITY_LIST_LIMIT = 100;
+const ACTIVITY_CLOCK_SKEW_MS = 60_000;
+
+// The presence vocabulary is the vault key set (report() enforces the
+// same set); connection aliases ('chatgpt', 'openai_codex') resolve
+// through tenant-agent-state's connectionProvider, the same resolver
+// the presence leg uses. The worker reports the qwen seat as 'ollama'
+// (its presence name), so the desk matches activity to a seat by the
+// same names it already maps presence by.
+function normalizeActivityProvider(raw) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (!value) return null;
+  if (PROVIDERS.has(value)) return value;
+  const resolved = connectionProvider(value);
+  return resolved && PROVIDERS.has(resolved) ? resolved : null;
+}
+
+// Detail is a small bag of scalars the worker measured (counts, a
+// transport name, a message id). Anything else — nested objects, long
+// strings, extra keys — is dropped here so the feed can never become a
+// second message body or a secret's hiding place.
+function sanitizeActivityDetail(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (Object.keys(out).length >= 16) break;
+    const k = String(key).slice(0, 40);
+    if (!k) continue;
+    if (typeof value === 'string') out[k] = value.slice(0, 200);
+    else if (typeof value === 'number' && Number.isFinite(value)) out[k] = value;
+    else if (typeof value === 'boolean') out[k] = value;
+  }
+  return out;
+}
+
+// Shape one raw activity report into the stored event. `at` is the
+// worker's own stamp, clamped to the server's now when it is missing,
+// unparseable, or ahead of the clock beyond a small skew — a worker
+// cannot fake freshness, and expiry always derives from the clamped
+// stamp plus the TTL.
+export function normalizeActivityEvent(raw, fallbackProvider, now = new Date()) {
+  const bad = (message) => Object.assign(new Error(message), { status: 400 });
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw bad('activity event required');
+  const provider = normalizeActivityProvider(raw.provider ?? fallbackProvider);
+  if (!provider) throw bad('unknown provider');
+  const channelId = String(raw.channelId ?? '').trim();
+  if (!channelId || channelId.length > 128) throw bad('channelId required');
+  const stage = String(raw.stage ?? '').trim().toLowerCase();
+  if (!ACTIVITY_STAGE_SET.has(stage)) throw bad('unknown activity stage');
+  const nowMs = now.getTime();
+  let atMs = raw.at != null ? new Date(raw.at).getTime() : NaN;
+  if (!Number.isFinite(atMs) || atMs > nowMs + ACTIVITY_CLOCK_SKEW_MS) atMs = nowMs;
+  return {
+    provider,
+    channelId,
+    stage,
+    detail: sanitizeActivityDetail(raw.detail),
+    at: new Date(atMs).toISOString(),
+    expiresAt: new Date(atMs + ACTIVITY_TTL_MS).toISOString(),
+  };
+}
 
 // Own lazy pool: live-admin.mjs owns the primary pool and cannot pass it
 // through the frozen hook. Same env var, same ssl rule.
@@ -187,6 +269,59 @@ export function createRunnerPresenceStore(pool) {
         throw error;
       }
     },
+
+    // Store one live-activity event (sql/067). The write first prunes
+    // this tenant's expired rows, so the table stays the size of the
+    // TTL window without a sweeper. An event never touches the presence
+    // rows: activity is what a seat is doing, presence is what a device
+    // claims — different facts, different tables.
+    async reportActivity(tenantId, rawActivity, fallbackProvider) {
+      const event = normalizeActivityEvent(rawActivity, fallbackProvider, new Date());
+      try {
+        await withTenant(tenantId, async (client) => {
+          await client.query(
+            `delete from helmion.runner_activity
+             where tenant_id = current_setting('helmion.tenant_id', true) and expires_at <= $1`,
+            [new Date().toISOString()]);
+          await client.query(
+            `insert into helmion.runner_activity(tenant_id, provider_name, channel_id, stage, detail, at, expires_at)
+             values (current_setting('helmion.tenant_id', true), $1, $2, $3, $4::jsonb, $5, $6)`,
+            [event.provider, event.channelId, event.stage, JSON.stringify(event.detail), event.at, event.expiresAt]);
+        });
+        return { ok: true, activity: event };
+      } catch (error) {
+        if (isMissingTable(error)) throw Object.assign(new Error('activity store unavailable'), { status: 503 });
+        throw error;
+      }
+    },
+
+    // The desk's activity feed: this tenant's unexpired events, newest
+    // first. Expiry is judged at read time against the caller's now, so
+    // a stale event never rides the payload even before a write prunes
+    // it. 42P01-safe like list(): before sql/067 the feed is empty and
+    // presence answers exactly as it always has.
+    async listActivity(tenantId, now = new Date()) {
+      try {
+        return await withTenant(tenantId, async (client) => {
+          const r = await client.query(
+            `select provider_name, channel_id, stage, detail, at, expires_at from helmion.runner_activity
+             where tenant_id = current_setting('helmion.tenant_id', true) and expires_at > $1
+             order by at desc limit ${ACTIVITY_LIST_LIMIT}`,
+            [now.toISOString()]);
+          return r.rows.map((row) => ({
+            provider: String(row.provider_name),
+            channelId: String(row.channel_id),
+            stage: String(row.stage),
+            detail: row.detail && typeof row.detail === 'object' ? row.detail : {},
+            at: new Date(row.at).toISOString(),
+            expiresAt: new Date(row.expires_at).toISOString(),
+          }));
+        });
+      } catch (error) {
+        if (isMissingTable(error)) return [];
+        throw error;
+      }
+    },
   };
 }
 
@@ -210,7 +345,11 @@ export async function handleRunnerPresenceRoute({
     const actor = await activeTenantActor(request);
     if (request.method === 'GET') {
       const presence = await store.list(actor.tenantId);
-      send(response, 200, JSON.stringify({ valid: true, presence }));
+      // The activity feed rides the read the desk already polls. Every
+      // existing field keeps its meaning; `activity` is additive, and
+      // it is [] until sql/067 lands.
+      const activity = typeof store.listActivity === 'function' ? await store.listActivity(actor.tenantId) : [];
+      send(response, 200, JSON.stringify({ valid: true, presence, activity }));
     } else if (request.method === 'POST') {
       let body = {};
       try { body = (await readJson(request)) ?? {}; } catch {}
@@ -238,6 +377,27 @@ export async function handleRunnerPresenceRoute({
           syncedFiles,
           syncedAt: new Date().toISOString(),
         }));
+        return true;
+      }
+      if (body.activity != null) {
+        // A live-activity report: its own write, never a presence
+        // report — an event must not create or move a connected claim.
+        // The provider may ride at the top level (the presence body's
+        // shape) or inside the event itself.
+        if (actor.viaDeviceToken === true) {
+          // The worker emitting a job's real milestones — the only
+          // caller whose activity means anything, same rule as the
+          // connected claim.
+          const result = await store.reportActivity(actor.tenantId, body.activity, body.provider);
+          send(response, 200, JSON.stringify({ valid: true, ...result }));
+          return true;
+        }
+        // A member browser session cannot attest to a seat's work
+        // either, so its activity write degrades to the same
+        // timestamp-only sync stamp as its connected claim, and the
+        // event is dropped.
+        const result = await store.markSynced(actor.tenantId, body.provider ?? body.activity?.provider);
+        send(response, 200, JSON.stringify({ valid: true, ...result, activityAccepted: false }));
         return true;
       }
       if (actor.viaDeviceToken === true) {
