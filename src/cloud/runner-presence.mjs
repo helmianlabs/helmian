@@ -24,9 +24,19 @@
 // route hangs off the existing envoy-ably hook (envoy-ably.mjs delegates
 // here). Device-token auth applies because the path lives under
 // /api/admin/envoy/.
+//
+// Profile sync (S1, 2026-11-05): the sync branch below used to return a
+// hardcoded list of files it claimed to have written — it wrote none.
+// It now also enqueues a real profile-sync job (profile-sync.mjs,
+// sql/070) for the tenant's device; the PC bridge claims it, runs the
+// Agent OS installer, and reports the files it actually wrote. This
+// route's answer carries the job and an EMPTY syncedFiles: the only
+// file list a surface may render is the device's report, read back
+// through the profile-sync route.
 import { Pool } from 'pg';
 import { PROVIDER_KEY_ENV } from '../runner/vault.mjs';
 import { connectionProvider } from './tenant-agent-state.mjs';
+import { createProfileSyncJobStore } from './profile-sync.mjs';
 
 export const RUNNER_PRESENCE_PATH = '/api/admin/envoy/runner/presence';
 
@@ -337,6 +347,7 @@ export async function handleRunnerPresenceRoute({
   TenantAuthorizationError,
   readJson,
   store: injectedStore,
+  profileSyncJobs: injectedJobs,
 } = {}) {
   if (!requestUrl || requestUrl.pathname !== RUNNER_PRESENCE_PATH) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
@@ -362,19 +373,20 @@ export async function handleRunnerPresenceRoute({
         for (const prov of syncedProviders) {
           await store.markSynced(actor.tenantId, prov).catch(() => {});
         }
-        const syncedFiles = [
-          '~/.claude/CLAUDE.md (+ agent-os/AGENT_OS.md, LESSONS.md, LEARNINGS.md, MEMORY.md, hooks)',
-          '~/.codex/AGENTS.md (+ agent-os/AGENT_OS.md, hooks.json, LESSONS.md, LEARNINGS.md)',
-          '~/.gemini/GEMINI.md (+ agent-os/AGENT_OS.md, settings.hooks.json, LESSONS.md, LEARNINGS.md)',
-          '~/.grok/AGENTS.md (+ agent-os/AGENT_OS.md, hooks/agent-os.json, LESSONS.md, LEARNINGS.md)',
-          '~/.helmion/autonomy_rules.json (Helmian Guard & Executive Guard rules)',
-          'Scribe Shared Memory & Flywheel rules',
-        ];
-        send(response, 200, JSON.stringify({
+        // And enqueue the real work: a profile-sync job the tenant's PC
+        // bridge claims and answers with the files it actually wrote
+        // (profile-sync.mjs). No file list is returned here — the only
+        // list a surface may render is that device report. If the job
+        // store is unavailable (sql/070 not applied) the request fails
+        // honestly instead of falling back to the old fiction.
+        const jobs = injectedJobs ?? createProfileSyncJobStore(getPool());
+        const job = await jobs.enqueue(actor.tenantId, { requestedBy: actor.subject ?? null });
+        send(response, 202, JSON.stringify({
           valid: true,
           ok: true,
           syncedProviders,
-          syncedFiles,
+          syncedFiles: [],
+          syncJob: { id: job.id, status: job.status },
           syncedAt: new Date().toISOString(),
         }));
         return true;

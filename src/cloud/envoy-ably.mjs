@@ -14,6 +14,7 @@
 import { handleEnvoyMeshRoute } from './envoy-mesh.mjs';
 import { createHmac, randomBytes } from 'node:crypto';
 import { handleRunnerPresenceRoute } from './runner-presence.mjs';
+import { handleProfileSyncRoute } from './profile-sync.mjs';
 import { handleCredentialConnectRoute } from './credential-connect.mjs';
 import { handleToolConnectionsRoute } from './tool-connections-read.mjs';
 import { handleTenantAgentStateRoute } from './tenant-agent-state.mjs';
@@ -205,39 +206,43 @@ export async function handleEnvoyAblyRoute({
     try {
       const actor = await activeTenantActor(request);
       const { createRunnerPresenceStore } = await import('./runner-presence.mjs');
+      const { createProfileSyncJobStore } = await import('./profile-sync.mjs');
       const { Pool } = await import('pg');
       const cs = String(process.env.HELMION_DATABASE_URL ?? '').trim();
       const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama'];
-      if (cs) {
-        const pool = new Pool({ connectionString: cs, ssl: cs.includes('sslmode=disable') ? false : undefined, max: 2 });
-        try {
-          const store = createRunnerPresenceStore(pool);
-          for (const p of syncedProviders) {
-            // A sync connects nothing, for any caller: stamp the sync
-            // time and leave the device's connected claim untouched.
-            // This route used to write report(p, true) for all seven
-            // providers, manufacturing a connected state out of a
-            // member's "Sync now" click. (Honest-connection fix,
-            // 2026-11-01 — same contract as the presence route.)
-            await store.markSynced(actor.tenantId, p).catch(() => {});
-          }
-        } finally {
-          await pool.end().catch(() => {});
-        }
+      if (!cs) {
+        send(response, 503, JSON.stringify({ valid: false, error: 'database not configured' }));
+        return true;
       }
-      const syncedFiles = [
-        '~/.claude/CLAUDE.md (+ agent-os/AGENT_OS.md, LESSONS.md, LEARNINGS.md, MEMORY.md, hooks)',
-        '~/.codex/AGENTS.md (+ agent-os/AGENT_OS.md, hooks.json, LESSONS.md, LEARNINGS.md)',
-        '~/.gemini/GEMINI.md (+ agent-os/AGENT_OS.md, settings.hooks.json, LESSONS.md, LEARNINGS.md)',
-        '~/.grok/AGENTS.md (+ agent-os/AGENT_OS.md, hooks/agent-os.json, LESSONS.md, LEARNINGS.md)',
-        '~/.helmion/autonomy_rules.json (Helmian Guard & Executive Guard rules)',
-        'Scribe Shared Memory & Flywheel rules',
-      ];
-      send(response, 200, JSON.stringify({
+      const pool = new Pool({ connectionString: cs, ssl: cs.includes('sslmode=disable') ? false : undefined, max: 2 });
+      let job;
+      try {
+        const store = createRunnerPresenceStore(pool);
+        for (const p of syncedProviders) {
+          // A sync connects nothing, for any caller: stamp the sync
+          // time and leave the device's connected claim untouched.
+          // This route used to write report(p, true) for all seven
+          // providers, manufacturing a connected state out of a
+          // member's "Sync now" click. (Honest-connection fix,
+          // 2026-11-01 — same contract as the presence route.)
+          await store.markSynced(actor.tenantId, p).catch(() => {});
+        }
+        // The real work (S1, 2026-11-05): enqueue a profile-sync job
+        // for the tenant's device. This route used to answer with a
+        // hardcoded syncedFiles list of files it never wrote; it now
+        // returns the job and an empty list — the only file list a
+        // surface may render is the device's report, read back through
+        // the profile-sync route.
+        job = await createProfileSyncJobStore(pool).enqueue(actor.tenantId, { requestedBy: actor.subject ?? null });
+      } finally {
+        await pool.end().catch(() => {});
+      }
+      send(response, 202, JSON.stringify({
         valid: true,
         ok: true,
         syncedProviders,
-        syncedFiles,
+        syncedFiles: [],
+        syncJob: { id: job.id, status: job.status },
         syncedAt: new Date().toISOString(),
       }));
     } catch (error) {
@@ -246,6 +251,7 @@ export async function handleEnvoyAblyRoute({
     return true;
   }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
+  if (await handleProfileSyncRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleCredentialConnectRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleToolConnectionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleTenantAgentStateRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
