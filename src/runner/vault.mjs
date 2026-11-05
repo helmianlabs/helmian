@@ -28,6 +28,7 @@ export const PROVIDER_KEY_ENV = {
   xai: 'XAI_API_KEY',
   mistral: 'MISTRAL_API_KEY',
   runway: 'RUNWAYML_API_SECRET',
+  ollama: 'OLLAMA_API_KEY',
 };
 
 function deriveDataKey(deviceToken, salt) {
