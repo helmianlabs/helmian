@@ -210,9 +210,14 @@ public partial class TeamChatPanel : UserControl
         _busy = true;
         try
         {
-            _channelConfig = await Client(new Uri(_link.Origin)).SetDebateModeAsync(_link.Token, _channelId, nextOn, 12);
+            // Re-use the server's stored cap when one is known; never invent
+            // a client-side number (the old code hardcoded 12 while the
+            // server's default is 10 and the operator's setting lives in
+            // the stored channel config).
+            var turns = _channelConfig?.MaxRoundTurns is > 0 ? _channelConfig.MaxRoundTurns : EnvoyCloudChatClient.DefaultDebateTurns;
+            _channelConfig = await Client(new Uri(_link.Origin)).SetDebateModeAsync(_link.Token, _channelId, nextOn, turns);
             ApplyChannelConfig(_channelConfig);
-            ChatStatus.Text = nextOn ? "Free-Willy Debate Mode enabled (12 turns max)." : "Free-Willy Debate Mode turned off.";
+            ChatStatus.Text = nextOn ? $"Free-Willy Debate Mode enabled ({_channelConfig.MaxRoundTurns} turns max)." : "Free-Willy Debate Mode turned off.";
             await RefreshMessagesAsync();
         }
         catch (Exception ex)

@@ -93,6 +93,17 @@ public sealed record EnvoyCloudLink(string Token, string Origin, string? Organiz
 public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
 {
     public static readonly Uri DefaultOrigin = new("https://helmian.cloud");
+
+    /// <summary>
+    /// Mirrors the server's DEFAULT_DEBATE_TURNS (src/cloud/envoy-agents.mjs).
+    /// The server's config replies always carry a numeric cap, so this is only
+    /// the last-resort fallback: the desktop must never invent a different
+    /// number than the server (the old fallback was 12; the server's is 10).
+    /// </summary>
+    public const int DefaultDebateTurns = 10;
+
+    /// <summary>Mirrors the server's MAX_DEBATE_TURNS clamp (1..50).</summary>
+    public const int MaxDebateTurns = 50;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public Uri Origin { get; } = RequireOrigin(origin);
@@ -191,19 +202,19 @@ public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
         var cfg = reply?.Config;
         return new EnvoyChannelConfig(
             cfg?.DebateMode ?? "off",
-            cfg?.MaxRoundTurns is > 0 ? cfg.MaxRoundTurns : 12,
+            cfg?.MaxRoundTurns is > 0 ? cfg.MaxRoundTurns : DefaultDebateTurns,
             cfg?.Github,
             cfg?.CustomAgents ?? []);
     }
 
-    public async Task<EnvoyChannelConfig> SetDebateModeAsync(string token, string channelId, bool enabled, int maxRoundTurns = 12, CancellationToken cancellationToken = default)
+    public async Task<EnvoyChannelConfig> SetDebateModeAsync(string token, string channelId, bool enabled, int maxRoundTurns = DefaultDebateTurns, CancellationToken cancellationToken = default)
     {
         var payload = new
         {
             channelId,
             action = enabled ? "set-debate" : "stop-debate",
             debateMode = enabled ? "free-willy" : "off",
-            maxRoundTurns = Math.Clamp(maxRoundTurns, 2, 24)
+            maxRoundTurns = Math.Clamp(maxRoundTurns, 1, MaxDebateTurns)
         };
         var reply = await SendAsync<ConfigReply>(HttpMethod.Post, "/api/admin/envoy/channel-config", token, payload, cancellationToken);
         var cfg = reply?.Config;
@@ -228,7 +239,7 @@ public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
         };
         var reply = await SendAsync<ConfigReply>(HttpMethod.Post, "/api/admin/envoy/channel-config", token, payload, cancellationToken);
         var cfg = reply?.Config;
-        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? 12, cfg?.Github, cfg?.CustomAgents ?? []);
+        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? DefaultDebateTurns, cfg?.Github, cfg?.CustomAgents ?? []);
     }
 
     public async Task<EnvoyChannelConfig> UnlinkGitHubAsync(string token, string channelId, CancellationToken cancellationToken = default)
@@ -236,7 +247,7 @@ public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
         var payload = new { channelId, action = "unlink-github" };
         var reply = await SendAsync<ConfigReply>(HttpMethod.Post, "/api/admin/envoy/channel-config", token, payload, cancellationToken);
         var cfg = reply?.Config;
-        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? 12, cfg?.Github, cfg?.CustomAgents ?? []);
+        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? DefaultDebateTurns, cfg?.Github, cfg?.CustomAgents ?? []);
     }
 
     public async Task<EnvoyChannelConfig> UpsertCustomAgentAsync(string token, string channelId, EnvoyCustomAgent agent, CancellationToken cancellationToken = default)
@@ -260,7 +271,7 @@ public sealed partial class EnvoyCloudChatClient(HttpClient http, Uri origin)
         };
         var reply = await SendAsync<ConfigReply>(HttpMethod.Post, "/api/admin/envoy/channel-config", token, payload, cancellationToken);
         var cfg = reply?.Config;
-        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? 12, cfg?.Github, cfg?.CustomAgents ?? []);
+        return new EnvoyChannelConfig(cfg?.DebateMode ?? "off", cfg?.MaxRoundTurns ?? DefaultDebateTurns, cfg?.Github, cfg?.CustomAgents ?? []);
     }
 
     public async Task SendMessageAsync(string token, string channelId, string text, CancellationToken cancellationToken = default)

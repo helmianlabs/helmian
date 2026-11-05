@@ -302,6 +302,24 @@ test('custom agents: sanitizeCustomAgent normalizes handle, emoji, jobTitle, job
   assert.equal(describeAuthor('agent:rusty_bot', 'agent', back.customAgents).engine, 'mistral');
 });
 
+test('debate turn cap persists across off-writes (Free-Willy cap truth, 2026-11-04)', () => {
+  // The operator's cap is a setting, not part of the on/off state: turning
+  // debate off (stop-debate / set 'off') must not erase a non-default cap.
+  const on = emptyConfig();
+  on.debateMode = 'free-willy';
+  on.maxRoundTurns = 6;
+  const off = parseConfig(serializeConfig({ ...on, debateMode: 'off' }));
+  assert.equal(off.debateMode, 'off');
+  assert.equal(off.maxRoundTurns, 6, 'cap survives the off-write');
+  const backOn = parseConfig(serializeConfig({ ...off, debateMode: 'free-willy' }));
+  assert.equal(backOn.debateMode, 'free-willy');
+  assert.equal(backOn.maxRoundTurns, 6, 'cap survives the off→on round-trip');
+  // Byte-stability: a default-cap, mode-off config still stores no cap key.
+  const plain = emptyConfig();
+  assert.ok(!serializeConfig(plain).includes('maxRoundTurns'), 'default off config stores no cap key');
+  assert.equal(parseConfig(serializeConfig(plain)).maxRoundTurns, 10, 'absent cap reads back as the server default');
+});
+
 test('custom agents: every legacy authMode collapses to password_session, and stored records still load (one-road Bite 5)', async () => {
   const { sanitizeCustomAgent, CUSTOM_AGENT_AUTH_MODE } = await import('../src/cloud/envoy-agents.mjs');
   assert.equal(CUSTOM_AGENT_AUTH_MODE, 'password_session');
