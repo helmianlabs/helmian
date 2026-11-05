@@ -11,7 +11,13 @@ risky steps, and every action lands in an audit trail. Supporting pieces:
 **Guard** flags destructive commands and unsourced claims, **Maestro**
 coordinates the agents, and **Herald** puts approvals on your phone.
 
-![Helmian desktop: Room, Console, Agents, and Guard panels](docs/assets/desktop-4panel.jpg)
+![Helmian workbench: four seats answering in one room](docs/assets/desktop-4panel.jpg)
+
+![The Helmian cockpit on helmian.cloud: four seats linked under the Maestro coordinator, Guard armed](https://workspace.5-78-222-178.sslip.io/readme-assets/shot-landing-cockpit.png)
+
+*The cockpit at [helmian.cloud](https://helmian.cloud), captured 2026-11-04 — the
+same four seats (Claude, ChatGPT, Grok, Gemini) that answer together in the
+Maestro desk below.*
 
 **Judge it in two minutes** (Node.js 20+, no database, no API key, no network):
 
@@ -25,11 +31,18 @@ npm run verify
 If it passes, the kernel is sound on your machine.
 
 **Try the web app:** [helmian.cloud](https://helmian.cloud) (free account, no
-card). The Windows desktop app is not released yet.
+card). The Windows installer (Helmian-Setup-1.0.3) is available after sign-up.
+
+![Create your free account — the get-started page at helmian.cloud, captured 2026-11-04](https://workspace.5-78-222-178.sslip.io/readme-assets/shot-get-started.png)
 
 **Watch it:** [Guard review, 43 s](https://helmian.cloud/media/helmian-guard-review.mp4) ·
 [Desktop overview, 5 min](https://helmian.cloud/media/helmian-desktop-overview.mp4) ·
 [Four providers on one project, 7 min](https://helmian.cloud/media/helmian-project-flow.mp4)
+
+**Recorded with the capture rig, 2026-11-04:**
+[Landing page tour, 34 s](https://workspace.5-78-222-178.sslip.io/readme-assets/demo-landing-tour.mp4) ·
+[Get-started page, 16 s](https://workspace.5-78-222-178.sslip.io/readme-assets/demo-get-started.mp4) —
+the public pages exactly as a visitor sees them.
 
 What it does **not** do yet is stated plainly in [Honest boundary](#honest-boundary).
 
@@ -97,24 +110,35 @@ Phone / Browser ──→ Cloud (Vercel + Neon) ──→ Bridge ──→ Your 
   their runner vault. The cloud never persists it.
 
 
-## Current status (October 2026)
+## Current status (November 2026)
 
 Live in production at [helmian.cloud](https://helmian.cloud):
 
 - **Signup → trial → app**: new users sign up at `/get-started`, get a trial
   workspace auto-created, land in `/app`. No credit card, no manual setup.
-- **Provider connections**: each provider card offers OAuth ("Login with
-  Google" for Gemini) or API key (`node bin/runner-vault.mjs store <name>`).
-  Cloud shows presence only.
-- **Bridge live on Hetzner**: cloud publishes over Ably, runner answers
-  through Gemini, replies in ~1 second. Works with the PC off.
-- **Cloud chat**: team/direct/agent channels, human approval gates, audit
-  trail, leases, all tenant-scoped in Neon.
-- **Auth**: Clerk sign-in with GitHub social login (Clerk is still on a development instance; moving to production is on the launch list).
-- **Desktop ↔ web parity**: the web app matches the desktop Pilot panel by
-  panel (Room, Console, Agents, Guard). Sliding panels, drag splitters,
-  hover-expand sidebar — built from the actual EXE source.
-
+- **Four of the five seats are live in the room** (proven 2026-11-04):
+  Grok, ChatGPT and Gemini answer from the server; Claude answers from the
+  user's own PC through the spoke, invisibly — no windows, no per-call
+  consent prompts. The fifth seat (Mistral) is in progress.
+- **Free-Willy debate mode**: proven live 2026-11-04. Turn it on in a
+  channel and the seated agents jump in on a message, debate and critique
+  each other's replies, and converge — capped by a per-round turn limit
+  that stops the round on its own.
+- **Executive Guard**: agent actions on a user's machine ride signed,
+  one-time approvals with a hash-chained audit trail. A standing grant can
+  carry routine calls; anything destructive still stops for the owner.
+- **Hands through the spoke**: agents can work on the user's own PC
+  (files, PowerShell, localhost) through the guarded door — proven live
+  2026-11-04 with a page built on the server and served from the PC.
+- **Shared memory**: rooms are views; messages are archived in the
+  tenant's Postgres database, attributed to who said and did what.
+- **Bridges**: the same conversation is mirrored to Discord and Slack
+  (two-way, proven), and work ships through GitHub.
+- **Provider connections**: seats run on the customer's own subscriptions
+  and sign-ins; API keys are an option, never the default. The cloud shows
+  presence only and never holds provider passwords in the clear — the
+  credential vault is envelope-encrypted.
+- **Auth**: Clerk sign-in with GitHub social login.
 
 ## Quick start
 
@@ -158,12 +182,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and questions are welcome.
 ## Honest boundary
 
 The kernel is real and tested: local governance, leases, audit, signed
-confirmations, a live cloud-to-runner bridge answering chat through Gemini,
-and a working signup flow that provisions trial workspaces. What it is not
-yet: a hardened multi-tenant product. Tenant isolation is scaffolded
-(separate users, vaults, bridges) but not hardened (no row-level security,
-no per-tenant containers). Only Gemini has a working OAuth flow; Claude,
-ChatGPT, and Grok are API-key only for now. There is no billing yet.
-Discord, Slack, and GitHub integrations are not built. Until those land,
-this is a working system with real users and multi-tenant bones — not a
-finished SaaS.
+confirmations, a live cloud-to-runner bridge, four of the five agent seats
+answering in one room, and a working signup flow that provisions trial
+workspaces. What it is not yet: a hardened multi-tenant product. Tenant
+isolation is scaffolded (separate users, vaults, bridges) but not hardened
+(no row-level security, no per-tenant containers). The fifth seat (Mistral)
+is not live yet. There is no billing yet. Until those land, this is a
+working system with real users and multi-tenant bones — not a finished
+SaaS.
