@@ -59,6 +59,25 @@ export const CONFIG_SUBJECT = 'system:envoy-config';
 export const NOTICE_SUBJECT = 'system:envoy';
 export const CONFIG_FORMAT = 'helmian.envoy.channel-config.v1';
 
+// A channel's own look (emoji bite 5): a character face or a plain
+// letter icon, stored on the channel config so it renders for the
+// whole workspace — the desk used to keep this choice in one
+// browser's localStorage, so a channel wore a different face on
+// every device. The shape is the desk's own avatar choice
+// (web/marketing/app/avatars.mjs: {k:'char', id} | {k:'plain', c});
+// the character ids and colour count are mirrored here because the
+// cloud bundle ships only emoji-map.mjs from the web tree, and the
+// bite-5 faces test pins this list against avatars.mjs CHARACTERS so
+// the two can never drift.
+export const CHANNEL_AVATAR_CHARACTERS = Object.freeze(['fox', 'panda', 'octo', 'unicorn', 'frog', 'robot', 'alien', 'cat', 'pup', 'owl', 'bee', 'penguin']);
+export const CHANNEL_AVATAR_COLORS = 8;
+
+export function sanitizeChannelAvatar(value) {
+  if (value?.k === 'char' && CHANNEL_AVATAR_CHARACTERS.includes(value.id)) return { k: 'char', id: value.id };
+  if (value?.k === 'plain' && Number.isInteger(value.c) && value.c >= 0 && value.c < CHANNEL_AVATAR_COLORS) return { k: 'plain', c: value.c };
+  return null;
+}
+
 // The desk channel is reserved by slug: the desk route (envoy-maestro.mjs)
 // creates it lazily under this slug, and envoy-mesh.mjs refuses to seed
 // desk config on any other channel.
@@ -137,6 +156,7 @@ export function emptyConfig() {
     customAgents: [],
     debateMode: 'off',
     maxRoundTurns: DEFAULT_DEBATE_TURNS,
+    avatar: null,
   };
 }
 
@@ -181,7 +201,8 @@ export function parseConfig(body) {
     const debateMode = raw.debateMode === 'free-willy' ? 'free-willy' : 'off';
     const rawTurns = Number(raw.maxRoundTurns);
     const maxRoundTurns = Number.isFinite(rawTurns) ? Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(rawTurns))) : DEFAULT_DEBATE_TURNS;
-    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, customAgents, debateMode, maxRoundTurns };
+    const avatar = sanitizeChannelAvatar(raw.avatar);
+    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, customAgents, debateMode, maxRoundTurns, avatar };
   } catch { return null; }
 }
 
@@ -204,6 +225,10 @@ export function serializeConfig(config) {
   const turnsRaw = Number(config.maxRoundTurns);
   const turns = Number.isFinite(turnsRaw) ? Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(turnsRaw))) : DEFAULT_DEBATE_TURNS;
   if (config.debateMode === 'free-willy' || turns !== DEFAULT_DEBATE_TURNS) stored.maxRoundTurns = turns;
+  // avatar is written only when set, so every config stored before
+  // channel faces existed keeps its exact bytes.
+  const avatar = sanitizeChannelAvatar(config.avatar);
+  if (avatar) stored.avatar = avatar;
   const body = JSON.stringify(stored);
   if (body.length > 4000) throw new Error('channel config is too large');
   return body;
@@ -232,6 +257,7 @@ export function publicConfig(config, now = Date.now()) {
       return { provider: p, name: AGENT_NAMES[p], joinedAt: c.joined?.[p] ?? null };
     }),
     customAgents: c.customAgents ?? [],
+    avatar: sanitizeChannelAvatar(c.avatar),
     debateMode: c.debateMode === 'free-willy' ? 'free-willy' : 'off',
     maxRoundTurns: c.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
     desk: c.desk === true,

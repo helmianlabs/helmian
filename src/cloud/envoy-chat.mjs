@@ -62,10 +62,26 @@ function contextFor(actor) {
   return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: actor.sessionId, requestId: actor.requestId };
 }
 
-function rowMessage(row) {
+function rowMessage(row, authorEmoji = null) {
   const who = describeAuthor(row.author_subject, row.author_kind);
   const metadata = row.metadata ? normalizeMessageMetadata(typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) : null;
-  return Object.freeze({ id: String(row.id), channelId: String(row.channel_id), authorSubject: String(row.author_subject), authorKind: String(row.author_kind), ...(who.name ? { authorName: who.name } : {}), source: who.source, ...(who.provider ? { agentProvider: who.provider } : {}), body: String(row.body), ...(metadata ? { metadata } : {}), idempotencyKey: String(row.idempotency_key), createdAt: row.created_at });
+  return Object.freeze({ id: String(row.id), channelId: String(row.channel_id), authorSubject: String(row.author_subject), authorKind: String(row.author_kind), ...(who.name ? { authorName: who.name } : {}), ...(authorEmoji ? { authorEmoji } : {}), source: who.source, ...(who.provider ? { agentProvider: who.provider } : {}), body: String(row.body), ...(metadata ? { metadata } : {}), idempotencyKey: String(row.idempotency_key), createdAt: row.created_at });
+}
+
+// Member faces (emoji bite 5): a human author's profile emoji
+// (helmion.user_profiles.avatar_emoji — the Settings > Envoy profile
+// record) rides their messages, so every client renders the member's
+// chosen face instead of a bare initial. Best-effort by shape:
+// profiles are a separate store with their own migration history
+// (059/062), so a missing table or a failed read yields no faces,
+// never a failed message list.
+async function profileEmojis(client, subjects) {
+  const wanted = [...new Set((subjects ?? []).filter((s) => typeof s === 'string' && s))];
+  if (!wanted.length) return new Map();
+  try {
+    const r = await client.query('select subject, avatar_emoji from helmion.user_profiles where subject = any($1::text[])', [wanted]);
+    return new Map(r.rows.filter((row) => row.avatar_emoji).map((row) => [String(row.subject), String(row.avatar_emoji)]));
+  } catch { return new Map(); }
 }
 
 export function createEnvoyStore(pool) {
@@ -124,7 +140,9 @@ export function createEnvoyStore(pool) {
              order by created_at desc, id desc limit $3`,
             [context.tenantId, normalizedChannelId, boundedLimit],
           );
-        const messages = normalizedCursor ? result.rows.map(rowMessage) : result.rows.map(rowMessage).reverse();
+        const rows = normalizedCursor ? result.rows : result.rows.slice().reverse();
+        const faces = await profileEmojis(client, rows.filter((r) => r.author_kind === 'human').map((r) => String(r.author_subject)));
+        const messages = rows.map((row) => rowMessage(row, faces.get(String(row.author_subject)) ?? null));
         return { messages, nextCursor: messages.at(-1)?.id ?? normalizedCursor };
       });
     },
@@ -157,7 +175,8 @@ export function createEnvoyStore(pool) {
           [context.tenantId, message.channelId, message.authorSubject, idempotencyKey],
         )).rows[0];
         if (!row) throw new Error('Envoy message receipt was not durable');
-        return { receipt: Object.freeze({ format: 'helmion.envoy-message-receipt.v1', durable: true, replayed: result.rowCount !== 1, message: rowMessage(row) }) };
+        const faces = await profileEmojis(client, [String(row.author_subject)]);
+        return { receipt: Object.freeze({ format: 'helmion.envoy-message-receipt.v1', durable: true, replayed: result.rowCount !== 1, message: rowMessage(row, faces.get(String(row.author_subject)) ?? null) }) };
       });
       // Realtime push for the PC bridge (v2). Fire-and-forget: the write is
       // already durable above, and a realtime failure must never fail the send.
@@ -190,6 +209,6 @@ import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
 export function attachChannelLinks(channels, configsByChannelId = new Map()) {
   return channels.map((channel) => {
     const config = configsByChannelId.get(String(channel.id)) ?? null;
-    return Object.freeze({ ...channel, discord: config?.discord ?? null, slack: config?.slack ?? null, github: config?.github ?? null });
+    return Object.freeze({ ...channel, discord: config?.discord ?? null, slack: config?.slack ?? null, github: config?.github ?? null, avatar: config?.avatar ?? null });
   });
 }

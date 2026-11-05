@@ -93,6 +93,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-channel .unread { width:8px; height:8px; border-radius:50%; background:var(--accent); }
 .ew-new-channel { display:flex; flex-direction:column; gap:8px; padding:8px 12px; border-top:1px solid var(--border); }
 .ew-foot { border-top:1px solid var(--border); padding:10px 12px; display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted); }
+.ew-me-face { display:flex; align-items:center; gap:8px; padding-bottom:2px; }
+.ew-me-face .ew-avatar { width:30px; height:30px; margin-top:0; font-size:13px; }
+.ew-me-face .name { font-weight:600; font-size:13px; color:var(--text); }
+.ew-me-face .ew-btn { margin-left:auto; }
 .ew-source { display:flex; gap:6px; align-items:center; }
 .ew-source img { border-radius:50%; }
 /* Brand marks are real glyphs, not color blocks: currentColor mask
@@ -205,6 +209,8 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 @keyframes ew-pulse { 0%, 100% { opacity:.35; } 50% { opacity:1; } }
 @media (prefers-reduced-motion: reduce) { .ew-working-dot { animation:none; } }
 .ew-agent .remove { grid-row:1; grid-column:3; justify-self:end; }
+.ew-agent .ew-agent-btns { grid-row:1; grid-column:3; justify-self:end; display:flex; gap:2px; align-items:center; }
+.ew-agent .face .hx-emoji { width:20px; height:20px; }
 .ew-agent-add { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px 6px; }
 
 /* Workbench */

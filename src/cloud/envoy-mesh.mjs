@@ -26,7 +26,7 @@ import { publishEnvoyMessage } from './envoy-ably.mjs';
 import {
   AGENT_NAMES, AGENT_PROVIDERS, CONFIG_SUBJECT, DESK_ROSTER_FALLBACK, MAESTRO_DESK_SLUG, MAX_CHANNEL_AGENTS, MAX_DEBATE_TURNS, DEFAULT_DEBATE_TURNS, NOTICE_SUBJECT,
   agentSubject, agentsToAnswer, describeAuthor, discordSubject, isSlackId, slackSubject,
-  emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
+  emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeChannelAvatar, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
@@ -237,6 +237,14 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           config.debateMode = 'off';
           await writeConfig(client, actor.tenantId, channelId, config);
           posted = await notice(client, actor.tenantId, channelId, `Multi-agent debate stopped in #${channel.title}.`);
+        } else if (action === 'set-channel-avatar') {
+          if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
+          // The channel's face (emoji bite 5): a sanitized avatar
+          // choice, or null to clear back to the desk's default look.
+          // No notice — a cosmetic change does not need a room event;
+          // the config the caller gets back carries the new look.
+          config.avatar = sanitizeChannelAvatar(input?.avatar);
+          await writeConfig(client, actor.tenantId, channelId, config);
         } else if (action === 'link-github') {
           if (!admin) throw fail(403, 'ENVOY_ADMIN_REQUIRED');
           const gh = sanitizeGithubLink({ repo: input?.repo, events: input?.events, linkedAt: new Date(now()).toISOString() });

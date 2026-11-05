@@ -876,3 +876,36 @@ test('reactions: the desk wires bite 2\'s route, the chips, and the bite-1 grid 
     assert.ok(css.includes(needle), `envoy.css has ${needle}`);
   }
 });
+
+// ---------- faces (emoji bite 5) ----------
+// Seat faces resolve stored-over-default through the shipped map;
+// the desk wiring (faces route, member face, channel face, Qwen's
+// pill art) is pinned in source like the bite-3 reaction wiring.
+
+test('seatFaceFor: defaults render before load, stored faces win, junk falls back', () => {
+  const { seatFaceFor } = envoyWorkspace;
+  assert.equal(seatFaceFor(null, 'claude'), '🧠');
+  assert.equal(seatFaceFor(null, 'openai'), '🤖');
+  assert.equal(seatFaceFor(null, 'grok'), '⚡');
+  assert.equal(seatFaceFor(null, 'gemini'), '🌟');
+  assert.equal(seatFaceFor(null, 'mistral'), '🦉');
+  assert.equal(seatFaceFor({ claude: '🦊' }, 'claude'), '🦊');
+  assert.equal(seatFaceFor({ claude: '🍕' }, 'claude'), '🧠', 'an undrawn stored face never renders');
+  assert.equal(seatFaceFor({ claude: '🦊' }, 'gemini'), '🌟', 'one seat\u2019s face never leaks to another');
+  assert.equal(seatFaceFor(null, 'maestro'), null, 'Maestro keeps the stock mark');
+  assert.equal(seatFaceFor(null, 'qwen'), null, 'custom agents render from their own records');
+  assert.equal(seatFaceFor(null, null), null);
+});
+
+test('bite 5 wiring: faces route, member face, channel face, custom pill art', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  for (const needle of ['/api/admin/envoy/agent-faces', 'loadFaces', 'openSeatFaceModal', 'saveSeatFace', 'seatAvatar', 'seatFaceImg', 'ew-me-face', 'openMyFaceModal', 'saveMyFace', 'authorEmoji', 'set-channel-avatar', 'Saved for the whole workspace.']) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
+  assert.ok(js.includes("'/api/admin/profile'"), 'the member face rides the profile route');
+  assert.ok(!js.includes("h('span', {}, ca.emoji || '🤖')"), 'custom-agent mention pills render bite-1 art, never a raw glyph');
+  for (const needle of ['.ew-agent-btns', '.ew-me-face']) {
+    assert.ok(css.includes(needle), `envoy.css has ${needle}`);
+  }
+});

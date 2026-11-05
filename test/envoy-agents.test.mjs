@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentsToAnswer, mentionsIn, normalizeProvider, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, emptyConfig, normalizeMessageMetadata, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES } from '../src/cloud/envoy-agents.mjs';
+import { agentsToAnswer, mentionsIn, normalizeProvider, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, emptyConfig, normalizeMessageMetadata, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES, sanitizeChannelAvatar, CHANNEL_AVATAR_CHARACTERS, CHANNEL_AVATAR_COLORS } from '../src/cloud/envoy-agents.mjs';
+import { CHARACTERS, COLORS } from '../web/marketing/app/avatars.mjs';
 
 const human = (body) => ({ authorKind: 'human', authorSubject: 'user_x', body });
 
@@ -370,4 +371,45 @@ test('free-willy debate mode: human message dispatches all seated agents; agent 
     ),
     [],
   );
+});
+
+// ---------- channel faces (emoji bite 5) ----------
+// A channel's look rides its config so the whole workspace sees the
+// same face; before this bite it lived in one browser's localStorage.
+
+test('channel avatar: the cloud mirror matches the desk avatar vocabulary', () => {
+  assert.deepEqual([...CHANNEL_AVATAR_CHARACTERS], CHARACTERS.map(([id]) => id));
+  assert.equal(CHANNEL_AVATAR_COLORS, COLORS.length);
+});
+
+test('sanitizeChannelAvatar keeps drawn choices and refuses the rest', () => {
+  assert.deepEqual(sanitizeChannelAvatar({ k: 'char', id: 'fox' }), { k: 'char', id: 'fox' });
+  assert.deepEqual(sanitizeChannelAvatar({ k: 'plain', c: 0 }), { k: 'plain', c: 0 });
+  assert.deepEqual(sanitizeChannelAvatar({ k: 'plain', c: 7 }), { k: 'plain', c: 7 });
+  assert.equal(sanitizeChannelAvatar({ k: 'char', id: 'dragon' }), null);
+  assert.equal(sanitizeChannelAvatar({ k: 'plain', c: 8 }), null);
+  assert.equal(sanitizeChannelAvatar({ k: 'plain', c: -1 }), null);
+  assert.equal(sanitizeChannelAvatar({ k: 'plain', c: 1.5 }), null);
+  assert.equal(sanitizeChannelAvatar({ k: 'emoji', c: '🦊' }), null);
+  assert.equal(sanitizeChannelAvatar(null), null);
+  assert.equal(sanitizeChannelAvatar(undefined), null);
+  assert.equal(sanitizeChannelAvatar('fox'), null);
+});
+
+test('channel avatar round-trips through parse/serialize/publicConfig', () => {
+  const config = { ...emptyConfig(), avatar: { k: 'char', id: 'octo' } };
+  const body = serializeConfig(config);
+  assert.deepEqual(JSON.parse(body).avatar, { k: 'char', id: 'octo' });
+  const parsed = parseConfig(body);
+  assert.deepEqual(parsed.avatar, { k: 'char', id: 'octo' });
+  assert.deepEqual(publicConfig(parsed).avatar, { k: 'char', id: 'octo' });
+});
+
+test('a config without an avatar keeps its exact stored shape', () => {
+  const body = serializeConfig(emptyConfig());
+  assert.ok(!('avatar' in JSON.parse(body)), 'unset avatar is never written');
+  assert.equal(parseConfig(body).avatar, null);
+  assert.equal(publicConfig(parseConfig(body)).avatar, null);
+  const junk = parseConfig(JSON.stringify({ format: 'helmian.envoy.channel-config.v1', avatar: { k: 'char', id: 'nope' } }));
+  assert.equal(junk.avatar, null, 'a stored junk avatar reads back as none');
 });
