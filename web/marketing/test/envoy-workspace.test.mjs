@@ -460,28 +460,28 @@ test('desk targets: agent and system messages dispatch nobody', () => {
   assert.deepEqual(deskTargets(sysMsg, DESK_TEAM), []);
 });
 
-test('the seat on screen: banner over the thread, desk panel, and the mode hooks', async () => {
+test('the desk on screen: no banner, no manager mode, no seat to leave — the desk panel and hooks stay', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
-  const head = html.indexOf('ew-chat-head');
-  const banner = html.indexOf('id="ew-maestro-banner"');
-  const msgs = html.indexOf('id="ew-messages"');
-  assert.ok(head !== -1 && banner > head && banner < msgs, 'the manager-mode banner sits between the chat head and the thread');
-  assert.match(html, /id="ew-maestro-banner"[^>]*hidden/, 'the banner starts hidden — it shows only in the seat');
-  assert.match(html, /You are Maestro — manager mode/, 'the banner names the mode in plain words');
-  assert.match(html, /id="ew-maestro-exit"[^>]*>Leave the seat</, 'the banner carries the way out of the seat');
+  assert.equal(html.indexOf('id="ew-maestro-banner"'), -1, 'no manager-mode banner in the shell (fun pass F4)');
+  assert.equal(html.indexOf('id="ew-maestro-exit"'), -1, 'no Leave-the-seat button in the shell');
+  assert.doesNotMatch(html, /You are Maestro — manager mode/, 'the banner copy is gone');
+  assert.doesNotMatch(html, /Leave the seat/, 'the way-out-of-the-seat copy is gone');
   for (const id of ['ew-desk', 'ew-desk-handoffs', 'ew-desk-checkpoints', 'ew-desk-note']) {
     assert.match(html, new RegExp(`id="${id}"`), id);
   }
   const agentsPane = html.indexOf('id="ew-agents"');
   const deskPanel = html.indexOf('id="ew-desk"');
   assert.ok(deskPanel > agentsPane, 'the desk panel lives in the Agents pane');
-  for (const needle of ['function renderMaestroMode', 'function enterMaestroSeat', 'function leaveMaestroSeat', 'function loadDeskLists', "post('/api/admin/envoy/maestro-desk'", "'/api/admin/maestro/handoffs'", "'/api/admin/maestro/checkpoints'", 'inMaestroMode()', 'Dispatched to']) {
+  for (const needle of ['function renderMaestroMode', 'function openDeskChannel', 'function loadDeskLists', "post('/api/admin/envoy/maestro-desk'", "'/api/admin/maestro/handoffs'", "'/api/admin/maestro/checkpoints'", 'inMaestroMode()', 'Dispatched to', '@name for one agent, no name for everyone']) {
     assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
   }
-  assert.match(css, /\.ew-maestro-banner \{/, 'envoy.css styles the banner');
-  assert.match(css, /#ew-chat\.maestro-mode \{/, 'envoy.css frames the chat pane in manager mode');
+  for (const gone of ['function enterMaestroSeat', 'function leaveMaestroSeat', 'ew-maestro-exit', 'ew-maestro-banner', 'maestro-mode']) {
+    assert.ok(!js.includes(gone), `envoy-workspace.js no longer has ${gone}`);
+  }
+  assert.doesNotMatch(css, /\.ew-maestro-banner \{/, 'envoy.css no longer styles a banner');
+  assert.doesNotMatch(css, /#ew-chat\.maestro-mode \{/, 'envoy.css no longer frames the chat pane in a manager mode');
   assert.match(css, /\.ew-channel\.seat \{/, 'envoy.css marks the seat row in the channel list');
 });
 
@@ -528,7 +528,7 @@ test('seat render: with the live-proof channel shape (Team + agent rooms, no des
   const envoyHead = render.indexOf("'ENVOY'");
   assert.ok(maestroHead !== -1 && envoyHead !== -1 && maestroHead < envoyHead, 'the MAESTRO head renders above the ENVOY head');
   assert.ok(render.includes('seatRow,'), 'the seat row is emitted with the list children');
-  assert.ok(render.includes('enterMaestroSeat'), 'the no-desk-channel branch builds the enter-the-seat row');
+  assert.ok(render.includes('openDeskChannel'), 'the no-desk-channel branch builds the desk row that opens (and creates) the desk');
   assert.ok(render.includes('Your manager seat'), 'the desk-exists branch builds the desk row — both branches render a seat');
 });
 
