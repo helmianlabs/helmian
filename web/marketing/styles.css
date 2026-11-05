@@ -415,3 +415,17 @@ html, body { overflow-x: clip; }
   .cockpit-panel { padding: 14px 12px 18px; }
   .radar-node { width: 40px; height: 40px; font-size: 10px; }
 }
+
+/* Pricing (/pricing): tier cards on the shared feature-card frame.
+   Scoped under .price- so nothing else on the site moves. */
+.price-card { display: flex; flex-direction: column; }
+.price-card .index { margin-bottom: 26px; }
+.price-card > p.price-amount { min-height: 0; margin: 16px 0 2px; color: var(--ink); font-size: 40px; font-weight: 640; letter-spacing: -0.04em; line-height: 1; }
+.price-amount small { color: var(--muted); font-size: 13px; font-weight: 650; letter-spacing: 0.02em; }
+.price-card > p.price-sub { min-height: 0; margin: 8px 0 0; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.price-card > p.price-desc { min-height: 0; margin: 12px 0 18px; }
+.price-includes { display: grid; gap: 9px; margin: 0 0 26px; padding: 0; list-style: none; color: var(--soft); font-size: 13.5px; line-height: 1.5; }
+.price-includes li { position: relative; padding-left: 18px; }
+.price-includes li::before { content: ""; position: absolute; left: 0; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.price-card .button { margin-top: auto; }
+.price-card > p.price-note { min-height: 0; margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
