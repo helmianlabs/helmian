@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRunnerPresenceStore, handleRunnerPresenceRoute, RUNNER_PRESENCE_PATH } from '../src/cloud/runner-presence.mjs';
+import * as runnerPresence from '../src/cloud/runner-presence.mjs';
 import { computeTenantAgentState, claimGateFor } from '../src/cloud/tenant-agent-state.mjs';
 
 function makeFakePool({ missingTable = false } = {}) {
@@ -251,4 +252,251 @@ test('markAnswered stamps only an existing row, list returns the stamp, and the 
   assert.ok(rows[0].lastAnsweredAt instanceof Date, 'list returns the answer stamp');
   assert.equal(rows[0].connected, true, 'answering does not rewrite the device claim');
   await assert.rejects(() => store.markAnswered('tenant-honest', 'nope'), /unknown provider/);
+});
+
+// ---------- live activity (demo-night bite A, 2026-11-04) ----------
+// The room must show what a seat is DOING, from real worker events only.
+// The worker POSTs activity events over this same presence route (device
+// token only, like every runner claim); the desk reads them on the GET
+// payload it already polls. Events carry a short TTL: a seat whose
+// worker died mid-job stops claiming work when its last event expires.
+
+// A fake that models the presence table AND the sql/067 activity table.
+// missingActivity makes only the activity queries throw 42P01 (the state
+// of production until the migration is applied).
+function makeActivityFakePool({ missingActivity = false } = {}) {
+  const providers = new Map(); // provider -> { connected, updated_at, last_answered_at }
+  const activity = []; // { provider_name, channel_id, stage, detail, at, expires_at }
+  const calls = { pruned: 0 };
+  const client = {
+    query: async (sql, params = []) => {
+      const text = String(sql);
+      if (text.includes('set_config')) return { rows: [] };
+      if (text.includes('helmion.runner_activity')) {
+        if (missingActivity) { const e = new Error('missing activity table'); e.code = '42P01'; throw e; }
+        if (text.startsWith('delete from helmion.runner_activity')) {
+          calls.pruned += 1;
+          const cutoff = new Date(params[0]).getTime();
+          for (let i = activity.length - 1; i >= 0; i -= 1) {
+            if (new Date(activity[i].expires_at).getTime() <= cutoff) activity.splice(i, 1);
+          }
+          return { rowCount: 0 };
+        }
+        if (text.startsWith('insert into helmion.runner_activity')) {
+          activity.push({ provider_name: params[0], channel_id: params[1], stage: params[2], detail: JSON.parse(params[3]), at: params[4], expires_at: params[5] });
+          return { rowCount: 1 };
+        }
+        if (text.includes('from helmion.runner_activity')) {
+          const nowMs = new Date(params[0]).getTime();
+          const rows = activity
+            .filter((r) => new Date(r.expires_at).getTime() > nowMs)
+            .sort((a, b) => new Date(b.at) - new Date(a.at))
+            .map((r) => ({ ...r }));
+          return { rows };
+        }
+        throw new Error(`unexpected activity query: ${text}`);
+      }
+      if (text.startsWith('select provider_name')) {
+        return { rows: [...providers.entries()].map(([provider_name, v]) => ({ provider_name, ...v })) };
+      }
+      if (text.includes('insert into helmion.runner_provider_presence')) {
+        const prev = providers.get(params[0]) ?? { connected: false, updated_at: null, last_answered_at: null };
+        const next = { ...prev, updated_at: new Date() };
+        if (text.includes('connected = excluded.connected')) next.connected = params[1] === true;
+        providers.set(params[0], next);
+        return { rowCount: 1 };
+      }
+      if (text.includes('update helmion.runner_provider_presence')) {
+        const row = providers.get(params[0]);
+        if (!row) return { rows: [], rowCount: 0 };
+        row.last_answered_at = new Date();
+        return { rows: [], rowCount: 1 };
+      }
+      if (text === 'begin' || text === 'commit' || text === 'rollback') return {};
+      throw new Error(`unexpected query: ${text}`);
+    },
+    release: () => {},
+  };
+  return {
+    connect: async () => client,
+    // The store probes for the sql/066 column through pool.query.
+    query: async (sql) => (String(sql).includes('last_answered_at') ? { rows: [] } : client.query(sql)),
+    _providers: providers,
+    _activity: activity,
+    _calls: calls,
+  };
+}
+
+async function callPresenceRouteGet({ actor, store }) {
+  const captured = {};
+  const handled = await handleRunnerPresenceRoute({
+    request: { method: 'GET' },
+    response: {},
+    requestUrl: new URL(`http://presence.test${RUNNER_PRESENCE_PATH}`),
+    activeTenantActor: async () => actor,
+    send: (_response, status, payload) => { captured.status = status; captured.body = JSON.parse(payload); },
+    TenantAuthorizationError: FakeTenantAuthorizationError,
+    readJson: async () => ({}),
+    store,
+  });
+  return { handled, ...captured };
+}
+
+const NOW = new Date('2026-11-05T05:00:00.000Z');
+
+test('activity: the stage vocabulary is exactly the six real milestones', () => {
+  assert.deepEqual([...runnerPresence.ACTIVITY_STAGES].sort(), ['done', 'failed', 'file-placed', 'published', 'started', 'working']);
+  assert.ok(runnerPresence.ACTIVITY_TTL_MS >= 60_000 && runnerPresence.ACTIVITY_TTL_MS <= 15 * 60_000, 'a short TTL, long enough for one build leg');
+});
+
+test('activity: normalizeActivityEvent shapes a valid event and stamps its expiry', () => {
+  const event = runnerPresence.normalizeActivityEvent(
+    { provider: 'claude', channelId: 'chan-1', stage: 'working', detail: { transport: 'pc-seat' }, at: NOW.toISOString() },
+    undefined,
+    NOW,
+  );
+  assert.deepEqual(event, {
+    provider: 'claude',
+    channelId: 'chan-1',
+    stage: 'working',
+    detail: { transport: 'pc-seat' },
+    at: NOW.toISOString(),
+    expiresAt: new Date(NOW.getTime() + runnerPresence.ACTIVITY_TTL_MS).toISOString(),
+  });
+});
+
+test('activity: the provider may ride at the top level, and engine names resolve (qwen seat reports as ollama)', () => {
+  const event = runnerPresence.normalizeActivityEvent({ channelId: 'chan-1', stage: 'started' }, 'ollama', NOW);
+  assert.equal(event.provider, 'ollama');
+  const chatgpt = runnerPresence.normalizeActivityEvent({ provider: 'chatgpt', channelId: 'chan-1', stage: 'started' }, undefined, NOW);
+  assert.equal(chatgpt.provider, 'openai');
+});
+
+test('activity: normalizeActivityEvent rejects a bad stage, an unknown provider, and a missing channel', () => {
+  assert.throws(() => runnerPresence.normalizeActivityEvent({ provider: 'claude', channelId: 'c', stage: 'typing' }, undefined, NOW), (e) => e?.status === 400);
+  assert.throws(() => runnerPresence.normalizeActivityEvent({ provider: 'nope', channelId: 'c', stage: 'started' }, undefined, NOW), (e) => e?.status === 400);
+  assert.throws(() => runnerPresence.normalizeActivityEvent({ provider: 'claude', stage: 'started' }, undefined, NOW), (e) => e?.status === 400);
+  assert.throws(() => runnerPresence.normalizeActivityEvent(null, undefined, NOW), (e) => e?.status === 400);
+});
+
+test('activity: detail is sanitized — scalars only, strings and keys bounded', () => {
+  const event = runnerPresence.normalizeActivityEvent({
+    provider: 'grok', channelId: 'c', stage: 'published',
+    detail: { published: 2, ok: true, note: 'x'.repeat(500), nested: { no: 'objects' }, list: [1, 2] },
+  }, undefined, NOW);
+  assert.deepEqual(Object.keys(event.detail).sort(), ['note', 'ok', 'published']);
+  assert.equal(event.detail.note.length, 200);
+  assert.equal(event.detail.published, 2);
+});
+
+test('activity: a future or unparseable at clamps to now — a worker cannot fake freshness', () => {
+  const future = runnerPresence.normalizeActivityEvent(
+    { provider: 'claude', channelId: 'c', stage: 'working', at: new Date(NOW.getTime() + 3_600_000).toISOString() }, undefined, NOW);
+  assert.equal(future.at, NOW.toISOString());
+  const garbage = runnerPresence.normalizeActivityEvent(
+    { provider: 'claude', channelId: 'c', stage: 'working', at: 'not-a-date' }, undefined, NOW);
+  assert.equal(garbage.at, NOW.toISOString());
+});
+
+test('activity: report + list round-trips, expired events are excluded, and a write prunes', async () => {
+  const pool = makeActivityFakePool();
+  const store = createRunnerPresenceStore(pool);
+  const written = await store.reportActivity('tenant-act', { provider: 'claude', channelId: 'chan-1', stage: 'started', detail: { messageId: 'm1' } });
+  assert.equal(written.ok, true);
+  assert.equal(written.activity.provider, 'claude');
+  assert.equal(pool._calls.pruned, 1, 'every write prunes expired rows first');
+  const listed = await store.listActivity('tenant-act');
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].stage, 'started');
+  assert.deepEqual(listed[0].detail, { messageId: 'm1' });
+  const afterExpiry = await store.listActivity('tenant-act', new Date(Date.now() + runnerPresence.ACTIVITY_TTL_MS + 60_000));
+  assert.deepEqual(afterExpiry, [], 'an expired event no longer claims the seat is working');
+});
+
+test('activity: without the sql/067 table, reads are empty and writes report 503 — presence is untouched', async () => {
+  const pool = makeActivityFakePool({ missingActivity: true });
+  const store = createRunnerPresenceStore(pool);
+  assert.deepEqual(await store.listActivity('tenant-act'), []);
+  await assert.rejects(
+    () => store.reportActivity('tenant-act', { provider: 'claude', channelId: 'c', stage: 'started' }),
+    (e) => e?.status === 503,
+  );
+  await store.report('tenant-act', 'claude', true);
+  assert.equal((await store.list('tenant-act'))[0].connected, true, 'presence works exactly as before');
+});
+
+test('activity route: a device-token POST stores the event and creates NO presence claim', async () => {
+  const pool = makeActivityFakePool();
+  const store = createRunnerPresenceStore(pool);
+  const device = { tenantId: 'tenant-act', subject: 'device-1', viaDeviceToken: true };
+  const { handled, status, body } = await callPresenceRoute({
+    actor: device,
+    body: { provider: 'grok', activity: { channelId: 'chan-9', stage: 'file-placed', detail: { delivered: 1, pcWritten: 1 } } },
+    store,
+  });
+  assert.equal(handled, true);
+  assert.equal(status, 200);
+  assert.equal(body.valid, true);
+  assert.equal(body.activity.provider, 'grok');
+  assert.equal(body.activity.stage, 'file-placed');
+  assert.ok(body.activity.expiresAt > body.activity.at);
+  assert.deepEqual(await store.list('tenant-act'), [], 'an activity event is not a connection claim');
+  assert.equal((await store.listActivity('tenant-act')).length, 1);
+});
+
+test('activity route: a member POST cannot post activity — it degrades to a sync stamp like every member write', async () => {
+  const pool = makeActivityFakePool();
+  const store = createRunnerPresenceStore(pool);
+  const member = { tenantId: 'tenant-act', subject: 'user-1', viaDeviceToken: false };
+  const { status, body } = await callPresenceRoute({
+    actor: member,
+    body: { provider: 'claude', activity: { channelId: 'chan-9', stage: 'working' } },
+    store,
+  });
+  assert.equal(status, 200);
+  assert.equal(body.synced, true, 'the member write is answered as what it is: a sync stamp');
+  assert.equal(body.activityAccepted, false);
+  assert.deepEqual(await store.listActivity('tenant-act'), [], 'no activity was stored');
+});
+
+test('activity route: a device POST with an unknown stage is refused with 400', async () => {
+  const store = createRunnerPresenceStore(makeActivityFakePool());
+  const device = { tenantId: 'tenant-act', subject: 'device-1', viaDeviceToken: true };
+  const { status } = await callPresenceRoute({
+    actor: device,
+    body: { provider: 'claude', activity: { channelId: 'chan-9', stage: 'daydreaming' } },
+    store,
+  });
+  assert.equal(status, 400);
+  assert.deepEqual(await store.listActivity('tenant-act'), []);
+});
+
+test('activity route: GET carries presence exactly as before PLUS the unexpired activity feed', async () => {
+  const pool = makeActivityFakePool();
+  const store = createRunnerPresenceStore(pool);
+  const device = { tenantId: 'tenant-act', subject: 'device-1', viaDeviceToken: true };
+  const member = { tenantId: 'tenant-act', subject: 'user-1', viaDeviceToken: false };
+  await callPresenceRoute({ actor: device, body: { provider: 'claude', connected: true }, store });
+  await store.reportActivity('tenant-act', { provider: 'claude', channelId: 'chan-1', stage: 'working', detail: { transport: 'pc-seat' } });
+  // An already-expired event (forged straight into the table, as an old
+  // row would sit) must not ride the payload.
+  pool._activity.push({ provider_name: 'gemini', channel_id: 'chan-1', stage: 'working', detail: {}, at: '2020-01-01T00:00:00.000Z', expires_at: '2020-01-01T00:05:00.000Z' });
+  const { status, body } = await callPresenceRouteGet({ actor: member, store });
+  assert.equal(status, 200);
+  assert.equal(body.presence.length, 1);
+  assert.deepEqual(Object.keys(body.presence[0]).sort(), ['connected', 'lastAnsweredAt', 'provider', 'updatedAt'], 'every existing presence field keeps its meaning');
+  assert.equal(body.presence[0].connected, true);
+  assert.equal(body.activity.length, 1, 'only the live event rides the payload');
+  assert.deepEqual(Object.keys(body.activity[0]).sort(), ['at', 'channelId', 'detail', 'expiresAt', 'provider', 'stage']);
+  assert.equal(body.activity[0].provider, 'claude');
+  assert.equal(body.activity[0].channelId, 'chan-1');
+});
+
+test('activity route: GET before the sql/067 migration still answers presence, with an empty activity feed', async () => {
+  const store = createRunnerPresenceStore(makeActivityFakePool({ missingActivity: true }));
+  const member = { tenantId: 'tenant-act', subject: 'user-1', viaDeviceToken: false };
+  const { status, body } = await callPresenceRouteGet({ actor: member, store });
+  assert.equal(status, 200);
+  assert.deepEqual(body.activity, []);
+  assert.deepEqual(body.presence, []);
 });
