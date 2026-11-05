@@ -21,6 +21,31 @@
   --shadow: 0 28px 90px rgba(0, 0, 0, 0.28);
 }
 
+/* Light theme — the shared web light palette (B0 §2.1). Additive: dark
+   stays the :root default above; this block overrides when theme-init.js
+   sets data-theme="light" on <html>. Layout tokens (--max, --radius) are
+   not re-declared. */
+[data-theme="light"] {
+  color-scheme: light;
+  --canvas: #F4F6F8;
+  --canvas-deep: #E9EDF1;
+  --sidebar: #FFFFFF;
+  --surface: #FFFFFF;
+  --raised: #EEF1F4;
+  --panel: #F7F9FB;
+  --line: #D5DBE3;
+  --line-strong: #71869D;
+  --ink: #121820;
+  --soft: #2F3A47;
+  --muted: #5C6B7A;
+  --faint: #5A6B7D;
+  --accent: #0B6E99;
+  --accent-ink: #FFFFFF;
+  --accent-panel: #D8EEF8;
+  --accent-dark: #085A80;
+  --shadow: 0 24px 60px rgba(13, 42, 67, 0.14);
+}
+
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
@@ -429,3 +454,71 @@ html, body { overflow-x: clip; }
 .price-includes li::before { content: ""; position: absolute; left: 0; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .price-card .button { margin-top: auto; }
 .price-card > p.price-note { min-height: 0; margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+/* Theme toggle (header) — wired by theme-init.js. Sun shows in dark
+   (click: go light), moon in light (click: go dark); both icons are in the
+   markup and CSS picks the one for the active theme. */
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; padding: 0; flex-shrink: 0;
+  border: 1px solid var(--line); border-radius: 11px;
+  background: var(--surface); color: var(--soft); cursor: pointer;
+}
+.theme-toggle:hover { border-color: var(--line-strong); color: var(--accent); }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.theme-toggle svg { width: 17px; height: 17px; }
+.theme-toggle .icon-moon { display: none; }
+[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+
+/* Light decorative layer — the dark theme's glow/rgba material re-authored
+   for the light palette (B0 §2.1 notes). Colors only; no layout changes.
+   The body keeps its gradient structure with the radial glow replaced by
+   a whisper of the accent tint; the sticky header takes the spec values. */
+[data-theme="light"] body {
+  background:
+    radial-gradient(circle at 82% 8%, rgba(11, 110, 153, 0.05), transparent 30rem),
+    linear-gradient(180deg, var(--canvas) 0%, var(--canvas-deep) 100%);
+}
+[data-theme="light"] .site-header {
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+}
+[data-theme="light"] .brand-mark { box-shadow: none; }
+[data-theme="light"] .button-primary:hover { background: var(--accent-dark); }
+[data-theme="light"] .posture-list li::before { box-shadow: 0 0 0 4px rgba(11, 110, 153, 0.10); }
+[data-theme="light"] .feature-card { background: linear-gradient(160deg, var(--surface), var(--panel)); }
+[data-theme="light"] .security-section { background: var(--panel); }
+[data-theme="light"] .boundary-panel { background: var(--surface); }
+[data-theme="light"] .demo-card { background: var(--surface); }
+[data-theme="light"] .video-placeholder { background: linear-gradient(145deg, var(--accent-panel), var(--panel)); }
+[data-theme="light"] .contact-band { background: linear-gradient(115deg, var(--accent-panel), var(--surface)); }
+[data-theme="light"] .section-rule { border-top: 1px solid var(--line); }
+[data-theme="light"] .envoy-panel { background: linear-gradient(160deg, var(--surface), var(--panel)); }
+
+/* Dark islands — the cockpit figure and the interface figure are framed
+   depictions of the (dark) product itself, the CSS twin of the landing
+   media B0 §5.6 keeps dark. Under the light theme they re-declare the
+   dark token values on the figure, so their subtrees render exactly as
+   they do in the dark theme; the page around them goes light. */
+[data-theme="light"] .cockpit-panel,
+[data-theme="light"] .interface-figure {
+  --canvas: #07111d;
+  --canvas-deep: #050c14;
+  --sidebar: #091725;
+  --surface: #0e1d2b;
+  --raised: #14293b;
+  --panel: #102333;
+  --line: #274154;
+  --line-strong: #39778d;
+  --ink: #edf8fb;
+  --soft: #b9d3e0;
+  --muted: #829eb0;
+  --faint: #587184;
+  --accent: #65d5f5;
+  --accent-ink: #05202a;
+  --accent-panel: #123247;
+  --accent-dark: #123b4d;
+  --shadow: 0 28px 90px rgba(0, 0, 0, 0.28);
+}
