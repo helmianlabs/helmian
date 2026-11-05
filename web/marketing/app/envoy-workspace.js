@@ -98,23 +98,17 @@ export function agentStates(messages, roster, online, now = Date.now(), route = 
   return out;
 }
 
-// The server's agent-work window (src/cloud/envoy-mesh.mjs agentWork): a
-// routed message stays waiting for its agent for 30 minutes, until the
-// reply lands. pendingAgentWork/deskPending below mirror that definition
-// and stay exported as the test-pinned mirror of the server rule — but
-// the desk no longer derives any display from them: the in-thread
-// "answering" cue and the roster WORKING light that were computed from
-// message age were removed on Troy's order (2026-11-04) because they lit
-// seats that had no job running. Real seat activity renders from the
-// runner activity feed instead (activity desk bite).
-export const AGENT_WORK_WINDOW_MS = 30 * 60_000;
-export const FAST_POLL_MS = 800;
+// The desk derives NO work state from message age. The client mirror of
+// the server's agent-work window (pendingAgentWork/deskPending, with
+// AGENT_WORK_WINDOW_MS and FAST_POLL_MS) was deleted with the activity
+// desk bite (2026-11-04): the in-thread "answering" cue and the roster
+// WORKING light it fed lit seats that had no job running, and Troy's
+// order was that the desk show no work state it cannot prove. The
+// server's own agentWork rule still lives in src/cloud/envoy-mesh.mjs;
+// what a seat is doing renders only from the runner activity feed (see
+// the activity helpers at the desk anchor below).
 export const CALM_POLL_MS = 2500;
 
-// Providers (roster order) with a routed message still unanswered: posted
-// inside the work window, after the provider joined, with no reply:<id>
-// from that provider yet. Offline providers are excluded — nobody is
-// coming, so the channel must not claim an answer is on its way.
 // The workspace's honest asleep banner: when the server says this
 // tenant's agents cannot answer yet (no subscription connected, or no
 // computer running them), the chat says so in plain words instead of
@@ -134,22 +128,6 @@ export function roomAddressed(message, roster) {
   if (all) return team;
   if (providers.length) return team.filter((p) => providers.includes(p));
   return team;
-}
-
-export function pendingAgentWork(messages, roster, joined = {}, online = new Set(), now = Date.now(), route = addressed) {
-  const answered = new Set();
-  for (const m of messages) if (String(m.idempotencyKey ?? '').startsWith('reply:')) answered.add(`${m.authorSubject}|${String(m.idempotencyKey).slice(6)}`);
-  const due = new Set();
-  for (const m of messages) {
-    if (now - new Date(m.createdAt).getTime() > AGENT_WORK_WINDOW_MS) continue;
-    for (const p of route(m, roster)) {
-      if (answered.has(`agent:${p}|${m.id}`)) continue;
-      const j = joined[p];
-      if (j && new Date(m.createdAt).getTime() < Date.parse(j)) continue;
-      if (providerOnline(p, online)) due.add(p);
-    }
-  }
-  return roster.filter((p) => due.has(p));
 }
 
 // ---------- the Maestro desk (the manager seat) ----------
@@ -192,25 +170,6 @@ export function deskTargets(message, roster) {
   return team;
 }
 
-// The desk's pending-work mirror (pendingAgentWork with desk routing):
-// same 30-minute work window, joined and reply rules, over deskTargets.
-export function deskPending(messages, roster, joined = {}, online = new Set(), now = Date.now()) {
-  const team = deskRoster(roster);
-  const answered = new Set();
-  for (const m of messages) if (String(m.idempotencyKey ?? '').startsWith('reply:')) answered.add(`${m.authorSubject}|${String(m.idempotencyKey).slice(6)}`);
-  const due = new Set();
-  for (const m of messages) {
-    if (now - new Date(m.createdAt).getTime() > AGENT_WORK_WINDOW_MS) continue;
-    for (const p of deskTargets(m, team)) {
-      if (answered.has(`agent:${p}|${m.id}`)) continue;
-      const j = joined[p];
-      if (j && new Date(m.createdAt).getTime() < Date.parse(j)) continue;
-      if (providerOnline(p, online)) due.add(p);
-    }
-  }
-  return team.filter((p) => due.has(p));
-}
-
 // Private agent rooms: every agent has its own channel (kind 'agent',
 // slug agent-<provider>) where its one-to-one conversation lives, away
 // from the shared channels. The Agent Chat pane reads and writes that
@@ -230,13 +189,149 @@ export function agentRoomFor(channels, provider) {
   return (channels ?? []).find((c) => c.kind === 'agent' && c.slug === `agent-${provider}`) ?? null;
 }
 
-// ACTIVITY ANCHOR (desk): this is where the desk's live seat-activity
-// rendering hooks in (activity desk bite — real runner events: started /
-// working / file-placed / published / done / failed, with an elapsed
-// clock). The age-derived pending-work computation that fed the old
-// "answering" cue (currentWorking over pendingAgentWork/deskPending) was
-// removed 2026-11-04 on Troy's order — the desk shows no work state it
-// cannot prove from real events.
+// ---------- live seat activity (the runner activity feed) ----------
+// The presence GET also carries `activity`: the worker's real per-job
+// events ({ provider, channelId, stage, detail, at, expiresAt } —
+// sql/067 + src/cloud/runner-presence.mjs), one per thing a seat
+// actually did. This feed is the ONLY source of work state the desk
+// renders: a seat shows a row while its newest unexpired event for the
+// open channel is live, and for a few seconds after a terminal event
+// (done / failed) lands. No event, no row — message age, roster
+// membership and online state prove nothing about work and are never
+// consulted here. (The age-derived computation that fed the old
+// "answering" cue was removed 2026-11-04 on Troy's order.)
+export const ACTIVITY_STAGE_WORDS = Object.freeze({
+  started: 'starting',
+  working: 'working on it',
+  'file-placed': 'placing files on the PC',
+  published: 'published a page',
+  done: 'finished',
+  failed: 'hit a problem',
+});
+const ACTIVITY_TERMINAL_STAGES = new Set(['done', 'failed']);
+// How long a terminal row lingers after its event lands — long enough
+// to be seen, short enough that a finished seat never looks busy.
+export const ACTIVITY_TERMINAL_SHOW_MS = 10_000;
+// The fast refresh cadence while any displayed seat has live activity.
+// (The pre-kill FAST_POLL_MS value, kept as an internal constant: the
+// exported name went away with the age-derived mirror it served.)
+const ACTIVITY_POLL_MS = 800;
+
+// Activity rides under presence names (the qwen seat reports as
+// 'ollama', grok may report as 'xai') — the same mapping loadPresence
+// applies to the online set, in the desk vocabulary's direction.
+export function activityProviderNames(provider) {
+  const names = [provider];
+  if (provider === 'qwen') names.push('ollama');
+  if (provider === 'grok') names.push('xai');
+  return names;
+}
+
+// The desk-vocabulary provider for a feed event's provider name.
+function activityDeskProvider(name) {
+  if (name === 'ollama') return 'qwen';
+  if (name === 'xai') return 'grok';
+  return name;
+}
+
+// The newest unexpired event for one seat in one channel, or null.
+export function latestActivity(activity, provider, channelId, now = Date.now()) {
+  const names = activityProviderNames(provider);
+  let best = null;
+  for (const event of activity ?? []) {
+    if (!event || event.channelId !== channelId || !names.includes(event.provider)) continue;
+    if (!(new Date(event.expiresAt).getTime() > now)) continue;
+    if (!best || new Date(event.at).getTime() > new Date(best.at).getTime()) best = event;
+  }
+  return best;
+}
+
+export function activityElapsed(event, now = Date.now()) {
+  const seconds = Math.max(0, Math.floor((now - new Date(event.at).getTime()) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+export function activityCueText(name, event, now = Date.now()) {
+  const words = ACTIVITY_STAGE_WORDS[event.stage] ?? 'working on it';
+  return `${name} · ${words} · ${activityElapsed(event, now)}`;
+}
+
+// The event one seat may show in one channel, or null when it has
+// nothing provable to show: no unexpired event, or a terminal event
+// whose brief showing has passed. An older working event underneath a
+// terminal one never resurrects the seat — the newest event decides.
+export function activityCue(activity, provider, channelId, now = Date.now()) {
+  const event = latestActivity(activity, provider, channelId, now);
+  if (!event) return null;
+  if (ACTIVITY_TERMINAL_STAGES.has(event.stage) && now - new Date(event.at).getTime() > ACTIVITY_TERMINAL_SHOW_MS) return null;
+  return event;
+}
+
+// Every seat with something to show in a channel, in display order:
+// the built-in seats in AGENTS order, then custom agents in config
+// order. The seat set comes from the feed itself (reverse-mapped), so
+// a seat shows its real work even off the roster — and a seat with no
+// event never shows at all.
+export function activityCues(activity, channelId, customAgents = [], now = Date.now()) {
+  const present = new Set();
+  for (const event of activity ?? []) {
+    if (event && event.channelId === channelId) present.add(activityDeskProvider(String(event.provider ?? '')));
+  }
+  const order = [...AGENTS.filter((p) => p !== 'maestro'), ...(customAgents ?? []).map((a) => a.handle).filter(Boolean)];
+  const out = [];
+  for (const p of order) {
+    if (!present.has(p)) continue;
+    const event = activityCue(activity, p, channelId, now);
+    if (event) out.push({ provider: p, event });
+  }
+  return out;
+}
+
+export function activityName(provider, customAgents = []) {
+  if (NAMES[provider]) return NAMES[provider];
+  const custom = (customAgents ?? []).find((a) => a.handle === provider);
+  return custom?.name ?? provider;
+}
+
+// Any displayable activity in a channel — drives the fast refresh
+// cadence while a seat is visibly working there.
+export function activityLive(activity, channelId, customAgents = [], now = Date.now()) {
+  return activityCues(activity, channelId, customAgents, now).length > 0;
+}
+
+// One seat's activity row, in the message stream where its reply will
+// land — same shape as the cue the kill removed, fed by events instead.
+function activityRow(provider, event, customAgents = [], now = Date.now()) {
+  const custom = (customAgents ?? []).find((a) => a.handle === provider);
+  const avatar = custom
+    ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(custom.emoji || '🤖'))
+    : h('div', { class: 'ew-avatar' }, avatarImg(provider));
+  return h('div', { class: 'ew-msg ew-answering', role: 'status' },
+    avatar,
+    h('div', {}, h('div', { class: 'ew-body ew-activity-body' },
+      h('span', { class: 'ew-working-dot', 'aria-hidden': 'true' }),
+      activityCueText(activityName(provider, customAgents), event, now))));
+}
+
+// The rendered-activity signature: provider + stage + elapsed second
+// per visible cue, for the open channel and the open room. When it
+// changes — a stage moved, a cue appeared or cleared, or a live clock
+// ticked into a new second — the two message views re-render; when it
+// doesn't, polls leave the DOM alone.
+let activityViewSig = '';
+function activityViewSignature(now = Date.now()) {
+  const parts = [];
+  for (const c of activityCues(ws.activity, ws.channelId, ws.config?.customAgents, now)) parts.push(`ch:${c.provider}:${c.event.stage}:${activityElapsed(c.event, now)}`);
+  if (ws.cli.roomId) for (const c of activityCues(ws.activity, ws.cli.roomId, ws.config?.customAgents, now)) parts.push(`rm:${c.provider}:${c.event.stage}:${activityElapsed(c.event, now)}`);
+  return parts.join(',');
+}
+function syncActivityViews() {
+  const sig = activityViewSignature();
+  if (sig === activityViewSig) return;
+  activityViewSig = sig;
+  renderMessages();
+  renderCliThread();
+}
 
 // Message text -> DOM: code fences, links, @mentions, Claim:.
 // Links render as buttons wired to onLink: the desk sends them to the
@@ -297,7 +392,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, cueSig: null, online: new Set(), agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), activity: [], agentState: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -1391,10 +1486,12 @@ function renderMessages() {
         h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })), dispatch)));
     prev = m;
   }
-  // ACTIVITY ANCHOR (thread): the activity desk bite renders real runner
-  // activity rows here, after the message list. The age-derived
-  // "X is answering…" cue that stood here was removed 2026-11-04 on
-  // Troy's order — it lit seats from message age alone, job or no job.
+  // Real runner activity rows (activity desk bite): one per seat whose
+  // newest unexpired event for this channel is live, sitting where its
+  // reply will land. Events or nothing — the age-derived "X is
+  // answering…" cue that stood here was removed 2026-11-04 on Troy's
+  // order; it lit seats from message age alone, job or no job.
+  for (const cue of activityCues(ws.activity, ws.channelId, ws.config?.customAgents)) out.push(activityRow(cue.provider, cue.event, ws.config?.customAgents));
   if (!ws.messages.length) out.push(h('div', { class: 'ew-empty' }, desk
     ? 'This is your desk. Send a dispatch — @name for one agent, @all for everyone, or name nobody and it goes to everyone on the desk.'
     : (ws.config?.agents?.length ? 'Say hello. Name an agent with @ to get an answer — a message that names nobody is just posted, for people.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.')));
@@ -1412,7 +1509,7 @@ async function send(e) {
   ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
   box.value = ''; grow(); closeSlashMenu();
-  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); }
+  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
   finally { btn.disabled = false; }
 }
@@ -1511,10 +1608,12 @@ async function loadCliRoom() {
   } catch { /* keep the last good room state */ }
   renderCliThread();
 }
-// ACTIVITY ANCHOR (room): the room's live activity rows hook in with the
-// activity desk bite. The age-derived roomWorking() that fed this pane's
+// The room's live activity renders inside renderCliThread below, from
+// the same runner activity feed as the desk's (see the activity
+// helpers above). The age-derived roomWorking() that fed this pane's
 // "answering" cue and the fast-poll decision was removed 2026-11-04 on
-// Troy's order, together with the cue itself.
+// Troy's order, together with the cue itself; the fast-poll decision
+// now reads the feed (see the mount poll).
 
 // The pane's own conversation stream: the picked agent's room, rendered
 // where the human is looking instead of inside a shared channel.
@@ -1524,13 +1623,16 @@ function renderCliThread() {
   const { key } = cliTarget();
   const inRoom = ws.cli.roomFor === key && Boolean(ws.cli.roomId);
   const list = inRoom ? agentRoomThread(ws.cli.roomMessages) : [];
-  const sig = `${key}|${ws.cli.roomId ?? ''}|${list.map((m) => m.id).join(',')}`;
+  const cue = inRoom ? activityCue(ws.activity, key, ws.cli.roomId) : null;
+  const sig = `${key}|${ws.cli.roomId ?? ''}|${list.map((m) => m.id).join(',')}|${cue ? `${cue.stage}:${activityElapsed(cue)}` : ''}`;
   if (sig === ws.cli.threadSig) return;
   ws.cli.threadSig = sig;
   if (!list.length) {
-    box.replaceChildren(h('p', { class: 'ew-note' }, inRoom
-      ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here, in ${NAMES[key]}'s own room.`
-      : `Opening your room with ${NAMES[key]}…`));
+    box.replaceChildren(...(cue
+      ? [activityRow(key, cue, ws.config?.customAgents)]
+      : [h('p', { class: 'ew-note' }, inRoom
+        ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here, in ${NAMES[key]}'s own room.`
+        : `Opening your room with ${NAMES[key]}…`)]));
     return;
   }
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -1552,9 +1654,11 @@ function renderCliThread() {
         h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })))));
     prev = m;
   }
-  // ACTIVITY ANCHOR (room thread): real runner activity rows render here
-  // with the activity desk bite; the age-derived "answering" cue that
-  // stood here was removed 2026-11-04 on Troy's order.
+  // The room seat's real activity (activity desk bite): its newest
+  // unexpired event for this room renders here, or nothing at all —
+  // the age-derived "answering" cue that stood here was removed
+  // 2026-11-04 on Troy's order.
+  if (cue) out.push(activityRow(key, cue, ws.config?.customAgents));
   box.replaceChildren(...out);
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
@@ -1619,6 +1723,7 @@ async function sendCli(e) {
     await ws.ctx.post('/api/admin/envoy/messages', req.payload);
     box.value = ''; growCli(); closeSlashMenu(); ws.attach.cli = []; ws.webSearch.cli = false; renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
     await loadCliRoom();
+    loadPresence().catch(() => {});
   } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
   finally { btn.disabled = false; }
 }
@@ -2142,8 +2247,9 @@ function wire() {
 }
 
 async function loadPresence() {
-  try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; })); }
-  catch { ws.online = new Set(); }
+  try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; })); ws.activity = Array.isArray(body.activity) ? body.activity : []; }
+  catch { ws.online = new Set(); /* the last good activity feed stays — its events expire on their own stamps */ }
+  syncActivityViews();
 }
 
 function renderAgentState() {
@@ -2172,18 +2278,24 @@ export async function mountWorkspace(ctx) {
   await openCliRoom().catch(() => {});
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
   const visible = () => document.visibilityState === 'visible' && document.getElementById('shell')?.dataset.view === 'desktop';
-  // Message poll on the calm interval. This was adaptive — fast while
-  // the age-derived mirror said work was pending — until that mirror's
-  // display was killed (2026-11-04, Troy's order); event-driven refresh
-  // returns with the runner activity feed. The generation counter
-  // retires a chain whose mount has been superseded, so remounts never
-  // stack pollers.
+  // Message poll: calm at rest, fast while the runner activity feed
+  // shows a seat working in the open channel or the open room — and on
+  // that fast cadence presence (which carries the feed) refreshes too,
+  // so stage changes and the elapsed clock stay live. This is the
+  // event-driven return of the adaptive poll the age-derived mirror
+  // used to drive (killed 2026-11-04, Troy's order): the feed decides,
+  // never message age. The generation counter retires a chain whose
+  // mount has been superseded, so remounts never stack pollers.
   const gen = (ws.pollGen = (ws.pollGen ?? 0) + 1);
   const tick = async () => {
     if (gen !== ws.pollGen) return;
     if (visible()) { await loadMessages().catch(() => {}); await loadCliRoom().catch(() => {}); }
     if (gen !== ws.pollGen) return;
-    ws.timer = setTimeout(tick, CALM_POLL_MS);
+    let live = activityLive(ws.activity, ws.channelId, ws.config?.customAgents) || (ws.cli.roomId ? activityLive(ws.activity, ws.cli.roomId, ws.config?.customAgents) : false);
+    if (visible() && live) { await loadPresence().catch(() => {}); live = activityLive(ws.activity, ws.channelId, ws.config?.customAgents) || (ws.cli.roomId ? activityLive(ws.activity, ws.cli.roomId, ws.config?.customAgents) : false); }
+    if (gen !== ws.pollGen) return;
+    syncActivityViews();
+    ws.timer = setTimeout(tick, live ? ACTIVITY_POLL_MS : CALM_POLL_MS);
   };
   ws.timer = setTimeout(tick, CALM_POLL_MS);
   ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadAgentState(); loadConfig(); if (inMaestroMode()) loadDeskLists(); } }, 15000);

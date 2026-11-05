@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { AGENT_WORK_WINDOW_MS, CALM_POLL_MS, FAST_POLL_MS, MAESTRO_DESK_SLUG, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskPending, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, mirrorLinkHeader, pendingAgentWork, pickerAgentContext, roomAddressed } from '../app/envoy-workspace.js';
+import { CALM_POLL_MS, MAESTRO_DESK_SLUG, activityCue, activityCueText, activityCues, activityElapsed, activityLive, activityName, activityProviderNames, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, latestActivity, mirrorLinkHeader, pickerAgentContext, roomAddressed } from '../app/envoy-workspace.js';
+import * as envoyWorkspace from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
 // one human-chat surface flips between Envoy and Discord via a labelled
@@ -25,91 +26,82 @@ test('layout bite 2: Envoy/Discord flip switch and network strip exist with mode
   }
 });
 
-// pendingAgentWork mirrors the server's agentWork() rules
-// (src/cloud/envoy-mesh.mjs): a routed message is pending for a provider
-// until its reply:<id> lands, it ages out of the 30-minute work window,
-// or it predates the provider joining the channel. Only online providers
-// are reported — an offline agent is not "answering".
+// The age-derived pending-work mirror (pendingAgentWork/deskPending)
+// is DELETED (activity desk bite, 2026-11-04, Troy's order): it derived
+// "answering" from message age and lit seats that had no job running.
+// The server's own agentWork() rules live on in src/cloud/envoy-mesh.mjs
+// alone. What a seat is doing now comes only from the runner activity
+// feed — the pure helpers below are its whole client side.
 
 const NOW = Date.parse('2026-10-22T18:00:00.000Z');
 const iso = (msAgo) => new Date(NOW - msAgo).toISOString();
 const human = (id, body, msAgo = 60_000) => ({ id, authorKind: 'human', authorSubject: 'user:troy', body, createdAt: iso(msAgo) });
 const reply = (id, toId, provider, msAgo = 30_000) => ({ id, authorKind: 'agent', authorSubject: `agent:${provider}`, body: 'On it.', createdAt: iso(msAgo), idempotencyKey: `reply:${toId}` });
+const ev = (provider, stage, msAgo, channelId = 'c1', ttlMs = 300_000) => ({ provider, channelId, stage, at: iso(msAgo), expiresAt: new Date(NOW - msAgo + ttlMs).toISOString() });
 const ROSTER = ['maestro', 'gemini'];
-const JOINED = { maestro: iso(3_600_000), gemini: iso(3_600_000) };
-const ONLINE = new Set(['maestro', 'gemini']);
 
-test('an unmentioned human message is pending for nobody (Bite 2: unnamed = silence)', () => {
-  const msgs = [human('m1', 'hello')];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), []);
+test('the age-derived pending-work mirror is deleted, not just unwired', () => {
+  for (const name of ['pendingAgentWork', 'deskPending', 'AGENT_WORK_WINDOW_MS', 'FAST_POLL_MS']) {
+    assert.equal(name in envoyWorkspace, false, `${name} must not be exported`);
+  }
+  assert.equal(CALM_POLL_MS, 2500, 'the calm poll cadence is unchanged');
+});
+
+test('an unmentioned human message routes to nobody (Bite 2: unnamed = silence)', () => {
   assert.deepEqual(addressed(human('m1', 'hello'), ROSTER), []);
   // Naming Maestro names the human's own seat: still nobody.
   assert.deepEqual(addressed(human('m1', '@Maestro look'), ROSTER), []);
 });
 
-test('a mention routes the pending work to the named agent', () => {
-  const msgs = [human('m1', '@Gemini yo')];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['gemini']);
-});
-
-test('@all makes the work pending for every agent — never for Maestro', () => {
-  const msgs = [human('m1', '@all hands on deck')];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['gemini']);
-});
-
-test('the work clears when the reply posts', () => {
-  const msgs = [human('m1', '@Gemini hello'), reply('m2', 'm1', 'gemini')];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), []);
-});
-
-test('a second unanswered ask keeps the agent pending after the first is answered', () => {
-  const msgs = [human('m1', '@Gemini one', 120_000), reply('m2', 'm1', 'gemini', 90_000), human('m3', '@Gemini two', 60_000)];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, ONLINE, NOW), ['gemini']);
-});
-
-test('work expires at the server work window, not before', () => {
-  const justInside = [human('m1', '@Gemini hello', AGENT_WORK_WINDOW_MS - 1_000)];
-  assert.deepEqual(pendingAgentWork(justInside, ROSTER, JOINED, ONLINE, NOW), ['gemini']);
-  const justOutside = [human('m1', '@Gemini hello', AGENT_WORK_WINDOW_MS + 1_000)];
-  assert.deepEqual(pendingAgentWork(justOutside, ROSTER, JOINED, ONLINE, NOW), []);
-});
-
 test('in a private room the unnamed prompt IS the room agent\'s work (the room is the address)', () => {
-  const msgs = [human('m1', 'just us here')];
-  assert.deepEqual(pendingAgentWork(msgs, ['gemini'], { gemini: iso(3_600_000) }, new Set(['gemini']), NOW, roomAddressed), ['gemini']);
+  assert.deepEqual(roomAddressed(human('m1', 'just us here'), ['gemini']), ['gemini']);
   assert.deepEqual(roomAddressed(human('m1', '@Claude wrong room'), ['gemini']), []);
   assert.deepEqual(roomAddressed(human('m1', 'hello'), ['maestro']), [], 'a maestro room seats nobody');
 });
 
-test('messages from before an agent joined are not its work', () => {
-  const msgs = [human('m1', '@Gemini hello', 120_000)];
-  const joined = { maestro: iso(3_600_000), gemini: iso(60_000) };
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, joined, ONLINE, NOW), []);
+test('activity: the newest unexpired event for the seat in this channel is the cue', () => {
+  const feed = [ev('claude', 'started', 90_000), ev('claude', 'working', 30_000), ev('gemini', 'working', 10_000)];
+  assert.equal(latestActivity(feed, 'claude', 'c1', NOW)?.stage, 'working');
+  assert.equal(latestActivity(feed, 'gemini', 'c1', NOW)?.stage, 'working');
+  assert.equal(latestActivity(feed, 'claude', 'c2', NOW), null, 'events belong to their channel');
+  assert.equal(latestActivity(feed, 'grok', 'c1', NOW), null, 'a seat with no event shows nothing');
 });
 
-test('offline agents are never reported as answering', () => {
-  const msgs = [human('m1', '@Gemini hello')];
-  assert.deepEqual(pendingAgentWork(msgs, ROSTER, JOINED, new Set(), NOW), []);
-  assert.deepEqual(pendingAgentWork([human('m2', '@Gemini yo')], ROSTER, JOINED, new Set(['maestro']), NOW), []);
+test('activity: expired events are invisible, however recent the seat', () => {
+  const feed = [ev('claude', 'working', 400_000)];
+  assert.equal(latestActivity(feed, 'claude', 'c1', NOW), null);
+  assert.deepEqual(activityCues(feed, 'c1', [], NOW), []);
+  assert.equal(activityLive(feed, 'c1', [], NOW), false);
 });
 
-test('agent-authored messages make nobody pending — there is no dispatch hop', () => {
-  // The old shape: a message authored "by Maestro" dispatched the named
-  // workers in the client's mirror too. Gone (Bite 2).
-  const dispatch = { id: 'm1', authorKind: 'agent', authorSubject: 'agent:maestro', body: '@Gemini: take the summary slice', createdAt: iso(60_000) };
-  assert.deepEqual(pendingAgentWork([dispatch], ROSTER, JOINED, ONLINE, NOW), []);
-  const workerNote = { id: 'm2', authorKind: 'agent', authorSubject: 'agent:gemini', body: '@Maestro done', createdAt: iso(60_000) };
-  assert.deepEqual(pendingAgentWork([workerNote], ROSTER, JOINED, ONLINE, NOW), []);
+test('activity: seats report under presence names — qwen is ollama, grok may be xai', () => {
+  assert.deepEqual(activityProviderNames('qwen'), ['qwen', 'ollama']);
+  assert.deepEqual(activityProviderNames('grok'), ['grok', 'xai']);
+  assert.deepEqual(activityProviderNames('claude'), ['claude']);
+  const feed = [ev('ollama', 'working', 5_000), ev('xai', 'started', 5_000)];
+  assert.equal(latestActivity(feed, 'qwen', 'c1', NOW)?.provider, 'ollama');
+  assert.equal(latestActivity(feed, 'grok', 'c1', NOW)?.provider, 'xai');
+  assert.deepEqual(activityCues(feed, 'c1', [{ handle: 'qwen', name: 'Qwen' }], NOW).map((c) => c.provider), ['grok', 'qwen'], 'built-ins in AGENTS order, then custom agents');
+  assert.equal(activityName('qwen', [{ handle: 'qwen', name: 'Qwen' }]), 'Qwen');
+  assert.equal(activityName('openai', []), 'ChatGPT');
 });
 
-test('no roster, no work', () => {
-  assert.deepEqual(pendingAgentWork([human('m1', 'hello')], [], {}, ONLINE, NOW), []);
+test('activity: a terminal event shows briefly, then clears — older work never resurrects', () => {
+  const fresh = [ev('claude', 'working', 60_000), ev('claude', 'done', 5_000)];
+  assert.equal(activityCue(fresh, 'claude', 'c1', NOW)?.stage, 'done');
+  const stale = [ev('claude', 'working', 60_000), ev('claude', 'done', 11_000)];
+  assert.equal(activityCue(stale, 'claude', 'c1', NOW), null, 'past the brief showing, the finished seat is quiet');
+  const failed = [ev('gemini', 'failed', 2_000)];
+  assert.equal(activityCue(failed, 'gemini', 'c1', NOW)?.stage, 'failed');
 });
 
-test('poll cadence: fast while work is pending, calm otherwise', () => {
-  assert.equal(FAST_POLL_MS, 800);
-  assert.equal(CALM_POLL_MS, 2500);
-  assert.equal(AGENT_WORK_WINDOW_MS, 30 * 60_000);
+test('activity: cue text is Name · stage words · m:ss elapsed', () => {
+  assert.equal(activityElapsed(ev('claude', 'working', 0), NOW), '0:00');
+  assert.equal(activityElapsed(ev('claude', 'working', 65_000), NOW), '1:05');
+  assert.equal(activityElapsed(ev('claude', 'working', 600_000), NOW), '10:00');
+  assert.equal(activityCueText('Claude', ev('claude', 'working', 65_000), NOW), 'Claude · working on it · 1:05');
+  assert.equal(activityCueText('Gemini', ev('gemini', 'file-placed', 9_000), NOW), 'Gemini · placing files on the PC · 0:09');
+  assert.equal(activityCueText('Grok', ev('grok', 'failed', 3_000), NOW), 'Grok · hit a problem · 0:03');
 });
 
 // Private agent rooms (Bite 7, 2026-10-24): the Agent Chat pane no
@@ -425,11 +417,8 @@ test('I6: channel-row status markers are glyphs, not unexplained color dots', as
 // The Maestro desk (Maestro Bite 1, 2026-10-25): the human's manager
 // seat is one channel per tenant (slug 'maestro-desk'). In the desk a
 // send is a dispatch — deskTargets mirrors the server's desk routing
-// (src/cloud/envoy-agents.mjs agentsToAnswer with desk:true) — and
-// deskPending mirrors pendingAgentWork over those targets.
+// (src/cloud/envoy-agents.mjs agentsToAnswer with desk:true).
 const DESK_TEAM = ['claude', 'openai', 'grok', 'gemini'];
-const DESK_JOINED = Object.fromEntries(DESK_TEAM.map((p) => [p, iso(3_600_000)]));
-const DESK_ONLINE = new Set(DESK_TEAM);
 
 test('desk identity: the desk channel is found by its reserved slug, never by title', () => {
   const channels = [
@@ -469,28 +458,6 @@ test('desk targets: agent and system messages dispatch nobody', () => {
   assert.deepEqual(deskTargets(agentMsg, DESK_TEAM), []);
   const sysMsg = { id: 'm2', authorKind: 'system', authorSubject: 'system:envoy', body: '@all', createdAt: iso(60_000) };
   assert.deepEqual(deskTargets(sysMsg, DESK_TEAM), []);
-});
-
-test('desk pending: an unnamed dispatch is pending for the whole online desk', () => {
-  const msgs = [human('m1', 'status, everyone')];
-  assert.deepEqual(deskPending(msgs, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), DESK_TEAM);
-  // The contrast that defines the desk: the same message under ordinary
-  // routing is pending for nobody at all (Bite 2: unnamed = silence).
-  assert.deepEqual(pendingAgentWork(msgs, ['maestro', ...DESK_TEAM], { maestro: iso(3_600_000), ...DESK_JOINED }, new Set(['maestro', ...DESK_TEAM]), NOW), []);
-});
-
-test('desk pending: a named dispatch is pending for the named agent; its reply clears only its share', () => {
-  const msgs = [human('m1', 'status, everyone'), human('m2', '@Claude the numbers'), reply('m3', 'm2', 'claude')];
-  assert.deepEqual(deskPending(msgs, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), DESK_TEAM, 'the unnamed dispatch still waits on everyone, Claude included');
-  const afterAll = [...msgs, reply('m4', 'm1', 'claude'), reply('m5', 'm1', 'openai'), reply('m6', 'm1', 'grok'), reply('m7', 'm1', 'gemini')];
-  assert.deepEqual(deskPending(afterAll, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), []);
-});
-
-test('desk pending: offline agents and expired work are not pending', () => {
-  const msgs = [human('m1', 'status, everyone')];
-  assert.deepEqual(deskPending(msgs, DESK_TEAM, DESK_JOINED, new Set(['claude']), NOW), ['claude']);
-  const old = [human('m1', 'status, everyone', AGENT_WORK_WINDOW_MS + 1_000)];
-  assert.deepEqual(deskPending(old, DESK_TEAM, DESK_JOINED, DESK_ONLINE, NOW), []);
 });
 
 test('the seat on screen: banner over the thread, desk panel, and the mode hooks', async () => {
