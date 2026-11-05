@@ -931,7 +931,7 @@ async function loadChannels() {
 }
 function currentTitle() { const c = ws.channels.find((x) => x.id === ws.channelId); return c?.title || c?.slug || 'channel'; }
 const openChannel = () => ws.channels.find((c) => c.id === ws.channelId) ?? null;
-// Manager mode is a place, not a toggle: the desk channel is open.
+// The desk channel is open.
 const inMaestroMode = () => isDeskChannel(openChannel());
 function openNewChannel() {
   setPane('channels', true);
@@ -994,10 +994,12 @@ function setComposer(on) {
 export const discordEmptyText = (bot = ws.discordBot) => bot?.configured
   ? 'No channels are linked to Discord yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.'
   : 'The Helmian Discord bot is not connected yet. Once it is, linked channels mirror here.';
-// ---------- entering and leaving the seat ----------
+// ---------- opening the desk channel ----------
 // The desk channel is resolved once: from the channel list when it
 // already exists, otherwise the server creates it (and seeds its
-// dispatch config) on first entry — the rooms pattern.
+// dispatch config) the first time it is opened — the rooms pattern.
+// Opening it is ordinary channel selection (fun pass F4): there is
+// no seat to enter or leave.
 async function ensureMaestroDesk() {
   const known = deskChannelFor(ws.channels);
   if (known) return known.id;
@@ -1016,15 +1018,10 @@ async function ensureMaestroDesk() {
   })();
   try { return await ws.desk.promise; } finally { ws.desk.promise = null; }
 }
-async function enterMaestroSeat() {
+async function openDeskChannel() {
   const id = await ensureMaestroDesk();
   if (id) await selectChannel(id);
   else ws.ctx.toast('The desk is not reachable yet. Try again.');
-}
-async function leaveMaestroSeat() {
-  const next = ws.channels.find((c) => !isDeskChannel(c) && c.kind !== 'agent');
-  if (next) await selectChannel(next.id);
-  else ws.ctx.toast('Create a channel to leave the seat.');
 }
 async function setNetMode(mode) {
   if (mode !== 'envoy' && mode !== 'discord') return;
@@ -1066,17 +1063,17 @@ function renderChannels() {
     );
     return;
   }
-  // The seat sits above the channel list under its own head: it is not
-  // a channel you chat in, it is the manager's desk. Until the server
-  // has created it, the row is the way in (entering creates it).
+  // The desk sits above the channel list under its own head: it is
+  // the manager's desk channel. Until the server has created it, the
+  // row still opens it (opening creates it) — the same row either way.
   const desk = deskChannelFor(ws.channels);
   const seatRow = desk
     ? h('button', { type: 'button', class: `ew-channel seat${desk.id === ws.channelId ? ' active' : ''}`, 'data-id': desk.id, onclick: () => selectChannel(desk.id) },
       h('span', { class: 'ew-avatar seat-ava' }, avatarImg('maestro')), h('span', { class: 'name' }, 'Maestro'),
       h('span', { class: 'tags' }, h('span', { class: 'ew-mini seat', title: 'Your manager seat' })))
-    : h('button', { type: 'button', class: 'ew-channel seat enter', onclick: () => enterMaestroSeat() },
+    : h('button', { type: 'button', class: 'ew-channel seat', onclick: () => openDeskChannel() },
       h('span', { class: 'ew-avatar seat-ava' }, avatarImg('maestro')), h('span', { class: 'name' }, 'Maestro'),
-      h('span', { class: 'tags' }, h('span', { class: 'ew-mini seat', title: 'Enter your manager seat' })));
+      h('span', { class: 'tags' }, h('span', { class: 'ew-mini seat', title: 'Your manager seat' })));
   // Agent rooms (kind 'agent') get their own section: they are private
   // one-to-one rooms, not shared channels, and the list says so.
   const regular = ws.channels.filter((c) => c.kind !== 'agent' && !isDeskChannel(c));
@@ -1239,27 +1236,18 @@ function renderHeader() {
   renderNetStrip();
   renderMaestroMode();
 }
-// The seat's on-screen state. While the desk is open the chat pane is
-// unmistakably in manager mode: a banner over the thread, the desk
-// styling on the pane, the desk panel in the Agents pane, and composer
-// copy that says "dispatch" — because that is what a send here is.
-// Leaving the desk restores the ordinary channel furniture exactly.
+// The desk's on-screen state (fun pass F4): the desk channel wears
+// no costume — no banner over the thread, no mode styling on the
+// pane, no seat to leave. What this still owns is the desk panel in
+// the Agents pane (handoffs and checkpoints, shown only while the
+// desk is open) and the one plain composer hint that says how a desk
+// send is addressed. Everything else about the open desk is ordinary
+// channel furniture, rendered by the ordinary paths.
 function renderMaestroMode() {
   const on = inMaestroMode();
-  const banner = $('ew-maestro-banner'); if (banner) banner.hidden = !on;
-  $('ew-chat').classList.toggle('maestro-mode', on);
   const panel = $('ew-desk'); if (panel) panel.hidden = !on;
   const hint = $('ew-composer-hint');
-  if (on) {
-    $('maestro-input').placeholder = 'Dispatch to your agents — @name for one, @all for everyone; no name reaches everyone';
-    if (hint) hint.textContent = 'Enter to dispatch · Shift+Enter for a new line';
-    $('ew-link-discord').hidden = true;
-    $('ew-discord-badge').hidden = true;
-    $('ew-link-slack').hidden = true;
-    $('ew-slack-badge').hidden = true;
-  } else if (hint) {
-    hint.textContent = 'Enter to send · Shift+Enter for a new line';
-  }
+  if (hint) hint.textContent = on ? '@name for one agent, no name for everyone' : 'Enter to send · Shift+Enter for a new line';
 }
 // The desk surface: the manager's existing handoff and checkpoint lists
 // (the Session console's Evidence endpoints), shown beside the thread
@@ -2580,7 +2568,6 @@ function wire() {
   $('ew-foot-create-agent')?.addEventListener('click', openCreateAgentModal);
   $('ew-foot-phone-qr')?.addEventListener('click', openPhoneCloneModal);
   $('ew-mnav-chat')?.addEventListener('click', () => { closeSheets(); $('maestro-input')?.focus({ preventScroll: true }); });
-  $('ew-maestro-exit').addEventListener('click', leaveMaestroSeat);
   $('ew-modal-close').addEventListener('click', closeModal);
   $('ew-modal').addEventListener('click', (e) => { if (e.target === $('ew-modal')) closeModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (ws.pickerFor) closePicker(); else if ($('ew-modal').classList.contains('open')) closeModal(); else closeSheets(); } });
