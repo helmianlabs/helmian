@@ -299,13 +299,47 @@ export function activityLive(activity, channelId, customAgents = [], now = Date.
   return activityCues(activity, channelId, customAgents, now).length > 0;
 }
 
+// ---------- seat avatar motion (emoji bite 4) ----------
+// Motion is a RENDERING of the same feed, never a state of its own:
+// a seat's avatar moves only while its newest unexpired event for the
+// viewed channel is a working stage, and stops the moment the stage
+// turns terminal or the event expires — the class rides the same
+// poll-driven renders the cue text does, so no timers exist here.
+// Working stages bounce (the seat is visibly busy); 'published' —
+// its reply landing — gets the talking bobble. The gate is the
+// desk's own emojiStill(): plain emoji mode and prefers-reduced-
+// motion systems get the still frame and no motion class at all,
+// and envoy.css repeats the reduced-motion gate on the animation
+// itself. The animated asset's own internal (SMIL) motion is a
+// separate layer and untouched by this one.
+export function activityMotionKind(stage) {
+  if (stage === 'published') return 'talk';
+  if (stage === 'started' || stage === 'working' || stage === 'file-placed') return 'bounce';
+  return null;
+}
+export function activityMotionClass(stage, still = emojiStill()) {
+  if (still) return '';
+  const kind = activityMotionKind(stage);
+  return kind ? `ew-ava-${kind}` : '';
+}
+// The stage a seat's avatar may move to in one channel right now:
+// its live cue's stage, or null — a terminal cue's brief linger
+// ("finished" / "hit a problem") is still, and an expired or absent
+// event never moves anything.
+export function activityMotionStage(activity, provider, channelId, now = Date.now()) {
+  const event = activityCue(activity, provider, channelId, now);
+  if (!event || ACTIVITY_TERMINAL_STAGES.has(event.stage)) return null;
+  return event.stage;
+}
+
 // One seat's activity row, in the message stream where its reply will
 // land — same shape as the cue the kill removed, fed by events instead.
 function activityRow(provider, event, customAgents = [], now = Date.now()) {
   const custom = (customAgents ?? []).find((a) => a.handle === provider);
+  const motion = activityMotionClass(event.stage);
   const avatar = custom
-    ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(custom.emoji || '🤖'))
-    : seatAvatar(provider);
+    ? h('div', { class: `ew-avatar emoji-ava${motion ? ` ${motion}` : ''}` }, emojiNode(custom.emoji || '🤖'))
+    : seatAvatar(provider, event.stage);
   return h('div', { class: 'ew-msg ew-answering', role: 'status' },
     avatar,
     h('div', {}, h('div', { class: 'ew-body ew-activity-body' },
@@ -331,6 +365,23 @@ function syncActivityViews() {
   activityViewSig = sig;
   renderMessages();
   renderCliThread();
+  syncAgentCardMotion();
+}
+
+// The Agents-panel cards are rebuilt on roster/config changes, not on
+// the activity tick — so their avatars' motion (emoji bite 4) is
+// synced in place from the same signature change that re-renders the
+// message views: class toggles on the avatar shell only, no rebuild,
+// and only while the signature actually moved.
+function syncAgentCardMotion() {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+  for (const card of document.querySelectorAll('#ew-agent-cards .ew-agent[data-provider]')) {
+    const ava = card.querySelector('.ew-avatar');
+    if (!ava) continue;
+    const cls = activityMotionClass(activityMotionStage(ws.activity, card.getAttribute('data-provider'), ws.channelId));
+    ava.classList.toggle('ew-ava-bounce', cls === 'ew-ava-bounce');
+    ava.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
+  }
 }
 
 // Message text -> DOM: code fences, links, @mentions, Claim:.
@@ -380,10 +431,14 @@ const seatFace = (provider) => seatFaceFor(ws.faces, provider);
 // Avatar nodes for a built-in seat: the face — bite-1 art through
 // emojiNode, so plain mode and reduced motion get the still frame —
 // in the same .ew-avatar.emoji-ava shell custom agents wear, or the
-// stock picture when the seat has no face.
-function seatAvatar(provider) {
+// stock picture when the seat has no face. `motionStage` is the
+// seat's live activity stage for the viewed channel (emoji bite 4):
+// it only ever adds the motion class for that stage, or nothing.
+function seatAvatar(provider, motionStage = null) {
   const face = seatFace(provider);
-  return face ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(face)) : h('div', { class: 'ew-avatar' }, avatarImg(provider));
+  const motion = activityMotionClass(motionStage);
+  const cls = `ew-avatar${face ? ' emoji-ava' : ''}${motion ? ` ${motion}` : ''}`;
+  return face ? h('div', { class: cls }, emojiNode(face)) : h('div', { class: cls }, avatarImg(provider));
 }
 function seatFaceImg(provider) {
   const face = seatFace(provider);
@@ -1249,8 +1304,8 @@ function renderAgents() {
   const builtinCards = roster.map((p) => {
     const s = states[p];
     const label = s.state === 'offline' ? 'OFFLINE' : 'IDLE';
-    return h('div', { class: 'ew-agent', role: 'button', tabindex: 0, title: desk ? `Dispatch to @${NAMES[p]}` : `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
-      seatAvatar(p), h('strong', {}, NAMES[p]),
+    return h('div', { class: 'ew-agent', 'data-provider': p, role: 'button', tabindex: 0, title: desk ? `Dispatch to @${NAMES[p]}` : `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
+      seatAvatar(p, activityMotionStage(ws.activity, p, ws.channelId)), h('strong', {}, NAMES[p]),
       h('span', { class: 'ew-agent-btns' },
         ...(canFace ? [h('button', { type: 'button', class: 'ew-icon face', title: `Change ${NAMES[p]}'s face`, 'aria-label': `Change ${NAMES[p]}'s face`, onclick: (e) => { e.stopPropagation(); openSeatFaceModal(p); } }, emojiNode(seatFace(p) ?? '🤖'))] : []),
         h('button', { type: 'button', class: 'ew-icon remove', title: desk ? `Remove ${NAMES[p]} from the desk` : `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×')),
@@ -1261,8 +1316,9 @@ function renderAgents() {
     const engineOnline = ws.online.has(ca.provider) || ca.provider === 'ollama';
     const state = engineOnline ? 'idle' : 'offline';
     const provLabel = CUSTOM_PROVIDER_LABELS[ca.provider] || ca.provider;
-    return h('div', { class: 'ew-agent custom-agent-card', role: 'button', tabindex: 0, title: `Mention @${ca.handle} (${ca.jobTitle || provLabel})`, onclick: () => insertMention(ca.handle), onkeydown: (e) => { if (e.key === 'Enter') insertMention(ca.handle); } },
-      h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(ca.emoji || '🤖')),
+    const caMotion = activityMotionClass(activityMotionStage(ws.activity, ca.handle, ws.channelId));
+    return h('div', { class: 'ew-agent custom-agent-card', 'data-provider': ca.handle, role: 'button', tabindex: 0, title: `Mention @${ca.handle} (${ca.jobTitle || provLabel})`, onclick: () => insertMention(ca.handle), onkeydown: (e) => { if (e.key === 'Enter') insertMention(ca.handle); } },
+      h('div', { class: `ew-avatar emoji-ava${caMotion ? ` ${caMotion}` : ''}` }, emojiNode(ca.emoji || '🤖')),
       h('strong', {}, `${ca.name} (@${ca.handle})`),
       h('button', { type: 'button', class: 'ew-icon remove', title: `Retire @${ca.handle}`, 'aria-label': `Retire @${ca.handle}`, onclick: (e) => { e.stopPropagation(); removeCustomAgent(ca.handle); } }, '×'),
       h('span', { class: `ew-state ${state}` }, engineOnline ? 'READY' : 'CONNECT SEAT'),
@@ -1620,14 +1676,22 @@ function renderMessages() {
   // own pages the same treatment). Other links keep the bench browser.
   const onAgentLink = (url) => { window.open(url, '_blank', 'noopener'); };
   const onCanvas = (code) => { openBench('canvas'); setCanvas(code); };
+  // Seat motion for this render (emoji bite 4): each seat's live,
+  // non-terminal stage in this channel, from the same cues whose
+  // activity rows land below — a working seat's face moves wherever
+  // it stands in the stream, and stills the moment its stage turns.
+  const cues = activityCues(ws.activity, ws.channelId, ws.config?.customAgents);
+  const liveMotion = new Map();
+  for (const c of cues) if (!ACTIVITY_TERMINAL_STAGES.has(c.event.stage)) liveMotion.set(c.provider, c.event.stage);
   for (const m of ws.messages) {
     const day = dayLabel(m.createdAt);
     if (day !== prevDay) { out.push(h('div', { class: 'ew-day' }, day)); prevDay = day; prev = null; }
     if (m.authorKind === 'system') { out.push(h('div', { class: 'ew-notice' }, h('span', {}, m.body))); prev = null; continue; }
     const who = whoOf(m);
     const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
+    const motionCls = who.kind === 'agent' ? activityMotionClass(liveMotion.get(who.custom ? who.custom.handle : who.provider)) : '';
     const avatar = who.kind === 'agent'
-      ? (who.custom ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.custom.emoji || '🤖')) : seatAvatar(who.provider))
+      ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${motionCls ? ` ${motionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : seatAvatar(who.provider, liveMotion.get(who.provider) ?? null))
       : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
     const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
     const src = who.kind === 'agent'
@@ -1648,7 +1712,7 @@ function renderMessages() {
   // reply will land. Events or nothing — the age-derived "X is
   // answering…" cue that stood here was removed 2026-11-04 on Troy's
   // order; it lit seats from message age alone, job or no job.
-  for (const cue of activityCues(ws.activity, ws.channelId, ws.config?.customAgents)) out.push(activityRow(cue.provider, cue.event, ws.config?.customAgents));
+  for (const cue of cues) out.push(activityRow(cue.provider, cue.event, ws.config?.customAgents));
   if (!ws.messages.length) out.push(h('div', { class: 'ew-empty' }, desk
     ? 'This is your desk. Send a dispatch — @name for one agent, @all for everyone, or name nobody and it goes to everyone on the desk.'
     : (ws.config?.agents?.length ? 'Say hello. Name an agent with @ to get an answer — a message that names nobody is just posted, for people.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.')));
@@ -1909,6 +1973,10 @@ function renderCliThread() {
   const sig = `${key}|${ws.cli.roomId ?? ''}|${list.map((m) => m.id).join(',')}|${cue ? `${cue.stage}:${activityElapsed(cue)}` : ''}`;
   if (sig === ws.cli.threadSig) return;
   ws.cli.threadSig = sig;
+  // The room seat's avatar motion (emoji bite 4): its live cue stage
+  // for this room, terminal linger excluded — same feed, same gate
+  // as the channel stream.
+  const roomMotion = cue && !ACTIVITY_TERMINAL_STAGES.has(cue.stage) ? cue.stage : null;
   if (!list.length) {
     box.replaceChildren(...(cue
       ? [activityRow(key, cue, ws.config?.customAgents)]
@@ -1929,7 +1997,8 @@ function renderCliThread() {
   for (const m of list) {
     const who = whoOf(m);
     const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
-    const avatar = who.kind === 'agent' ? seatAvatar(who.provider) : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase()));
+    const threadMotionCls = who.kind === 'agent' ? activityMotionClass((who.custom ? who.custom.handle : who.provider) === key ? roomMotion : null) : '';
+    const avatar = who.kind === 'agent' ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${threadMotionCls ? ` ${threadMotionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : seatAvatar(who.provider, who.provider === key ? roomMotion : null)) : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase()));
     const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : null;
     out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}` }, avatar,
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),

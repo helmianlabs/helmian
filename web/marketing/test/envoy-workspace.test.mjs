@@ -897,6 +897,56 @@ test('seatFaceFor: defaults render before load, stored faces win, junk falls bac
   assert.equal(seatFaceFor(null, null), null);
 });
 
+// ---------- avatar motion (emoji bite 4) ----------
+// Motion is a rendering of the same activity feed: stage -> kind ->
+// class, gated by the desk's still gate (plain mode / reduced
+// motion). No event, no motion; a finished seat is still.
+
+test('motion: working stages bounce, publishing talks, terminal and idle are still', () => {
+  const { activityMotionKind, activityMotionClass } = envoyWorkspace;
+  for (const stage of ['started', 'working', 'file-placed']) {
+    assert.equal(activityMotionKind(stage), 'bounce', `${stage} bounces`);
+    assert.equal(activityMotionClass(stage, false), 'ew-ava-bounce');
+  }
+  assert.equal(activityMotionKind('published'), 'talk', 'a reply landing talks');
+  assert.equal(activityMotionClass('published', false), 'ew-ava-talk');
+  for (const stage of ['done', 'failed', 'idle', '', null, undefined]) {
+    assert.equal(activityMotionKind(stage), null, `${stage} is still`);
+    assert.equal(activityMotionClass(stage, false), '');
+  }
+});
+
+test('motion: the still gate (plain mode / reduced motion) kills every class', () => {
+  const { activityMotionClass } = envoyWorkspace;
+  for (const stage of ['started', 'working', 'file-placed', 'published']) {
+    assert.equal(activityMotionClass(stage, true), '', `${stage} never moves a still user`);
+  }
+});
+
+test('motion: the stage comes from the live cue — terminal linger and expiry are still', () => {
+  const { activityMotionStage } = envoyWorkspace;
+  assert.equal(activityMotionStage([ev('claude', 'working', 5_000)], 'claude', 'c1', NOW), 'working');
+  assert.equal(activityMotionStage([ev('claude', 'published', 5_000)], 'claude', 'c1', NOW), 'published');
+  assert.equal(activityMotionStage([ev('claude', 'done', 5_000)], 'claude', 'c1', NOW), null, 'a finished seat is still even while its row lingers');
+  assert.equal(activityMotionStage([ev('claude', 'failed', 5_000)], 'claude', 'c1', NOW), null);
+  assert.equal(activityMotionStage([ev('claude', 'working', 400_000, 'c1', 300_000)], 'claude', 'c1', NOW), null, 'expired work never moves');
+  assert.equal(activityMotionStage([], 'claude', 'c1', NOW), null, 'no event, no motion');
+  assert.equal(activityMotionStage([ev('ollama', 'working', 5_000)], 'qwen', 'c1', NOW), 'working', 'presence names map like the cues do');
+  assert.equal(activityMotionStage([ev('claude', 'working', 5_000, 'c2')], 'claude', 'c1', NOW), null, 'another channel\u2019s work never moves this view');
+});
+
+test('motion wiring: rows, cards and message avatars carry it; css animates the shell only', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  for (const needle of ['activityMotionClass', 'activityMotionStage', 'syncAgentCardMotion', 'ew-ava-bounce', 'ew-ava-talk', 'data-provider']) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
+  for (const needle of ['.ew-avatar.ew-ava-bounce', '.ew-avatar.ew-ava-talk', '@keyframes ew-ava-bounce', '@keyframes ew-ava-talk']) {
+    assert.ok(css.includes(needle), `envoy.css has ${needle}`);
+  }
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*ew-ava-bounce[^}]*animation:none/, 'reduced motion turns the avatar animation off in css too');
+});
+
 test('bite 5 wiring: faces route, member face, channel face, custom pill art', async () => {
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
