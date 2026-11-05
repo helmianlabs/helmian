@@ -73,13 +73,13 @@ function makeFakePool({ missingTable = false } = {}) {
 
 // ---------- the shipped defaults ----------
 
-test('the five seats ship a drawn default face each, and only those five', () => {
-  assert.deepEqual([...AGENT_FACE_PROVIDERS].sort(), ['claude', 'gemini', 'grok', 'mistral', 'openai']);
+test('the nine seats ship a drawn default face each, and only those nine', () => {
+  assert.deepEqual([...AGENT_FACE_PROVIDERS].sort(), ['claude', 'cloudflare', 'gemini', 'grok', 'groq', 'mistral', 'nvidia', 'openai', 'openrouter']);
   assert.deepEqual(Object.keys(AGENT_FACE_DEFAULTS).sort(), [...AGENT_FACE_PROVIDERS].sort());
   for (const provider of AGENT_FACE_PROVIDERS) {
     assert.ok(emojiAssetSlug(AGENT_FACE_DEFAULTS[provider]), `${provider}'s default face has Helmian art`);
   }
-  assert.equal(new Set(Object.values(AGENT_FACE_DEFAULTS)).size, 5, 'no two seats share a default face');
+  assert.equal(new Set(Object.values(AGENT_FACE_DEFAULTS)).size, 9, 'no two seats share a default face');
   assert.ok(!Object.values(AGENT_FACE_DEFAULTS).includes('🦀'), "Qwen's crab stays Qwen's");
 });
 

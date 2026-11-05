@@ -11,6 +11,18 @@ export const PHONE_URL = 'https://helmian.cloud/app';
 // of any link out or help act. Runway is not one of the five and keeps
 // its existing card exactly.
 const CONNECT_FIELD_PROVIDERS = new Set(['claude', 'openai', 'gemini', 'grok', 'mistral']);
+// The provider-catalog seats (src/cloud/provider-registry.mjs) connect
+// a different way: with a key the person pastes on the card
+// (api-key-fields.mjs), stored under the seat's own name. The field
+// lists are the registry rows' auth fields — one key for most, and
+// Cloudflare's two pieces, which the connect route composes into the
+// one saved record its seat reads.
+const API_KEY_CONNECT_FIELDS = Object.freeze({
+  groq: ['api_key'],
+  nvidia: ['api_key'],
+  cloudflare: ['account_id', 'api_token'],
+  openrouter: ['api_key'],
+});
 
 // presence: rows from the runner presence feed (null when that read never
 // arrived); connectors/providers/toolConnections: the cloud's connection
@@ -37,6 +49,10 @@ export function integrationSections({ presence = null, connectors = {}, provider
     ['grok', 'xai', 'Grok', 'Sign in with your Grok account.'],
     ['mistral', 'mistral', 'Mistral Le Chat', 'Sign in with your Mistral account.'],
     ['runway', 'runway', 'Runway', 'Use your Runway account for video and image generation.'],
+    ['groq', 'groq', 'Groq', 'Connect with a key from your Groq account — free to create, no card needed.'],
+    ['nvidia', 'nvidia', 'NVIDIA', 'Connect with a key from your NVIDIA Build account — free to create.'],
+    ['cloudflare', 'cloudflare', 'Cloudflare', 'Connect with the two saved pieces from your Cloudflare account — free every day.'],
+    ['openrouter', 'openrouter', 'OpenRouter', 'Connect with a key from your OpenRouter account — its free models cost nothing.'],
   ].map(([key, cloudKey, name, blurb]) => {
     const row = truth.get(cloudKey);
     const connected = row?.connected === true;
@@ -59,7 +75,8 @@ export function integrationSections({ presence = null, connectors = {}, provider
       ? { img: `/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png` }
       : { tile: avatarFor(null, name) };
     const connect = !connected && CONNECT_FIELD_PROVIDERS.has(key) ? { provider: key } : null;
-    return { key, name, blurb, icon, status: connected || answered.has(key) ? 'on' : 'off', statusText, connect,
+    const apiKeyConnect = !connected && API_KEY_CONNECT_FIELDS[key] ? { provider: key, fields: API_KEY_CONNECT_FIELDS[key] } : null;
+    return { key, name, blurb, icon, status: connected || answered.has(key) ? 'on' : 'off', statusText, connect, apiKeyConnect,
       action: connected ? { label: 'Manage', href: '#agents' } : null };
   });
   const discord = truth.get('discord');

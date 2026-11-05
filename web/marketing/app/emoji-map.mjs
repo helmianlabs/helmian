@@ -82,6 +82,13 @@ export const AGENT_FACE_DEFAULTS = Object.freeze({
   grok: '\u{26A1}', // bolt
   gemini: '\u{1F31F}', // glow-star
   mistral: '\u{1F989}', // owl
+  // The provider-catalog seats (src/cloud/provider-registry.mjs) wear
+  // drawn faces from the same map — fire, mech-arm, bee, octo — each
+  // distinct, and none of them Qwen's crab.
+  groq: '\u{1F525}', // fire
+  nvidia: '\u{1F9BE}', // mech-arm
+  cloudflare: '\u{1F41D}', // bee
+  openrouter: '\u{1F419}', // octo
 });
 export const AGENT_FACE_PROVIDERS = Object.freeze(Object.keys(AGENT_FACE_DEFAULTS));
 

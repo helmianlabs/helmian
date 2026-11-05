@@ -235,12 +235,13 @@ const CONNECTORS_NOTE = 'Attaching a connector hands the agent a note that the s
 
 // PROVIDER_REGISTRY keys that are NOT services: the team chat mirrors
 // (Slack, Discord — mirrors, not connectors; they never appear in the
-// picker) and the AI providers (Claude, ChatGPT, Grok, Gemini — they
-// are the agents above, never connector rows). What remains in the
-// registry is a service (GitHub today). Further services arrive only
-// through the tool-connections data itself — see pickerModel.
+// picker) and the AI providers (Claude, ChatGPT, Grok, Gemini, and the
+// provider-catalog seats Groq, NVIDIA, Cloudflare, OpenRouter — they
+// are agents, never connector rows). What remains in the registry is
+// a service (GitHub today). Further services arrive only through the
+// tool-connections data itself — see pickerModel.
 const MIRROR_KEYS = new Set(['slack', 'discord']);
-const AGENT_REGISTRY_KEYS = new Set(['anthropic', 'openai', 'xai', 'google']);
+const AGENT_REGISTRY_KEYS = new Set(['anthropic', 'openai', 'xai', 'google', 'groq', 'nvidia', 'cloudflare', 'openrouter']);
 
 export function pickerModel({ connectors = {}, providers = {}, plugins = {}, toolConnections = null, presence = null, now = Date.now(), agent = null } = {}) {
   const rows = integrationsModel(connectors, providers, { toolConnections, presence, now });

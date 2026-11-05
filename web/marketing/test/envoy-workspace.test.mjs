@@ -440,6 +440,20 @@ test('desk roster: AGENTS order, and Maestro is never on it', () => {
   assert.deepEqual(deskRoster(null), []);
 });
 
+test('desk roster: the four catalog seats sit on the desk and answer to their names', () => {
+  assert.deepEqual(
+    deskRoster(['openrouter', 'groq', 'cloudflare', 'nvidia', 'claude']),
+    ['claude', 'groq', 'nvidia', 'cloudflare', 'openrouter'],
+    'catalog seats join the roster in AGENTS order, after the sign-in seats',
+  );
+  assert.equal(activityName('groq'), 'Groq');
+  assert.equal(activityName('nvidia'), 'NVIDIA');
+  assert.equal(activityName('cloudflare'), 'Cloudflare');
+  assert.equal(activityName('openrouter'), 'OpenRouter');
+  assert.deepEqual(deskTargets(human('m1', '@Groq and @OpenRouter: go'), ['groq', 'openrouter', 'claude']), ['groq', 'openrouter']);
+  assert.deepEqual(deskTargets(human('m1', '@nim check the build'), ['nvidia']), ['nvidia'], 'the nim alias reaches the NVIDIA seat');
+});
+
 test('desk targets: unnamed is everyone, @all is everyone, @name is the named alone', () => {
   assert.deepEqual(deskTargets(human('m1', 'build the page'), DESK_TEAM), DESK_TEAM);
   assert.deepEqual(deskTargets(human('m1', '@all status'), DESK_TEAM), DESK_TEAM);

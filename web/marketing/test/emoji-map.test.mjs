@@ -75,7 +75,7 @@ test('asset urls honor the base path and the still variant', () => {
 // ---------- seat face defaults (emoji bite 5) ----------
 
 test('every built-in seat ships a default face with Helmian art', () => {
-  assert.deepEqual([...AGENT_FACE_PROVIDERS].sort(), ['claude', 'gemini', 'grok', 'mistral', 'openai']);
+  assert.deepEqual([...AGENT_FACE_PROVIDERS].sort(), ['claude', 'cloudflare', 'gemini', 'grok', 'groq', 'mistral', 'nvidia', 'openai', 'openrouter']);
   assert.deepEqual(Object.keys(AGENT_FACE_DEFAULTS).sort(), [...AGENT_FACE_PROVIDERS].sort());
   for (const provider of AGENT_FACE_PROVIDERS) {
     assert.ok(emojiAssetSlug(AGENT_FACE_DEFAULTS[provider]), `${provider}'s default face is drawn`);
@@ -83,7 +83,7 @@ test('every built-in seat ships a default face with Helmian art', () => {
   }
   assert.equal(agentFaceDefault('maestro'), null, 'Maestro is the human seat — no agent face');
   assert.equal(agentFaceDefault('qwen'), null, 'custom agents carry their own faces');
-  assert.equal(new Set(Object.values(AGENT_FACE_DEFAULTS)).size, 5);
+  assert.equal(new Set(Object.values(AGENT_FACE_DEFAULTS)).size, 9);
 });
 
 test('isFaceEmoji admits exactly the single drawn tokens', () => {

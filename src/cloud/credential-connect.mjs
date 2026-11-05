@@ -42,6 +42,7 @@
 import { Pool } from 'pg';
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
 import { createCredentialServiceClient } from './credential-service-client.mjs';
+import { composeRegistryCredential, providerRegistryRow } from './provider-registry.mjs';
 
 export const CREDENTIAL_CONNECT_PATH = '/api/admin/envoy/credential/connect';
 
@@ -49,10 +50,16 @@ export const CREDENTIAL_CONNECT_PATH = '/api/admin/envoy/credential/connect';
 // else is a client bug, refused before any storage is touched. heygen
 // and higgsfield are API-key-only tool services (Troy, 2026-11-04):
 // they have no password road, their slot is the apiKey shape below.
-const CONNECT_PROVIDERS = new Set(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'heygen', 'higgsfield']);
+// The provider-catalog seats (provider-registry.mjs) join the same
+// gate from their registry rows: API-key kind, stored under the row's
+// vault slot name, never a password road.
+const CONNECT_PROVIDERS = new Set(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'heygen', 'higgsfield', 'groq', 'nvidia', 'cloudflare', 'openrouter']);
 const MAX_USERNAME_CHARS = 256;
 const MAX_PASSWORD_CHARS = 1024;
 const MAX_API_KEY_CHARS = 1024;
+// A multi-field row's composed bundle (cloudflare: account_id +
+// api_token as one JSON record) is two values in one stored string.
+const MAX_BUNDLE_CHARS = 2048;
 
 // Own lazy pool: live-admin.mjs owns the primary pool and cannot pass it
 // through the frozen hook. Same env var, same ssl rule (runner-presence
@@ -227,15 +234,35 @@ export async function handleCredentialConnectRoute({
     // The body is exactly one credential shape and the provider.
     // Anything else — above all a tenant id — is refused: the tenant
     // comes from the verified actor, so a connect can only ever write
-    // its own tenant.
-    if (Object.keys(body).some((key) => !['provider', 'username', 'password', 'apiKey'].includes(key))) {
+    // its own tenant. A multi-field registry row (cloudflare) sends
+    // its named intake fields in `fields` instead of a bare apiKey;
+    // the fields compose into the row's one stored record below.
+    if (Object.keys(body).some((key) => !['provider', 'username', 'password', 'apiKey', 'fields'].includes(key))) {
       throw Object.assign(new Error('credential connect body contains a forbidden field'), { status: 400 });
     }
     const provider = String(body.provider ?? '').toLowerCase();
     if (!CONNECT_PROVIDERS.has(provider)) throw Object.assign(new Error('unknown provider'), { status: 400 });
     const username = typeof body.username === 'string' ? body.username.trim() : '';
     const password = typeof body.password === 'string' ? body.password : '';
-    const apiKey = typeof body.apiKey === 'string' ? body.apiKey : '';
+    const rawApiKey = typeof body.apiKey === 'string' ? body.apiKey : '';
+    const registryRow = providerRegistryRow(provider);
+    let apiKey = rawApiKey;
+    if (registryRow && registryRow.auth.fields.length > 1) {
+      // Store-time composition (DESIGN.md §4): the row's named fields
+      // become the one bundle record the runner reads. A bare apiKey
+      // is refused for a multi-field row — half a credential stored
+      // as the whole record would read as connected and never work.
+      const fields = body.fields && typeof body.fields === 'object' && !Array.isArray(body.fields) ? body.fields : null;
+      if (rawApiKey || !fields || Object.keys(fields).some((key) => !registryRow.auth.fields.includes(key))) {
+        throw Object.assign(new Error('send the provider fields for this provider, not a single key'), { status: 400 });
+      }
+      const values = {};
+      for (const f of registryRow.auth.fields) values[f] = typeof fields[f] === 'string' ? fields[f].trim() : '';
+      apiKey = composeRegistryCredential(registryRow, values) ?? '';
+      if (!apiKey) throw Object.assign(new Error('every provider field is required'), { status: 400 });
+    } else if (body.fields !== undefined) {
+      throw Object.assign(new Error('provider fields are only for multi-field providers'), { status: 400 });
+    }
     const hasApiKey = apiKey.length > 0;
     const hasPair = username.length > 0 || password.length > 0;
     if (hasApiKey && hasPair) {
@@ -246,7 +273,8 @@ export async function handleCredentialConnectRoute({
     if (!client) throw Object.assign(new Error('credential service not configured'), { status: 503, code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' });
 
     if (hasApiKey) {
-      if (apiKey.length > MAX_API_KEY_CHARS) throw Object.assign(new Error('api key is too long'), { status: 400 });
+      const maxChars = registryRow && registryRow.auth.fields.length > 1 ? MAX_BUNDLE_CHARS : MAX_API_KEY_CHARS;
+      if (apiKey.length > maxChars) throw Object.assign(new Error('api key is too long'), { status: 400 });
       const credentialReference = credentialApiKeyReferenceFor(actor.tenantId, provider);
       const stored = await client.storeCredential({
         tenantId: actor.tenantId,
