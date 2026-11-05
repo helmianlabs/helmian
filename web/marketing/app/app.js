@@ -137,7 +137,10 @@ function renderIconPicker() {
 }
 
 // ---- appearance ----
-function applyTheme(theme) { document.documentElement.dataset.theme = theme; $('#theme').value = theme; $('#theme-quick').value = theme; store.set('theme', theme); }
+const themeMq = window.matchMedia('(prefers-color-scheme: light)');
+function resolveTheme(theme) { return theme === 'system' ? (themeMq.matches ? 'light' : 'midnight') : theme; }
+function applyTheme(theme) { const resolved = resolveTheme(theme); document.documentElement.dataset.theme = resolved; const tc = document.querySelector('meta[name="theme-color"]'); if (tc) tc.content = resolved === 'light' ? '#F4F6F8' : '#0B1120'; $('#theme').value = theme; $('#theme-quick').value = theme; store.set('theme', theme); }
+themeMq.addEventListener('change', () => { if (store.get('theme', 'midnight') === 'system') applyTheme('system'); });
 function applyScale(pct) { document.documentElement.style.setProperty('--scale', String(pct / 100)); $('#text-size').value = String(pct); store.set('scale', pct); }
 $('#theme').onchange = (e) => applyTheme(e.target.value); $('#theme-quick').onchange = (e) => applyTheme(e.target.value);
 $('#text-size').oninput = (e) => applyScale(Number(e.target.value));

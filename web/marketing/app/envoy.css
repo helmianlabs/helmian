@@ -146,7 +146,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-body .mention { color:var(--accent); background:rgba(14,165,233,.12); border-radius:4px; padding:0 3px; font-weight:600; }
 .ew-body .claim { color:var(--amber); font-weight:700; }
 .ew-body a, .ew-body .link { color:var(--accent); cursor:pointer; text-decoration:underline; text-underline-offset:2px; background:none; border:0; padding:0; font:inherit; }
-.ew-body pre { background:#0F141C; border:1px solid var(--border); border-radius:8px; padding:10px; overflow:auto; white-space:pre; font:12px/1.5 var(--mono); margin:6px 0; }
+.ew-body pre { background:#0F141C; color:#DCE7EE; border:1px solid var(--border); border-radius:8px; padding:10px; overflow:auto; white-space:pre; font:12px/1.5 var(--mono); margin:6px 0; }
 .ew-code-actions { display:flex; gap:6px; margin-top:-2px; }
 .ew-notice { text-align:center; color:var(--faint); font-size:12px; padding:6px 0; animation:ew-in .22s var(--ease); }
 .ew-notice span { background:var(--panel); border:1px solid var(--border); border-radius:999px; padding:3px 10px; }
@@ -243,7 +243,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-canvas-body.split { grid-template-columns:1fr 1fr; }
 .ew-canvas-body.code { grid-template-columns:1fr 0; }
 .ew-canvas-body.live { grid-template-columns:0 1fr; }
-.ew-canvas-body textarea { border:0; border-right:1px solid var(--border); border-radius:0; resize:none; font:12px/1.55 var(--mono); padding:10px; background:#0F141C; min-width:0; }
+.ew-canvas-body textarea { border:0; border-right:1px solid var(--border); border-radius:0; resize:none; font:12px/1.55 var(--mono); padding:10px; background:#0F141C; color:#DCE7EE; min-width:0; }
 .ew-canvas-body iframe { border:0; width:100%; height:100%; background:#fff; min-width:0; }
 
 /* Modal */
@@ -325,7 +325,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .sidebar.rail { overflow:visible; z-index:35; }
 .sidebar.rail .nav-item[data-tip]:hover::after, .sidebar.rail .nav-item[data-tip]:focus-visible::after {
   content:attr(data-tip); position:absolute; left:calc(100% + 10px); top:50%; transform:translateY(-50%);
-  background:#0B1220; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; pointer-events:none; z-index:80; box-shadow:0 6px 18px rgba(0,0,0,.4); }
+  background:#0B1220; color:#F2F7FA; border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12px; white-space:nowrap; pointer-events:none; z-index:80; box-shadow:0 6px 18px rgba(0,0,0,.4); }
 .sidebar.rail .advanced-nav, .sidebar.rail .side-sessions, .sidebar.rail #appearance { display:none; }
 /* At rest the rail hides whole sections (above); "More" is the hint they
    exist. It hides again while peeked, when the real sections are showing. */
@@ -692,3 +692,58 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .sidebar.rail .nav-item .nav-svg { width:18px; height:18px; }
 .ew-mnav-ico { display:inline-grid; place-items:center; height:18px; }
 .ew-mnav-ico svg { width:17px; height:17px; }
+
+/* ---- Light theme literal triage (B0 §2.2 notes, §4.1; audit §2.4) ----
+   The palette itself lives in app.css ([data-theme="light"]); envoy
+   consumes the same root variables, so no envoy token block exists. What
+   follows is only the literal layer that cannot follow the tokens:
+   white-alpha hover flips to the spec's shadow hue; text set in the dark
+   themes' near-black accent ink (#04121c) takes the light theme's
+   accent-ink (#FFFFFF, B0 §2.2); brand badge/mark text darkens to the
+   brand colors already used in this file (#5865F2, #4A154B); amber/red
+   status surfaces take the flat §2.0 tint pairs; the old sky accent's
+   alpha tints re-tint to the light accent (11,110,153); heavy black
+   shadows soften to rgba(13,42,67,·). Scoped to light only — the dark
+   themes' rules above are untouched. */
+[data-theme="light"] .ew-msg:hover { background:rgba(13,42,67,.05); }
+[data-theme="light"] .ew-btn.primary { color:#fff; }
+[data-theme="light"] .ew-net-seg.on { color:#fff; }
+[data-theme="light"] .ew-seg button.on { color:#fff; }
+[data-theme="light"] .check.on { color:#fff; }
+[data-theme="light"] .ew-badge.discord { background:rgba(88,101,242,.12); color:#5865F2; border-color:rgba(88,101,242,.45); }
+[data-theme="light"] .ew-badge.slack { background:rgba(74,21,75,.08); color:#4A154B; border-color:rgba(74,21,75,.35); }
+[data-theme="light"] .ew-badge.github { background:rgba(113,134,157,.16); color:#2F3A47; border-color:rgba(113,134,157,.45); }
+[data-theme="light"] .ew-badge.debate { background:#FBF0DA; color:var(--amber); border-color:rgba(137,94,13,.45); }
+[data-theme="light"] .ew-src.discord { background:rgba(88,101,242,.12); color:#5865F2; }
+[data-theme="light"] .ew-src.slack { background:rgba(74,21,75,.08); color:#4A154B; }
+[data-theme="light"] .ew-net-strip.discord { color:#5865F2; }
+[data-theme="light"] .ew-mini.discord, [data-theme="light"] .ew-src-head .ew-discord-mark, [data-theme="light"] .ew-foot .ew-discord-mark { color:#5865F2; }
+[data-theme="light"] .ew-mini.slack, [data-theme="light"] .ew-foot .ew-slack-mark { color:#4A154B; }
+[data-theme="light"] .ew-agent-state { color:var(--amber); background:#FBF0DA; }
+[data-theme="light"] .ew-approval { background:#FBF0DA; border-color:rgba(137,94,13,.4); }
+[data-theme="light"] .ew-approval:hover { border-color:var(--amber); }
+[data-theme="light"] .ew-count { background:#F6C453; }
+[data-theme="light"] .int-status.on { color:var(--green); border-color:rgba(26,119,75,.35); background:#E4F4EB; }
+[data-theme="light"] .int-status.off { color:var(--amber); border-color:rgba(137,94,13,.35); background:#FBF0DA; }
+[data-theme="light"] .ew-btn.danger { background:#FDECEB; border-color:rgba(179,58,54,.5); color:var(--red); }
+[data-theme="light"] .ew-btn.danger:hover { background:rgba(179,58,54,.16); border-color:var(--red); }
+[data-theme="light"] .ew-body .mention { background:rgba(11,110,153,.10); }
+[data-theme="light"] .ew-src.agent { background:rgba(11,110,153,.12); }
+[data-theme="light"] .ew-ca-tag { background:rgba(11,110,153,.10); border-color:rgba(11,110,153,.3); }
+[data-theme="light"] .ew-pill.session { border-color:rgba(11,110,153,.45); }
+[data-theme="light"] .ew-pill img { box-shadow:0 0 0 2px var(--panel), 0 0 0 3px rgba(11,110,153,.45); }
+[data-theme="light"] .ew-pill:hover { box-shadow:0 4px 14px rgba(11,110,153,.18); }
+[data-theme="light"] .ew-avatar img { box-shadow:0 0 0 2px rgba(11,110,153,.35); }
+[data-theme="light"] .ew-custom-ava, [data-theme="light"] .ew-avatar.custom { border-color:rgba(11,110,153,.4); }
+[data-theme="light"] .ew-emoji-btn.on { background:rgba(11,110,153,.14); box-shadow:0 0 0 2px rgba(11,110,153,.3); }
+[data-theme="light"] .ew-mnav-btn.on, [data-theme="light"] .ew-mnav-btn[aria-pressed="true"] { background:rgba(11,110,153,.12); }
+[data-theme="light"] .empty-hint { background:linear-gradient(180deg, rgba(11,110,153,.06), transparent); }
+[data-theme="light"] .getting-started { background:linear-gradient(135deg, rgba(11,110,153,.08), rgba(167,139,250,.08)); border-color:rgba(11,110,153,.35); }
+[data-theme="light"] .ew-modal-card { box-shadow:0 20px 60px rgba(13,42,67,.28); }
+[data-theme="light"] .sidebar.rail .nav-item[data-tip]:hover::after, [data-theme="light"] .sidebar.rail .nav-item[data-tip]:focus-visible::after { box-shadow:0 6px 18px rgba(13,42,67,.25); }
+@media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+  [data-theme="light"] .sidebar.rail.peek { box-shadow:24px 0 48px rgba(13,42,67,.28); }
+}
+@media (max-width: 900px) {
+  [data-theme="light"] .ew-pane.ew-channels, [data-theme="light"] .ew-pane.ew-cli, [data-theme="light"] .ew-pane.ew-agents, [data-theme="light"] .ew-pane.ew-bench, [data-theme="light"] .ew-pane.ew-guard { box-shadow:0 0 40px rgba(13,42,67,.30); }
+}
