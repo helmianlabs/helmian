@@ -12,4 +12,4 @@
 <linearGradient id="grape" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
 <linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient>
 <linearGradient id="rose" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient>
-<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><polygon points="72,4 26,74 54,74 44,124 102,50 72,50" fill="#facc15" stroke="#d97706" stroke-width="3" stroke-linejoin="round"/></svg>
+<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2e8f0"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><polygon points="84,6 28,72 57,72 45,122 106,50 76,50" fill="#facc15" stroke="#b45309" stroke-width="5" stroke-linejoin="round"/></svg>
