@@ -11,20 +11,30 @@
 // (integrations app.js, pre-honest-connect): the submit races a real
 // timeout, and a finally block restores the button and the inputs on
 // every exit — success, refusal, timeout, or throw.
+//
+// Change mode (owner's order, 2026-11-06): a connected card must let
+// the person change the saved pair — before this, a connected card
+// showed no form at all, so a wrong or stale pair could never be
+// corrected from the page. In change mode the same fields render for
+// an already-connected provider and the same submit stores over the
+// old pair through the same route (the vault treats it as a
+// replacement, with its existing Guard gate).
 export const CREDENTIAL_CONNECT_PATH = '/api/admin/envoy/credential/connect';
 export const CONNECT_FIELDS_TIMEOUT_MS = 15000;
 
-export function connectFieldsModel({ provider, connected = false } = {}) {
+export function connectFieldsModel({ provider, connected = false, change = false } = {}) {
   const p = String(provider ?? '').toLowerCase();
-  if (!p || connected === true) return null;
+  if (!p || (connected === true && change !== true)) return null;
+  const isChange = change === true;
   return {
     provider: p,
+    change: isChange,
     path: CREDENTIAL_CONNECT_PATH,
     fields: [
       { name: 'username', label: 'Email', type: 'email', autocomplete: 'username', placeholder: 'you@example.com' },
       { name: 'password', label: 'Password', type: 'password', autocomplete: 'current-password', placeholder: 'Password' },
     ],
-    button: { label: 'Connect', pendingLabel: 'Connecting…' },
+    button: { label: isChange ? 'Save' : 'Connect', pendingLabel: isChange ? 'Saving…' : 'Connecting…' },
   };
 }
 
@@ -80,10 +90,10 @@ export async function submitConnectFields({ provider, username, password, post, 
 // DOM factory. `post` is the host's JSON POST helper (app.js); `onStored`
 // lets the host re-read the store after a successful store — the status
 // the person then sees is the store's, rendered by the host, not a claim
-// made here. Returns null when there is nothing to render (connected,
-// no provider, or no document).
-export function createConnectFields({ provider, connected = false, post, onStored = null, timeoutMs, doc = globalThis.document } = {}) {
-  const model = connectFieldsModel({ provider, connected });
+// made here. Returns null when there is nothing to render (connected
+// and not in change mode, no provider, or no document).
+export function createConnectFields({ provider, connected = false, change = false, post, onStored = null, timeoutMs, doc = globalThis.document } = {}) {
+  const model = connectFieldsModel({ provider, connected, change });
   if (!model || !doc || typeof doc.createElement !== 'function') return null;
   const mk = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const form = mk('form', 'connect-fields');
@@ -123,7 +133,9 @@ export function createConnectFields({ provider, connected = false, post, onStore
       const result = await submitConnectFields({ provider: model.provider, username: inputs.username.value, password: inputs.password.value, post, timeoutMs });
       if (result.ok) {
         inputs.password.value = '';
-        note.textContent = 'Saved. This card now reads its status from the saved connection.';
+        note.textContent = model.change
+          ? 'Saved. The new sign-in replaced the old one.'
+          : 'Saved. This card now reads its status from the saved connection.';
         note.hidden = false;
         if (onStored) { try { await onStored(result); } catch { /* the store already happened; a failed re-read is not a failed connect */ } }
       } else {
