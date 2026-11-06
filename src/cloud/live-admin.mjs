@@ -416,15 +416,31 @@ export async function createLiveHelmianCloudAdminHandler({
     let claimed = sessionIdentity(request);
     if (!claimed?.subject && isEnvoyPath(request) && bearerToken(request)) {
       const desktop = await invites.desktopIdentity(bearerToken(request)).catch(() => null);
-      if (desktop) claimed = { subject: desktop.subject, viaDeviceToken: true };
+      if (desktop) claimed = { subject: desktop.subject, viaDeviceToken: true, deviceTenantId: desktop.tenantId };
     }
     if (!claimed?.subject) throw Object.assign(new Error('Identity required'), { status: 403 });
     const client = await pool.connect();
     try {
-      const membership = await client.query(
-        `select tenant_id, role from helmion.tenant_memberships where subject=$1 and active order by created_at asc, tenant_id asc`,
-        [claimed.subject],
-      );
+      // A device token's authority is its desktop link: the link was
+      // minted inside one tenant by a member of it, and revoking the
+      // link kills the token — so a device actor takes its tenant from
+      // the link (the same authority the Guard browser-event and
+      // artifact-result ingests already use), with the subject's
+      // active membership in THAT tenant as the guard. Resolving a
+      // device by the subject's earliest membership instead sent it to
+      // whatever workspace the subject joined first: a bridge paired
+      // under the platform tenant could never claim its real
+      // workspace's profile-sync jobs. Member sessions keep the
+      // earliest-created pick below.
+      const membership = claimed.viaDeviceToken === true && claimed.deviceTenantId
+        ? await client.query(
+          `select tenant_id, role from helmion.tenant_memberships where subject=$1 and tenant_id=$2 and active`,
+          [claimed.subject, claimed.deviceTenantId],
+        )
+        : await client.query(
+          `select tenant_id, role from helmion.tenant_memberships where subject=$1 and active order by created_at asc, tenant_id asc`,
+          [claimed.subject],
+        );
       // Duplicate active memberships can exist (signups that raced before
       // creation took a per-subject advisory lock). Refusing them locked
       // the account out of its own workspace forever, so resolution picks
