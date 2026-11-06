@@ -2969,16 +2969,22 @@ boot();
 // disappears in a deploy reads as 'gone', which also counts as a change.
 const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
 (() => {
-  let known = null; let offered = false;
+  let known = null; let offeredFor = null;
   const one = async (u) => { const r = await fetch(u, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' }); return r.ok ? (r.headers.get('etag') ?? 'noetag') : 'gone'; };
   const etag = async () => { try { const tags = await Promise.all(DEPLOY_WATCH.map(one)); return tags.join('|'); } catch { return null; } };
   const check = async () => {
     const now = await etag(); if (!now) return;
     if (!known) { known = now; return; }
-    if (now === known || offered) return;
+    if (now === known) return;
     const typing = [...document.querySelectorAll('textarea, input[type="text"], input:not([type])')].some((f) => f.value && f.value.trim() && f.offsetParent);
     if (!typing && document.visibilityState === 'visible') { location.reload(); return; }
-    offered = true; toast('A new version of Helmian is ready. Reload when you are done typing.', 'ok');
+    // Blocked this cycle (typing, or the tab is in the background): say
+    // so ONCE per version, then KEEP CHECKING — when the typing clears
+    // or the tab comes forward, the reload fires on its own. The old
+    // one-shot latch gave up forever after a single offer, so a desk
+    // that was busy at deploy time stayed stale until a hard refresh
+    // (proven in the 2026-11-05 untouched-desk watch).
+    if (offeredFor !== now) { offeredFor = now; toast('A new version of Helmian is ready. It loads itself when you are done typing.', 'ok'); }
   };
   check();
   setInterval(check, 5 * 60 * 1000);
