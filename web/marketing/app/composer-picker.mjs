@@ -241,7 +241,7 @@ const CONNECTORS_NOTE = 'Attaching a connector hands the agent a note that the s
 // a service (GitHub today). Further services arrive only through the
 // tool-connections data itself — see pickerModel.
 const MIRROR_KEYS = new Set(['slack', 'discord']);
-const AGENT_REGISTRY_KEYS = new Set(['anthropic', 'openai', 'xai', 'google', 'mistral', 'groq', 'nvidia', 'cloudflare', 'openrouter']);
+const AGENT_REGISTRY_KEYS = new Set(['anthropic', 'openai', 'xai', 'google', 'mistral', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
 
 export function pickerModel({ connectors = {}, providers = {}, plugins = {}, toolConnections = null, presence = null, now = Date.now(), agent = null } = {}) {
   const rows = integrationsModel(connectors, providers, { toolConnections, presence, now });

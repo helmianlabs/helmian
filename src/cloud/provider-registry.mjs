@@ -116,6 +116,29 @@ export const PROVIDER_REGISTRY = Object.freeze([
     multi_account: true,
     quota: { signal: 'http_402', exhaustion_code: 'credit_balance_exhausted', reset: 'top up', bench_class: 'exhausted' },
   }),
+  row({
+    id: 'muse',
+    display_name: 'Muse',
+    kind: 'api-key',
+    status: 'live',
+    free_kind: 'paid_only',
+    free_summary: 'No free tier: a Model API key is billed per token (Muse Wonder at $4 per million input tokens and $20 per million output, standard rates), or Muse runs through Muse Code, Meta\u2019s terminal agent, on its own plans from $5 a month.',
+    card_required: true,
+    free_ends_or_expires: null,
+    data_training_caveat: null,
+    source_url: 'https://dev.meta.ai/docs',
+    checked_at: '2026-11-06',
+    signup_url: 'https://dev.meta.ai',
+    signup_line: 'Create a Meta Model API account at dev.meta.ai, then create a key under API keys.',
+    auth: { fields: ['api_key'], vault_slot: 'muse', vault_refs: null },
+    // The seat is wired dark (2026-11-06): the runner pins Muse Wonder
+    // with cross-model fallback OFF, like every other seat but
+    // OpenRouter. It lights when an owner brings a key.
+    runner: { type: 'api-runner', file: 'run-muse.mjs', base_url: 'https://api.meta.ai/v1', pinned_model: 'muse-wonder-1.0', model_env: 'RUN_MUSE_MODEL' },
+    seat_flag: 'MUSE_SEAT_PROVIDERS',
+    multi_account: true,
+    quota: { signal: 'http_402', exhaustion_code: 'credit_balance_exhausted', reset: 'top up', bench_class: 'exhausted' },
+  }),
 ]);
 
 const BY_ID = new Map(PROVIDER_REGISTRY.map((r) => [r.id, r]));

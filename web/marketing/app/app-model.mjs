@@ -29,7 +29,7 @@ export const PROVIDER_REGISTRY = Object.freeze([
   // API-key providers whose connections are saved under their own seat
   // names. Their free terms ride the server registry row; this row is
   // only the Integrations truth lookup.
-  { key: 'groq', name: 'Groq', kind: 'AI provider' }, { key: 'nvidia', name: 'NVIDIA', kind: 'AI provider' }, { key: 'cloudflare', name: 'Cloudflare', kind: 'AI provider' }, { key: 'openrouter', name: 'OpenRouter', kind: 'AI provider' },
+  { key: 'groq', name: 'Groq', kind: 'AI provider' }, { key: 'nvidia', name: 'NVIDIA', kind: 'AI provider' }, { key: 'cloudflare', name: 'Cloudflare', kind: 'AI provider' }, { key: 'openrouter', name: 'OpenRouter', kind: 'AI provider' }, { key: 'muse', name: 'Muse', kind: 'AI provider' },
 ]);
 
 // Phones open on Home; wider screens keep the desktop-style Console default.
@@ -226,6 +226,7 @@ const PROVIDER_SOURCE_NAMES = Object.freeze({
   nvidia: Object.freeze({ connections: ['nvidia'], presence: ['nvidia'] }),
   cloudflare: Object.freeze({ connections: ['cloudflare'], presence: ['cloudflare'] }),
   openrouter: Object.freeze({ connections: ['openrouter'], presence: ['openrouter'] }),
+  muse: Object.freeze({ connections: ['muse'], presence: ['muse'] }),
 });
 
 function mirrorRow(p, connectors) {
