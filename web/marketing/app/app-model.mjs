@@ -17,6 +17,14 @@ export const PROVIDERS = Object.freeze(['Claude', 'ChatGPT', 'Grok', 'Gemini']);
 export const PROVIDER_REGISTRY = Object.freeze([
   { key: 'slack', name: 'Slack', kind: 'Team chat mirror' }, { key: 'discord', name: 'Discord', kind: 'Team chat mirror' }, { key: 'github', name: 'GitHub', kind: 'Code' },
   { key: 'anthropic', name: 'Claude', kind: 'AI provider' }, { key: 'openai', name: 'ChatGPT', kind: 'AI provider' }, { key: 'xai', name: 'Grok', kind: 'AI provider' }, { key: 'google', name: 'Gemini', kind: 'AI provider' },
+  // Mistral is one of the five sign-in seats on the one connect road
+  // (integrations-view.mjs CONNECT_FIELD_PROVIDERS), but her registry
+  // row was missing: with no row, the truth model could never read
+  // her saved connection, so her Integrations card showed the
+  // connect fields forever and never read Connected — the card the
+  // owner reported "stays open, never connects" (2026-11-06). The
+  // row below is her truth lookup, nothing more.
+  { key: 'mistral', name: 'Mistral Le Chat', kind: 'AI provider' },
   // The provider-catalog seats (src/cloud/provider-registry.mjs):
   // API-key providers whose connections are saved under their own seat
   // names. Their free terms ride the server registry row; this row is
@@ -213,6 +221,7 @@ const PROVIDER_SOURCE_NAMES = Object.freeze({
   openai: Object.freeze({ connections: ['openai'], presence: ['openai'] }),
   xai: Object.freeze({ connections: ['xai', 'grok'], presence: ['xai', 'grok'] }),
   google: Object.freeze({ connections: ['google', 'gemini'], presence: ['gemini', 'google'] }),
+  mistral: Object.freeze({ connections: ['mistral'], presence: ['mistral'] }),
   groq: Object.freeze({ connections: ['groq'], presence: ['groq'] }),
   nvidia: Object.freeze({ connections: ['nvidia'], presence: ['nvidia'] }),
   cloudflare: Object.freeze({ connections: ['cloudflare'], presence: ['cloudflare'] }),

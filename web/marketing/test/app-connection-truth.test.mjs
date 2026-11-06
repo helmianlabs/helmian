@@ -116,6 +116,28 @@ test('bite 4: a connected AI card shows no fields and keeps Manage', () => {
   assert.equal(connectFieldsModel({ provider: 'gemini', connected: true }), null, 'the component model renders nothing when connected');
 });
 
+test('change road: Mistral has a truth row — a saved connection reads Connected (owner report, 2026-11-06)', () => {
+  const providers = { connections: [{ providerId: 'mistral', lifecycle: 'pending', authMode: 'password_session', updatedAt: SYNCED_AT }] };
+  const row = integrationsModel({}, providers, { presence: [] }).find((r) => r.key === 'mistral');
+  assert.ok(row, 'the truth model carries a mistral row');
+  assert.equal(row.connected, true);
+  assert.equal(row.statusText, 'Connected');
+  const none = integrationsModel({}, { connections: [] }, { presence: [] }).find((r) => r.key === 'mistral');
+  assert.equal(none.connected, false, 'no saved row → not connected, same rule as every seat');
+});
+
+test('change road: change mode renders the fields for a connected provider (owner order, 2026-11-06)', () => {
+  const model = connectFieldsModel({ provider: 'mistral', connected: true, change: true });
+  assert.ok(model, 'change mode renders despite the saved connection');
+  assert.equal(model.change, true);
+  assert.equal(model.button.label, 'Save');
+  const form = createConnectFields({ provider: 'mistral', connected: true, change: true, post: async () => ({}), doc: fakeDoc });
+  assert.ok(form, 'the factory builds the change form');
+  assert.equal(form.dataset.provider, 'mistral');
+  const button = findAll(form, (n) => n.tagName === 'BUTTON')[0];
+  assert.equal(button.textContent, 'Save');
+});
+
 // ---- minimal DOM for the component factory (only what it touches) ----
 class FakeElement {
   constructor(tag) {

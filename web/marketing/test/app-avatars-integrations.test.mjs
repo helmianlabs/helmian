@@ -86,6 +86,35 @@ test('integrations: the four catalog seats carry key fields, not sign-in fields,
   assert.equal(on.groq.apiKeyConnect, null);
   assert.equal(on.groq.status, 'on');
   assert.deepEqual(on.groq.action, { label: 'Manage', href: '#agents' });
+  // …and the change button arrives (owner's order, 2026-11-06): a
+  // connected card must let the person put in new values.
+  assert.deepEqual(on.groq.changeApiKey, { provider: 'groq', fields: ['api_key'], label: 'New API key' });
+  assert.equal(on.groq.changeConnect, null, 'a key seat never offers the sign-in change');
+});
+
+test('integrations: connected cards carry the plain change button; not-connected cards do not (owner order, 2026-11-06)', () => {
+  const on = Object.fromEntries(integrationSections({ providers: { connections: [
+    { providerId: 'mistral', authMode: 'password_session' },
+    { providerId: 'cloudflare', authMode: 'api_key' },
+  ] }, presence: [] }).find((s) => s.id === 'ai').cards.map((c) => [c.key, c]));
+  // Mistral's saved connection now reads through her truth row, so
+  // her card closes the connect fields, reads Connected, and offers
+  // the change button like every other sign-in seat.
+  assert.equal(on.mistral.statusText, 'Connected');
+  assert.equal(on.mistral.connect, null, 'a connected card shows no first-connect fields');
+  assert.deepEqual(on.mistral.changeConnect, { provider: 'mistral', label: 'New username and password' });
+  assert.equal(on.mistral.changeApiKey, null);
+  // Cloudflare's button names both of its pieces.
+  assert.deepEqual(on.cloudflare.changeApiKey, { provider: 'cloudflare', fields: ['account_id', 'api_token'], label: 'New account number and API key' });
+  assert.equal(on.cloudflare.changeConnect, null);
+  // Runway keeps its existing card exactly — no change road.
+  assert.equal(on.runway.changeConnect, null);
+  assert.equal(on.runway.changeApiKey, null);
+  const off = Object.fromEntries(integrationSections({}).find((s) => s.id === 'ai').cards.map((c) => [c.key, c]));
+  for (const c of Object.values(off)) {
+    assert.equal(c.changeConnect, null, `${c.key} not connected → no change button`);
+    assert.equal(c.changeApiKey, null, `${c.key} not connected → no change button`);
+  }
 });
 
 test('integrations: tool-connection cards render probe truth; unchecked providers say so (bite 1b)', () => {
