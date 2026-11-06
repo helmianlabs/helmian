@@ -27,6 +27,15 @@ test('model: nothing renders when connected, providerless, or the field shape is
   assert.equal(apiKeyFieldsModel({ provider: 'groq', fields: [] }), null);
 });
 
+test('model: change mode renders the same fields for a connected provider (owner order, 2026-11-06)', () => {
+  const m = apiKeyFieldsModel({ provider: 'cloudflare', fields: ['account_id', 'api_token'], connected: true, change: true });
+  assert.equal(m.provider, 'cloudflare');
+  assert.equal(m.change, true);
+  assert.deepEqual(m.fields.map((f) => f.name), ['account_id', 'api_token']);
+  assert.equal(m.button.label, 'Save');
+  assert.equal(apiKeyFieldsModel({ provider: 'groq', fields: ['api_key'], change: true }).change, true, 'change mode also renders before a first connect — the host decides when to offer it');
+});
+
 test('payload: a one-field row sends its key as apiKey; a multi-field row sends the named fields, trimmed', () => {
   assert.deepEqual(apiKeyPayload('groq', { api_key: 'gsk_x' }), { provider: 'groq', apiKey: 'gsk_x' });
   assert.deepEqual(

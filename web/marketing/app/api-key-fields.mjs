@@ -13,6 +13,12 @@
 // submit races a real timeout, and a finally block restores the
 // button and the inputs on every exit — success, refusal, timeout,
 // or throw.
+//
+// Change mode (owner's order, 2026-11-06) mirrors ConnectFields: a
+// connected card must let the person change the saved key — before
+// this, a connected card showed no form at all. In change mode the
+// same fields render for an already-connected provider and the same
+// submit stores over the old record through the same route.
 import { CREDENTIAL_CONNECT_PATH, CONNECT_FIELDS_TIMEOUT_MS, connectFailureText } from './connect-fields.mjs';
 
 export { CREDENTIAL_CONNECT_PATH, CONNECT_FIELDS_TIMEOUT_MS };
@@ -26,16 +32,18 @@ const FIELD_SHAPES = Object.freeze({
   api_token: { name: 'api_token', label: 'API token', type: 'password', autocomplete: 'off', placeholder: 'Your API token' },
 });
 
-export function apiKeyFieldsModel({ provider, fields = ['api_key'], connected = false } = {}) {
+export function apiKeyFieldsModel({ provider, fields = ['api_key'], connected = false, change = false } = {}) {
   const p = String(provider ?? '').toLowerCase();
-  if (!p || connected === true) return null;
+  if (!p || (connected === true && change !== true)) return null;
   const shapes = (Array.isArray(fields) ? fields : []).map((f) => FIELD_SHAPES[String(f ?? '').toLowerCase()]).filter(Boolean);
   if (!shapes.length || shapes.length !== (Array.isArray(fields) ? fields.length : 0)) return null;
+  const isChange = change === true;
   return {
     provider: p,
+    change: isChange,
     path: CREDENTIAL_CONNECT_PATH,
     fields: shapes,
-    button: { label: 'Save key', pendingLabel: 'Saving…' },
+    button: { label: isChange ? 'Save' : 'Save key', pendingLabel: 'Saving…' },
   };
 }
 
@@ -88,10 +96,10 @@ export async function submitApiKeyFields({ provider, values, fields, post, timeo
 // `onStored` lets the host re-read the store after a successful
 // store — the status the person then sees is the store's, rendered
 // by the host, not a claim made here. Returns null when there is
-// nothing to render (connected, no provider, unknown fields, or no
-// document).
-export function createApiKeyFields({ provider, fields = ['api_key'], connected = false, post, onStored = null, timeoutMs, doc = globalThis.document } = {}) {
-  const model = apiKeyFieldsModel({ provider, fields, connected });
+// nothing to render (connected and not in change mode, no provider,
+// unknown fields, or no document).
+export function createApiKeyFields({ provider, fields = ['api_key'], connected = false, change = false, post, onStored = null, timeoutMs, doc = globalThis.document } = {}) {
+  const model = apiKeyFieldsModel({ provider, fields, connected, change });
   if (!model || !doc || typeof doc.createElement !== 'function') return null;
   const mk = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const form = mk('form', 'connect-fields api-key-fields');
@@ -132,7 +140,9 @@ export function createApiKeyFields({ provider, fields = ['api_key'], connected =
       const result = await submitApiKeyFields({ provider: model.provider, values, fields: model.fields.map((f) => f.name), post, timeoutMs });
       if (result.ok) {
         for (const input of Object.values(inputs)) input.value = '';
-        note.textContent = 'Saved. This card now reads its status from the saved connection.';
+        note.textContent = model.change
+          ? 'Saved. The new values replaced the old ones.'
+          : 'Saved. This card now reads its status from the saved connection.';
         note.hidden = false;
         if (onStored) { try { await onStored(result); } catch { /* the store already happened; a failed re-read is not a failed connect */ } }
       } else {
