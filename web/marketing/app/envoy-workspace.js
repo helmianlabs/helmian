@@ -79,7 +79,12 @@ export function addressed(message, roster) {
   return [];
 }
 
-const providerOnline = (p, online) => online.has(p);
+// Presence rides under engine names for two seats (the qwen seat
+// reports as 'ollama', grok may report as 'xai') — the same names the
+// activity feed maps. A roster seat is online when ANY of its names
+// is in the presence set; matching only the roster name left Qwen
+// OFFLINE forever while she answered (her presence name is 'ollama').
+const providerOnline = (p, online) => activityProviderNames(p).some((n) => online.has(n));
 
 export function agentStates(messages, roster, online, now = Date.now(), route = addressed) {
   // Presence only: connected or not, from the presence feed (the `online`
@@ -2601,7 +2606,7 @@ function wire() {
 }
 
 async function loadPresence() {
-  try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; })); ws.activity = Array.isArray(body.activity) ? body.activity : []; }
+  try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n === 'ollama' ? 'qwen' : n; })); ws.activity = Array.isArray(body.activity) ? body.activity : []; }
   catch { ws.online = new Set(); /* the last good activity feed stays — its events expire on their own stamps */ }
   syncActivityViews();
 }
