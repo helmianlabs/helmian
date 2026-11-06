@@ -39,7 +39,8 @@ export function integrationSections({ presence = null, connectors = {}, provider
   // an agent posts a reply back): this provider has answered through
   // its road before, so its card reads "Answered" — the registry rows
   // carry the same state via the truth model; this set covers the
-  // providers with no registry row of their own (Mistral, Runway).
+  // provider with no registry row of its own (Runway; Mistral's row
+  // was added 2026-11-06).
   const answered = new Set((Array.isArray(presence) ? presence : []).filter((p) => p?.lastAnsweredAt ?? p?.last_answered_at).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; }));
   const truth = new Map(integrationsModel(connectors, providers, { toolConnections, presence, now }).map((i) => [i.key, i]));
   const ai = [
@@ -56,9 +57,9 @@ export function integrationSections({ presence = null, connectors = {}, provider
   ].map(([key, cloudKey, name, blurb]) => {
     const row = truth.get(cloudKey);
     const connected = row?.connected === true;
-    // Providers with no registry row of their own (Mistral, Runway) get
-    // the same truth from the raw feeds: a presence stamp earns "Synced",
-    // and "Not connected" waits for the connections read, like everywhere.
+    // Runway has no registry row of its own, so it gets the same truth
+    // from the raw feeds: a presence stamp earns "Synced", and
+    // "Not connected" waits for the connections read, like everywhere.
     const fallbackText = answered.has(key)
       ? 'Answered'
       : stamped.has(key)
@@ -76,7 +77,19 @@ export function integrationSections({ presence = null, connectors = {}, provider
       : { tile: avatarFor(null, name) };
     const connect = !connected && CONNECT_FIELD_PROVIDERS.has(key) ? { provider: key } : null;
     const apiKeyConnect = !connected && API_KEY_CONNECT_FIELDS[key] ? { provider: key, fields: API_KEY_CONNECT_FIELDS[key] } : null;
-    return { key, name, blurb, icon, status: connected || answered.has(key) ? 'on' : 'off', statusText, connect, apiKeyConnect,
+    // The change road (owner's order, 2026-11-06): a connected card
+    // also carries a plain button that opens the same fields in
+    // change mode, so the person can put in new values over the old
+    // ones — before this, a connected card offered no way to correct
+    // its saved values from the page at all. The labels are the
+    // owner's own words for the button: sign-in seats get "New
+    // username and password", key seats get "New API key", and
+    // Cloudflare names both of its pieces.
+    const changeConnect = connected && CONNECT_FIELD_PROVIDERS.has(key) ? { provider: key, label: 'New username and password' } : null;
+    const changeApiKey = connected && API_KEY_CONNECT_FIELDS[key]
+      ? { provider: key, fields: API_KEY_CONNECT_FIELDS[key], label: key === 'cloudflare' ? 'New account number and API key' : 'New API key' }
+      : null;
+    return { key, name, blurb, icon, status: connected || answered.has(key) ? 'on' : 'off', statusText, connect, apiKeyConnect, changeConnect, changeApiKey,
       action: connected ? { label: 'Manage', href: '#agents' } : null };
   });
   const discord = truth.get('discord');

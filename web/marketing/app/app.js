@@ -1659,6 +1659,30 @@ function integrationCard(card) {
     const fields = apiKeyFieldsMod.createApiKeyFields({ provider: card.apiKeyConnect.provider, fields: card.apiKeyConnect.fields, post, onStored: () => loadIntegrations() });
     if (fields) a.append(fields);
   }
+  // The change road (owner's order, 2026-11-06): a connected card
+  // carries a plain button — "New username and password" on a sign-in
+  // seat, "New API key" on a key seat — that opens the same fields in
+  // change mode. Saving stores the new values over the old ones
+  // through the same connect route, and the page then re-reads the
+  // store exactly as a first connect does.
+  const changeSpec = card.changeConnect && connectFieldsMod
+    ? { label: card.changeConnect.label, make: () => connectFieldsMod.createConnectFields({ provider: card.changeConnect.provider, connected: true, change: true, post, onStored: () => loadIntegrations() }) }
+    : card.changeApiKey && apiKeyFieldsMod
+      ? { label: card.changeApiKey.label, make: () => apiKeyFieldsMod.createApiKeyFields({ provider: card.changeApiKey.provider, fields: card.changeApiKey.fields, connected: true, change: true, post, onStored: () => loadIntegrations() }) }
+      : null;
+  if (changeSpec) {
+    const row = el('div', 'int-actions');
+    const b = el('button', 'btn sm', changeSpec.label);
+    b.type = 'button';
+    let form = null;
+    b.onclick = () => {
+      if (form) { form.remove(); form = null; return; }
+      form = changeSpec.make();
+      if (form) a.append(form);
+    };
+    row.append(b);
+    a.append(row);
+  }
   if (card.action) {
     const row = el('div', 'int-actions');
     if (card.action.href) { const link = el('a', `btn sm ${card.status === 'on' ? '' : 'primary'}`.trim(), card.action.label); link.href = card.action.href; row.append(link); }
