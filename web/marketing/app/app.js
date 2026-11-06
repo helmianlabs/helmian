@@ -2961,10 +2961,17 @@ boot();
 // Installable PWA (scope /app/). Herald keeps its own /herald/ worker until the merge lands.
 // Long-open tabs: notice a new deploy (the shell ETags change) and pick it up.
 // Reload silently when nothing is being typed; otherwise offer a reload.
+// The watch set is EVERY first-party file the desk loads — shell, desk
+// module, its imports, the shell's dynamic imports, and both stylesheets.
+// envoy-workspace.js was missing from this set until 2026-11-05, so a
+// deploy that changed only the desk itself (most fixes) never reloaded
+// an open desk: Troy had to hard-refresh to see new work. A file that
+// disappears in a deploy reads as 'gone', which also counts as a change.
+const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
 (() => {
   let known = null; let offered = false;
-  const one = async (u) => { const r = await fetch(u, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' }); return r.ok ? r.headers.get('etag') : null; };
-  const etag = async () => { try { const tags = await Promise.all(['/app', '/app/app.js', '/app/envoy.css'].map(one)); return tags.every(Boolean) ? tags.join('|') : null; } catch { return null; } };
+  const one = async (u) => { const r = await fetch(u, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' }); return r.ok ? (r.headers.get('etag') ?? 'noetag') : 'gone'; };
+  const etag = async () => { try { const tags = await Promise.all(DEPLOY_WATCH.map(one)); return tags.join('|'); } catch { return null; } };
   const check = async () => {
     const now = await etag(); if (!now) return;
     if (!known) { known = now; return; }
