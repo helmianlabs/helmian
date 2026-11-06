@@ -86,6 +86,13 @@ test('activity: seats report under presence names — qwen is ollama, grok may b
   assert.equal(activityName('openai', []), 'ChatGPT');
 });
 
+test('presence: a seat reporting under its engine name still reads online — qwen is ollama, grok may be xai', () => {
+  const states = envoyWorkspace.agentStates([], ['qwen', 'grok', 'claude'], new Set(['ollama', 'xai']), NOW);
+  assert.equal(states.qwen.state, 'idle', 'qwen checks in as ollama — she is online, not OFFLINE');
+  assert.equal(states.grok.state, 'idle', 'grok may check in as xai');
+  assert.equal(states.claude.state, 'offline', 'a seat with no presence name in the set stays offline');
+});
+
 test('activity: a terminal event shows briefly, then clears — older work never resurrects', () => {
   const fresh = [ev('claude', 'working', 60_000), ev('claude', 'done', 5_000)];
   assert.equal(activityCue(fresh, 'claude', 'c1', NOW)?.stage, 'done');
