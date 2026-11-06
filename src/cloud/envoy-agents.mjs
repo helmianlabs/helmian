@@ -27,8 +27,8 @@
 // behind the name to answer. Agent-authored and system messages route
 // nobody in the desk too.
 
-export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'groq', 'nvidia', 'cloudflare', 'openrouter']);
-export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' });
+export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter']);
+export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' });
 export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'custom']);
 // One connect road (owner's law, 2026-11-01): a custom agent's account
 // connects with an email and a password, and the seat works off that
@@ -46,6 +46,16 @@ const ALIASES = Object.freeze({
   grok: 'grok', xai: 'grok', supergrok: 'grok',
   gemini: 'gemini', google: 'gemini',
   mistral: 'mistral', lechat: 'mistral',
+  // Seat six (QWEN CHANNEL FIX, 2026-11-05): Qwen — the local model on
+  // the user's own PC, engine Ollama — is a built-in provider in its
+  // own right, addable to any channel like every other seat. 'ollama'
+  // and 'local' name this same seat (its engine), never a second
+  // agent. Before this she existed only as a per-channel custom agent
+  // (handle 'qwen', engine 'ollama'), which is why she was missing
+  // from every channel nobody had hand-built her into; that custom
+  // shape keeps working (parseConfig + the worker's claim set are
+  // unchanged), it is simply no longer the only road in.
+  qwen: 'qwen', ollama: 'qwen', local: 'qwen',
   // The provider-catalog seats (provider-registry.mjs): their seat
   // names are their provider ids, so @groq / @nvidia / @cloudflare /
   // @openrouter address them in a channel like any built-in seat.
