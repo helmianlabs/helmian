@@ -22,7 +22,7 @@
 // Everything here is pure except `installAgentOs` and `loadEstateCargo`,
 // which are the only functions that touch the filesystem.
 
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, posix, relative, resolve, sep } from 'node:path';
@@ -232,6 +232,79 @@ function estateFolderFileCarried(folder, name) {
   return folder.extensions.some((extension) => lower.endsWith(extension));
 }
 
+// ── Estate tree cargo (part B2) ──────────────────────────────────────────────
+//
+// The skills library: the user's rules in executable form, one folder per
+// skill under `skills/` in the Claude seat — a SKILL.md plus whatever
+// supporting files that skill keeps beside it, sometimes one level down.
+// Unlike the folder cargo above this walk is recursive and preserves each
+// file's path relative to the tree root, because a skill IS its folder
+// shape: flattening it would land files whose references point at siblings
+// that are no longer beside them. Carriage is all this is, as with the
+// scripts: the files land as data under agent-os/estate/skills/ in every
+// seat; nothing here installs a skill into a seat's native skills home or
+// runs anything it carries.
+//
+// The fences are exclusions rather than an allowlist — a skill may keep
+// any kind of text beside its SKILL.md, and a kind nobody has used yet
+// should not silently stay home — but five things never ride:
+//
+//   - Secret-bearing names, wherever they appear in the tree: `.env*`,
+//     and any name carrying `key`, `secret`, `token` or `credential`.
+//     The library's one real .env sits inside a skill folder today.
+//   - Dependency and cache directories — node_modules, __pycache__ and
+//     their kin — named at any depth; their contents are machinery, not
+//     estate, and they dwarf the library itself.
+//   - Logs, backups and temp files (.log, .bak, .tmp, .swp).
+//   - Known binary extensions. The estate pipeline carries text verbatim
+//     — bytes in, the same bytes out, hashes equal — and a binary read as
+//     text is not a copy at all, so binaries stay home rather than land
+//     corrupted.
+//   - A single file over ESTATE_TREE_FILE_MAX_BYTES. The largest file in
+//     the library today is ~32 KB; the cap leaves grown skills room and
+//     still stops a stray data file from riding the sync.
+export const ESTATE_TREE_FILE_MAX_BYTES = 256 * 1024;
+
+export const ESTATE_TREE_EXCLUDED_DIRS = Object.freeze([
+  'node_modules', '__pycache__', '.git', '.cache', '.mypy_cache', '.pytest_cache',
+]);
+
+const ESTATE_TREE_BINARY_EXTENSIONS = Object.freeze([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tif', '.tiff',
+  '.pdf', '.zip', '.gz', '.tgz', '.bz2', '.xz', '.7z', '.rar', '.tar',
+  '.exe', '.dll', '.so', '.dylib', '.bin', '.o', '.a',
+  '.db', '.sqlite', '.sqlite3', '.pyc', '.pyo', '.class',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.mp3', '.mp4', '.mov', '.avi', '.mkv', '.webm',
+]);
+
+const ESTATE_TREE_SECRET_NAME = /^\.env($|\.)|key|secret|token|credential/;
+const ESTATE_TREE_JUNK_NAME = /\.bak($|\.)|\.(log|tmp|swp)$/;
+
+export const ESTATE_CARGO_TREES = Object.freeze([
+  Object.freeze({
+    source: 'skills',
+    destination: `${MANAGED_DIR}/estate/skills`,
+  }),
+]);
+
+/**
+ * True when a file inside an estate tree is one the tree's cargo carries.
+ * `name` is the file's own name (not its path); the directory fences are
+ * applied by the walk itself, which never descends into an excluded
+ * directory. `size` is the file's byte size from stat, checked before the
+ * file is read so an oversized file is never loaded to be rejected.
+ */
+function estateTreeFileCarried(name, size) {
+  const lower = String(name).toLowerCase();
+  if (lower === '.ds_store') return false;
+  if (ESTATE_TREE_SECRET_NAME.test(lower)) return false;
+  if (ESTATE_TREE_JUNK_NAME.test(lower)) return false;
+  if (ESTATE_TREE_BINARY_EXTENSIONS.some((extension) => lower.endsWith(extension))) return false;
+  if (typeof size === 'number' && size > ESTATE_TREE_FILE_MAX_BYTES) return false;
+  return true;
+}
+
 export function resolveTargets(requested) {
   if (!requested || requested === 'all') return [...AGENT_OS_TARGETS];
   const names = String(requested)
@@ -430,6 +503,20 @@ export function renderEstateFiles(estateContents = {}) {
       files.push({ path, content, ownership: 'managed', cargo: 'estate' });
     }
   }
+  // Tree cargo: the same prefix rule — a snapshot key under a tree's
+  // destination is one carried file, its path below the destination
+  // preserving the shape it had below the tree's source.
+  for (const tree of ESTATE_CARGO_TREES) {
+    const prefix = `${tree.destination}/`;
+    const paths = Object.keys(estateContents ?? {})
+      .filter((path) => path.startsWith(prefix))
+      .sort();
+    for (const path of paths) {
+      const content = estateContents[path];
+      if (typeof content !== 'string') continue;
+      files.push({ path, content, ownership: 'managed', cargo: 'estate' });
+    }
+  }
   return files;
 }
 
@@ -507,34 +594,43 @@ function kitOwnedEstateContents(templates, sourceDir) {
 /**
  * Read the estate sources from the source seat's directory under `home`.
  *
- * Returns { contents, missing, missingFolders, kitOwned }: `contents` maps
- * each estate destination path to the source file's exact text; `missing`
- * lists the fixed-cargo source names that are not there; `missingFolders`
- * lists the estate folders that are not there; `kitOwned` lists the sources
- * that exist but are still the installer's own shipped paper (see above)
- * and so are not estate yet. Neither absence is an error — a machine may
- * not have grown a file yet — but both are reported, never silently treated
- * as an empty file. This is the one read of user content the installer
- * performs, and it is read-only: the sources are never written by any code
- * path here.
+ * Returns { contents, missing, missingFolders, missingTrees, kitOwned }:
+ * `contents` maps each estate destination path to the source file's exact
+ * text; `missing` lists the fixed-cargo source names that are not there;
+ * `missingFolders` lists the estate folders that are not there;
+ * `missingTrees` lists the estate trees that are not there; `kitOwned`
+ * lists the sources that exist but are still the installer's own shipped
+ * paper (see above) and so are not estate yet. No absence is an error — a
+ * machine may not have grown a file yet — but each is reported, never
+ * silently treated as an empty file. This is the one read of user content
+ * the installer performs, and it is read-only: the sources are never
+ * written by any code path here.
  *
  * Folder cargo reads one level only: the folder's own root files whose
  * names pass its extension allowlist (see ESTATE_CARGO_FOLDERS). An
  * existing folder with no carried files contributes nothing and is not
  * missing. The kit-owned exclusion does not reach folder files: the kit
  * ships no scripts or lessons, so no folder file can be kit paper.
+ *
+ * Tree cargo reads recursively: every file under the tree whose path
+ * avoids the excluded directories and whose name and size pass its fences
+ * (see ESTATE_CARGO_TREES), keyed by its path relative to the tree root
+ * so the folder shape survives the trip. The kit-owned exclusion does not
+ * reach tree files either: the kit ships no skills.
  */
 export async function loadEstateCargo({
   home = homedir(),
   templates = null,
   readFileImpl = readFile,
   readdirImpl = readdir,
+  statImpl = stat,
 } = {}) {
   const sourceDir = defaultTargetDirectory(ESTATE_SOURCE_TARGET, home);
   const kitOwnedRefs = templates ? kitOwnedEstateContents(templates, sourceDir) : {};
   const contents = {};
   const missing = [];
   const missingFolders = [];
+  const missingTrees = [];
   const kitOwned = [];
   for (const { source, destination } of ESTATE_CARGO) {
     let content;
@@ -571,7 +667,41 @@ export async function loadEstateCargo({
       );
     }
   }
-  return { contents, missing, missingFolders, kitOwned };
+  for (const tree of ESTATE_CARGO_TREES) {
+    const treeRoot = join(sourceDir, tree.source);
+    let rootEntries;
+    try {
+      rootEntries = await readdirImpl(treeRoot, { withFileTypes: true });
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      missingTrees.push(tree.source);
+      continue;
+    }
+    // Collect first, read in sorted order after: the snapshot reads the
+    // same on every run, and a file that vanishes mid-walk surfaces as an
+    // ENOENT there rather than sorting differently here.
+    const carried = [];
+    async function walk(dir, relPrefix, entries) {
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (ESTATE_TREE_EXCLUDED_DIRS.includes(entry.name.toLowerCase())) continue;
+          const childDir = join(dir, entry.name);
+          const childEntries = await readdirImpl(childDir, { withFileTypes: true });
+          await walk(childDir, `${relPrefix}${entry.name}/`, childEntries);
+        } else if (entry.isFile()) {
+          carried.push({ full: join(dir, entry.name), rel: `${relPrefix}${entry.name}`, name: entry.name });
+        }
+      }
+    }
+    await walk(treeRoot, '', rootEntries);
+    carried.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    for (const file of carried) {
+      const info = await statImpl(file.full);
+      if (!estateTreeFileCarried(file.name, info.size)) continue;
+      contents[`${tree.destination}/${file.rel}`] = await readFileImpl(file.full, 'utf8');
+    }
+  }
+  return { contents, missing, missingFolders, missingTrees, kitOwned };
 }
 
 /**
