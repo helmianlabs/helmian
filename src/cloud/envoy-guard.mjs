@@ -58,7 +58,9 @@ import { evaluateToolCall } from '../core/governance-gate.mjs';
 const COMMAND_PROFILE = new Set(['file.delete', 'shell']);
 
 // What each class is, in the plain words the refusal surface names.
-const CLASS_NOUN = Object.freeze({
+// Exported so bite 3's findings (envoy-findings.mjs) title their rows
+// with the same words the channel refusal uses.
+export const SEAT_ACTION_NOUN = Object.freeze({
   'credential.resolve': 'revealing a stored credential',
   'file.delete': 'deleting files',
   'file.write': 'writing a file',
@@ -131,7 +133,7 @@ export function evaluateSeatAction(action, { body = '', workspace } = {}) {
  * plain words, carrying the gate's (or the vault posture's) own reason.
  */
 export function guardRefusalText(outcome) {
-  const what = CLASS_NOUN[outcome?.action?.type] ?? 'carrying out this ask';
+  const what = SEAT_ACTION_NOUN[outcome?.action?.type] ?? 'carrying out this ask';
   const why = outcome?.reason ? ` Why: ${outcome.reason}.` : '';
   return `The Executive Guard refused this ask before it was handed to a seat. What was refused: ${what}.${why} Nothing was run and nothing was changed.`;
 }
