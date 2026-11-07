@@ -118,7 +118,7 @@
             </div>
           </header>
           <div class="pane-scroll" id="heraldTeamScroll"><div id="heraldEnvoyFeed" hidden style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
-            <section class="empty-hero">
+            <section class="empty-hero" id="teamPlaceholder">
               <div class="empty-icon"><svg><use href="/herald/icons.svg#users"></use></svg></div>
               <p class="eyebrow">READY WHEN YOU CONNECT</p>
               <h2>Bring the project conversation into focus</h2>
@@ -149,7 +149,7 @@
               <h1>Conversation</h1>
             </div>
             <div class="pane-actions">
-              <span class="quiet-status">Desktop offline</span>
+              <span class="quiet-status" id="desktopSessionStatus">Desktop session: none selected</span>
               <button class="icon-button" data-open-drawer="history" aria-label="Open review and history" title="Review and history"><svg><use href="/herald/icons.svg#history"></use></svg></button>
             </div>
           </header>
@@ -163,7 +163,7 @@
             </article>
           </div>
           <form class="composer" id="composer">
-            <div class="draft-notice" id="draftNotice">Drafts stay on this device until a desktop is connected.</div>
+            <div class="draft-notice" id="draftNotice">Drafts stay on this device. This composer sends through a Desktop session, so a draft sends once one is selected.</div>
             <div class="composer-box">
               <textarea id="messageInput" rows="2" maxlength="2800" placeholder="Send a reviewed instruction to the selected Helmian console…" aria-label="Send instruction to Helmian Desktop"></textarea>
               <div class="composer-toolbar">
