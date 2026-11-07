@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -251,6 +251,60 @@ test('executeProfileSync reports files that match the disk, hashes included', as
   }
   const second = await executeProfileSync({ home, targets: ['claude'] });
   assert.deepEqual(second.files, [], 'a no-op sync reports an empty list, not a success story');
+});
+
+test('executeProfileSync carries the estate and reports hashes that equal the sources', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'profile-sync-estate-'));
+  const sha = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
+  const sources = {
+    // The source doubles as the claude seat's context file and already
+    // carries the agent OS block — the state the estate inventory found on
+    // the real machine — so the sync leaves the source itself untouched
+    // and the estate snapshot is stable across runs.
+    'CLAUDE.md': '# Hand-built rules\n\nEverything I taught this seat, in my own words.\n\n<!-- BEGIN AGENT OS -->\n@agent-os/AGENT_OS.md\n<!-- END AGENT OS -->\n',
+    'LESSONS.md': '# LESSONS\n\nThe grown flywheel, one hundred lessons deep.\n',
+    'LEARNINGS.md': '# LEARNINGS\n\n- The copy is the proof.\n',
+  };
+  await mkdir(join(home, '.claude'), { recursive: true });
+  for (const [name, content] of Object.entries(sources)) {
+    await writeFile(join(home, '.claude', name), content, 'utf8');
+  }
+  await mkdir(join(home, '.grok'), { recursive: true });
+
+  const destFor = {
+    'CLAUDE.md': 'CLAUDE-ESTATE.md',
+    'LESSONS.md': 'LESSONS.md',
+    'LEARNINGS.md': 'LEARNINGS.md',
+  };
+
+  const first = await executeProfileSync({ home, targets: ['claude', 'grok'] });
+  for (const target of ['claude', 'grok']) {
+    for (const [source, dest] of Object.entries(destFor)) {
+      const entry = first.files.find(
+        (f) => f.target === target && f.path === join(home, `.${target === 'claude' ? 'claude' : 'grok'}`, 'agent-os', 'estate', dest),
+      );
+      assert.ok(entry, `${target} must report its estate copy of ${source}`);
+      assert.equal(entry.action, 'created');
+      // The copy is verbatim, so the reported hash IS the source's hash.
+      assert.equal(entry.sha256, sha(sources[source]), `${target}:${dest} hash must equal the source hash`);
+    }
+  }
+
+  // Unchanged sources: the estate stays out of the report entirely — a
+  // no-op sync never pads its list.
+  const second = await executeProfileSync({ home, targets: ['claude', 'grok'] });
+  assert.deepEqual(second.files, []);
+
+  // One source grows: exactly its two copies are reported, as updates.
+  const grown = `${sources['LESSONS.md']}One more lesson.\n`;
+  await writeFile(join(home, '.claude', 'LESSONS.md'), grown, 'utf8');
+  const third = await executeProfileSync({ home, targets: ['claude', 'grok'] });
+  assert.equal(third.files.length, 2, 'only the refreshed estate copies are reported');
+  for (const entry of third.files) {
+    assert.equal(entry.action, 'updated');
+    assert.ok(entry.path.endsWith(join('estate', 'LESSONS.md')));
+    assert.equal(entry.sha256, sha(grown));
+  }
 });
 
 // ── (c) the page model renders exactly the device report ────────────
