@@ -14,8 +14,13 @@
 //      snippet next to the settings file with merge instructions, because
 //      settings files carry keys this installer knows nothing about.
 //
-// Everything here is pure except `installAgentOs`, which is the only function
-// that touches the filesystem.
+// The estate cargo (see ESTATE_CARGO below) is the one exception to the
+// "created once" rule, and it stays inside boundary 1: the user's own grown
+// files are copied into the managed folder only, refreshed when they change,
+// and the seat files they were copied from are read, never written.
+//
+// Everything here is pure except `installAgentOs` and `loadEstateCargo`,
+// which are the only functions that touch the filesystem.
 
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -142,6 +147,45 @@ const PARTIALS = Object.freeze({
 const HOOK_TEMPLATES = Object.freeze([
   'hooks/session-start-context.mjs',
   'hooks/stop-capture.mjs',
+]);
+
+// ── Estate cargo ─────────────────────────────────────────────────────────────
+//
+// The templates above are a distilled starter kit: they ship to strangers, so
+// they are anonymized and they carry no one's actual work. The estate is the
+// opposite cargo. It is the user's own grown files, read from the source seat
+// on this machine at install time and copied into every seat's managed
+// folder, refreshed on every sync — so what one seat has learned and written
+// down reaches the others instead of staying stranded in the seat that grew
+// it.
+//
+// The source of truth is the Claude seat: its CLAUDE.md (hand-built, the
+// largest single rules document the user owns) and the flywheel's grown
+// companions — LESSONS.md and LEARNINGS.md, whose template seeds in the other
+// seats are empty frames by comparison.
+//
+// Three properties keep this cargo honest:
+//
+//   - Verbatim. An estate file is a copy, not a render: no trimming, no
+//     placeholder pass, no anonymization scan. The bytes that land are the
+//     bytes that were read, so a sync report's hash for a copy equals the
+//     source's hash, and "unchanged" is a direct comparison.
+//   - Managed only. Copies land under agent-os/estate/ and nowhere else. The
+//     seat's own files — the very files the estate was read from, and every
+//     other seat's own context file and companions — are never the copy's
+//     destination.
+//   - Presence-gated. A seat whose directory does not exist on this machine
+//     is not present here; its estate cargo is skipped and the skip is
+//     recorded in the plan, never silently dropped and never forced into a
+//     folder the sync itself just invented.
+
+/** The seat whose directory holds the estate sources. */
+export const ESTATE_SOURCE_TARGET = 'claude';
+
+export const ESTATE_CARGO = Object.freeze([
+  Object.freeze({ source: 'CLAUDE.md', destination: `${MANAGED_DIR}/estate/CLAUDE-ESTATE.md` }),
+  Object.freeze({ source: 'LESSONS.md', destination: `${MANAGED_DIR}/estate/LESSONS.md` }),
+  Object.freeze({ source: 'LEARNINGS.md', destination: `${MANAGED_DIR}/estate/LEARNINGS.md` }),
 ]);
 
 export function resolveTargets(requested) {
@@ -316,6 +360,23 @@ export function appendBlockFor({ target, renderedContext }) {
 }
 
 /**
+ * Build the estate entries for one target from loaded contents.
+ *
+ * `estateContents` maps a destination path to the source file's exact text,
+ * as returned by `loadEstateCargo`. A destination with no string content is
+ * left out entirely — a missing source produces no file, never an empty one.
+ */
+export function renderEstateFiles(estateContents = {}) {
+  const files = [];
+  for (const { destination } of ESTATE_CARGO) {
+    const content = estateContents?.[destination];
+    if (typeof content !== 'string') continue;
+    files.push({ path: destination, content, ownership: 'managed', cargo: 'estate' });
+  }
+  return files;
+}
+
+/**
  * Decide what to do with each file, without touching disk.
  *
  * `existing` maps a relative path to its current content, or undefined when the
@@ -366,9 +427,76 @@ export function planAgentOsInstall({ target, files, existing = {} }) {
 }
 
 /**
+ * The estate-shaped contents the installer itself ships: the rendered
+ * context file for the source seat and the companion seeds, exactly as an
+ * install writes them. A source still byte-identical to one of these is the
+ * kit's own paper — a fresh install's context file, a companion seed nobody
+ * has written in yet — not the user's grown estate. Carrying it would feed
+ * the starter kit back to every seat dressed as the user's own work, and
+ * would make a second sync on a fresh machine "discover" an estate the
+ * first sync manufactured.
+ */
+function kitOwnedEstateContents(templates, sourceDir) {
+  const rendered = renderAgentOsFiles({ target: ESTATE_SOURCE_TARGET, templates, installDir: sourceDir });
+  const byPath = new Map(rendered.map((file) => [file.path, file.content]));
+  const owned = {};
+  for (const { source, destination } of ESTATE_CARGO) {
+    const content = byPath.get(source);
+    if (typeof content === 'string') owned[destination] = content;
+  }
+  return owned;
+}
+
+/**
+ * Read the estate sources from the source seat's directory under `home`.
+ *
+ * Returns { contents, missing, kitOwned }: `contents` maps each estate
+ * destination path to the source file's exact text; `missing` lists the
+ * source names that are not there; `kitOwned` lists the sources that exist
+ * but are still the installer's own shipped paper (see above) and so are
+ * not estate yet. Neither absence is an error — a machine may not have
+ * grown a file yet — but both are reported, never silently treated as an
+ * empty file. This is the one read of user content the installer performs,
+ * and it is read-only: the sources are never written by any code path here.
+ */
+export async function loadEstateCargo({ home = homedir(), templates = null, readFileImpl = readFile } = {}) {
+  const sourceDir = defaultTargetDirectory(ESTATE_SOURCE_TARGET, home);
+  const kitOwnedRefs = templates ? kitOwnedEstateContents(templates, sourceDir) : {};
+  const contents = {};
+  const missing = [];
+  const kitOwned = [];
+  for (const { source, destination } of ESTATE_CARGO) {
+    let content;
+    try {
+      content = await readFileImpl(join(sourceDir, source), 'utf8');
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      missing.push(source);
+      continue;
+    }
+    if (kitOwnedRefs[destination] !== undefined && content === kitOwnedRefs[destination]) {
+      kitOwned.push(source);
+      continue;
+    }
+    contents[destination] = content;
+  }
+  return { contents, missing, kitOwned };
+}
+
+/**
  * Plan, and optionally apply, an install for one target.
  * With `apply: false` nothing is written — that is the default, so the
  * destructive-looking step needs an explicit --yes.
+ *
+ * `estateContents` is the estate snapshot to carry (see loadEstateCargo).
+ * Pass a map — including an empty one — to carry exactly that. Left
+ * undefined, the snapshot is loaded from disk — but only for a home install:
+ * an explicit `dir` names a self-contained scratch install, and the estate
+ * is a home-level cargo, so a scratch install carries none unless the caller
+ * hands it over. installAgentOsTargets loads the snapshot once and hands
+ * the same one to every target, so all four seats receive the estate as it
+ * stood when the sync began, even if an earlier target's install in the same
+ * run touches the source seat's files.
  */
 export async function installAgentOs({
   target,
@@ -377,13 +505,22 @@ export async function installAgentOs({
   templates = null,
   apply = false,
   home = homedir(),
+  estateContents = undefined,
 }) {
   const spec = TARGET_SPECS[target];
   if (!spec) throw new Error(`Unknown target "${target}"`);
 
   const installDir = resolve(dir ?? defaultTargetDirectory(target, home));
+  // Presence is judged before this run writes anything: a seat directory
+  // the sync itself is about to create does not count as the seat being
+  // present on this machine.
+  const seatPresent = existsSync(installDir);
   const loaded = templates ?? await loadAgentOsTemplates(templatesRoot);
-  const files = renderAgentOsFiles({ target, templates: loaded, installDir });
+  const estate = estateContents ?? (dir ? {} : (await loadEstateCargo({ home, templates: loaded })).contents);
+  const files = [
+    ...renderAgentOsFiles({ target, templates: loaded, installDir }),
+    ...renderEstateFiles(estate),
+  ];
 
   const existing = {};
   for (const file of files) {
@@ -391,7 +528,16 @@ export async function installAgentOs({
     if (existsSync(full)) existing[file.path] = await readFile(full, 'utf8');
   }
 
-  const actions = planAgentOsInstall({ target, files, existing });
+  const planned = planAgentOsInstall({ target, files, existing });
+
+  // The estate is presence-gated: where the seat has no directory on this
+  // machine, its estate entries are recorded as skips instead of writes.
+  // The rest of the cargo installs as it always has.
+  const actions = seatPresent
+    ? planned
+    : planned.map((action) => (action.cargo === 'estate' && (action.action === 'create' || action.action === 'update')
+      ? { ...action, action: 'skip', reason: 'seat not present on this machine — estate cargo skipped' }
+      : action));
 
   if (apply) {
     for (const action of actions) {
@@ -410,6 +556,8 @@ export async function installAgentOs({
     return acc;
   }, {});
 
+  const estateActions = actions.filter((action) => action.cargo === 'estate');
+
   return {
     target: spec.id,
     label: spec.label,
@@ -419,8 +567,14 @@ export async function installAgentOs({
     settingsSnippet: join(installDir, MANAGED_DIR, spec.snippetFile),
     hooksWired: false, // Always false: this installer never edits a settings file.
     counts,
-    files: actions.map(({ path, action, reason, ownership }) => ({
-      path, action, reason, ownership,
+    estate: {
+      carried: estateActions.filter((action) => action.action !== 'skip').length,
+      skipped: estateActions
+        .filter((action) => action.action === 'skip')
+        .map((action) => action.path),
+    },
+    files: actions.map(({ path, action, reason, ownership, cargo }) => ({
+      path, action, reason, ownership, ...(cargo ? { cargo } : {}),
     })),
   };
 }
@@ -431,8 +585,14 @@ export async function installAgentOsTargets({
   templatesRoot = DEFAULT_TEMPLATES_ROOT,
   apply = false,
   home = homedir(),
+  estateContents = undefined,
 }) {
   const templates = await loadAgentOsTemplates(templatesRoot);
+  // One estate snapshot for the whole run, taken before any target writes:
+  // the seats all receive the estate as it stood when the sync began. As in
+  // installAgentOs, an explicit dir means a scratch install and carries no
+  // estate unless the caller hands a snapshot over.
+  const estate = estateContents ?? (dir ? {} : (await loadEstateCargo({ home, templates })).contents);
   const results = [];
   for (const target of targets) {
     // When an explicit --dir is given for several targets, keep them apart by
@@ -442,7 +602,7 @@ export async function installAgentOsTargets({
       ? (targets.length > 1 ? join(dir, TARGET_SPECS[target].directoryName) : dir)
       : defaultTargetDirectory(target, home);
     results.push(await installAgentOs({
-      target, dir: targetDir, templatesRoot, templates, apply, home,
+      target, dir: targetDir, templatesRoot, templates, apply, home, estateContents: estate,
     }));
   }
   return { applied: apply, targets: results };
