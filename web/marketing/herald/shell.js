@@ -39,6 +39,11 @@ let remoteApi = createAccountRemoteControlApi();
 let remoteTransport = null;
 let selectedControl = null;
 let activeAccountId = null;
+// The page's own connection is the cloud session (helmian.cloud). This is
+// tracked separately from the Desktop session state so the shell can state
+// each truth in its own place instead of reporting the Desktop's absence
+// as the page's connection state.
+let cloudSignedIn = false;
 const delivery = createDeliveryTracker();
 // QR pairing: Helmian Desktop shows a QR for /herald/#enroll=<code>. Take the
 // one-time code from the fragment (never sent to a server) and scrub it now.
@@ -424,14 +429,20 @@ async function applyAccountState(config) {
   if (!clerk?.isSignedIn) {
     remoteTransport?.close(); remoteTransport = null; selectedControl = null;
     activeAccountId = null;
+    cloudSignedIn = false;
     $('#accountButton').textContent = 'Sign in';
     setRemoteStatus('Sign in to see only the Desktops owned by your Helmian account.', false);
     $('#desktopList').replaceChildren();
     $('#desktopEmpty').hidden = false;
+    const sessionStatus = $('#desktopSessionStatus');
+    if (sessionStatus) sessionStatus.textContent = 'Desktop session: none selected';
     // The Team feed belongs to the signed-in account; never leave the
     // previous account's messages standing after a sign-out.
     const envoyFeedBox = $('#heraldEnvoyFeed');
     if (envoyFeedBox) { envoyFeedBox.replaceChildren(); envoyFeedBox.hidden = true; }
+    // With the feed gone, the Team pane's placeholder stands again.
+    const teamPlaceholder = $('#teamPlaceholder');
+    if (teamPlaceholder) teamPlaceholder.hidden = false;
     if (qrEnrollmentCode && !accountDialog.open) accountDialog.showModal();
     if (accountDialog.open) clerk.mountSignIn($('#clerkMount'), clerkReturnProps);
     return;
@@ -441,6 +452,7 @@ async function applyAccountState(config) {
     remoteTransport?.close(); remoteTransport = null; selectedControl = null;
   }
   activeAccountId = nextAccountId;
+  cloudSignedIn = true;
   accountDialog.close();
   $('#accountButton').textContent = 'Sign out';
   setRemoteStatus('Signed in. Checking your account-owned Desktop sessions…', false);
@@ -452,7 +464,7 @@ async function applyAccountState(config) {
   // after a desktop enrollment.
   void loadHeraldEnvoyFeed();
   if (config?.transport?.realtimeClientActive !== true) {
-    setRemoteStatus('Your account is signed in, but scoped realtime transport is not configured.', false);
+    setRemoteStatus('Signed in to helmian.cloud. The Desktop realtime transport is not configured, so Desktop sessions are unavailable.', false);
   }
 }
 
@@ -474,9 +486,11 @@ async function refreshDesktopList() {
     // Keeping the eight-digit form beside an already selectable session made
     // the phone look unpaired and repeatedly sent people back into setup.
     $('#enrollmentForm').hidden = list.childElementCount > 0;
-    setRemoteStatus(list.childElementCount
-      ? 'Choose one live session from your account-owned Desktop.'
-      : 'No live Desktop session is connected to this account.', false);
+    // The banner carries the page's own state — the cloud session — not
+    // the Desktop list's result. Whether a Desktop session exists is
+    // stated in the Projects drawer itself (the list, or its "No
+    // connected Desktop" empty state), where that fact belongs.
+    setRemoteStatus('Connected to helmian.cloud.', false);
   } catch (error) {
     list.replaceChildren(); $('#desktopEmpty').hidden = false; $('#enrollmentForm').hidden = false;
     setRemoteStatus(error.status === 401 ? 'Your account session expired. Sign in again.' : error.message, false);
@@ -503,7 +517,8 @@ async function selectRemoteSession(desktop, session) {
     selectedControl = control.session;
     $('#selectedProjectName').textContent = session.project.name;
     $('#desktopControlTitle').textContent = `${desktop.displayName} — ${session.name}`;
-    $('.conversation-pane .quiet-status').textContent = desktop.displayName;
+    const sessionStatus = $('#desktopSessionStatus');
+    if (sessionStatus) sessionStatus.textContent = `Desktop session: ${desktop.displayName}`;
     setRemoteStatus(`Connected to ${desktop.displayName} · ${session.name}`, true);
     closeDrawer();
   } catch (error) {
@@ -559,31 +574,48 @@ function renderHistory() {
   }));
 }
 
-function setRemoteStatus(message, live) {
+// The header chip is the page's PRIMARY connection state, and the page's
+// connection is the cloud session: signed in to helmian.cloud reads as
+// connected, desktop or no desktop. The Desktop session's own state lives
+// only in the surfaces that use it (the Projects drawer's Desktop list and
+// empty state, the console's session label) — never in this chip.
+function renderConnectionState() {
   const connection = $('#connectionState');
-  if (connection) {
-    connection.lastChild.textContent = live ? ' Desktop connected' : ' Desktop not connected';
-    connection.classList.toggle('live', live);
-  }
+  if (!connection) return;
+  connection.lastChild.textContent = cloudSignedIn ? ' Connected to helmian.cloud' : ' Not signed in';
+  connection.classList.toggle('live', cloudSignedIn);
+}
+
+function setRemoteStatus(message, live) {
+  renderConnectionState();
   const status = $('#remoteStatusText');
   if (status) status.textContent = message;
+  // The console intro states its two facts separately: the Desktop
+  // session's state (its own label), and the cloud state behind the page.
   const state = $('#desktopControlState');
   const copy = $('#desktopControlMessage');
-  if (state) state.textContent = live ? 'Live' : 'Waiting';
+  if (state) state.textContent = live ? 'Desktop session live' : 'No desktop session';
   $('#desktopControlIntro')?.toggleAttribute('hidden', live);
   if (copy) copy.textContent = live
     ? ''
-    : 'Connecting to Helmian.';
+    : cloudSignedIn
+      ? 'Signed in to helmian.cloud — the live cloud conversation is in the Team pane. This console sends through a Desktop session, and none is selected.'
+      : 'Sign in to helmian.cloud to use this console.';
 }
 
 function resetRemoteUi() {
   remoteTransport?.close(); remoteTransport = null; selectedControl = null;
+  cloudSignedIn = false;
   // A parked enrollment code belongs to the signed-out scan that parked it;
   // signing out must not carry it into the next account's session.
   qrEnrollmentCode = null;
   writeSessionStorage(pendingEnrollmentKey, '');
   $('#selectedProjectName').textContent = 'No project open';
   $('#desktopList').replaceChildren(); $('#desktopEmpty').hidden = false;
+  const sessionStatus = $('#desktopSessionStatus');
+  if (sessionStatus) sessionStatus.textContent = 'Desktop session: none selected';
+  const teamPlaceholder = $('#teamPlaceholder');
+  if (teamPlaceholder) teamPlaceholder.hidden = false;
   $('#accountButton').textContent = 'Sign in';
   setRemoteStatus('Signed out. No Desktop control is active.', false);
 }
@@ -626,5 +658,10 @@ async function loadHeraldEnvoyFeed() {
       art.innerHTML = `<div class="message-body"><div class="message-meta"><strong>${escapeHtml(m.authorName || m.authorKind || 'Member')}</strong><span>#${escapeHtml(first.title || first.slug)}</span></div><p>${escapeHtml(String(m.body || '').slice(0, 280))}</p></div>`;
       return art;
     }));
+    // A populated feed replaces the "ready when you connect" placeholder:
+    // live messages must never stand under a block saying the conversation
+    // arrives once you connect. An empty load leaves the placeholder up.
+    const teamPlaceholder = $('#teamPlaceholder');
+    if (teamPlaceholder) teamPlaceholder.hidden = msgs.length > 0;
   } catch { /* Envoy feed is optional in Herald cockpit */ }
 }
