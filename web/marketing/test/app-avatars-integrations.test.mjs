@@ -66,20 +66,21 @@ test('integrations: AI card icons are settled letter tiles — asset images or t
   for (const c of ai) assert.equal(c.icon.glyph, undefined, `${c.key} carries no emoji glyph icon`);
 });
 
-test('integrations: the four catalog seats carry key fields, not sign-in fields, until connected', () => {
+test('integrations: the five catalog seats carry key fields, not sign-in fields, until connected', () => {
   const ai = integrationSections({}).find((s) => s.id === 'ai').cards;
   const by = Object.fromEntries(ai.map((c) => [c.key, c]));
-  // One key each for three seats; Cloudflare's two named pieces.
+  // One key each for four seats; Cloudflare's two named pieces.
   assert.deepEqual(by.groq.apiKeyConnect, { provider: 'groq', fields: ['api_key'] });
   assert.deepEqual(by.nvidia.apiKeyConnect, { provider: 'nvidia', fields: ['api_key'] });
   assert.deepEqual(by.openrouter.apiKeyConnect, { provider: 'openrouter', fields: ['api_key'] });
+  assert.deepEqual(by.muse.apiKeyConnect, { provider: 'muse', fields: ['api_key'] });
   assert.deepEqual(by.cloudflare.apiKeyConnect, { provider: 'cloudflare', fields: ['account_id', 'api_token'] });
-  for (const key of ['groq', 'nvidia', 'cloudflare', 'openrouter']) {
+  for (const key of ['groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']) {
     assert.equal(by[key].connect, null, `${key} never gets the email + password fields`);
     assert.equal(by[key].action, null, `${key} not connected → no Manage`);
     assert.equal(by[key].icon.tile.kind, 'plain', `${key} renders the plain letter tile like Mistral and Runway`);
   }
-  assert.deepEqual(ai.map((c) => c.key), ['claude', 'openai', 'gemini', 'grok', 'mistral', 'runway', 'groq', 'nvidia', 'cloudflare', 'openrouter'], 'the catalog seats join the AI section after the sign-in seats');
+  assert.deepEqual(ai.map((c) => c.key), ['claude', 'openai', 'gemini', 'grok', 'mistral', 'runway', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse'], 'the catalog seats join the AI section after the sign-in seats');
   // A saved connection flips the card: fields go, Manage arrives.
   const on = Object.fromEntries(integrationSections({ providers: { connections: [{ providerId: 'groq', authMode: 'api_key' }] }, presence: [] })
     .find((s) => s.id === 'ai').cards.map((c) => [c.key, c]));

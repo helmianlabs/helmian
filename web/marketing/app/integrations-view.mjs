@@ -22,6 +22,7 @@ const API_KEY_CONNECT_FIELDS = Object.freeze({
   nvidia: ['api_key'],
   cloudflare: ['account_id', 'api_token'],
   openrouter: ['api_key'],
+  muse: ['api_key'],
 });
 
 // presence: rows from the runner presence feed (null when that read never
@@ -54,6 +55,7 @@ export function integrationSections({ presence = null, connectors = {}, provider
     ['nvidia', 'nvidia', 'NVIDIA', 'Connect with a key from your NVIDIA Build account — free to create.'],
     ['cloudflare', 'cloudflare', 'Cloudflare', 'Connect with the two saved pieces from your Cloudflare account — free every day.'],
     ['openrouter', 'openrouter', 'OpenRouter', 'Connect with a key from your OpenRouter account — its free models cost nothing.'],
+    ['muse', 'muse', 'Muse', 'Connect with a key from your Meta Model account — it bills by use, no free tier.'],
   ].map(([key, cloudKey, name, blurb]) => {
     const row = truth.get(cloudKey);
     const connected = row?.connected === true;
