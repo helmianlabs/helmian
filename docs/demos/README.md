@@ -1,5 +1,12 @@
 # Helmian Social Content Pack
 
+> **Status (2026-11-06): pre-launch pack, kept for the record.** The
+> HELMIAN AI YouTube channel is now live and the current public videos
+> are listed in the root README's "Watch it work" section. The three
+> pieces below were written on 2026-10-18, before the channel existed,
+> and were not posted as-is; the "NOT posted" note at the bottom is
+> theirs, not the channel's current state.
+
 Created 2026-10-18. Ready for Troy or Grokbot to post when YouTube/X/LinkedIn accounts are set up.
 
 ## Videos (3)
