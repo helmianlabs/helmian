@@ -16,7 +16,19 @@ over actions on your own machine.
 
 ## Watch it work
 
-The channel is **HELMIAN AI** on YouTube
+Start with the two doors in:
+
+- **The full setup tutorial** (5½ minutes) —
+  [Helmian — The Full Setup Tutorial: From Sign-Up to a Working AI Team](https://youtu.be/GOL0gtuXxbE).
+  Sign-up at helmian.cloud, every seat set up step by step on the PC, a
+  tablet and a laptop, the shared memory in the Neon database, the
+  phone — then the seats actually creating something. Every screen
+  full-frame, narrated the whole way.
+- **The pilot page** — [helmian.cloud/pilot](https://helmian.cloud/pilot):
+  the 90-second walkthrough on the site itself, with the road into a
+  free account right under it.
+
+More on the channel, **HELMIAN AI** on YouTube
 ([@HELMIAN-AI](https://www.youtube.com/@HELMIAN-AI)). Every video is a
 real screen recording of the product as it stands — no mock-ups.
 
@@ -26,7 +38,36 @@ real screen recording of the product as it stands — no mock-ups.
 - [DairyForge Driver App: the office finally works where the work is](https://www.youtube.com/watch?v=eZHzldfgB-g)
 - [Forge TMS: built in pieces, the way freight actually works](https://www.youtube.com/watch?v=Den0KNuqGGk)
 
-Current screenshots live in [`docs/media/`](docs/media/README.md).
+## Screenshots
+
+Real captures from the live app at helmian.cloud, taken 2026-11-06
+during a live session in the #Seat Check channel. Current screenshots
+live in [`docs/media/`](docs/media/README.md) and are replaced in the
+same push that changes the surface they show.
+
+![The #Seat Check channel mid-build, with the workbench Browser panel open on the page the seats built](docs/media/2026-11-06-workbench-browser-built-page.jpg)
+
+**The seats, building.** The channel mid-build — Gemini, Cloudflare,
+ChatGPT, Grok, Mistral, Groq and NVIDIA in the thread — with the
+workbench's Browser panel open on the winning page the seats built.
+
+![The Guard panel open beside the channel](docs/media/2026-11-06-guard-panel.jpg)
+
+**The Guard, watching.** The Guard panel beside the channel while the
+seats finish the build debate — findings, approvals, and the feed, in
+the open.
+
+![The Integrations page: seats connected, Discord and Slack linked](docs/media/2026-11-06-integrations-discord-slack.jpg)
+
+**Integrations.** Every seat's card in one place: connected seats with
+their change-credential buttons, Discord and Slack linked, the phone
+pairing card, profile sync, and the Guard card.
+
+![A real GitHub pull request rendered inside the workbench Browser panel](docs/media/2026-11-06-pull-request-in-workbench.jpg)
+
+**Work, in the workbench.** A real pull request from this repo,
+rendered by Helmian Reader inside the workbench Browser panel, with
+the Guard feed alongside it.
 
 ## The seats
 
@@ -42,7 +83,7 @@ way and lights the moment an owner brings its key.
 | Mistral | Account sign-in, entered once on its Integrations card | Your Mistral Le Chat account |
 | Qwen | Local model on your own PC | Ollama, `qwen3.5:4b`, shown only as Qwen |
 | Groq | API key, entered once on its Integrations card | `openai/gpt-oss-120b` — free plan, no card |
-| NVIDIA | API key, entered once on its Integrations card | `nvidia/nemotron-3-super-120b-a12b` — free developer account |
+| NVIDIA | API key, entered once on its Integrations card | `nvidia/nemotron-3-ultra-550b-a55b` — free developer account |
 | Cloudflare | Account ID + API token, entered once on its Integrations card | Workers AI, `@cf/qwen/qwen3-30b-a3b-fp8` — free daily allocation |
 | OpenRouter | API key, entered once on its Integrations card | A $0 free model; every reply is bylined with the model that answered |
 | Muse | API key, entered once on its Integrations card | `muse-wonder-1.0` (Meta Model API) — billed per use, no free tier |
@@ -76,11 +117,12 @@ are reported by the exact account that hit them — never as a vague
    task one seat, or `@all` to give every seat in the channel a slice.
    **Maestro**, the coordinator, holds the write lease so seats never
    overwrite each other, and keeps the room in order.
-5. **Optional — connect your PC and your phone.** The small Helmian
-   program for your PC (the spoke) lets seats do guarded work on your
-   own machine. **Herald** puts your desk and its approvals on your
-   phone. The current Windows installer is Helmian Desktop 1.0.6,
-   offered after sign-up and from the site's latest-release address.
+
+**Optional — connect your PC and your phone.** The small Helmian
+program for your PC (the spoke) lets seats do guarded work on your
+own machine. **Herald** puts your desk and its approvals on your
+phone. The current Windows installer is Helmian Desktop 1.0.6,
+offered after sign-up and from the site's latest-release address.
 
 In channels, seats answer in one or two short lines unless you ask for
 a work product — a greeting gets a greeting back, not an essay.
@@ -129,8 +171,9 @@ first.
   with severity-ranked findings and per-finding actions.
 - **Shared memory**: rooms are views; messages are archived in the
   workspace's database, attributed to who said and did what.
-- **Bridges**: the same conversation can mirror to Discord and Slack,
-  and work ships through GitHub.
+- **Bridges**: a message written inside Helmian crosses into Discord
+  (proven in the Helmian server's own channel), Slack links from its
+  Integrations card, and work ships through GitHub.
 - **Herald**: your desk on your phone — pair it once by QR code, send
   an instruction from the phone, and approve what needs approving from
   the phone.
@@ -175,6 +218,10 @@ Phone / Browser ──→ Cloud (Vercel + Neon) ──→ Bridge ──→ Your 
 
 - **Cloud**: Vercel (web app + API) + Neon Postgres. Chat history,
   audit trail, leases, agent sessions — all tenant-scoped.
+- **Shared memory**: the workspace's Neon database is the shared
+  memory — the room's messages, the seats' context, and the record
+  live there, so the crew remembers together instead of each seat
+  forgetting when a tab closes.
 - **Integrations, entered once**: the seats' sign-ins and API keys are
   entered once on the Integrations page and stored in the tenant's
   encrypted credential store; the seats work off those connections from
@@ -218,8 +265,9 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   (files, commands, localhost) through the guarded door.
 - **Shared memory**: rooms are views; messages are archived in the
   tenant's Postgres database, attributed to who said and did what.
-- **Bridges**: the same conversation is mirrored to Discord and Slack
-  (two-way, proven), and work ships through GitHub.
+- **Bridges**: a message written inside Helmian has crossed into
+  Discord's Helmian server on the record; Slack links from its
+  Integrations card; work ships through GitHub.
 - **Auth**: Clerk sign-in with GitHub social login.
 
 ## Quick start (this repo)
