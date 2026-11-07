@@ -33,6 +33,7 @@ import { classifySeatAsk } from './envoy-actions.mjs';
 import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
+import { readNotebookBlock } from './envoy-notebook.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
 
 // The bot status functions live in bot-status.mjs (import-free, so the
@@ -156,7 +157,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, notebookImpl = null, notebookLogImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -316,6 +317,31 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // (envoy-findings.mjs). The chat action leaves no job: it is
       // never evaluated, so there is nothing to record.
       const findingJobs = [];
+      // Notebook block (envoy-notebook.mjs, coverage bite 2): the
+      // tenant's shared-notebook content, read at dispatch time and
+      // ridden on every work item this poll hands out. Loaded lazily
+      // — a poll with no due work never touches the notebook — and at
+      // most once per poll, however many items it builds. The read
+      // runs on the pool, outside the dispatch transaction, and is
+      // fail-soft in both layers: the reader itself never throws, and
+      // a throwing injected reader is caught here and logged, so a
+      // notebook failure changes nothing about dispatch — the work
+      // items simply carry no block, exactly as before this bite.
+      let notebookPromise = null;
+      const loadNotebook = () => {
+        if (!notebookPromise) {
+          notebookPromise = (async () => {
+            const log = notebookLogImpl ?? ((...args) => console.error(...args));
+            try {
+              return await (notebookImpl ?? ((p, t) => readNotebookBlock(p, t, { log })))(pool, actor.tenantId);
+            } catch (error) {
+              log(`[envoy-notebook] notebook read FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — seats answer without the notebook block this poll; dispatch is unchanged.`);
+              return null;
+            }
+          })();
+        }
+        return notebookPromise;
+      };
       const result = await tx(actor, async (client) => {
         // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
         // readiness signal — a registered runner, a presence report, a
@@ -418,6 +444,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               continue;
             }
             const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
+            const notebook = await loadNotebook();
             work.push({
               channel: {
                 id: String(channel.id),
@@ -431,6 +458,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               },
               members: config.agents,
               ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
+              ...(notebook ? { notebook } : {}),
               message,
               action,
               ...(evaluation ? { evaluation } : {}),
