@@ -1,11 +1,15 @@
 # Helmian always-on box (Hetzner)
 
-> **STATUS (2026-10-17): FUTURE PATH, NOT LIVE.** The box currently runs
-> bridge-only via systemd (`deploy/helmian-bridge.service`, provisioned by
-> `deploy/provision-runner.sh`): no Docker, no Caddy, no listening ports.
-> This compose stack (Caddy + Kokoro voice server + relay) is the planned
-> next step for when the box needs to serve voice and relay traffic. Do not
-> run both paths on the same box without deciding which owns ports 80/443.
+> **STATUS (updated 2026-11-06): the box is live, and this compose
+> stack is not the whole of it.** The always-on box now runs both
+> systemd services (the agent worker, the session executor, the box
+> spoke, the Executive Guard's auto-approve) and Docker containers
+> (hands-mcp, the Executive Guard, the Scribe door, the credential
+> service). Treat this folder as one deployment path among several;
+> before changing anything on the box, read what is actually running
+> there first. The original 2026-10-17 note said "future path, not
+> live — bridge-only, no Docker"; that stopped being true as the
+> services above landed.
 
 
 Runs only what Vercel can't keep alive: **Kokoro voice**, **Mark's relay**, and the **background worker**.
