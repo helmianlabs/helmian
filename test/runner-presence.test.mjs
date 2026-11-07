@@ -3,6 +3,7 @@
 // guarantee that no secret material ever passes through.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRunnerPresenceStore, handleRunnerPresenceRoute, RUNNER_PRESENCE_PATH } from '../src/cloud/runner-presence.mjs';
 import * as runnerPresence from '../src/cloud/runner-presence.mjs';
 import { computeTenantAgentState, claimGateFor } from '../src/cloud/tenant-agent-state.mjs';
@@ -499,4 +500,78 @@ test('activity route: GET before the sql/067 migration still answers presence, w
   assert.equal(status, 200);
   assert.deepEqual(body.activity, []);
   assert.deepEqual(body.presence, []);
+});
+
+// ---------- presence catalog admission: the Muse seat (sql/073) ----------
+// The provider-name check lives in two places that must never drift: the
+// durable migration in sql/ and the in-code self-repair inside
+// runner-presence.mjs's upsert. These tests pin the muse admission and
+// the agreement between the two lists.
+
+// Extract the ordered provider names out of a presence-check definition,
+// from either a migration file or the repair SQL in the source. Comment
+// lines (--) are stripped first, per the migration-test pattern.
+function presenceCheckNames(text, label) {
+  const code = text.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+  const m = code.match(/add constraint runner_provider_presence_provider_name_check check \(provider_name in \(([^)]*)\)\)/);
+  assert.ok(m, `${label} carries the presence provider-name check`);
+  return m[1].split(',').map((s) => s.trim().replace(/^'(.*)'$/, '$1'));
+}
+
+test('sql/073 admits exactly the sql/071 names plus muse — one name, nothing else moves', () => {
+  const before = presenceCheckNames(
+    readFileSync(new URL('../sql/071_runner_presence_catalog_providers.sql', import.meta.url), 'utf8'), 'sql/071');
+  const after = presenceCheckNames(
+    readFileSync(new URL('../sql/073_runner_presence_muse.sql', import.meta.url), 'utf8'), 'sql/073');
+  assert.deepEqual(after, [...before, 'muse']);
+});
+
+test('the in-code repair list and sql/073 name the same providers — no drift', () => {
+  const repair = presenceCheckNames(
+    readFileSync(new URL('../src/cloud/runner-presence.mjs', import.meta.url), 'utf8'), 'runner-presence.mjs repair');
+  const migration = presenceCheckNames(
+    readFileSync(new URL('../sql/073_runner_presence_muse.sql', import.meta.url), 'utf8'), 'sql/073');
+  assert.deepEqual(repair, migration);
+  assert.ok(repair.includes('muse'), 'the self-heal widens to muse and can never narrow it back out');
+});
+
+// A fake whose table still carries a pre-073 check: the first insert
+// fails with a check violation (23514), the store's standing repair must
+// widen the constraint, and the retried insert must land.
+function makeStaleCheckFakePool() {
+  const rows = new Map(); // provider -> { connected, updated_at }
+  const alters = [];
+  let insertAttempts = 0;
+  const client = {
+    query: async (sql, params = []) => {
+      const text = String(sql);
+      if (text.includes('set_config')) return { rows: [] };
+      if (text.startsWith('select provider_name')) {
+        return { rows: [...rows.entries()].map(([provider_name, v]) => ({ provider_name, ...v })) };
+      }
+      if (text.includes('alter table helmion.runner_provider_presence')) { alters.push(text); return {}; }
+      if (text.includes('insert into helmion.runner_provider_presence')) {
+        insertAttempts += 1;
+        if (insertAttempts === 1) { const e = new Error('check constraint violated'); e.code = '23514'; throw e; }
+        rows.set(params[0], { connected: params[1] === true, updated_at: new Date().toISOString() });
+        return { rowCount: 1 };
+      }
+      if (text === 'begin' || text === 'commit' || text === 'rollback') return {};
+      throw new Error(`unexpected query: ${text}`);
+    },
+    release: () => {},
+  };
+  return { connect: async () => client, _rows: rows, _alters: alters, _inserts: () => insertAttempts };
+}
+
+test('stale-check repair: a 23514 widens the check to the list with muse, then the muse report lands', async () => {
+  const pool = makeStaleCheckFakePool();
+  const store = createRunnerPresenceStore(pool);
+  await store.report('t1', 'muse', true);
+  assert.equal(pool._inserts(), 2, 'the failed insert is retried after the repair');
+  assert.equal(pool._alters.length, 2, 'the repair drops and re-adds the check');
+  const widened = presenceCheckNames(pool._alters.find((s) => s.includes('add constraint')), 'repair SQL');
+  assert.ok(widened.includes('muse'));
+  const rows = await store.list('t1');
+  assert.deepEqual(rows.map((r) => [r.provider, r.connected]), [['muse', true]]);
 });
