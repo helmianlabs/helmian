@@ -3,7 +3,11 @@
 // envoy-mesh.mjs agentWork). The unit half drives the real gate
 // (evaluateToolCall) through hermetic temp workspaces; the seam half
 // runs the two demo-staging fixtures end to end at agentWork against a
-// real database when HELMIAN_TEST_PG_URL is set.
+// real database when HELMIAN_TEST_PG_URL is set. The seam drives the
+// real store split — channels and messages live on the chat store
+// (createEnvoyStore), dispatch on the mesh (createEnvoyMesh) — and a
+// shape test below pins that split so a seam written against the
+// wrong factory fails without needing a database.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -129,6 +133,39 @@ test('guardRefusalText names what was refused and why, in plain words', () => {
   assert.match(deleteText, /What was refused: deleting files\./);
 });
 
+// --- The store split the seam drives, pinned without a database -----
+
+// The seam below was once written against the mesh alone — calling
+// createChannel / appendMessage / listMessages on createEnvoyMesh,
+// where they have never lived — and, being PG-gated, the mistake
+// could only surface on a machine with a database. This shape test
+// catches that class of error anywhere the factories can be imported
+// at all: the channel/message methods belong to the chat store, the
+// dispatch methods to the mesh, and neither factory grows the
+// other's half.
+test('the seam factories expose the store split this file drives', async (t) => {
+  let meshMod; let chatMod;
+  try {
+    meshMod = await import('../src/cloud/envoy-mesh.mjs');
+    chatMod = await import('../src/cloud/envoy-chat.mjs');
+  } catch (err) {
+    // Both modules import 'pg' at load; where dependencies are not
+    // installed the shape cannot be checked and the PG-gated seam
+    // below remains the only cover. Any other import failure is real.
+    if (err?.code === 'ERR_MODULE_NOT_FOUND') { t.skip('pg is not installed in this environment'); return; }
+    throw err;
+  }
+  const mesh = meshMod.createEnvoyMesh({ pool: null });
+  const chat = chatMod.createEnvoyStore(null);
+  for (const name of ['agentWork', 'changeConfig', 'postAsAgent']) {
+    assert.equal(typeof mesh[name], 'function', `mesh.${name}`);
+  }
+  for (const name of ['createChannel', 'appendMessage', 'listMessages']) {
+    assert.equal(typeof chat[name], 'function', `chat.${name}`);
+    assert.equal(mesh[name], undefined, `mesh.${name} belongs to the chat store, not the mesh`);
+  }
+});
+
 // --- The dispatch seam, end to end (needs a real database) ------------
 
 const pgUrl = process.env.HELMIAN_TEST_PG_URL;
@@ -137,78 +174,103 @@ const pgSkip = pgUrl ? false : 'HELMIAN_TEST_PG_URL is not set';
 test('agentWork evaluates before dispatch: refusals surface in the channel and never dispatch', { skip: pgSkip }, async () => {
   const { default: pg } = await import('pg');
   const { createEnvoyMesh } = await import('../src/cloud/envoy-mesh.mjs');
+  const { createEnvoyStore } = await import('../src/cloud/envoy-chat.mjs');
+  const { randomUUID } = await import('node:crypto');
   const pool = new pg.Pool({ connectionString: pgUrl });
-  const tenantId = `tenant_envoy_guard_${Date.now().toString(36)}`;
+  const tenantId = `t-${randomUUID().slice(0, 8)}`;
+  const ownerSubject = `user_${randomUUID().replaceAll('-', '').slice(0, 20)}`;
+  const owner = {
+    tenantId, subject: ownerSubject, role: 'owner',
+    get sessionId() { return randomUUID(); },
+    get requestId() { return randomUUID(); },
+  };
+  const device = { tenantId, subject: ownerSubject, role: 'owner', viaDeviceToken: true };
+  // Bite 3 witnesses every evaluation from this same poll into the
+  // Guard findings feed; an injected recording store keeps this test
+  // on bite 2's ground (dispatch outcomes) and off the real findings
+  // tables, the way envoy-findings.test.mjs injects its own.
+  const recordingStore = {
+    async ingestFinding() { return { durability: 'committed', inserted: true, ackCleared: false }; },
+  };
+  const mesh = createEnvoyMesh({ pool, publishImpl: async () => {}, guardStoreImpl: recordingStore });
+  const chat = createEnvoyStore(pool);
   try {
     await pool.query('insert into helmion.tenants (tenant_id, display_name) values ($1,$2)', [tenantId, 'Envoy Guard Test']);
-    await pool.query('insert into helmion.tenant_memberships (tenant_id, subject, role) values ($1,$2,$3)', [tenantId, 'user:owner', 'owner']);
-    const owner = {
-      tenantId, subject: 'user:owner',
-      get sessionId() { return 'sess-guard'; },
-      get requestId() { return 'req-guard'; },
-    };
-    const device = {
-      tenantId, subject: 'user:owner', viaDeviceToken: true,
-      get sessionId() { return 'sess-guard-device'; },
-      get requestId() { return 'req-guard-device'; },
-    };
-    const store = createEnvoyMesh({ pool });
-    const channel = await store.createChannel(owner, { title: 'Guard Check' });
-    const channelId = channel.channel.id;
-    await store.changeConfig(owner, { channelId, action: 'add_agent', agent: 'claude' });
-    await store.changeConfig(owner, { channelId, action: 'add_agent', agent: 'grok' });
+    await pool.query('insert into helmion.tenant_memberships (tenant_id, subject, role) values ($1,$2,$3)', [tenantId, ownerSubject, 'owner']);
+    const { channel } = await chat.createChannel(owner, { slug: 'guard-check', title: 'Guard Check', kind: 'team' });
+    const channelId = channel.id;
+    await mesh.changeConfig(owner, { action: 'add-agent', channelId, provider: 'claude' });
+    await mesh.changeConfig(owner, { action: 'add-agent', channelId, provider: 'grok' });
     await new Promise((r) => setTimeout(r, 20));
 
-    const workFor = async () => (await store.agentWork(device, 'claude,grok')).work
+    const workFor = async () => (await mesh.agentWork(device, 'claude,grok')).work
       .filter((w) => String(w.channel.id) === String(channelId));
-    const messages = async () => (await store.listMessages(owner, { channelId, limit: 50 })).messages;
+    const messages = async () => (await chat.listMessages(owner, channelId, 50)).messages;
+    // A refusal's outcome record rides in its message metadata, which
+    // the chat store's read normalizes away — so the record is read
+    // where it is stored, the way envoy-findings.test.mjs reads its
+    // refusal rows, while the channel listing proves the refusal is
+    // the seat's visible reply.
+    const refusalRows = async () => (await pool.query(
+      'select author_subject, body, metadata from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_kind=$3',
+      [tenantId, channelId, 'agent'],
+    )).rows.filter((r) => r.metadata?.guard);
 
     // Fixture 1: the password ask is not dispatched to anyone; the
     // refusal is Claude's reply in the channel and carries the outcome
     // record; later polls still hand out nothing for it.
-    const passwordMsg = (await store.appendMessage(owner, { channelId, body: PASSWORD_ASK, idempotencyKey: 'guard-pw' })).receipt.message;
+    const passwordMsg = (await chat.appendMessage(owner, { channelId, body: PASSWORD_ASK, idempotencyKey: randomUUID() })).receipt.message;
     assert.equal((await workFor()).some((w) => w.message.id === passwordMsg.id), false);
-    const passwordRefusal = (await messages()).find((m) => m.guard?.action?.type === 'credential.resolve');
+    const passwordRefusal = (await refusalRows()).find((r) => r.metadata.guard.action?.type === 'credential.resolve');
     assert.ok(passwordRefusal, 'the refusal is posted in the channel');
-    assert.equal(passwordRefusal.authorName, 'Claude');
+    assert.equal(passwordRefusal.author_subject, 'agent:claude');
     assert.match(passwordRefusal.body, /The Executive Guard refused this ask/);
     assert.match(passwordRefusal.body, /revealing a stored credential/);
-    assert.equal(passwordRefusal.guard.verdict, 'refuse');
-    assert.equal(passwordRefusal.guard.match, 'password');
+    assert.equal(passwordRefusal.metadata.guard.verdict, 'refuse');
+    assert.equal(passwordRefusal.metadata.guard.match, 'password');
+    assert.ok(
+      (await messages()).some((m) => m.authorName === 'Claude' && /The Executive Guard refused this ask/.test(m.body)),
+      'the refusal reads as Claude\u2019s reply in the channel listing',
+    );
     assert.equal((await workFor()).some((w) => w.message.id === passwordMsg.id), false);
 
     // Fixture 2: the delete ask, same shape, addressed to Grok.
-    const deleteMsg = (await store.appendMessage(owner, { channelId, body: DELETE_ASK, idempotencyKey: 'guard-del' })).receipt.message;
+    const deleteMsg = (await chat.appendMessage(owner, { channelId, body: DELETE_ASK, idempotencyKey: randomUUID() })).receipt.message;
     assert.equal((await workFor()).some((w) => w.message.id === deleteMsg.id), false);
-    const deleteRefusal = (await messages()).find((m) => m.guard?.action?.type === 'file.delete');
+    const deleteRefusal = (await refusalRows()).find((r) => r.metadata.guard.action?.type === 'file.delete');
     assert.ok(deleteRefusal, 'the refusal is posted in the channel');
-    assert.equal(deleteRefusal.authorName, 'Grok');
+    assert.equal(deleteRefusal.author_subject, 'agent:grok');
     assert.match(deleteRefusal.body, /deleting files/);
-    assert.equal(deleteRefusal.guard.verdict, 'refuse');
-    assert.equal(deleteRefusal.guard.match, 'delete');
+    assert.equal(deleteRefusal.metadata.guard.verdict, 'refuse');
+    assert.equal(deleteRefusal.metadata.guard.match, 'delete');
+    assert.ok(
+      (await messages()).some((m) => m.authorName === 'Grok' && /The Executive Guard refused this ask/.test(m.body)),
+      'the refusal reads as Grok\u2019s reply in the channel listing',
+    );
 
     // An ordinary build ask dispatches, with the allow outcome riding
     // on the work item as its record.
-    const buildMsg = (await store.appendMessage(owner, { channelId, body: BUILD_ASK, idempotencyKey: 'guard-build' })).receipt.message;
+    const buildMsg = (await chat.appendMessage(owner, { channelId, body: BUILD_ASK, idempotencyKey: randomUUID() })).receipt.message;
     const buildItem = (await workFor()).find((w) => w.message.id === buildMsg.id);
     assert.ok(buildItem, 'the build ask is dispatched');
     assert.deepEqual(buildItem.agents, ['claude']);
     assert.equal(buildItem.action.type, 'file.write');
     assert.equal(buildItem.evaluation.verdict, 'allow');
-    await store.postAsAgent(device, { provider: 'claude', channelId, messageId: buildItem.message.id, inReplyTo: buildItem.message.id, body: 'Landing page built.' });
+    await mesh.postAsAgent(device, { channelId, provider: 'claude', replyTo: buildMsg.id, body: 'Landing page built.' });
 
     // A plain chat message dispatches with no evaluation record at all.
-    const chatMsg = (await store.appendMessage(owner, { channelId, body: '@Claude how is the launch looking today?', idempotencyKey: 'guard-chat' })).receipt.message;
+    const chatMsg = (await chat.appendMessage(owner, { channelId, body: '@Claude how is the launch looking today?', idempotencyKey: randomUUID() })).receipt.message;
     const chatItem = (await workFor()).find((w) => w.message.id === chatMsg.id);
     assert.ok(chatItem, 'the chat message is dispatched');
     assert.equal(chatItem.action.type, 'chat');
     assert.equal('evaluation' in chatItem, false);
-    await store.postAsAgent(device, { provider: 'claude', channelId, messageId: chatItem.message.id, inReplyTo: chatItem.message.id, body: 'Looking good.' });
+    await mesh.postAsAgent(device, { channelId, provider: 'claude', replyTo: chatMsg.id, body: 'Looking good.' });
 
-    // Nothing is left outstanding, and a refusal never became work.
+    // Nothing is left outstanding, and exactly the two refusals carry
+    // an outcome record — neither ever became work.
     const remaining = await workFor();
     assert.equal(remaining.length, 0);
-    assert.equal((await messages()).some((m) => m.guard && remaining.some((w) => w.message.id === m.id)), false);
+    assert.equal((await refusalRows()).length, 2);
   } finally {
     await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
     await pool.end();
