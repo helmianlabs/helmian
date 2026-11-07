@@ -14,6 +14,7 @@ import {
   AGENT_OS_TARGETS,
   DEFAULT_TEMPLATES_ROOT,
   ESTATE_CARGO,
+  ESTATE_CARGO_FOLDERS,
   IDENTIFYING_PATTERNS,
   TARGET_SPECS,
   defaultTargetDirectory,
@@ -757,6 +758,220 @@ test('no estate sources means no estate cargo, and no error', async () => {
   assert.deepEqual(result.estate.skipped, []);
   assert.equal(result.files.some((file) => file.cargo === 'estate'), false);
   assert.equal(existsSync(join(home, '.claude', 'agent-os', 'estate')), false);
+
+  await rm(home, { recursive: true, force: true });
+});
+
+// ── Estate folder cargo (part B1) ────────────────────────────────────────────
+//
+// The same estate, one level down: the Claude seat's hand-built hook scripts
+// (scripts/) and its topic lessons library (lessons/) ride along file by
+// file. The fences are part of the cargo: root files only, an extension
+// allowlist per folder, so backup copies, logs and nested tool trees stay
+// home. Carriage only — nothing here wires or runs a carried script.
+
+const ESTATE_FOLDER_CARRIED = Object.freeze({
+  // [folder-relative source path, exact bytes]
+  scripts: Object.freeze({
+    'hook_block_destructive.ps1': '# the destructive-command block\r\nif ($cmd -match "rm -rf") { exit 2 }\n',
+    'rules_drift_check.mjs': 'export const drift = "check";\n',
+    'session_start_inject.sh': '#!/bin/sh\necho start\n',
+  }),
+  lessons: Object.freeze({
+    'INDEX.md': '# Lessons index\n',
+    'lessons-hooks.md': '# Hooks lessons\n\n- Name the line that broke.\n',
+  }),
+});
+
+// Files that sit in the same folders but must NOT be carried: a backup copy,
+// a log, a wrong-extension file, and a script one level down in a subfolder.
+const ESTATE_FOLDER_LEFT_HOME = Object.freeze({
+  scripts: Object.freeze({
+    'hook_block_destructive.ps1.bak-2026-07-25': 'an old copy',
+    'tts.log': 'a log line\n',
+    'neon/db.mjs': 'a nested tool tree file\n',
+  }),
+  lessons: Object.freeze({
+    'INDEX.md.20260728-175435.bak': 'an old copy',
+    'notes.txt': 'not markdown\n',
+  }),
+});
+
+const folderDestinations = () => Object.values(ESTATE_FOLDER_CARRIED)
+  .flatMap((files, index) => {
+    const folder = ESTATE_CARGO_FOLDERS[index];
+    return Object.keys(files).map((name) => `${folder.destination}/${name}`);
+  })
+  .sort();
+
+async function estateFolderHome() {
+  const home = await estateHome();
+  const claudeDir = join(home, '.claude');
+  for (const [folder, files] of Object.entries(ESTATE_FOLDER_CARRIED)) {
+    await mkdir(join(claudeDir, folder), { recursive: true });
+    for (const [name, content] of Object.entries(files)) {
+      await writeFile(join(claudeDir, folder, name), content, 'utf8');
+    }
+  }
+  for (const [folder, files] of Object.entries(ESTATE_FOLDER_LEFT_HOME)) {
+    for (const [name, content] of Object.entries(files)) {
+      const full = join(claudeDir, folder, name);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, content, 'utf8');
+    }
+  }
+  return home;
+}
+
+test('loadEstateCargo carries the estate folders by their fences, and names the missing ones', async () => {
+  const home = await estateFolderHome();
+  const { contents, missingFolders } = await loadEstateCargo({ home });
+
+  assert.deepEqual(missingFolders, []);
+  for (const [folder, files] of Object.entries(ESTATE_FOLDER_CARRIED)) {
+    const spec = ESTATE_CARGO_FOLDERS.find((entry) => entry.source === folder);
+    for (const [name, content] of Object.entries(files)) {
+      assert.equal(
+        contents[`${spec.destination}/${name}`],
+        content,
+        `${folder}/${name} must be carried byte for byte`,
+      );
+    }
+  }
+  const carriedFolderKeys = Object.keys(contents).filter((path) => path.includes('/scripts/') || path.includes('/lessons/'));
+  assert.deepEqual(carriedFolderKeys.sort(), folderDestinations(), 'only the fenced files ride');
+  for (const [folder, files] of Object.entries(ESTATE_FOLDER_LEFT_HOME)) {
+    const spec = ESTATE_CARGO_FOLDERS.find((entry) => entry.source === folder);
+    for (const name of Object.keys(files)) {
+      assert.equal(contents[`${spec.destination}/${name}`], undefined, `${folder}/${name} stays home`);
+    }
+  }
+
+  // Absent folders: named in missingFolders, no contents, no error.
+  const bare = await estateHome();
+  const bareResult = await loadEstateCargo({ home: bare });
+  assert.deepEqual(bareResult.missingFolders, ['scripts', 'lessons']);
+  assert.deepEqual(
+    Object.keys(bareResult.contents).filter((path) => path.includes('/scripts/') || path.includes('/lessons/')),
+    [],
+  );
+
+  // Present but empty folders: not missing, and they contribute nothing.
+  const empty = await estateHome();
+  await mkdir(join(empty, '.claude', 'scripts'), { recursive: true });
+  await mkdir(join(empty, '.claude', 'lessons'), { recursive: true });
+  const emptyResult = await loadEstateCargo({ home: empty });
+  assert.deepEqual(emptyResult.missingFolders, []);
+  assert.deepEqual(
+    Object.keys(emptyResult.contents).filter((path) => path.includes('/scripts/') || path.includes('/lessons/')),
+    [],
+  );
+
+  await rm(home, { recursive: true, force: true });
+  await rm(bare, { recursive: true, force: true });
+  await rm(empty, { recursive: true, force: true });
+});
+
+test('renderEstateFiles carries folder cargo sorted, verbatim, managed', () => {
+  const contents = {
+    'agent-os/estate/scripts/session_start_inject.sh': '#!/bin/sh\necho start\n',
+    'agent-os/estate/lessons/INDEX.md': '# Lessons index\n',
+    'agent-os/estate/scripts/hook_block_destructive.ps1': 'a script with trailing space \n\n',
+    'agent-os/estate/CLAUDE-ESTATE.md': 'the fixed cargo still rides first\n',
+    'agent-os/unrelated.txt': 'not estate cargo at all',
+  };
+  const files = renderEstateFiles(contents);
+
+  assert.deepEqual(
+    files.map((file) => file.path),
+    [
+      'agent-os/estate/CLAUDE-ESTATE.md',
+      'agent-os/estate/scripts/hook_block_destructive.ps1',
+      'agent-os/estate/scripts/session_start_inject.sh',
+      'agent-os/estate/lessons/INDEX.md',
+    ],
+  );
+  for (const file of files) {
+    assert.equal(file.ownership, 'managed');
+    assert.equal(file.cargo, 'estate');
+    assert.equal(file.content, contents[file.path], 'verbatim: no trim, no render');
+  }
+});
+
+test('the estate folders land in every seat, refresh on change only, and skip with the seat', async () => {
+  const home = await estateFolderHome();
+  const expectedCarried = ESTATE_CARGO.length + folderDestinations().length;
+
+  // Three seats present; grok is not on this machine.
+  await mkdir(join(home, '.codex'), { recursive: true });
+  await mkdir(join(home, '.gemini'), { recursive: true });
+
+  const first = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  const byTarget = new Map(first.targets.map((result) => [result.target, result]));
+
+  for (const present of ['claude', 'codex', 'gemini']) {
+    const result = byTarget.get(present);
+    assert.equal(result.estate.carried, expectedCarried, `${present} must carry the fixed estate and both folders`);
+    for (const [folder, files] of Object.entries(ESTATE_FOLDER_CARRIED)) {
+      for (const [name, content] of Object.entries(files)) {
+        assert.equal(
+          await readFile(join(result.directory, 'agent-os', 'estate', folder, name), 'utf8'),
+          content,
+          `${present}: estate/${folder}/${name} must equal the source bytes`,
+        );
+      }
+    }
+    // Nothing that stayed home appears in a seat.
+    assert.equal(existsSync(join(result.directory, 'agent-os', 'estate', 'scripts', 'neon')), false);
+    assert.equal(existsSync(join(result.directory, 'agent-os', 'estate', 'scripts', 'tts.log')), false);
+    assert.equal(existsSync(join(result.directory, 'agent-os', 'estate', 'lessons', 'notes.txt')), false);
+  }
+
+  // The absent seat: every estate entry — fixed and folder — is a recorded
+  // skip, and no estate folder is written for it.
+  const grok = byTarget.get('grok');
+  assert.equal(grok.estate.carried, 0);
+  assert.deepEqual(
+    grok.estate.skipped.sort(),
+    [...ESTATE_CARGO.map((entry) => entry.destination), ...folderDestinations()].sort(),
+  );
+  assert.equal(existsSync(join(home, '.grok', 'agent-os', 'estate')), false);
+
+  // Unchanged sources: every folder entry is a no-op in every present seat.
+  const second = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  for (const result of second.targets) {
+    if (result.target === 'grok') continue;
+    const folderActions = result.files.filter(
+      (file) => file.cargo === 'estate' && folderDestinations().includes(file.path),
+    );
+    assert.equal(folderActions.length, folderDestinations().length);
+    assert.ok(
+      folderActions.every((file) => file.action === 'unchanged'),
+      `${result.target}: unchanged folder sources must not refresh`,
+    );
+  }
+
+  // One script grows: exactly that copy refreshes, in every present seat.
+  const grown = `${ESTATE_FOLDER_CARRIED.scripts['rules_drift_check.mjs']}// one more check\n`;
+  await writeFile(join(home, '.claude', 'scripts', 'rules_drift_check.mjs'), grown, 'utf8');
+  const third = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  for (const result of third.targets) {
+    if (result.target === 'grok') continue;
+    const byPath = new Map(result.files.map((file) => [file.path, file.action]));
+    assert.equal(byPath.get('agent-os/estate/scripts/rules_drift_check.mjs'), 'update', `${result.target}: the grown script must refresh`);
+    assert.equal(byPath.get('agent-os/estate/scripts/hook_block_destructive.ps1'), 'unchanged');
+    assert.equal(byPath.get('agent-os/estate/lessons/INDEX.md'), 'unchanged');
+    assert.equal(
+      await readFile(join(result.directory, 'agent-os', 'estate', 'scripts', 'rules_drift_check.mjs'), 'utf8'),
+      grown,
+    );
+  }
+
+  // The sources were read, never written: the files left home are untouched.
+  assert.equal(
+    await readFile(join(home, '.claude', 'scripts', 'hook_block_destructive.ps1.bak-2026-07-25'), 'utf8'),
+    'an old copy',
+  );
 
   await rm(home, { recursive: true, force: true });
 });
