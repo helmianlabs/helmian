@@ -29,6 +29,16 @@ export const PROFILE_SYNC_JOB_STATUSES = Object.freeze(['pending', 'claimed', 'd
 const FILE_REPORT_LIMIT = 500;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
+// The device report is the one legitimately large body on the admin
+// host: FILE_REPORT_LIMIT entries, each carrying a path of up to 1024
+// chars, a target, a verb and a sha256 — a full report serializes to
+// roughly 600 KB. The host's shared body reader (live-admin.mjs
+// readJsonObject) caps bodies at 16 KB by default, a size chosen for
+// action-policy payloads; it takes the cap as its second argument, so
+// this route asks for a report-sized one. 1 MiB covers the largest
+// report the sanitizer can emit, with headroom, and stays bounded.
+const REPORT_BODY_MAX_BYTES = 1024 * 1024;
+
 // The report is small scalars only — a path, a target name, a
 // created/updated verb, a hash. Anything else is dropped here so the
 // result column can never become a file-content or secret channel.
@@ -211,7 +221,18 @@ export async function handleProfileSyncRoute({
     const actor = await activeTenantActor(request);
     if (request.method === 'POST') {
       let body = {};
-      try { body = (await readJson(request)) ?? {}; } catch {}
+      try {
+        body = (await readJson(request, REPORT_BODY_MAX_BYTES)) ?? {};
+      } catch (error) {
+        // An unreadable body is an error, never an enqueue. The old
+        // empty catch re-read an oversized device report as a button
+        // press: the 16 KB host cap rejected every estate-scale report
+        // (jobs 8, 11, 14 on 2026-11-06), the route minted a phantom
+        // job and answered 202, and the claimed job sat in 'claimed'
+        // forever while the bridge logged a successful report.
+        send(response, error?.status ?? 400, JSON.stringify({ valid: false, code: 'PROFILE_SYNC_BODY_INVALID', detail: error?.message ?? String(error) }));
+        return true;
+      }
       if (body.jobId != null || body.status != null) {
         // A device report. A member session cannot attest to files on
         // a PC it is not running on — same line as the connected claim.
