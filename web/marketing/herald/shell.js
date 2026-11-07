@@ -409,7 +409,12 @@ async function initializeAccountRemoteControl() {
     // PC actions waiting in Executive Guard (owner-only; hidden otherwise).
     const pcApprovals = mountPcApprovals({ container: document.querySelector('[data-drawer-panel="guard"]'), token: async () => (clerk?.isSignedIn ? clerk?.session?.getToken?.() ?? null : null) });
     void pcApprovals.refresh();
-    setInterval(() => { if (clerk?.isSignedIn && !document.hidden) void pcApprovals.refresh(); }, 15000);
+    setInterval(() => {
+      if (clerk?.isSignedIn && !document.hidden) {
+        void pcApprovals.refresh();
+        void loadHeraldEnvoyFeed();
+      }
+    }, 15000);
   } catch (error) {
     setRemoteStatus(`Remote Control is unavailable: ${error.message}`, false);
   }
@@ -423,6 +428,10 @@ async function applyAccountState(config) {
     setRemoteStatus('Sign in to see only the Desktops owned by your Helmian account.', false);
     $('#desktopList').replaceChildren();
     $('#desktopEmpty').hidden = false;
+    // The Team feed belongs to the signed-in account; never leave the
+    // previous account's messages standing after a sign-out.
+    const envoyFeedBox = $('#heraldEnvoyFeed');
+    if (envoyFeedBox) { envoyFeedBox.replaceChildren(); envoyFeedBox.hidden = true; }
     if (qrEnrollmentCode && !accountDialog.open) accountDialog.showModal();
     if (accountDialog.open) clerk.mountSignIn($('#clerkMount'), clerkReturnProps);
     return;
@@ -437,6 +446,11 @@ async function applyAccountState(config) {
   setRemoteStatus('Signed in. Checking your account-owned Desktop sessions…', false);
   await refreshDesktopList();
   await redeemScannedEnrollment();
+  // The Team pane's live Envoy feed is a cloud read with no desktop
+  // dependency: it fires on the signed-in state itself (and refreshes on
+  // the approvals interval in initializeAccountRemoteControl), never only
+  // after a desktop enrollment.
+  void loadHeraldEnvoyFeed();
   if (config?.transport?.realtimeClientActive !== true) {
     setRemoteStatus('Your account is signed in, but scoped realtime transport is not configured.', false);
   }
@@ -584,13 +598,20 @@ async function loadHeraldEnvoyFeed() {
   const box = $('#heraldEnvoyFeed');
   if (!box) return;
   try {
-    const chRes = await fetch('/api/admin/envoy/channels', { credentials: 'include' });
+    // Same identity as the rest of the shell: the Clerk session Bearer,
+    // exactly as pc-approvals calls its feed. A /herald-only sign-in holds
+    // no /app admin session cookie, so the old cookie-only fetch 401'd and
+    // the feed silently never rendered.
+    const token = clerk?.isSignedIn ? await clerk.session?.getToken?.().catch(() => null) ?? null : null;
+    if (!token) return;
+    const feedInit = { credentials: 'same-origin', headers: { authorization: `Bearer ${token}` } };
+    const chRes = await fetch('/api/admin/envoy/channels', feedInit);
     if (!chRes.ok) return;
     const chBody = await chRes.json();
     const channels = Array.isArray(chBody.channels) ? chBody.channels : [];
     const first = channels[0];
     if (!first) return;
-    const msgRes = await fetch(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(first.id)}&limit=20`, { credentials: 'include' });
+    const msgRes = await fetch(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(first.id)}&limit=20`, feedInit);
     if (!msgRes.ok) return;
     const msgBody = await msgRes.json();
     const msgs = (Array.isArray(msgBody.messages) ? msgBody.messages : []).filter((m) => m.authorKind !== 'system');

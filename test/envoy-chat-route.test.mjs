@@ -31,6 +31,7 @@ function fakePool() {
         return { rowCount: 1, rows: [{ role: memberships[values[1]]?.role ?? 'member' }] };
       }
       if (q.startsWith('select id, slug, title, kind, created_by_subject')) return { rowCount: channels.length, rows: channels };
+      if (q.startsWith('select distinct on (channel_id) channel_id, body from helmion.envoy_messages')) return { rowCount: 0, rows: [] };
       if (q.startsWith('select id from helmion.envoy_channels')) return channels.some((row) => row.id === values[1]) ? { rowCount: 1, rows: [{ id: values[1] }] } : { rowCount: 0, rows: [] };
       if (q.startsWith('insert into helmion.envoy_channels')) {
         const existing = channels.find((row) => row.slug === values[1]);
@@ -249,4 +250,35 @@ test('a message with a file attachment larger than the old 16 KB body cap posts 
   assert.equal(tooBig.status, 400, 'a body past the route budget is refused, not stored');
   const channelsBody = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_CHANNELS_PATH}`, { method: 'POST', headers, body: JSON.stringify({ slug: 'padded', title: 'x'.repeat(20_000), kind: 'team' }) });
   assert.equal(channelsBody.status, 400, 'an oversized body on another admin route is still refused');
+});
+test('Envoy feed reads accept a Clerk session Bearer (Herald shell) without the admin cookie', async (t) => {
+  // The /herald shell's identity is the Clerk session Bearer (the
+  // guard-pc-approvals precedent); a phone signed in only through /herald
+  // holds no helmion_admin_session cookie.
+  const verifyClerkBearer = async (token) => token === 'clerk-session-token' ? { subject: 'user-1' } : null;
+  const app = await fixture({ verifyClerkBearer }); t.after(app.close);
+  const headers = { authorization: ['Bearer', 'clerk-session-token'].join(' ') };
+  const channels = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_CHANNELS_PATH}`, { headers });
+  assert.equal(channels.status, 200);
+  assert.equal((await channels.json()).channels[0].id, 'channel-1');
+  const messages = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}?channel_id=channel-1`, { headers });
+  assert.equal(messages.status, 200);
+  assert.deepEqual((await messages.json()).messages, []);
+});
+
+test('Clerk Bearer leg refuses unverified tokens, non-members, and writes', async (t) => {
+  const verifyClerkBearer = async (token) => token === 'clerk-member-token' ? { subject: 'user-1' } : token === 'clerk-stranger-token' ? { subject: 'user-9' } : null;
+  const app = await fixture({ verifyClerkBearer }); t.after(app.close);
+  const bearer = (token) => ({ authorization: ['Bearer', token].join(' ') });
+  // A Bearer that does not verify is no identity at all.
+  const unverified = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_CHANNELS_PATH}`, { headers: bearer('clerk-junk-token') });
+  assert.equal(unverified.status, 403);
+  // A verified Clerk subject with no tenant membership still refuses:
+  // the Bearer proves identity, membership still grants the read.
+  const stranger = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_CHANNELS_PATH}`, { headers: bearer('clerk-stranger-token') });
+  assert.equal(stranger.status, 403);
+  // The Clerk leg is read-only: writes still require the cookie session
+  // or a device token.
+  const write = await fetch(`${app.url}${LIVE_ADMIN_ENVOY_MESSAGES_PATH}`, { method: 'POST', headers: { ...bearer('clerk-member-token'), 'content-type': 'application/json' }, body: JSON.stringify({ channelId: 'channel-1', body: 'nope', idempotencyKey: 'clerk-write-1' }) });
+  assert.equal(write.status, 403);
 });
