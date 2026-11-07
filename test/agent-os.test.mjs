@@ -15,6 +15,8 @@ import {
   DEFAULT_TEMPLATES_ROOT,
   ESTATE_CARGO,
   ESTATE_CARGO_FOLDERS,
+  ESTATE_CARGO_TREES,
+  ESTATE_TREE_FILE_MAX_BYTES,
   IDENTIFYING_PATTERNS,
   TARGET_SPECS,
   defaultTargetDirectory,
@@ -971,6 +973,219 @@ test('the estate folders land in every seat, refresh on change only, and skip wi
   assert.equal(
     await readFile(join(home, '.claude', 'scripts', 'hook_block_destructive.ps1.bak-2026-07-25'), 'utf8'),
     'an old copy',
+  );
+
+  await rm(home, { recursive: true, force: true });
+});
+
+// ── Estate tree cargo (part B2) ─────────────────────────────────────────────
+//
+// The skills library rides as a tree: each skill is a folder whose shape is
+// part of the skill, so the walk is recursive and the fences are exclusions
+// (secret-bearing names, dependency and cache directories, logs, backups,
+// binaries, an oversized file) rather than the folder cargo's allowlist.
+// Carriage only — nothing here installs a skill into a seat's native
+// skills home or runs anything it carries.
+
+const ESTATE_TREE_CARRIED = Object.freeze({
+  // [tree-relative source path, exact bytes]
+  'cite-or-shut-up/SKILL.md': '# Cite or shut up\n\n- Name the file behind the claim.\n',
+  'cite-or-shut-up/references/sources.md': '# Sources\n\nWhere claims come from.\n',
+  'llm-council/council.py': 'print("council is in session")\n',
+  'llm-council/notes.txt': 'council notes\n',
+});
+
+// Files that sit in the same tree but must NOT be carried: a real .env and
+// its template, a name carrying "key", a backup copy, a log, a binary, the
+// dependency and cache directories, and one file over the size cap.
+const ESTATE_TREE_LEFT_HOME = Object.freeze({
+  'llm-council/.env': 'COUNCIL_KEY=not-the-estate\n',
+  'llm-council/.env.template': 'COUNCIL_KEY=\n',
+  'llm-council/api-key-notes.md': 'where the keys live\n',
+  'cite-or-shut-up/SKILL.md.20260728-212459.bak': 'an old copy',
+  'cite-or-shut-up/debug.log': 'a log line\n',
+  'cite-or-shut-up/diagram.png': 'not really a png, fenced by name\n',
+  'llm-council/node_modules/pkg/index.js': 'a dependency file\n',
+  'llm-council/__pycache__/council.cpython-312.pyc': 'bytecode\n',
+  'llm-council/big-transcript.md': 'x'.repeat(ESTATE_TREE_FILE_MAX_BYTES + 1),
+});
+
+const treeSpec = () => ESTATE_CARGO_TREES[0];
+
+const treeDestinations = () => Object.keys(ESTATE_TREE_CARRIED)
+  .map((rel) => `${treeSpec().destination}/${rel}`)
+  .sort();
+
+async function estateTreeHome() {
+  const home = await estateHome();
+  const skillsDir = join(home, '.claude', treeSpec().source);
+  for (const files of [ESTATE_TREE_CARRIED, ESTATE_TREE_LEFT_HOME]) {
+    for (const [rel, content] of Object.entries(files)) {
+      const full = join(skillsDir, rel);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, content, 'utf8');
+    }
+  }
+  return home;
+}
+
+test('loadEstateCargo carries the skills tree by its fences, and names the missing tree', async () => {
+  const home = await estateTreeHome();
+  const { contents, missingTrees } = await loadEstateCargo({ home });
+
+  assert.deepEqual(missingTrees, []);
+  for (const [rel, content] of Object.entries(ESTATE_TREE_CARRIED)) {
+    assert.equal(
+      contents[`${treeSpec().destination}/${rel}`],
+      content,
+      `skills/${rel} must be carried byte for byte, its folder shape intact`,
+    );
+  }
+  const carriedTreeKeys = Object.keys(contents)
+    .filter((path) => path.startsWith(`${treeSpec().destination}/`));
+  assert.deepEqual(carriedTreeKeys.sort(), treeDestinations(), 'only the fenced files ride');
+  for (const rel of Object.keys(ESTATE_TREE_LEFT_HOME)) {
+    assert.equal(
+      contents[`${treeSpec().destination}/${rel}`],
+      undefined,
+      `skills/${rel} stays home`,
+    );
+  }
+
+  // Absent tree: named in missingTrees, no contents, no error.
+  const bare = await estateHome();
+  const bareResult = await loadEstateCargo({ home: bare });
+  assert.deepEqual(bareResult.missingTrees, [treeSpec().source]);
+  assert.deepEqual(
+    Object.keys(bareResult.contents).filter((path) => path.startsWith(`${treeSpec().destination}/`)),
+    [],
+  );
+
+  // Present but empty tree: not missing, and it contributes nothing.
+  const empty = await estateHome();
+  await mkdir(join(empty, '.claude', treeSpec().source), { recursive: true });
+  const emptyResult = await loadEstateCargo({ home: empty });
+  assert.deepEqual(emptyResult.missingTrees, []);
+  assert.deepEqual(
+    Object.keys(emptyResult.contents).filter((path) => path.startsWith(`${treeSpec().destination}/`)),
+    [],
+  );
+
+  await rm(home, { recursive: true, force: true });
+  await rm(bare, { recursive: true, force: true });
+  await rm(empty, { recursive: true, force: true });
+});
+
+test('renderEstateFiles carries tree cargo sorted, verbatim, managed', () => {
+  const contents = {
+    'agent-os/estate/skills/llm-council/council.py': 'print("council")\n',
+    'agent-os/estate/skills/cite-or-shut-up/SKILL.md': '# Cite or shut up\n',
+    'agent-os/estate/skills/cite-or-shut-up/references/sources.md': '# Sources \n\n',
+    'agent-os/estate/scripts/rules_drift_check.mjs': 'export const drift = "check";\n',
+    'agent-os/estate/CLAUDE-ESTATE.md': 'the fixed cargo still rides first\n',
+    'agent-os/unrelated.txt': 'not estate cargo at all',
+  };
+  const files = renderEstateFiles(contents);
+
+  assert.deepEqual(
+    files.map((file) => file.path),
+    [
+      'agent-os/estate/CLAUDE-ESTATE.md',
+      'agent-os/estate/scripts/rules_drift_check.mjs',
+      'agent-os/estate/skills/cite-or-shut-up/SKILL.md',
+      'agent-os/estate/skills/cite-or-shut-up/references/sources.md',
+      'agent-os/estate/skills/llm-council/council.py',
+    ],
+  );
+  for (const file of files) {
+    assert.equal(file.ownership, 'managed');
+    assert.equal(file.cargo, 'estate');
+    assert.equal(file.content, contents[file.path], 'verbatim: no trim, no render');
+  }
+});
+
+test('the skills tree lands in every seat, refreshes on change only, and skips with the seat', async () => {
+  const home = await estateTreeHome();
+  const expectedCarried = ESTATE_CARGO.length + treeDestinations().length;
+
+  // Three seats present; grok is not on this machine.
+  await mkdir(join(home, '.codex'), { recursive: true });
+  await mkdir(join(home, '.gemini'), { recursive: true });
+
+  const first = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  const byTarget = new Map(first.targets.map((result) => [result.target, result]));
+
+  for (const present of ['claude', 'codex', 'gemini']) {
+    const result = byTarget.get(present);
+    assert.equal(result.estate.carried, expectedCarried, `${present} must carry the fixed estate and the whole tree`);
+    for (const [rel, content] of Object.entries(ESTATE_TREE_CARRIED)) {
+      assert.equal(
+        await readFile(join(result.directory, 'agent-os', 'estate', 'skills', rel), 'utf8'),
+        content,
+        `${present}: estate/skills/${rel} must equal the source bytes`,
+      );
+    }
+    // Nothing that stayed home appears in a seat — and the copy never
+    // lands in the seat's NATIVE skills home, only in the managed folder.
+    assert.equal(existsSync(join(result.directory, 'agent-os', 'estate', 'skills', 'llm-council', '.env')), false);
+    assert.equal(existsSync(join(result.directory, 'agent-os', 'estate', 'skills', 'llm-council', 'node_modules')), false);
+    assert.equal(existsSync(join(result.directory, 'agent-os', 'estate', 'skills', 'llm-council', 'big-transcript.md')), false);
+    if (result.target !== 'claude') {
+      assert.equal(
+        existsSync(join(result.directory, 'skills')),
+        false,
+        `${result.target}: no native skills home is written`,
+      );
+    }
+  }
+  // The source seat's native skills home is the source itself: untouched,
+  // and the estate copy sits beside it under agent-os/, not inside it.
+  assert.equal(existsSync(join(home, '.claude', 'skills', 'agent-os')), false);
+
+  // The absent seat: every estate entry — fixed and tree — is a recorded
+  // skip, and no estate folder is written for it.
+  const grok = byTarget.get('grok');
+  assert.equal(grok.estate.carried, 0);
+  assert.deepEqual(
+    grok.estate.skipped.sort(),
+    [...ESTATE_CARGO.map((entry) => entry.destination), ...treeDestinations()].sort(),
+  );
+  assert.equal(existsSync(join(home, '.grok', 'agent-os', 'estate')), false);
+
+  // Unchanged sources: every tree entry is a no-op in every present seat.
+  const second = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  for (const result of second.targets) {
+    if (result.target === 'grok') continue;
+    const treeActions = result.files.filter(
+      (file) => file.cargo === 'estate' && treeDestinations().includes(file.path),
+    );
+    assert.equal(treeActions.length, treeDestinations().length);
+    assert.ok(
+      treeActions.every((file) => file.action === 'unchanged'),
+      `${result.target}: unchanged tree sources must not refresh`,
+    );
+  }
+
+  // One nested file grows: exactly that copy refreshes, in every present seat.
+  const grown = `${ESTATE_TREE_CARRIED['cite-or-shut-up/references/sources.md']}\nOne more source.\n`;
+  await writeFile(join(home, '.claude', 'skills', 'cite-or-shut-up', 'references', 'sources.md'), grown, 'utf8');
+  const third = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  for (const result of third.targets) {
+    if (result.target === 'grok') continue;
+    const byPath = new Map(result.files.map((file) => [file.path, file.action]));
+    assert.equal(byPath.get('agent-os/estate/skills/cite-or-shut-up/references/sources.md'), 'update', `${result.target}: the grown file must refresh`);
+    assert.equal(byPath.get('agent-os/estate/skills/cite-or-shut-up/SKILL.md'), 'unchanged');
+    assert.equal(byPath.get('agent-os/estate/skills/llm-council/council.py'), 'unchanged');
+    assert.equal(
+      await readFile(join(result.directory, 'agent-os', 'estate', 'skills', 'cite-or-shut-up', 'references', 'sources.md'), 'utf8'),
+      grown,
+    );
+  }
+
+  // The sources were read, never written: the files left home are untouched.
+  assert.equal(
+    await readFile(join(home, '.claude', 'skills', 'llm-council', '.env'), 'utf8'),
+    ESTATE_TREE_LEFT_HOME['llm-council/.env'],
   );
 
   await rm(home, { recursive: true, force: true });
