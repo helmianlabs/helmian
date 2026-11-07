@@ -62,12 +62,15 @@ const ACTIVITY_STAGE_SET = new Set(ACTIVITY_STAGES);
 const ACTIVITY_LIST_LIMIT = 100;
 const ACTIVITY_CLOCK_SKEW_MS = 60_000;
 
-// The presence vocabulary is the vault key set (report() enforces the
-// same set); connection aliases ('chatgpt', 'openai_codex') resolve
-// through tenant-agent-state's connectionProvider, the same resolver
-// the presence leg uses. The worker reports the qwen seat as 'ollama'
-// (its presence name), so the desk matches activity to a seat by the
-// same names it already maps presence by.
+// The presence vocabulary is the vault key set plus the presence-only
+// seat names (report() enforces the same set); connection aliases
+// ('chatgpt', 'openai_codex') resolve through tenant-agent-state's
+// connectionProvider, the same resolver the presence leg uses. The
+// worker reports the qwen seat as 'qwen' — her own name, admitted by
+// the presence-only split below — while a report under her engine's
+// name ('ollama', the vault key) still resolves as the engine's row,
+// so the desk matches activity to a seat by the same names it already
+// maps presence by.
 function normalizeActivityProvider(raw) {
   const value = String(raw ?? '').trim().toLowerCase();
   if (!value) return null;
@@ -133,7 +136,15 @@ function getPool() {
   return sharedPool;
 }
 
-const PROVIDERS = new Set(Object.keys(PROVIDER_KEY_ENV));
+// The presence vocabulary: the vault key set, plus the presence-only
+// seat names — seats that hold no vault key slot of their own. 'qwen'
+// is the one such seat: her engine 'ollama' keeps the key slot
+// (PROVIDER_KEY_ENV stays machinery, per the qwen-rename plan's
+// pick A) while the seat herself reports, syncs, and stamps answers
+// under her own name. Before this split the store rejected 'qwen'
+// outright, so her answers could never stamp her presence row.
+const PRESENCE_ONLY_PROVIDERS = Object.freeze(['qwen']);
+const PROVIDERS = new Set([...Object.keys(PROVIDER_KEY_ENV), ...PRESENCE_ONLY_PROVIDERS]);
 
 function isMissingTable(error) {
   return error?.code === '42P01';
@@ -167,7 +178,7 @@ export function createRunnerPresenceStore(pool) {
     } catch (err) {
       if (err?.code !== '23514') throw err;
       await client.query(`alter table helmion.runner_provider_presence drop constraint if exists runner_provider_presence_provider_name_check`);
-      await client.query(`alter table helmion.runner_provider_presence add constraint runner_provider_presence_provider_name_check check (provider_name in ('gemini', 'claude', 'openai', 'grok', 'xai', 'mistral', 'runway', 'ollama', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse'))`);
+      await client.query(`alter table helmion.runner_provider_presence add constraint runner_provider_presence_provider_name_check check (provider_name in ('gemini', 'claude', 'openai', 'grok', 'xai', 'mistral', 'runway', 'ollama', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse', 'qwen'))`);
       await client.query(sql, params);
     }
   };
@@ -369,7 +380,9 @@ export async function handleRunnerPresenceRoute({
         // provider's presence row with the sync time (markSynced) so the
         // surfaces can say "Synced" — the connected boolean is the
         // bridge's claim to make, and this branch never touches it.
-        const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama'];
+        // The qwen seat stamps under her own name ('qwen'), not her
+        // engine's — the presence-vocabulary split above admits it.
+        const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'qwen'];
         for (const prov of syncedProviders) {
           await store.markSynced(actor.tenantId, prov).catch(() => {});
         }
