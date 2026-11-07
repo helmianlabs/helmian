@@ -407,8 +407,12 @@ export function slackSubject(userId, displayName) {
 }
 
 // Text an agent gets for its turn: who it is, who else is here, the recent
-// conversation, and the message it is answering.
-export function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian', customAgents = [], debateMode = 'off' }) {
+// conversation, and the message it is answering. `notebook`, when the mesh
+// supplies one (envoy-notebook.mjs), is the tenant's shared-notebook block
+// — already bounded and formatted — rendered between the role line and the
+// recent conversation. Absent or empty, the prompt is exactly what it has
+// always been, byte for byte.
+export function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian', customAgents = [], debateMode = 'off', notebook = null }) {
   const customMap = new Map((customAgents ?? []).map((a) => [a.handle || a.id, a]));
   const p = normalizeProvider(provider) ?? (customMap.has(String(provider ?? '').toLowerCase()) ? String(provider).toLowerCase() : null);
   // There is no Maestro prompt: no turn is ever composed for 'maestro',
@@ -433,7 +437,8 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
   const role = `You are ${me}, an agent member of ${where}.${jobLine} Other agents here: ${others.join(', ') || 'none'}. If you were given a slice of work, start your reply with "Claim:" and the slice you are taking, so you do not overlap the others.${debateLine} Be concise.`;
   const history = context.slice(-12).map((m) => `${m.authorName || m.authorKind}: ${String(m.body ?? '').slice(0, 600)}`).join('\n');
   const from = message?.authorName || (message?.authorKind === 'agent' ? 'Agent' : 'Member');
-  return `${role}\n\nRecent conversation:\n${history || '(none)'}\n\nReply to this message from ${from}:\n${String(message?.body ?? '')}`;
+  const notebookBlock = String(notebook ?? '').trim();
+  return `${role}${notebookBlock ? `\n\n${notebookBlock}` : ''}\n\nRecent conversation:\n${history || '(none)'}\n\nReply to this message from ${from}:\n${String(message?.body ?? '')}`;
 }
 
 // ── Message attachments (composer "+" picker) ─────────────────────────────

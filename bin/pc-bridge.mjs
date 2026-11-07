@@ -515,7 +515,7 @@ export async function runBridge(overrides = {}) {
       await sendAndWait(child, { cmd: 'reset' }, 'ready');
       const prepared = await expandAgentWorkBody(String(item.message?.body ?? ''));
       const message = prepared.body === String(item.message?.body ?? '') ? item.message : { ...item.message, body: prepared.body };
-      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source });
+      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, notebook: item.notebook ?? null });
       const reply = await runTurn(child, text, { metadata: item.message?.metadata ?? null, slashExpansion: prepared.slashExpansion });
       if (!reply || !reply.trim()) { log(`agent ${provider}: no text for ${item.message.id}`); return; }
       const body = reply.length > 4000 ? `${reply.slice(0, 3997)}...` : reply;
