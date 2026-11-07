@@ -10,8 +10,10 @@ import { promisify } from 'node:util';
 
 import {
   AGENT_OS_MARKER_BEGIN,
+  AGENT_OS_MARKER_END,
   AGENT_OS_TARGETS,
   DEFAULT_TEMPLATES_ROOT,
+  ESTATE_CARGO,
   IDENTIFYING_PATTERNS,
   TARGET_SPECS,
   defaultTargetDirectory,
@@ -19,8 +21,10 @@ import {
   installAgentOsTargets,
   listTemplateFiles,
   loadAgentOsTemplates,
+  loadEstateCargo,
   render,
   renderAgentOsFiles,
+  renderEstateFiles,
   resolveTargets,
   scanForIdentifyingContent,
   scanTemplatesForIdentifyingContent,
@@ -531,6 +535,230 @@ test('the grok hook snippet uses grok own event names and is valid JSON', async 
   assert.ok(existsSync(hookPath), `snippet points at a missing hook: ${hookPath}`);
 
   await rm(dir, { recursive: true, force: true });
+});
+
+// ── Estate cargo ─────────────────────────────────────────────────────────────
+//
+// The starter kit above is distilled and anonymized. The estate is the
+// opposite cargo: the user's own grown files — the Claude seat's CLAUDE.md
+// and its flywheel companions — copied verbatim into every seat's managed
+// folder and refreshed as the sources change. These tests pin the four
+// promises: verbatim, everywhere, refreshed on change, and never at the
+// cost of a seat's own files.
+
+const ESTATE_SOURCES = Object.freeze({
+  'CLAUDE.md': '# My own rules, hand-built\n\nRule one: check the disk before you speak.\nRule two: no claim without a file behind it.\n',
+  'LESSONS.md': '# LESSONS\n\n## 2026-01-01 - the grown flywheel\n\nA hundred small lessons live here now.\n',
+  'LEARNINGS.md': '# LEARNINGS\n\n- Learning one: the copy is the proof.\n',
+});
+
+async function estateHome() {
+  const home = await scratch();
+  const claudeDir = join(home, '.claude');
+  await mkdir(claudeDir, { recursive: true });
+  for (const [name, content] of Object.entries(ESTATE_SOURCES)) {
+    await writeFile(join(claudeDir, name), content, 'utf8');
+  }
+  return home;
+}
+
+const withBlock = (own) => [
+  own,
+  '',
+  AGENT_OS_MARKER_BEGIN,
+  '@agent-os/AGENT_OS.md',
+  AGENT_OS_MARKER_END,
+  '',
+].join('\n');
+
+test('renderEstateFiles carries the sources verbatim, managed, under agent-os/estate', () => {
+  const contents = {
+    'agent-os/estate/CLAUDE-ESTATE.md': 'rules with trailing space \n\n\n',
+    'agent-os/estate/LESSONS.md': 'lessons',
+    // LEARNINGS.md absent from the snapshot: no file, never an empty one.
+  };
+  const files = renderEstateFiles(contents);
+
+  assert.deepEqual(
+    files.map((file) => file.path),
+    ['agent-os/estate/CLAUDE-ESTATE.md', 'agent-os/estate/LESSONS.md'],
+  );
+  for (const file of files) {
+    assert.equal(file.ownership, 'managed');
+    assert.equal(file.cargo, 'estate');
+    // Byte for byte: a render pass would have trimmed the trailing space
+    // and blank lines, and then no hash could ever match the source.
+    assert.equal(file.content, contents[file.path]);
+  }
+  assert.deepEqual(renderEstateFiles(), []);
+  assert.deepEqual(renderEstateFiles({}), []);
+});
+
+test('loadEstateCargo reads the three sources and names the missing ones', async () => {
+  const home = await estateHome();
+  const { contents, missing } = await loadEstateCargo({ home });
+
+  assert.deepEqual(missing, []);
+  assert.equal(contents['agent-os/estate/CLAUDE-ESTATE.md'], ESTATE_SOURCES['CLAUDE.md']);
+  assert.equal(contents['agent-os/estate/LESSONS.md'], ESTATE_SOURCES['LESSONS.md']);
+  assert.equal(contents['agent-os/estate/LEARNINGS.md'], ESTATE_SOURCES['LEARNINGS.md']);
+
+  const partial = await scratch();
+  await mkdir(join(partial, '.claude'), { recursive: true });
+  await writeFile(join(partial, '.claude', 'CLAUDE.md'), 'only this one', 'utf8');
+  const second = await loadEstateCargo({ home: partial });
+  assert.deepEqual(second.missing, ['LESSONS.md', 'LEARNINGS.md']);
+  assert.deepEqual(Object.keys(second.contents), ['agent-os/estate/CLAUDE-ESTATE.md']);
+
+  await rm(home, { recursive: true, force: true });
+  await rm(partial, { recursive: true, force: true });
+});
+
+test('a source still identical to the shipped seed is the kit paper, not estate', async () => {
+  // On a fresh machine the first sync writes the rendered context file and
+  // the companion seeds into the Claude seat. A second sync must not
+  // "discover" those as the user's estate and start copying them around.
+  const home = await scratch();
+  const templates = await loadAgentOsTemplates();
+  const rendered = renderAgentOsFiles({ target: 'claude', templates, installDir: join(home, '.claude') });
+  await mkdir(join(home, '.claude'), { recursive: true });
+  for (const name of ['CLAUDE.md', 'LESSONS.md', 'LEARNINGS.md']) {
+    await writeFile(join(home, '.claude', name), rendered.find((file) => file.path === name).content, 'utf8');
+  }
+
+  const { contents, missing, kitOwned } = await loadEstateCargo({ home, templates });
+  assert.deepEqual(contents, {});
+  assert.deepEqual(missing, []);
+  assert.deepEqual(kitOwned.sort(), ['CLAUDE.md', 'LEARNINGS.md', 'LESSONS.md']);
+
+  // And a full double install on a fresh home never grows an estate folder.
+  const fresh = await scratch();
+  await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home: fresh, apply: true });
+  const second = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home: fresh, apply: true });
+  for (const result of second.targets) {
+    assert.equal(result.estate.carried, 0, `${result.target}: the kit must not feed back as estate`);
+    assert.equal(existsSync(join(result.directory, 'agent-os', 'estate')), false);
+  }
+
+  await rm(home, { recursive: true, force: true });
+  await rm(fresh, { recursive: true, force: true });
+});
+
+test('the estate lands in every seat, refreshes on change, and touches no seat file of its own', async () => {
+  const home = await estateHome();
+
+  // Every seat present. Two seats already carry the agent OS block in their
+  // own context files, and codex has its own LESSONS.md: all of those are
+  // the seats' own files and must come through byte-for-byte.
+  const ownContext = {
+    codex: withBlock('# Codex own rules'),
+    grok: withBlock('# Grok own rules'),
+  };
+  await mkdir(join(home, '.codex'), { recursive: true });
+  await writeFile(join(home, '.codex', 'AGENTS.md'), ownContext.codex, 'utf8');
+  const codexOwnLessons = '# Codex lessons of its own\n';
+  await writeFile(join(home, '.codex', 'LESSONS.md'), codexOwnLessons, 'utf8');
+  await mkdir(join(home, '.gemini'), { recursive: true });
+  await mkdir(join(home, '.grok'), { recursive: true });
+  await writeFile(join(home, '.grok', 'AGENTS.md'), ownContext.grok, 'utf8');
+
+  // The source CLAUDE.md doubles as the claude seat's context file; give it
+  // the block too, so the run leaves the source itself exactly as found.
+  const sourceClaude = withBlock(ESTATE_SOURCES['CLAUDE.md']);
+  await writeFile(join(home, '.claude', 'CLAUDE.md'), sourceClaude, 'utf8');
+
+  const first = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+
+  for (const result of first.targets) {
+    assert.equal(result.estate.carried, ESTATE_CARGO.length, `${result.target} must carry the whole estate`);
+    assert.deepEqual(result.estate.skipped, []);
+    const dir = result.directory;
+    assert.equal(
+      await readFile(join(dir, 'agent-os', 'estate', 'CLAUDE-ESTATE.md'), 'utf8'),
+      sourceClaude,
+      `${result.target}: the estate copy must equal the source bytes`,
+    );
+    assert.equal(await readFile(join(dir, 'agent-os', 'estate', 'LESSONS.md'), 'utf8'), ESTATE_SOURCES['LESSONS.md']);
+    assert.equal(await readFile(join(dir, 'agent-os', 'estate', 'LEARNINGS.md'), 'utf8'), ESTATE_SOURCES['LEARNINGS.md']);
+  }
+
+  // The seats' own files are byte-for-byte what they were.
+  assert.equal(await readFile(join(home, '.codex', 'AGENTS.md'), 'utf8'), ownContext.codex);
+  assert.equal(await readFile(join(home, '.grok', 'AGENTS.md'), 'utf8'), ownContext.grok);
+  assert.equal(await readFile(join(home, '.codex', 'LESSONS.md'), 'utf8'), codexOwnLessons);
+  assert.equal(await readFile(join(home, '.claude', 'CLAUDE.md'), 'utf8'), sourceClaude, 'the source is read, never written');
+
+  // Unchanged sources: the estate is a no-op.
+  const second = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  for (const result of second.targets) {
+    const estateActions = result.files.filter((file) => file.cargo === 'estate');
+    assert.equal(estateActions.length, ESTATE_CARGO.length);
+    assert.ok(
+      estateActions.every((file) => file.action === 'unchanged'),
+      `${result.target}: unchanged sources must not refresh the estate`,
+    );
+  }
+
+  // One source grows: exactly that copy refreshes, in every seat.
+  const grown = `${ESTATE_SOURCES['LESSONS.md']}\n## 2026-01-02 - one more lesson\n`;
+  await writeFile(join(home, '.claude', 'LESSONS.md'), grown, 'utf8');
+  const third = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  for (const result of third.targets) {
+    const byPath = new Map(result.files.map((file) => [file.path, file.action]));
+    assert.equal(byPath.get('agent-os/estate/LESSONS.md'), 'update', `${result.target}: the grown source must refresh`);
+    assert.equal(byPath.get('agent-os/estate/CLAUDE-ESTATE.md'), 'unchanged');
+    assert.equal(byPath.get('agent-os/estate/LEARNINGS.md'), 'unchanged');
+    assert.equal(await readFile(join(result.directory, 'agent-os', 'estate', 'LESSONS.md'), 'utf8'), grown);
+  }
+  // And codex's own LESSONS.md still is not the estate's business.
+  assert.equal(await readFile(join(home, '.codex', 'LESSONS.md'), 'utf8'), codexOwnLessons);
+
+  await rm(home, { recursive: true, force: true });
+});
+
+test('a seat with no presence on the machine gets no estate, and the skip is recorded', async () => {
+  const home = await estateHome();
+  await mkdir(join(home, '.codex'), { recursive: true });
+  // .gemini and .grok do not exist: those seats are not present here.
+
+  const report = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
+  const byTarget = new Map(report.targets.map((result) => [result.target, result]));
+
+  for (const absent of ['gemini', 'grok']) {
+    const result = byTarget.get(absent);
+    assert.equal(result.estate.carried, 0, `${absent}: no presence, no estate`);
+    assert.deepEqual(
+      result.estate.skipped.sort(),
+      ESTATE_CARGO.map((entry) => entry.destination).sort(),
+    );
+    const estateActions = result.files.filter((file) => file.cargo === 'estate');
+    assert.ok(estateActions.every((file) => file.action === 'skip' && /not present/.test(file.reason)));
+    assert.equal(
+      existsSync(join(home, TARGET_SPECS[absent].directoryName, 'agent-os', 'estate')),
+      false,
+      `${absent}: the skip must not write the estate folder either`,
+    );
+  }
+
+  for (const present of ['claude', 'codex']) {
+    assert.equal(byTarget.get(present).estate.carried, ESTATE_CARGO.length, `${present} is present and carries the estate`);
+  }
+
+  await rm(home, { recursive: true, force: true });
+});
+
+test('no estate sources means no estate cargo, and no error', async () => {
+  const home = await scratch();
+  await mkdir(join(home, '.claude'), { recursive: true });
+
+  const report = await installAgentOsTargets({ targets: ['claude'], home, apply: true });
+  const [result] = report.targets;
+  assert.equal(result.estate.carried, 0);
+  assert.deepEqual(result.estate.skipped, []);
+  assert.equal(result.files.some((file) => file.cargo === 'estate'), false);
+  assert.equal(existsSync(join(home, '.claude', 'agent-os', 'estate')), false);
+
+  await rm(home, { recursive: true, force: true });
 });
 
 test('installing all four targets into one directory keeps grok separate from codex', async () => {
