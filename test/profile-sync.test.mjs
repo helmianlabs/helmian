@@ -221,6 +221,74 @@ test('profile-sync route: members enqueue and read, only devices claim and repor
   assert.equal(out, false);
 });
 
+// ── the estate-scale report vs the host body cap (2026-11-06) ─────
+// Jobs 8, 11 and 14 landed ~216 file writes each and sat in 'claimed'
+// forever: the admin host's shared body reader caps request bodies at
+// 16 KB, the route's empty catch swallowed the 413, and the oversized
+// report was re-read as a button press — a phantom job was enqueued,
+// the bridge got a 202, and the real job was never completed.
+
+// A readJson with the host reader's exact cap behavior (live-admin.mjs
+// readJsonObject): 16 KB by default, a larger cap only when the
+// caller passes one as the second argument.
+function hostReadJson(rawBody) {
+  return async (request, maxBytes = 16 * 1024) => {
+    if (Buffer.byteLength(rawBody) > maxBytes) {
+      throw Object.assign(new Error('Request body is too large'), { status: 413 });
+    }
+    return JSON.parse(rawBody);
+  };
+}
+
+function bigFileList(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    path: `C:\\Users\\troyh\\.claude\\agent-os\\estate\\lessons\\lesson-${String(i).padStart(3, '0')}-entry.md`,
+    target: 'claude',
+    action: 'created',
+    sha256: 'c'.repeat(64),
+  }));
+}
+
+test('an estate-scale report (216 files, body over the 16 KB host cap) is recorded, not re-read as an enqueue', async () => {
+  const store = createProfileSyncJobStore(makeFakeJobPool());
+  const job = await store.enqueue('t1', { requestedBy: 'user-1' });
+  const claimed = await store.claimNext('t1');
+  assert.equal(claimed.id, job.id);
+
+  const rawBody = JSON.stringify({ jobId: job.id, status: 'done', files: bigFileList(216) });
+  assert.ok(Buffer.byteLength(rawBody) > 16 * 1024, 'the report body must exceed the host default cap for this test to mean anything');
+
+  const h = routeHarness({ actor: DEVICE, store });
+  await handleProfileSyncRoute({
+    ...h.args,
+    request: { method: 'POST' },
+    requestUrl: new URL(`http://x${PROFILE_SYNC_PATH}`),
+    readJson: hostReadJson(rawBody),
+  });
+  assert.equal(h.sent[0].status, 200);
+  assert.equal(h.sent[0].body.job.status, 'done');
+  assert.equal(h.sent[0].body.job.files.length, 216);
+
+  const reread = await store.get('t1', job.id);
+  assert.equal(reread.status, 'done');
+  assert.equal(reread.files.length, 216);
+  assert.equal(await store.claimNext('t1'), null, 'no phantom job was minted by the report');
+});
+
+test('an unreadable report body answers its error, never an enqueue', async () => {
+  const store = createProfileSyncJobStore(makeFakeJobPool());
+  const h = routeHarness({ actor: DEVICE, store });
+  await handleProfileSyncRoute({
+    ...h.args,
+    request: { method: 'POST' },
+    requestUrl: new URL(`http://x${PROFILE_SYNC_PATH}`),
+    readJson: async () => { throw Object.assign(new Error('Request body is too large'), { status: 413 }); },
+  });
+  assert.equal(h.sent[0].status, 413);
+  assert.equal(h.sent[0].body.valid, false);
+  assert.equal(await store.claimNext('t1'), null, 'nothing was enqueued');
+});
+
 test('sanitize keeps only well-formed file entries', () => {
   const out = sanitizeProfileSyncFiles([
     VALID_FILE,
