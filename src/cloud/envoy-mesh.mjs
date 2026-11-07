@@ -30,6 +30,7 @@ import {
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { classifySeatAsk } from './envoy-actions.mjs';
+import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
 
 // The bot status functions live in bot-status.mjs (import-free, so the
@@ -153,7 +154,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -303,7 +304,11 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       const wantedStd = [...new Set(rawTokens.map(normalizeProvider).filter(Boolean))];
       const wantedHandles = new Set(rawTokens.map(normalizeCustomHandle).filter(Boolean));
       if (!wantedStd.length && !wantedHandles.size) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
-      return tx(actor, async (client) => {
+      // Guard refusals written inside the transaction (below) are
+      // published only after it commits, like every other message this
+      // store posts; the rows are collected here for that.
+      const refusalRows = [];
+      const result = await tx(actor, async (client) => {
         // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
         // readiness signal — a registered runner, a presence report, a
         // stored connection — those signals are authoritative: work is
@@ -348,6 +353,12 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // Only messages after the agent joined count.
           for (const row of rows) {
             const message = messageOut(row);
+            // Guard spine bite 2: a Guard refusal record (the outcome
+            // rides in the message metadata, spread onto the message by
+            // messageOut) is terminal. It is never itself a work source,
+            // so a refusal can never route, join a debate, or be
+            // re-evaluated as an ask.
+            if (message.guard) continue;
             const at = new Date(row.created_at).getTime();
             let due = agentsToAnswer(message, config.agents, {
               desk: config.desk === true,
@@ -367,6 +378,34 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               due = due.filter(gateAllows);
             }
             if (!due.length) continue;
+            // Guard spine, bites 1 + 2: the ask is classified as a typed
+            // action (envoy-actions.mjs) and, when it is typed, evaluated
+            // through the governance kernel (envoy-guard.mjs) BEFORE the
+            // work item is handed to an executor. An allow dispatches
+            // unchanged apart from the evaluation record riding along;
+            // a refuse dispatches nothing — each due seat's reply is the
+            // refusal, written in its name with the outcome record in
+            // its metadata, which also marks the ask answered for that
+            // seat so no later poll can hand it out again. The chat
+            // (null) action is never evaluated and carries no record.
+            const action = classifySeatAsk(message.body);
+            const evaluation = evaluateSeatAction(action, { body: message.body, workspace: guardWorkspace });
+            if (evaluation?.verdict === 'refuse') {
+              const text = guardRefusalText(evaluation);
+              for (const p of due) {
+                const { row: refusal, replayed } = await insertMessage(client, {
+                  tenantId: actor.tenantId,
+                  channelId: String(channel.id),
+                  subject: agentSubject(p, config.customAgents ?? []),
+                  kind: 'agent',
+                  body: text,
+                  key: `reply:${message.id}`,
+                  metadata: { guard: evaluation },
+                });
+                if (refusal && !replayed) refusalRows.push(refusal);
+              }
+              continue;
+            }
             const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
             work.push({
               channel: {
@@ -382,12 +421,8 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               members: config.agents,
               ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
               message,
-              // Guard spine bite 1: the ask, classified as a typed action
-              // (envoy-actions.mjs). Classification only — nothing is
-              // evaluated, blocked, or recorded here; the stamp rides
-              // along so the executor and the next bites can see what
-              // this ask IS, not just who should answer it.
-              action: classifySeatAsk(message.body),
+              action,
+              ...(evaluation ? { evaluation } : {}),
               agents: due,
               context,
             });
@@ -399,6 +434,8 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           ...(withheld.size ? { withheld: [...withheld].map(([provider, reason]) => ({ provider, reason })) } : {}),
         };
       });
+      for (const row of refusalRows) publish(actor.tenantId, row, publishImpl);
+      return result;
     },
 
     async postAsAgent(actor, input) {
