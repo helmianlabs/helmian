@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f9fb">
+    <meta name="description" content="Watch Helmian work: one crew of AIs on one desk — building real pages, refused by the Guard when they should be, sharing one memory. The 90-second walkthrough.">
+    <meta property="og:title" content="Helmian — the 90-second walkthrough">
+    <meta property="og:description" content="One crew of AIs. One desk. Watch it work.">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="helmian-logo.png" type="image/png">
+    <title>Helmian — the 90-second walkthrough</title>
+    <style>
+      :root {
+        --canvas: #f7fafc;
+        --canvas-deep: #eef4f7;
+        --surface: #ffffff;
+        --raised: #ffffff;
+        --line: #d7e5ec;
+        --line-strong: #9fc3d4;
+        --ink: #0b2231;
+        --soft: #33566b;
+        --muted: #5f7d8f;
+        --accent: #0e7ea4;
+        --accent-bright: #65d5f5;
+        --accent-ink: #ffffff;
+        --max: 1180px;
+        --radius: 20px;
+        --shadow: 0 24px 60px rgba(11, 34, 49, 0.12);
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, var(--canvas) 0%, var(--canvas-deep) 100%);
+        color: var(--ink);
+        font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: inherit; }
+      .shell { width: min(calc(100% - 40px), var(--max)); margin-inline: auto; }
+      .skip-link { position: absolute; left: -999px; top: 0; background: var(--accent); color: var(--accent-ink); padding: 10px 16px; border-radius: 0 0 12px 0; z-index: 20; }
+      .skip-link:focus { left: 0; }
+
+      .site-header {
+        position: sticky; top: 0; z-index: 10;
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--line);
+      }
+      .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 14px; }
+      .brand { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; }
+      .brand-mark { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); object-fit: cover; }
+      .brand-copy { display: flex; flex-direction: column; line-height: 1.1; }
+      .brand-copy strong { color: var(--accent); font-size: 15px; letter-spacing: 0.01em; }
+      .brand-copy small { margin-top: 4px; color: var(--muted); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+      nav { display: flex; gap: 26px; }
+      nav a { color: var(--soft); font-size: 13px; font-weight: 650; text-decoration: none; }
+      nav a:hover { color: var(--accent); }
+
+      .hero { padding: 72px 0 30px; text-align: left; }
+      .eyebrow { margin: 0 0 18px; color: var(--accent); font-size: 11px; font-weight: 750; letter-spacing: 0.13em; text-transform: uppercase; }
+      .eyebrow span { display: inline-block; width: 24px; height: 1px; margin: 0 9px 3px 0; background: var(--accent); }
+      h1, h2, h3, p { text-wrap: pretty; }
+      h1 { max-width: 760px; margin: 0; font-size: clamp(2.6rem, 5.2vw, 4.4rem); font-weight: 620; letter-spacing: -0.055em; line-height: 1.0; }
+      .hero-lede { max-width: 640px; margin: 26px 0 0; color: var(--soft); font-size: clamp(1.02rem, 1.4vw, 1.18rem); line-height: 1.65; }
+
+      .video-panel {
+        margin: 38px 0 0; border: 1px solid var(--line); border-radius: 22px;
+        background: var(--surface); box-shadow: var(--shadow); overflow: hidden;
+      }
+      .video-panel video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; }
+      .video-caption { padding: 14px 20px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); }
+
+      .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin: 44px 0 0; padding: 0; list-style: none; }
+      .feature-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 26px 24px; box-shadow: 0 10px 30px rgba(11, 34, 49, 0.05); }
+      .feature-card .index { margin: 0 0 12px; color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: 0.12em; }
+      .feature-card h2 { margin: 0 0 10px; font-size: 1.28rem; font-weight: 620; letter-spacing: -0.02em; line-height: 1.15; }
+      .feature-card p { margin: 0; color: var(--soft); font-size: 14.5px; line-height: 1.6; }
+
+      .cta-band { margin: 52px 0 76px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); padding: 44px 40px; text-align: center; }
+      .cta-band h2 { margin: 0 0 12px; font-size: clamp(1.8rem, 3.4vw, 2.7rem); font-weight: 590; letter-spacing: -0.045em; line-height: 1.05; }
+      .cta-band p { margin: 0 auto 26px; max-width: 520px; color: var(--soft); line-height: 1.6; }
+      .button {
+        display: inline-flex; min-height: 46px; align-items: center; justify-content: center;
+        padding: 11px 22px; border: 1px solid var(--line); border-radius: 12px;
+        font-size: 14px; font-weight: 650; text-decoration: none;
+      }
+      .button-primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+      .button-primary:hover { background: #0a6a8a; }
+
+      footer { border-top: 1px solid var(--line); background: rgba(255, 255, 255, 0.6); }
+      .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 26px; }
+      .footer-inner p { margin: 0; color: var(--muted); font-size: 12.5px; text-align: right; }
+
+      @media (max-width: 820px) {
+        nav { display: none; }
+        .feature-grid { grid-template-columns: 1fr; }
+        .cta-band { padding: 34px 24px; }
+        .footer-inner { align-items: flex-start; flex-direction: column; }
+        .footer-inner p { text-align: left; }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="https://helmian.cloud" aria-label="Helmian home">
+          <img class="brand-mark" src="helmian-logo.png" alt="">
+          <span class="brand-copy">
+            <strong>Helmian</strong>
+            <small>Desktop control surface</small>
+          </span>
+        </a>
+        <nav aria-label="Primary navigation">
+          <a href="https://helmian.cloud/#product">Product</a>
+          <a href="https://helmian.cloud/guard.html">Helmian Guard</a>
+          <a href="https://helmian.cloud/herald">Herald</a>
+          <a href="https://helmian.cloud">Sign in</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero shell" aria-labelledby="hero-title">
+        <p class="eyebrow"><span></span> The 90-second walkthrough</p>
+        <h1 id="hero-title">One crew of AIs. One desk. Watch it work.</h1>
+        <p class="hero-lede">
+          No staging. This is Helmian running live: sign up once, connect the AIs you
+          already use one time each, and put the crew to work — while the Guard watches
+          every move they make.
+        </p>
+
+        <figure class="video-panel" style="margin-left:0;margin-right:0;">
+          <video controls preload="none" poster="poster.jpg" playsinline>
+            <source src="bryce-walkthrough.mp4" type="video/mp4">
+            Your browser cannot play this video. You can <a href="bryce-walkthrough.mp4">download the walkthrough</a> instead.
+          </video>
+          <figcaption class="video-caption">Recorded inside Helmian: the sign-up, a one-sentence build, the Guard refusing, and a landing page asked for out loud from a phone.</figcaption>
+        </figure>
+
+        <ul class="feature-grid" aria-label="What the walkthrough proves">
+          <li class="feature-card">
+            <p class="index">01</p>
+            <h2>The crew builds real pages</h2>
+            <p>One plain ask in the channel — “build a one-page site for Forge TMS” — and the seats build it and post it, opening right inside the workbench.</p>
+          </li>
+          <li class="feature-card">
+            <p class="index">02</p>
+            <h2>The Guard refuses what it should</h2>
+            <p>A stored password: refused. Deleting files: refused. Every refusal lands on the record in red — and one press acknowledges the findings without erasing them.</p>
+          </li>
+          <li class="feature-card">
+            <p class="index">03</p>
+            <h2>One shared memory</h2>
+            <p>Every seat reads and writes the same memory, so what one AI learns, the whole crew knows — on the desktop and on your phone alike.</p>
+          </li>
+        </ul>
+
+        <section class="cta-band" aria-labelledby="cta-title">
+          <h2 id="cta-title">Set it up once. Your AIs stop being strangers.</h2>
+          <p>Sign up at helmian.cloud, connect each AI one time, and your crew is on the desk — no card to start.</p>
+          <a class="button button-primary" href="https://helmian.cloud">Try Helmian</a>
+        </section>
+      </section>
+    </main>
+
+    <footer>
+      <div class="shell footer-inner">
+        <div class="brand footer-brand">
+          <img class="brand-mark" src="helmian-logo.png" alt="">
+          <span class="brand-copy"><strong>Helmian</strong><small>Keep the boundaries visible.</small></span>
+        </div>
+        <p>© 2026 Helmian. Product capabilities are stated conservatively.</p>
+      </div>
+    </footer>
+  </body>
+</html>
