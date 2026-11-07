@@ -63,6 +63,7 @@ import { SLASH_COMMANDS_PATH, listSlashCommands, slashCommandsWorkspace } from '
 import { createConsoleCommandRepository } from './console-command-repository.mjs';
 import { createConsoleCommandWorker, CONSOLE_EXECUTORS } from './console-command-worker.mjs';
 import { claimFirstOwner } from './owner-claim.mjs';
+import { verifyClerkSessionBearer } from './signup.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -280,6 +281,7 @@ export async function createLiveHelmianCloudAdminHandler({
   fetchImpl = fetch,
   pool: suppliedPool = null,
   identity: suppliedIdentity = null,
+  verifyClerkBearer: suppliedVerifyClerkBearer = null,
   page: suppliedPage = null,
   script: suppliedScript = null,
   envoyClientScript: suppliedEnvoyClientScript = null,
@@ -323,6 +325,7 @@ export async function createLiveHelmianCloudAdminHandler({
   if (!connectionString || !expectedEndpointId) throw new Error('Live admin requires HELMION_DATABASE_URL and HELMION_EXPECTED_ENDPOINT_ID');
   assertExpectedNeonEndpoint(connectionString, expectedEndpointId);
   const identity = suppliedIdentity ?? createIdentityGateway({ env, fetchImpl });
+  const verifyClerkBearer = suppliedVerifyClerkBearer ?? verifyClerkSessionBearer;
   const page = suppliedPage ?? await readFile(pagePath, 'utf8');
   const script = suppliedScript ?? await readFile(scriptPath, 'utf8');
   const envoyClientScript = suppliedEnvoyClientScript ?? await readFile(envoyClientPath, 'utf8');
@@ -412,11 +415,30 @@ export async function createLiveHelmianCloudAdminHandler({
   // Device tokens: Envoy only.
   const bearerToken = (request) => { const h = String(request.headers?.authorization ?? ''); return h.startsWith('Bearer ') ? h.slice(7).trim() : ''; };
   const isEnvoyPath = (request) => new URL(request.url, 'http://local').pathname.startsWith('/api/admin/envoy/');
+  // The two Envoy reads the Herald Team feed makes (channels list, message
+  // list). Only these GETs get the Clerk Bearer leg below — nothing else.
+  const isEnvoyFeedReadPath = (request) => {
+    if (request.method !== 'GET') return false;
+    const { pathname } = new URL(request.url, 'http://local');
+    return pathname === LIVE_ADMIN_ENVOY_CHANNELS_PATH || pathname === LIVE_ADMIN_ENVOY_MESSAGES_PATH;
+  };
   async function deriveTenantActor(request) {
     let claimed = sessionIdentity(request);
     if (!claimed?.subject && isEnvoyPath(request) && bearerToken(request)) {
       const desktop = await invites.desktopIdentity(bearerToken(request)).catch(() => null);
       if (desktop) claimed = { subject: desktop.subject, viaDeviceToken: true, deviceTenantId: desktop.tenantId };
+    }
+    // Herald shell leg, following the guard-pc-approvals precedent: a phone
+    // signed in only through /herald holds a Clerk session Bearer and no
+    // /app admin session cookie, so the cookie-only check above 403s its
+    // Team feed reads. The feed's two GET routes accept the Bearer, verified
+    // exactly the way pc-approvals verifies it; the membership resolution
+    // below is unchanged, so a verified subject with no active membership
+    // still refuses, and a request with neither identity still refuses.
+    // Writes keep requiring the cookie session or a device token.
+    if (!claimed?.subject && isEnvoyFeedReadPath(request) && bearerToken(request)) {
+      const clerkIdentity = await verifyClerkBearer(bearerToken(request), env).catch(() => null);
+      if (clerkIdentity?.subject) claimed = { subject: clerkIdentity.subject, viaClerkBearer: true };
     }
     if (!claimed?.subject) throw Object.assign(new Error('Identity required'), { status: 403 });
     const client = await pool.connect();
