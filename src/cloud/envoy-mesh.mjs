@@ -31,6 +31,8 @@ import {
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { classifySeatAsk } from './envoy-actions.mjs';
 import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
+import { createGuardStore } from './guard-findings.mjs';
+import { ingestEvaluationFinding } from './envoy-findings.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
 
 // The bot status functions live in bot-status.mjs (import-free, so the
@@ -154,7 +156,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -308,6 +310,12 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // published only after it commits, like every other message this
       // store posts; the rows are collected here for that.
       const refusalRows = [];
+      // Guard spine bite 3: every evaluation outcome from this poll —
+      // allows and refusals alike — is collected here and witnessed
+      // into the Guard findings feed after the transaction commits
+      // (envoy-findings.mjs). The chat action leaves no job: it is
+      // never evaluated, so there is nothing to record.
+      const findingJobs = [];
       const result = await tx(actor, async (client) => {
         // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
         // readiness signal — a registered runner, a presence report, a
@@ -388,6 +396,8 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             // its metadata, which also marks the ask answered for that
             // seat so no later poll can hand it out again. The chat
             // (null) action is never evaluated and carries no record.
+            // Every typed outcome, allow or refuse, also becomes a
+            // Guard finding after commit (bite 3, findingJobs below).
             const action = classifySeatAsk(message.body);
             const evaluation = evaluateSeatAction(action, { body: message.body, workspace: guardWorkspace });
             if (evaluation?.verdict === 'refuse') {
@@ -403,6 +413,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
                   metadata: { guard: evaluation },
                 });
                 if (refusal && !replayed) refusalRows.push(refusal);
+                findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
               }
               continue;
             }
@@ -426,6 +437,11 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               agents: due,
               context,
             });
+            if (evaluation) {
+              for (const p of due) {
+                findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
+              }
+            }
           }
         }
         return {
@@ -435,6 +451,19 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         };
       });
       for (const row of refusalRows) publish(actor.tenantId, row, publishImpl);
+      // Guard spine bite 3: witness every evaluation this poll produced
+      // into the Guard findings feed, allows and refusals alike. This
+      // runs after the transaction commits and through a wrapper that
+      // cannot throw, so a findings-write failure is logged loudly and
+      // changes nothing about the work handed out or the refusals
+      // posted above.
+      if (findingJobs.length) {
+        const findings = guardStoreImpl ?? createGuardStore(pool);
+        const evaluatedAt = new Date(now()).toISOString();
+        for (const job of findingJobs) {
+          await ingestEvaluationFinding(findings, actor, job.evaluation, { ...job, at: evaluatedAt }, guardLogImpl ? { log: guardLogImpl } : {});
+        }
+      }
       return result;
     },
 
