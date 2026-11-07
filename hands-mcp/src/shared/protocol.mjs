@@ -12,6 +12,9 @@ import { createHash, createPublicKey, verify } from 'node:crypto';
 
 export const DECISION_AUDIENCE = 'helmian-executive-guard-decision-v1';
 export const ROOT_GRANT_AUDIENCE = 'helmian-executive-guard-root-grant-v1';
+export const ACTION_GRANT_AUDIENCE = 'helmian-executive-guard-action-grant-v1';
+/** The rule the Guard stamps on a decision issued from a standing action grant. */
+export const STANDING_GRANT_RULE_ID = 'standing-grant';
 export const GUARD_ACTION_SITE = 'hands.helmian';
 export const MAX_OUTPUT_BYTES = 64 * 1024;
 
@@ -382,14 +385,78 @@ export function describeHandsAction(tool, args, { snippets = true } = {}) {
 }
 
 /** The action sent to Guard for a mutating tool. contentHash binds the exact arguments. */
+/**
+ * The standing-grant scope buckets (Bite Zero, no-approvals design). These are
+ * EXACTLY the buckets the Executive Guard can mint (ACTION_GRANT_SCOPES in
+ * executive-guard/src/server.mjs): no other (tool, scope) pair is grantable,
+ * and a call that does not classify into one of them carries no scope signal
+ * and can never be grant-covered — it asks a human, exactly as before.
+ */
+export const HANDS_GRANT_SCOPES = Object.freeze({
+  write_file: Object.freeze(['jobs-prompt', 'salvage-file']),
+  run_powershell: Object.freeze(['seat-call', 'salvage-mkdir']),
+  edit_file: Object.freeze(['spoke-protocol']),
+});
+
+/**
+ * Classify a mutating hands call into its standing-grant scope bucket, from
+ * the (tool, args) shape alone — deterministic, and mirrored by the Guard so
+ * both sides agree on what a grant covers. Returns null for everything else
+ * (fail safe: no bucket, no grant, a human decides).
+ *
+ * The shapes are the worker's PC-seat traffic (helmian-agentbox
+ * pc-seat-transport.mjs), all under the PC seat root (default
+ * C:\Users\troyh\pc-seat):
+ *   write_file     <root>\jobs\<uuid>.prompt.txt                  jobs-prompt
+ *   write_file     <root>\builds\<provider>\<file>                salvage-file
+ *   run_powershell run-command launching seat-call.ps1            seat-call
+ *   run_powershell run-command launching ollama-call.ps1 (its prompt
+ *                  and out files ride the command's arg list)     seat-call
+ *   edit_file      the shared protocol file inside the Helmian
+ *                  install on the PC (the spoke's own rule book)  spoke-protocol
+ *   run_powershell run-command New-Item -ItemType Directory into
+ *                  <root>\builds\<provider>                       salvage-mkdir
+ */
+export function handsScopeFor(tool, args) {
+  if (!args || typeof args !== 'object') return null;
+  if (tool === 'write_file') {
+    const path = String(args.path || '').replaceAll('\\', '/');
+    if (/\/jobs\/[^/]+\.prompt\.txt$/i.test(path)) return 'jobs-prompt';
+    if (/\/builds\/[^/]+\/[^/]+$/i.test(path)) return 'salvage-file';
+    return null;
+  }
+  if (tool === 'edit_file') {
+    const path = String(args.path || '').replaceAll('\\', '/');
+    if (/\/Programs\/Helmian\/hands-mcp\/src\/shared\/protocol\.mjs$/i.test(path)) return 'spoke-protocol';
+    return null;
+  }
+  if (tool === 'run_powershell') {
+    if (args.commandId !== 'run-command') return null;
+    const command = String(args.args?.command || '');
+    if (/seat-call\.ps1/i.test(command)) return 'seat-call';
+    if (/ollama-call\.ps1/i.test(command)
+      && /-PromptFile/i.test(command) && /\.prompt\.txt/i.test(command)
+      && /-OutFile/i.test(command) && /\.out\.txt/i.test(command)) return 'seat-call';
+    if (/New-Item/i.test(command) && /-ItemType\s+Directory/i.test(command) && /[\\/]builds[\\/][^'";]+/i.test(command)) return 'salvage-mkdir';
+    return null;
+  }
+  return null;
+}
+
+/** The action sent to Guard for a mutating tool. contentHash binds the exact arguments. */
 export function buildGuardAction(tool, args) {
+  // A classified PC-seat call carries its grant-scope bucket as a risk
+  // signal, so it is part of the signed action hash: a grant can only ever
+  // cover the exact call shape it was checked against, and stripping or
+  // swapping the signal changes the hash and breaks verification.
+  const scope = handsScopeFor(tool, args);
   return {
     kind: 'agent.tool',
     site: GUARD_ACTION_SITE,
     contentHash: sha256Hex(canonicalJson({ tool, args })),
     // 'destructive-intent' routes every mutating hands call to Guard's
     // human-approval rule; without it Guard's default is deny.
-    riskSignals: ['destructive-intent', 'hands.act', `tool:${tool}`].sort(),
+    riskSignals: ['destructive-intent', 'hands.act', `tool:${tool}`, ...(scope ? [`scope:${scope}`] : [])].sort(),
     summary: describeHandsAction(tool, args),
   };
 }
@@ -420,6 +487,12 @@ export function verifyApproval({ publicKeyX, envelope, tool, args, nonce, device
     if (typeof claims.exp !== 'number' || claims.exp * 1000 < now) return { ok: false, error: 'expired' };
     if (claims.verdict !== 'allow') return { ok: false, error: `verdict ${claims.verdict}` };
     if (!claims.approvalId || !claims.decidedBy) return { ok: false, error: 'not a human approval' };
+    if (claims.grantId != null && claims.ruleId !== STANDING_GRANT_RULE_ID) return { ok: false, error: 'grant claims on a non-grant decision' };
+    if (claims.ruleId === STANDING_GRANT_RULE_ID) {
+      if (!claims.grantId || typeof claims.grantId !== 'string') return { ok: false, error: 'grant-backed decision without a grantId' };
+      const scope = handsScopeFor(tool, args);
+      if (!scope || !HANDS_GRANT_SCOPES[tool]?.includes(scope)) return { ok: false, error: 'grant-backed decision for an unscoped call' };
+    }
     if (claims.actionHash !== guardActionHash(buildGuardAction(tool, args))) return { ok: false, error: 'approval is for different arguments' };
     if (nonce && claims.nonce !== nonce) return { ok: false, error: 'nonce mismatch' };
     if (deviceId && claims.deviceId !== deviceId) return { ok: false, error: 'device mismatch' };
@@ -558,4 +631,177 @@ export function redactSecrets(text) {
   let out = String(text ?? '');
   for (const p of GUARD_REFUSED_PATTERNS) out = out.replace(new RegExp(p.source, p.flags.includes('g') ? p.flags : `${p.flags}g`), '[redacted]');
   return out;
+}
+
+// ─── PC seat action grants ───────────────────────────────────────────────────
+//
+// An action grant is the standing-permission sibling of the root grant: the
+// same Ed25519 envelope shape ({ payload, signature, keyId }) verified
+// against the Guard key pinned on the PC, but with its own audience, and
+// instead of opening a folder it pre-approves a NARROW, enumerated set of
+// mutating tool calls — exactly the calls the PC seat transport makes on
+// every job (worker/pc-seat-transport.mjs): the jobs prompt write, the one
+// seat-call command line, and the salvage pair (build-folder mkdir +
+// build-file writes). Matching is template-exact: the only things allowed
+// to vary are the provider word and the job UUID. Anything else — other
+// tools, other paths, read_file, resume_action — is never covered.
+// A grant is minted from ONE human approval of buildActionGrantAction
+// below; revocation is removing the grant from the spoke's local grants
+// file, the same road as root grants.
+
+export const ACTION_GRANT_PC_ROOT = 'C:\\Users\\troyh\\pc-seat';
+export const ACTION_GRANT_PROVIDERS = Object.freeze(['grok', 'claude', 'mistral', 'chatgpt']);
+
+const ACTION_GRANT_SCOPES = Object.freeze({
+  write_file: Object.freeze(['jobs-prompt', 'salvage-file']),
+  run_powershell: Object.freeze(['seat-call', 'salvage-mkdir']),
+  edit_file: Object.freeze(['spoke-protocol']),
+});
+
+function isValidActionEntry(entry) {
+  return !!entry && typeof entry === 'object'
+    && Object.prototype.hasOwnProperty.call(ACTION_GRANT_SCOPES, entry.tool)
+    && ACTION_GRANT_SCOPES[entry.tool].includes(entry.scope);
+}
+
+/**
+ * The Guard action a human approves ONCE to mint an action grant. The
+ * 'destructive-intent' signal routes it to Guard's human-approval rule
+ * under today's policy — minting a standing permission is exactly the
+ * kind of act a human approves, once, with no policy change needed.
+ */
+export function buildActionGrantAction({ deviceId, spokeDeviceId, actions } = {}) {
+  if (!deviceId || typeof deviceId !== 'string') throw new TypeError('deviceId is required');
+  if (!spokeDeviceId || typeof spokeDeviceId !== 'string') throw new TypeError('spokeDeviceId is required');
+  if (!Array.isArray(actions) || !actions.length || !actions.every(isValidActionEntry)) {
+    throw new TypeError('actions must be a non-empty list of known { tool, scope } entries');
+  }
+  const clean = actions.map(({ tool, scope }) => ({ tool, scope }));
+  return {
+    kind: 'agent.tool',
+    site: GUARD_ACTION_SITE,
+    tool: 'guard.issue_action_grant',
+    contentHash: sha256Hex(canonicalJson({ grant: { deviceId, spokeDeviceId, actions: clean } })),
+    riskSignals: ['action-grant', 'destructive-intent', 'hands.act'].sort(),
+    summary: `hands grant standing actions (${clean.map((a) => `${a.tool}:${a.scope}`).join(', ')}) for ${spokeDeviceId}`,
+  };
+}
+
+export function actionGrantActionHash(request) {
+  return guardActionHash(buildActionGrantAction(request));
+}
+
+/**
+ * Verify a signed action-grant envelope against the pinned Guard key.
+ * Mirrors verifyRootGrant's rigor and its { ok, claims } / { ok, error }
+ * convention. Required claims: aud, grantType='action', grantId,
+ * verdict='allow', a human approvalId + decidedBy, deviceId and
+ * spokeDeviceId (each enforced against the caller's expectation when one
+ * is given), and a non-empty actions list of known { tool, scope }
+ * entries. exp is honored when present; no exp means "until revoked" —
+ * the local grants file is the revocation list.
+ */
+export function verifyActionGrant(envelope, { publicKey, publicKeyX, deviceId, spokeDeviceId, now = Date.now() } = {}) {
+  try {
+    const keyX = publicKeyX ?? (typeof publicKey === 'string' ? publicKey : null);
+    const key = keyX ? publicKeyFromX(keyX) : publicKey;
+    if (!key) return { ok: false, error: 'no pinned Guard key' };
+    if (!envelope || typeof envelope.payload !== 'string' || typeof envelope.signature !== 'string') return { ok: false, error: 'malformed action grant' };
+    const good = verify(null, Buffer.from(envelope.payload, 'utf8'), key, Buffer.from(envelope.signature, 'base64url'));
+    if (!good) return { ok: false, error: 'bad signature' };
+    const claims = JSON.parse(Buffer.from(envelope.payload, 'base64url').toString('utf8'));
+    if (claims.aud !== ACTION_GRANT_AUDIENCE) return { ok: false, error: 'wrong audience' };
+    if (claims.grantType !== 'action') return { ok: false, error: 'not an action grant' };
+    if (!claims.grantId || typeof claims.grantId !== 'string') return { ok: false, error: 'missing grantId' };
+    if (claims.verdict !== 'allow') return { ok: false, error: `verdict ${claims.verdict}` };
+    if (!claims.approvalId || !claims.decidedBy) return { ok: false, error: 'not a human approval' };
+    if (!claims.deviceId || typeof claims.deviceId !== 'string') return { ok: false, error: 'missing deviceId' };
+    if (deviceId && claims.deviceId !== deviceId) return { ok: false, error: 'device mismatch' };
+    if (!claims.spokeDeviceId || typeof claims.spokeDeviceId !== 'string') return { ok: false, error: 'missing spokeDeviceId' };
+    if (spokeDeviceId && claims.spokeDeviceId !== spokeDeviceId) return { ok: false, error: 'spoke device mismatch' };
+    if (!Array.isArray(claims.actions) || !claims.actions.length || !claims.actions.every(isValidActionEntry)) return { ok: false, error: 'invalid actions' };
+    if (claims.exp != null) {
+      if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) return { ok: false, error: 'invalid expiry' };
+      if (claims.exp * 1000 <= now) return { ok: false, error: 'expired' };
+    }
+    if (claims.iat != null && (typeof claims.iat !== 'number' || !Number.isFinite(claims.iat))) return { ok: false, error: 'invalid issued-at' };
+    return { ok: true, claims };
+  } catch (error) {
+    return { ok: false, error: `unverifiable: ${error.message}` };
+  }
+}
+
+// ── Coverage matchers ─────────────────────────────────────────────────────
+// Windows paths compare case-insensitively with slashes normalized; the
+// command lines compare as whole normalized strings anchored to the
+// transport's exact templates, so any extra token, extra flag, different
+// script path, different window style, or chaining operator fails.
+
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const normWin = (value) => String(value ?? '').replace(/\//g, '\\').toLowerCase();
+const ACTION_UUID_RE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const ACTION_PROVIDER_RE = `(${ACTION_GRANT_PROVIDERS.join('|')})`;
+const ACTION_ROOT_RE = escRe(normWin(ACTION_GRANT_PC_ROOT));
+const JOBS_PROMPT_RE = new RegExp(`^${ACTION_ROOT_RE}\\\\jobs\\\\${ACTION_UUID_RE}\\.prompt\\.txt$`);
+const SEAT_CALL_RE = new RegExp(
+  `^start-process powershell -argumentlist @\\('-noprofile','-executionpolicy','bypass','-file','${ACTION_ROOT_RE}\\\\seat-call\\.ps1','-provider','${ACTION_PROVIDER_RE}','-promptfile','${ACTION_ROOT_RE}\\\\jobs\\\\(${ACTION_UUID_RE})\\.prompt\\.txt','-outfile','${ACTION_ROOT_RE}\\\\jobs\\\\(${ACTION_UUID_RE})\\.out\\.txt'\\) -windowstyle hidden$`,
+);
+const OLLAMA_CALL_RE = new RegExp(
+  `^start-process powershell -argumentlist @\\('-noprofile','-executionpolicy','bypass','-file','${ACTION_ROOT_RE}\\\\ollama-call\\.ps1','-model','qwen3\\.5:4b','-promptfile','${ACTION_ROOT_RE}\\\\jobs\\\\(${ACTION_UUID_RE})\\.prompt\\.txt','-outfile','${ACTION_ROOT_RE}\\\\jobs\\\\(${ACTION_UUID_RE})\\.out\\.txt'\\) -windowstyle hidden$`,
+);
+const SPOKE_PROTOCOL_RE = new RegExp(`^${escRe(normWin('C:\\Users\\troyh\\AppData\\Local\\Programs\\Helmian\\hands-mcp\\src\\shared\\protocol.mjs'))}$`);
+const SALVAGE_MKDIR_RE = new RegExp(`^new-item -itemtype directory -force -path '${ACTION_ROOT_RE}\\\\builds\\\\${ACTION_PROVIDER_RE}' \\| out-null$`);
+const SALVAGE_FILE_RE = new RegExp(`^${ACTION_ROOT_RE}\\\\builds\\\\${ACTION_PROVIDER_RE}\\\\([^\\\\]+)$`);
+// The transport's own salvage filename rule (writePcSeatFiles): a plain
+// file name, first char alphanumeric, no '..' anywhere.
+const SALVAGE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function actionCommandText(args) {
+  if (typeof args?.args?.command === 'string') return args.args.command;
+  if (typeof args?.command === 'string') return args.command;
+  return null;
+}
+
+/**
+ * True only when `claims` (a verified action grant's claims) covers this
+ * exact tool call. Fail closed on every doubt: unknown tools, unknown
+ * scopes, malformed args and near-miss command lines are never covered.
+ */
+export function actionGrantCovers(tool, args, claims) {
+  try {
+    if (!claims || claims.grantType !== 'action' || !Array.isArray(claims.actions)) return false;
+    const a = args && typeof args === 'object' ? args : {};
+    return claims.actions.some((entry) => {
+      if (!isValidActionEntry(entry) || entry.tool !== tool) return false;
+      switch (`${entry.tool}:${entry.scope}`) {
+        case 'write_file:jobs-prompt':
+          return typeof a.path === 'string' && JOBS_PROMPT_RE.test(normWin(a.path));
+        case 'write_file:salvage-file': {
+          if (typeof a.path !== 'string') return false;
+          const m = SALVAGE_FILE_RE.exec(normWin(a.path));
+          return !!m && SALVAGE_NAME_RE.test(m[2]) && !m[2].includes('..');
+        }
+        case 'run_powershell:seat-call': {
+          if (a.commandId !== 'run-command') return false;
+          const command = actionCommandText(a);
+          if (command == null) return false;
+          const m = SEAT_CALL_RE.exec(normWin(command));
+          if (m) return m[2] === m[3]; // same job UUID in -PromptFile and -OutFile
+          const o = OLLAMA_CALL_RE.exec(normWin(command));
+          return !!o && o[1] === o[2]; // Qwen's launch: same job UUID in both files
+        }
+        case 'run_powershell:salvage-mkdir': {
+          if (a.commandId !== 'run-command') return false;
+          const command = actionCommandText(a);
+          return command != null && SALVAGE_MKDIR_RE.test(normWin(command));
+        }
+        case 'edit_file:spoke-protocol':
+          return typeof a.path === 'string' && SPOKE_PROTOCOL_RE.test(normWin(a.path));
+        default:
+          return false;
+      }
+    });
+  } catch {
+    return false;
+  }
 }
