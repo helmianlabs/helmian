@@ -526,13 +526,14 @@ test('sql/073 admits exactly the sql/071 names plus muse — one name, nothing e
   assert.deepEqual(after, [...before, 'muse']);
 });
 
-test('the in-code repair list and sql/073 name the same providers — no drift', () => {
+test('the in-code repair list and sql/072 name the same providers — no drift', () => {
   const repair = presenceCheckNames(
     readFileSync(new URL('../src/cloud/runner-presence.mjs', import.meta.url), 'utf8'), 'runner-presence.mjs repair');
   const migration = presenceCheckNames(
-    readFileSync(new URL('../sql/073_runner_presence_muse.sql', import.meta.url), 'utf8'), 'sql/073');
+    readFileSync(new URL('../sql/072_runner_presence_qwen.sql', import.meta.url), 'utf8'), 'sql/072');
   assert.deepEqual(repair, migration);
   assert.ok(repair.includes('muse'), 'the self-heal widens to muse and can never narrow it back out');
+  assert.ok(repair.includes('qwen'), 'the self-heal widens to qwen and can never narrow it back out');
 });
 
 // A fake whose table still carries a pre-073 check: the first insert
@@ -574,4 +575,88 @@ test('stale-check repair: a 23514 widens the check to the list with muse, then t
   assert.ok(widened.includes('muse'));
   const rows = await store.list('t1');
   assert.deepEqual(rows.map((r) => [r.provider, r.connected]), [['muse', true]]);
+});
+
+// ---------- presence catalog admission: the Qwen seat (sql/072) ----------
+// Qwen is a presence-only name: her engine 'ollama' holds the vault key
+// slot (machinery), while the seat reports, syncs, and stamps answers
+// under her own name (the qwen-rename plan, pick A). These tests pin the
+// admission, the presence-vocabulary split that enforces it in the
+// store, and the agreement between the migration and the repair list
+// (the drift test above).
+
+test('sql/072 admits exactly the sql/073 names plus qwen — one name, nothing else moves', () => {
+  const before = presenceCheckNames(
+    readFileSync(new URL('../sql/073_runner_presence_muse.sql', import.meta.url), 'utf8'), 'sql/073');
+  const after = presenceCheckNames(
+    readFileSync(new URL('../sql/072_runner_presence_qwen.sql', import.meta.url), 'utf8'), 'sql/072');
+  assert.deepEqual(after, [...before, 'qwen']);
+});
+
+test('report + list round-trips the qwen seat under her own name', async () => {
+  const store = createRunnerPresenceStore(makeFakePool());
+  await store.report('t1', 'qwen', true);
+  const rows = await store.list('t1');
+  assert.deepEqual(rows.map((r) => [r.provider, r.connected]), [['qwen', true]]);
+});
+
+test('markSynced stamps a qwen row unconnected, with a timestamp', async () => {
+  const store = createRunnerPresenceStore(makeSyncFakePool());
+  const out = await store.markSynced('t1', 'qwen');
+  assert.deepEqual(out, { ok: true, provider: 'qwen', synced: true });
+  const rows = await store.list('t1');
+  assert.deepEqual(rows.map((r) => [r.provider, r.connected]), [['qwen', false]]);
+});
+
+test('markAnswered stamps an existing qwen row — her answers can name her', async () => {
+  const store = createRunnerPresenceStore(makeFullFakePool());
+  const before = await store.markAnswered('t1', 'qwen');
+  assert.equal(before.answered, false, 'an answer never creates the row');
+  await store.report('t1', 'qwen', true);
+  const stamped = await store.markAnswered('t1', 'qwen');
+  assert.equal(stamped.answered, true);
+  const rows = await store.list('t1');
+  assert.equal(rows[0].provider, 'qwen');
+  assert.ok(rows[0].lastAnsweredAt, 'the answered stamp landed on her own row');
+});
+
+test('activity: a qwen report keeps her own name', () => {
+  const event = runnerPresence.normalizeActivityEvent(
+    { provider: 'qwen', channelId: 'chan-1', stage: 'working' }, undefined, NOW);
+  assert.equal(event.provider, 'qwen');
+});
+
+test('stale-check repair: a 23514 widens the check to the list with qwen, then the qwen report lands', async () => {
+  const pool = makeStaleCheckFakePool();
+  const store = createRunnerPresenceStore(pool);
+  await store.report('t1', 'qwen', true);
+  assert.equal(pool._inserts(), 2, 'the failed insert is retried after the repair');
+  assert.equal(pool._alters.length, 2, 'the repair drops and re-adds the check');
+  const widened = presenceCheckNames(pool._alters.find((s) => s.includes('add constraint')), 'repair SQL');
+  assert.ok(widened.includes('qwen'));
+  const rows = await store.list('t1');
+  assert.deepEqual(rows.map((r) => [r.provider, r.connected]), [['qwen', true]]);
+});
+
+test('sync route stamps qwen, not ollama', async () => {
+  const store = createRunnerPresenceStore(makeFullFakePool());
+  const captured = {};
+  const handled = await handleRunnerPresenceRoute({
+    request: { method: 'POST' },
+    response: {},
+    requestUrl: new URL(`http://presence.test${RUNNER_PRESENCE_PATH}`),
+    activeTenantActor: async () => ({ tenantId: 't1', subject: 'user-1', viaDeviceToken: false }),
+    send: (_response, status, payload) => { captured.status = status; captured.body = JSON.parse(payload); },
+    TenantAuthorizationError: FakeTenantAuthorizationError,
+    readJson: async () => ({ syncProfile: true }),
+    store,
+    profileSyncJobs: { enqueue: async () => ({ id: 'job-qwen', status: 'queued' }) },
+  });
+  assert.equal(handled, true);
+  assert.equal(captured.status, 202);
+  assert.ok(captured.body.syncedProviders.includes('qwen'), 'the sync stamps her own name');
+  assert.ok(!captured.body.syncedProviders.includes('ollama'), 'the sync no longer stamps the engine name for her seat');
+  const rows = await store.list('t1');
+  assert.ok(rows.some((r) => r.provider === 'qwen'));
+  assert.ok(!rows.some((r) => r.provider === 'ollama'));
 });
