@@ -188,6 +188,50 @@ export const ESTATE_CARGO = Object.freeze([
   Object.freeze({ source: 'LEARNINGS.md', destination: `${MANAGED_DIR}/estate/LEARNINGS.md` }),
 ]);
 
+// ── Estate folder cargo (part B1) ────────────────────────────────────────────
+//
+// Two folders of the same estate, carried file by file under the same four
+// properties: the hand-built hook scripts in `scripts/` — the user's own
+// PC-side gates (autonomy boundary, destructive-command block, commit QA,
+// pretask blocker gate, the topic-lessons injector, and the rest of the
+// library) — and the topic lessons library in `lessons/` that the
+// topic-lessons hook injects from. Carriage is all this is: the files land
+// as data in each seat's managed folder; nothing here wires or runs them.
+//
+// Two fences keep the carriage to the estate itself:
+//
+//   - Root files only, never recursive. The subfolders under `scripts/` are
+//     separate tool trees with their own dependency folders, logs and data
+//     files — one of them holds a secret-bearing .env — and none of that is
+//     estate. A seat receives the scripts folder's own files, not everything
+//     that happens to live beneath it.
+//   - An extension allowlist per folder. Backup copies (.bak and friends),
+//     logs and caches sit in these folders beside the living files; the
+//     allowlist names the file kinds that ARE the estate — script files for
+//     `scripts/`, markdown for `lessons/` — and everything else stays home.
+export const ESTATE_SCRIPT_EXTENSIONS = Object.freeze([
+  '.ps1', '.mjs', '.js', '.cjs', '.sh', '.py', '.bat', '.cmd', '.vbs',
+]);
+
+export const ESTATE_CARGO_FOLDERS = Object.freeze([
+  Object.freeze({
+    source: 'scripts',
+    destination: `${MANAGED_DIR}/estate/scripts`,
+    extensions: ESTATE_SCRIPT_EXTENSIONS,
+  }),
+  Object.freeze({
+    source: 'lessons',
+    destination: `${MANAGED_DIR}/estate/lessons`,
+    extensions: Object.freeze(['.md']),
+  }),
+]);
+
+/** True when a folder-root file name is one the folder's cargo carries. */
+function estateFolderFileCarried(folder, name) {
+  const lower = String(name).toLowerCase();
+  return folder.extensions.some((extension) => lower.endsWith(extension));
+}
+
 export function resolveTargets(requested) {
   if (!requested || requested === 'all') return [...AGENT_OS_TARGETS];
   const names = String(requested)
@@ -373,6 +417,19 @@ export function renderEstateFiles(estateContents = {}) {
     if (typeof content !== 'string') continue;
     files.push({ path: destination, content, ownership: 'managed', cargo: 'estate' });
   }
+  // Folder cargo: every snapshot key under a folder's destination is one
+  // carried file. Sorted, so the plan reads the same on every run.
+  for (const folder of ESTATE_CARGO_FOLDERS) {
+    const prefix = `${folder.destination}/`;
+    const paths = Object.keys(estateContents ?? {})
+      .filter((path) => path.startsWith(prefix))
+      .sort();
+    for (const path of paths) {
+      const content = estateContents[path];
+      if (typeof content !== 'string') continue;
+      files.push({ path, content, ownership: 'managed', cargo: 'estate' });
+    }
+  }
   return files;
 }
 
@@ -450,20 +507,34 @@ function kitOwnedEstateContents(templates, sourceDir) {
 /**
  * Read the estate sources from the source seat's directory under `home`.
  *
- * Returns { contents, missing, kitOwned }: `contents` maps each estate
- * destination path to the source file's exact text; `missing` lists the
- * source names that are not there; `kitOwned` lists the sources that exist
- * but are still the installer's own shipped paper (see above) and so are
- * not estate yet. Neither absence is an error — a machine may not have
- * grown a file yet — but both are reported, never silently treated as an
- * empty file. This is the one read of user content the installer performs,
- * and it is read-only: the sources are never written by any code path here.
+ * Returns { contents, missing, missingFolders, kitOwned }: `contents` maps
+ * each estate destination path to the source file's exact text; `missing`
+ * lists the fixed-cargo source names that are not there; `missingFolders`
+ * lists the estate folders that are not there; `kitOwned` lists the sources
+ * that exist but are still the installer's own shipped paper (see above)
+ * and so are not estate yet. Neither absence is an error — a machine may
+ * not have grown a file yet — but both are reported, never silently treated
+ * as an empty file. This is the one read of user content the installer
+ * performs, and it is read-only: the sources are never written by any code
+ * path here.
+ *
+ * Folder cargo reads one level only: the folder's own root files whose
+ * names pass its extension allowlist (see ESTATE_CARGO_FOLDERS). An
+ * existing folder with no carried files contributes nothing and is not
+ * missing. The kit-owned exclusion does not reach folder files: the kit
+ * ships no scripts or lessons, so no folder file can be kit paper.
  */
-export async function loadEstateCargo({ home = homedir(), templates = null, readFileImpl = readFile } = {}) {
+export async function loadEstateCargo({
+  home = homedir(),
+  templates = null,
+  readFileImpl = readFile,
+  readdirImpl = readdir,
+} = {}) {
   const sourceDir = defaultTargetDirectory(ESTATE_SOURCE_TARGET, home);
   const kitOwnedRefs = templates ? kitOwnedEstateContents(templates, sourceDir) : {};
   const contents = {};
   const missing = [];
+  const missingFolders = [];
   const kitOwned = [];
   for (const { source, destination } of ESTATE_CARGO) {
     let content;
@@ -480,7 +551,27 @@ export async function loadEstateCargo({ home = homedir(), templates = null, read
     }
     contents[destination] = content;
   }
-  return { contents, missing, kitOwned };
+  for (const folder of ESTATE_CARGO_FOLDERS) {
+    let entries;
+    try {
+      entries = await readdirImpl(join(sourceDir, folder.source), { withFileTypes: true });
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      missingFolders.push(folder.source);
+      continue;
+    }
+    const names = entries
+      .filter((entry) => entry.isFile() && estateFolderFileCarried(folder, entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    for (const name of names) {
+      contents[`${folder.destination}/${name}`] = await readFileImpl(
+        join(sourceDir, folder.source, name),
+        'utf8',
+      );
+    }
+  }
+  return { contents, missing, missingFolders, kitOwned };
 }
 
 /**
