@@ -29,20 +29,20 @@ import {
 } from '../src/cloud/credential-connect.mjs';
 import { TenantAuthorizationError } from '../src/core/tenant-context.mjs';
 
-const FOUR = ['groq', 'nvidia', 'cloudflare', 'openrouter'];
+const FIVE = ['groq', 'nvidia', 'cloudflare', 'openrouter', 'muse'];
 
 // ---------- the rows ----------
 
-test('registry: exactly the four catalog seats, in order, no credential material in any row', () => {
-  assert.deepEqual([...PROVIDER_REGISTRY_IDS], FOUR);
-  assert.equal(PROVIDER_REGISTRY.length, 4);
+test('registry: exactly the five catalog seats, in order, no credential material in any row', () => {
+  assert.deepEqual([...PROVIDER_REGISTRY_IDS], FIVE);
+  assert.equal(PROVIDER_REGISTRY.length, 5);
   for (const r of PROVIDER_REGISTRY) {
     assert.ok(!JSON.stringify(r).match(/sk-[A-Za-z0-9]|api[_-]?key["']?\s*:\s*["'][A-Za-z0-9]{16,}/i), `${r.id}: a row never holds a key`);
   }
 });
 
 test('registry: every row carries the mandatory check date and source, one pinned model, and slot = id', () => {
-  for (const id of FOUR) {
+  for (const id of FIVE) {
     const r = providerRegistryRow(id);
     assert.ok(r, `${id} has a row`);
     assert.equal(r.id, id);
@@ -86,8 +86,8 @@ test('compose: cloudflare composes the one bundle record the runner reads; a hal
 
 // ---------- channel vocabulary ----------
 
-test('vocabulary: the four normalize as providers and engines, with their aliases', () => {
-  for (const id of FOUR) {
+test('vocabulary: the five normalize as providers and engines, with their aliases', () => {
+  for (const id of FIVE) {
     assert.equal(normalizeProvider(id), id);
     assert.equal(normalizeProvider(`@${id}`), id);
     assert.equal(normalizeEngine(id), id);

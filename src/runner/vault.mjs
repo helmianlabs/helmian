@@ -38,6 +38,7 @@ export const PROVIDER_KEY_ENV = {
   nvidia: 'NVIDIA_API_KEY',
   cloudflare: 'CLOUDFLARE_API_TOKEN',
   openrouter: 'OPENROUTER_API_KEY',
+  muse: 'MODEL_API_KEY',
 };
 
 function deriveDataKey(deviceToken, salt) {
