@@ -6,14 +6,35 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const requiredFiles = [
   'herald/index.html', 'herald/shell.js', 'herald/account-runtime.js',
-  'api/remote/v1/enrollment.js', 'api/remote/v1/desktop.js',
-  'api/remote/v1/desktops.js', 'api/remote/v1/control.js',
-  'api/remote/v1/control-token.js', 'api/remote/v1/desktop-token.js',
 ];
 const source = {};
 for (const file of requiredFiles) {
   try { await access(resolve(root, file)); source[file] = true; }
   catch { source[file] = false; }
+}
+// The remote/v1 routes have no physical files: vercel.json rewrites
+// multi-segment /api paths to the api/[...path].js catch-all, whose exported
+// route table maps each route key to a handler module under server/. Check
+// the route table itself, plus that each mapped handler module exists,
+// instead of looking for per-route files the routing design never creates.
+const remoteRoutes = {
+  'remote/v1/enrollment': 'herald-enrollment.js',
+  'remote/v1/desktop': 'herald-desktop.js',
+  'remote/v1/desktops': 'herald-desktops.js',
+  'remote/v1/control': 'herald-control.js',
+  'remote/v1/control-token': 'herald-realtime-token.js',
+  'remote/v1/desktop-token': 'herald-desktop-realtime-token.js',
+};
+let catchAllSource = '';
+try {
+  catchAllSource = await readFile(resolve(root, 'api/[...path].js'), 'utf8');
+  source['api/[...path].js'] = true;
+} catch { source['api/[...path].js'] = false; }
+for (const [route, handlerFile] of Object.entries(remoteRoutes)) {
+  let handlerPresent = false;
+  try { await access(resolve(root, 'server', handlerFile)); handlerPresent = true; }
+  catch { handlerPresent = false; }
+  source[`route:${route}`] = catchAllSource.includes(`'${route}':`) && handlerPresent;
 }
 const vercel = JSON.parse(await readFile(resolve(root, 'vercel.json'), 'utf8'));
 const policy = vercel.headers?.flatMap((item) => item.headers ?? [])
