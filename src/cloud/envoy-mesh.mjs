@@ -29,6 +29,7 @@ import {
   emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeChannelAvatar, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
+import { classifySeatAsk } from './envoy-actions.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
 
 // The bot status functions live in bot-status.mjs (import-free, so the
@@ -381,6 +382,12 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               members: config.agents,
               ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
               message,
+              // Guard spine bite 1: the ask, classified as a typed action
+              // (envoy-actions.mjs). Classification only — nothing is
+              // evaluated, blocked, or recorded here; the stamp rides
+              // along so the executor and the next bites can see what
+              // this ask IS, not just who should answer it.
+              action: classifySeatAsk(message.body),
               agents: due,
               context,
             });
