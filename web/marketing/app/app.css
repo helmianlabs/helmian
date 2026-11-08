@@ -860,3 +860,26 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   html, body { overflow-x: clip; }
   .icon-btn.sm { width: 32px; height: 32px; }
 }
+
+/* Themed scrollbars: thin and pill-shaped, no arrow buttons, colored
+   only from the theme tokens so every theme rides its own grey ramp.
+   Thumb = --border, the structural grey each theme already separates
+   its panes with; hover = --muted, one step up that ramp (in the light
+   theme --muted sits one step darker than --border, so hover deepens
+   there instead — same one-step move, read against a white ground).
+   The black theme is the one exception: its --border (#2A2A2A) sits
+   only ~1.4:1 on its near-black panels, too faint to find, so its
+   thumb uses --faint (inherited #64748B, ~4:1 on black) — the grey
+   that theme already uses for quiet-but-visible marks. */
+html { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-corner { background: transparent; }
+[data-theme="black"] { scrollbar-color: var(--faint) transparent; }
+[data-theme="black"]::-webkit-scrollbar-thumb,
+[data-theme="black"] ::-webkit-scrollbar-thumb { background: var(--faint); }
+[data-theme="black"]::-webkit-scrollbar-thumb:hover,
+[data-theme="black"] ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
