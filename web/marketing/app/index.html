@@ -151,6 +151,10 @@
             <div class="ew-row"><button type="button" class="ew-btn ghost sm" id="ew-new-channel-cancel">Cancel</button><button type="submit" class="ew-btn primary sm">Create</button></div>
           </form>
           <button id="ew-add-channel" class="ew-btn ghost full" type="button">+ New channel</button>
+          <section class="ew-crew" id="ew-crew" aria-label="Crew in this channel">
+            <div class="ew-crew-head"><span class="ew-crew-title" id="ew-crew-title">CREW</span></div>
+            <div class="ew-crew-list" id="ew-crew-list"></div>
+          </section>
           <footer class="ew-foot">
             <div class="ew-source"><img src="/assets/agents/maestro.png" alt="" width="14" height="14"> Helmian Envoy</div>
             <div class="ew-source" id="ew-discord-status"><span class="ew-discord-mark" aria-hidden="true"></span> Discord: <span id="ew-discord-status-text">checking…</span></div>
@@ -185,7 +189,6 @@
           <div id="ew-agent-state" class="ew-agent-state" role="status" hidden></div>
           <div id="ew-net-strip" class="ew-net-strip" role="status"></div>
           <form id="maestro-form" class="ew-composer" autocomplete="off">
-            <div class="ew-pills" id="ew-mention-pills" aria-label="Mention an agent"></div>
             <div class="ew-attach-chips" id="ew-attach-chips" hidden></div>
             <div class="ew-picker" id="ew-picker" hidden></div>
             <div class="ew-picker ew-slash-menu" id="ew-slash-menu" role="listbox" aria-label="Slash commands" hidden></div>
@@ -245,7 +248,6 @@
             <button class="ew-icon" type="button" data-collapse="agents" aria-label="Hide agents" title="Hide agents">›</button>
           </header>
           <button id="ew-create-agent-btn" class="ew-btn primary full" type="button">+ Create custom agent</button>
-          <div id="ew-agent-cards" class="ew-agent-cards"></div>
           <div class="ew-subhead">ADD TO THIS CHANNEL</div>
           <div id="ew-agent-add" class="ew-agent-add"></div>
           <p class="ew-note">@mention an agent to ask it, or @all to ask everyone here. A message that names nobody is just posted — no agent answers it. Agents run on your own PC bridge with your own keys; replies show up here and in the linked Discord channel.</p>
