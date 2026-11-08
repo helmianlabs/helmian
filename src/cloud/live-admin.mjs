@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Pool } from 'pg';
 import { assertExpectedNeonEndpoint } from '../core/database-target.mjs';
 import { requireActiveTenantMembership, TenantAuthorizationError, withTenantTransaction } from '../core/tenant-context.mjs';
@@ -91,6 +91,8 @@ export const LIVE_ADMIN_CONTROL_PATH = '/api/admin/control-surface';
 export const LIVE_ADMIN_EVENTS_PATH = '/api/admin/events';
 export const LIVE_ADMIN_EVENTS_EXPORT_PATH = '/api/admin/events/export';
 export const LIVE_ADMIN_WORKSPACE_PATH = '/api/admin/workspace';
+export const LIVE_ADMIN_WORKSPACE_MEMBERSHIPS_PATH = '/api/admin/workspace/memberships';
+export const LIVE_ADMIN_WORKSPACE_SELECT_PATH = '/api/admin/workspace/select';
 export const LIVE_ADMIN_ACTION_POLICY_PATH = '/api/admin/action-policy';
 export const LIVE_ADMIN_ACTION_POLICY_PREVIEW_PATH = '/api/admin/action-policy/preview';
 export const LIVE_ADMIN_ACTION_POLICY_CONFIRM_PATH = '/api/admin/action-policy/confirm';
@@ -206,6 +208,55 @@ function cookieOptions(path) {
 
 function oauthCookie(name, value, maxAge = 600) {
   return `${name}=${value}; Max-Age=${maxAge}; ${cookieOptions('/api/admin/provider-oauth')}`;
+}
+
+// Workspace switching, server selection leg (WS-SWITCH-DESIGN piece 1):
+// a signed-in person may present the workspace they want to work in —
+// the `helmian_tenant` cookie the select endpoint sets, or the
+// `x-helmian-tenant` header for clients that present it per request.
+// The presented value is only ever a NAME: tenant resolution matches it
+// against the person's own active memberships, so a selection can never
+// grant a workspace the person does not already belong to, and an
+// absent, malformed, or non-member selection resolves exactly as no
+// selection did before (the earliest-created membership). The cookie
+// value is HMAC-signed with the same secret that seals admin sessions;
+// a tampered value fails verification and is treated as absent. Where
+// no session secret is configured — the single-process mode whose
+// sessions are themselves opaque in-memory ids — the plain tenant id
+// is the cookie value, mirroring that fallback.
+export const TENANT_SELECTION_COOKIE = 'helmian_tenant';
+export const TENANT_SELECTION_HEADER = 'x-helmian-tenant';
+
+function tenantSelectionSecret(env) {
+  return String(env.HELMION_ADMIN_SESSION_SECRET ?? '');
+}
+
+function signTenantSelection(tenantId, secret) {
+  if (!secret) return tenantId;
+  const mac = createHmac('sha256', secret).update(`helmian_tenant:${tenantId}`).digest('base64url');
+  return `${tenantId}.${mac}`;
+}
+
+function readTenantSelectionCookie(request, secret) {
+  const raw = cookieValue(request, TENANT_SELECTION_COOKIE).trim();
+  if (!raw || raw.length > 512) return null;
+  if (!secret) return raw;
+  const cut = raw.lastIndexOf('.');
+  if (cut <= 0) return null;
+  const tenantId = raw.slice(0, cut);
+  const presented = Buffer.from(raw.slice(cut + 1), 'utf8');
+  const expected = Buffer.from(createHmac('sha256', secret).update(`helmian_tenant:${tenantId}`).digest('base64url'), 'utf8');
+  if (presented.length !== expected.length || !timingSafeEqual(presented, expected)) return null;
+  return tenantId;
+}
+
+function presentedTenantSelection(request, env) {
+  // An explicit per-request header wins over the stored cookie; a
+  // malformed header is a malformed selection (fallback), never a
+  // silent pass to the cookie.
+  const header = String(request.headers[TENANT_SELECTION_HEADER] ?? '').trim();
+  if (header) return header.length <= 128 ? header : null;
+  return readTenantSelectionCookie(request, tenantSelectionSecret(env));
 }
 
 function requestOrigin(request, env) {
@@ -399,13 +450,31 @@ export async function createLiveHelmianCloudAdminHandler({
          order by created_at asc, tenant_id asc`,
         [claimed.subject],
       );
-      // Duplicate active memberships can exist (signups that raced before
-      // creation took a per-subject advisory lock). Demanding exactly one
-      // locked such an account out of every admin path forever, so pick
-      // deterministically instead: the earliest-created membership — the
-      // same pick deriveTenantActor and signup's checks make. Only zero
-      // memberships refuses, with the same 403 as before.
       if (membership.rowCount === 0) throw Object.assign(new Error('Admin tenant membership required'), { status: 403 });
+      // Workspace selection, piece 1b: the same presented selection the
+      // member leg honours (deriveTenantActor), resolved only against
+      // the admin rows just read — a selection naming a workspace where
+      // the person holds no owner/admin role is not among them and
+      // never grants it. Every request reaching this deriver arrived on
+      // the cookie session, so no leg guard is needed here.
+      const selectedTenantId = presentedTenantSelection(request, env);
+      if (selectedTenantId) {
+        const picked = membership.rows.find((row) => row.tenant_id === selectedTenantId);
+        if (picked) return { subject: claimed.subject, tenantId: picked.tenant_id, role: picked.role };
+      }
+      // No selection, or one naming no admin workspace of theirs.
+      // Duplicate active memberships within ONE tenant can exist
+      // (signups that raced before creation took a per-subject advisory
+      // lock), so a single admin tenant still picks deterministically —
+      // the earliest-created row, exactly as before. But a subject
+      // holding owner/admin roles in two or more tenants has no
+      // unambiguous console: landing them silently in the
+      // earliest-created workspace is the failure the clm placeholder
+      // ("denied until a server-bound picker exists") guards, so that
+      // case refuses with the same 403 until the person presents a
+      // selection naming one of their admin workspaces.
+      const adminTenants = new Set(membership.rows.map((row) => row.tenant_id));
+      if (adminTenants.size > 1) throw Object.assign(new Error('Admin workspace selection required'), { status: 403 });
       const role = membership.rows[0].role;
       if (!['owner', 'admin'].includes(role)) throw Object.assign(new Error('Admin tenant membership required'), { status: 403 });
       return { subject: claimed.subject, tenantId: membership.rows[0].tenant_id, role };
@@ -424,6 +493,12 @@ export async function createLiveHelmianCloudAdminHandler({
   };
   async function deriveTenantActor(request) {
     let claimed = sessionIdentity(request);
+    // Workspace selection applies to the member-session leg only. Note
+    // that this request arrived on it before the desktop-link and
+    // Clerk-bearer legs below replace `claimed`: a device token takes
+    // its tenant from its desktop link and a phone's feed reads keep
+    // the plain membership pick — neither ever sees a selection.
+    const viaMemberSession = Boolean(claimed?.subject);
     if (!claimed?.subject && isEnvoyPath(request) && bearerToken(request)) {
       const desktop = await invites.desktopIdentity(bearerToken(request)).catch(() => null);
       if (desktop) claimed = { subject: desktop.subject, viaDeviceToken: true, deviceTenantId: desktop.tenantId };
@@ -453,7 +528,8 @@ export async function createLiveHelmianCloudAdminHandler({
       // whatever workspace the subject joined first: a bridge paired
       // under the platform tenant could never claim its real
       // workspace's profile-sync jobs. Member sessions keep the
-      // earliest-created pick below.
+      // earliest-created pick below, unless the person has selected
+      // one of their own workspaces (workspace switching, piece 1).
       const membership = claimed.viaDeviceToken === true && claimed.deviceTenantId
         ? await client.query(
           `select tenant_id, role from helmion.tenant_memberships where subject=$1 and tenant_id=$2 and active`,
@@ -469,7 +545,16 @@ export async function createLiveHelmianCloudAdminHandler({
       // deterministically instead: the earliest-created membership — the
       // same pick signup's checks make. Only zero memberships refuses.
       if (membership.rowCount === 0) throw Object.assign(new Error('Exactly one active organization membership is required'), { status: 403 });
-      const actor = { subject: claimed.subject, tenantId: membership.rows[0].tenant_id, role: membership.rows[0].role };
+      let picked = membership.rows[0];
+      if (viaMemberSession) {
+        // The selection picks among the rows just read — the person's
+        // own active memberships, nothing else — so a selection naming
+        // a workspace the person does not belong to is simply not
+        // among them and the earliest-created row stands.
+        const selectedTenantId = presentedTenantSelection(request, env);
+        if (selectedTenantId) picked = membership.rows.find((row) => row.tenant_id === selectedTenantId) ?? picked;
+      }
+      const actor = { subject: claimed.subject, tenantId: picked.tenant_id, role: picked.role };
       if (claimed.viaDeviceToken === true) actor.viaDeviceToken = true;
       return actor;
     } finally { client.release(); }
@@ -793,6 +878,62 @@ export async function createLiveHelmianCloudAdminHandler({
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
         const signedIn = sessionIdentity(request);
         send(response, denied ? 403 : 503, JSON.stringify({ authenticated: false, signedIn: Boolean(signedIn?.subject), ...(signedIn?.subject ? { subject: signedIn.subject } : {}), code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_MEMBERSHIPS_PATH) {
+      try {
+        try { await claimFirstOwner({ pool, env, session: sessionIdentity(request), logger: noteAttempt }); } catch { /* claim is best-effort; membership check below decides */ }
+        const actor = await deriveTenantActor(request);
+        const client = await pool.connect();
+        try {
+          const result = await client.query(
+            `select m.tenant_id, m.role, t.display_name
+             from helmion.tenant_memberships m
+             left join helmion.tenants t on t.tenant_id = m.tenant_id
+             where m.subject=$1 and m.active=true
+             order by m.created_at asc, m.tenant_id asc`,
+            [actor.subject],
+          );
+          send(response, 200, JSON.stringify({ memberships: result.rows.map((row) => ({ tenantId: row.tenant_id, name: String(row.display_name ?? '').trim() || null, role: row.role, selected: row.tenant_id === actor.tenantId })) }));
+        } finally { client.release(); }
+      } catch (error) {
+        const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
+        send(response, denied ? 403 : 503, JSON.stringify({ valid: false, code: denied ? 'ADMIN_MEMBERSHIP_REQUIRED' : 'ADMIN_DATABASE_READ_FAILED' }));
+      }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_SELECT_PATH) {
+      try {
+        // The selection belongs to the signed-in person, so it is
+        // recorded from the member session itself — never from a
+        // device token or a bearer — and only after the person's own
+        // active membership in the named workspace is proven. A
+        // non-member selection is refused and sets no cookie.
+        const session = sessionIdentity(request);
+        if (!session?.subject) throw Object.assign(new Error('Workspace selection requires a signed-in member session'), { status: 403, code: 'WORKSPACE_SELECTION_SESSION_REQUIRED' });
+        const body = await readJsonObject(request);
+        exactKeys(body, ['tenantId']);
+        const tenantId = typeof body.tenantId === 'string' ? body.tenantId.trim() : '';
+        if (!tenantId || tenantId.length > 128) throw Object.assign(new Error('Workspace selection tenantId is invalid'), { status: 400, code: 'WORKSPACE_SELECTION_INPUT_INVALID' });
+        const client = await pool.connect();
+        let membership;
+        try {
+          membership = await client.query(
+            `select m.tenant_id, m.role, t.display_name
+             from helmion.tenant_memberships m
+             left join helmion.tenants t on t.tenant_id = m.tenant_id
+             where m.subject=$1 and m.tenant_id=$2 and m.active=true`,
+            [session.subject, tenantId],
+          );
+        } finally { client.release(); }
+        if (membership.rowCount !== 1) throw Object.assign(new Error('Workspace selection requires an active membership in that workspace'), { status: 403, code: 'WORKSPACE_SELECTION_MEMBERSHIP_REQUIRED' });
+        const row = membership.rows[0];
+        const selection = signTenantSelection(row.tenant_id, tenantSelectionSecret(env));
+        send(response, 200, JSON.stringify({ valid: true, selected: { tenantId: row.tenant_id, name: String(row.display_name ?? '').trim() || null, role: row.role } }), 'application/json; charset=utf-8', { 'set-cookie': `${TENANT_SELECTION_COOKIE}=${selection}; Max-Age=${APP_SESSION_MAX_AGE_SECONDS}; ${cookieOptions('/api/admin')}` });
+      } catch (error) {
+        const status = error?.status === 403 ? 403 : error?.status === 400 ? 400 : error?.status === 413 ? 413 : error?.status === 415 ? 415 : 503;
+        send(response, status, JSON.stringify({ valid: false, code: error?.code ?? (status === 403 ? 'WORKSPACE_SELECTION_FORBIDDEN' : status === 503 ? 'WORKSPACE_SELECTION_UNAVAILABLE' : 'WORKSPACE_SELECTION_INPUT_INVALID') }));
       }
       return true;
     }
