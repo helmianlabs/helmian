@@ -1297,7 +1297,7 @@ function renderHeader() {
   if (debBadge) { debBadge.hidden = deb.badgeHidden; debBadge.textContent = deb.badgeText; }
   if (debBtn) { const l = debBtn.querySelector('.lbl'); if (l) l.textContent = deb.buttonLabel; debBtn.setAttribute('aria-pressed', String(deb.active)); }
   if (debStop) debStop.hidden = deb.stopHidden;
-  $('ew-agent-count').textContent = String((ws.config?.agents?.length ?? 0));
+  const agentCount = $('ew-agent-count'); if (agentCount) agentCount.textContent = String((ws.config?.agents?.length ?? 0));
   $('ew-discord-status-text').textContent = dh.statusText;
   $('ew-slack-status-text').textContent = sh.statusText;
   renderNetStrip();
