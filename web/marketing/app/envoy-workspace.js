@@ -467,7 +467,7 @@ function seatFaceImg(provider) {
 const CREW_FACE_SLUG = { openai: 'chatgpt' };
 const crewFaceSlug = (provider) => CREW_FACE_SLUG[provider] ?? provider;
 function crewFaceImg(slug, fallback) {
-  const img = h('img', { class: 'ew-crew-face-img', src: `/app/assets/crew/${slug}-128.png`, srcset: `/app/assets/crew/${slug}-256.png 2x`, alt: '', width: 28, height: 28, loading: 'lazy' });
+  const img = h('img', { class: 'ew-crew-face-img', src: `/app/assets/crew/${slug}-56.png`, srcset: `/app/assets/crew/${slug}-128.png 2x, /app/assets/crew/${slug}-256.png 3x`, alt: '', width: 28, height: 28, loading: 'lazy' });
   img.addEventListener('error', () => {
     if (img.dataset.fbk) return;
     img.dataset.fbk = '1';
