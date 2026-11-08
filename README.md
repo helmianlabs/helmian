@@ -226,7 +226,7 @@ Phone / Browser ──→ Cloud (Vercel + Neon) ──→ Bridge ──→ Your 
   entered once on the Integrations page and stored in the tenant's
   encrypted credential store; the seats work off those connections from
   then on. Keys and passwords are never typed into a chat.
-- **Signup**: creating an account creates a trial workspace and an owner
+- **Signup**: creating an account creates a workspace and an owner
   membership, then lands you in `/app`. No manual provisioning.
 
 ## Current status (November 2026)
