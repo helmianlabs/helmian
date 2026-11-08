@@ -373,22 +373,24 @@ function syncActivityViews() {
   activityViewSig = sig;
   renderMessages();
   renderCliThread();
-  syncAgentCardMotion();
+  syncCrewMotion();
 }
 
-// The Agents-panel cards are rebuilt on roster/config changes, not on
-// the activity tick — so their avatars' motion (emoji bite 4) is
-// synced in place from the same signature change that re-renders the
-// message views: class toggles on the avatar shell only, no rebuild,
-// and only while the signature actually moved.
-function syncAgentCardMotion() {
+// The CREW rail rows are rebuilt by renderAgents() on the message poll
+// (loadMessages renders them on every poll, changed signature or not),
+// so their status dots and activity lines ride that cadence. Their
+// faces' motion (emoji bite 4) is synced in place from the same
+// signature change that re-renders the message views: class toggles on
+// the face shell only, no rebuild, and only while the signature
+// actually moved.
+function syncCrewMotion() {
   if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
-  for (const card of document.querySelectorAll('#ew-agent-cards .ew-agent[data-provider]')) {
-    const ava = card.querySelector('.ew-avatar');
-    if (!ava) continue;
-    const cls = activityMotionClass(activityMotionStage(ws.activity, card.getAttribute('data-provider'), ws.channelId));
-    ava.classList.toggle('ew-ava-bounce', cls === 'ew-ava-bounce');
-    ava.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
+  for (const row of document.querySelectorAll('#ew-crew-list .ew-crew-row[data-provider]')) {
+    const face = row.querySelector('.ew-crew-face');
+    if (!face) continue;
+    const cls = activityMotionClass(activityMotionStage(ws.activity, row.getAttribute('data-provider'), ws.channelId));
+    face.classList.toggle('ew-ava-bounce', cls === 'ew-ava-bounce');
+    face.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
   }
 }
 
@@ -451,6 +453,42 @@ function seatAvatar(provider, motionStage = null) {
 function seatFaceImg(provider) {
   const face = seatFace(provider);
   return face ? emojiNode(face) : avatarImg(provider);
+}
+
+// ---------- CREW rail faces (UI polish bite 1) ----------
+// The rail's faces are the library pack's stills, served as app assets
+// at /app/assets/crew/<seat>-<size>.png. Seat slugs are the manifest's
+// (library-pack/manifest.json seats[]); the one mismatch with the
+// room's provider keys is ChatGPT — provider 'openai', asset slug
+// 'chatgpt'. If an asset 404s (the pack is uploaded separately), the
+// face falls back to the seat's existing avatar — the workspace emoji
+// face when it has one, otherwise the stock picture — so a missing
+// file never leaves an empty slot.
+const CREW_FACE_SLUG = { openai: 'chatgpt' };
+const crewFaceSlug = (provider) => CREW_FACE_SLUG[provider] ?? provider;
+function crewFaceImg(slug, fallback) {
+  const img = h('img', { class: 'ew-crew-face-img', src: `/app/assets/crew/${slug}-128.png`, srcset: `/app/assets/crew/${slug}-256.png 2x`, alt: '', width: 28, height: 28, loading: 'lazy' });
+  img.addEventListener('error', () => {
+    if (img.dataset.fbk) return;
+    img.dataset.fbk = '1';
+    img.replaceWith(fallback());
+  });
+  return img;
+}
+const crewSeatFaceImg = (provider) => crewFaceImg(crewFaceSlug(provider), () => seatFaceImg(provider));
+const crewOwnerFaceImg = () => crewFaceImg('owner', () => {
+  const face = myFace();
+  return face ? emojiNode(face) : h('span', { class: 'ew-crew-initial' }, (ws.profile?.nickname || 'You').slice(0, 1).toUpperCase());
+});
+// The rail's face slot: 28px rounded square (radius 8 — never a
+// circle) on the soft backing, with the status dot pinned at its
+// bottom-right over a surface ring, and the seat's live activity
+// motion riding the shell exactly as it did on the agent cards.
+function crewFaceNode(faceImg, statusKind, motionStage) {
+  const motion = activityMotionClass(motionStage);
+  return h('span', { class: `ew-crew-face${motion ? ` ${motion}` : ''}` },
+    faceImg,
+    h('span', { class: `ew-crew-dot ${statusKind}`, 'aria-hidden': 'true' }));
 }
 
 function renderFaceViews() { renderAgents(); renderMessages(); renderCliChips(); renderCliSessions(); renderCliThread(); }
@@ -593,7 +631,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -1286,6 +1324,169 @@ async function loadDeskLists() {
   if (cRes.status === 'fulfilled') ws.desk.checkpoints = Array.isArray(cRes.value?.checkpoints) ? cRes.value.checkpoints : [];
   renderDeskLists();
 }
+// ---------- CREW rail (UI polish bite 1) ----------
+// The sidebar presence rail that replaces the composer's pill strip
+// and the Agents pane's cards. Everything it shows comes from feeds
+// the room already loads — nothing new is fetched:
+//   · presence: GET /api/admin/envoy/runner/presence (loadPresence)
+//     fills ws.online (connected seats) and ws.presenceRows (the raw
+//     rows, kept for the limit read below);
+//   · work: the runner activity feed on that same GET (ws.activity),
+//     read through activityCue() — the exact helper the in-stream
+//     activity rows are built from;
+//   · roster: the channel config's agents + custom agents, the same
+//     set renderAgents() has always derived.
+// Status kinds: 'working' (a live, non-terminal activity cue),
+// 'limit' (the seat's presence row carries a limit flag — see
+// crewLimit), 'live' (connected, no live cue), 'offline' (not in the
+// presence set). Rows sort working → limit → live → offline, roster
+// order inside a group (spec §4: the list is the room's heartbeat).
+const CREW_RANK = { working: 0, limit: 1, live: 2, offline: 3 };
+// The seat's raw presence row, matched under any of its feed names
+// (the qwen seat reports as 'ollama', grok may report as 'xai').
+function crewPresenceRow(provider) {
+  const names = activityProviderNames(provider);
+  return (ws.presenceRows ?? []).find((row) => {
+    const n = String(row?.provider ?? row?.providerName ?? '').toLowerCase();
+    return activityDeskProvider(n) === provider || names.includes(n);
+  }) ?? null;
+}
+// At-limit state, read off the presence row when the server marks it:
+// a limited/atLimit flag, a limited/at-limit status word, or a future
+// limit-reset stamp. The client payload the room consumes today
+// carries only provider + connected on each row, so until the server
+// adds one of these fields this read returns null and no seat renders
+// at-limit — the rail never invents a limit it cannot see.
+function crewLimit(provider) {
+  const row = crewPresenceRow(provider);
+  if (!row) return null;
+  const until = row.limitUntil ?? row.limitedUntil ?? row.limitResetsAt ?? row.resetsAt ?? row.resetAt ?? null;
+  const flagged = row.limited === true || row.atLimit === true || row.at_limit === true
+    || row.status === 'limited' || row.status === 'at-limit' || row.state === 'limited' || row.state === 'at-limit'
+    || (typeof until === 'string' && Boolean(until) && new Date(until).getTime() > Date.now());
+  if (!flagged) return null;
+  return { until: typeof until === 'string' && until ? until : null };
+}
+// One seat's rail status: { kind, line } — the line is always plain
+// words, never blank. A working seat's line is its activity event's
+// own detail when the event carries one, else the stage words the
+// in-stream cue uses (ACTIVITY_STAGE_WORDS).
+function crewStatus(key, online, now = Date.now()) {
+  const cue = activityCue(ws.activity, key, ws.channelId, now);
+  const limit = AGENTS.includes(key) ? crewLimit(key) : null;
+  if (limit) { const untilText = limit.until ? clock(limit.until) : ''; return { kind: 'limit', line: untilText ? `At its limit until ${untilText}` : 'At its limit' }; }
+  if (cue && !ACTIVITY_TERMINAL_STAGES.has(cue.stage)) {
+    const detail = typeof cue.detail === 'string' ? cue.detail.trim() : '';
+    const words = ACTIVITY_STAGE_WORDS[cue.stage] ?? 'working on it';
+    return { kind: 'working', line: detail || `${words.charAt(0).toUpperCase()}${words.slice(1)}` };
+  }
+  if (!online) return { kind: 'offline', line: 'Offline' };
+  if (cue) {
+    const words = ACTIVITY_STAGE_WORDS[cue.stage] ?? 'working on it';
+    return { kind: 'live', line: `${words.charAt(0).toUpperCase()}${words.slice(1)}` };
+  }
+  return { kind: 'live', line: 'Standing by' };
+}
+// --- composer targeting, driven from the rail ---
+// There is no separate target state to keep: send() posts the
+// composer's text, and routing (addressed / deskTargets — the client
+// mirrors of the server's rules) parses the @mentions out of that
+// text. The pill strip wrote the text with insertMention() — a
+// leading `@Name ` prefix in #maestro-input — and the rail writes the
+// exact same text the exact same way, so the send path is untouched.
+// Picking a seat first strips any leading @tags the rail (or the old
+// pills) put there, so a click always leaves exactly one target.
+function crewTagName(key) {
+  if (key === 'all') return 'all';
+  if (NAMES[key]) return NAMES[key];
+  return key; // a custom agent is targeted by its handle
+}
+function crewKnownTags() {
+  const map = new Map([['all', 'all']]);
+  for (const p of AGENTS) { map.set(p, p); map.set(NAMES[p].toLowerCase(), p); }
+  for (const [word, p] of Object.entries(ALIAS)) map.set(word, p);
+  for (const ca of ws.config?.customAgents ?? []) if (ca.handle) map.set(String(ca.handle).toLowerCase(), ca.handle);
+  return map;
+}
+function crewLeadingTargets() {
+  const box = $('maestro-input');
+  if (!box) return [];
+  const known = crewKnownTags();
+  const out = [];
+  let rest = box.value;
+  let m;
+  while ((m = rest.match(/^@([A-Za-z0-9_-]+)[ \t]+/))) {
+    const key = known.get(m[1].toLowerCase());
+    if (!key) break;
+    out.push(key);
+    rest = rest.slice(m[0].length);
+  }
+  return out;
+}
+function stripCrewLeadingTargets() {
+  const box = $('maestro-input');
+  if (!box) return;
+  const known = crewKnownTags();
+  let rest = box.value;
+  let m;
+  while ((m = rest.match(/^@([A-Za-z0-9_-]+)[ \t]+/)) && known.has(m[1].toLowerCase())) rest = rest.slice(m[0].length);
+  box.value = rest;
+}
+function setCrewTarget(key) {
+  if (!$('maestro-input')) return;
+  stripCrewLeadingTargets();
+  insertMention(crewTagName(key));
+  syncCrewSelection();
+}
+// The whole-crew row reads selected when nothing leads the draft (the
+// default) or when @all leads it; a seat row reads selected when its
+// tag leads the draft. Derived from the draft text itself, so hand
+// edits and pill-era drafts show the same truth the send will use.
+function crewRowSelected(key, targets) {
+  if (key === 'all') return targets.length === 0 || (targets.length === 1 && targets[0] === 'all');
+  return targets.includes(key);
+}
+function syncCrewSelection() {
+  const list = $('ew-crew-list');
+  if (!list) return;
+  const targets = crewLeadingTargets();
+  for (const row of list.querySelectorAll('.ew-crew-row[data-provider]')) {
+    const on = crewRowSelected(row.getAttribute('data-provider'), targets);
+    row.classList.toggle('selected', on);
+    row.setAttribute('aria-pressed', String(on));
+  }
+}
+function crewRow({ key, name, faceImg, status, motionStage, title }) {
+  const selected = crewRowSelected(key, crewLeadingTargets());
+  return h('button', { type: 'button', class: `ew-crew-row${selected ? ' selected' : ''}`, 'data-provider': key, 'aria-pressed': String(selected), title, onclick: () => setCrewTarget(key) },
+    crewFaceNode(faceImg, status.kind, motionStage),
+    h('span', { class: 'ew-crew-text' },
+      h('span', { class: 'ew-crew-name' }, name),
+      h('span', { class: 'ew-crew-line' }, status.line)));
+}
+function renderCrew(roster, customList, states, desk) {
+  const list = $('ew-crew-list');
+  if (!list) return;
+  const total = roster.length + customList.length;
+  const titleEl = $('ew-crew-title');
+  if (titleEl) titleEl.textContent = total ? `CREW — ${total} IN THIS CHANNEL` : 'CREW';
+  const entries = [];
+  roster.forEach((p, i) => {
+    const status = crewStatus(p, states[p].state !== 'offline');
+    entries.push({ rank: CREW_RANK[status.kind], order: i, make: () => crewRow({ key: p, name: NAMES[p], faceImg: crewSeatFaceImg(p), status, motionStage: activityMotionStage(ws.activity, p, ws.channelId), title: desk ? `Dispatch to ${NAMES[p]} — your message goes to this seat` : `Target ${NAMES[p]} — your message goes to this seat` }) });
+  });
+  customList.forEach((ca, i) => {
+    const status = crewStatus(ca.handle, ws.online.has(ca.provider) || ca.provider === 'ollama');
+    entries.push({ rank: CREW_RANK[status.kind], order: roster.length + i, make: () => crewRow({ key: ca.handle, name: ca.name, faceImg: emojiNode(ca.emoji || '🤖'), status, motionStage: activityMotionStage(ws.activity, ca.handle, ws.channelId), title: `Target ${ca.name} (@${ca.handle})` }) });
+  });
+  entries.sort((a, b) => a.rank - b.rank || a.order - b.order);
+  const ownerRow = crewRow({ key: 'all', name: 'Whole crew', faceImg: crewOwnerFaceImg(), status: { kind: 'live', line: desk ? 'Everyone on the desk' : 'Everyone in this channel' }, motionStage: null, title: desk ? 'Dispatch to everyone on the desk' : 'Target the whole crew — clears a single-seat target' });
+  const activeKey = document.activeElement?.classList?.contains('ew-crew-row') ? document.activeElement.getAttribute('data-provider') : null;
+  list.replaceChildren(ownerRow, ...entries.map((e) => e.make()),
+    ...(total ? [] : [h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one from the Agents panel.' : 'No agents in this channel yet. Add one from the Agents panel.')]));
+  if (activeKey) for (const row of list.querySelectorAll('.ew-crew-row')) if (row.getAttribute('data-provider') === activeKey) { row.focus({ preventScroll: true }); break; }
+}
+
 function renderAgents() {
   const desk = inMaestroMode();
   const raw = (ws.config?.agents ?? []).map((a) => a.provider);
@@ -1296,41 +1497,13 @@ function renderAgents() {
   $('ew-agents-summary').textContent = desk
     ? (totalCount ? `${totalCount} on the desk` : 'the desk is empty')
     : (totalCount ? `${totalCount} in this channel` : 'none in this channel');
-  const canFace = ['owner', 'admin'].includes(ws.ctx.state.actor?.role);
-  const builtinCards = roster.map((p) => {
-    const s = states[p];
-    const label = s.state === 'offline' ? 'OFFLINE' : 'IDLE';
-    return h('div', { class: 'ew-agent', 'data-provider': p, role: 'button', tabindex: 0, title: desk ? `Dispatch to @${NAMES[p]}` : `Mention @${NAMES[p]} in the channel`, onclick: () => insertMention(NAMES[p]), onkeydown: (e) => { if (e.key === 'Enter') insertMention(NAMES[p]); } },
-      seatAvatar(p, activityMotionStage(ws.activity, p, ws.channelId)), h('strong', {}, NAMES[p]),
-      h('span', { class: 'ew-agent-btns' },
-        ...(canFace ? [h('button', { type: 'button', class: 'ew-icon face', title: `Change ${NAMES[p]}'s face`, 'aria-label': `Change ${NAMES[p]}'s face`, onclick: (e) => { e.stopPropagation(); openSeatFaceModal(p); } }, emojiNode(seatFace(p) ?? '🤖'))] : []),
-        h('button', { type: 'button', class: 'ew-icon remove', title: desk ? `Remove ${NAMES[p]} from the desk` : `Remove ${NAMES[p]} from this channel`, 'aria-label': `Remove ${NAMES[p]}`, onclick: (e) => { e.stopPropagation(); changeAgent('remove-agent', p); } }, '×')),
-      h('span', { class: `ew-state ${s.state}` }, label),
-      h('span', { class: 'last' }, s.state === 'offline' ? 'Offline. Start the Helmian bridge on your PC to bring it online.' : (s.last ? s.last.replace(/\s+/g, ' ').slice(0, 120) : 'Waiting for a message')));
-  });
-  const customCards = customList.map((ca) => {
-    const engineOnline = ws.online.has(ca.provider) || ca.provider === 'ollama';
-    const state = engineOnline ? 'idle' : 'offline';
-    const provLabel = CUSTOM_PROVIDER_LABELS[ca.provider] || ca.provider;
-    const caMotion = activityMotionClass(activityMotionStage(ws.activity, ca.handle, ws.channelId));
-    return h('div', { class: 'ew-agent custom-agent-card', 'data-provider': ca.handle, role: 'button', tabindex: 0, title: `Mention @${ca.handle} (${ca.jobTitle || provLabel})`, onclick: () => insertMention(ca.handle), onkeydown: (e) => { if (e.key === 'Enter') insertMention(ca.handle); } },
-      h('div', { class: `ew-avatar emoji-ava${caMotion ? ` ${caMotion}` : ''}` }, emojiNode(ca.emoji || '🤖')),
-      h('strong', {}, `${ca.name} (@${ca.handle})`),
-      h('button', { type: 'button', class: 'ew-icon remove', title: `Retire @${ca.handle}`, 'aria-label': `Retire @${ca.handle}`, onclick: (e) => { e.stopPropagation(); removeCustomAgent(ca.handle); } }, '×'),
-      h('span', { class: `ew-state ${state}` }, engineOnline ? 'READY' : 'CONNECT SEAT'),
-      h('span', { class: 'last' }, `${ca.jobTitle ? ca.jobTitle + ' · ' : ''}${provLabel}`));
-  });
-  $('ew-agent-cards').replaceChildren(...builtinCards, ...customCards);
-  if (!totalCount) $('ew-agent-cards').append(h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one below or click + Create Agent.' : 'No agents in this channel. Add one below or click + Create Agent to build your team.'));
+  // The CREW rail (sidebar) is the seat surface now — the Agents
+  // pane's cards and the composer's pill strip are gone (bite 1).
+  renderCrew(roster, customList, states, desk);
   $('ew-agent-add').replaceChildren(
     ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)),
     h('button', { type: 'button', class: 'ew-pill create-custom', title: 'Create a custom agent with emoji, name, job & AI provider', onclick: openCreateAgentModal }, '✨ + Custom Agent')
   );
-  $('ew-mention-pills').replaceChildren(...((desk ? totalCount >= 1 : totalCount > 1) ? [h('button', { type: 'button', class: 'ew-pill all', onclick: () => insertMention('all') }, '@all')] : []),
-    ...roster.map((p) => h('button', { type: 'button', class: 'ew-pill', title: `Mention @${NAMES[p]}`, onclick: () => insertMention(NAMES[p]) }, seatFaceImg(p), NAMES[p])),
-    ...customList.map((ca) => h('button', { type: 'button', class: 'ew-pill custom-pill', title: `Mention @${ca.handle}${ca.jobTitle ? ' · ' + ca.jobTitle : ''}`, onclick: () => insertMention(ca.handle) }, emojiNode(ca.emoji || '🤖'), `@${ca.handle}`)),
-    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill add', title: `Add ${NAMES[p]} to #${currentTitle()}`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)));
-  $('ew-mention-pills').hidden = false;
 }
 async function changeAgent(action, provider) {
   try {
@@ -2544,7 +2717,7 @@ function wire() {
   });
   $('maestro-form').addEventListener('submit', send);
   const box = $('maestro-input');
-  box.addEventListener('input', () => { grow(); refreshSlashMenu('channel'); });
+  box.addEventListener('input', () => { grow(); refreshSlashMenu('channel'); syncCrewSelection(); });
   box.addEventListener('keydown', (e) => { slashKeydown('channel', e); });
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
   $('maestro-plus').addEventListener('click', () => togglePicker('channel'));
@@ -2606,8 +2779,8 @@ function wire() {
 }
 
 async function loadPresence() {
-  try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n === 'ollama' ? 'qwen' : n; })); ws.activity = Array.isArray(body.activity) ? body.activity : []; }
-  catch { ws.online = new Set(); /* the last good activity feed stays — its events expire on their own stamps */ }
+  try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.presenceRows = Array.isArray(body.presence) ? body.presence : []; ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n === 'ollama' ? 'qwen' : n; })); ws.activity = Array.isArray(body.activity) ? body.activity : []; }
+  catch { ws.online = new Set(); /* the last good presence rows and activity feed stay — activity events expire on their own stamps */ }
   syncActivityViews();
 }
 
