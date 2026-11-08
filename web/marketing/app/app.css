@@ -74,6 +74,11 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .shell { display:grid; height:100dvh; grid-template-columns:var(--side-w) minmax(0,1fr) var(--guard-w); transition:grid-template-columns 0.25s ease; }
 /* Rail width is single-sourced in envoy.css (--rail-w); do not redeclare. */
 .shell.full { grid-template-columns:224px minmax(0,1fr) 296px; }
+/* Full mode keeps the outer navigation rail (burst 2): the sidebar is a
+   shell column like the workspace and the Guard column and never hides
+   in full mode. The pre-header-bite hide rule is gone from this file;
+   this states the keep explicitly so the intent survives in the file. */
+.shell.full .sidebar { display:flex; }
 
 /* left - EXE-style: collapses to icon rail, hover to expand */
 .sidebar {

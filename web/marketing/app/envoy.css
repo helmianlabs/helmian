@@ -79,12 +79,14 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
    the pill; the buttons inside keep their own .ew-btn behaviour with
    quiet borders until hover or press. */
 .ew-head-pill { display:inline-flex; align-items:center; gap:2px; flex:none; padding:3px; border:1px solid var(--border); border-radius:999px; background:var(--panel-2);
-  box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent), 0 0 16px color-mix(in srgb, var(--accent) 32%, transparent); }
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 0 30px color-mix(in srgb, var(--accent) 52%, transparent); }
 .ew-head-pill .ew-btn { border-color:transparent; background:transparent; border-radius:999px; }
 .ew-head-pill .ew-btn:hover { border-color:var(--accent); }
 .ew-head-pill .ew-btn[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
-/* Light theme: the same glow one notch quieter — visible, not garish. */
-html[data-theme="light"] .ew-head-pill { box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent), 0 0 9px color-mix(in srgb, var(--accent) 20%, transparent); }
+/* Light theme: the same glow, raised with the rest (burst 2) and only a
+   step quieter than the dark themes now — a white ground washes a halo
+   out, so the gap is kept narrow on purpose. Visible, not garish. */
+html[data-theme="light"] .ew-head-pill { box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 44%, transparent); }
 .ew-icon { width:30px; height:30px; display:inline-grid; place-items:center; border:0; border-radius:7px; background:transparent; color:var(--muted); cursor:pointer; flex:none; transition:background .15s, color .15s; }
 .ew-icon:hover:not(:disabled) { background:var(--panel-2); color:var(--text); }
 .ew-icon:disabled { opacity:.35; cursor:default; }
@@ -223,6 +225,24 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-picker-state { margin-left:auto; font-size:11px; font-weight:700; }
 .ew-picker-state.on { color:var(--green); }
 .ew-picker-state.off { color:var(--muted); }
+/* Connector library (Surface A, bite 3): seat faces ride the crew
+   tile (#10151F in every theme, like .ew-crew-face); library rows
+   carry a two-line text block and, for toggleable rows, a switch. */
+.ew-lib-face { flex:none; width:28px; height:28px; border-radius:8px; background:#10151F; display:grid; place-items:center; overflow:hidden; }
+.ew-lib-face > img { width:28px; height:28px; border-radius:8px; object-fit:cover; display:block; }
+.ew-lib-icon { flex:none; width:28px; height:28px; border-radius:8px; background:var(--panel-2); border:1px solid var(--border); color:var(--muted); display:grid; place-items:center; font-weight:700; font-size:13px; }
+.ew-lib-text { display:flex; flex-direction:column; min-width:0; }
+.ew-lib-name { font-weight:600; }
+.ew-lib-line { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-lib-row { cursor:default; }
+.ew-lib-row:hover { border-color:var(--border); }
+.ew-lib-back { align-self:flex-start; }
+.ew-lib-manage { margin-left:auto; font-size:12px; font-weight:700; color:var(--accent); white-space:nowrap; }
+.ew-lib-row.mirror .ew-picker-state { margin-left:0; }
+.ew-lib-switch { flex:none; width:34px; height:20px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); position:relative; }
+.ew-lib-switch::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:var(--muted); transition:left .15s, background .15s; }
+.ew-picker-row.on .ew-lib-switch { background:var(--accent); border-color:var(--accent); }
+.ew-picker-row.on .ew-lib-switch::after { left:16px; background:#fff; }
 .ew-slash-menu { gap:6px; }
 .ew-slash-row .ew-slash-name { font-weight:700; white-space:nowrap; }
 .ew-slash-row .ew-picker-kind { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

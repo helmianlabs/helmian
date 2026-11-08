@@ -17,6 +17,7 @@ import { handleRunnerPresenceRoute } from './runner-presence.mjs';
 import { handleProfileSyncRoute } from './profile-sync.mjs';
 import { handleCredentialConnectRoute } from './credential-connect.mjs';
 import { handleToolConnectionsRoute } from './tool-connections-read.mjs';
+import { handleConnectorLibraryRoute } from './connector-library-read-route.mjs';
 import { handleTenantAgentStateRoute } from './tenant-agent-state.mjs';
 import { handleAgentSessionsRoute } from './agent-sessions.mjs';
 import { handleAgentRoomsRoute } from './envoy-rooms.mjs';
@@ -254,6 +255,7 @@ export async function handleEnvoyAblyRoute({
   if (await handleProfileSyncRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleCredentialConnectRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleToolConnectionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
+  if (await handleConnectorLibraryRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleTenantAgentStateRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleAgentSessionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleAgentRoomsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
