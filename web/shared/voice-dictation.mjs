@@ -10,8 +10,12 @@
 // - "send it": a final transcript whose trimmed text ends with "send it"
 //   (case-insensitive, trailing punctuation ignored) strips those two words
 //   and fires onSubmit with the remainder. "send it" alone (nothing left)
-//   does nothing. Only acts while the toggle is actively listening — never
-//   from plain typing, never from a hidden tab.
+//   submits the composer as-is (onSubmit with an empty remainder). Only
+//   acts while the toggle is actively listening — never from plain
+//   typing, never from a hidden tab.
+// - Interim results stream to onInterim for display only: they are never
+//   committed text and never trigger "send it". Only final results
+//   insert or submit, and each final is committed exactly once.
 // - Toggle OFF stops everything: recognition stops, speech cancels.
 // - The mic pauses while the tab is hidden and resumes when visible.
 //
@@ -48,6 +52,7 @@ export function createVoiceController({
   let voiceMode = false; // the toggle
   let voiceKind = 'dictate'; // 'dictate' (text only) or 'voice' (two-way)
   let handlers = {};
+  let restartTimer = null; // held mic restart while a reply is speaking (see restartTurn)
 
   const ERROR_MESSAGES = {
     'not-allowed': 'Microphone permission was not granted. Nothing was recorded.',
@@ -85,14 +90,27 @@ export function createVoiceController({
     recognition.onresult = (event) => {
       if (!voiceMode) return; // commands only act while the toggle is on
       if (typeof document !== 'undefined' && document.hidden) return; // never transcribe a hidden tab
-      const text = Array.from(event.results ?? [])
-        .filter((result) => result.isFinal)
-        .map((result) => result?.[0]?.transcript ?? '')
-        .join(' ')
-        .trim();
-      if (!text) return;
-      const cmd = sendCommand(text);
-      if (cmd === undefined) handlers.onTranscript?.(text);
+      // Interim/final tracking (bite 2a): results before event.resultIndex
+      // were already reported by earlier events in this turn, so each
+      // final is committed exactly once (the old handler re-joined every
+      // final in the event and could insert one twice). Interim text is
+      // display-only: it goes to onInterim and never inserts, submits,
+      // or triggers "send it" — finals only.
+      const results = event.results ?? [];
+      const from = typeof event.resultIndex === 'number' ? event.resultIndex : 0;
+      let finalText = '';
+      let interimText = '';
+      for (let i = from; i < results.length; i += 1) {
+        const result = results[i];
+        const transcript = String(result?.[0]?.transcript ?? '').trim();
+        if (!transcript) continue;
+        if (result.isFinal) finalText = finalText ? `${finalText} ${transcript}` : transcript;
+        else interimText = interimText ? `${interimText} ${transcript}` : transcript;
+      }
+      if (interimText) handlers.onInterim?.(interimText);
+      if (!finalText) return;
+      const cmd = sendCommand(finalText);
+      if (cmd === undefined) handlers.onTranscript?.(finalText);
       else handlers.onSubmit?.(cmd ?? ''); // null = bare "send it": submit the composer as-is
     };
     recognition.onerror = (event) => {
@@ -103,10 +121,34 @@ export function createVoiceController({
       listening = false;
       recognition = null;
       const hidden = typeof document !== 'undefined' && document.hidden;
-      if (voiceMode && !hidden) startTurn(); // next turn of the loop
+      if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a reply is speaking
       else if (!voiceMode) handlers.onState?.('idle');
     };
     recognition.start();
+  }
+
+  // Whether a reply is currently being read aloud (either engine:
+  // queued, generating, or playing). startTurn() cancels speech, so
+  // the loop's automatic restart must not fire while a reply speaks —
+  // it would cut the reply off, and the mic would transcribe the
+  // speaker. restartTurn holds the next listening turn until speech
+  // drains, then starts it.
+  function speechActive() {
+    if (kokoroPlaying || activeSource || kokoroQueue.length > 0) return true;
+    if (synthSpeaking || synthQueue.length > 0) return true;
+    try { return !!(synthesis?.speaking || synthesis?.pending); } catch { return false; }
+  }
+
+  function restartTurn() {
+    if (!voiceMode) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (speechActive()) {
+      if (!restartTimer) {
+        restartTimer = setTimeout(() => { restartTimer = null; restartTurn(); }, 400);
+      }
+      return;
+    }
+    startTurn();
   }
 
   function setVoiceMode(on, next = {}) {
@@ -125,6 +167,7 @@ export function createVoiceController({
       voiceMode = false;
       voiceKind = 'dictate';
       handlers = {};
+      if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
       stopTurn();
       cancelSpeech();
       next.onState?.('idle');

@@ -74,6 +74,17 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .ew-btn.full { margin:6px 12px; width:calc(100% - 24px); }
 .ew-btn[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
 .ew-btn:disabled { opacity:.5; cursor:default; }
+/* Chat-head control pill (header bite 2): Free-Willy, Workbench, Guard and
+   Full screen ride in one rounded cluster. The frame and the glow live on
+   the pill; the buttons inside keep their own .ew-btn behaviour with
+   quiet borders until hover or press. */
+.ew-head-pill { display:inline-flex; align-items:center; gap:2px; flex:none; padding:3px; border:1px solid var(--border); border-radius:999px; background:var(--panel-2);
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent), 0 0 16px color-mix(in srgb, var(--accent) 32%, transparent); }
+.ew-head-pill .ew-btn { border-color:transparent; background:transparent; border-radius:999px; }
+.ew-head-pill .ew-btn:hover { border-color:var(--accent); }
+.ew-head-pill .ew-btn[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
+/* Light theme: the same glow one notch quieter — visible, not garish. */
+html[data-theme="light"] .ew-head-pill { box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent), 0 0 9px color-mix(in srgb, var(--accent) 20%, transparent); }
 .ew-icon { width:30px; height:30px; display:inline-grid; place-items:center; border:0; border-radius:7px; background:transparent; color:var(--muted); cursor:pointer; flex:none; transition:background .15s, color .15s; }
 .ew-icon:hover:not(:disabled) { background:var(--panel-2); color:var(--text); }
 .ew-icon:disabled { opacity:.35; cursor:default; }
@@ -239,6 +250,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-crew-row.selected { background:var(--panel-2); border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
 .ew-crew-face { position:relative; flex:none; width:28px; height:28px; border-radius:8px; background:#10151F; display:grid; place-items:center; font-weight:700; color:var(--text); }
 .ew-crew-face > img { width:28px; height:28px; border-radius:8px; object-fit:cover; display:block; }
+/* Faces bite 4b: the state clip fills the 28px tile edge to edge —
+   the clips are dark-stage renders with no alpha, so cover-fit on
+   the shell's dark tile leaves no letterbox and no seam. */
+.ew-crew-face > video.ew-crew-face-video { width:28px; height:28px; border-radius:8px; object-fit:cover; display:block; }
 .ew-crew-face > .hx-emoji { width:24px; height:24px; object-fit:contain; }
 .ew-crew-initial { font-size:13px; }
 .ew-crew-dot { position:absolute; right:-3px; bottom:-3px; width:10px; height:10px; border-radius:50%; background:var(--faint); box-shadow:0 0 0 2px var(--panel); z-index:1; }
@@ -252,6 +267,15 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-crew-face.ew-ava-bounce { animation:ew-ava-bounce .9s ease-in-out infinite; }
 .ew-crew-face.ew-ava-talk { animation:ew-ava-talk .5s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .ew-crew-face.ew-ava-bounce, .ew-crew-face.ew-ava-talk { animation:none; } }
+/* Faces bite 4c — still-mode idle life: a standing-by face whose
+   slot holds the pack still (plain mode, reduced motion's still,
+   or a clip that failed and fell back) breathes — a slow, small
+   swell on the picture itself, transform-only so nothing reflows.
+   This is the fallback polish when no clip is playing; reduced
+   motion turns it off like every other face animation here. */
+.ew-crew-face > img.ew-crew-face-img { animation:ew-ava-idle 3.4s ease-in-out infinite; }
+@keyframes ew-ava-idle { 0%, 100% { transform:scale(1) translateY(0); } 50% { transform:scale(1.05) translateY(-.5px); } }
+@media (prefers-reduced-motion: reduce) { .ew-crew-face > img.ew-crew-face-img { animation:none; } }
 .ew-crew-text { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px; }
 .ew-crew-name { font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ew-crew-line { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -264,11 +288,15 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
    real activity stage is live — transforms on the avatar shell only,
    so nothing reflows. Working seats bounce; a seat whose reply is
    publishing gets the talking bobble; reduced motion never animates
-   (the JS gate already withholds the class — this is the second lock). */
+   (the JS gate already withholds the class — this is the second lock).
+   Faces bite 4c raised the amplitude: at 28px a small motion reads as
+   no motion, so the bounce lifts higher and grows more, and the talk
+   bobble rocks wider with a slight swell. Faces only — no other
+   element uses these keyframes. */
 .ew-avatar.ew-ava-bounce { animation:ew-ava-bounce .9s ease-in-out infinite; }
 .ew-avatar.ew-ava-talk { animation:ew-ava-talk .5s ease-in-out infinite; }
-@keyframes ew-ava-bounce { 0%, 100% { transform:translateY(0) scale(1); } 35% { transform:translateY(-3px) scale(1.07); } 70% { transform:translateY(0) scale(1); } }
-@keyframes ew-ava-talk { 0%, 100% { transform:translateY(0) rotate(0deg); } 25% { transform:translateY(-1px) rotate(-4deg); } 75% { transform:translateY(-1px) rotate(4deg); } }
+@keyframes ew-ava-bounce { 0%, 100% { transform:translateY(0) scale(1); } 35% { transform:translateY(-5px) scale(1.15); } 70% { transform:translateY(0) scale(1); } }
+@keyframes ew-ava-talk { 0%, 100% { transform:translateY(0) rotate(0deg) scale(1); } 25% { transform:translateY(-2px) rotate(-7deg) scale(1.05); } 75% { transform:translateY(-2px) rotate(7deg) scale(1.05); } }
 @media (prefers-reduced-motion: reduce) { .ew-avatar.ew-ava-bounce, .ew-avatar.ew-ava-talk { animation:none; } }
 .ew-agent-add { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px 6px; }
 
@@ -342,7 +370,6 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   .ew-pane.collapsed { flex-basis:auto !important; opacity:1; pointer-events:auto; }
   .ew-chat-head { gap:4px; padding:6px 8px; }
   .ew-chat-head .ew-btn.sm { padding:4px 8px; }
-  #ew-link-discord, #ew-link-slack { display:none; }
   .ew-hint { display:none; }
   .ew-messages { padding:10px 8px 6px; }
   .ew-composer { margin:0 8px 8px; }
@@ -480,7 +507,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-src-head { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:10.5px; font-weight:700; letter-spacing:.09em; padding:12px 12px 4px; }
 .ew-src-head:first-child { padding-top:6px; }
 .ew-src-head .ew-discord-mark, .ew-foot .ew-discord-mark { color:#8B95FF; }
-.ew-foot .ew-slack-mark { color:#E3B7E8; }
+.ew-src-head .ew-slack-mark, .ew-foot .ew-slack-mark { color:#E3B7E8; }
 /* Network flip (bite 2): labelled two-segment Envoy/Discord switch at
    the top of the channels pane + the anti-mis-send strip above the
    composer. Geometry is identical in both modes; Discord mode adds the
@@ -727,7 +754,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-mobile-nav { display:none; }
 
 @media (max-width: 900px) {
-  /* Keep Link GitHub accessible; hide duplicate pane toggles that live in #ew-mobile-nav */
+  /* Hide duplicate pane toggles that live in #ew-mobile-nav */
   .ew-chat-head .ew-toggle[data-toggle="cli"],
   .ew-chat-head .ew-toggle[data-toggle="agents"],
   .ew-chat-head .ew-toggle[data-toggle="guard"],
