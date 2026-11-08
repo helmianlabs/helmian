@@ -382,15 +382,20 @@ function syncActivityViews() {
 // faces' motion (emoji bite 4) is synced in place from the same
 // signature change that re-renders the message views: class toggles on
 // the face shell only, no rebuild, and only while the signature
-// actually moved.
+// actually moved. Faces bite 4b rides the same pass: a face carrying a
+// state clip (see crewFaceClip below) is pointed at the clip its seat's
+// current stage calls for, in place — same no-rebuild discipline.
 function syncCrewMotion() {
   if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
   for (const row of document.querySelectorAll('#ew-crew-list .ew-crew-row[data-provider]')) {
     const face = row.querySelector('.ew-crew-face');
     if (!face) continue;
-    const cls = activityMotionClass(activityMotionStage(ws.activity, row.getAttribute('data-provider'), ws.channelId));
+    const stage = activityMotionStage(ws.activity, row.getAttribute('data-provider'), ws.channelId);
+    const cls = activityMotionClass(stage);
     face.classList.toggle('ew-ava-bounce', cls === 'ew-ava-bounce');
     face.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
+    const video = face.querySelector('video.ew-crew-face-video');
+    if (video) crewClipApply(video, stage);
   }
 }
 
@@ -457,7 +462,10 @@ function seatFaceImg(provider) {
 
 // ---------- CREW rail faces (UI polish bite 1) ----------
 // The rail's faces are the library pack's stills, served as app assets
-// at /app/assets/crew/<seat>-<size>.png. Seat slugs are the manifest's
+// at /app/assets/crew/<seat>-<size>.png. (Faces bite 4b layers the
+// pack's state clips over the same stills — see crewFaceClip below;
+// the still builders here stay as the poster/fallback chain and as
+// the message-row faces.) Seat slugs are the manifest's
 // (library-pack/manifest.json seats[]); the one mismatch with the
 // room's provider keys is ChatGPT — provider 'openai', asset slug
 // 'chatgpt'. If an asset 404s (the pack is uploaded separately), the
@@ -489,6 +497,82 @@ function crewFaceNode(faceImg, statusKind, motionStage) {
   return h('span', { class: `ew-crew-face${motion ? ` ${motion}` : ''}` },
     faceImg,
     h('span', { class: `ew-crew-dot ${statusKind}`, 'aria-hidden': 'true' }));
+}
+
+// ---------- CREW rail face clips (faces bite 4b) ----------
+// The rail face can carry the library pack's per-seat state clips
+// (bite 4a uploads them next to the stills as
+// /app/assets/crew/<slug>-<kind>.webm): a muted, looping <video>
+// inside the same 28px dark-tile shell, the 56px still as its poster.
+// The clips are dark-stage renders with no alpha channel — the
+// shell's dark tile is what contains them, and envoy.css fits the
+// video to the tile edge to edge so no letterbox shows.
+// The clip is a RENDERING of the same activity feed the motion
+// classes read, never a state of its own. The mapping: no live
+// stage → idle; a working stage (started / working / file-placed)
+// → thinking; 'published' — the reply landing → speaking. Only a
+// seat with a live stage ever loads a thinking or speaking clip;
+// every other face holds its small idle loop. emojiStill() (plain
+// emoji mode, reduced-motion systems) never builds a video at all —
+// those faces keep the still (with the CSS idle life from bite 4c) —
+// and a clip that fails to load hands the slot back to the still
+// and its own fallback chain, so a missing upload never leaves an
+// empty tile.
+export function crewClipKind(stage) {
+  if (stage === 'published') return 'speaking';
+  if (stage === 'started' || stage === 'working' || stage === 'file-placed') return 'thinking';
+  return 'idle';
+}
+const crewClipSrc = (slug, kind) => `/app/assets/crew/${slug}-${kind}.webm`;
+// Point one face's video at the clip for a stage and keep playback
+// honest: the src swaps only when the kind actually changed, the
+// clip plays unless the tab is hidden, and pauses when it is.
+function crewClipApply(video, stage) {
+  if (!video || video.dataset.fbk) return;
+  const kind = crewClipKind(stage);
+  if (video.dataset.clip !== kind) {
+    video.dataset.clip = kind;
+    video.src = crewClipSrc(video.dataset.slug, kind);
+    video.load();
+  }
+  if (typeof document !== 'undefined' && document.hidden) { video.pause(); return; }
+  if (video.paused) { const p = video.play(); if (p && typeof p.catch === 'function') p.catch(() => {}); }
+}
+// The clip face for one pack slug, opening on the clip for the
+// stage the seat is in at build time. In still mode this IS the
+// still — no video element is built.
+function crewFaceClip(slug, stage, stillFallback) {
+  if (emojiStill()) return crewFaceImg(slug, stillFallback);
+  const video = h('video', { class: 'ew-crew-face-video', muted: true, loop: true, playsinline: true, preload: 'metadata', poster: `/app/assets/crew/${slug}-56.png`, 'aria-hidden': 'true' });
+  video.muted = true;
+  video.dataset.slug = slug;
+  video.dataset.clip = 'idle';
+  video.src = crewClipSrc(slug, 'idle');
+  video.addEventListener('error', () => {
+    if (video.dataset.fbk) return;
+    video.dataset.fbk = '1';
+    video.replaceWith(crewFaceImg(slug, stillFallback));
+  });
+  crewClipApply(video, stage);
+  return video;
+}
+const crewSeatFaceClip = (provider, stage) => crewFaceClip(crewFaceSlug(provider), stage, () => seatFaceImg(provider));
+const crewOwnerFaceClip = (stage) => crewFaceClip('owner', stage, () => {
+  const face = myFace();
+  return face ? emojiNode(face) : h('span', { class: 'ew-crew-initial' }, (ws.profile?.nickname || 'You').slice(0, 1).toUpperCase());
+});
+// Tab hidden → every crew clip pauses; visible again → each one
+// resumes at the clip its seat's current stage calls for.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('visibilitychange', () => {
+    if (typeof document.querySelectorAll !== 'function') return;
+    for (const row of document.querySelectorAll('#ew-crew-list .ew-crew-row[data-provider]')) {
+      const video = row.querySelector('video.ew-crew-face-video');
+      if (!video) continue;
+      if (document.hidden) video.pause();
+      else crewClipApply(video, activityMotionStage(ws.activity, row.getAttribute('data-provider'), ws.channelId));
+    }
+  });
 }
 
 // ---------- message-row faces (UI polish bite 2) ----------
@@ -1104,8 +1188,6 @@ async function setNetMode(mode) {
   ws.channelId = null; ws.config = null; ws.messages = []; ws.sig = null;
   renderChannels(); renderHeader(); renderNetStrip();
   $('ew-channel-title').textContent = 'Discord';
-  $('ew-link-discord').hidden = true;
-  $('ew-link-slack').hidden = true;
   $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, discordEmptyText()));
   setComposer(false);
 }
@@ -1123,7 +1205,7 @@ function renderChannels() {
   if (ws.mode === 'discord') {
     list.replaceChildren(
       h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
-      ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.' : 'Bot not connected yet. Linked channels mirror here.')])
+      ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Flip to Envoy, open a channel and use + Link Discord in the channel list to mirror it here.' : 'Bot not connected yet. Linked channels mirror here.')])
     );
     return;
   }
@@ -1164,8 +1246,33 @@ function renderChannels() {
         h('span', { class: 'name' }, ca.name),
         h('span', { class: 'tags' }, h('span', { class: 'ew-mini custom-tag' }, `@${ca.handle}`))))
       : [h('p', { class: 'ew-note' }, 'Click + to create a custom agent with a face, name, and real job.')]),
-    h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
-    ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Use Link Discord in a chat.' : 'Bot not connected yet. Linked channels mirror here.')]),
+    h('div', { class: 'ew-src-head' },
+      h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }),
+      'DISCORD',
+      h('button', { type: 'button', class: 'ew-icon sm', title: 'Link a Discord channel to this channel', 'aria-label': 'Link Discord channel', style: 'margin-left:auto;', onclick: (e) => { e.stopPropagation(); if (narrow()) closeSheets(); linkDiscord(); } }, '+')
+    ),
+    ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet.' : 'Bot not connected yet. Linked channels mirror here.')]),
+    ws.config?.discord
+      ? h('button', { type: 'button', class: 'ew-channel', title: `This channel mirrors with Discord #${ws.config.discord.channelName || ws.config.discord.channelId} — click to manage`, onclick: () => { if (narrow()) closeSheets(); linkDiscord(); } },
+          h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }),
+          h('span', { class: 'name' }, `#${ws.config.discord.channelName || ws.config.discord.channelId}`),
+          h('span', { class: 'tags' }, h('span', { class: 'ew-ca-tag' }, 'Linked')))
+      : h('button', { type: 'button', class: 'ew-channel', title: 'Mirror this channel with a Discord channel', onclick: () => { if (narrow()) closeSheets(); linkDiscord(); } },
+          h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }),
+          h('span', { class: 'name' }, '+ Link Discord')),
+    h('div', { class: 'ew-src-head' },
+      h('span', { class: 'ew-slack-mark', 'aria-hidden': 'true' }),
+      'SLACK',
+      h('button', { type: 'button', class: 'ew-icon sm', title: 'Link a Slack channel to this channel', 'aria-label': 'Link Slack channel', style: 'margin-left:auto;', onclick: (e) => { e.stopPropagation(); if (narrow()) closeSheets(); linkSlack(); } }, '+')
+    ),
+    ws.config?.slack
+      ? h('button', { type: 'button', class: 'ew-channel', title: `This channel mirrors with Slack #${ws.config.slack.channelName || ws.config.slack.channelId} — click to manage`, onclick: () => { if (narrow()) closeSheets(); linkSlack(); } },
+          h('span', { class: 'ew-slack-mark', 'aria-hidden': 'true' }),
+          h('span', { class: 'name' }, `#${ws.config.slack.channelName || ws.config.slack.channelId}`),
+          h('span', { class: 'tags' }, h('span', { class: 'ew-ca-tag' }, 'Linked')))
+      : h('button', { type: 'button', class: 'ew-channel', title: 'Mirror this channel with a Slack channel', onclick: () => { if (narrow()) closeSheets(); linkSlack(); } },
+          h('span', { class: 'ew-slack-mark', 'aria-hidden': 'true' }),
+          h('span', { class: 'name' }, '+ Link Slack')),
     h('div', { class: 'ew-src-head' },
       h('span', { class: 'ew-gh-mark', 'aria-hidden': 'true' }),
       'GITHUB',
@@ -1271,23 +1378,15 @@ function renderHeader() {
   badge.hidden = dh.badgeHidden;
   badge.className = `ew-badge ${dh.badgeClass}`;
   badge.textContent = dh.badgeText;
-  const link = $('ew-link-discord');
-  link.querySelector('.lbl').textContent = dh.buttonLabel;
-  link.hidden = dh.buttonHidden;
   const sBadge = $('ew-slack-badge');
   const s = ws.config?.slack;
   const sh = mirrorLinkHeader({ link: s, bot: ws.slackBot, admin, label: 'Slack' });
   sBadge.hidden = sh.badgeHidden;
   sBadge.className = `ew-badge ${sh.badgeClass}`;
   sBadge.textContent = sh.badgeText;
-  const sLink = $('ew-link-slack');
-  sLink.querySelector('.lbl').textContent = sh.buttonLabel;
-  sLink.hidden = sh.buttonHidden;
   const ghBadge = $('ew-github-badge');
-  const ghLink = $('ew-link-github');
   const gh = githubLinkHeader({ github: ws.config?.github, admin });
   if (ghBadge) { ghBadge.hidden = gh.badgeHidden; ghBadge.textContent = gh.badgeText; }
-  if (ghLink) { const l = ghLink.querySelector('.lbl'); if (l) l.textContent = gh.buttonLabel; ghLink.hidden = gh.buttonHidden; }
   const ghStatus = $('ew-github-status-text');
   if (ghStatus) ghStatus.textContent = gh.statusText;
   const deb = debateHeaderState({ debateMode: ws.config?.debateMode, maxRoundTurns: ws.config?.maxRoundTurns });
@@ -1494,14 +1593,14 @@ function renderCrew(roster, customList, states, desk) {
   const entries = [];
   roster.forEach((p, i) => {
     const status = crewStatus(p, states[p].state !== 'offline');
-    entries.push({ rank: CREW_RANK[status.kind], order: i, make: () => crewRow({ key: p, name: NAMES[p], faceImg: crewSeatFaceImg(p), status, motionStage: activityMotionStage(ws.activity, p, ws.channelId), title: desk ? `Dispatch to ${NAMES[p]} — your message goes to this seat` : `Target ${NAMES[p]} — your message goes to this seat` }) });
+    entries.push({ rank: CREW_RANK[status.kind], order: i, make: () => { const stage = activityMotionStage(ws.activity, p, ws.channelId); return crewRow({ key: p, name: NAMES[p], faceImg: crewSeatFaceClip(p, stage), status, motionStage: stage, title: desk ? `Dispatch to ${NAMES[p]} — your message goes to this seat` : `Target ${NAMES[p]} — your message goes to this seat` }); } });
   });
   customList.forEach((ca, i) => {
     const status = crewStatus(ca.handle, ws.online.has(ca.provider) || ca.provider === 'ollama');
     entries.push({ rank: CREW_RANK[status.kind], order: roster.length + i, make: () => crewRow({ key: ca.handle, name: ca.name, faceImg: emojiNode(ca.emoji || '🤖'), status, motionStage: activityMotionStage(ws.activity, ca.handle, ws.channelId), title: `Target ${ca.name} (@${ca.handle})` }) });
   });
   entries.sort((a, b) => a.rank - b.rank || a.order - b.order);
-  const ownerRow = crewRow({ key: 'all', name: 'Whole crew', faceImg: crewOwnerFaceImg(), status: { kind: 'live', line: desk ? 'Everyone on the desk' : 'Everyone in this channel' }, motionStage: null, title: desk ? 'Dispatch to everyone on the desk' : 'Target the whole crew — clears a single-seat target' });
+  const ownerRow = crewRow({ key: 'all', name: 'Whole crew', faceImg: crewOwnerFaceClip(null), status: { kind: 'live', line: desk ? 'Everyone on the desk' : 'Everyone in this channel' }, motionStage: null, title: desk ? 'Dispatch to everyone on the desk' : 'Target the whole crew — clears a single-seat target' });
   const activeKey = document.activeElement?.classList?.contains('ew-crew-row') ? document.activeElement.getAttribute('data-provider') : null;
   list.replaceChildren(ownerRow, ...entries.map((e) => e.make()),
     ...(total ? [] : [h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one from the Agents panel.' : 'No agents in this channel yet. Add one from the Agents panel.')]));
@@ -1829,8 +1928,36 @@ async function loadMessages() {
     return;
   }
   ws.sig = sig; ws.messages = messages;
+  speakNewMessages(id, messages);
   renderMessages(); renderAgents(); renderCliThread();
   loadReactions({ force: true });
+}
+// ---------- spoken replies (voice bite 2d) ----------
+// While voice chat is on, messages from anyone else are read aloud
+// through the shared voice controller (ctx.voiceSpeak, wired in
+// app.js; it speaks only in voice mode, and its view gate keeps the
+// session console as the only speaker while that view is up). One
+// seen-set covers both streams this module renders — the open
+// channel and the agent-CLI room — so a message is spoken by
+// whichever surface sees it first, never twice. A stream's first
+// load only primes the set: history is never read aloud, only
+// messages that arrive while the member is in the room. Pending
+// rows are local echoes of the member's own send and never speak.
+const spokenIds = new Set();
+const spokenPrimed = new Set();
+function speakNewMessages(streamId, messages) {
+  if (!streamId || typeof ws.ctx?.voiceSpeak !== 'function') return;
+  if (!spokenPrimed.has(streamId)) {
+    spokenPrimed.add(streamId);
+    for (const m of messages ?? []) if (m?.id) spokenIds.add(m.id);
+    return;
+  }
+  for (const m of messages ?? []) {
+    if (!m?.id || m._pending || spokenIds.has(m.id)) continue;
+    spokenIds.add(m.id);
+    if (m.authorKind === 'system' || whoOf(m).kind === 'me') continue;
+    ws.ctx.voiceSpeak(m.body);
+  }
 }
 function whoOf(m) {
   const me = ws.ctx.state.actor?.subject;
@@ -2203,7 +2330,7 @@ async function loadCliRoom() {
     if (id !== ws.cli.roomId) return;
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const sig = messages.map((m) => m.id).join(',');
-    if (sig !== ws.cli.roomSig) { ws.cli.roomSig = sig; ws.cli.roomMessages = messages; }
+    if (sig !== ws.cli.roomSig) { ws.cli.roomSig = sig; ws.cli.roomMessages = messages; speakNewMessages(id, messages); }
   } catch { /* keep the last good room state */ }
   renderCliThread();
 }
@@ -2835,9 +2962,6 @@ function wire() {
   cliBox.addEventListener('keydown', (e) => { slashKeydown('cli', e); });
   cliBox.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); sendCli(); } });
   ws.ctx.wireCliVoice?.();
-  $('ew-link-discord').addEventListener('click', linkDiscord);
-  $('ew-link-slack').addEventListener('click', linkSlack);
-  $('ew-link-github')?.addEventListener('click', linkGithub);
   $('ew-debate-toggle')?.addEventListener('click', openDebateModal);
   $('ew-debate-stop')?.addEventListener('click', stopDebateNow);
   $('ew-phone-qr')?.addEventListener('click', openPhoneCloneModal);

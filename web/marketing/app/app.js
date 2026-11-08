@@ -389,6 +389,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   let voiceMode = false;
   let voiceKind = 'dictate'; // 'dictate' (text only) or 'voice' (two-way)
   let handlers = {};
+  let restartTimer = null; // held mic restart while a reply is speaking (see restartTurn)
   const ERROR_MESSAGES = {
     'not-allowed': 'Microphone permission was not granted. Nothing was recorded.',
     'no-speech': 'No speech detected — try again.',
@@ -415,25 +416,72 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     recognition.lang = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
     recognition.onstart = () => { listening = true; handlers.onState?.('listening'); };
     recognition.onresult = (event) => {
-      if (!voiceMode) return;
-      if (typeof document !== 'undefined' && document.hidden) return;
-      const text = Array.from(event.results ?? []).filter((result) => result.isFinal).map((result) => result?.[0]?.transcript ?? '').join(' ').trim();
-      if (!text) return;
-      const cmd = sendCommand(text);
-      if (cmd === undefined) handlers.onTranscript?.(text);
+      if (!voiceMode) return; // commands only act while the toggle is on
+      if (typeof document !== 'undefined' && document.hidden) return; // never transcribe a hidden tab
+      // Interim/final tracking (bite 2a): results before event.resultIndex
+      // were already reported by earlier events in this turn, so each
+      // final is committed exactly once (the old handler re-joined every
+      // final in the event and could insert one twice). Interim text is
+      // display-only: it goes to onInterim and never inserts, submits,
+      // or triggers "send it" — finals only.
+      const results = event.results ?? [];
+      const from = typeof event.resultIndex === 'number' ? event.resultIndex : 0;
+      let finalText = '';
+      let interimText = '';
+      for (let i = from; i < results.length; i += 1) {
+        const result = results[i];
+        const transcript = String(result?.[0]?.transcript ?? '').trim();
+        if (!transcript) continue;
+        if (result.isFinal) finalText = finalText ? `${finalText} ${transcript}` : transcript;
+        else interimText = interimText ? `${interimText} ${transcript}` : transcript;
+      }
+      if (interimText) handlers.onInterim?.(interimText);
+      if (!finalText) return;
+      const cmd = sendCommand(finalText);
+      if (cmd === undefined) handlers.onTranscript?.(finalText);
       else handlers.onSubmit?.(cmd ?? ''); // null = bare "send it": submit the composer as-is
     };
     recognition.onerror = (event) => {
-      if (event?.error === 'aborted') return;
+      if (event?.error === 'aborted') return; // user tapped to stop; silent
       handlers.onError?.(ERROR_MESSAGES[event?.error] ?? 'Dictation stopped before a usable transcript was produced.');
     };
-    recognition.onend = () => { listening = false; recognition = null; const hidden = typeof document !== 'undefined' && document.hidden; if (voiceMode && !hidden) startTurn(); else if (!voiceMode) handlers.onState?.('idle'); };
+    recognition.onend = () => {
+      listening = false;
+      recognition = null;
+      const hidden = typeof document !== 'undefined' && document.hidden;
+      if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a reply is speaking
+      else if (!voiceMode) handlers.onState?.('idle');
+    };
     recognition.start();
   }
+  // Whether a reply is currently being read aloud (either engine:
+  // queued, generating, or playing). startTurn() cancels speech, so
+  // the loop's automatic restart must not fire while a reply speaks —
+  // it would cut the reply off, and the mic would transcribe the
+  // speaker. restartTurn holds the next listening turn until speech
+  // drains, then starts it.
+  function speechActive() {
+    if (kokoroPlaying || activeSource || kokoroQueue.length > 0) return true;
+    if (synthSpeaking || synthQueue.length > 0) return true;
+    try { return !!(synthesis?.speaking || synthesis?.pending); } catch { return false; }
+  }
+
+  function restartTurn() {
+    if (!voiceMode) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (speechActive()) {
+      if (!restartTimer) {
+        restartTimer = setTimeout(() => { restartTimer = null; restartTurn(); }, 400);
+      }
+      return;
+    }
+    startTurn();
+  }
+
   function setVoiceMode(on, next = {}) {
     if (!supported) { next.onError?.('Voice mode is not supported by this browser. You can still type or paste a message.'); return false; }
     if (on && !voiceMode) { voiceMode = true; voiceKind = next.mode === 'voice' ? 'voice' : 'dictate'; handlers = next; startTurn(); return true; }
-    if (!on && voiceMode) { voiceMode = false; voiceKind = 'dictate'; handlers = {}; stopTurn(); cancelSpeech(); next.onState?.('idle'); return true; }
+    if (!on && voiceMode) { voiceMode = false; voiceKind = 'dictate'; handlers = {}; if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; } stopTurn(); cancelSpeech(); next.onState?.('idle'); return true; }
     return false;
   }
   // Pause the mic while the tab is hidden: speech meant for another tab must
@@ -718,6 +766,56 @@ function checkComposerForSendCommand() {
   box.oninput();
   return true;
 }
+// Interim dictation (bite 2a): while a turn is still hearing, the
+// not-yet-final words render as a replace-in-place trailing span at
+// the caret, so the box types along with the speaker. The span is
+// tracked as offsets on the box element; a new interim replaces it,
+// and every final insert path clears it before splicing the committed
+// text in. Interim rendering does no layout work — the box resizes on
+// finals only (the insert paths), never per interim.
+function clearInterim(box) {
+  if (!box || !box._interimSpan) return;
+  const span = box._interimSpan;
+  box._interimSpan = null;
+  box.value = box.value.slice(0, span.start) + box.value.slice(span.end);
+  if ((box.selectionStart ?? 0) > span.start) box.setSelectionRange(span.start, span.start);
+}
+function renderInterim(box, text) {
+  if (!box || !text) return;
+  clearInterim(box);
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? start;
+  const before = box.value.slice(0, start);
+  const after = box.value.slice(end);
+  const sep = before && !/[\s\n]$/.test(before) ? ' ' : '';
+  const shown = sep + text;
+  box.value = before + shown + after;
+  box._interimSpan = { start: before.length, end: before.length + shown.length };
+  const pos = before.length + shown.length;
+  box.setSelectionRange(pos, pos);
+}
+// Second nets for a split "send it" (bite 2c): the channel and CLI
+// composers get the console's checkComposerForSendCommand pattern —
+// after an insert, if the box's full text ends with "send it", strip
+// it and report true so the caller submits what remains.
+function checkMaestroForSendCommand() {
+  const box = document.getElementById('maestro-input');
+  if (!box) return false;
+  const cleaned = box.value.trim().replace(/[.!?…]+$/, '');
+  if (!/send it$/i.test(cleaned)) return false;
+  box.value = cleaned.slice(0, -'send it'.length).trim();
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
+function checkCliForSendCommand() {
+  const box = document.getElementById('ew-cli-input');
+  if (!box) return false;
+  const cleaned = box.value.trim().replace(/[.!?…]+$/, '');
+  if (!/send it$/i.test(cleaned)) return false;
+  box.value = cleaned.slice(0, -'send it'.length).trim();
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
 function updateVoiceChips() {
   for (const [chip, mode] of [[dictateChip, 'dictate'], [voiceChatChip, 'voice']]) {
     if (!chip) continue;
@@ -727,6 +825,7 @@ function updateVoiceChips() {
   }
 }
 function toggleVoiceChip(mode) {
+  clearInterim($('#prompt'));
   if (voice.voiceMode && voice.mode === mode) {
     voice.setVoiceMode(false, { onState: updateVoiceChips });
   } else {
@@ -734,13 +833,15 @@ function toggleVoiceChip(mode) {
     if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy(mode)); store.set('voicePrivacySeen', true); }
     voice.setVoiceMode(true, {
       mode,
+      onInterim: (text) => renderInterim($('#prompt'), text),
       onTranscript: (text) => {
+        clearInterim($('#prompt'));
         insertDictation(text);
         if (checkComposerForSendCommand() && $('#prompt').value.trim()) $('#composer').requestSubmit();
       },
-      onSubmit: (text) => { if (text) insertDictation(text); if ($('#prompt').value.trim()) $('#composer').requestSubmit(); },
+      onSubmit: (text) => { clearInterim($('#prompt')); if (text) insertDictation(text); if ($('#prompt').value.trim()) $('#composer').requestSubmit(); },
       onState: updateVoiceChips,
-      onError: (msg) => { toast(msg); updateVoiceChips(); },
+      onError: (msg) => { clearInterim($('#prompt')); toast(msg); updateVoiceChips(); },
     });
   }
   updateVoiceChips();
@@ -2554,6 +2655,12 @@ async function loadDesktop() {
     openTools,
     wireVoice: wireMaestroVoiceChips,
     wireCliVoice: wireCliVoiceChips,
+    // Spoken replies for the Envoy room (bite 2d): envoy calls this for
+    // new non-mine messages; the shared controller speaks only in voice
+    // mode. The view gate keeps exactly one surface speaking — while
+    // the session console is up, its own poll (loadLog) is the speaker
+    // and Envoy stays silent.
+    voiceSpeak: (text) => (shell.dataset.view === 'console' ? false : voice.speak(text)),
     renderFeed,
     loadFeedData,
     ackAll: () => document.getElementById('feed-ack-all')?.click(),
@@ -2628,6 +2735,9 @@ function insertMaestroDictation(text) {
   box.value = before + sep + text + after;
   const pos = before.length + sep.length + text.length;
   box.setSelectionRange(pos, pos);
+  // Same path typed text takes (bite 2b): envoy's input listener on
+  // this box grows it and refreshes the slash menu + crew targeting.
+  box.dispatchEvent(new Event('input', { bubbles: true }));
   box.focus();
 }
 
@@ -2644,6 +2754,7 @@ function updateMaestroVoiceChips() {
 }
 
 function toggleMaestroVoice(mode) {
+  clearInterim(document.getElementById('maestro-input'));
   if (voice.voiceMode && voice.mode === mode) {
     voice.setVoiceMode(false, { onState: updateMaestroVoiceChips });
   } else {
@@ -2651,10 +2762,16 @@ function toggleMaestroVoice(mode) {
     if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy(mode)); store.set('voicePrivacySeen', true); }
     voice.setVoiceMode(true, {
       mode,
-      onTranscript: (text) => { insertMaestroDictation(text); },
-      onSubmit: (text) => { if (text) insertMaestroDictation(text); const f = document.getElementById('maestro-form'); if (document.getElementById('maestro-input').value.trim() && f) f.requestSubmit(); },
+      onInterim: (text) => renderInterim(document.getElementById('maestro-input'), text),
+      onTranscript: (text) => {
+        const box = document.getElementById('maestro-input');
+        clearInterim(box);
+        insertMaestroDictation(text);
+        if (checkMaestroForSendCommand() && box?.value.trim()) { const f = document.getElementById('maestro-form'); if (f) f.requestSubmit(); }
+      },
+      onSubmit: (text) => { clearInterim(document.getElementById('maestro-input')); if (text) insertMaestroDictation(text); const f = document.getElementById('maestro-form'); if (document.getElementById('maestro-input').value.trim() && f) f.requestSubmit(); },
       onState: updateMaestroVoiceChips,
-      onError: (msg) => { toast(msg); updateMaestroVoiceChips(); },
+      onError: (msg) => { clearInterim(document.getElementById('maestro-input')); toast(msg); updateMaestroVoiceChips(); },
     });
   }
   updateMaestroVoiceChips();
@@ -2719,6 +2836,7 @@ function updateCliVoiceChips() {
 }
 
 function toggleCliVoice(mode) {
+  clearInterim(document.getElementById('ew-cli-input'));
   const onState = () => { updateCliVoiceChips(); updateMaestroVoiceChips(); };
   if (voice.voiceMode && voice.mode === mode) {
     voice.setVoiceMode(false, { onState });
@@ -2727,10 +2845,16 @@ function toggleCliVoice(mode) {
     if (!store.get('voicePrivacySeen', false)) { toast(voicePrivacy(mode)); store.set('voicePrivacySeen', true); }
     voice.setVoiceMode(true, {
       mode,
-      onTranscript: (text) => { insertCliDictation(text); },
-      onSubmit: (text) => { if (text) insertCliDictation(text); const f = document.getElementById('ew-cli-form'); if (document.getElementById('ew-cli-input')?.value.trim() && f) f.requestSubmit(); },
+      onInterim: (text) => renderInterim(document.getElementById('ew-cli-input'), text),
+      onTranscript: (text) => {
+        const box = document.getElementById('ew-cli-input');
+        clearInterim(box);
+        insertCliDictation(text);
+        if (checkCliForSendCommand() && box?.value.trim()) { const f = document.getElementById('ew-cli-form'); if (f) f.requestSubmit(); }
+      },
+      onSubmit: (text) => { clearInterim(document.getElementById('ew-cli-input')); if (text) insertCliDictation(text); const f = document.getElementById('ew-cli-form'); if (document.getElementById('ew-cli-input')?.value.trim() && f) f.requestSubmit(); },
       onState,
-      onError: (msg) => { toast(msg); updateCliVoiceChips(); },
+      onError: (msg) => { clearInterim(document.getElementById('ew-cli-input')); toast(msg); updateCliVoiceChips(); },
     });
   }
   updateCliVoiceChips();
