@@ -150,6 +150,13 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-meta .agent { color:var(--accent); }
 .ew-meta time { color:var(--faint); font-size:11px; }
 /* Role tag (bite 2): plain muted text — no fill, no border, no chip. */
+/* Bite 2b: app.css carries a generic .agent rule (background, padding,
+   radius, flex) meant for agent list rows; the message header's name
+   (strong.agent) and tag (span.ew-src.agent) both carry that bare class
+   and picked the fill up from it. Out-specify it inside .ew-meta only,
+   and keep the tag muted (the name keeps the accent colour). */
+.ew-meta strong.agent, .ew-meta .ew-src.agent { background:none; padding:0; border-radius:0; display:inline; }
+.ew-meta .ew-src.agent { color:var(--muted); }
 .ew-src { font-size:12px; font-weight:500; color:var(--muted); }
 .ew-src.discord { color:#AAB4FF; }
 .ew-src.slack { color:#E3B7E8; }
