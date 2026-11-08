@@ -1162,7 +1162,8 @@ function guardMotionState(finding, now = Date.now()) {
   return { tone: 'grey', pulse: false, acked: false };
 }
 function findingCards() {
-  // Guard findings carry server-side ack state; criticals are never hidden by ack.
+  // Guard findings carry server-side ack state; an ack clears the card from
+  // the pile (criticals included — owner's call, 2026-11-08).
   return (state.findings ?? []).map((f) => ({
     id: `finding:${f.fingerprint}`,
     severity: f.severity,
@@ -1174,15 +1175,12 @@ function findingCards() {
   }));
 }
 async function ackFinding(fingerprint) {
-  const finding = (state.findings ?? []).find((f) => f.fingerprint === fingerprint);
   try { await post('/api/admin/guard/acks', { fingerprint }); toast('Acknowledged'); }
   catch { toast('Acknowledgement not saved — try again'); await loadFeedData(); renderFeed(); return; }
   // The ack is saved on the server; the card also leaves the pile for good
-  // via the persisted cleared set — except criticals, which are never
-  // hidden by an ack: they stay visible, marked acknowledged.
-  if (finding && String(finding.severity ?? '').toLowerCase() !== 'critical') {
-    state.cleared.add(`finding:${fingerprint}`); store.set('cleared', [...state.cleared]);
-  }
+  // via the persisted cleared set — criticals included (owner's call,
+  // 2026-11-08: the reds clear on ack like everything else).
+  state.cleared.add(`finding:${fingerprint}`); store.set('cleared', [...state.cleared]);
   await loadFeedData(); renderFeed();
 }
 // Acknowledging an event card removes it from the feed for good: the id
@@ -1288,6 +1286,17 @@ function renderFeed() {
         }
         card.append(head, el('div', 'guard-card-title', c.title));
         if (c.body) card.append(el('div', 'muted sm', String(c.body).slice(0, 200)));
+        // Panel parity with the main feed: a critical that is a decidable
+        // approval carries its action buttons here too (owner's ask,
+        // 2026-11-08) — deciding is what takes care of those reds.
+        if (c.severity === 'critical' && c.approval?.canDecide) {
+          const acts = el('div', 'actions');
+          const ok = el('button', 'btn primary sm', 'Approve'); const no = el('button', 'btn ghost sm', 'Reject');
+          ok.onclick = (e) => { e.stopPropagation(); decide(c.approval, 'approve'); };
+          no.onclick = (e) => { e.stopPropagation(); if (card.querySelector('.confirm')) return; const cf = el('div', 'confirm'); cf.append(el('div', null, 'Reject this request?')); const r = el('div', 'actions'); const y = el('button', 'btn danger sm', 'Yes, reject'); const n = el('button', 'btn ghost sm', 'Cancel'); y.onclick = () => decide(c.approval, 'reject'); n.onclick = () => cf.remove(); r.append(y, n); cf.append(r); card.append(cf); };
+          acts.append(ok, no);
+          card.append(acts);
+        }
         return card;
       }));
       if (!visible.length) dpFindings.replaceChildren(el('p', 'ew-note', 'All clear. Warnings from your agents and browser land here.'));
@@ -1301,7 +1310,7 @@ $('#feed-ack-all').onclick = async () => {
   for (const f of pending) { try { await post('/api/admin/guard/acks', { fingerprint: f.fingerprint }); } catch { /* keep going */ } }
   if (pending.length) toast(pending.length === 1 ? 'Finding acknowledged' : `${pending.length} findings acknowledged`);
   // Ack all clears the pile, not just the findings: every event card and
-  // every non-critical finding card now in the feed is acknowledged and
+  // every finding card now in the feed is acknowledged and
   // removed for good via the persisted cleared set, so a reload cannot
   // resurrect them. Pending approvals are decisions, not notices — an ack
   // never clears them.
