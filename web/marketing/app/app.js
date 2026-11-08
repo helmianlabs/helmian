@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, profileSyncResultModel } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
@@ -2825,12 +2825,106 @@ function openAccountPanel(title) {
 }
 acctBtn.onclick = (e) => {
   e.stopPropagation();
+  closeWorkspaceMenu();
   if (acctMenu.hidden) { acctMenu.hidden = false; acctBtn.setAttribute('aria-expanded', 'true'); }
   else closeAccountMenu();
 };
 document.addEventListener('click', (e) => { if (!e.target.closest('.acct-wrap')) closeAccountMenu(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeAccountMenu(); closeAccountPanel(); } });
 $('#account-panel-close').onclick = closeAccountPanel;
+
+// ---- workspace switcher (sidebar foot, above the account block) ----
+// The server contract (src/cloud/live-admin.mjs, live on main):
+// GET /api/admin/workspace/memberships answers { memberships:
+// [{ tenantId, name, role, selected }] } in created order, its
+// selected row resolved by the same deriver the session read uses;
+// POST /api/admin/workspace/select { tenantId } records the pick in
+// the signed helmian_tenant cookie and answers the picked row, or
+// refuses 403 WORKSPACE_SELECTION_MEMBERSHIP_REQUIRED and sets no
+// cookie. Until the memberships read lands, the button carries the
+// name and role boot() renders from the session actor — the same
+// values the account block below shows; the read then replaces them
+// with the selected row's own name and role. Stored names are shown
+// exactly as returned; a missing name falls back the way
+// workspaceName() does (a tenant UUID is never shown to a person).
+const wsBtn = $('#workspace-switch-btn');
+const wsMenu = $('#workspace-menu');
+const wsMenuList = $('#workspace-menu-list');
+const wsMenuNote = $('#workspace-menu-note');
+const wsState = { memberships: null, failed: false, switching: false };
+function closeWorkspaceMenu() { if (!wsMenu) return; wsMenu.hidden = true; wsBtn.setAttribute('aria-expanded', 'false'); }
+function wsDisplayName(row, actor = state.actor) {
+  const named = String(row?.name ?? '').trim();
+  if (named) return named;
+  return row?.tenantId && actor?.tenantId === row.tenantId ? workspaceName(actor) : friendlyWorkspace(row?.tenantId);
+}
+function renderWorkspaceButton(actor = state.actor) {
+  if (!wsBtn) return;
+  const rows = Array.isArray(wsState.memberships) ? wsState.memberships : null;
+  const selected = rows?.find((r) => r.selected) ?? null;
+  if (selected) { $('#workspace-name').textContent = wsDisplayName(selected, actor); $('#workspace-role').textContent = String(selected.role ?? '').trim(); return; }
+  if (!rows || !rows.length) { $('#workspace-name').textContent = workspaceName(actor ?? {}); $('#workspace-role').textContent = String(actor?.role ?? '').trim(); }
+}
+function renderWorkspaceMenu() {
+  wsMenuNote.hidden = true; wsMenuNote.textContent = '';
+  const rows = wsState.memberships;
+  if (!Array.isArray(rows)) {
+    wsMenuList.replaceChildren(el('p', 'ws-note muted sm', wsState.failed ? 'Your workspaces could not be loaded. Close this and try again.' : 'Loading…'));
+    return;
+  }
+  if (!rows.length) { wsMenuList.replaceChildren(el('p', 'ws-note muted sm', 'No workspaces on your memberships.')); return; }
+  wsMenuList.replaceChildren(...rows.map((row) => {
+    const b = el('button', row.selected ? 'ws-item selected' : 'ws-item');
+    b.type = 'button'; b.setAttribute('role', 'menuitem');
+    if (row.selected) b.setAttribute('aria-current', 'true');
+    if (wsState.switching) b.disabled = true;
+    b.append(el('span', 'ws-item-check', row.selected ? '✓' : ''), el('span', 'ws-item-name', wsDisplayName(row)), el('span', 'ws-item-role faint sm', String(row.role ?? '').trim()));
+    b.onclick = () => { void pickWorkspace(row); };
+    return b;
+  }));
+}
+async function loadWorkspaceMemberships() {
+  try {
+    const body = await api('/api/admin/workspace/memberships');
+    wsState.memberships = Array.isArray(body.memberships) ? body.memberships : [];
+    wsState.failed = false;
+  } catch { wsState.failed = true; }
+  renderWorkspaceButton();
+  if (wsMenu && !wsMenu.hidden) renderWorkspaceMenu();
+}
+async function pickWorkspace(row) {
+  if (wsState.switching) return;
+  // The selected row — and a lone membership, whose only row is the
+  // selected one — just closes the menu: no pointless POST.
+  if (row.selected || (Array.isArray(wsState.memberships) && wsState.memberships.length === 1)) { closeWorkspaceMenu(); return; }
+  wsState.switching = true; renderWorkspaceMenu();
+  try {
+    await post('/api/admin/workspace/select', { tenantId: row.tenantId });
+    // The pick lives in the cookie the select answer set. Every
+    // surface — the session actor, projects, the Envoy room —
+    // resolved its workspace at boot, and the app has no in-place
+    // session re-resolve; its own road for a changed session state
+    // is a reload (the signup road and the deploy watch reload the
+    // same way), so the whole view re-resolves on the pick.
+    location.reload();
+  } catch (err) {
+    wsState.switching = false; renderWorkspaceMenu();
+    wsMenuNote.textContent = err?.status === 403 ? "That workspace isn't on your memberships" : 'Could not switch workspaces. Try again.';
+    wsMenuNote.hidden = false;
+  }
+}
+wsBtn.onclick = (e) => {
+  e.stopPropagation();
+  closeAccountMenu();
+  if (wsMenu.hidden) { renderWorkspaceMenu(); wsMenu.hidden = false; wsBtn.setAttribute('aria-expanded', 'true'); if (!Array.isArray(wsState.memberships)) loadWorkspaceMemberships(); }
+  else closeWorkspaceMenu();
+};
+document.addEventListener('click', (e) => { if (!e.target.closest('.ws-wrap')) closeWorkspaceMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeWorkspaceMenu(); });
+function initWorkspaceSwitcher(actor) {
+  renderWorkspaceButton(actor);
+  loadWorkspaceMemberships();
+}
 
 async function clerkUser() {
   // The shell's lazy Clerk load (Devices section): asking it for a
@@ -2973,6 +3067,7 @@ async function boot() {
   state.actor = model.actor;
   $('#svc-dot').classList.add('live'); $('#svc-text').textContent = 'Connected';
   { const ws = workspaceName(model.actor); $('#account').textContent = ws === 'your workspace' ? `Signed in · ${model.actor.role}` : `${ws} · ${model.actor.role}`; $('#account-name').textContent = ws === 'your workspace' ? 'Account' : ws; $('#account-avatar').textContent = $('#account-name').textContent.charAt(0).toUpperCase(); }
+  initWorkspaceSwitcher(model.actor);
   $('#admin-link').hidden = !isAdminRole(model.actor.role);
   renderSessions(); loadSessions();
   loadEmojiMode().catch(() => {});

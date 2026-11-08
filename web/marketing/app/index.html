@@ -86,6 +86,17 @@
 
     <footer class="side-foot">
       <div class="svc"><span id="svc-dot" class="dot"></span><span id="svc-text">Cloud service · Connecting…</span></div>
+      <div class="ws-wrap">
+        <button id="workspace-switch-btn" class="ws-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="workspace-menu" title="Switch workspace">
+          <svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+          <span class="ws-btn-text"><span id="workspace-name" class="ws-name">Workspace</span><span id="workspace-role" class="ws-role faint sm"></span></span>
+          <span class="ws-chev" aria-hidden="true">▾</span>
+        </button>
+        <div id="workspace-menu" class="acct-menu ws-menu" role="menu" aria-label="Switch workspace" hidden>
+          <div id="workspace-menu-list"></div>
+          <p id="workspace-menu-note" class="ws-note muted sm" role="status" hidden></p>
+        </div>
+      </div>
       <div class="acct-wrap">
         <button id="account-menu-btn" class="acct-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">
           <span id="account-avatar" class="acct-avatar" aria-hidden="true">A</span>

@@ -159,6 +159,27 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .sidebar.rail .acct-menu { right:auto; }
 .acct-item { border:0; background:transparent; color:var(--text); text-align:left; padding:8px 10px; border-radius:6px; cursor:pointer; font-size:13px; text-decoration:none; display:block; }
 .acct-item:hover { background:var(--panel); }
+/* workspace switcher (sidebar foot, above the account block): the button
+   mirrors .acct-btn; its menu reuses .acct-menu outright (same overlay
+   placement, border, shadow and both themes) — only the rows are new. */
+.ws-wrap { position:relative; }
+.ws-btn { display:flex; align-items:center; gap:10px; width:100%; border:1px solid transparent; background:transparent; border-radius:var(--radius); padding:7px 8px; cursor:pointer; text-align:left; color:var(--text); }
+.ws-btn:hover, .ws-btn[aria-expanded="true"] { background:var(--panel-2); border-color:var(--border); }
+.ws-btn-text { display:flex; align-items:baseline; gap:8px; min-width:0; line-height:1.25; }
+.ws-name { font-weight:600; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ws-role { flex:none; white-space:nowrap; }
+.ws-chev { margin-left:auto; color:var(--muted); font-size:11px; flex:none; }
+.sidebar.rail .ws-btn { justify-content:center; padding:7px 0; }
+.sidebar.rail .ws-btn-text, .sidebar.rail .ws-chev { display:none; }
+.sidebar.rail .ws-menu { right:auto; }
+.ws-item { display:flex; align-items:center; gap:8px; width:100%; border:0; background:transparent; color:var(--text); text-align:left; padding:8px 10px; border-radius:6px; cursor:pointer; font-size:13px; }
+.ws-item:hover { background:var(--panel); }
+.ws-item[disabled] { opacity:.55; cursor:default; }
+.ws-item-check { width:14px; flex:none; text-align:center; color:var(--accent); }
+.ws-item-name { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ws-item.selected .ws-item-name { font-weight:600; }
+.ws-item-role { flex:none; }
+.ws-note { padding:6px 10px 2px; margin:0; }
 .acct-panel { position:fixed; left:16px; bottom:16px; width:min(430px, calc(100vw - 32px)); max-height:min(74dvh, 660px); overflow-y:auto; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:0 18px 50px rgba(0,0,0,.5); padding:16px; z-index:90; }
 .acct-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }
 .acct-panel-head strong { font-size:15px; }
