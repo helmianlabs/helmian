@@ -138,14 +138,21 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-avatar img { width:100%; height:100%; }
 .ew-avatar.discord { background:#5865F2; }
 .ew-avatar.slack { background:#4A154B; }
+/* Message rows (bite 2): the face slot is a 28px rounded square —
+   radius 8, no circle crop, no ring — whatever face the row carries
+   (library still, emoji face, stock picture, initial letter). Other
+   .ew-avatar surfaces keep the 36px round slot. */
+.ew-msg .ew-avatar { width:28px; height:28px; border-radius:8px; font-size:13px; }
+.ew-msg .ew-avatar img { border-radius:8px; box-shadow:none; }
+.ew-msg .ew-avatar .hx-emoji { width:20px; height:20px; }
 .ew-meta { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
 .ew-meta strong { font-weight:650; }
 .ew-meta .agent { color:var(--accent); }
 .ew-meta time { color:var(--faint); font-size:11px; }
-.ew-src { font-size:10px; font-weight:800; letter-spacing:.06em; border-radius:4px; padding:1px 5px; background:var(--panel-2); color:var(--muted); }
-.ew-src.discord { background:rgba(88,101,242,.2); color:#AAB4FF; }
-.ew-src.slack { background:rgba(74,21,75,.35); color:#E3B7E8; }
-.ew-src.agent { background:rgba(14,165,233,.15); color:var(--accent); }
+/* Role tag (bite 2): plain muted text — no fill, no border, no chip. */
+.ew-src { font-size:12px; font-weight:500; color:var(--muted); }
+.ew-src.discord { color:#AAB4FF; }
+.ew-src.slack { color:#E3B7E8; }
 .ew-body { white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; line-height:1.5; }
 .ew-body .mention { color:var(--accent); background:rgba(14,165,233,.12); border-radius:4px; padding:0 3px; font-weight:600; }
 .ew-body .claim { color:var(--amber); font-weight:700; }
@@ -157,6 +164,15 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-empty { margin:auto; text-align:center; color:var(--muted); padding:40px 10px; }
 .ew-day { display:flex; align-items:center; gap:10px; color:var(--faint); font-size:11px; font-weight:700; margin:10px 0 6px; }
 .ew-day::before, .ew-day::after { content:""; flex:1; height:1px; background:var(--border); }
+/* Grouped follow-up time (bite 2): sits in the row's gutter where
+   the avatar would be, right-aligned against the body, and only
+   surfaces while the row is hovered (always faintly on touch). */
+.ew-gutter-time { font-size:11px; color:var(--faint); text-align:right; align-self:start; padding-top:5px; white-space:nowrap; opacity:0; transition:opacity .15s; }
+.ew-msg:hover .ew-gutter-time, .ew-msg:focus-within .ew-gutter-time { opacity:1; }
+@media (pointer:coarse) { .ew-gutter-time { opacity:.55; } }
+/* The unread divider (bite 2): the day divider's pattern in red. */
+.ew-new-divider { display:flex; align-items:center; gap:10px; color:var(--red); font-size:11px; font-weight:700; margin:10px 0 6px; }
+.ew-new-divider::before, .ew-new-divider::after { content:""; flex:1; height:1px; background:var(--red); opacity:.5; }
 @keyframes ew-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 
 .ew-composer { margin:0 14px 14px; border:1px solid var(--border); border-radius:12px; background:var(--panel); padding:8px 10px; display:flex; flex-direction:column; gap:6px; transition:border-color .15s; }
@@ -670,12 +686,21 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-rchip:hover { border-color:var(--accent); }
 .ew-rchip.mine { border-color:var(--accent); background:rgba(14,165,233,.14); }
 .ew-rchip .ew-rchip-face { width:16px; height:16px; }
-.ew-react-add { position:absolute; top:2px; right:6px; z-index:2; display:inline-flex; align-items:center; gap:1px; padding:3px 6px; border:1px solid var(--border); border-radius:999px; background:var(--panel); color:var(--muted); cursor:pointer; opacity:0; pointer-events:none; transition:opacity .15s, border-color .15s, color .15s; }
+/* Hover toolbar (bite 2): every per-message action lives in this
+   one floating bar at the row's top-right, overlapping the row
+   above — hidden until hover or focus, always faintly present
+   on touch. The reaction button keeps its .ew-react-add
+   class and picker wiring; inside the bar it is a plain icon
+   button, like Copy beside it. */
+.ew-msg-tools { position:absolute; top:-10px; right:12px; z-index:3; display:inline-flex; align-items:center; gap:2px; padding:2px; background:var(--panel); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.28); opacity:0; pointer-events:none; transition:opacity .15s; }
+.ew-msg:hover .ew-msg-tools, .ew-msg:focus-within .ew-msg-tools { opacity:1; pointer-events:auto; }
+@media (pointer:coarse) { .ew-msg-tools { opacity:.85; pointer-events:auto; } }
+.ew-react-add { display:inline-flex; align-items:center; justify-content:center; gap:1px; min-width:28px; height:28px; padding:0 5px; border:0; border-radius:6px; background:none; color:var(--muted); cursor:pointer; }
 .ew-react-add .hx-emoji { width:15px; height:15px; }
 .ew-react-plus { font-size:12px; font-weight:700; line-height:1; }
-.ew-msg:hover .ew-react-add, .ew-msg:focus-within .ew-react-add { opacity:1; pointer-events:auto; }
-.ew-react-add:hover { border-color:var(--accent); color:var(--text); }
-@media (pointer:coarse) { .ew-react-add { opacity:.55; pointer-events:auto; } }
+.ew-react-add:hover { background:var(--panel-2); color:var(--text); }
+.ew-tool-btn { display:inline-flex; align-items:center; justify-content:center; min-width:28px; height:28px; padding:0 7px; border:0; border-radius:6px; background:none; color:var(--muted); cursor:pointer; font:inherit; font-size:12px; font-weight:600; }
+.ew-tool-btn:hover { background:var(--panel-2); color:var(--text); }
 .ew-react-pop { position:fixed; z-index:70; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:8px; box-shadow:0 16px 40px rgba(0,0,0,.45); }
 .ew-react-pop-head { display:flex; align-items:center; justify-content:space-between; font-size:13px; font-weight:650; padding:0 2px 6px; }
 .ew-react-grid { max-height:264px; overflow:auto; }
@@ -756,6 +781,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
    shadows soften to rgba(13,42,67,·). Scoped to light only — the dark
    themes' rules above are untouched. */
 [data-theme="light"] .ew-msg:hover { background:rgba(13,42,67,.05); }
+[data-theme="light"] .ew-msg-tools { box-shadow:0 8px 24px rgba(13,42,67,.14); }
+/* Bite 2: message-row faces stay square and ring-free in light too —
+   this out-specifies the generic light avatar-img ring below. */
+[data-theme="light"] .ew-msg .ew-avatar img { border-radius:8px; box-shadow:none; }
 [data-theme="light"] .ew-btn.primary { color:#fff; }
 [data-theme="light"] .ew-net-seg.on { color:#fff; }
 [data-theme="light"] .ew-seg button.on { color:#fff; }
@@ -764,8 +793,8 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 [data-theme="light"] .ew-badge.slack { background:rgba(74,21,75,.08); color:#4A154B; border-color:rgba(74,21,75,.35); }
 [data-theme="light"] .ew-badge.github { background:rgba(113,134,157,.16); color:#2F3A47; border-color:rgba(113,134,157,.45); }
 [data-theme="light"] .ew-badge.debate { background:#FBF0DA; color:var(--amber); border-color:rgba(137,94,13,.45); }
-[data-theme="light"] .ew-src.discord { background:rgba(88,101,242,.12); color:#5865F2; }
-[data-theme="light"] .ew-src.slack { background:rgba(74,21,75,.08); color:#4A154B; }
+[data-theme="light"] .ew-src.discord { color:#5865F2; }
+[data-theme="light"] .ew-src.slack { color:#4A154B; }
 [data-theme="light"] .ew-net-strip.discord { color:#5865F2; }
 [data-theme="light"] .ew-mini.discord, [data-theme="light"] .ew-src-head .ew-discord-mark, [data-theme="light"] .ew-foot .ew-discord-mark { color:#5865F2; }
 [data-theme="light"] .ew-mini.slack, [data-theme="light"] .ew-foot .ew-slack-mark { color:#4A154B; }
@@ -778,7 +807,6 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 [data-theme="light"] .ew-btn.danger { background:#FDECEB; border-color:rgba(179,58,54,.5); color:var(--red); }
 [data-theme="light"] .ew-btn.danger:hover { background:rgba(179,58,54,.16); border-color:var(--red); }
 [data-theme="light"] .ew-body .mention { background:rgba(11,110,153,.10); }
-[data-theme="light"] .ew-src.agent { background:rgba(11,110,153,.12); }
 [data-theme="light"] .ew-ca-tag { background:rgba(11,110,153,.10); border-color:rgba(11,110,153,.3); }
 [data-theme="light"] .ew-pill.session { border-color:rgba(11,110,153,.45); }
 [data-theme="light"] .ew-pill img { box-shadow:0 0 0 2px var(--panel), 0 0 0 3px rgba(11,110,153,.45); }
