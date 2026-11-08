@@ -460,6 +460,12 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
 
 export const ATTACHMENT_KINDS = Object.freeze(['skill', 'connector', 'plugin', 'file']);
 export const MAX_MESSAGE_ATTACHMENTS = 8;
+// The connector-library toggles a message may carry (metadata.connectors,
+// connector-library SPEC §1.6): one { seatId, entryId } per connector the
+// person armed for this turn from the "+" library panel. Ids are the
+// library's slugs (seat ids from the catalog, entry ids from the read).
+export const MAX_MESSAGE_CONNECTORS = 16;
+const CONNECTOR_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
 const ATTACHMENT_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ATTACHMENT_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*(:[a-z0-9][a-z0-9_-]*)?$/;
 
@@ -574,10 +580,36 @@ export function normalizeSourceRef(input) {
 }
 
 /**
- * The metadata object stored on a message. Accepts the two wire shapes the
- * client may send — `{ attachments: [...], webSearch?: boolean }` — plus
- * the bridge's source stamp, and returns the canonical frozen form, or
- * null when nothing was attached.
+ * The connector-library toggles a message carries (SPEC §1.6): the set
+ * of connectors the person armed for this turn from the "+" library
+ * panel. Each entry names its seat — a seat's turn consumes only its
+ * own entries (§3.4) — so the pair is the identity and duplicates are
+ * refused, exactly like attachments. Absent (the untouched panel) is
+ * the default every layer already treats as "nothing armed".
+ */
+export function normalizeConnectorToggles(input) {
+  if (input === undefined || input === null) return undefined;
+  if (!Array.isArray(input)) throw new Error('message connectors are invalid');
+  if (input.length > MAX_MESSAGE_CONNECTORS) throw new Error('too many connectors');
+  const seen = new Set();
+  const out = input.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('message connectors are invalid');
+    const seatId = String(item.seatId ?? '');
+    const entryId = String(item.entryId ?? '');
+    if (!CONNECTOR_ID_PATTERN.test(seatId) || !CONNECTOR_ID_PATTERN.test(entryId)) throw new Error('message connectors are invalid');
+    const id = `${seatId}:${entryId}`;
+    if (seen.has(id)) throw new Error('connector is duplicated');
+    seen.add(id);
+    return Object.freeze({ seatId, entryId });
+  });
+  return out.length ? Object.freeze(out) : undefined;
+}
+
+/**
+ * The metadata object stored on a message. Accepts the wire shapes the
+ * client may send — `{ attachments: [...], webSearch?: boolean,
+ * connectors?: [...] }` — plus the bridge's source stamp, and returns
+ * the canonical frozen form, or null when nothing was attached.
  */
 export function normalizeMessageMetadata(input) {
   if (input === undefined || input === null) return null;
@@ -598,11 +630,13 @@ export function normalizeMessageMetadata(input) {
   const fileBytes = attachments.reduce((sum, a) => sum + (a.kind === 'file' ? a.size : 0), 0);
   if (fileBytes > FILE_ATTACHMENTS_MAX_TOTAL_BYTES) throw new Error('attached files are too large in total');
   const webSearch = input.webSearch === undefined ? undefined : input.webSearch === true;
+  const connectors = normalizeConnectorToggles(input.connectors);
   const source = normalizeSourceRef(input.source);
-  if (!attachments.length && webSearch === undefined && !source) return null;
+  if (!attachments.length && webSearch === undefined && !connectors && !source) return null;
   return Object.freeze({
     ...(attachments.length ? { attachments: Object.freeze(attachments) } : {}),
     ...(webSearch !== undefined ? { webSearch } : {}),
+    ...(connectors ? { connectors } : {}),
     ...(source ? { source } : {}),
   });
 }

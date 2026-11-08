@@ -93,6 +93,14 @@
 //   on the others) and the cloud worker's context builder. It is carried
 //   only when ON; off is the absence every layer already treats as the
 //   default, so an untouched toggle changes nothing on the wire.
+// - the connector-library toggles ride as metadata.connectors — not
+//   attachments either: the per-(seat, conversation) armed set from the
+//   "+" library panel (connector-panel.mjs). Each entry names its seat
+//   ({ seatId, entryId }); a seat's turn consumes only its own entries,
+//   and normalizeMessageMetadata (src/cloud/envoy-agents.mjs) is the
+//   canonical validator. Carried only when at least one toggle is on —
+//   an untouched panel changes nothing on the wire, the same absence
+//   rule as webSearch.
 import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs';
 
 // Truthful attachment states (see the header): what attaching an entry
@@ -419,12 +427,45 @@ export function removeAttachment(list = [], att) {
   return list.filter((a) => attachmentKey(a) !== key);
 }
 
+// Mirror of MAX_MESSAGE_CONNECTORS in src/cloud/envoy-agents.mjs: the
+// most connector-library toggles one message may carry. The server
+// re-checks; this exists so the panel's own model never builds a
+// request the validator would refuse.
+export const MESSAGE_CONNECTORS_MAX = 16;
+
+const CONNECTOR_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
+// The armed connector set for one turn, cleaned to the wire shape:
+// { seatId, entryId } pairs, slug-shaped, deduped. Anything malformed
+// is dropped here — the panel only ever arms rows the library read
+// returned, so a malformed entry is a bug, and dropping it keeps the
+// message sendable (the server refuses the whole metadata otherwise).
+export function normalizeConnectorToggles(connectors = []) {
+  if (!Array.isArray(connectors)) return Object.freeze([]);
+  const seen = new Set();
+  const out = [];
+  for (const item of connectors) {
+    const seatId = String(item?.seatId ?? '').trim();
+    const entryId = String(item?.entryId ?? '').trim();
+    if (!CONNECTOR_ID_PATTERN.test(seatId) || !CONNECTOR_ID_PATTERN.test(entryId)) continue;
+    const key = `${seatId}:${entryId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(Object.freeze({ seatId, entryId }));
+    if (out.length >= MESSAGE_CONNECTORS_MAX) break;
+  }
+  return Object.freeze(out);
+}
+
 // The structured metadata shape the server accepts, stores and hands to
 // the turn (normalizeMessageMetadata in src/cloud/envoy-agents.mjs is the
 // canonical validator). Plain JSON, frozen. The web-search toggle joins
-// the same object as `webSearch` — carried only when ON (see the header).
-export function attachmentMetadata(list = [], { webSearch = false } = {}) {
-  if (!list.length && webSearch !== true) return null;
+// the same object as `webSearch` — carried only when ON (see the header);
+// the connector-library toggles join as `connectors`, carried only when
+// at least one is armed.
+export function attachmentMetadata(list = [], { webSearch = false, connectors = [] } = {}) {
+  const armed = normalizeConnectorToggles(connectors);
+  if (!list.length && webSearch !== true && !armed.length) return null;
   return Object.freeze({
     ...(list.length ? {
       attachments: Object.freeze(list.map((a) => (a.kind === 'connector'
@@ -434,6 +475,7 @@ export function attachmentMetadata(list = [], { webSearch = false } = {}) {
           : Object.freeze({ kind: a.kind, name: a.name })))),
     } : {}),
     ...(webSearch === true ? { webSearch: true } : {}),
+    ...(armed.length ? { connectors: armed } : {}),
   });
 }
 
@@ -456,9 +498,9 @@ export function applySkillToBody(body, list = []) {
   return { body: `/${skill.name} ${text}`, skillCarried: true, note: null };
 }
 
-export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [], webSearch = false } = {}) {
+export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [], webSearch = false, connectors = [] } = {}) {
   const applied = applySkillToBody(body, attachments);
-  const metadata = attachmentMetadata(attachments, { webSearch });
+  const metadata = attachmentMetadata(attachments, { webSearch, connectors });
   return Object.freeze({
     // The fields POST /api/admin/envoy/messages accepts: the original
     // three, plus `metadata` when something is attached or web search is

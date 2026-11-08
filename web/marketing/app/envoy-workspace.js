@@ -4,6 +4,7 @@
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
 import { addSession, sessionsFromServer } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, pickerModel, removeAttachment } from './composer-picker.mjs';
+import { clearConversationToggles, connectorsForTurn, level1Model, level2Model, providerForSeat, seatName, toggleConnector } from './connector-panel.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
 import { createConnectFields } from './connect-fields.mjs';
 import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
@@ -733,7 +734,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null }, connectorToggles: {}, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -1703,6 +1704,16 @@ function renderAttachChips(which) {
       'Web search',
       h('button', { type: 'button', class: 'ew-chip-x', title: 'Turn web search off for this message', 'aria-label': 'Turn web search off', onclick: () => { ws.webSearch[which] = false; renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×')));
   }
+  // Connector-library toggles armed for this conversation ride the
+  // next message the same way: one chip each while armed, gone with
+  // the send (or the ×). The names come from the library reads that
+  // armed them — a toggle can only exist for a row the panel showed.
+  for (const { seatId, entryId } of connectorsForTurn(ws.connectorToggles, conversationIdFor(which))) {
+    const name = ws.libraryFacts?.names?.[`${seatId}:${entryId}`] ?? entryId;
+    chips.push(h('span', { class: 'ew-chip connector' },
+      name,
+      h('button', { type: 'button', class: 'ew-chip-x', title: `Turn ${name} off for this message`, 'aria-label': `Turn ${name} off`, onclick: () => { ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), seatId, entryId); renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×')));
+  }
   box.hidden = !chips.length;
   box.replaceChildren(...chips);
 }
@@ -1713,10 +1724,143 @@ function closePicker() {
 async function togglePicker(which) {
   if (ws.pickerFor === which) { closePicker(); return; }
   ws.pickerFor = which;
+  // The library always opens on Level 1 (pick the seat, SPEC §1.1).
+  ws.libraryPanel = { level: 1, seatId: null };
   const other = which === 'channel' ? 'cli' : 'channel';
   const op = $(PICKER_IDS[other].panel); if (op) op.hidden = true;
   await renderPicker(which);
 }
+// ---------- composer "+" library: per-seat connector libraries (SPEC §1.1 Surface A, bite 3) ----------
+// The library section leads the "+" panel. Level 1 picks the seat
+// (face, name, connected count); Level 2 is that seat's library, read
+// from GET /api/admin/connector-library (the Bite 2 read behind the
+// Bite 3 route). The pure model in connector-panel.mjs shapes both
+// levels and owns the toggle store: toggles are held per (seat,
+// conversation) in ws.connectorToggles, ride the next message as
+// metadata.connectors, and are cleared when that message lands — one
+// message only, never the next one's defaults, never another seat's
+// or another conversation's (SPEC §1.6/§3.4). Closing the panel never
+// touches the composer text; nothing in this section writes to the
+// draft boxes.
+// The conversation a composer's toggles belong to: the open channel,
+// or the picked agent's private room for the agent-chat composer (the
+// room is per agent, resolved from the same cliTarget() the send
+// uses, so panel and send always name the same conversation).
+function conversationIdFor(which) {
+  return which === 'cli' ? `cli:${cliTarget().key}` : `channel:${ws.channelId ?? 'none'}`;
+}
+async function loadLibraryFacts() {
+  if (ws.libraryFacts) return ws.libraryFacts;
+  if (ws.libraryLoading) return ws.libraryLoading;
+  ws.libraryLoading = (async () => {
+    const facts = { seats: [], libraries: {}, names: {}, error: false };
+    try {
+      const body = await ws.ctx.api('/api/admin/connector-library/seats');
+      facts.seats = Array.isArray(body?.seats) ? body.seats : [];
+    } catch { facts.error = true; }
+    ws.libraryFacts = facts;
+    return facts;
+  })();
+  return ws.libraryLoading;
+}
+async function loadSeatLibrary(seatId) {
+  const facts = await loadLibraryFacts();
+  if (facts.libraries[seatId]) return facts.libraries[seatId];
+  let library;
+  try {
+    const body = await ws.ctx.api(`/api/admin/connector-library?seat=${encodeURIComponent(seatId)}`);
+    library = { seatId, connectedCount: body?.connectedCount ?? 0, rows: Array.isArray(body?.rows) ? body.rows : [] };
+    for (const row of library.rows) facts.names[`${seatId}:${row.entryId}`] = row.name;
+  } catch {
+    library = { seatId, connectedCount: 0, rows: [], error: true };
+  }
+  facts.libraries[seatId] = library;
+  return library;
+}
+// A seat's face on the crew tile: the library-pack still by seat slug
+// (the pack's slugs ARE the library seat ids), falling back to the
+// seat's workspace face, then its initial — the crewFaceImg chain, so
+// a missing asset never leaves an empty slot.
+function librarySeatFace(seatId) {
+  const provider = providerForSeat(seatId);
+  return h('span', { class: 'ew-lib-face' }, crewFaceImg(seatId, () => (provider ? seatFaceImg(provider) : h('span', { class: 'ew-crew-initial' }, seatName(seatId).slice(0, 1)))));
+}
+// A library row's icon tile (§1.2 field 1). iconRef names the
+// service's own mark as a stored asset ('icon:<slug>'); the marks are
+// not in the app yet, so the tile carries the service's initial on the
+// same consistent tile every row wears — never a borrowed logo.
+function libraryIconTile(row) {
+  return h('span', { class: 'ew-lib-icon', 'aria-hidden': 'true' }, (row.name ?? '?').slice(0, 1).toUpperCase());
+}
+function libraryRowNode(which, row) {
+  const vendorLine = row.mirror
+    ? `${row.vendorLabel} · ${row.trustText} · Managed in ${row.mirror.managedIn}`
+    : `${row.vendorLabel} · ${row.trustText}`;
+  const text = h('span', { class: 'ew-lib-text' },
+    h('span', { class: 'ew-lib-name' }, row.name),
+    h('span', { class: 'ew-lib-line' }, row.oneLiner),
+    h('span', { class: 'ew-lib-line' }, vendorLine));
+  if (row.toggleable) {
+    return h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on for your next message — tap to turn it off` : `Turn ${row.name} on for your next message`, onclick: () => {
+      ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId);
+      renderAttachChips(which); renderPicker(which);
+    } }, libraryIconTile(row), text,
+      h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
+      h('span', { class: `ew-picker-state ${row.on ? 'on' : 'off'}` }, row.on ? 'On' : row.stateLabel));
+  }
+  if (row.mirror) {
+    // A mirror row is never a button Helmian can't honour (§1.5): it
+    // shows the state the vendor side last reported, and its one
+    // action is the deep link to the vendor's own management surface.
+    return h('div', { class: 'ew-picker-row ew-lib-row mirror' }, libraryIconTile(row), text,
+      h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel),
+      ...(row.mirror.manageUrl ? [h('a', { class: 'ew-lib-manage', href: row.mirror.manageUrl, target: '_blank', rel: 'noreferrer', title: `${row.name} is connected in ${row.mirror.managedIn} — Helmian only shows its state` }, `Manage in ${row.mirror.managedIn}`)] : []));
+  }
+  return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
+    h('span', { class: 'ew-picker-state off' }, row.stateLabel));
+}
+function renderLibrarySection(which) {
+  const head = h('div', { class: 'ew-subhead' }, 'CONNECTOR LIBRARY');
+  const facts = ws.libraryFacts;
+  if (!facts) {
+    void loadLibraryFacts().then(() => { if (ws.pickerFor === which) renderPicker(which); });
+    return [h('div', { class: 'ew-picker-group' }, head, h('p', { class: 'ew-note' }, 'Loading libraries...'))];
+  }
+  if (ws.libraryPanel.level === 2 && ws.libraryPanel.seatId) {
+    const seatId = ws.libraryPanel.seatId;
+    const library = facts.libraries[seatId];
+    if (!library) {
+      void loadSeatLibrary(seatId).then(() => { if (ws.pickerFor === which) renderPicker(which); });
+      return [h('div', { class: 'ew-picker-group' }, head, h('p', { class: 'ew-note' }, `Loading ${seatName(seatId)}'s library...`))];
+    }
+    const back = h('button', { type: 'button', class: 'ew-btn sm ghost ew-lib-back', onclick: () => { ws.libraryPanel = { level: 1, seatId: null }; renderPicker(which); } }, '‹ All agents');
+    const title = h('div', { class: 'ew-subhead' }, `${seatName(seatId).toUpperCase()}'S LIBRARY`);
+    if (library.error) {
+      return [h('div', { class: 'ew-picker-group' }, back, title, h('p', { class: 'ew-note' }, 'This library could not be loaded.'))];
+    }
+    const model = level2Model(library, ws.connectorToggles, conversationIdFor(which));
+    const nodes = [back, title, h('p', { class: 'ew-note' }, 'Toggles ride your next message in this conversation, for this agent only.')];
+    if (model.connected.length) nodes.push(h('div', { class: 'ew-subhead' }, 'CONNECTED'), ...model.connected.map((row) => libraryRowNode(which, row)));
+    if (model.catalog.length) nodes.push(h('div', { class: 'ew-subhead' }, 'LIBRARY'), ...model.catalog.map((row) => libraryRowNode(which, row)));
+    if (!model.connected.length && !model.catalog.length) nodes.push(h('p', { class: 'ew-note' }, 'Nothing in this library yet.'));
+    nodes.push(h('button', { type: 'button', class: 'ew-picker-row', disabled: true, title: model.customRow.note },
+      h('span', {}, model.customRow.label), h('span', { class: 'ew-picker-state off' }, 'Not available yet')));
+    return [h('div', { class: 'ew-picker-group' }, ...nodes)];
+  }
+  const model = level1Model(facts.seats);
+  const rows = model.rows.map((seat) => h('button', { type: 'button', class: 'ew-picker-row ew-lib-seat', title: `See ${seat.name}'s connector library`, onclick: () => {
+    ws.libraryPanel = { level: 2, seatId: seat.seatId };
+    void loadSeatLibrary(seat.seatId).then(() => { if (ws.pickerFor === which) renderPicker(which); });
+    renderPicker(which);
+  } },
+    librarySeatFace(seat.seatId),
+    h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, seat.name)),
+    h('span', { class: 'ew-picker-state' }, seat.connectedCount ? `${seat.connectedCount} connected` : 'None connected')));
+  return [h('div', { class: 'ew-picker-group' }, head,
+    h('p', { class: 'ew-note' }, 'Pick an agent — you get that agent\'s own library.'),
+    ...(rows.length ? rows : [h('p', { class: 'ew-note' }, facts.error ? 'The libraries could not be loaded.' : 'No libraries in this workspace yet.')]))];
+}
+
 async function renderPicker(which) {
   const panel = $(PICKER_IDS[which].panel); if (!panel) return;
   if (ws.pickerFor !== which) { panel.hidden = true; return; }
@@ -1803,6 +1947,7 @@ async function renderPicker(which) {
   }
   panel.replaceChildren(
     h('div', { class: 'ew-picker-head' }, h('strong', {}, 'Add to this message'), h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-icon', 'aria-label': 'Close picker', onclick: () => closePicker() }, '×')),
+    ...renderLibrarySection(which),
     ...groups);
 }
 
@@ -2230,12 +2375,13 @@ async function send(e) {
   const box = $('maestro-input'); const body = box.value.trim();
   if (!body || !ws.channelId) return;
   const key = crypto.randomUUID();
-  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel });
+  const convId = conversationIdFor('channel');
+  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel, connectors: connectorsForTurn(ws.connectorToggles, convId) });
   const btn = $('maestro-send'); btn.disabled = true;
   ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
   box.value = ''; grow(); closeSlashMenu();
-  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); }
+  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; ws.connectorToggles = clearConversationToggles(ws.connectorToggles, convId); renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
   finally { btn.disabled = false; }
 }
@@ -2448,11 +2594,12 @@ async function sendCli(e) {
   // The room is created lazily here if this is the first prompt ever.
   const roomId = await ensureCliRoom(key);
   if (!roomId) { ws.ctx.toast(`Could not open your room with ${NAMES[key]}. Your prompt is still in the box.`); return; }
-  const req = buildMessageRequest({ channelId: roomId, body: raw, idempotencyKey: crypto.randomUUID(), attachments: ws.attach.cli, webSearch: ws.webSearch.cli });
+  const convId = conversationIdFor('cli');
+  const req = buildMessageRequest({ channelId: roomId, body: raw, idempotencyKey: crypto.randomUUID(), attachments: ws.attach.cli, webSearch: ws.webSearch.cli, connectors: connectorsForTurn(ws.connectorToggles, convId) });
   const btn = $('ew-cli-send'); btn.disabled = true;
   try {
     await ws.ctx.post('/api/admin/envoy/messages', req.payload);
-    box.value = ''; growCli(); closeSlashMenu(); ws.attach.cli = []; ws.webSearch.cli = false; renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
+    box.value = ''; growCli(); closeSlashMenu(); ws.attach.cli = []; ws.webSearch.cli = false; ws.connectorToggles = clearConversationToggles(ws.connectorToggles, convId); renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
     await loadCliRoom();
     loadPresence().catch(() => {});
   } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
