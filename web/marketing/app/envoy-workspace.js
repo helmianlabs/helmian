@@ -491,6 +491,24 @@ function crewFaceNode(faceImg, statusKind, motionStage) {
     h('span', { class: `ew-crew-dot ${statusKind}`, 'aria-hidden': 'true' }));
 }
 
+// ---------- message-row faces (UI polish bite 2) ----------
+// A message row's face is the library still in the row's rounded-
+// square slot (28px, radius 8 — envoy.css .ew-msg .ew-avatar), with
+// bite 1's fallback chain behind it: if the pack file is missing,
+// the seat's existing avatar art (its workspace emoji face, else
+// the stock picture) takes the slot, so a row never renders empty.
+// The owner's own rows carry the owner face the same way. A seat
+// with no provider (the PC bridge) keeps the old avatar path —
+// there is no pack slug to ask for.
+function msgSeatAvatar(provider, motionStage = null) {
+  if (!provider) return seatAvatar(provider, motionStage);
+  const motion = activityMotionClass(motionStage);
+  return h('div', { class: `ew-avatar${motion ? ` ${motion}` : ''}` }, crewSeatFaceImg(provider));
+}
+function msgOwnerAvatar() {
+  return h('div', { class: 'ew-avatar' }, crewOwnerFaceImg());
+}
+
 function renderFaceViews() { renderAgents(); renderMessages(); renderCliChips(); renderCliSessions(); renderCliThread(); }
 
 async function loadFaces() {
@@ -1165,6 +1183,9 @@ function renderChannels() {
 }
 async function selectChannel(id) {
   if (!id) return;
+  // Leaving a channel marks it seen up to its newest message (the
+  // unread divider's last-seen stamp, bite 2).
+  if (ws.channelId && ws.channelId !== id) markChannelSeen(ws.channelId, ws.messages);
   ws.channelId = id; ls.set('channel', id); ls.set(`netChannel.${ws.mode}`, id); ws.sig = null; ws.messages = [];
   ws.reactions = { channelId: null, byId: {}, mine: {} }; ws.reactionsStamp = 0; closeReactionPicker();
   setComposer(true);
@@ -1834,11 +1855,40 @@ function deskDispatchLine(m) {
   if (!targets.length) return h('div', { class: 'ew-dispatch' }, 'That named nobody on the desk — no agent was dispatched.');
   return h('div', { class: 'ew-dispatch' }, targets.length === team.length ? 'Dispatched to everyone on the desk' : `Dispatched to ${targets.map((p) => NAMES[p]).join(' · ')}`);
 }
+// ---------- unread "New" divider (UI polish bite 2) ----------
+// Client-side only: a per-channel last-seen stamp in localStorage
+// (the ls store, key lastSeen.<channelId>, ms since epoch). Entering
+// a channel snapshots the stored stamp; renders draw the red
+// divider before the first message from someone else that is newer
+// than the snapshot. The stamp advances when the member leaves the
+// channel (selectChannel) or settles at its bottom (the scroll
+// listener in wire()); the snapshot itself never moves mid-visit,
+// so the divider holds its place across poll re-renders. A channel
+// with no stored stamp (first ever visit) shows no divider.
+const unread = { channelId: null, at: 0, armedAt: 0 };
+function unreadSnapshot() {
+  if (unread.channelId === ws.channelId) return;
+  unread.channelId = ws.channelId;
+  unread.at = ws.channelId ? Number(ls.get(`lastSeen.${ws.channelId}`, 0)) || 0 : 0;
+  // The entry render auto-scrolls to the bottom; that programmatic
+  // scroll is not the member viewing the bottom, so the scroll
+  // listener stays disarmed briefly after each channel switch.
+  unread.armedAt = Date.now() + 600;
+}
+function markChannelSeen(channelId, messages) {
+  if (!channelId || !messages?.length) return;
+  let newest = 0;
+  for (const m of messages) { const t = new Date(m.createdAt).getTime(); if (t > newest) newest = t; }
+  if (!(newest > 0)) return;
+  if (newest > (Number(ls.get(`lastSeen.${channelId}`, 0)) || 0)) ls.set(`lastSeen.${channelId}`, newest);
+  if (unread.channelId === channelId && newest > unread.at) unread.at = newest;
+}
 function renderMessages() {
   const box = $('ew-messages');
   const desk = inMaestroMode();
+  unreadSnapshot();
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  const out = []; let prev = null; let prevDay = '';
+  const out = []; let prev = null; let prevDay = ''; let newShown = false;
   const onLink = (url) => { openBench('browser'); navigate(url); };
   // Agent replies open their links in a full tab: a build reveal is one
   // click at full size and the desk stays put (navigate() gives Helmian's
@@ -1857,11 +1907,18 @@ function renderMessages() {
     if (day !== prevDay) { out.push(h('div', { class: 'ew-day' }, day)); prevDay = day; prev = null; }
     if (m.authorKind === 'system') { out.push(h('div', { class: 'ew-notice' }, h('span', {}, m.body))); prev = null; continue; }
     const who = whoOf(m);
-    const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
+    // The red "New" divider (bite 2): the first message from someone
+    // else newer than the entry snapshot carries it, and the divider
+    // breaks the group — this message prints its full header.
+    const showNew = !newShown && unread.at > 0 && who.kind !== 'me' && !m._pending && new Date(m.createdAt).getTime() > unread.at;
+    if (showNew) newShown = true;
+    const cont = !showNew && prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
     const motionCls = who.kind === 'agent' ? activityMotionClass(liveMotion.get(who.custom ? who.custom.handle : who.provider)) : '';
     const avatar = who.kind === 'agent'
-      ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${motionCls ? ` ${motionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : seatAvatar(who.provider, liveMotion.get(who.provider) ?? null))
-      : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
+      ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${motionCls ? ` ${motionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : msgSeatAvatar(who.provider, liveMotion.get(who.provider) ?? null))
+      : who.kind === 'me'
+        ? msgOwnerAvatar()
+        : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
     const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
     const src = who.kind === 'agent'
       ? h('span', { class: 'ew-src agent' }, who.custom?.jobTitle ? `AGENT · ${who.custom.jobTitle}` : 'AGENT')
@@ -1869,11 +1926,17 @@ function renderMessages() {
     // In the desk, a manager send carries its dispatch line; agent
     // replies render as themselves, under their own names, as anywhere.
     const dispatch = desk && m.authorKind === 'human' ? deskDispatchLine(m) : null;
-    out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}`, 'data-id': m.id }, avatar,
+    if (showNew) out.push(h('div', { class: 'ew-new-divider' }, h('span', {}, 'New')));
+    // Grouped follow-ups print no avatar and no header; in their
+    // place the gutter carries the follow-up's time, shown on hover
+    // (bite 2). Every per-message action lives in the one hover
+    // toolbar — the reaction button moved inside it, beside Copy.
+    const firstCell = cont ? h('time', { class: 'ew-gutter-time', datetime: m.createdAt }, clock(m.createdAt)) : avatar;
+    out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}`, 'data-id': m.id }, firstCell,
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
         h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })),
         h('div', { class: 'ew-reactions' }, ...reactionChipKids(m.id)), dispatch),
-      m._pending ? null : reactionAddButton(m)));
+      m._pending ? null : h('div', { class: 'ew-msg-tools', role: 'toolbar', 'aria-label': 'Message actions' }, reactionAddButton(m), copyMessageButton(m))));
     prev = m;
   }
   // Real runner activity rows (activity desk bite): one per seat whose
@@ -1947,6 +2010,27 @@ function reactionAddButton(m) {
   return h('button', { type: 'button', class: 'ew-react-add', title: 'Add a reaction', 'aria-label': 'Add a reaction', 'aria-haspopup': 'dialog',
     onclick: (e) => openReactionPicker(m.id, e.currentTarget) },
     emojiNode('🙂'), h('span', { class: 'ew-react-plus', 'aria-hidden': 'true' }, '+'));
+}
+// Copy a message's raw text (bite 2 hover toolbar). Clipboard API
+// first; the off-screen textarea path covers the contexts where it
+// is unavailable. The result is toasted either way — a silent copy
+// button reads as a broken one.
+function copyMessageButton(m) {
+  return h('button', { type: 'button', class: 'ew-tool-btn', title: 'Copy message text', 'aria-label': 'Copy message text',
+    onclick: () => { void copyMessageText(m); } }, 'Copy');
+}
+async function copyMessageText(m) {
+  const text = typeof m.body === 'string' ? m.body : '';
+  let done = false;
+  try { await navigator.clipboard.writeText(text); done = true; } catch { /* fall through to the textarea path */ }
+  if (!done) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.append(ta); ta.select();
+    try { done = document.execCommand('copy'); } catch { done = false; }
+    ta.remove();
+  }
+  ws.ctx.toast(done ? 'Message copied.' : 'Copy did not work here.');
 }
 // Patch every visible message's chip row in place from the store —
 // the message DOM itself is never rebuilt for a reaction change.
@@ -2167,7 +2251,7 @@ function renderCliThread() {
     const who = whoOf(m);
     const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
     const threadMotionCls = who.kind === 'agent' ? activityMotionClass((who.custom ? who.custom.handle : who.provider) === key ? roomMotion : null) : '';
-    const avatar = who.kind === 'agent' ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${threadMotionCls ? ` ${threadMotionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : seatAvatar(who.provider, who.provider === key ? roomMotion : null)) : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase()));
+    const avatar = who.kind === 'agent' ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${threadMotionCls ? ` ${threadMotionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : msgSeatAvatar(who.provider, who.provider === key ? roomMotion : null)) : who.kind === 'me' ? msgOwnerAvatar() : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase()));
     const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : null;
     out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}` }, avatar,
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
@@ -2716,6 +2800,18 @@ function wire() {
     } catch { ws.ctx.toast('Channel not created.'); }
   });
   $('maestro-form').addEventListener('submit', send);
+  // Unread divider (bite 2): settling at the bottom of the channel
+  // marks it seen and clears the divider in place. Disarmed briefly
+  // after each channel switch — the entry render's own auto-scroll
+  // is not the member viewing the bottom (see unreadSnapshot).
+  $('ew-messages').addEventListener('scroll', () => {
+    if (Date.now() < unread.armedAt) return;
+    const mb = $('ew-messages');
+    if (mb.scrollHeight - mb.scrollTop - mb.clientHeight < 80) {
+      markChannelSeen(ws.channelId, ws.messages);
+      mb.querySelector('.ew-new-divider')?.remove();
+    }
+  }, { passive: true });
   const box = $('maestro-input');
   box.addEventListener('input', () => { grow(); refreshSlashMenu('channel'); syncCrewSelection(); });
   box.addEventListener('keydown', (e) => { slashKeydown('channel', e); });
