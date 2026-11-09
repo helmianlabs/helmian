@@ -2388,6 +2388,12 @@ function plusMenuRowNode(which, row, index) {
       // vendor manage row and no dead placeholder row exists).
       if (row.target === 'integrations') {
         return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', onclick: () => {
+          // Land on the Manage surface at THIS seat's tab (mirror M1):
+          // the marker is read once by the surface as it mounts.
+          try {
+            if (ws.libraryPanel.seatId) sessionStorage.setItem('helmian.manageSeat', ws.libraryPanel.seatId);
+            else sessionStorage.removeItem('helmian.manageSeat');
+          } catch {}
           closePicker();
           document.querySelector('.nav-item[data-view="integrations"]')?.click();
         } }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
