@@ -73,6 +73,25 @@ test('wiring: the surface reads the existing reads and writes through the M1 rou
   ]) assert.ok(manage.includes(path), path);
 });
 
+test('wiring: the surface paints a loading state first — empty states wait for the first reads', () => {
+  // The 2026-11-09 exercise: first landings showed a false empty
+  // state with no seat tabs until a detour away and back. The
+  // surface now paints "Loading connectors…" synchronously and only
+  // renders real content (empty states included) once `loaded`.
+  assert.match(manage, /Loading connectors…/);
+  assert.match(manage, /loaded: false/);
+  assert.match(manage, /if \(!state\.loaded\) root\.replaceChildren\(note, loadingLine\(\)\)/);
+  assert.match(manage, /state\.loaded = true/);
+  assert.ok(manage.indexOf('Loading connectors…') < manage.indexOf('async function refresh'), 'the loading line is painted at construction, before any read');
+});
+
+test('wiring: loadIntegrations holds the "Nothing connected yet" hint down with a loading line', () => {
+  assert.match(appJs, /Loading integrations…/);
+  const fnStart = appJs.indexOf('async function loadIntegrations');
+  assert.ok(fnStart >= 0);
+  assert.ok(appJs.indexOf('Loading integrations…', fnStart) < appJs.indexOf('Promise.allSettled', fnStart), 'the placeholder lands before the integrations reads start');
+});
+
 test('wiring: the composer Manage row leaves the seat marker for this surface', () => {
   assert.equal(MANAGE_SEAT_STORAGE_KEY, 'helmian.manageSeat');
   assert.match(workspace, /sessionStorage\.setItem\('helmian\.manageSeat', ws\.libraryPanel\.seatId\)/);

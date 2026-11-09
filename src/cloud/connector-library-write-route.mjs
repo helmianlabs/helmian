@@ -57,7 +57,7 @@ import {
   validateVaultTokenRef,
   CONNECTOR_POSTURES,
 } from './connector-library.mjs';
-import { LIVE_SEATS } from './connector-catalog.mjs';
+import { LIVE_SEATS, catalogEntryById } from './connector-catalog.mjs';
 import { createCredentialConnectClient } from './credential-connect.mjs';
 import {
   createConnectorOAuthPendingStore,
@@ -113,6 +113,27 @@ function refuseCredentialValues(input, { allow = [] } = {}) {
 const providerIdFor = (seatId, entryId) => `connector.${seatId}.${entryId}`;
 const isScribeEntry = (entry) => entry.id === 'helmian-scribe'
   || String(entry.mcpEndpointUrl ?? '').startsWith(SCRIBE_DOOR_ISSUER);
+
+// The catalog definition is the authority for a seeded entry's auth
+// road — never the stored row alone. Rows seeded under an older
+// catalog keep its label (the read-route seed refreshes only tenants
+// holding zero entries), and helmian-scribe's live rows still said
+// 'none' long after the catalog's correction to 'oauth': connect
+// dispatched on the stale label and recorded a "No sign-in"
+// connection no consent produced (live exercise, 2026-11-09). So the
+// dispatch below runs on the catalog's authMode whenever a catalog
+// definition exists for the entry; the stored row's mode governs
+// only entries the catalog does not define (custom entries are a
+// person's own — their stored mode is their truth). A stored row
+// can therefore never reroute an OAuth entry onto a direct road,
+// whatever the seed says. (sql/079 aligns the stored rows; the
+// guard stands either way.)
+export function effectiveAuthMode(entry) {
+  if (!entry || entry.kind === 'custom') return entry?.authMode ?? null;
+  let definition = null;
+  try { definition = catalogEntryById(entry.seatId, entry.id); } catch { definition = null; }
+  return definition?.authMode ?? entry.authMode;
+}
 
 // The consent-boundary answer for OAuth entries Helmian holds no
 // client registration for: the provider's resource metadata (RFC
@@ -255,14 +276,15 @@ export function createConnectorLibraryWriteHandler({
           });
           return true;
         }
-        if (entry.authMode === 'none') {
+        const authMode = effectiveAuthMode(entry);
+        if (authMode === 'none') {
           const connection = await store.createConnection(tenantId, personId, {
             ...key, accountIdentity: 'No sign-in', grantedScopes: [], ...(body.posture ? { posture: String(body.posture) } : {}),
           });
           sendJson(201, { status: 'connected', connection });
           return true;
         }
-        if (entry.authMode === 'header') {
+        if (authMode === 'header') {
           const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
           sendJson(200, {
             status: 'needs-credential',
@@ -305,7 +327,7 @@ export function createConnectorLibraryWriteHandler({
         const entry = await store.getEntry(tenantId, seatId, entryId);
         if (!entry) throw failure(404, 'connector entry not found in this seat\u2019s library');
         if (entry.brokerMode !== 'helmian') throw failure(400, 'this entry is vendor-brokered — Helmian holds no credential for it');
-        if (entry.authMode !== 'header') throw failure(400, 'this entry does not take a header key — use its own connect road');
+        if (effectiveAuthMode(entry) !== 'header') throw failure(400, 'this entry does not take a header key — use its own connect road');
         const credentials = resolveCredentials();
         if (!credentials) { sendJson(503, { error: 'Helmian\u2019s credential storage is not switched on, so the key cannot be kept yet', code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' }); return true; }
         const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
@@ -329,6 +351,11 @@ export function createConnectorLibraryWriteHandler({
         // twice: the reference must be exactly the one this surface
         // mints for the caller, and the credential must resolve.
         refuseCredentialValues(body);
+        const completeEntry = await store.getEntry(tenantId, seatId, entryId);
+        if (!completeEntry) throw failure(404, 'connector entry not found in this seat\u2019s library');
+        if (effectiveAuthMode(completeEntry) === 'oauth') {
+          throw failure(400, 'this connector signs in with OAuth — its connection lands only through its sign-in callback, never from a stored reference');
+        }
         const accessTokenRef = String(body.accessTokenRef ?? '');
         const expected = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
         if (accessTokenRef !== expected) {

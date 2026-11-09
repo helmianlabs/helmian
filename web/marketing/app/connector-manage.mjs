@@ -73,13 +73,21 @@ const STATE_TEXT = Object.freeze({
 // The renderer. `api` is app.js's api() (throws on non-2xx with the
 // server's error message where present), `el` its element helper.
 export function renderConnectorManage(box, { api, el, role = '', initialSeat = null } = {}) {
-  const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false };
+  const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false };
   box.replaceChildren();
   const root = el('div', 'cm-root');
   const note = el('p', 'cm-note muted sm');
   note.hidden = true;
   root.append(note);
   box.append(root);
+  // A loading state paints synchronously, before the first read: on
+  // the 2026-11-09 live exercise the surface's first landings showed
+  // a false empty state (no seat tabs, nothing apparently connected)
+  // until a detour away and back let the reads land. The genuine
+  // empty states below may render only once `loaded` says the reads
+  // are in — before that, this line is the whole surface.
+  const loadingLine = () => el('p', 'cm-loading muted sm', 'Loading connectors…');
+  root.append(loadingLine());
 
   const say = (text, isError = false) => {
     note.textContent = text ?? '';
@@ -318,14 +326,21 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
   }
 
   async function refresh() {
+    if (!state.loaded) root.replaceChildren(note, loadingLine());
     try {
       await loadSeats();
       const head = header();
+      let body = null;
+      if (state.tab === 'connectors') { await loadRows(); body = await connectorsTab(); }
+      else if (state.tab === 'skills') body = await skillsTab();
+      else body = await pluginsTab();
+      state.loaded = true;
       root.replaceChildren(note, head);
-      if (state.tab === 'connectors') { await loadRows(); root.append(await connectorsTab()); }
-      else if (state.tab === 'skills') root.append(await skillsTab());
-      else root.append(await pluginsTab());
+      if (body) root.append(body);
     } catch (error) {
+      if (!state.loaded) {
+        root.replaceChildren(note, el('p', 'cm-loading muted sm', 'The connector library did not load — leave this view and come back to try again.'));
+      }
       say(error?.message || 'The connector library did not load.', true);
     }
   }

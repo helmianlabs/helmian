@@ -132,6 +132,11 @@ export function createBridge({ cloud, token, fetchImpl = fetch, stateDir, log = 
       const t = Date.parse(m.createdAt);
       if (Number.isFinite(t) && t > newest) newest = t;
       if (posted.has(m.id)) continue;
+      // GitHub event cards (author system:github) are Helmian-channel
+      // notices only — Troy's order 2026-11-09: they never mirror to
+      // Discord. Mark each one posted so the watermark passes it and it
+      // is never retried; every other message mirrors exactly as before.
+      if (m.authorSubject === 'system:github') { posted.add(m.id); state.posted.push(m.id); continue; }
       const hook = await getWebhook(m.discordChannelId, state.webhooks);
       if (!hook) continue;
       for (const part of splitForDiscord(m.body)) {
