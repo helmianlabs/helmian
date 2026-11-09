@@ -34,6 +34,7 @@ import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
 import { readNotebookBlock } from './envoy-notebook.mjs';
+import { createLibrarianStore, deriveChannelName, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { createSkillLibraryStore } from './skill-library.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
 
@@ -234,7 +235,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -404,6 +405,27 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // (envoy-findings.mjs). The chat action leaves no job: it is
       // never evaluated, so there is nothing to record.
       const findingJobs = [];
+      // Librarian (envoy-librarian.mjs): every dispatched human ask
+      // this poll hands out — allowed or refused — is collected here
+      // and filed into the shared notebook after the transaction
+      // commits, beside the findings ingest, through wrappers that
+      // cannot throw. A channel still carrying a generic fallback
+      // title contributes one naming candidate per poll: its earliest
+      // human message in the window, from which the librarian derives
+      // the name. Collection is in-transaction only; all librarian
+      // writes run post-commit on the pool, so a librarian failure
+      // can never poison or veto a dispatch.
+      const librarianJobs = [];
+      const namingJobs = new Map();
+      // Knowledge base incidents born in this poll: a Guard refusal
+      // is an AI (or a human's ask) hitting a wall — the librarian
+      // files it as an OPEN incident in the knowledge base
+      // (envoy-librarian.mjs, sql/076), categorized by the filing
+      // engine, so the refusal becomes a reviewable, solvable row
+      // instead of a scrolled-past line. Collected in-transaction;
+      // filed post-commit through the fail-soft wrapper, like every
+      // librarian write.
+      const incidentJobs = [];
       // Notebook block (envoy-notebook.mjs, coverage bite 2): the
       // tenant's shared-notebook content, read at dispatch time and
       // ridden on every work item this poll hands out. Loaded lazily
@@ -428,6 +450,28 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           })();
         }
         return notebookPromise;
+      };
+      // Knowledge base block (envoy-librarian.mjs): the tenant's
+      // solved incidents — mistakes already made here, and the fixes
+      // that worked — read once per poll that hands out work and
+      // ridden on the work items beside the notebook block, so
+      // recall is immediate: the seat sees the workspace's own
+      // scar tissue in the same prompt as the ask. Same fail-soft
+      // discipline as the notebook in both layers.
+      let kbPromise = null;
+      const loadKnowledgeBase = () => {
+        if (!kbPromise) {
+          kbPromise = (async () => {
+            const log = kbLogImpl ?? ((...args) => console.error(...args));
+            try {
+              return await (kbImpl ?? ((p, a) => readKnowledgeBaseBlock(p, a, { log })))(pool, actor);
+            } catch (error) {
+              log(`[envoy-librarian] knowledge base read FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — seats answer without the knowledge base block this poll; dispatch is unchanged.`);
+              return null;
+            }
+          })();
+        }
+        return kbPromise;
       };
       // Skills (skill-library.mjs, slash-skills bite S1): the records
       // behind a due message's metadata.skills, read at dispatch time
@@ -500,6 +544,18 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             [actor.tenantId, channel.id, CONFIG_SUBJECT, since],
           );
           const rows = recent.rows.reverse();
+          // Librarian naming candidate: a channel still carrying a
+          // generic fallback title is named from its earliest human
+          // message in this window at this dispatch (post-commit,
+          // compare-and-swap on the observed title — a human-set
+          // name is never overwritten, and once named the title is
+          // no longer generic, so this fires once).
+          if (isGenericChannelTitle(channel.title) && !namingJobs.has(String(channel.id))) {
+            const firstHuman = rows.find((r) => r.author_kind === 'human');
+            if (firstHuman && deriveChannelName(String(firstHuman.body ?? ''))) {
+              namingJobs.set(String(channel.id), { channelId: String(channel.id), observedTitle: channel.title, fromBody: String(firstHuman.body ?? '') });
+            }
+          }
           const answered = new Set(rows.filter((r) => String(r.idempotency_key).startsWith('reply:')).map((r) => `${r.author_subject}|${String(r.idempotency_key).slice(6)}`));
           // Count consecutive agent turns since the last human message for Free-Willy debate mode.
           let roundTurns = 0;
@@ -564,10 +620,22 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
                 if (refusal && !replayed) refusalRows.push(refusal);
                 findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
               }
+              // A refused ask was still dispatched — the librarian
+              // files it with the Guard's decision riding along.
+              if (message.authorKind === 'human') {
+                librarianJobs.push({ channelId: String(channel.id), channelSlug: channel.slug, channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, seats: due, guardDecision: evaluation?.verdict ?? null, excerpt: message.body, at: new Date(now()).toISOString() });
+                // …and into the knowledge base as an open incident:
+                // a refusal is a wall an ask hit; filed once per
+                // refused message (the key makes replays no-ops),
+                // categorized by the filing engine, awaiting the
+                // review that solves or supersedes it.
+                incidentJobs.push({ key: `guard-ask:${message.id}`, title: `Guard refused an ask in ${channel.title}`, mistake: message.body, actor: message.authorSubject, source: 'guard', evidence: { channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, verdict: 'refuse' } });
+              }
               continue;
             }
             const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
             const notebook = await loadNotebook();
+            const knowledgeBase = await loadKnowledgeBase();
             // Skills ride only when the message names them: resolve
             // its toggles against the records this poll read, clamped
             // to each record's own scope, for the seats due here. A
@@ -595,6 +663,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               members: config.agents,
               ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
               ...(notebook ? { notebook } : {}),
+              ...(knowledgeBase ? { knowledgeBase } : {}),
               ...(skills?.length ? { skills } : {}),
               message,
               action,
@@ -606,6 +675,13 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               for (const p of due) {
                 findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
               }
+            }
+            // Librarian: file every dispatched human ask (the chat
+            // action included — an untyped ask is still an ask the
+            // channel's memory should carry). Agent turns in debate
+            // mode are not human asks and are not filed.
+            if (message.authorKind === 'human') {
+              librarianJobs.push({ channelId: String(channel.id), channelSlug: channel.slug, channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, seats: due, guardDecision: evaluation?.verdict ?? null, excerpt: message.body, at: new Date(now()).toISOString() });
             }
           }
         }
@@ -627,6 +703,25 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         const evaluatedAt = new Date(now()).toISOString();
         for (const job of findingJobs) {
           await ingestEvaluationFinding(findings, actor, job.evaluation, { ...job, at: evaluatedAt }, guardLogImpl ? { log: guardLogImpl } : {});
+        }
+      }
+      // Librarian: file this poll's dispatched asks into the shared
+      // notebook and name any still-generic channel from its first
+      // human message. Post-commit and through the fail-soft
+      // wrappers, like the findings ingest above: a librarian
+      // failure is logged loudly and changes nothing about the work
+      // handed out or the refusals posted.
+      if (librarianJobs.length || namingJobs.size || incidentJobs.length) {
+        const librarian = librarianImpl ?? createLibrarianStore(pool);
+        const librarianOpts = librarianLogImpl ? { log: librarianLogImpl } : {};
+        for (const job of librarianJobs) {
+          await fileDispatchAsk(librarian, actor, job, librarianOpts);
+        }
+        for (const naming of namingJobs.values()) {
+          await nameChannelIfGeneric(librarian, actor, naming, librarianOpts);
+        }
+        for (const incident of incidentJobs) {
+          await fileIncidentFromDispatch(librarian, actor, incident, librarianOpts);
         }
       }
       return result;
