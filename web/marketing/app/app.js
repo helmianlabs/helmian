@@ -2222,7 +2222,7 @@ async function loadEvidence() {
   const denied = (h.status === 'rejected' && h.reason?.status === 403) || (c.status === 'rejected' && c.reason?.status === 403);
   note.textContent = denied ? 'Handoffs and checkpoints are visible to owners and admins.' : '';
 }
-let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let apiKeyFieldsMod = null;
+let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let apiKeyFieldsMod = null; let connectorManageMod = null;
 async function loadIntegrations() {
   integrationsMod ??= await import('./integrations-view.mjs');
   connectFieldsMod ??= await import('./connect-fields.mjs');
@@ -2237,6 +2237,14 @@ async function loadIntegrations() {
     return wrap;
   }));
   for (const q of box.querySelectorAll('[data-qr]')) drawQr(q, q.dataset.qr);
+  // The per-seat Manage surface (mirror M1) mounts under the account
+  // cards: connector-manage.mjs owns its own reads and writes against
+  // the connector library routes.
+  const manageBox = $('#connector-manage');
+  if (manageBox) {
+    connectorManageMod ??= await import('./connector-manage.mjs');
+    await connectorManageMod.mountConnectorManage(manageBox, { api, el, role: state.actor?.role ?? '' }).catch(() => {});
+  }
   return p.value;
 }
 function integrationCard(card) {
@@ -3805,7 +3813,7 @@ boot();
 // deploy that changed only the desk itself (most fixes) never reached
 // an open desk: Troy had to hard-refresh to see new work. A file that
 // disappears in a deploy reads as 'gone', which also counts as a change.
-const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/connector-panel.mjs', '/app/connector-menu.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/face-library.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/maestro-activation.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
+const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/connector-panel.mjs', '/app/connector-menu.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/face-library.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/maestro-activation.mjs', '/app/connector-manage.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
 (() => {
   let nudgedFor = null; // the update the notice is already up for — one showing per update
   const showUpdateNudge = (key) => {
