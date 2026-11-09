@@ -232,8 +232,19 @@ const SOURCE1_BY_SEAT = Object.freeze({
 //
 //   helmian-scribe — Scribe, Helmian's own shared memory and
 //     inter-agent mail: how the seats already reach each other. Its
-//     endpoint is Helmian's own hosted MCP door. State joins when a
-//     seat-side report exists; the read never invents one.
+//     endpoint is Helmian's own hosted MCP door. The door is
+//     OAuth-only — authorization-code + PKCE, approved once by the
+//     person with the Scribe passphrase, issuing a one-hour access
+//     key and a thirty-day renewal key (proven live 2026-11-09 by
+//     connectors bite 4R's step-0 probe: an unauthenticated call is
+//     answered 401 with a Bearer challenge; the door's own discovery
+//     documents name no other flow). authMode is therefore 'oauth',
+//     NOT 'none': the label decides whether the library connection
+//     model may hold the door's token pair as vault references
+//     (connector-library.mjs validateTokenRefs refuses references
+//     for a 'none' entry), and a 'none' label here made the first
+//     Pattern-A hand-off impossible to credential. State joins from
+//     the person's connection record; the read never invents one.
 export const NATIVE_STATE_SOURCES = Object.freeze({
   'helmian-github': Object.freeze({ stateSource: 'tool-connections', serviceId: 'github', repoLinks: true }),
   'helmian-scribe': Object.freeze({ stateSource: 'helmian-service' }),
@@ -269,7 +280,8 @@ function helmianNativeEntries(seatId) {
       category: 'memory',
       brokerMode: 'helmian',
       mcpEndpointUrl: 'https://connect.helmian.cloud/mcp',
-      authMode: 'none',
+      authMode: 'oauth',
+      scopesSummary: 'Read and write the shared memory, read and act through Hands — the scopes the door grants at consent',
       addedBy: 'system',
     },
   ];

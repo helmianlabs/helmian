@@ -148,6 +148,17 @@ async function runAgentTurnInner({
   // On every other seat it changes nothing on the wire, and the turn's
   // attachment context line has already said so honestly.
   webSearch = false,
+  // Pattern-A connector servers armed for THIS turn (composer "+" →
+  // message metadata → attachments.mjs → bridge → here). Carried
+  // SEPARATELY from the tool runtime on purpose: these servers are
+  // consumed by the provider's own cloud (today: Anthropic's MCP
+  // connector), never added to the local tool definitions, and a
+  // Pattern-A call never enters the local execute-loop below — the
+  // calls come back inside the provider's response as evidence
+  // (reply.mcpToolCalls / mcpToolResults), which this loop collects
+  // into the turn's record. Empty (the default) changes nothing on
+  // the wire: chatWithTools sends no MCP parameter at all.
+  mcpServers = [],
   envTier = readEnvTier(),
   // Interactive replies fail closed to the selected provider. Local Qwen is
   // reserved for the schema-validated, no-tools micro-task runner under
@@ -173,6 +184,19 @@ async function runAgentTurnInner({
 }) {
   const toolDefs = runtime.definitionsForOpenAi();
   const limit = resolveMaxToolRounds(maxToolRounds);
+  // Pattern-A evidence for the whole turn, across rounds: every MCP
+  // call/result block a provider response carried, in order. This is
+  // the turn record the connectors program gate reads — it names what
+  // the vendor's cloud actually executed, as opposed to what was armed.
+  const mcpEvidence = [];
+  const collectMcpEvidence = (reply, round) => {
+    const calls = Array.isArray(reply?.mcpToolCalls) ? reply.mcpToolCalls : [];
+    const results = Array.isArray(reply?.mcpToolResults) ? reply.mcpToolResults : [];
+    if (!calls.length && !results.length) return;
+    const entry = { round, calls, results };
+    mcpEvidence.push(entry);
+    onEvent({ type: 'mcp_evidence', ...entry });
+  };
   // Before the prompt is even recorded. A turn cancelled while it sat queued
   // never happened, and appending its user message would leave the history
   // carrying a question nothing ever answered.
@@ -239,6 +263,10 @@ async function runAgentTurnInner({
       messages: choice.isLocal ? withLocalBrevity(messages) : messages,
       toolDefs,
       webSearch,
+      // Armed Pattern-A servers ride beside the tool defs, never in
+      // them (see the option's comment). chatWithTools forwards them
+      // only on the Anthropic road; every other adapter ignores them.
+      mcpServers,
       // ONLY the local endpoint. qwen3.5:4b is a reasoning model; without this a
       // short conversational turn burns ~2,603 tokens over ~40 s to say one
       // sentence, and 30 tokens in 0.9 s with it. Deliberately keyed off the
@@ -351,6 +379,7 @@ async function runAgentTurnInner({
     }
     // After the reply, never before: this reports the row on disk.
     announceProvenance(reply, round);
+    collectMcpEvidence(reply, round);
 
     if (!reply.toolCalls?.length) {
       // Redact secrets from final assistant response before showing to user
@@ -358,7 +387,7 @@ async function runAgentTurnInner({
       messages.push({ role: 'assistant', content: text });
       onEvent({ type: 'assistant', text });
       onEvent({ type: 'done' });
-      return { text, messages };
+      return { text, messages, ...(mcpEvidence.length ? { mcpEvidence } : {}) };
     }
 
     if (reply.content?.trim()) {
@@ -503,7 +532,7 @@ async function runAgentTurnInner({
     messages.push({ role: 'assistant', content: stop });
     onEvent({ type: 'assistant', text: stop });
     onEvent({ type: 'done' });
-    return { text: stop, messages };
+    return { text: stop, messages, ...(mcpEvidence.length ? { mcpEvidence } : {}) };
   }
 
   const footer =
@@ -515,7 +544,7 @@ async function runAgentTurnInner({
     last.content = `${last.content}${footer}`;
   }
   onEvent({ type: 'done' });
-  return { text: `${wrapText}${footer}`, messages };
+  return { text: `${wrapText}${footer}`, messages, ...(mcpEvidence.length ? { mcpEvidence } : {}) };
 }
 
 function parseWorkbenchResult(value) {

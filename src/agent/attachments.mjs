@@ -17,6 +17,22 @@
 //               live cloud-side; no agent-side callable tool exists for
 //               them, so the turn is told exactly that, in-context, and
 //               told not to claim it used the connector.
+// - connectors (metadata.connectors, the connector-LIBRARY toggles) →
+//               ARMING, resolved below (connectors bite 4R2). A toggle
+//               names {seatId, entryId} from the person's library; a
+//               toggle for THIS seat whose entry is Helmian-brokered
+//               can be handed to the seat's own provider cloud
+//               (Pattern A) when the injected arming seam produces the
+//               server descriptor — today that means the Claude seat
+//               and the Scribe door, whose access key is minted at
+//               turn time (src/agent/scribe-door.mjs). The armed
+//               servers ride OUT of this module as `mcpServers` for
+//               the loop to hand to the adapter; they are never added
+//               to extraTools and Helmian never executes them. Every
+//               toggle's outcome — armed, or unarmed with the reason —
+//               is recorded in `connectorOutcomes` and stated in the
+//               context text: a connector that did not arm is never
+//               described as connected for the turn.
 // - skill     → the name rides along. A leading /name is expanded into
 //               the command body before the turn text is composed — by
 //               the agent bridge itself on the direct path, or by the PC
@@ -47,12 +63,23 @@
 import { isAbsolute, resolve } from 'node:path';
 import { createMcpClient } from './mcp-client.mjs';
 import { providerHasNativeWebSearch } from './providers.mjs';
-import { classifyFileAttachment, normalizeMessageMetadata } from '../cloud/envoy-agents.mjs';
+import { classifyFileAttachment, normalizeMessageMetadata, normalizeProvider } from '../cloud/envoy-agents.mjs';
+import { catalogEntryById } from '../cloud/connector-catalog.mjs';
 
 // A text file is inlined whole below this many characters; above it the
 // head is shown and the cut is stated, so the agent never mistakes a
 // partial file for the whole file.
 export const FILE_TEXT_INLINE_MAX_CHARS = 48_000;
+
+// Adapter (provider) id → connector-library seat id. See the toggle
+// resolution below for why this seam exists and is crossed only here.
+const SEAT_BY_PROVIDER_ID = Object.freeze({
+  anthropic: 'claude',
+  openai: 'chatgpt',
+  xai: 'grok',
+  gemini: 'gemini',
+  mistral: 'mistral',
+});
 
 export function mcpToolName(pluginName, serverName, toolName) {
   const clean = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'x';
@@ -81,26 +108,45 @@ function resolveArgs(declaration, pluginRoot) {
 /**
  * @param {{metadata?: object|null, plugins?: Array, connectorInfo?: object,
  *          slashExpansion?: {name: string, expanded: boolean}|null,
- *          providerId?: string|null, createMcpClientImpl?: Function}} input
+ *          providerId?: string|null, seatId?: string|null,
+ *          credentialType?: string|null,
+ *          connectorArming?: {connectionFor?: Function, mintAccessToken?: Function}|null,
+ *          createMcpClientImpl?: Function}} input
  *   `providerId` is the seat's adapter id (bridge.mjs's resolved provider),
- *   used ONLY to decide whether the web-search toggle can be native here.
+ *   used to decide whether the web-search toggle can be native here and
+ *   whether a Pattern-A hand-off exists for this seat. `seatId` is the
+ *   library seat id when the caller knows it directly; otherwise it is
+ *   derived from `providerId` (envoy-agents.mjs normalizeProvider).
+ *   `connectorArming` is the injected Pattern-A seam (the Scribe door
+ *   composition in src/agent/scribe-door.mjs, wired by bridge.mjs):
+ *   connectionFor({seatId, entryId}) → the person's connection for the
+ *   entry as this runner knows it ({state, refreshTokenRef}) or null;
+ *   mintAccessToken({refreshTokenRef, seatId, entryId}) →
+ *   {ok: true, accessToken} | {ok: false, code, reason}. Absent seam =
+ *   nothing arms, stated plainly — never a pretend arm.
  * @returns {Promise<{extraTools: object, toolNames: string[], contextText: string|null,
  *          images: Array<{fileName: string, mediaType: string, data: string}>,
- *          webSearch: boolean, dispose: () => Promise<void>}>}
+ *          webSearch: boolean,
+ *          mcpServers: Array<{entryId: string, name: string, url: string, authorizationToken: string}>,
+ *          connectorOutcomes: Array<{seatId: string, entryId: string, armed: boolean, reason?: string, detail?: string}>,
+ *          dispose: () => Promise<void>}>}
  *   `webSearch` is true only when the toggle was ON *and* this seat has a
  *   provider-native search tool for the loop to enable — never merely
  *   because the user asked. `images` carries file attachments the caller
  *   merges into the turn's images (the same {fileName, mediaType, data}
- *   shape bridge.mjs accepts on a turn request).
+ *   shape bridge.mjs accepts on a turn request). `mcpServers` are the
+ *   Pattern-A servers armed for this turn — for the loop/adapter only,
+ *   never local tools. `connectorOutcomes` is the per-toggle record:
+ *   every toggle the person armed for this seat, and whether it armed.
  */
-export async function resolveTurnAttachments({ metadata = null, plugins = [], connectorInfo = {}, slashExpansion = null, providerId = null, createMcpClientImpl = createMcpClient } = {}) {
+export async function resolveTurnAttachments({ metadata = null, plugins = [], connectorInfo = {}, slashExpansion = null, providerId = null, seatId = null, credentialType = null, connectorArming = null, createMcpClientImpl = createMcpClient } = {}) {
   const clean = normalizeMessageMetadata(metadata ?? undefined);
   const lines = [];
   const extraTools = {};
   const clients = [];
   const fileImages = [];
   if (!clean) {
-    return { extraTools, toolNames: [], contextText: null, images: fileImages, webSearch: false, dispose: async () => {} };
+    return { extraTools, toolNames: [], contextText: null, images: fileImages, webSearch: false, mcpServers: [], connectorOutcomes: [], dispose: async () => {} };
   }
   for (const attachment of clean.attachments ?? []) {
     if (attachment.kind === 'file') {
@@ -215,12 +261,105 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
       lines.push('Web search: OFF for this turn — answer without web sources.');
     }
   }
+
+  // ── Connector-library toggles (metadata.connectors) ──────────────────
+  // The person armed these from the "+" library panel. A toggle is a
+  // {seatId, entryId} pair; a seat's turn consumes ONLY its own entries
+  // (connector-library SPEC §3.4) — another seat's toggle is not this
+  // turn's business and leaves no trace here. Resolution runs from the
+  // toggle + the catalog definition (endpoint, broker mode) + the
+  // person's connection as this runner knows it (the injected seam).
+  const mcpServers = [];
+  const connectorOutcomes = [];
+  // Adapter id → library seat id, crossed deliberately in this one
+  // place (the census's named seam): the bridge child's adapters key
+  // off provider ids (anthropic, openai, xai…), the library and its
+  // toggles key off seat ids (claude, chatgpt, grok…). normalizeProvider
+  // is the fallback for engine names a direct caller might pass.
+  const turnSeat = seatId ?? SEAT_BY_PROVIDER_ID[providerId] ?? normalizeProvider(providerId);
+  for (const toggle of clean.connectors ?? []) {
+    if (turnSeat && toggle.seatId !== turnSeat) continue;
+    const outcome = { seatId: toggle.seatId, entryId: toggle.entryId, armed: false };
+    connectorOutcomes.push(outcome);
+    const unarm = (reason, line) => { outcome.reason = reason; lines.push(line); };
+    if (!turnSeat) {
+      unarm('seat-unknown', `Connector armed for this message: ${toggle.entryId}. Which seat this turn belongs to could not be determined, so it was NOT armed for this turn. Do not claim you used it.`);
+      continue;
+    }
+    let entry = null;
+    try { entry = catalogEntryById(toggle.seatId, toggle.entryId); } catch { entry = null; }
+    if (!entry) {
+      unarm('unknown-entry', `Connector armed for this message: ${toggle.entryId}. It is not in this seat's library, so it was NOT armed for this turn. Do not claim you used it.`);
+      continue;
+    }
+    if (entry.brokerMode !== 'helmian' || !entry.mcpEndpointUrl) {
+      unarm('vendor-brokered', `Connector armed for this message: ${entry.name}. It is brokered by ${entry.vendorName}, not by Helmian — Helmian holds no pipe for it, so it was NOT armed for this turn. Do not claim you used it.`);
+      continue;
+    }
+    if (providerId !== 'anthropic') {
+      // Pattern A exists only where the adapter already speaks the
+      // vendor surface the hand-off lives on — today the Claude seat's
+      // Messages API (connectors census §2). Every other seat's toggle
+      // is recorded unarmed, never silently dropped.
+      unarm('pattern-a-unavailable', `Connector armed for this message: ${entry.name}. This seat cannot hand a connector to its provider's cloud yet — that hand-off exists only for the Claude seat today — so it was NOT armed for this turn. Do not claim you used it.`);
+      continue;
+    }
+    if (credentialType === 'cli') {
+      unarm('cli-turn', `Connector armed for this message: ${entry.name}. This turn runs on a subscription sign-in, which carries no provider tools at all, so it was NOT armed for this turn. Do not claim you used it.`);
+      continue;
+    }
+    if (!connectorArming || typeof connectorArming.connectionFor !== 'function' || typeof connectorArming.mintAccessToken !== 'function') {
+      unarm('arming-not-wired', `Connector armed for this message: ${entry.name}. No arming road is wired on this runner yet, so it was NOT armed for this turn. Do not claim you used it.`);
+      continue;
+    }
+    let connection = null;
+    try {
+      connection = await connectorArming.connectionFor({ seatId: toggle.seatId, entryId: toggle.entryId });
+    } catch (error) {
+      unarm('connection-lookup-failed', `Connector armed for this message: ${entry.name}. Its connection could not be checked for this turn (${error.message}), so it was NOT armed. Do not claim you used it.`);
+      continue;
+    }
+    if (!connection) {
+      unarm('not-connected', `Connector armed for this message: ${entry.name}. It is not connected for this seat on this runner, so it was NOT armed for this turn. Do not claim you used it.`);
+      continue;
+    }
+    if (connection.state && connection.state !== 'connected') {
+      unarm(`connection-${connection.state}`, `Connector armed for this message: ${entry.name}. Its connection is ${connection.state}, so it was NOT armed for this turn. Do not claim you used it.`);
+      continue;
+    }
+    let minted = null;
+    try {
+      minted = await connectorArming.mintAccessToken({ refreshTokenRef: connection.refreshTokenRef ?? null, seatId: toggle.seatId, entryId: toggle.entryId });
+    } catch (error) {
+      minted = { ok: false, code: 'mint-threw', reason: error.message };
+    }
+    if (!minted?.ok || typeof minted.accessToken !== 'string' || !minted.accessToken) {
+      // ARM-STATE HONESTY: a failed mint is an unarmed turn, recorded
+      // with the failure — the toggle is never reported as connected
+      // for a turn it did not arm.
+      outcome.reason = minted?.code ?? 'mint-failed';
+      if (minted?.reason) outcome.detail = minted.reason;
+      lines.push(`Connector armed for this message: ${entry.name}. It could not be armed for this turn${minted?.reason ? ` — ${minted.reason}` : ''} It is NOT connected for this turn; do not claim you used it.`);
+      continue;
+    }
+    mcpServers.push({
+      entryId: entry.id,
+      name: entry.id,
+      url: entry.mcpEndpointUrl,
+      authorizationToken: minted.accessToken,
+    });
+    outcome.armed = true;
+    lines.push(`Connector armed for this message: ${entry.name} — it is handed to Anthropic's cloud for this turn, and Anthropic runs its tools itself; the calls and their results are part of this turn's record. Use its tools when the request calls for them.`);
+  }
+
   return {
     extraTools,
     toolNames: Object.keys(extraTools),
     contextText: lines.length ? `[Attached to this message — Helmian composer "+"]\n${lines.join('\n')}\n[/Attached]` : null,
     images: fileImages,
     webSearch,
+    mcpServers,
+    connectorOutcomes,
     dispose: async () => { for (const client of clients) { try { await client.close(); } catch { /* already gone */ } } },
   };
 }

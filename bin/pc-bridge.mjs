@@ -64,6 +64,16 @@ function defaultDeps() {
   };
 }
 
+// Vault records that are NOT agent providers. The runner vault can
+// hold credentials that are not a seat's provider key — today the
+// Scribe door's OAuth bundle (src/runner/vault.mjs's 'scribe' slot,
+// connectors bite 4R2), which exists so an armed Claude turn can mint
+// the door's access key. A vault row must never turn such a record
+// into an agent claim: presence and the served-agent list below skip
+// these keys, so holding the door's credential never reads as "a
+// scribe agent is served here".
+const NON_AGENT_VAULT_PROVIDERS = new Set(['scribe']);
+
 async function api(deps, path, { method = 'GET', body = null, token = null } = {}) {
   const headers = {};
   if (token) headers.authorization = `Bearer ${token}`;
@@ -193,7 +203,7 @@ async function reportPresence(deps, token) {
     if (!deviceToken) return;
     const vault = await openVault({ vaultPath, deviceToken });
     const rows = await vault.status();
-    const providers = new Set(rows.map((r) => String(r.provider).toLowerCase()));
+    const providers = new Set(rows.map((r) => String(r.provider).toLowerCase()).filter((p) => !NON_AGENT_VAULT_PROVIDERS.has(p)));
     await syncAgentOsProfile(deps);
     for (const cliProv of await cliSignedInProviders()) providers.add(cliProv);
     // Presence is claimed only for what this PC actually holds: a vault
@@ -222,7 +232,7 @@ async function vaultProviders(deps) {
     const token = await readDeviceToken(deps.tokenPath);
     if (!token) return [];
     const vault = await openVault({ vaultPath: deps.vaultPath || defaultVaultPath(homedir()), deviceToken: token });
-    const fromVault = (await vault.status()).map((r) => String(r.provider).toLowerCase());
+    const fromVault = (await vault.status()).map((r) => String(r.provider).toLowerCase()).filter((p) => !NON_AGENT_VAULT_PROVIDERS.has(p));
     const fromCli = await cliSignedInProviders();
     return [...new Set([...fromVault, ...fromCli])];
   } catch { return []; }
@@ -278,7 +288,7 @@ async function loadVaultKey(deps) {
 // assistant text once the turn's `done` event arrives.
 // onPermissionRequest(event) is called for broker `permission_request` events
 // so the host can surface approvals (envoy channel) while the turn is blocked.
-function runTurn(child, text, { onPermissionRequest = null, metadata = null, slashExpansion = null } = {}) {
+function runTurn(child, text, { onPermissionRequest = null, metadata = null, slashExpansion = null, connectorConnections = null } = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let buffer = '';
@@ -302,7 +312,7 @@ function runTurn(child, text, { onPermissionRequest = null, metadata = null, sla
       }
     };
     child.stdout.on('data', onData);
-    child.stdin.write(`${JSON.stringify({ cmd: 'turn', text, ...(metadata ? { metadata } : {}), ...(slashExpansion ? { slashExpansion } : {}) })}\n`, (err) => {
+    child.stdin.write(`${JSON.stringify({ cmd: 'turn', text, ...(metadata ? { metadata } : {}), ...(slashExpansion ? { slashExpansion } : {}), ...(Array.isArray(connectorConnections) && connectorConnections.length ? { connectorConnections } : {}) })}\n`, (err) => {
       if (err) { child.stdout.off('data', onData); reject(err); }
     });
   });
@@ -516,7 +526,14 @@ export async function runBridge(overrides = {}) {
       const prepared = await expandAgentWorkBody(String(item.message?.body ?? ''));
       const message = prepared.body === String(item.message?.body ?? '') ? item.message : { ...item.message, body: prepared.body };
       const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, notebook: item.notebook ?? null });
-      const reply = await runTurn(child, text, { metadata: item.message?.metadata ?? null, slashExpansion: prepared.slashExpansion });
+      // The person's connector connections ride the work item when the
+      // cloud supplies them ([{seatId, entryId, refreshTokenRef, state}]
+      // — vault references only, never values) so the child's arming
+      // seam can resolve the toggles the message carries (connectors
+      // bite 4R2). Absent today: the child then answers connectionFor
+      // from its own runner vault for the Scribe door, and every other
+      // toggle records unarmed rather than pretending.
+      const reply = await runTurn(child, text, { metadata: item.message?.metadata ?? null, slashExpansion: prepared.slashExpansion, connectorConnections: item.connectorConnections ?? null });
       if (!reply || !reply.trim()) { log(`agent ${provider}: no text for ${item.message.id}`); return; }
       const body = reply.length > 4000 ? `${reply.slice(0, 3997)}...` : reply;
       await api(deps, '/api/admin/envoy/agent-messages', { method: 'POST', token: creds.token, body: { channelId: item.channel.id, provider, replyTo: item.message.id, body } });
