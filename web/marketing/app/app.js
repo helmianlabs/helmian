@@ -382,10 +382,17 @@ async function loadSessions() {
 // browser afterwards (the engine's own transformers.js Cache Storage; no
 // second cache is built here), so later visits warm from cache. While the
 // model loads, replies queue behind it and the engine status reads
-// "Voice loading…". speechSynthesis is the BACKUP voice only: it speaks
-// when Kokoro truly cannot load (or where Web Audio is missing), and
-// whenever it speaks the engine status says it is the backup voice — it
-// is never substituted silently.
+// "Voice loading…" — but the wait is BOUNDED (the voice-silence law): a
+// reply never waits more than KOKORO_SPEAK_WAIT_MS from the moment the
+// load started; past the bound the labelled backup voice speaks the reply
+// while the load keeps running in the background, and Kokoro takes over
+// when it lands. A load that never settles at all — a hung import, fetch,
+// or GPU session cannot be caught, only abandoned — is abandoned past
+// KOKORO_LOAD_ABANDON_MS and retried fresh. The room never goes silent.
+// speechSynthesis is the BACKUP voice only: it speaks when Kokoro truly
+// cannot load, is still loading past the bound, or where Web Audio is
+// missing, and whenever it speaks the engine status says it is the backup
+// voice — it is never substituted silently.
 // Default Kokoro voice preset (a voice setting UI comes later).
 const KOKORO_VOICE = 'af_heart';
 const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
@@ -524,7 +531,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     // on-branch below): the load starts at enable time, not first speak.
     if (!supported) { next.onError?.('Voice mode is not supported by this browser. You can still type or paste a message.'); return false; }
     if (on && !voiceMode) { voiceMode = true; voiceKind = next.mode === 'voice' ? 'voice' : 'dictate'; handlers = next; startTurn(); if (voiceKind === 'voice') void warmup(); return true; }
-    if (!on && voiceMode) { voiceMode = false; voiceKind = 'dictate'; handlers = {}; if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; } stopTurn(); cancelSpeech(); next.onState?.('idle'); return true; }
+    if (!on && voiceMode) { voiceMode = false; voiceKind = 'dictate'; handlers = {}; if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; } stopTurn(); cancelSpeech(); setVoiceStatus('', ''); next.onState?.('idle'); return true; }
     return false;
   }
   // Pause the mic while the tab is hidden: speech meant for another tab must
@@ -587,6 +594,23 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   let kokoroState = 'idle';   // load state: idle | loading | ready | failed
   let kokoroFailedAt = 0;     // timestamp of last Kokoro failure; retry after 60s
   const KOKORO_RETRY_MS = 60000;
+  // Bounded-wait law (voice-silence fix): a reply waits at most
+  // KOKORO_SPEAK_WAIT_MS — measured from when the load STARTED, so a
+  // load that has been in flight since voice-enable does not get a
+  // fresh budget per reply — then the labelled backup voice speaks it
+  // while the load keeps running in the background. A load still
+  // pending past KOKORO_LOAD_ABANDON_MS is treated as stuck (a hung
+  // import/fetch/GPU session never settles, so it can never reject
+  // into the fallback) and is retried fresh.
+  const KOKORO_SPEAK_WAIT_MS = 15000;
+  const KOKORO_LOAD_ABANDON_MS = 60000;
+  const KOKORO_WAIT_POLL_MS = 250;
+  let kokoroLoadStartedAt = 0; // when the current load attempt began
+  let kokoroLoadGen = 0;       // generation of the current load attempt
+  let kokoroLastError = null;  // last load failure, kept for the console proof point
+  let kokoroBackupWhileLoading = false; // bounded wait expired: backup speaks until the load lands
+  let kokoroPreferWasm = false; // a load was abandoned as stuck: the next attempt skips WebGPU
+  let kokoroRetryTimer = null;
   let playToken = 0;          // cancel() bumps it; late audio is ignored
   let activeSource = null;    // currently playing AudioBufferSourceNode
   let audioCtx = null;
@@ -616,15 +640,46 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     } catch { return false; }
   }
 
+  // Where the Kokoro runtime comes from. The vendored copy under the
+  // site's own /kokoro-js/ is tried first — same origin, so no
+  // third-party module host can fail the load — and the esm.sh CDN
+  // (KOKORO_URL) is the fallback if the vendored copy is missing from
+  // a deploy. Either way the model is pointed at the same-origin
+  // /kokoro-model/ tree through the transformers.js env kokoro-js
+  // re-exports; if those files are absent, the library still falls
+  // back to the HuggingFace originals on its own.
+  const KOKORO_LOCAL_URL = '/kokoro-js/kokoro-js@1.2.1.mjs';
+  const KOKORO_MODEL_PATH = '/kokoro-model/';
+
+  async function importKokoro() {
+    let mod;
+    try {
+      mod = await import(KOKORO_LOCAL_URL);
+    } catch (localErr) {
+      console.warn('[voice] Local Kokoro runtime unavailable, trying the CDN copy:', localErr?.message ?? localErr);
+      mod = await import(KOKORO_URL);
+    }
+    try {
+      if (mod.env) {
+        mod.env.allowLocalModels = true;
+        mod.env.localModelPath = KOKORO_MODEL_PATH;
+      }
+    } catch { /* the env pointer is a nicety; the remote defaults still work */ }
+    return mod;
+  }
+
   function defaultKokoroLoader() {
-    // Full URL (no inline import map: the page CSP forbids inline scripts, which
-    // silently broke the map). The model downloads once — warmed at
-    // voice-enable, see warmup() — and is cached by the browser afterwards.
+    // Full URL for the CDN fallback (no inline import map: the page CSP
+    // forbids inline scripts, which silently broke the map). The model
+    // downloads once — warmed at voice-enable, see warmup() — and is
+    // cached by the browser afterwards.
     // Try WebGPU first (faster), fall back to WASM if it fails (mobile).
-    return import(KOKORO_URL).then(async (mod) => {
+    return importKokoro().then(async (mod) => {
       const opts = { dtype: 'q8' };
       const hasGpu = typeof navigator !== 'undefined' && navigator.gpu;
-      if (hasGpu) {
+      // Skipped once a load has been abandoned as stuck: a hang inside
+      // the WebGPU attempt never throws, so it can only be avoided.
+      if (hasGpu && !kokoroPreferWasm) {
         try {
           return await mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'webgpu' });
         } catch (err) {
@@ -641,26 +696,74 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // Storage) — warmup on a later visit resolves from that cache.
   function ensureKokoro() {
     if (kokoro) return Promise.resolve(kokoro);
-    if (kokoroPromise) return kokoroPromise;
+    if (kokoroPromise && Date.now() - kokoroLoadStartedAt <= KOKORO_LOAD_ABANDON_MS) return kokoroPromise;
+    // A load still pending past the abandon bound is treated as stuck
+    // and a fresh attempt starts. The stale attempt cannot be cancelled
+    // (a hung import/fetch keeps its promise), so it is superseded by
+    // generation instead: a late success is still adopted (an engine is
+    // an engine), a late failure is ignored so it cannot latch the
+    // retry window or mislabel the state.
+    const gen = ++kokoroLoadGen;
+    kokoroLoadStartedAt = Date.now();
     kokoroState = 'loading';
     setVoiceStatus('Voice loading…', '');
-    kokoroPromise = (async () => {
+    let self;
+    self = (async () => {
       try {
         const engine = await (kokoroLoader ?? defaultKokoroLoader)();
-        kokoro = engine;
-        kokoroState = 'ready';
-        setVoiceStatus('Kokoro', 'kokoro');
+        if (!kokoro) {
+          kokoro = engine;
+          kokoroBackupWhileLoading = false;
+          if (gen === kokoroLoadGen || kokoroState === 'failed') {
+            kokoroState = 'ready';
+            setVoiceStatus('Kokoro', 'kokoro');
+          }
+        }
         return engine;
       } catch (err) {
-        kokoroFailedAt = Date.now();
-        kokoroState = 'failed';
-        setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
+        if (gen === kokoroLoadGen) {
+          kokoroFailedAt = Date.now();
+          kokoroState = 'failed';
+          kokoroLastError = err;
+          kokoroBackupWhileLoading = false;
+          setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
+        }
         throw err;
       } finally {
-        kokoroPromise = null;
+        if (kokoroPromise === self) kokoroPromise = null;
       }
     })();
-    return kokoroPromise;
+    kokoroPromise = self;
+    return self;
+  }
+
+  // The engine a reply may wait for, bounded: resolves the engine, or
+  // null when the load has failed or KOKORO_SPEAK_WAIT_MS has elapsed
+  // since the load started. The load itself is never cancelled by the
+  // wait — it keeps running in the background, and Kokoro takes over
+  // for later replies when it lands.
+  async function kokoroEngineForSpeak() {
+    if (kokoro) return kokoro;
+    ensureKokoro().catch(() => {});
+    const deadline = kokoroLoadStartedAt + KOKORO_SPEAK_WAIT_MS;
+    for (;;) {
+      if (kokoro) return kokoro;
+      if (kokoroState === 'failed') return null;
+      if (Date.now() >= deadline) return null;
+      await new Promise((r) => setTimeout(r, KOKORO_WAIT_POLL_MS));
+    }
+  }
+
+  // After a stuck load blows the bounded wait, keep retrying in the
+  // background: once the pending load crosses the abandon bound, the
+  // timer's ensureKokoro starts a fresh attempt on its own — no user
+  // action needed. A failed load is left to the normal retry window.
+  function scheduleKokoroRetry() {
+    if (kokoroRetryTimer) return;
+    kokoroRetryTimer = setTimeout(() => {
+      kokoroRetryTimer = null;
+      if (!kokoro && kokoroState !== 'failed') ensureKokoro().catch(() => {});
+    }, KOKORO_LOAD_ABANDON_MS);
   }
 
   // Start the Kokoro load ahead of the first reply. Called when voice
@@ -668,8 +771,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // failure retry window so a dead network is not hammered. Returns
   // true when a load is in flight or the model is already warm.
   function warmup() {
-    if (kokoro || kokoroPromise) return true;
+    if (kokoro) return true;
     if (!canSpeak || !canTryKokoro()) return false;
+    // ensureKokoro itself decides whether the in-flight load is still
+    // usable or has crossed the abandon bound and must start fresh.
     ensureKokoro().catch(() => {}); // failure surfaces via status + fallback
     return true;
   }
@@ -698,8 +803,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
 
   // A Kokoro failure hands the failed chunk and everything still queued to
   // speechSynthesis instead — under the backup-voice status, never quietly.
-  function kokoroFallback(failedItem) {
-    setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
+  function kokoroFallback(failedItem, reason = 'unavailable') {
+    if (reason === 'loading') setVoiceStatus('Backup voice — Kokoro still loading', 'fallback');
+    else if (reason === 'failed') setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
+    else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
     const chunks = [];
     if (failedItem) chunks.push(failedItem.text);
     for (const item of kokoroQueue.splice(0)) chunks.push(item.text);
@@ -710,9 +817,33 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     if (kokoroPlaying || kokoroQueue.length === 0) return;
     const item = kokoroQueue.shift();
     kokoroPlaying = true;
+    let engine;
+    try {
+      engine = await kokoroEngineForSpeak();
+    } catch { engine = null; }
+    if (item.token !== playToken) { kokoroPlaying = false; pumpKokoro(); return; } // cancelled while waiting
+    if (!engine) {
+      kokoroPlaying = false;
+      if (kokoroState === 'failed') {
+        console.warn('[voice] Kokoro load failed, falling back:', kokoroLastError?.message ?? kokoroLastError);
+        kokoroFallback(item, 'failed');
+      } else {
+        // The load is still running past the bounded wait. The backup
+        // voice speaks this reply — and, via kokoroBackupWhileLoading,
+        // the replies behind it — while the load continues in the
+        // background; Kokoro takes over when it lands, and the retry
+        // timer starts a fresh attempt once the stuck load crosses the
+        // abandon bound (skipping WebGPU, the stage a hang cannot be
+        // caught in). The room never goes silent.
+        kokoroBackupWhileLoading = true;
+        kokoroPreferWasm = true;
+        scheduleKokoroRetry();
+        kokoroFallback(item, 'loading');
+      }
+      return;
+    }
     let out;
     try {
-      const engine = await ensureKokoro();
       out = await engine.generate(item.text, { voice: item.voice ?? KOKORO_VOICE });
     } catch (err) {
       kokoroPlaying = false;
@@ -764,9 +895,18 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       // A new reply replaces anything in progress, on either engine.
       synthEngine.cancel();
       kokoroCancel();
+      // Bounded-wait law: while a load that already blew its wait is
+      // still running in the background, replies go straight to the
+      // labelled backup instead of queueing behind a load that may
+      // never land.
+      if (!kokoro && kokoroBackupWhileLoading) {
+        setVoiceStatus('Backup voice — Kokoro still loading', 'fallback');
+        return synthEngine.speakChunks(chunks);
+      }
       // Kokoro road whenever the model is warm, loading, or loadable:
-      // queued chunks wait behind an in-flight warmup instead of
-      // dropping to the backup voice just because they arrived early.
+      // queued chunks wait behind an in-flight warmup (bounded — see
+      // kokoroEngineForSpeak) instead of dropping to the backup voice
+      // just because they arrived early.
       if (kokoro || kokoroPromise || canTryKokoro()) {
         const voice = voiceForSeat(seat);
         for (const c of chunks) kokoroQueue.push({ text: c, token: playToken, voice });
@@ -774,8 +914,13 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
         return true;
       }
       // Backup voice: Kokoro cannot run here, or it failed and the
-      // retry window is still open. It speaks — labelled as the backup.
-      setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
+      // retry window is still open. It speaks — labelled as the backup,
+      // and when the load itself is what failed the label keeps saying
+      // so instead of erasing it with the generic wording (the owner's
+      // live session flipped "could not load" → "unavailable" on the
+      // first reply exactly here).
+      if (kokoroState === 'failed') setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
+      else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
       return synthEngine.speakChunks(chunks);
     },
     cancel() {
@@ -792,6 +937,35 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     tts.cancel();
   }
   return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, get engineState() { return kokoroState; }, setVoiceMode, speak, cancelSpeech, warmup };
+}
+// Spoken mentions (mention-buttons bite, 2026-11-08) — inline copy of
+// mapSpokenMentions + SPOKEN_MENTION_TAGS in web/shared/voice-dictation.mjs
+// (same inline-copy pattern as the rest of this voice section). Rewrites a
+// dictated "at <name>" into "@<Name>" only at a message start / sentence
+// boundary; applied ONLY inside insertMaestroDictation below, never to
+// typed text. See the shared file for the full rationale.
+const SPOKEN_MENTION_TAGS = Object.freeze({
+  all: 'all', everyone: 'all', here: 'all',
+  claude: 'Claude', chatgpt: 'ChatGPT', gpt: 'ChatGPT', openai: 'ChatGPT',
+  grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', lechat: 'Mistral',
+  groq: 'Groq', qwen: 'Qwen', ollama: 'Qwen', muse: 'Muse',
+  maestro: 'Maestro', manager: 'Maestro', helm: 'Helm',
+  nvidia: 'NVIDIA', nim: 'NVIDIA', cloudflare: 'Cloudflare',
+  openrouter: 'OpenRouter',
+});
+function mapSpokenMentions(text, tags = SPOKEN_MENTION_TAGS, { leadingBoundary = true } = {}) {
+  const src = String(text ?? '');
+  if (!src || !tags) return src;
+  const words = Object.keys(tags).filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!words.length) return src;
+  const re = new RegExp(`(^|[.!?…]\\s+|\\n\\s*)at\\s+(${words.join('|')})(?=[\\s,.!?…;:]|$)`, 'gi');
+  return src.replace(re, (whole, boundary, word) => {
+    if (boundary === '' && !leadingBoundary) return whole;
+    const tag = tags[String(word).toLowerCase()];
+    return tag ? `${boundary}@${tag}` : whole;
+  });
 }
 function stripSpeechMarkup(text) {
   return String(text ?? '')
@@ -2820,9 +2994,18 @@ function insertMaestroDictation(text) {
   const end = box.selectionEnd ?? box.value.length;
   const before = box.value.slice(0, start);
   const after = box.value.slice(end);
+  // Spoken mentions (mention-buttons bite): this function is the room
+  // composer's DICTATION insert path — its only callers are the voice
+  // handlers (onTranscript / onSubmit) — so the spoken-mention mapping
+  // lives here and typed text never sees it. The chunk opens a mention
+  // only when the insert point is itself a message start or a sentence
+  // boundary; mid-sentence inserts keep the dictated words as spoken.
+  const mapped = mapSpokenMentions(text, SPOKEN_MENTION_TAGS, {
+    leadingBoundary: before.trim() === '' || /[.!?…]\s*$/.test(before) || /\n\s*$/.test(before),
+  });
   const sep = before && !/[\s\n]$/.test(before) ? ' ' : '';
-  box.value = before + sep + text + after;
-  const pos = before.length + sep.length + text.length;
+  box.value = before + sep + mapped + after;
+  const pos = before.length + sep.length + mapped.length;
   box.setSelectionRange(pos, pos);
   // Same path typed text takes (bite 2b): envoy's input listener on
   // this box grows it and refreshes the slash menu + crew targeting.
