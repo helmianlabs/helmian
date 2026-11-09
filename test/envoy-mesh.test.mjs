@@ -161,14 +161,14 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
   }
 });
 
-test('maestro follow wiring: agentWork passes the desk switch when either flag is set, and the config action exists', async () => {
+test('maestro always-on wiring: agentWork dispatches desk-style unconditionally, and the retired follow action is gone', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/cloud/envoy-mesh.mjs', import.meta.url), 'utf8');
-  assert.ok(src.includes('desk: config.desk === true || config.maestroFollow === true'), 'agentWork derives the desk switch from desk OR maestroFollow');
-  assert.ok(src.includes("action === 'set-maestro-follow'"), 'changeConfig carries the set-maestro-follow action');
-  const actionAt = src.indexOf("action === 'set-maestro-follow'");
-  const gateAt = src.indexOf('ENVOY_ADMIN_REQUIRED', actionAt);
-  assert.ok(gateAt > actionAt && gateAt - actionAt < 200, 'the follow action is owner/admin-gated like link-github');
+  assert.ok(src.includes('desk: true,'), 'agentWork passes the desk switch unconditionally — every channel dispatches');
+  assert.ok(!src.includes('config.maestroFollow'), 'routing never consults the stored maestroFollow flag, so a stored false cannot restore silence');
+  assert.ok(!src.includes("action === 'set-maestro-follow'"), 'the set-maestro-follow config action is removed');
+  assert.ok(!src.includes('Maestro now follows you'), 'no follow notice remains to post');
+  assert.ok(!src.includes('Maestro no longer follows you'), 'no unfollow notice remains to post');
 });
 
 test('messageOut carries stored attachments metadata to the bridge work queue', async () => {
@@ -274,12 +274,11 @@ test('mesh desk: the seat seeds its roster once, refuses other channels, and dis
   }
 });
 
-test('mesh maestro follow: owner/admin gate, notice, and routing both ways', { skip }, async () => {
+test('mesh maestro always-on: unnamed sends dispatch with no flag set, and the retired action is unsupported', { skip }, async () => {
   const pg = (await import('pg')).default;
   const pool = new pg.Pool({ connectionString: url, max: 4 });
   const tenantId = `t-${randomUUID()}`;
   const owner = { tenantId, subject: 'user:owner', role: 'owner' };
-  const memberActor = { tenantId, subject: 'user:member', role: 'member' };
   const device = { tenantId, subject: 'user:owner', role: 'owner', viaDeviceToken: true };
   const chat = createEnvoyStore(pool);
   const mesh = createEnvoyMesh({ pool });
@@ -289,49 +288,30 @@ test('mesh maestro follow: owner/admin gate, notice, and routing both ways', { s
     await mesh.changeConfig(owner, { action: 'add-agent', channelId: channel.id, provider: 'claude' });
     await mesh.changeConfig(owner, { action: 'add-agent', channelId: channel.id, provider: 'gemini' });
 
-    // Default off: the public config says so, and an unnamed human
-    // message earns nobody a turn (today's silence rule stands).
-    let cfg = await mesh.getConfig(owner, channel.id);
-    assert.equal(cfg.config.maestroFollow, false);
-    const before = (await chat.appendMessage(owner, { channelId: channel.id, body: 'status, everyone', idempotencyKey: randomUUID() })).receipt.message;
-    let work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === before.id);
-    assert.equal(work.length, 0, 'follow off: unnamed message is silence');
-
-    // Owner/admin gate, exactly like link-github: a member is refused
-    // and the refused write changes nothing.
-    await assert.rejects(
-      mesh.changeConfig(memberActor, { action: 'set-maestro-follow', channelId: channel.id, maestroFollow: true }),
-      /ENVOY_ADMIN_REQUIRED/,
-    );
-    cfg = await mesh.getConfig(owner, channel.id);
-    assert.equal(cfg.config.maestroFollow, false, 'the refused write changed nothing');
-
-    // Owner turns follow on: the config answer carries it and the
-    // standard channel notice posts.
-    const set = await mesh.changeConfig(owner, { action: 'set-maestro-follow', channelId: channel.id, maestroFollow: true });
-    assert.equal(set.config.maestroFollow, true);
-    const listed = await chat.listMessages(owner, channel.id);
-    assert.ok(listed.messages.some((m) => m.body.includes('Maestro now follows you in #Follow')), 'the follow notice posted to the channel');
-
-    // Follow on: an unnamed send routes like the desk — the whole
-    // crew — and a named send still picks the named seat alone.
+    // No flag is ever set on this channel — its stored config parses
+    // with the legacy maestroFollow field false — and still an
+    // unnamed human send dispatches desk-style to the whole crew:
+    // a stored false does not restore the old silence.
+    const cfg = await mesh.getConfig(owner, channel.id);
+    assert.equal(cfg.config.maestroFollow, false, 'the legacy field still parses false — and routing ignores it');
     const all = (await chat.appendMessage(owner, { channelId: channel.id, body: 'status, everyone', idempotencyKey: randomUUID() })).receipt.message;
-    work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === all.id);
+    let work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === all.id);
     assert.equal(work.length, 1);
-    assert.deepEqual(work[0].agents, ['claude', 'gemini'], 'unnamed send reaches the whole crew when Maestro follows');
+    assert.deepEqual(work[0].agents, ['claude', 'gemini'], 'unnamed send reaches the whole crew — Maestro is always on');
     const one = (await chat.appendMessage(owner, { channelId: channel.id, body: '@claude the numbers please', idempotencyKey: randomUUID() })).receipt.message;
     work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === one.id);
     assert.equal(work.length, 1);
     assert.deepEqual(work[0].agents, ['claude'], 'a named send still picks the named seat alone');
 
-    // Owner turns follow back off: silence returns for unnamed sends.
-    const off = await mesh.changeConfig(owner, { action: 'set-maestro-follow', channelId: channel.id, maestroFollow: false });
-    assert.equal(off.config.maestroFollow, false);
-    const after = (await chat.appendMessage(owner, { channelId: channel.id, body: 'anyone there', idempotencyKey: randomUUID() })).receipt.message;
-    work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === after.id);
-    assert.equal(work.length, 0, 'follow off again: unnamed message is silence');
-    const listedOff = await chat.listMessages(owner, channel.id);
-    assert.ok(listedOff.messages.some((m) => m.body.includes('Maestro no longer follows you in #Follow')), 'the unfollow notice posted to the channel');
+    // The retired switch action is gone: even the owner gets the
+    // unsupported-action refusal, and no follow/unfollow notice ever
+    // posts in the channel.
+    await assert.rejects(
+      mesh.changeConfig(owner, { action: 'set-maestro-follow', channelId: channel.id, maestroFollow: false }),
+      /ENVOY_CONFIG_ACTION_UNSUPPORTED/,
+    );
+    const listed = await chat.listMessages(owner, channel.id);
+    assert.ok(!listed.messages.some((m) => m.body.includes('Maestro now follows you') || m.body.includes('Maestro no longer follows you')), 'no follow notices post — there is no switch event to announce');
   } finally {
     await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
     await pool.end();
