@@ -21,7 +21,13 @@
 //       model is Claude's Web search — the one capability with a
 //       real per-seat road in the room's turn path (REPORT §6);
 //   (6) the module is pure (no DOM, no fetch, one relative import)
-//       and the definitions are frozen.
+//       and the definitions are frozen;
+//   (7) the manage footer is Helmian's Integrations view for EVERY
+//       seat (Troy's ruling, 2026-11-08): REPORT §3's vendor manage
+//       rows are deliberately NOT carried — no definition holds a
+//       'vendor' target or a manage URL, because a seat's
+//       connections are managed inside Helmian, never in a vendor
+//       window.
 //
 // The live half of the gate (the rendered menu in the real room,
 // served bytes byte-compared) belongs to bite 3R-b — see the bite
@@ -87,21 +93,21 @@ const EXPECTED = {
     'submenu:More',
     `live:-:${NATIVES}`,
     'mirror:-:ChatGPT:mirror:gmail,google-calendar,google-drive,slack,notion,github,canva,dropbox',
-    'manage:Manage in ChatGPT:vendor',
+    'manage:Manage connectors:integrations',
   ],
   grok: [
     'attach:Files',
     'submenu:Connectors',
     `live:-:github,${NATIVES}`,
     'mirror:-:Grok:state:gmail,google-calendar,google-drive,onedrive,outlook,microsoft-teams,sharepoint,salesforce,box,canva,gamma,linear,meltwater,notion,sp-global,vercel',
-    'manage:Manage in Grok:vendor',
+    'manage:Manage connectors:integrations',
   ],
   gemini: [
     'attach:Add photos & files',
     'submenu:Connected Apps',
     'mirror:-:Gemini:state:gmail,google-drive,google-calendar',
     `live:Connectors:${NATIVES}`,
-    'manage:Manage in Gemini:vendor',
+    'manage:Manage connectors:integrations',
   ],
   mistral: [
     'attach:Add files',
@@ -109,7 +115,7 @@ const EXPECTED = {
     `live:-:${NATIVES}`,
     'mirror:-:Mistral:mirror:',
     'mirror:Agents:Mistral:mirror:feed:vendor-agents',
-    'manage:Manage in Mistral:vendor',
+    'manage:Manage connectors:integrations',
   ],
   groq: ['attach:Add files', `live:Connectors:${NATIVES}:note:Beta — Groq remote MCP`, 'manage:Manage connectors:integrations'],
   nvidia: PLAIN_LIST,
@@ -244,6 +250,23 @@ test('row shapes: Grok and Gemini mirrors are account-level state rows; the rest
   // Seats with no vendor-brokered surface have no mirror group at all.
   for (const seatId of ['groq', 'nvidia', 'openrouter', 'cloudflare', 'qwen', 'muse', 'maestro', 'helm', 'owner']) {
     assert.equal(shapes.has(seatId), false, seatId);
+  }
+});
+
+// --------------------------------- (7) the manage footer is Helmian's
+
+test('manage footer: every seat closes on Helmian\'s Integrations — no vendor target, no manage URL, anywhere', () => {
+  for (const seatId of MENU_SEAT_IDS) {
+    const manages = [...walkMenuItems(menuForSeat(seatId))].filter(({ item }) => item.type === 'manage-link');
+    assert.equal(manages.length, 1, seatId);
+    const { item } = manages[0];
+    assert.equal(item.label, 'Manage connectors', seatId);
+    assert.equal(item.target, 'integrations', seatId);
+    assert.deepEqual(Object.keys(item).sort(), ['label', 'target', 'type'], `${seatId}: the manage item carries no url field`);
+  }
+  const source = readFileSync(new URL('../web/marketing/app/connector-menu.mjs', import.meta.url), 'utf8');
+  for (const gone of ['Manage in ChatGPT', 'Manage in Grok', 'Manage in Gemini', 'Manage in Mistral', "target: 'vendor'", 'https://chatgpt.com/plugins', 'https://grok.com/connectors', 'https://gemini.google.com']) {
+    assert.ok(!source.includes(gone), `connector-menu.mjs no longer contains ${gone}`);
   }
 });
 

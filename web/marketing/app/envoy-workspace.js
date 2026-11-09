@@ -2138,11 +2138,13 @@ function libraryRowNode(which, row, { shape = null } = {}) {
   }
   if (row.mirror) {
     // A mirror row is never a button Helmian can't honour (§1.5): it
-    // shows the state the vendor side last reported, and its one
-    // action is the deep link to the vendor's own management surface.
+    // shows the state the vendor side last reported — state only.
+    // Managing the connection happens in Helmian's Integrations
+    // view, never through a link out to the vendor (Troy's ruling,
+    // 2026-11-08), so the row carries no anchor even though the read
+    // still names the vendor's manager in its state line above.
     return h('div', { class: `ew-picker-row ew-lib-row mirror${shape === 'state' ? ' state' : ''}` }, libraryIconTile(row), text,
-      h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel),
-      ...(row.mirror.manageUrl ? [h('a', { class: 'ew-lib-manage', href: row.mirror.manageUrl, target: '_blank', rel: 'noreferrer', title: `${row.name} is connected in ${row.mirror.managedIn} — Helmian only shows its state` }, `Manage in ${row.mirror.managedIn}`)] : []));
+      h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel));
   }
   return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
     h('span', { class: 'ew-picker-state off' }, row.stateLabel));
@@ -2160,7 +2162,7 @@ function libraryRowNode(which, row, { shape = null } = {}) {
 //   { kind: 'note', text }
 //   { kind: 'toggle' | 'mirror' | 'row', row, rowShape }
 //   { kind: 'submenu', label, rows }
-//   { kind: 'manage', label, target, url }
+//   { kind: 'manage', label, target }
 // A connector group binds its rows from the read by entry id, in the
 // definition's own order. A group that resolves to no rows — a
 // feed-bound group whose read lands in a later bite, an entry set
@@ -2205,7 +2207,7 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
       case 'live-toggle-group': return groupRows(item, 'mirror');
       case 'mirror-group': return groupRows(item, item.rowShape ?? 'mirror');
       case 'submenu': return [{ kind: 'submenu', label: item.label, rows: (item.items ?? []).flatMap(itemRows) }];
-      case 'manage-link': return [{ kind: 'manage', label: item.label, target: item.target, url: item.url ?? null }];
+      case 'manage-link': return [{ kind: 'manage', label: item.label, target: item.target }];
       default: return [];
     }
   };
@@ -2299,21 +2301,17 @@ function plusMenuRowNode(which, row, index) {
         h('div', { class: 'ew-plus-sub' }, ...row.rows.map((r, i) => plusMenuRowNode(which, r, i))));
     }
     case 'manage': {
-      if (row.target === 'vendor' && row.url) {
-        return h('a', { class: 'ew-picker-row ew-plus-manage', href: row.url, target: '_blank', rel: 'noreferrer', title: `${row.label} — opens in a new tab` },
-          h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
-      }
+      // The footer's one road: Helmian's own Integrations view, for
+      // every seat (Troy's ruling, 2026-11-08 — a seat's connections
+      // are managed inside Helmian, never in a vendor window, so no
+      // vendor manage row and no dead placeholder row exists).
       if (row.target === 'integrations') {
         return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', onclick: () => {
           closePicker();
           document.querySelector('.nav-item[data-view="integrations"]')?.click();
         } }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
       }
-      // A manage row whose address the shipped data does not carry
-      // yet (Mistral's, until a later bite supplies it): the row
-      // stands, disabled — never a link to nowhere.
-      return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', disabled: true, title: 'This address is not in the library data yet' },
-        h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Not available yet'));
+      return h('p', { class: 'ew-note' }, '');
     }
     default: return h('p', { class: 'ew-note' }, '');
   }

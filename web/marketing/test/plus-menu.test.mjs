@@ -117,7 +117,7 @@ test('plus menu Level 2 — ChatGPT: no web-search row (the attachments layer ca
     'toggle:helmian-github=off',
     'row:helmian-scribe',
     'mirror:gmail',
-    'manage:Manage in ChatGPT:vendor:https://chatgpt.com/plugins',
+    'manage:Manage connectors:integrations:none',
   ]);
   assert.ok(!flat(model).some((r) => r.kind === 'capability'), 'no capability row is rendered for ChatGPT at all');
 });
@@ -151,7 +151,7 @@ test('plus menu Level 2 — Gemini: Connected Apps mirror first, then the live H
     'note:On for the whole account — name it in a message to use it.',
     'label:Connectors',
     'toggle:helmian-github=off',
-    'manage:Manage in Gemini:vendor:https://gemini.google.com',
+    'manage:Manage connectors:integrations:none',
   ]);
 });
 
@@ -167,7 +167,7 @@ test('plus menu Level 2 — Groq: the beta note rides its live group', () => {
   ]);
 });
 
-test('plus menu Level 2 — Mistral: empty groups are honest notes; the manage row carries no invented address', () => {
+test('plus menu Level 2 — Mistral: empty groups are honest notes; the footer is Helmian\'s manage road like every seat', () => {
   const lib = library('mistral', [libRow('mistral', 'helmian-github', 'Helmian GitHub', { state: 'connected' })]);
   const model = plusMenuLevel2Model({ seatId: 'mistral', library: lib, conversationId: 'c1' });
   assert.deepEqual(brief(model), [
@@ -177,8 +177,29 @@ test('plus menu Level 2 — Mistral: empty groups are honest notes; the manage r
     'note:Nothing here yet.',
     'label:Agents',
     'note:Nothing here yet.',
-    'manage:Manage in Mistral:vendor:none',
+    'manage:Manage connectors:integrations:none',
   ]);
+});
+
+test('plus menu: no seat\'s Level 2 carries a vendor manage row — the only manage row is Helmian\'s Integrations road (Troy\'s ruling, 2026-11-08)', () => {
+  for (const seatId of MENU_SEAT_IDS) {
+    const model = plusMenuLevel2Model({ seatId, library: library(seatId, []), conversationId: 'c1' });
+    assert.ok(model, `${seatId} composes`);
+    const manages = flat(model).filter((r) => r.kind === 'manage');
+    assert.equal(manages.length, 1, seatId);
+    assert.deepEqual(manages[0], { kind: 'manage', label: 'Manage connectors', target: 'integrations' }, seatId);
+    assert.equal(flat(model).at(-1).kind, 'manage', `${seatId}: the manage row still closes the menu`);
+  }
+});
+
+test('plus menu face: no vendor eject renders — no mirror manage anchor, no vendor manage branch, no dead placeholder row', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.ok(!js.includes('ew-lib-manage'), 'the per-row vendor manage anchor is gone from the renderer');
+  assert.ok(!js.includes("row.target === 'vendor'"), 'the footer has no vendor branch');
+  assert.ok(!js.includes('Not available yet'), 'no dead manage placeholder row remains');
+  assert.match(js, /data-view="integrations"/, 'the Integrations nav road is still the footer action');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.ok(!css.includes('.ew-lib-manage'), 'the removed anchor\'s style rule is gone too');
 });
 
 test('plus menu: cross-seat toggle isolation — arming Claude\'s GitHub arms nothing for Grok, and nothing in another conversation', () => {

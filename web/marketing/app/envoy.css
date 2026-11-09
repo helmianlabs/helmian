@@ -287,7 +287,6 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-lib-row { cursor:default; }
 .ew-lib-row:hover { border-color:var(--border); }
 .ew-lib-back { align-self:flex-start; }
-.ew-lib-manage { margin-left:auto; font-size:12px; font-weight:700; color:var(--accent); white-space:nowrap; }
 .ew-lib-row.mirror .ew-picker-state { margin-left:0; }
 .ew-lib-switch { flex:none; width:34px; height:20px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); position:relative; }
 .ew-lib-switch::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:var(--muted); transition:left .15s, background .15s; }
