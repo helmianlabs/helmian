@@ -269,6 +269,11 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-attach-chips { display:flex; gap:6px; flex-wrap:wrap; }
 .ew-attach-chips[hidden] { display:none; }
 .ew-chip { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--accent); background:var(--panel-2); color:var(--text); border-radius:999px; padding:2px 4px 2px 10px; font-size:12px; font-weight:600; }
+/* The Helmian skills a sent message carried, as a chip row under its
+   body (slash-skills S3): records, not controls — no ×, symmetric
+   padding. An empty row is never rendered (the workspace omits it). */
+.ew-msg-skills { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.ew-chip.skill-ref { padding:2px 10px; }
 .ew-chip-x { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; line-height:1; padding:0 4px; }
 .ew-chip-x:hover { color:var(--text); }
 .ew-picker { border:1px solid var(--border); border-radius:10px; background:var(--panel-2); padding:10px; display:flex; flex-direction:column; gap:10px; max-height:340px; overflow:auto; }

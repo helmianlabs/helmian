@@ -2,10 +2,11 @@
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
-import { UPLOAD_NOTE, addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment } from './composer-picker.mjs';
-import { clearConversationToggles, connectorsForTurn, level1Model, level2Model, providerForSeat, seatName, toggleConnector } from './connector-panel.mjs';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs';
+import { clearConversationToggles, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs';
 import { menuForSeat } from './connector-menu.mjs';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs';
 import { createConnectFields } from './connect-fields.mjs';
 import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
 import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs';
@@ -837,7 +838,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2087,6 +2088,16 @@ function renderAttachChips(which) {
       name,
       h('button', { type: 'button', class: 'ew-chip-x', title: `Turn ${name} off for this message`, 'aria-label': `Turn ${name} off`, onclick: () => { ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), seatId, entryId); renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×')));
   }
+  // Helmian skills armed from the "/" menu's Skills group ride the
+  // next message the same way (metadata.skills): one chip each —
+  // "/name" for every agent, "/name → Seat" for one seat — gone with
+  // the send (or the ×).
+  for (const { skillId, seatId } of ws.skillAttach[which]) {
+    const label = seatId === 'all' ? `/${skillId}` : `/${skillId} → ${skillSeatLabel(seatId)}`;
+    chips.push(h('span', { class: 'ew-chip helmian-skill' },
+      label,
+      h('button', { type: 'button', class: 'ew-chip-x', title: `Remove the ${skillId} skill from this message`, 'aria-label': `Remove skill ${skillId}`, onclick: () => { ws.skillAttach[which] = removeSkillAttach(ws.skillAttach[which], { skillId, seatId }); renderAttachChips(which); } }, '×')));
+  }
   box.hidden = !chips.length;
   box.replaceChildren(...chips);
 }
@@ -2371,6 +2382,18 @@ function renderPicker(which) {
 // the same set the bridge will expand — fetched lazily on the first "/"
 // and cached for the mount. Picking a row only inserts "/name " into
 // the input; sending is always the human's own Enter.
+//
+// The menu's second group is the workspace's HELMIAN skills
+// (slash-skills DESIGN §4, bite S3): the cloud store's list
+// (GET /api/admin/skills — names, descriptions, scopes; no bodies),
+// fetched lazily beside the commands and cached the same way. A skill
+// pick never inserts text: it opens the scope step (Every agent, or
+// one seat of this channel), and picking a scope ARMS the skill for
+// the next message (metadata.skills, composer-picker.mjs) and clears
+// the token the person typed to get here — the token was navigation,
+// and leaving it in the body would hand the bridge a command file
+// that does not exist. The group's last row authors a new skill
+// (openSkillEditor below).
 const SLASH_IDS = {
   channel: { input: 'maestro-input', menu: 'ew-slash-menu' },
 };
@@ -2386,38 +2409,190 @@ async function loadSlashCommands() {
   await ws.slash.loading;
   return ws.slash.commands;
 }
+async function loadSkills() {
+  if (ws.skills.loaded) return ws.skills.list;
+  if (!ws.skills.loading) {
+    ws.skills.loading = ws.ctx.api('/api/admin/skills')
+      .then((body) => { ws.skills.list = Array.isArray(body?.skills) ? body.skills : []; ws.skills.loaded = true; })
+      .catch(() => { ws.skills.list = null; })
+      .finally(() => { ws.skills.loading = null; });
+  }
+  await ws.skills.loading;
+  return ws.skills.list;
+}
+// An authoring write (create/edit/delete) makes the cached list
+// stale; it is dropped, never patched, so the menu refetches the
+// store's own truth on its next open.
+function invalidateSkills() {
+  ws.skills.list = null; ws.skills.loaded = false; ws.skills.loading = null;
+}
+// The name a seat id wears in chips, badges and scope rows: a
+// library seat's room name, a custom agent's own name, or the id
+// itself when neither knows it.
+function skillSeatLabel(seatId) {
+  if (librarySeat(seatId)) return seatName(seatId);
+  const custom = (ws.config?.customAgents ?? []).find((a) => (a.handle || a.id) === seatId);
+  return custom?.name ?? String(seatId ?? '');
+}
+// This channel's seats, for the scope step: the standard agents by
+// their LIBRARY seat id (the id metadata.skills and the skill store
+// speak — the room's provider key maps through seatForProvider, so
+// ChatGPT the room agent is 'chatgpt' the seat), plus the channel's
+// custom agents by handle. Maestro is never a row: the manager is
+// the human, never a turn recipient (DESIGN §5.5).
+function channelSkillSeats() {
+  const out = [];
+  const seen = new Set();
+  for (const a of ws.config?.agents ?? []) {
+    const provider = typeof a === 'string' ? a : a?.provider;
+    if (!provider || provider === 'maestro') continue;
+    const seatId = seatForProvider(provider) ?? provider;
+    if (seen.has(seatId)) continue;
+    seen.add(seatId);
+    out.push({ seatId, name: NAMES[provider] ?? skillSeatLabel(seatId) });
+  }
+  for (const a of ws.config?.customAgents ?? []) {
+    const handle = a?.handle || a?.id;
+    if (!handle || seen.has(handle)) continue;
+    seen.add(handle);
+    out.push({ seatId: handle, name: a?.name ?? handle });
+  }
+  return out;
+}
 function currentSlashModel(which) {
   const box = $(SLASH_IDS[which].input); if (!box) return null;
   if (ws.slash.dismissedFor === box.value) return null;
-  return slashMenuModel({ commands: ws.slash.commands ?? [], loaded: ws.slash.loaded, value: box.value });
+  return slashMenuModel({ commands: ws.slash.commands ?? [], loaded: ws.slash.loaded, value: box.value, skills: ws.skills.list ?? [], skillsLoaded: ws.skills.loaded, seatLabel: skillSeatLabel });
+}
+// The menu's current view: level 1 (commands + skills) or, while
+// ws.slash.scopeFor names a listed skill, the scope step for it.
+// Render and keyboard both read this, so they can never disagree
+// about what a highlight index points at.
+function slashView(which) {
+  const model = currentSlashModel(which);
+  if (!model) return null;
+  if (ws.slash.scopeFor) {
+    const skill = model.skillRows.find((s) => s.id === ws.slash.scopeFor);
+    if (skill) {
+      const scope = slashSkillScopeModel(skill, channelSkillSeats());
+      const entries = [Object.freeze({ type: 'back' }), ...scope.rows.map((r) => Object.freeze({ type: 'scope', seatId: r.seatId })), Object.freeze({ type: 'edit', id: skill.id })];
+      return { model, level: 2, skill, scope, entries: Object.freeze(entries) };
+    }
+    ws.slash.scopeFor = null;
+  }
+  return { model, level: 1, entries: slashPickList(model) };
 }
 function closeSlashMenu() {
-  ws.slash.openFor = null; ws.slash.index = 0;
+  ws.slash.openFor = null; ws.slash.index = 0; ws.slash.scopeFor = null;
   for (const { menu } of Object.values(SLASH_IDS)) { const m = $(menu); if (m) m.hidden = true; }
 }
 async function refreshSlashMenu(which) {
   const box = $(SLASH_IDS[which].input); if (!box) return;
-  if (!ws.slash.loaded) {
+  if (!ws.slash.loaded || !ws.skills.loaded) {
     if (!slashMenuModel({ commands: [], loaded: true, value: box.value })) { closeSlashMenu(); return; }
-    await loadSlashCommands();
+    await Promise.all([loadSlashCommands(), loadSkills()]);
   }
   if (ws.slash.dismissedFor !== null && ws.slash.dismissedFor !== box.value) ws.slash.dismissedFor = null;
   renderSlashMenu(which);
 }
+function slashRowButton(which, entry, index, kids) {
+  return h('button', {
+    type: 'button', role: 'option', 'aria-selected': String(index === ws.slash.index),
+    class: `ew-picker-row ew-slash-row${index === ws.slash.index ? ' on' : ''}`,
+    onmousedown: (e) => { e.preventDefault(); pickSlashEntry(which, entry); },
+  }, ...kids);
+}
 function renderSlashMenu(which) {
   const menu = $(SLASH_IDS[which].menu); if (!menu) return;
-  const model = currentSlashModel(which);
-  if (!model) { if (ws.slash.openFor === which) closeSlashMenu(); else menu.hidden = true; return; }
+  const view = slashView(which);
+  if (!view) { if (ws.slash.openFor === which) closeSlashMenu(); else menu.hidden = true; return; }
   const opening = ws.slash.openFor !== which;
   ws.slash.openFor = which;
-  if (opening || ws.slash.index >= model.rows.length) ws.slash.index = 0;
-  const rows = model.rows.map((c, i) => h('button', {
-    type: 'button', role: 'option', 'aria-selected': String(i === ws.slash.index),
-    class: `ew-picker-row ew-slash-row${i === ws.slash.index ? ' on' : ''}`,
-    onmousedown: (e) => { e.preventDefault(); pickSlashCommand(which, c.name); },
-  }, h('span', { class: 'ew-slash-name' }, `/${c.name}`), h('span', { class: 'ew-picker-kind' }, c.description ?? ''), h('span', { class: 'ew-picker-state off' }, SLASH_ORIGIN_LABEL[c.origin] ?? c.origin ?? '')));
-  menu.replaceChildren(...(rows.length ? rows : [h('p', { class: 'ew-note' }, model.empty === 'no-commands' ? 'No commands in this workspace yet. Add markdown files to .helmion/commands/ and they will show up here.' : 'No matching command.')]));
+  if (opening || ws.slash.index >= view.entries.length) ws.slash.index = 0;
+  if (view.level === 2) { renderSlashScopeStep(which, menu, view); return; }
+  const { model } = view;
+  const nodes = [];
+  let pickIndex = -1;
+  for (const c of model.rows) {
+    pickIndex += 1;
+    const i = pickIndex;
+    nodes.push(slashRowButton(which, { type: 'command', name: c.name }, i, [
+      h('span', { class: 'ew-slash-name' }, `/${c.name}`), h('span', { class: 'ew-picker-kind' }, c.description ?? ''), h('span', { class: 'ew-picker-state off' }, SLASH_ORIGIN_LABEL[c.origin] ?? c.origin ?? ''),
+    ]));
+  }
+  if (!model.rows.length && !model.skillRows.length) {
+    nodes.push(h('p', { class: 'ew-note' }, model.empty === 'no-commands' && model.skillsEmpty === 'no-skills'
+      ? 'No commands or skills in this workspace yet. Add a skill below — or add markdown files to .helmion/commands/ and they will show up here.'
+      : 'No matching command or skill.'));
+  }
+  if (model.showNewSkill) {
+    nodes.push(h('div', { class: 'ew-subhead' }, 'Skills'));
+    for (const s of model.skillRows) {
+      pickIndex += 1;
+      const i = pickIndex;
+      nodes.push(slashRowButton(which, { type: 'skill', id: s.id }, i, [
+        h('span', { class: 'ew-slash-name' }, `/${s.id}`), h('span', { class: 'ew-picker-kind' }, s.description || (s.name !== s.id ? s.name : '')), h('span', { class: 'ew-picker-state off' }, s.badge),
+      ]));
+    }
+    pickIndex += 1;
+    const i = pickIndex;
+    nodes.push(slashRowButton(which, { type: 'new-skill' }, i, [
+      h('span', { class: 'ew-slash-name' }, '＋ New skill…'), h('span', { class: 'ew-picker-kind' }, 'Write or paste one for this workspace'),
+    ]));
+  }
+  menu.replaceChildren(...nodes);
   menu.hidden = false;
+}
+// The scope step (DESIGN §4.2): a second level in the same menu
+// element — back row, the skill's name, then Every agent and this
+// channel's seats (or only the record's seats: the record's scope
+// is the ceiling), and the Edit row that keeps the authoring editor
+// reachable from the pick that uses the skill. An owner-disabled
+// skill shows its turned-off note where the attach rows would be.
+function renderSlashScopeStep(which, menu, view) {
+  const { scope } = view;
+  const nodes = [];
+  let pickIndex = -1;
+  const row = (entry, kids) => { pickIndex += 1; nodes.push(slashRowButton(which, entry, pickIndex, kids)); };
+  row({ type: 'back' }, [h('span', { class: 'ew-slash-name' }, '‹ Skills'), h('span', { class: 'ew-picker-kind' }, 'back to the list')]);
+  nodes.push(h('div', { class: 'ew-subhead' }, `/${scope.skillId} — attach for`));
+  if (scope.disabled) {
+    nodes.push(h('p', { class: 'ew-note' }, 'Turned off by your workspace owner — it will not ride on a message until it is turned back on.'));
+  }
+  for (const r of scope.rows) {
+    row({ type: 'scope', seatId: r.seatId }, [
+      h('span', { class: 'ew-slash-name' }, r.name), h('span', { class: 'ew-picker-kind' }, r.seatId === 'all' ? 'every agent in this channel' : ''), h('span', { class: 'ew-picker-state off' }, r.seatId === 'all' ? 'all' : ''),
+    ]);
+  }
+  row({ type: 'edit', id: scope.skillId }, [
+    h('span', { class: 'ew-slash-name' }, '✎ Edit skill…'), h('span', { class: 'ew-picker-kind' }, 'name, description, instructions, scope'),
+  ]);
+  menu.replaceChildren(...nodes);
+  menu.hidden = false;
+}
+function pickSlashEntry(which, entry) {
+  const view = slashView(which);
+  if (!entry) return;
+  if (entry.type === 'command') { pickSlashCommand(which, entry.name); return; }
+  if (entry.type === 'skill') { ws.slash.scopeFor = entry.id; ws.slash.index = 0; renderSlashMenu(which); return; }
+  if (entry.type === 'back') { ws.slash.scopeFor = null; ws.slash.index = 0; renderSlashMenu(which); return; }
+  if (entry.type === 'scope' && view?.skill) { armSlashSkill(which, view.skill, entry.seatId); return; }
+  if (entry.type === 'new-skill') { openSkillEditor(null); return; }
+  if (entry.type === 'edit') { openSkillEditor(entry.id); return; }
+}
+// Arming a skill (DESIGN §4.2): the chip appears, the menu closes,
+// and the typed token leaves the box — it was how the person got
+// here, not part of the message. Sending stays the human's Enter,
+// on the message they now write.
+function armSlashSkill(which, skill, seatId) {
+  const res = addSkillAttach(ws.skillAttach[which], { skillId: skill.id, seatId });
+  ws.skillAttach[which] = res.list;
+  if (!res.added && res.reason) ws.ctx.toast(res.reason);
+  const box = $(SLASH_IDS[which].input);
+  ws.slash.dismissedFor = null;
+  closeSlashMenu();
+  if (box) { box.value = ''; box.focus(); grow(); }
+  renderAttachChips(which);
 }
 function pickSlashCommand(which, name) {
   const box = $(SLASH_IDS[which].input); if (!box) return;
@@ -2433,26 +2608,195 @@ function pickSlashCommand(which, name) {
 // before the send keydown handlers for that reason.
 function slashKeydown(which, e) {
   if (ws.slash.openFor !== which) return false;
-  const model = currentSlashModel(which);
-  if (!model) { closeSlashMenu(); return false; }
-  if (e.key === 'Escape') {
+  const view = slashView(which);
+  if (!view) { closeSlashMenu(); return false; }
+  if (e.key === 'Escape' || (view.level === 2 && e.key === 'ArrowLeft')) {
     e.preventDefault(); e.stopImmediatePropagation();
-    ws.slash.dismissedFor = $(SLASH_IDS[which].input)?.value ?? null;
-    closeSlashMenu();
+    // Escape steps OUT one level at a time (DESIGN §4.2): from the
+    // scope step back to the list; from the list, the menu closes.
+    if (view.level === 2) { ws.slash.scopeFor = null; ws.slash.index = 0; renderSlashMenu(which); }
+    else {
+      ws.slash.dismissedFor = $(SLASH_IDS[which].input)?.value ?? null;
+      closeSlashMenu();
+    }
     return true;
   }
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault(); e.stopImmediatePropagation();
-    ws.slash.index = moveSlashHighlight(ws.slash.index, e.key === 'ArrowDown' ? 1 : -1, model.rows.length);
+    ws.slash.index = moveSlashHighlight(ws.slash.index, e.key === 'ArrowDown' ? 1 : -1, view.entries.length);
     renderSlashMenu(which);
     return true;
   }
-  if ((e.key === 'Enter' || e.key === 'Tab') && model.rows.length) {
+  if ((e.key === 'Enter' || e.key === 'Tab') && view.entries.length) {
     e.preventDefault(); e.stopImmediatePropagation();
-    pickSlashCommand(which, model.rows[ws.slash.index]?.name ?? model.rows[0].name);
+    pickSlashEntry(which, view.entries[ws.slash.index] ?? view.entries[0]);
     return true;
   }
   return false;
+}
+
+// ---------- the skill authoring editor (DESIGN §2.3/§4.3) ----------
+// One editor serves typing AND paste, reached from the "/" menu: the
+// Skills group's New row (create) and a skill's scope-step Edit row
+// (edit in place). The pure half — slug derivation, draft validation,
+// the paste prefill, the save payload — is skill-editor.mjs; this is
+// the DOM and the S2 routes (POST/PUT/DELETE /api/admin/skills).
+// Paste never rewrites the body here: the raw text rides in the
+// payload and the route's own lift strips its frontmatter
+// server-side; the editor only prefills the fields the paste's
+// frontmatter names (applySkillPaste), so what the form shows is
+// what will be saved. Saving a NEW skill also attaches it to the
+// pending message in the same motion (attach-on-save) — the person
+// just wrote it for this message. An edit only saves.
+function skillSaveErrorText(err) {
+  switch (err?.body?.code) {
+    case 'SKILL_CONFLICT': return 'A skill with that id already exists — rename it, or remove the other one first.';
+    case 'SKILL_SEAT_UNKNOWN': return 'One of the picked agents is not a seat this workspace has.';
+    case 'SKILL_ROLE_FORBIDDEN': return 'Your role can read skills but not author them.';
+    case 'SKILLS_UNAVAILABLE': return 'Skills are not available on this workspace yet.';
+    case 'SKILL_INVALID': return 'That skill was refused — check the name and the lengths.';
+    default: return 'Could not save the skill.';
+  }
+}
+async function openSkillEditor(skillId) {
+  // The menu closes and stays closed for this token — the modal is
+  // the surface now; cancelling out of it must not pop the menu back.
+  const composerBox = $('maestro-input');
+  if (composerBox) ws.slash.dismissedFor = composerBox.value;
+  closeSlashMenu();
+  const editing = Boolean(skillId);
+  let draft = emptySkillDraft();
+  if (editing) {
+    try {
+      const body = await ws.ctx.api(`/api/admin/skills/${encodeURIComponent(skillId)}`);
+      if (!body?.skill) throw new Error('missing');
+      draft = skillDraftFromRecord(body.skill);
+    } catch { ws.ctx.toast('Could not load that skill.'); return; }
+  }
+  // The id a create will save under: the record's (never edited), a
+  // paste's frontmatter slug, or — while both are empty — derived
+  // live from the name field.
+  let pasteId = editing ? draft.id : '';
+  const nameInput = h('input', { value: draft.name, maxlength: 120, placeholder: 'e.g. Deep research', 'aria-label': 'Skill name' });
+  const descInput = h('input', { value: draft.description, maxlength: 200, placeholder: 'One line — what the picker shows', 'aria-label': 'Skill description' });
+  const bodyInput = h('textarea', { rows: 10, 'aria-label': 'Skill instructions', placeholder: 'Write the instructions — or paste a skill file (SKILL.md) here and its name and description fill in above.' }, draft.body);
+  const idNote = h('p', { class: 'ew-note' });
+  const drawId = () => {
+    idNote.textContent = editing
+      ? `This skill is /${draft.id} — its id never changes under an edit.`
+      : `Saves as /${skillDraftId({ id: pasteId, name: nameInput.value }) ?? '…'} — the name the menu lists and the message carries.`;
+  };
+  nameInput.addEventListener('input', drawId);
+  bodyInput.addEventListener('paste', () => {
+    // The paste has not landed in the value yet at event time; read
+    // it on the next tick, whole — the prefill fills only the fields
+    // still empty, and the body itself is never rewritten.
+    setTimeout(() => {
+      const next = applySkillPaste({ id: pasteId, name: nameInput.value, description: descInput.value, body: bodyInput.value, scope: 'blanket', seatIds: [] }, bodyInput.value);
+      if (!nameInput.value && next.name) nameInput.value = next.name;
+      if (!descInput.value && next.description) descInput.value = next.description;
+      if (!pasteId && next.id) pasteId = next.id;
+      drawId();
+    }, 0);
+  });
+  drawId();
+  const blanketRadio = h('input', { type: 'radio', name: 'ew-skill-scope', value: 'blanket', ...(draft.scope === 'blanket' ? { checked: true } : {}) });
+  const seatsRadio = h('input', { type: 'radio', name: 'ew-skill-scope', value: 'seats', ...(draft.scope === 'seats' ? { checked: true } : {}) });
+  const seatChecks = channelSkillSeats().map((s) => ({ seatId: s.seatId, input: h('input', { type: 'checkbox', ...(draft.seatIds.includes(s.seatId) ? { checked: true } : {}) }), name: s.name }));
+  const seatsBox = h('div', { class: 'ew-picker-group' },
+    ...(seatChecks.length
+      ? seatChecks.map((c) => h('label', {}, c.input, ` ${c.name}`))
+      : [h('p', { class: 'ew-note' }, 'No agents are in this channel to pick — a skill for picked agents needs a channel with agents.')]));
+  const syncScope = () => { seatsBox.hidden = !seatsRadio.checked; };
+  blanketRadio.addEventListener('change', syncScope);
+  seatsRadio.addEventListener('change', syncScope);
+  syncScope();
+  const statusNote = h('p', { class: 'muted sm' }, editing
+    ? 'Edits change future turns only — messages already sent keep the skill they named, read as it stands when their turn comes.'
+    : 'Saving attaches the new skill to the message you are writing.');
+  const draftFromFields = () => ({
+    id: editing ? draft.id : pasteId,
+    name: nameInput.value,
+    description: descInput.value,
+    body: bodyInput.value,
+    scope: seatsRadio.checked ? 'seats' : 'blanket',
+    seatIds: seatChecks.filter((c) => c.input.checked).map((c) => c.seatId),
+  });
+  const form = h('form', { class: 'ew-modal-form', onsubmit: async (e) => {
+    e.preventDefault();
+    const now = draftFromFields();
+    const verdict = validateSkillDraft(now);
+    if (!verdict.ok) { statusNote.textContent = Object.values(verdict.errors)[0]; return; }
+    const payload = skillSavePayload(now, { editing });
+    try {
+      const res = editing
+        ? await ws.ctx.api(`/api/admin/skills/${encodeURIComponent(draft.id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+        : await ws.ctx.post('/api/admin/skills', payload);
+      const saved = res.skill;
+      invalidateSkills();
+      closeModal();
+      if (editing) { ws.ctx.toast(`Skill /${saved.id} saved`, 'ok'); return; }
+      // Attach-on-save (DESIGN §4.3): the record's own scope names
+      // the targets — every agent, or each picked seat.
+      const targets = saved.scope === 'seats' ? saved.seatIds : ['all'];
+      let list = ws.skillAttach.channel;
+      let refused = null;
+      for (const seatId of targets) {
+        const r = addSkillAttach(list, { skillId: saved.id, seatId });
+        list = r.list;
+        if (!r.added && r.reason && r.reason !== 'Already attached.') refused = r.reason;
+      }
+      ws.skillAttach.channel = list;
+      renderAttachChips('channel');
+      if (composerBox && slashTokenOf(composerBox.value)) { composerBox.value = ''; grow(); }
+      ws.slash.dismissedFor = null;
+      if (refused) ws.ctx.toast(`Skill /${saved.id} saved. ${refused}`);
+      else ws.ctx.toast(`Skill /${saved.id} saved and attached to your next message`, 'ok');
+    } catch (err) { statusNote.textContent = skillSaveErrorText(err); }
+  } },
+    h('label', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, 'Name'), nameInput),
+    idNote,
+    h('label', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, 'Description'), descInput),
+    h('label', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, 'Instructions'), bodyInput),
+    h('div', { class: 'ew-field' }, h('span', { class: 'ew-field-label' }, 'Who is it for'),
+      h('div', { class: 'ew-row' },
+        h('label', {}, blanketRadio, ' Every agent'),
+        h('label', {}, seatsRadio, ' Pick agents…')),
+      seatsBox),
+    statusNote);
+  if (editing) {
+    // Delete sits in the editor (DESIGN §4.3), behind a confirm line
+    // that states the §2.4 consequence before anything is removed.
+    const confirmRow = h('div', { class: 'ew-modal-actions', hidden: true },
+      h('span', {}, `Delete /${draft.id} for good? Messages that already named it will say it is no longer in this workspace's skills.`));
+    const keepBtn = h('button', { type: 'button', class: 'ew-btn ghost' }, 'Keep it');
+    const killBtn = h('button', { type: 'button', class: 'ew-btn danger' }, 'Delete for good');
+    confirmRow.append(h('span', { class: 'ew-spacer' }), keepBtn, killBtn);
+    const actionsRow = h('div', { class: 'ew-modal-actions' },
+      h('button', { type: 'button', class: 'ew-btn danger', onclick: () => { actionsRow.hidden = true; confirmRow.hidden = false; } }, 'Delete skill'),
+      h('span', { class: 'ew-spacer' }),
+      h('button', { type: 'button', class: 'ew-btn ghost', onclick: closeModal }, 'Cancel'),
+      h('button', { type: 'submit', class: 'ew-btn primary' }, 'Save skill'));
+    keepBtn.addEventListener('click', () => { confirmRow.hidden = true; actionsRow.hidden = false; });
+    killBtn.addEventListener('click', async () => {
+      try {
+        await ws.ctx.api(`/api/admin/skills/${encodeURIComponent(draft.id)}`, { method: 'DELETE' });
+        invalidateSkills();
+        closeModal();
+        ws.ctx.toast(`Skill /${draft.id} deleted`, 'ok');
+      } catch { statusNote.textContent = 'Could not delete the skill.'; confirmRow.hidden = true; actionsRow.hidden = false; }
+    });
+    form.append(actionsRow, confirmRow);
+  } else {
+    form.append(h('div', { class: 'ew-modal-actions' }, h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-btn ghost', onclick: closeModal }, 'Cancel'), h('button', { type: 'submit', class: 'ew-btn primary' }, 'Save skill')));
+  }
+  openModal(editing ? `Edit skill /${draft.id}` : 'New skill', [
+    h('p', {}, editing
+      ? 'Change what this skill says or who it is for. It stays the same skill — messages name it by its id.'
+      : 'Write a skill, or paste one in — a pasted SKILL.md fills its own name and description in. Helmian keeps it for this workspace.'),
+    form,
+  ]);
+  nameInput.focus();
 }
 
 // A picked file → its base64 payload (the metadata carries the bytes
@@ -2724,6 +3068,12 @@ function renderMessages() {
     // In the desk, a manager send carries its dispatch line; agent
     // replies render as themselves, under their own names, as anywhere.
     const dispatch = desk && m.authorKind === 'human' ? deskDispatchLine(m) : null;
+    // A Helmian skill that rode this message shows as a chip row
+    // under its body (DESIGN §4.4): without it a metadata skill
+    // would be invisible on its own message — the by-name road's
+    // skill is visible only because its /name leads the body text.
+    const skillRefs = Array.isArray(m.metadata?.skills) ? m.metadata.skills : [];
+    const skillRefRow = skillRefs.length ? h('div', { class: 'ew-msg-skills' }, ...skillRefs.map((s) => h('span', { class: 'ew-chip skill-ref' }, s.seatId === 'all' ? `/${s.skillId}` : `/${s.skillId} → ${skillSeatLabel(s.seatId)}`))) : null;
     if (showNew) out.push(h('div', { class: 'ew-new-divider' }, h('span', {}, 'New')));
     // Grouped follow-ups print no avatar and no header; in their
     // place the gutter carries the follow-up's time, shown on hover
@@ -2738,6 +3088,7 @@ function renderMessages() {
       h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt)), cont ? null : speakIcon),
         cont ? speakIcon : null,
         h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })),
+        skillRefRow,
         h('div', { class: 'ew-reactions' }, ...reactionChipKids(m.id)), dispatch),
       m._pending ? null : h('div', { class: 'ew-msg-tools', role: 'toolbar', 'aria-label': 'Message actions' }, reactionAddButton(m), copyMessageButton(m))));
     prev = m;
@@ -2941,12 +3292,12 @@ async function send(e) {
   if (!body || !ws.channelId) return;
   const key = crypto.randomUUID();
   const convId = conversationIdFor('channel');
-  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel, connectors: connectorsForTurn(ws.connectorToggles, convId) });
+  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel, connectors: connectorsForTurn(ws.connectorToggles, convId), skills: ws.skillAttach.channel });
   const btn = $('maestro-send'); btn.disabled = true;
   ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
   box.value = ''; grow(); closeSlashMenu();
-  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; ws.connectorToggles = clearConversationToggles(ws.connectorToggles, convId); renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); }
+  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; ws.connectorToggles = clearConversationToggles(ws.connectorToggles, convId); ws.skillAttach.channel = []; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
   finally { btn.disabled = false; }
 }

@@ -1120,3 +1120,46 @@ test('speaking proof: wiring — the speak call carries the message id, renders 
   assert.ok(css.includes('.ew-speaking {'), 'the lit style exists');
   assert.ok(css.includes('@media (prefers-reduced-motion: reduce) { .ew-speaking { animation:none; } }'), 'reduced motion stills the pulse');
 });
+
+// ---- Slash-skills bite S3: the "/" menu's Helmian skills group, the
+// ---- scope step, composer chips, message-row chips and the authoring
+// ---- editor, wired in the channel workspace. The pure behaviour is
+// ---- proven in app-slash-menu / app-composer-picker /
+// ---- app-skill-editor; these needles pin the workspace wiring.
+
+test('slash-skills S3: the workspace wires the skills group, scope step, chips and editor', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  for (const needle of [
+    "from './skill-editor.mjs'",
+    "from './slash-menu.mjs'",
+    'slashPickList',
+    'slashSkillScopeModel',
+    "ws.ctx.api('/api/admin/skills')",
+    'function loadSkills()',
+    'function invalidateSkills()',
+    'function channelSkillSeats()',
+    'function skillSeatLabel(',
+    'function slashView(',
+    'function armSlashSkill(',
+    'function openSkillEditor(',
+    'function renderSlashScopeStep(',
+    "class: 'ew-chip helmian-skill'",
+    'ws.skillAttach.channel = [];',
+    "method: 'PUT'",
+    "method: 'DELETE'",
+    "ws.ctx.post('/api/admin/skills', payload)",
+    'ew-msg-skills',
+    'skill-ref',
+  ]) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
+  assert.match(js, /seatForProvider\(provider\)/, 'channel seats map room providers to library seat ids for metadata.skills');
+  assert.ok(!js.includes("registerCommand('skill'") && !js.includes("name: 'skill'"), 'no fake skill command is registered anywhere');
+  assert.ok(css.includes('.ew-msg-skills {'), 'the message-row skill chip row has its style');
+  assert.ok(css.includes('.ew-chip.skill-ref {'), 'the display-only skill chip has its style');
+  // No new scrollable surface: the scope step renders inside the
+  // existing #ew-slash-menu element, which carries .ew-picker.
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  assert.match(html, /class="ew-picker ew-slash-menu" id="ew-slash-menu"/, 'the skills group and scope step live in the one existing menu element');
+});

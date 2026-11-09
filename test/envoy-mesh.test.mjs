@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { createEnvoyMesh, handleEnvoyMeshRoute, bridgeTokenOk, stampAgentAnswered } from '../src/cloud/envoy-mesh.mjs';
+import { createEnvoyMesh, handleEnvoyMeshRoute, bridgeTokenOk, stampAgentAnswered, resolveDispatchSkills } from '../src/cloud/envoy-mesh.mjs';
 import { createRunnerPresenceStore } from '../src/cloud/runner-presence.mjs';
 import { createEnvoyStore } from '../src/cloud/envoy-chat.mjs';
 
@@ -353,6 +353,138 @@ test('mesh on Postgres: set-channel-avatar stores the channel face on its config
     assert.equal(cfg.config.avatar, null, 'the refused write changed nothing');
   } finally {
     await pool.query('delete from helmion.tenants where tenant_id=$1', [tenantId]).catch(() => {});
+    await pool.end();
+  }
+});
+
+// ---------- Helmian skills at dispatch (slash-skills bite S1) ----------
+// resolveDispatchSkills is the pure half of the dispatch resolution:
+// message toggles × store records × the due seats → the work item's
+// skill entries, clamped to each record's own scope. The end-to-end
+// half rides the Postgres suite below.
+
+const skillRecord = (over = {}) => ({
+  id: 'deep-research', name: 'Deep Research', body: 'Check three sources.',
+  scope: 'blanket', seatIds: [], state: 'available', ...over,
+});
+const recordsOf = (...records) => new Map(records.map((r) => [r.id, r]));
+
+test('dispatch skills: a blanket record takes the message target, for due seats only', () => {
+  const records = recordsOf(skillRecord());
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'deep-research', seatId: 'all' }], records, ['claude', 'gemini']),
+    [{ id: 'deep-research', name: 'Deep Research', body: 'Check three sources.', seatId: 'all' }],
+  );
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'deep-research', seatId: 'claude' }], records, ['claude']),
+    [{ id: 'deep-research', name: 'Deep Research', body: 'Check three sources.', seatId: 'claude' }],
+    'a blanket skill can be narrowed to one seat for one message',
+  );
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'deep-research', seatId: 'grok' }], records, ['claude']),
+    [],
+    'a target that is not due does not ride the work item',
+  );
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'deep-research', seatId: 'all' }], records, []),
+    [],
+    "'all' rides only when someone is due — and Maestro is never due",
+  );
+});
+
+test('dispatch skills: a seat-scoped record clamps the message, never the other way', () => {
+  const records = recordsOf(skillRecord({ id: 'wash-check', scope: 'seats', seatIds: ['claude', 'grok'] }));
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'wash-check', seatId: 'all' }], records, ['claude', 'gemini']),
+    [{ id: 'wash-check', name: 'Deep Research', body: 'Check three sources.', seatId: 'claude' }],
+    "'all' becomes the record's own seats, intersected with who is due",
+  );
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'wash-check', seatId: 'grok' }], records, ['grok']),
+    [{ id: 'wash-check', name: 'Deep Research', body: 'Check three sources.', seatId: 'grok' }],
+  );
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'wash-check', seatId: 'gemini' }], records, ['gemini']),
+    [],
+    'a message cannot retarget a seat-scoped skill to a seat outside its record',
+  );
+});
+
+test('dispatch skills: missing and disabled records ride as missing, for their targets among the due', () => {
+  const empty = new Map();
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'gone', seatId: 'all' }], empty, ['claude']),
+    [{ id: 'gone', missing: true, seatId: 'all' }],
+  );
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'gone', seatId: 'claude' }], empty, ['claude']),
+    [{ id: 'gone', missing: true, seatId: 'claude' }],
+  );
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'gone', seatId: 'grok' }], empty, ['claude']),
+    [],
+    'a missing skill for a seat that is not due is not this item’s business',
+  );
+  const disabled = recordsOf(skillRecord({ id: 'paused', state: 'disabled-by-owner' }));
+  assert.deepEqual(
+    resolveDispatchSkills([{ skillId: 'paused', seatId: 'all' }], disabled, ['claude']),
+    [{ id: 'paused', missing: true, seatId: 'all' }],
+    'an owner-disabled skill is not available to the turn, and the turn is told, not left silent',
+  );
+});
+
+test('mesh on Postgres: agentWork rides resolved skills; a failed read changes nothing', { skip }, async () => {
+  const pg = (await import('pg')).default;
+  const pool = new pg.Pool({ connectionString: url, max: 4 });
+  const tenantId = `t-${randomUUID()}`;
+  const owner = { tenantId, subject: 'user:owner', role: 'owner' };
+  const device = { tenantId, subject: 'user:owner', role: 'owner', viaDeviceToken: true };
+  const chat = createEnvoyStore(pool);
+  const canned = new Map([
+    ['blanket-skill', { id: 'blanket-skill', name: 'Blanket', body: 'For everyone.', scope: 'blanket', seatIds: [], state: 'available' }],
+    ['seated-skill', { id: 'seated-skill', name: 'Seated', body: 'For Claude only.', scope: 'seats', seatIds: ['claude'], state: 'available' }],
+  ]);
+  const mesh = createEnvoyMesh({ pool, skillReadImpl: async (_p, _t, ids) => new Map(ids.filter((id) => canned.has(id)).map((id) => [id, canned.get(id)])) });
+  try {
+    await pool.query('insert into helmion.tenants (tenant_id, owner_subject) values ($1,$2)', [tenantId, owner.subject]);
+    const { channel } = await chat.createChannel(owner, { slug: 'skills', title: 'Skills', kind: 'agent' });
+    await mesh.seedRoomAgent(owner, channel.id, 'claude');
+
+    // A message with no skills metadata: the work item is exactly
+    // what it has always been — no skills field.
+    const plain = (await chat.appendMessage(owner, { channelId: channel.id, body: 'plain hello', idempotencyKey: randomUUID() })).receipt.message;
+    let work = (await mesh.agentWork(device, 'claude')).work.filter((w) => w.channel.id === channel.id && w.message.id === plain.id);
+    assert.equal(work.length, 1);
+    assert.equal('skills' in work[0], false);
+    await mesh.postAsAgent(device, { channelId: channel.id, provider: 'claude', replyTo: plain.id, body: 'Claim: noted.' });
+
+    const skilled = (await chat.appendMessage(owner, {
+      channelId: channel.id,
+      body: 'with skills attached',
+      idempotencyKey: randomUUID(),
+      metadata: {
+        skills: [
+          { skillId: 'blanket-skill', seatId: 'all' },
+          { skillId: 'seated-skill', seatId: 'all' },
+          { skillId: 'gone-skill', seatId: 'all' },
+        ],
+      },
+    })).receipt.message;
+    work = (await mesh.agentWork(device, 'claude')).work.filter((w) => w.channel.id === channel.id && w.message.id === skilled.id);
+    assert.equal(work.length, 1);
+    assert.deepEqual(work[0].skills, [
+      { id: 'blanket-skill', name: 'Blanket', body: 'For everyone.', seatId: 'all' },
+      { id: 'seated-skill', name: 'Seated', body: 'For Claude only.', seatId: 'claude' },
+      { id: 'gone-skill', missing: true, seatId: 'all' },
+    ], 'blanket rides as all; the seat-scoped record clamps all → its own seats; the unknown id rides as missing');
+
+    // Read failure: dispatch is unchanged and carries no skills.
+    const failing = createEnvoyMesh({ pool, skillReadImpl: async () => { throw new Error('store is down'); }, skillLogImpl: () => {} });
+    work = (await failing.agentWork(device, 'claude')).work.filter((w) => w.channel.id === channel.id && w.message.id === skilled.id);
+    assert.equal(work.length, 1, 'the work is still handed out');
+    assert.equal('skills' in work[0], false, 'a failed skill read leaves the item skill-less, never half-resolved');
+  } finally {
+    await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
     await pool.end();
   }
 });

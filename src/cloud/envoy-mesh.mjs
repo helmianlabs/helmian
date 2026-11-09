@@ -34,6 +34,7 @@ import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
 import { readNotebookBlock } from './envoy-notebook.mjs';
+import { createSkillLibraryStore } from './skill-library.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
 
 // The bot status functions live in bot-status.mjs (import-free, so the
@@ -81,6 +82,82 @@ export function messageOut(row) {
 
 async function setTenant(client, tenantId) {
   await client.query(`select set_config('helmion.tenant_id', $1, true)`, [tenantId]);
+}
+
+// The dispatch read for Helmian-store skills (slash-skills DESIGN
+// §3.2): the named records for one tenant, through the skill store
+// over the mesh's pool — deliberately NOT the dispatch transaction's
+// client, so a skill failure can never poison the transaction that
+// hands out work (the notebook read's discipline). Returns a Map of
+// the records FOUND; an id the store does not return is simply absent
+// from the map. Throws on a real read failure — the caller in
+// agentWork turns that into "no skills this poll", never a failed
+// dispatch.
+async function readSkillRecords(pool, tenantId, ids) {
+  const store = createSkillLibraryStore(pool);
+  const found = new Map();
+  for (const id of ids) {
+    const record = await store.getSkill(tenantId, id);
+    if (record) found.set(id, record);
+  }
+  return found;
+}
+
+/**
+ * Resolve one message's skill toggles (metadata.skills) against the
+ * records dispatch read, for the seats due on that message
+ * (slash-skills DESIGN §3.2). Pure. `records` is a Map of skill id →
+ * store record (or null/absent when the read did not return it).
+ *
+ * The record's scope is the ceiling: a blanket record takes the
+ * message's target as-is; a 'seats' record narrows the message's
+ * target to its own seat list — 'all' becomes the record's seats, a
+ * seat outside the list becomes nothing. A message can narrow a
+ * skill for one turn, never widen it. Targets that name no due seat
+ * do not ride the work item at all (they are not this item's
+ * business), and 'all' rides only when someone is due — the due set
+ * is agentsToAnswer's, so a blanket skill never targets Maestro,
+ * who is never due (DESIGN §5.5).
+ *
+ * A toggle whose record is absent, or no longer 'available', rides
+ * as { id, missing: true, seatId } for each of its targets among the
+ * due seats, so the turn states the honest line (DESIGN §2.4) rather
+ * than the seat never knowing a skill was attached.
+ *
+ * Entries are { id, name, body, seatId } or { id, missing: true,
+ * seatId } — seatId is the EFFECTIVE target after clamping ('all' or
+ * one seat), which the bridges slice on and attachments.mjs
+ * re-checks per turn (defense in depth).
+ */
+export function resolveDispatchSkills(toggles, records, dueSeats) {
+  const due = new Set(dueSeats ?? []);
+  const out = [];
+  const seen = new Set();
+  const push = (entry) => {
+    const key = `${entry.id}|${entry.seatId}|${entry.missing ? 'missing' : 'body'}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(entry);
+  };
+  for (const toggle of toggles ?? []) {
+    const skillId = toggle?.skillId;
+    const seatId = toggle?.seatId;
+    if (!skillId || !seatId) continue;
+    const record = records?.get?.(skillId) ?? null;
+    if (!record || record.state !== 'available') {
+      if (seatId === 'all' ? due.size > 0 : due.has(seatId)) push({ id: skillId, missing: true, seatId });
+      continue;
+    }
+    let targets;
+    if (record.scope === 'blanket') targets = [seatId];
+    else if (seatId === 'all') targets = Array.isArray(record.seatIds) ? record.seatIds : [];
+    else targets = (Array.isArray(record.seatIds) ? record.seatIds : []).includes(seatId) ? [seatId] : [];
+    for (const target of targets) {
+      if (target === 'all' ? due.size === 0 : !due.has(target)) continue;
+      push({ id: record.id ?? skillId, name: record.name, body: record.body, seatId: target });
+    }
+  }
+  return out;
 }
 
 async function readConfig(client, tenantId, channelId) {
@@ -157,7 +234,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, notebookImpl = null, notebookLogImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -342,6 +419,42 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         }
         return notebookPromise;
       };
+      // Skills (skill-library.mjs, slash-skills bite S1): the records
+      // behind a due message's metadata.skills, read at dispatch time
+      // through the skill store over the pool (never the dispatch
+      // transaction, the notebook's discipline) and cached per poll by
+      // skill id, so a poll reads each named skill at most once
+      // however many due messages name it. Fail-soft, with the
+      // distinction kept sharp: a FAILED read (the store threw) is
+      // sticky for the poll — loadSkillRecords returns null and work
+      // items carry no skills, exactly as before this bite — while a
+      // skill the read simply does not return (deleted, or another
+      // tenant's; the tenant-scoped read makes the two
+      // indistinguishable, which is the point) is cached as known-
+      // missing and rides the work item as { missing: true } so the
+      // turn states the honest line (DESIGN §2.4).
+      const skillCache = new Map();
+      let skillReadFailed = false;
+      const loadSkillRecords = async (ids) => {
+        if (skillReadFailed) return null;
+        const wanted = [...new Set(ids)].filter((id) => !skillCache.has(id));
+        if (wanted.length) {
+          const log = skillLogImpl ?? ((...args) => console.error(...args));
+          try {
+            const found = await (skillReadImpl ?? readSkillRecords)(pool, actor.tenantId, wanted);
+            const entries = found instanceof Map ? [...found.entries()] : (Array.isArray(found) ? found.map((r) => [r?.id, r]) : []);
+            for (const id of wanted) skillCache.set(id, null);
+            for (const [id, record] of entries) {
+              if (record && skillCache.has(id)) skillCache.set(id, record);
+            }
+          } catch (error) {
+            skillReadFailed = true;
+            log(`[envoy-mesh] skill read FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — work items carry no skills this poll; dispatch is unchanged.`);
+            return null;
+          }
+        }
+        return skillCache;
+      };
       const result = await tx(actor, async (client) => {
         // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
         // readiness signal — a registered runner, a presence report, a
@@ -445,6 +558,19 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             }
             const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
             const notebook = await loadNotebook();
+            // Skills ride only when the message names them: resolve
+            // its toggles against the records this poll read, clamped
+            // to each record's own scope, for the seats due here. A
+            // failed read leaves the item skill-less (loadSkillRecords
+            // returned null); an untouched message never gains the
+            // field, so its work item is exactly what it has always
+            // been.
+            const skillToggles = Array.isArray(message.metadata?.skills) ? message.metadata.skills : [];
+            let skills;
+            if (skillToggles.length) {
+              const records = await loadSkillRecords(skillToggles.map((t) => t.skillId));
+              if (records) skills = resolveDispatchSkills(skillToggles, records, due);
+            }
             work.push({
               channel: {
                 id: String(channel.id),
@@ -459,6 +585,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               members: config.agents,
               ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
               ...(notebook ? { notebook } : {}),
+              ...(skills?.length ? { skills } : {}),
               message,
               action,
               ...(evaluation ? { evaluation } : {}),

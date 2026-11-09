@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
-  ATTACH_STATE, FILE_MAX_BYTES, MAX_ATTACHMENTS, UPLOAD_NOTE, WEB_SEARCH_NOTE, addAttachment, agentEcosystem, applySkillToBody,
+  ATTACH_STATE, FILE_MAX_BYTES, MAX_ATTACHMENTS, MESSAGE_SKILLS_MAX, UPLOAD_NOTE, WEB_SEARCH_NOTE, addAttachment, addSkillAttach, agentEcosystem, applySkillToBody,
   attachmentKey, attachmentMetadata, buildMessageRequest, classifyFile,
-  connectorState, fileRefusalReason, normalizeAgentKey, normalizeFileAttachment, normalizeSkillName,
-  pickerModel, removeAttachment,
+  connectorState, fileRefusalReason, normalizeAgentKey, normalizeFileAttachment, normalizeSkillName, normalizeSkillToggles,
+  pickerModel, removeAttachment, removeSkillAttach,
 } from '../app/composer-picker.mjs';
 // The REAL server validator the message route applies — imported, not
 // re-implemented, so a picker-built plugin payload is proven against the
@@ -308,7 +308,7 @@ test('the channel composer carries the picker: plus button, panel, chips, wiring
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.match(js, /from '\.\/composer-picker\.mjs'/);
   assert.match(js, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => togglePicker\('channel'\)\)/);
-  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: connectorsForTurn\(ws\.connectorToggles, convId\) \}\)/, 'channel send builds its request through the picker model, web-search toggle and connector toggles included');
+  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: connectorsForTurn\(ws\.connectorToggles, convId\), skills: ws\.skillAttach\.channel \}\)/, 'channel send builds its request through the picker model, web-search toggle, connector toggles and armed Helmian skills included');
   assert.match(js, /menuForSeat\(seatId\)/, 'the channel picker renders the shipped per-seat menu definitions (bite 3R-b)');
   assert.match(js, /ws\.webSearch\[which\] = !on/, 'the toggle flips per-composer state, never the attach list');
   assert.match(js, /api\('\/api\/admin\/connector-library\/seats'\)/, 'Level 1 reads the per-seat connector libraries');
@@ -651,4 +651,68 @@ test('bite 4: services that arrive only through tool connections carry the same 
   assert.equal(row.stateLabel, 'Check failed');
   assert.equal(connectorState('revoked', false), ATTACH_STATE.NOT_CONNECTED);
   assert.equal(connectorState('connected', true), ATTACH_STATE.NOTE_ONLY);
+});
+
+// ---- Helmian skills (slash-skills bite S3): the second skill road.
+// ---- Armed from the "/" menu's Skills group, they ride as
+// ---- metadata.skills — { skillId, seatId } pairs, 'all' for every
+// ---- agent — beside (never merged with) the by-name attachment
+// ---- road, and clear when the message lands.
+
+test('normalizeSkillToggles cleans the armed set to the wire shape', () => {
+  assert.deepEqual(normalizeSkillToggles([
+    { skillId: 'deep-research', seatId: 'all' },
+    { skillId: 'deep-research', seatId: 'claude' },
+    { skillId: 'deep-research', seatId: 'all' },
+  ]), [
+    { skillId: 'deep-research', seatId: 'all' },
+    { skillId: 'deep-research', seatId: 'claude' },
+  ], 'the same skill may arm for two seats; an exact pair never repeats');
+  assert.deepEqual(normalizeSkillToggles([
+    { skillId: 'Bad Id', seatId: 'all' },
+    { skillId: 'ok-skill', seatId: 'Not A Seat' },
+    { skillId: '', seatId: 'all' },
+    { skillId: 'ok-skill' },
+    'junk',
+    null,
+  ]), [], 'malformed entries drop — the message stays sendable');
+  assert.deepEqual(normalizeSkillToggles('nope'), []);
+  assert.deepEqual(normalizeSkillToggles(), []);
+  const four = normalizeSkillToggles([1, 2, 3, 4].map((n) => ({ skillId: `skill-${n}`, seatId: 'all' })));
+  assert.equal(MESSAGE_SKILLS_MAX, 3);
+  assert.deepEqual(four.map((s) => s.skillId), ['skill-1', 'skill-2', 'skill-3'], 'capped at MESSAGE_SKILLS_MAX, the first three stand');
+});
+
+test('addSkillAttach arms, refuses a duplicate and the fourth skill, and removeSkillAttach disarms one pair', () => {
+  const one = addSkillAttach([], { skillId: 'deep-research', seatId: 'all' });
+  assert.equal(one.added, true);
+  assert.deepEqual(one.list, [{ skillId: 'deep-research', seatId: 'all' }]);
+  const two = addSkillAttach(one.list, { skillId: 'deep-research', seatId: 'claude' });
+  assert.equal(two.added, true, 'the same skill for another seat is a new entry');
+  const dup = addSkillAttach(two.list, { skillId: 'deep-research', seatId: 'claude' });
+  assert.equal(dup.added, false);
+  assert.equal(dup.reason, 'Already attached.');
+  const three = addSkillAttach(two.list, { skillId: 'wash-check', seatId: 'all' });
+  const fourth = addSkillAttach(three.list, { skillId: 'one-more', seatId: 'all' });
+  assert.equal(fourth.added, false);
+  assert.match(fourth.reason, /Up to 3 skills per message/);
+  assert.equal(addSkillAttach([], { skillId: 'Bad Id', seatId: 'all' }).added, false);
+  assert.equal(addSkillAttach([], { skillId: 'ok-skill', seatId: '' }).added, false);
+  assert.deepEqual(removeSkillAttach(two.list, { skillId: 'deep-research', seatId: 'all' }), [{ skillId: 'deep-research', seatId: 'claude' }], 'the × drops exactly its pair');
+  assert.deepEqual(removeSkillAttach(two.list, { skillId: 'deep-research', seatId: 'grok' }), two.list, 'an unarmed pair removes nothing');
+});
+
+test('armed Helmian skills ride metadata.skills — and only while armed', () => {
+  const req = buildMessageRequest({ channelId: 'c1', body: 'wash this one carefully', idempotencyKey: 'ks1', skills: [{ skillId: 'wash-check', seatId: 'claude' }] });
+  assert.deepEqual(JSON.parse(JSON.stringify(req.metadata)), { skills: [{ skillId: 'wash-check', seatId: 'claude' }] });
+  assert.deepEqual(normalizeMessageMetadata(req.payload.metadata), req.metadata, 'the REAL server validator accepts and keeps the skills shape');
+  assert.equal(req.payload.body, 'wash this one carefully', 'a Helmian skill never touches the body — it is not the by-name road');
+  const bare = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'ks2', skills: [] });
+  assert.equal(bare.metadata, null, 'no skill armed → no metadata at all, the pre-skills wire');
+  const mixed = buildMessageRequest({ channelId: 'c1', body: 'and this', idempotencyKey: 'ks3', attachments: [skill('deploy')], connectors: [{ seatId: 'claude', entryId: 'helmian-scribe' }], skills: [{ skillId: 'wash-check', seatId: 'all' }] });
+  assert.deepEqual(normalizeMessageMetadata(mixed.payload.metadata), mixed.metadata, 'skills ride beside attachments and connectors without merging the roads');
+  assert.equal(mixed.payload.body, '/deploy and this', 'the by-name skill still leads the body on its own road');
+  const over = attachmentMetadata([], { skills: [1, 2, 3, 4].map((n) => ({ skillId: `skill-${n}`, seatId: 'all' })) });
+  assert.equal(over.skills.length, 3, 'metadata itself caps the set');
+  assert.deepEqual(normalizeMessageMetadata(over), over, 'the capped shape is the stored shape');
 });

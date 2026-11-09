@@ -191,3 +191,126 @@ test('skill line states the expansion outcome the composing side reported', asyn
   assert.match(other.contextText, /already been expanded into the command's instructions/);
   await other.dispose();
 });
+
+// ── Helmian-store skills (helmianSkills, slash-skills bite S1) ──────
+// Dispatch-resolved records ride in beside the metadata; these tests
+// pin the turn-side contract: the right seat gets the body between
+// markers, another seat gets no trace at all, a missing skill gets
+// the honest line, and the caps state their cuts.
+
+test('helmian skills: a targeted skill applies to its seat, between markers, with the outcome recorded', async () => {
+  const resolved = await resolveTurnAttachments({
+    metadata: null,
+    helmianSkills: [{ id: 'deep-research', name: 'Deep Research', body: 'Check three sources, then answer.', seatId: 'claude' }],
+    providerId: 'anthropic',
+  });
+  assert.match(resolved.contextText, /Skill attached: \/deep-research \(Helmian skill, attached for this seat\)/);
+  assert.match(resolved.contextText, /--- begin skill: deep-research ---\nCheck three sources, then answer\.\n--- end skill: deep-research ---/);
+  assert.deepEqual(resolved.skillOutcomes, [{ skillId: 'deep-research', seatId: 'claude', applied: true }]);
+  await resolved.dispose();
+});
+
+test('helmian skills: an entry targeting another seat leaves no trace in this turn', async () => {
+  const resolved = await resolveTurnAttachments({
+    metadata: null,
+    helmianSkills: [{ id: 'deep-research', body: 'Check three sources, then answer.', seatId: 'claude' }],
+    providerId: 'gemini',
+  });
+  assert.equal(resolved.contextText, null, 'no line at all — the skill is not this seat’s business');
+  assert.deepEqual(resolved.skillOutcomes, []);
+  await resolved.dispose();
+});
+
+test('helmian skills: blanket applies to every seat, including a custom handle', async () => {
+  for (const seat of [{ providerId: 'anthropic' }, { providerId: 'xai' }, { seatId: 'coder' }]) {
+    const resolved = await resolveTurnAttachments({
+      metadata: null,
+      helmianSkills: [{ id: 'house-style', body: 'Plain words. Short sentences.', seatId: 'all' }],
+      ...seat,
+    });
+    assert.match(resolved.contextText, /\(Helmian skill, attached for every agent\)/);
+    assert.match(resolved.contextText, /Plain words\. Short sentences\./);
+    assert.deepEqual(resolved.skillOutcomes, [{ skillId: 'house-style', seatId: 'all', applied: true }]);
+    await resolved.dispose();
+  }
+  // An entry with no target named was composed for this turn and applies.
+  const untargeted = await resolveTurnAttachments({
+    metadata: null,
+    helmianSkills: [{ id: 'house-style', body: 'Plain words.' }],
+    providerId: 'gemini',
+  });
+  assert.match(untargeted.contextText, /begin skill: house-style/);
+  await untargeted.dispose();
+});
+
+test('helmian skills: a missing skill gets the honest line, never a claim it ran', async () => {
+  const resolved = await resolveTurnAttachments({
+    metadata: null,
+    helmianSkills: [{ id: 'gone-skill', missing: true, seatId: 'claude' }],
+    providerId: 'anthropic',
+  });
+  assert.match(resolved.contextText, /Skill attached: \/gone-skill\. It is no longer in this workspace's skills, so its instructions are not part of this turn\./);
+  assert.doesNotMatch(resolved.contextText, /begin skill/);
+  assert.deepEqual(resolved.skillOutcomes, [{ skillId: 'gone-skill', seatId: 'claude', applied: false, reason: 'missing' }]);
+  await resolved.dispose();
+});
+
+test('helmian skills: the inline cap truncates with the cut stated', async () => {
+  const resolved = await resolveTurnAttachments({
+    metadata: null,
+    helmianSkills: [{ id: 'long-skill', body: 's'.repeat(13_000), seatId: 'all' }],
+    providerId: 'anthropic',
+  });
+  assert.match(resolved.contextText, /\[truncated: the skill is 13000 characters; only the first 12000 are shown\]/);
+  assert.deepEqual(resolved.skillOutcomes, [{ skillId: 'long-skill', seatId: 'all', applied: true }]);
+  await resolved.dispose();
+});
+
+test('helmian skills: the per-turn cap states when a skill could not be included at all', async () => {
+  const big = (id) => ({ id, body: 'x'.repeat(20_000), seatId: 'all' });
+  const resolved = await resolveTurnAttachments({
+    metadata: null,
+    helmianSkills: [big('one'), big('two'), { id: 'three', body: 'small but late', seatId: 'all' }],
+    providerId: 'anthropic',
+  });
+  // Each of the first two is shown to the 12,000 per-skill cap — the
+  // 24,000 per-turn budget is then exactly spent.
+  assert.match(resolved.contextText, /\[truncated: the skill is 20000 characters; only the first 12000 are shown\]/);
+  assert.match(resolved.contextText, /Skill attached: \/three \(Helmian skill\)\. This turn's skill budget \(24000 characters across all skills\) is already used up by the skills above, so its instructions are NOT part of this turn\./);
+  assert.doesNotMatch(resolved.contextText, /small but late/, 'the third body never enters the turn');
+  assert.deepEqual(resolved.skillOutcomes, [
+    { skillId: 'one', seatId: 'all', applied: true },
+    { skillId: 'two', seatId: 'all', applied: true },
+    { skillId: 'three', seatId: 'all', applied: false, reason: 'turn-budget-exhausted' },
+  ]);
+  await resolved.dispose();
+});
+
+test('helmian skills: an unskilled turn is exactly what it was before this road existed', async () => {
+  const bare = await resolveTurnAttachments({ metadata: null, plugins: [] });
+  assert.equal(bare.contextText, null);
+  assert.deepEqual(bare.skillOutcomes, []);
+  await bare.dispose();
+
+  const metadataOnly = await resolveTurnAttachments({
+    metadata: { attachments: [{ kind: 'connector', key: 'slack', name: 'Slack' }] },
+    plugins: [],
+  });
+  assert.deepEqual(metadataOnly.skillOutcomes, [], 'no skills ride — an empty record, and the rest of the turn is untouched');
+  assert.match(metadataOnly.contextText, /NO agent-side callable tool/);
+  await metadataOnly.dispose();
+});
+
+test('helmian skills: the same skill named for all and for this seat injects once', async () => {
+  const resolved = await resolveTurnAttachments({
+    metadata: null,
+    helmianSkills: [
+      { id: 'house-style', body: 'Plain words. Short sentences.', seatId: 'all' },
+      { id: 'house-style', body: 'Plain words. Short sentences.', seatId: 'claude' },
+    ],
+    providerId: 'anthropic',
+  });
+  assert.equal(resolved.contextText.split('begin skill: house-style').length - 1, 1, 'one body, one budget charge');
+  assert.deepEqual(resolved.skillOutcomes, [{ skillId: 'house-style', seatId: 'all', applied: true }]);
+  await resolved.dispose();
+});
