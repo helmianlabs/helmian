@@ -21,6 +21,7 @@ import {
 } from './commands.mjs';
 import { loadEnabledPlugins } from './plugins.mjs';
 import { resolveTurnAttachments } from './attachments.mjs';
+import { createScribeArming, runnerVaultHasScribe } from './scribe-door.mjs';
 
 /**
  * NDJSON bridge for the Windows Pilot EXE.
@@ -190,12 +191,19 @@ export async function runAgentBridge() {
   // resolver null and today's env-key behavior completely untouched. The
   // token file path matches bin/pc-bridge.mjs / bin/runner-vault.mjs.
   let supergrokResolver = null;
+  // The opened runner vault, kept for the Scribe door arming below
+  // (connectors bite 4R2): the door's renewal key lives in the same
+  // custody as the SuperGrok session, and the minter reads it from
+  // here. Null whenever the vault could not be opened — arming then
+  // stays unwired and attachments.mjs says so honestly.
+  let runnerVault = null;
   try {
     const deviceToken = await readDeviceToken(
       join(homedir(), 'AppData', 'Roaming', 'Helmian', 'pc-bridge-token.json'),
     );
     if (deviceToken) {
       const vault = await openVault({ vaultPath: defaultVaultPath(homedir()), deviceToken });
+      runnerVault = vault;
       supergrokResolver = createSuperGrokCredentialResolver({
         vault,
         onAuthProblem: (message) => emit({ event: 'status', message }),
@@ -204,7 +212,18 @@ export async function runAgentBridge() {
     }
   } catch {
     supergrokResolver = null;
+    runnerVault = null;
   }
+
+  // Scribe door arming (connectors bite 4R2): the turn-time minter over
+  // the runner vault. The per-turn connectionFor is composed in the
+  // turn handler — it depends on what the individual turn carries.
+  const scribeArming = runnerVault
+    ? createScribeArming({
+      vault: runnerVault,
+      onProblem: (message) => emit({ event: 'status', message }),
+    })
+    : null;
 
   // Human-in-the-loop approval for 'ask' mode. The broker is the only source of
   // an allow: it hands out ids and waits for a matching permission_response.
@@ -582,15 +601,50 @@ export async function runAgentBridge() {
         // (attachments.mjs decides; loop.mjs forwards; providers.mjs is
         // the only place a search declaration can reach the wire).
         let turnWebSearch = false;
+        // Pattern-A connector servers armed for this turn (attachments.mjs
+        // resolves them from the message's library toggles; loop.mjs
+        // carries them beside the local tools, never in them).
+        let turnMcpServers = [];
+        // The arming seam for THIS turn (connectors bite 4R2): the Scribe
+        // minter built at startup, plus a connectionFor that answers from
+        // what this turn carries — a composing side may ride the person's
+        // connections on the request as `connectorConnections`
+        // ([{seatId, entryId, refreshTokenRef, state}]; references are
+        // vault pointers, never values) — and, for the Scribe door, from
+        // this runner's own vault: holding the door's credential here IS
+        // the person's connection act for the runner custody, the same
+        // claim the bridge makes for provider keys.
+        const connectorArming = scribeArming ? {
+          mintAccessToken: scribeArming.mintAccessToken,
+          connectionFor: async ({ seatId, entryId }) => {
+            const carried = (Array.isArray(req.connectorConnections) ? req.connectorConnections : [])
+              .find((c) => c && c.seatId === seatId && c.entryId === entryId);
+            if (carried) {
+              return {
+                state: typeof carried.state === 'string' ? carried.state : 'connected',
+                refreshTokenRef: carried.refreshTokenRef ?? null,
+              };
+            }
+            if (entryId === 'helmian-scribe' && runnerVault && await runnerVaultHasScribe(runnerVault)) {
+              return { state: 'connected', refreshTokenRef: null };
+            }
+            return null;
+          },
+        } : null;
         if (attachmentMetadata) {
           try {
-            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion, providerId: provider.id });
+            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion, providerId: provider.id, credentialType: provider.credentialType ?? null, connectorArming });
             if (resolved.contextText) turnText = `${resolved.contextText}\n\n${text}`;
             if (resolved.toolNames.length) {
               turnRuntime = createToolRuntime(workspace, { ...runtimeOptions(), extraTools: resolved.extraTools });
             }
             attachmentDispose = resolved.dispose;
             turnWebSearch = resolved.webSearch === true;
+            turnMcpServers = Array.isArray(resolved.mcpServers) ? resolved.mcpServers : [];
+            if (Array.isArray(resolved.connectorOutcomes) && resolved.connectorOutcomes.length) {
+              emit({ event: 'connector_outcomes', outcomes: resolved.connectorOutcomes });
+            }
+            if (turnMcpServers.length) emit({ event: 'status', message: `Attachments armed ${turnMcpServers.length} connector(s) for this turn (the provider's cloud runs them).` });
             // File attachments that are images ride the same images
             // channel as a turn request's own images — one path into the
             // provider call, so an uploaded image is real image content.
@@ -616,6 +670,7 @@ export async function runAgentBridge() {
           modelOverride,
           images,
           webSearch: turnWebSearch,
+          mcpServers: turnMcpServers,
           onEvent: (ev) => {
             if (ev.type === 'model') {
               emit({
@@ -647,6 +702,11 @@ export async function runAgentBridge() {
                 timestamp: ev.timestamp,
                 sessionId: ev.sessionId,
               });
+            } else if (ev.type === 'mcp_evidence') {
+              // The Pattern-A record: what the provider's cloud actually
+              // executed for this turn (connectors bite 4R2). Forwarded
+              // verbatim — the host's turn record, not a summary of one.
+              emit({ event: 'mcp_evidence', round: ev.round, calls: ev.calls, results: ev.results });
             } else if (ev.type === 'status') emit({ event: 'status', message: ev.message });
             else if (ev.type === 'tool') {
               emit({ event: 'tool', name: ev.name, args: ev.args });

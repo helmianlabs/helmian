@@ -46,6 +46,14 @@ export const ANTHROPIC_WEB_SEARCH_TOOL = Object.freeze({
   max_uses: 5,
 });
 
+/**
+ * Anthropic's MCP connector beta header (connectors bite 4R2). Sent
+ * ONLY on a turn that actually carries `mcp_servers` — an unarmed
+ * turn's request is byte-identical to the pre-connector request,
+ * headers included (pinned by test/connector-arming.test.mjs).
+ */
+export const ANTHROPIC_MCP_BETA = 'mcp-client-2025-11-20';
+
 /** True only for seats whose adapter can declare the provider's own search. */
 export function providerHasNativeWebSearch(providerId) {
   return providerId === 'anthropic';
@@ -249,6 +257,14 @@ export async function chatWithTools({
   // provider supplies the search natively (providerHasNativeWebSearch);
   // every other adapter ignores it, and the turn's context line says so.
   webSearch = false,
+  // Pattern-A connector servers armed for this turn (attachments.mjs
+  // resolved them from the message's library toggles; for the Scribe
+  // door the access key was minted at turn time by scribe-door.mjs).
+  // Forwarded ONLY to the Anthropic adapter — the one surface the
+  // hand-off lives on today. Each entry: {name, url, authorizationToken}.
+  // These are NOT local tools: Anthropic's cloud connects and executes;
+  // nothing here runs them, and they never enter toolDefs.
+  mcpServers = [],
 }) {
   let credentialType = credentialTypeHint
     ? String(credentialTypeHint).toLowerCase()
@@ -380,6 +396,7 @@ export async function chatWithTools({
       images,
       credentialType,
       webSearch,
+      mcpServers,
     }), {
       providerId, model: resolvedModel, url: ANTHROPIC_URL, isLocal: false, provenance, startedAt,
     });
@@ -539,7 +556,7 @@ async function openAiCompatibleTurn({
   };
 }
 
-async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images = [], webSearch = false }) {
+async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images = [], webSearch = false, mcpServers = [] }) {
   // Convert OpenAI-style messages to Anthropic
   let system = '';
   const anthMessages = [];
@@ -610,13 +627,46 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images
     system: system || undefined,
     messages: anthMessages,
   };
+
+  // Pattern-A connector servers armed for this turn. Only well-formed
+  // descriptors count; a malformed one is dropped here rather than
+  // sent — the arming record in attachments.mjs already said what
+  // armed, and a descriptor that cannot be sent must not reach the wire.
+  const armedServers = (Array.isArray(mcpServers) ? mcpServers : [])
+    .filter((s) => s && typeof s.name === 'string' && s.name
+      && typeof s.url === 'string' && s.url
+      && typeof s.authorizationToken === 'string' && s.authorizationToken);
+  const mcpToolsets = armedServers.map((s) => ({ type: 'mcp_toolset', mcp_server_name: s.name }));
+
   if (webSearch) {
     // Anthropic's OWN server-side search, declared beside the function
     // tools (or alone, on a no-function-tools turn). Anthropic executes
     // the searches inside this one call; nothing client-side runs.
-    payload.tools = [...tools, { ...ANTHROPIC_WEB_SEARCH_TOOL }];
-  } else if (tools.length > 0) {
-    payload.tools = tools;
+    payload.tools = [...tools, { ...ANTHROPIC_WEB_SEARCH_TOOL }, ...mcpToolsets];
+  } else if (tools.length > 0 || mcpToolsets.length > 0) {
+    payload.tools = [...tools, ...mcpToolsets];
+  }
+
+  // The body is redacted BEFORE the MCP servers are attached, on
+  // purpose: a door access key is a JWT-shaped string, and
+  // redactSecrets would replace it with [REDACTED] in the sent body —
+  // the armed call would reach Anthropic with a destroyed credential.
+  // The connector's shape requires the token in the body (it travels
+  // nowhere else); the discipline that protects it is that this
+  // adapter never logs the body. Everything else in the payload keeps
+  // the full redaction pass, exactly as before. With no armed servers
+  // the body is the unmodified redacted serialization — byte-identical
+  // to the pre-connector request.
+  let bodyText = redactOutboundBody(JSON.stringify(payload), apiKey);
+  if (armedServers.length > 0) {
+    const withServers = JSON.parse(bodyText);
+    withServers.mcp_servers = armedServers.map((s) => ({
+      type: 'url',
+      url: s.url,
+      name: s.name,
+      authorization_token: s.authorizationToken,
+    }));
+    bodyText = JSON.stringify(withServers);
   }
 
   const res = await fetch(ANTHROPIC_URL, {
@@ -625,8 +675,9 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'Content-Type': 'application/json',
+      ...(armedServers.length > 0 ? { 'anthropic-beta': ANTHROPIC_MCP_BETA } : {}),
     },
-    body: redactOutboundBody(JSON.stringify(payload), apiKey),
+    body: bodyText,
     signal,
   });
   const raw = await res.text();
@@ -640,6 +691,8 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images
   const blocks = data.content || [];
   let content = '';
   const toolCalls = [];
+  const mcpToolCalls = [];
+  const mcpToolResults = [];
   for (const b of blocks) {
     if (b.type === 'text') content += b.text;
     // 'server_tool_use' (web_search) and 'web_search_tool_result' blocks
@@ -654,8 +707,51 @@ async function anthropicTurn({ apiKey, model, messages, toolDefs, signal, images
         arguments: b.input || {},
       });
     }
+    // MCP connector blocks ('mcp_tool_use' / 'mcp_tool_result') get the
+    // opposite treatment from web_search's — on purpose (connectors
+    // bite 4R2, census §5 step 4). Anthropic executed these too, so
+    // they NEVER enter toolCalls (the local runtime must not try to
+    // run them) and never enter the replayed history — but they are
+    // the program gate's evidence: the vendor cloud's own record that
+    // it called the connector and what came back. They are surfaced
+    // on the reply as mcpToolCalls / mcpToolResults, and the loop
+    // carries them into the turn record.
+    if (b.type === 'mcp_tool_use') {
+      mcpToolCalls.push({
+        id: b.id ?? null,
+        name: b.name ?? null,
+        serverName: b.server_name ?? null,
+        input: b.input ?? {},
+      });
+    }
+    if (b.type === 'mcp_tool_result') {
+      mcpToolResults.push({
+        toolUseId: b.tool_use_id ?? null,
+        isError: b.is_error === true,
+        content: mcpResultText(b.content),
+      });
+    }
   }
-  return { role: 'assistant', content, toolCalls, raw: data };
+  return {
+    role: 'assistant',
+    content,
+    toolCalls,
+    raw: data,
+    ...(mcpToolCalls.length || mcpToolResults.length ? { mcpToolCalls, mcpToolResults } : {}),
+  };
+}
+
+/** Evidence text from an MCP tool-result block's content, capped. */
+function mcpResultText(content) {
+  let text = '';
+  if (typeof content === 'string') text = content;
+  else if (Array.isArray(content)) {
+    text = content
+      .map((part) => (part?.type === 'text' && typeof part.text === 'string' ? part.text : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return text.length > 4000 ? `${text.slice(0, 4000)}\n…(evidence truncated)` : text;
 }
 
 async function geminiTurn({ apiKey, model, messages, toolDefs, signal, images = [], credentialType = 'api_key' }) {
