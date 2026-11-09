@@ -106,7 +106,11 @@ export function createApiKeyFields({ provider, fields = ['api_key'], connected =
   if (form.dataset) form.dataset.provider = model.provider;
   const inputs = {};
   for (const f of model.fields) {
-    const label = mk('label', 'connect-fields-label', f.label);
+    // R3 (fields across): same presentation as ConnectFields — the
+    // label text rides a visually-hidden span, the placeholder names
+    // the field on screen. The model's fields and words are unchanged.
+    const label = mk('label', 'connect-fields-label');
+    label.append(mk('span', 'connect-fields-label-text', f.label));
     const input = mk('input', 'connect-fields-input');
     input.type = f.type;
     input.name = f.name;

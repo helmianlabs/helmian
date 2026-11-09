@@ -747,10 +747,22 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .int-actions { display:flex; gap:8px; }
 .int-help { border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:4px; animation:ew-in .2s var(--ease); }
 .int-help p { margin:0; }
-.connect-fields { display:flex; flex-direction:column; gap:8px; margin-top:auto; }
-.connect-fields-label { display:flex; flex-direction:column; gap:4px; font-size:12px; font-weight:600; color:var(--muted); }
+/* R3 (Integrations redesign §2): fields ACROSS. The form is one flex
+   row — fields flexible, the submit button fixed — never a stacked
+   column. The label text is not printed above the field: the field's
+   placeholder names it on screen, and the label text rides a
+   visually-hidden span so the input keeps its accessible name.
+   Wrap: each field carries a 96px flex basis, so once the row can no
+   longer hold fields + button (about 294px of content width) the
+   button drops to a second row, right-aligned by its auto left
+   margin, while the fields stay side by side on the first row. The
+   note always takes its own full row under the fields. */
+.connect-fields { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:auto; }
+.connect-fields-label { flex:1 1 96px; min-width:0; display:block; }
+.connect-fields-label-text { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
 .connect-fields-input { width:100%; box-sizing:border-box; }
-.connect-fields-note { margin:0; }
+.connect-fields > button { flex:none; margin-left:auto; }
+.connect-fields-note { flex:1 0 100%; margin:0; }
 /* The phone card is the one exception to the resting height (§2):
    two cells wide, the QR at 96px, its three steps across. */
 .int-qr-row { display:flex; gap:16px; align-items:center; }

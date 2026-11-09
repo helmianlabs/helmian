@@ -30,8 +30,11 @@ export function connectFieldsModel({ provider, connected = false, change = false
     provider: p,
     change: isChange,
     path: CREDENTIAL_CONNECT_PATH,
+    // R3: with no stacked label, the placeholder IS the field's name
+    // on screen — so the email field's placeholder carries its label
+    // (it was an example address, 'you@example.com', before R3).
     fields: [
-      { name: 'username', label: 'Email', type: 'email', autocomplete: 'username', placeholder: 'you@example.com' },
+      { name: 'username', label: 'Email', type: 'email', autocomplete: 'username', placeholder: 'Email' },
       { name: 'password', label: 'Password', type: 'password', autocomplete: 'current-password', placeholder: 'Password' },
     ],
     button: { label: isChange ? 'Save' : 'Connect', pendingLabel: isChange ? 'Saving…' : 'Connecting…' },
@@ -100,7 +103,13 @@ export function createConnectFields({ provider, connected = false, change = fals
   if (form.dataset) form.dataset.provider = model.provider;
   const inputs = {};
   for (const f of model.fields) {
-    const label = mk('label', 'connect-fields-label', f.label);
+    // R3 (fields across): the label text is not stacked above the
+    // field — the field's placeholder carries its name on screen, and
+    // the label text rides a visually-hidden span so the input keeps
+    // its accessible name. Presentation only; the submit path, the
+    // timeout, and every success/failure word are unchanged.
+    const label = mk('label', 'connect-fields-label');
+    label.append(mk('span', 'connect-fields-label-text', f.label));
     const input = mk('input', 'connect-fields-input');
     input.type = f.type;
     input.name = f.name;
