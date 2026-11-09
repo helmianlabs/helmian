@@ -685,7 +685,12 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // is not reachable from every checking browser, and "unavailable"
   // alone does not say which stage broke. Cleared when Kokoro is ready.
   function noteKokoroError(err) {
-    kokoroErrorLatch = String(err?.message ?? err ?? '').slice(0, 300);
+    const msg = String(err?.message ?? err ?? '').slice(0, 300);
+    // First failure wins: it is the root cause. A later error in the same
+    // session is downstream of it (the CDN fallback failing after the
+    // local copy failed would otherwise bury the real reason).
+    if (msg && kokoroErrorLatch) return;
+    kokoroErrorLatch = msg;
     if (typeof document === 'undefined' || !document.querySelectorAll) return;
     for (const el of document.querySelectorAll('.voice-engine')) {
       if (kokoroErrorLatch) el.dataset.error = kokoroErrorLatch;
@@ -721,6 +726,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       mod = await import(KOKORO_LOCAL_URL);
     } catch (localErr) {
       console.warn('[voice] Local Kokoro runtime unavailable, trying the CDN copy:', localErr?.message ?? localErr);
+      noteKokoroError('local import: ' + String(localErr?.message ?? localErr));
       mod = await import(KOKORO_URL);
     }
     try {
