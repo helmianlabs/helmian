@@ -296,6 +296,21 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-slash-menu { gap:6px; }
 .ew-slash-row .ew-slash-name { font-weight:700; white-space:nowrap; }
 .ew-slash-row .ew-picker-kind { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* The "+" menu (bite 3R-b): the room composer's seat menu is one
+   small popup anchored above the "+" button — a fixed narrow width,
+   never the old full-width panel block. The composer becomes the
+   positioning context; the menu keeps .ew-picker's chrome, column
+   and scroll, and caps its own height. Only #ew-picker wears this
+   class (added at wire time); the console's picker is untouched. */
+.ew-composer { position:relative; }
+.ew-picker.ew-plus-menu { position:absolute; left:10px; bottom:calc(100% + 6px); width:340px; max-width:calc(100vw - 24px); max-height:min(560px, 70vh); z-index:60; gap:6px; box-shadow:0 12px 32px rgba(0,0,0,.35); }
+.ew-plus-head { display:flex; align-items:center; gap:6px; }
+.ew-plus-sub { display:flex; flex-direction:column; gap:6px; margin-left:12px; padding-left:8px; border-left:1px solid var(--border); }
+.ew-plus-file { display:none; }
+/* Mirror rows are state, not controls: dashed and unfilled, so a
+   vendor-brokered row never reads as something Helmian can arm. */
+.ew-lib-row.mirror { border-style:dashed; background:transparent; }
+.ew-plus-manage { text-decoration:none; }
 .ew-pills { display:flex; gap:6px; flex-wrap:wrap; }
 .ew-pill { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:999px; padding:2px 10px 2px 3px; font-size:12px; cursor:pointer; transition:border-color .15s, transform .1s; }
 .ew-pill:hover { border-color:var(--accent); }
@@ -794,6 +809,33 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-react-pop { position:fixed; z-index:70; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:8px; box-shadow:0 16px 40px rgba(0,0,0,.45); }
 .ew-react-pop-head { display:flex; align-items:center; justify-content:space-between; font-size:13px; font-weight:650; padding:0 2px 6px; }
 .ew-react-grid { max-height:264px; overflow:auto; }
+/* Maestro Library (face-library bite): the Change-face picker's
+   library grid, the pick preview, library faces in avatar slots, and
+   the reaction popover's library section. Library art was made on a
+   dark stage, so its tiles carry the face slot's stage colour
+   (#10151F, bite 2c) in every theme. */
+.ew-lib-sec { margin:10px 0 2px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; font-size:11px; }
+.ew-lib-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; flex:1; max-height:264px; overflow:auto; }
+.ew-lib-btn { display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px 2px; border:1px solid var(--border); background:#10151F; border-radius:10px; cursor:pointer; color:var(--text); font:inherit; transition:border-color .15s, transform .1s; }
+.ew-lib-btn:hover { border-color:var(--accent); transform:scale(1.03); }
+.ew-lib-btn.on { border-color:var(--accent); box-shadow:0 0 0 2px rgba(14,165,233,.35); }
+.ew-lib-btn img { width:40px; height:40px; border-radius:8px; object-fit:cover; display:block; }
+.ew-lib-btn-name { font-size:11px; font-weight:600; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-lib-preview { display:flex; align-items:center; justify-content:center; min-height:56px; padding:2px 0 4px; }
+.ew-lib-preview > img, .ew-lib-preview > video { width:56px; height:56px; border-radius:10px; object-fit:cover; background:#10151F; display:block; }
+.ew-lib-preview .ew-avatar { width:56px; height:56px; font-size:28px; }
+.ew-lib-preview .ew-avatar .hx-emoji { width:40px; height:40px; }
+.ew-avatar .ew-lib-face-img { width:100%; height:100%; object-fit:cover; display:block; }
+.ew-react-sec { padding-top:10px; }
+.ew-lib-react-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:4px; max-height:220px; overflow:auto; }
+.ew-lib-react-btn { display:flex; flex-direction:column; align-items:center; gap:2px; padding:5px 2px; border:1px solid var(--border); background:var(--bg); border-radius:8px; cursor:pointer; color:var(--text); font:inherit; transition:border-color .15s, transform .1s; }
+.ew-lib-react-btn:hover { border-color:var(--accent); transform:scale(1.04); }
+.ew-lib-react-btn.on { border-color:var(--accent); background:rgba(14,165,233,.16); box-shadow:0 0 0 2px rgba(14,165,233,.35); }
+.ew-lib-react-btn img { width:28px; height:28px; object-fit:contain; display:block; }
+.ew-lib-react-name { font-size:10px; font-weight:600; line-height:1.15; text-align:center; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-rchip .ew-rchip-face.ew-rchip-lib { object-fit:contain; }
+[data-theme="light"] .ew-lib-react-btn.on { background:rgba(11,110,153,.14); box-shadow:0 0 0 2px rgba(11,110,153,.3); }
+[data-theme="light"] .ew-lib-btn.on { box-shadow:0 0 0 2px rgba(11,110,153,.3); }
 /* The connect step is a form inside the form; an inset panel groups it
    as its own step. */
 .ew-ca-connect { background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:10px 12px 12px; }

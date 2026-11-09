@@ -82,6 +82,47 @@ export function voiceForSeat(seat) {
   return SEAT_VOICE_POOL[hash % SEAT_VOICE_POOL.length];
 }
 
+// Adapter-first device choice for the Kokoro load. The presence of
+// navigator.gpu is NOT proof WebGPU can run: a browser can expose the
+// API yet return a null adapter (no usable GPU, a blocked driver, a
+// headless shell), and a from_pretrained WebGPU attempt in that state
+// fails with "no available backend found" — and poisons the follow-on
+// WASM attempt, which then fails instantly with the same WebGPU error
+// (both proven live in the real room browser, 2026-11-08). So the
+// adapter is probed BEFORE any from_pretrained call: adapter in hand
+// -> WebGPU first, with the WASM catch-fallback kept for a genuine
+// WebGPU load failure; no adapter, a throwing probe, a probe that
+// hangs past the bound, or no API at all -> straight to WASM, WebGPU
+// never attempted. preferWasm (set when a load is abandoned as stuck)
+// skips the probe and WebGPU entirely.
+const KOKORO_ADAPTER_PROBE_MS = 10000;
+
+async function kokoroAdapterInHand(probeMs) {
+  const gpu = typeof navigator !== 'undefined' ? navigator.gpu : undefined;
+  if (!gpu || typeof gpu.requestAdapter !== 'function') return false;
+  let probe;
+  try {
+    probe = Promise.resolve(gpu.requestAdapter()).catch(() => null);
+  } catch { return false; }
+  let timer = null;
+  const bound = new Promise((resolve) => { timer = setTimeout(() => resolve(null), probeMs); });
+  const adapter = await Promise.race([probe, bound]);
+  clearTimeout(timer);
+  return adapter != null;
+}
+
+export async function loadKokoroEngine(mod, { preferWasm = false, probeMs = KOKORO_ADAPTER_PROBE_MS } = {}) {
+  const opts = { dtype: 'q8' };
+  if (!preferWasm && (await kokoroAdapterInHand(probeMs))) {
+    try {
+      return await mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'webgpu' });
+    } catch (err) {
+      console.warn('[voice] WebGPU failed, falling back to WASM:', err?.message ?? err);
+    }
+  }
+  return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'wasm' });
+}
+
 export function createVoiceController({
   Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition,
   synthesis = globalThis.speechSynthesis,
@@ -370,22 +411,11 @@ export function createVoiceController({
 
   function defaultKokoroLoader() {
     // The model downloads once, on first use, and is cached by the
-    // browser afterwards.
-    // Try WebGPU first (faster), fall back to WASM if it fails (mobile).
-    return importKokoro().then(async (mod) => {
-      const opts = { dtype: 'q8' };
-      const hasGpu = typeof navigator !== 'undefined' && navigator.gpu;
-      // Skipped once a load has been abandoned as stuck: a hang inside
-      // the WebGPU attempt never throws, so it can only be avoided.
-      if (hasGpu && !kokoroPreferWasm) {
-        try {
-          return await mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'webgpu' });
-        } catch (err) {
-          console.warn('[voice] WebGPU failed, falling back to WASM:', err?.message ?? err);
-        }
-      }
-      return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'wasm' });
-    });
+    // browser afterwards. The device is chosen adapter-first by
+    // loadKokoroEngine: WebGPU is attempted only with an adapter in
+    // hand, otherwise the load goes straight to WASM. kokoroPreferWasm
+    // — set when a load is abandoned as stuck — skips WebGPU entirely.
+    return importKokoro().then((mod) => loadKokoroEngine(mod, { preferWasm: kokoroPreferWasm }));
   }
 
   // One load, shared: warmup and any number of queued speaks all await

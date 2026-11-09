@@ -1,6 +1,7 @@
 import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -429,6 +430,47 @@ function voiceForSeat(seat) {
   return SEAT_VOICE_POOL[hash % SEAT_VOICE_POOL.length];
 }
 const KOKORO_SAMPLE_RATE = 24000;
+// Adapter-first device choice for the Kokoro load. The presence of
+// navigator.gpu is NOT proof WebGPU can run: a browser can expose the
+// API yet return a null adapter (no usable GPU, a blocked driver, a
+// headless shell), and a from_pretrained WebGPU attempt in that state
+// fails with "no available backend found" — and poisons the follow-on
+// WASM attempt, which then fails instantly with the same WebGPU error
+// (both proven live in the real room browser, 2026-11-08). So the
+// adapter is probed BEFORE any from_pretrained call: adapter in hand
+// -> WebGPU first, with the WASM catch-fallback kept for a genuine
+// WebGPU load failure; no adapter, a throwing probe, a probe that
+// hangs past the bound, or no API at all -> straight to WASM, WebGPU
+// never attempted. preferWasm (set when a load is abandoned as stuck)
+// skips the probe and WebGPU entirely.
+const KOKORO_ADAPTER_PROBE_MS = 10000;
+
+async function kokoroAdapterInHand(probeMs) {
+  const gpu = typeof navigator !== 'undefined' ? navigator.gpu : undefined;
+  if (!gpu || typeof gpu.requestAdapter !== 'function') return false;
+  let probe;
+  try {
+    probe = Promise.resolve(gpu.requestAdapter()).catch(() => null);
+  } catch { return false; }
+  let timer = null;
+  const bound = new Promise((resolve) => { timer = setTimeout(() => resolve(null), probeMs); });
+  const adapter = await Promise.race([probe, bound]);
+  clearTimeout(timer);
+  return adapter != null;
+}
+
+async function loadKokoroEngine(mod, { preferWasm = false, probeMs = KOKORO_ADAPTER_PROBE_MS } = {}) {
+  const opts = { dtype: 'q8' };
+  if (!preferWasm && (await kokoroAdapterInHand(probeMs))) {
+    try {
+      return await mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'webgpu' });
+    } catch (err) {
+      console.warn('[voice] WebGPU failed, falling back to WASM:', err?.message ?? err);
+    }
+  }
+  return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'wasm' });
+}
+
 function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition, synthesis = globalThis.speechSynthesis, Utterance = globalThis.SpeechSynthesisUtterance, kokoroLoader = null, makeAudioContext = null } = {}) {
   const supported = typeof Recognition === 'function';
   const canSpeak = typeof synthesis?.speak === 'function' && typeof Utterance === 'function';
@@ -672,22 +714,12 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     // Full URL for the CDN fallback (no inline import map: the page CSP
     // forbids inline scripts, which silently broke the map). The model
     // downloads once — warmed at voice-enable, see warmup() — and is
-    // cached by the browser afterwards.
-    // Try WebGPU first (faster), fall back to WASM if it fails (mobile).
-    return importKokoro().then(async (mod) => {
-      const opts = { dtype: 'q8' };
-      const hasGpu = typeof navigator !== 'undefined' && navigator.gpu;
-      // Skipped once a load has been abandoned as stuck: a hang inside
-      // the WebGPU attempt never throws, so it can only be avoided.
-      if (hasGpu && !kokoroPreferWasm) {
-        try {
-          return await mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'webgpu' });
-        } catch (err) {
-          console.warn('[voice] WebGPU failed, falling back to WASM:', err?.message ?? err);
-        }
-      }
-      return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'wasm' });
-    });
+    // cached by the browser afterwards. The device is chosen
+    // adapter-first by loadKokoroEngine: WebGPU is attempted only with
+    // an adapter in hand, otherwise the load goes straight to WASM.
+    // kokoroPreferWasm — set when a load is abandoned as stuck — skips
+    // WebGPU entirely.
+    return importKokoro().then((mod) => loadKokoroEngine(mod, { preferWasm: kokoroPreferWasm }));
   }
 
   // One load, shared: warmup and any number of queued speaks all await
@@ -2376,7 +2408,29 @@ async function loadProfile() {
 function renderAvatarPicker() {
   const container = $('#profile-avatars');
   if (!container) return;
-  container.replaceChildren(...AVATAR_EMOJIS.map(emoji => {
+  // Maestro Library faces lead the picker (face-library bite): the
+  // glossy avatar pieces as stills. A pick stores the piece's token in
+  // the same avatarEmoji field an emoji pick uses — one save path.
+  const libraryButtons = LIBRARY_FACES.map((face) => {
+    const token = libraryFaceToken(face.slug);
+    const btn = el('button', 'avatar-option avatar-option-lib' + (selectedAvatar === token ? ' selected' : ''), '');
+    btn.type = 'button';
+    btn.title = face.label;
+    btn.setAttribute('aria-label', 'Avatar ' + face.label);
+    const img = document.createElement('img');
+    img.src = libraryFaceStillUrl(face.slug, 128);
+    img.alt = '';
+    img.width = 28;
+    img.height = 28;
+    img.loading = 'lazy';
+    btn.append(img);
+    btn.onclick = () => {
+      selectedAvatar = token;
+      renderAvatarPicker();
+    };
+    return btn;
+  });
+  container.replaceChildren(...libraryButtons, ...AVATAR_EMOJIS.map(emoji => {
     const btn = el('button', 'avatar-option' + (selectedAvatar === emoji ? ' selected' : ''), emoji);
     btn.type = 'button';
     btn.setAttribute('aria-label', 'Avatar ' + emoji);
@@ -3506,7 +3560,7 @@ boot();
 // deploy that changed only the desk itself (most fixes) never reloaded
 // an open desk: Troy had to hard-refresh to see new work. A file that
 // disappears in a deploy reads as 'gone', which also counts as a change.
-const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/connector-panel.mjs', '/app/connector-menu.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
+const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/connector-panel.mjs', '/app/connector-menu.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/face-library.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
 (() => {
   let known = null; let offeredFor = null;
   const one = async (u) => { const r = await fetch(u, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' }); return r.ok ? (r.headers.get('etag') ?? 'noetag') : 'gone'; };

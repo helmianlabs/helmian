@@ -2,11 +2,13 @@
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
-import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, pickerModel, removeAttachment } from './composer-picker.mjs';
+import { UPLOAD_NOTE, addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment } from './composer-picker.mjs';
 import { clearConversationToggles, connectorsForTurn, level1Model, level2Model, providerForSeat, seatName, toggleConnector } from './connector-panel.mjs';
+import { menuForSeat } from './connector-menu.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
 import { createConnectFields } from './connect-fields.mjs';
 import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -482,10 +484,7 @@ function crewFaceImg(slug, fallback) {
   return img;
 }
 const crewSeatFaceImg = (provider) => crewFaceImg(crewFaceSlug(provider), () => seatFaceImg(provider));
-const crewOwnerFaceImg = () => crewFaceImg('owner', () => {
-  const face = myFace();
-  return face ? emojiNode(face) : h('span', { class: 'ew-crew-initial' }, (ws.profile?.nickname || 'You').slice(0, 1).toUpperCase());
-});
+const crewOwnerFaceImg = () => crewFaceImg('owner', () => ownerFaceFallback());
 // The rail's face slot: 28px rounded square (radius 8 — never a
 // circle) on the soft backing, with the status dot pinned at its
 // bottom-right over a surface ring, and the seat's live activity
@@ -555,10 +554,7 @@ function crewFaceClip(slug, stage, stillFallback) {
   return video;
 }
 const crewSeatFaceClip = (provider, stage) => crewFaceClip(crewFaceSlug(provider), stage, () => seatFaceImg(provider));
-const crewOwnerFaceClip = (stage) => crewFaceClip('owner', stage, () => {
-  const face = myFace();
-  return face ? emojiNode(face) : h('span', { class: 'ew-crew-initial' }, (ws.profile?.nickname || 'You').slice(0, 1).toUpperCase());
-});
+const crewOwnerFaceClip = (stage) => crewFaceClip('owner', stage, () => ownerFaceFallback());
 // Tab hidden → every crew clip pauses; visible again → each one
 // resumes at the clip its seat's current stage calls for.
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
@@ -614,6 +610,53 @@ function faceGrid(label, picked, onPick) {
     }, emojiNode(em))));
   };
   draw();
+  grid._redraw = draw;
+  return grid;
+}
+
+// ---------- Maestro Library faces (face-library bite) ----------
+// A member's stored face is one string with two vocabularies: an emoji
+// character (rendered through bite 1's map) or a Maestro Library token
+// (face-library.mjs). The library still renders in the same slots the
+// emoji face uses, with the crew pack's fallback discipline: a missing
+// file hands the slot to the member's initial, never an empty box —
+// and a client that predates the token simply never builds this node.
+function libraryFaceImg(token, size = 128) {
+  const slug = parseLibraryFaceToken(token);
+  if (!slug) return null;
+  const img = h('img', { class: 'ew-lib-face-img', src: libraryFaceStillUrl(slug, size), srcset: `${libraryFaceStillUrl(slug, 256)} 2x`, alt: '', loading: 'lazy' });
+  img.addEventListener('error', () => {
+    if (img.dataset.fbk) return;
+    img.dataset.fbk = '1';
+    img.replaceWith(h('span', { class: 'ew-crew-initial' }, (ws.profile?.nickname || 'You').slice(0, 1).toUpperCase()));
+  });
+  return img;
+}
+// The owner's face as a bare node (no .ew-avatar shell): the crew
+// rail's fallback behind the crew pack's owner still.
+function ownerFaceFallback() {
+  const face = myFace();
+  if (isLibraryFaceToken(face)) { const img = libraryFaceImg(face); if (img) return img; }
+  return face ? emojiNode(face) : h('span', { class: 'ew-crew-initial' }, (ws.profile?.nickname || 'You').slice(0, 1).toUpperCase());
+}
+// The Change-face picker's library section: the glossy avatar pieces
+// as stills with their names, one radio per piece. Picking stores the
+// piece's TOKEN through the same save path an emoji pick uses.
+function libraryFaceGrid(label, picked, onPick) {
+  const grid = h('div', { class: 'ew-lib-grid', role: 'radiogroup', 'aria-label': label });
+  const draw = () => {
+    grid.replaceChildren(...LIBRARY_FACES.map((f) => {
+      const token = libraryFaceToken(f.slug);
+      return h('button', {
+        type: 'button', class: `ew-lib-btn${picked() === token ? ' on' : ''}`, 'aria-checked': String(picked() === token),
+        title: f.use, 'aria-label': `Face: ${f.label}`,
+        onclick: () => { onPick(token); draw(); },
+      }, h('img', { src: libraryFaceStillUrl(f.slug, 128), srcset: `${libraryFaceStillUrl(f.slug, 256)} 2x`, alt: '', loading: 'lazy', width: 40, height: 40 }),
+        h('span', { class: 'ew-lib-btn-name' }, f.label));
+    }));
+  };
+  draw();
+  grid._redraw = draw;
   return grid;
 }
 
@@ -700,7 +743,8 @@ function renderMeFace() {
   const face = myFace();
   const name = ws.profile?.nickname || 'You';
   box.replaceChildren(
-    face ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(face)) : h('div', { class: 'ew-avatar' }, name.slice(0, 1).toUpperCase()),
+    isLibraryFaceToken(face) ? h('div', { class: 'ew-avatar lib-ava' }, libraryFaceImg(face))
+      : face ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(face)) : h('div', { class: 'ew-avatar' }, name.slice(0, 1).toUpperCase()),
     h('span', { class: 'name' }, name),
     h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: openMyFaceModal }, face ? 'Change face' : 'Pick a face'),
     h('button', { type: 'button', class: 'ew-icon sm ew-foot-toggle', 'aria-expanded': 'true', 'aria-controls': 'ew-channels-foot', 'aria-label': 'Collapse footer', title: 'Collapse footer', onclick: toggleFootCollapse }, '▾'),
@@ -710,15 +754,44 @@ function renderMeFace() {
 
 function openMyFaceModal() {
   let picked = myFace();
+  // The pick preview: a library pick plays its idle clip (the current
+  // picker shows motion — the emoji art is animated — so the library
+  // section answers with the piece's own motion), still-mode systems
+  // and a failed clip get the 256px still; an emoji pick previews
+  // through the emoji map, as before.
+  const preview = h('div', { class: 'ew-lib-preview' });
+  const drawPreview = () => {
+    const slug = parseLibraryFaceToken(picked);
+    if (slug) {
+      if (emojiStill()) { preview.replaceChildren(h('img', { src: libraryFaceStillUrl(slug, 256), alt: '', width: 56, height: 56 })); return; }
+      const video = h('video', { class: 'ew-lib-preview-video', muted: true, loop: true, playsinline: true, preload: 'metadata', poster: libraryFaceStillUrl(slug, 256), 'aria-hidden': 'true' });
+      video.muted = true;
+      video.src = libraryFaceClipUrl(slug);
+      video.addEventListener('error', () => { video.replaceWith(h('img', { src: libraryFaceStillUrl(slug, 256), alt: '', width: 56, height: 56 })); });
+      const p = video.play(); if (p && typeof p.catch === 'function') p.catch(() => {});
+      preview.replaceChildren(video);
+    } else if (picked) {
+      preview.replaceChildren(h('div', { class: 'ew-avatar emoji-ava ew-lib-preview-emoji' }, emojiNode(picked)));
+    } else {
+      preview.replaceChildren(h('span', { class: 'muted sm' }, 'No face picked — your initial shows.'));
+    }
+  };
+  const libGrid = libraryFaceGrid('Pick a Maestro Library face', () => picked, (token) => { picked = token; emGrid._redraw?.(); drawPreview(); });
+  const emGrid = faceGrid('Pick an emoji face', () => picked, (em) => { picked = em; libGrid._redraw?.(); drawPreview(); });
   openModal('Your face', [
     h('p', { class: 'muted sm' }, 'Your face shows next to your name here and on your messages, for everyone in this workspace.'),
-    h('div', { class: 'ew-row' }, faceGrid('Pick your face', () => picked, (em) => { picked = em; })),
+    preview,
+    h('p', { class: 'muted sm ew-lib-sec' }, 'Maestro Library'),
+    h('div', { class: 'ew-row' }, libGrid),
+    h('p', { class: 'muted sm ew-lib-sec' }, 'Emoji faces'),
+    h('div', { class: 'ew-row' }, emGrid),
     h('div', { class: 'ew-row' },
       h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => saveMyFace(null) }, 'No face — use my initial'),
       h('span', { class: 'ew-spacer' }),
       h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: closeModal }, 'Cancel'),
       h('button', { type: 'button', class: 'ew-btn primary sm', onclick: () => saveMyFace(picked) }, 'Save')),
   ]);
+  drawPreview();
 }
 
 async function saveMyFace(emoji) {
@@ -764,7 +837,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, pickerFacts: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null }, connectorToggles: {}, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -1899,13 +1972,41 @@ export function spokenMentionTags(customAgents = []) {
   return tags;
 }
 
-// ---------- composer "+" picker: agents, connectors, plugins, upload, web search ----------
-// The channel composer's one picker; the pure model in
-// composer-picker.mjs decides what can be attached and how it travels.
-// The model is AGENTS FIRST: the registry facts load once, and each
-// render builds the model for the agent that composer is talking to
-// (that agent's own group leads the six), or with no agent in context
-// (the desk, an unaddressed channel), where no group leads.
+// ---------- composer "+" menu: pick a seat, then that seat's own menu (bite 3R-b) ----------
+// The channel composer's one "+" menu. Troy's shape for it
+// (2026-11-08): press +, pick your agent, then THAT agent's own menu
+// opens — one small popup at the button, in the seat vendor's own
+// words and order, as close to the vendor's own product as the room
+// can honestly run. The menu DEFINITIONS are connector-menu.mjs
+// (bite 3R-a, frozen): per seat, the items and their order. The row
+// STATE comes from connector-panel.mjs — its Level 1 / Level 2
+// models stay the single source of row state — and the toggle store
+// is bite 3's, untouched: toggles are held per (seat, conversation)
+// in ws.connectorToggles, ride the next message as
+// metadata.connectors, and clear when that message lands — one
+// message only, never the next one's defaults, never another seat's
+// or another conversation's (SPEC §1.6/§3.4). Closing the menu (the
+// button, Escape, an outside press, or the send) never touches the
+// composer text; nothing in this section writes to the draft boxes.
+//
+// What the old full-width panel carried that this menu does not —
+// named, not silently dropped (the frozen definitions have no row
+// for either, and this bite does not fork them):
+// - By-name skill attach and bridge-plugin attach (the old per-agent
+//   groups). Skills ride the room's slash road now: type /name — the
+//   slash menu below is that road, and the road Troy settled for
+//   Helmian's own skills. Plugin attach has no seat-menu home yet;
+//   it waits on a definition, not a workaround.
+// - Registry connectors as note-only attachments (the old CONNECTORS
+//   group). The library toggles are the connector road now: an armed
+//   Helmian-brokered connector really rides the turn, which the
+//   note-only attach never did.
+// The session console's "+" keeps its own panel (app.js): a console
+// message addresses ONE session agent and its send carries no
+// connector toggles, so this menu's toggles would arm nothing there —
+// the console keeps the bridge attach panel its send can honour.
+// Same bare "+" face, different job.
+
 const PICKER_IDS = {
   channel: { panel: 'ew-picker', chips: 'ew-attach-chips' },
 };
@@ -1927,25 +2028,6 @@ export function pickerAgentContext({ which, cliProvider = null, channel = null, 
   return providers.find((p) => p !== 'maestro') ?? null;
 }
 
-async function loadPickerData() {
-  if (ws.pickerFacts) return ws.pickerFacts;
-  const [c, p, pl, tc, pr] = await Promise.allSettled([ws.ctx.api('/api/admin/cora/connectors'), ws.ctx.api('/api/admin/provider-connections'), ws.ctx.api('/api/admin/plugins'), ws.ctx.api('/api/admin/tool-connections'), ws.ctx.api('/api/admin/envoy/runner/presence')]);
-  ws.pickerFacts = {
-    connectors: c.status === 'fulfilled' ? c.value ?? {} : {}, providers: p.status === 'fulfilled' ? p.value ?? {} : {}, plugins: pl.status === 'fulfilled' ? pl.value ?? {} : {},
-    toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null,
-    presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null,
-  };
-  return ws.pickerFacts;
-}
-
-function currentPickerModel(which) {
-  const agent = pickerAgentContext({
-    which,
-    channel: openChannel(),
-    draft: $('maestro-input')?.value ?? '',
-  });
-  return pickerModel({ ...ws.pickerFacts, agent });
-}
 function renderAttachChips(which) {
   const box = $(PICKER_IDS[which].chips); if (!box) return;
   const list = ws.attach[which];
@@ -1972,31 +2054,26 @@ function renderAttachChips(which) {
   box.hidden = !chips.length;
   box.replaceChildren(...chips);
 }
+
 function closePicker() {
   ws.pickerFor = null;
   for (const { panel } of Object.values(PICKER_IDS)) { const p = $(panel); if (p) p.hidden = true; }
 }
+
 async function togglePicker(which) {
   if (ws.pickerFor === which) { closePicker(); return; }
   ws.pickerFor = which;
-  // The library always opens on Level 1 (pick the seat, SPEC §1.1).
-  ws.libraryPanel = { level: 1, seatId: null };
+  // The menu always opens on Level 1 (pick the seat).
+  ws.libraryPanel = { level: 1, seatId: null, sub: null };
   await renderPicker(which);
 }
-// ---------- composer "+" library: per-seat connector libraries (SPEC §1.1 Surface A, bite 3) ----------
-// The library section leads the "+" panel. Level 1 picks the seat
-// (face, name, connected count); Level 2 is that seat's library, read
-// from GET /api/admin/connector-library (the Bite 2 read behind the
-// Bite 3 route). The pure model in connector-panel.mjs shapes both
-// levels and owns the toggle store: toggles are held per (seat,
-// conversation) in ws.connectorToggles, ride the next message as
-// metadata.connectors, and are cleared when that message lands — one
-// message only, never the next one's defaults, never another seat's
-// or another conversation's (SPEC §1.6/§3.4). Closing the panel never
-// touches the composer text; nothing in this section writes to the
-// draft boxes.
-// The conversation a composer's toggles belong to: the open channel
-// (panel and send always name the same conversation).
+
+// ---------- the menu's data: per-seat connector libraries (SPEC §1.1, bite 3) ----------
+// The reads behind both levels. Level 1 picks the seat (face, name,
+// connected count); Level 2 is that seat's library, read from
+// GET /api/admin/connector-library (the Bite 2 read behind the Bite 3
+// route). The conversation a composer's toggles belong to: the open
+// channel (menu and send always name the same conversation).
 function conversationIdFor(which) {
   return `channel:${ws.channelId ?? 'none'}`;
 }
@@ -2043,7 +2120,7 @@ function librarySeatFace(seatId) {
 function libraryIconTile(row) {
   return h('span', { class: 'ew-lib-icon', 'aria-hidden': 'true' }, (row.name ?? '?').slice(0, 1).toUpperCase());
 }
-function libraryRowNode(which, row) {
+function libraryRowNode(which, row, { shape = null } = {}) {
   const vendorLine = row.mirror
     ? `${row.vendorLabel} · ${row.trustText} · Managed in ${row.mirror.managedIn}`
     : `${row.vendorLabel} · ${row.trustText}`;
@@ -2063,143 +2140,194 @@ function libraryRowNode(which, row) {
     // A mirror row is never a button Helmian can't honour (§1.5): it
     // shows the state the vendor side last reported, and its one
     // action is the deep link to the vendor's own management surface.
-    return h('div', { class: 'ew-picker-row ew-lib-row mirror' }, libraryIconTile(row), text,
+    return h('div', { class: `ew-picker-row ew-lib-row mirror${shape === 'state' ? ' state' : ''}` }, libraryIconTile(row), text,
       h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel),
       ...(row.mirror.manageUrl ? [h('a', { class: 'ew-lib-manage', href: row.mirror.manageUrl, target: '_blank', rel: 'noreferrer', title: `${row.name} is connected in ${row.mirror.managedIn} — Helmian only shows its state` }, `Manage in ${row.mirror.managedIn}`)] : []));
   }
   return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
     h('span', { class: 'ew-picker-state off' }, row.stateLabel));
 }
-function renderLibrarySection(which) {
-  const head = h('div', { class: 'ew-subhead' }, 'CONNECTOR LIBRARY');
+
+// The Level 2 model: one seat's menu definition composed with that
+// seat's library read and the toggle store. Pure, so it is unit
+// tested like the models it composes: connector-menu.mjs decides
+// shape, order and words; connector-panel.mjs's Level 2 model
+// decides row state; this decides only how the two meet on the face.
+// Rows are descriptors the renderer maps to nodes:
+//   { kind: 'attach', label }
+//   { kind: 'capability', label, capability, on }  (web search only)
+//   { kind: 'label', label }                       (a group heading)
+//   { kind: 'note', text }
+//   { kind: 'toggle' | 'mirror' | 'row', row, rowShape }
+//   { kind: 'submenu', label, rows }
+//   { kind: 'manage', label, target, url }
+// A connector group binds its rows from the read by entry id, in the
+// definition's own order. A group that resolves to no rows — a
+// feed-bound group whose read lands in a later bite, an entry set
+// the catalog does not hold yet — renders one honest note row, never
+// a dead control.
+export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false } = {}) {
+  const definition = menuForSeat(seatId);
+  if (!definition) return null;
+  const byId = new Map();
+  if (library && !library.error) {
+    const model = level2Model(library, toggles, conversationId);
+    for (const row of [...model.connected, ...model.catalog]) byId.set(row.entryId, row);
+  }
+  const boundRows = (item) => {
+    if (!Array.isArray(item.entryIds)) return null;
+    const rows = item.entryIds.map((id) => byId.get(id)).filter(Boolean);
+    return rows.length ? rows : null;
+  };
+  const groupRows = (item, rowShape) => {
+    const out = [];
+    if (item.label) out.push({ kind: 'label', label: item.label });
+    if (item.note) out.push({ kind: 'note', text: item.note });
+    if (!library) { out.push({ kind: 'note', text: `Loading ${seatName(seatId)}'s library...` }); return out; }
+    if (library.error) { out.push({ kind: 'note', text: 'This library could not be loaded.' }); return out; }
+    const rows = boundRows(item);
+    if (!rows) { out.push({ kind: 'note', text: 'Nothing here yet.' }); return out; }
+    for (const row of rows) out.push({ kind: row.toggleable ? 'toggle' : row.mirror ? 'mirror' : 'row', row, rowShape });
+    if (rowShape === 'state') out.push({ kind: 'note', text: 'On for the whole account — name it in a message to use it.' });
+    return out;
+  };
+  const itemRows = (item) => {
+    switch (item?.type) {
+      case 'attach': return [{ kind: 'attach', label: item.label }];
+      case 'capability':
+        // Only web search has a real road in this composer — the
+        // per-message webSearch flag every consumer already reads.
+        // Any other capability key renders nothing rather than a row
+        // the room cannot run for this seat (REPORT §6).
+        return item.capability === 'web-search'
+          ? [{ kind: 'capability', label: item.label, capability: item.capability, on: webSearchOn === true }]
+          : [];
+      case 'live-toggle-group': return groupRows(item, 'mirror');
+      case 'mirror-group': return groupRows(item, item.rowShape ?? 'mirror');
+      case 'submenu': return [{ kind: 'submenu', label: item.label, rows: (item.items ?? []).flatMap(itemRows) }];
+      case 'manage-link': return [{ kind: 'manage', label: item.label, target: item.target, url: item.url ?? null }];
+      default: return [];
+    }
+  };
+  return Object.freeze({
+    seatId,
+    seatName: seatName(seatId),
+    rows: Object.freeze(definition.flatMap(itemRows)),
+  });
+}
+
+function renderPlusMenuLevel1(which) {
   const facts = ws.libraryFacts;
   if (!facts) {
     void loadLibraryFacts().then(() => { if (ws.pickerFor === which) renderPicker(which); });
-    return [h('div', { class: 'ew-picker-group' }, head, h('p', { class: 'ew-note' }, 'Loading libraries...'))];
-  }
-  if (ws.libraryPanel.level === 2 && ws.libraryPanel.seatId) {
-    const seatId = ws.libraryPanel.seatId;
-    const library = facts.libraries[seatId];
-    if (!library) {
-      void loadSeatLibrary(seatId).then(() => { if (ws.pickerFor === which) renderPicker(which); });
-      return [h('div', { class: 'ew-picker-group' }, head, h('p', { class: 'ew-note' }, `Loading ${seatName(seatId)}'s library...`))];
-    }
-    const back = h('button', { type: 'button', class: 'ew-btn sm ghost ew-lib-back', onclick: () => { ws.libraryPanel = { level: 1, seatId: null }; renderPicker(which); } }, '‹ All agents');
-    const title = h('div', { class: 'ew-subhead' }, `${seatName(seatId).toUpperCase()}'S LIBRARY`);
-    if (library.error) {
-      return [h('div', { class: 'ew-picker-group' }, back, title, h('p', { class: 'ew-note' }, 'This library could not be loaded.'))];
-    }
-    const model = level2Model(library, ws.connectorToggles, conversationIdFor(which));
-    const nodes = [back, title, h('p', { class: 'ew-note' }, 'Toggles ride your next message in this conversation, for this agent only.')];
-    if (model.connected.length) nodes.push(h('div', { class: 'ew-subhead' }, 'CONNECTED'), ...model.connected.map((row) => libraryRowNode(which, row)));
-    if (model.catalog.length) nodes.push(h('div', { class: 'ew-subhead' }, 'LIBRARY'), ...model.catalog.map((row) => libraryRowNode(which, row)));
-    if (!model.connected.length && !model.catalog.length) nodes.push(h('p', { class: 'ew-note' }, 'Nothing in this library yet.'));
-    nodes.push(h('button', { type: 'button', class: 'ew-picker-row', disabled: true, title: model.customRow.note },
-      h('span', {}, model.customRow.label), h('span', { class: 'ew-picker-state off' }, 'Not available yet')));
-    return [h('div', { class: 'ew-picker-group' }, ...nodes)];
+    return [h('p', { class: 'ew-note' }, 'Loading libraries...')];
   }
   const model = level1Model(facts.seats);
-  const rows = model.rows.map((seat) => h('button', { type: 'button', class: 'ew-picker-row ew-lib-seat', title: `See ${seat.name}'s connector library`, onclick: () => {
-    ws.libraryPanel = { level: 2, seatId: seat.seatId };
+  const rows = model.rows.map((seat) => h('button', { type: 'button', class: 'ew-picker-row ew-lib-seat', title: `See ${seat.name}'s menu`, onclick: () => {
+    ws.libraryPanel = { level: 2, seatId: seat.seatId, sub: null };
     void loadSeatLibrary(seat.seatId).then(() => { if (ws.pickerFor === which) renderPicker(which); });
     renderPicker(which);
   } },
     librarySeatFace(seat.seatId),
     h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, seat.name)),
     h('span', { class: 'ew-picker-state' }, seat.connectedCount ? `${seat.connectedCount} connected` : 'None connected')));
-  return [h('div', { class: 'ew-picker-group' }, head,
-    h('p', { class: 'ew-note' }, 'Pick an agent — you get that agent\'s own library.'),
-    ...(rows.length ? rows : [h('p', { class: 'ew-note' }, facts.error ? 'The libraries could not be loaded.' : 'No libraries in this workspace yet.')]))];
+  return rows.length ? rows : [h('p', { class: 'ew-note' }, facts.error ? 'The libraries could not be loaded.' : 'No libraries in this workspace yet.')];
 }
 
-async function renderPicker(which) {
+function renderPlusMenuLevel2(which) {
+  const seatId = ws.libraryPanel.seatId;
+  const library = ws.libraryFacts?.libraries?.[seatId] ?? null;
+  if (!library) {
+    void loadSeatLibrary(seatId).then(() => { if (ws.pickerFor === which) renderPicker(which); });
+  }
+  const model = plusMenuLevel2Model({ seatId, library, toggles: ws.connectorToggles, conversationId: conversationIdFor(which), webSearchOn: ws.webSearch[which] === true });
+  const back = h('button', { type: 'button', class: 'ew-btn sm ghost ew-lib-back', onclick: () => { ws.libraryPanel = { level: 1, seatId: null, sub: null }; renderPicker(which); } }, '‹ All agents');
+  const head = h('div', { class: 'ew-plus-head' }, back, h('strong', {}, seatName(seatId)));
+  if (!model) return [head, h('p', { class: 'ew-note' }, 'This menu could not be loaded.')];
+  return [head, ...model.rows.map((row, i) => plusMenuRowNode(which, row, i))];
+}
+
+// The attach row: the room's upload, on the menu's first row. The
+// file input itself stays hidden in the row's group; picking a file
+// runs the same refusal-then-read path the old panel ran, and the
+// file joins the same attach list the chips render.
+function attachRowNode(which, row) {
+  const note = h('p', { class: 'ew-note' });
+  note.hidden = true;
+  const fileInput = h('input', { type: 'file', class: 'ew-file-input ew-plus-file', 'aria-label': 'Choose a file to attach to this message' });
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = '';
+    if (!file) return;
+    // Refuse on name/type/size before reading a single byte.
+    const refusal = fileRefusalReason({ name: file.name, mediaType: file.type || '', size: file.size });
+    if (refusal) { note.textContent = refusal; note.hidden = false; return; }
+    try {
+      const data = await readFileAsBase64(file);
+      const r = addAttachment(ws.attach[which], { kind: 'file', name: file.name, mediaType: file.type || '', size: file.size, data });
+      if (!r.added) { note.textContent = r.reason; note.hidden = false; return; }
+      ws.attach[which] = r.list;
+      renderAttachChips(which); renderPicker(which);
+    } catch { note.textContent = 'That file could not be read.'; note.hidden = false; }
+  });
+  const btn = h('button', { type: 'button', class: 'ew-picker-row', title: UPLOAD_NOTE, onclick: () => fileInput.click() },
+    h('span', {}, row.label));
+  return h('div', { class: 'ew-picker-group' }, btn, fileInput, note);
+}
+
+function plusMenuRowNode(which, row, index) {
+  switch (row.kind) {
+    case 'attach': return attachRowNode(which, row);
+    case 'capability': {
+      const on = row.on;
+      return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: on ? 'Web search is on for this message — tap to turn it off' : 'Turn web search on for this message', onclick: () => {
+        ws.webSearch[which] = !on;
+        renderAttachChips(which); renderPicker(which);
+      } }, h('span', {}, row.label), h('span', { class: 'ew-picker-kind' }, 'per message'), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'On' : 'Off'));
+    }
+    case 'label': return h('div', { class: 'ew-subhead' }, row.label);
+    case 'note': return h('p', { class: 'ew-note' }, row.text);
+    case 'toggle': case 'mirror': case 'row': return libraryRowNode(which, row.row, { shape: row.rowShape });
+    case 'submenu': {
+      const open = ws.libraryPanel.sub === index;
+      const head = h('button', { type: 'button', class: 'ew-picker-row', 'aria-expanded': String(open), onclick: () => {
+        ws.libraryPanel = { ...ws.libraryPanel, sub: open ? null : index };
+        renderPicker(which);
+      } }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, open ? '▾' : '›'));
+      if (!open) return head;
+      return h('div', { class: 'ew-picker-group' }, head,
+        h('div', { class: 'ew-plus-sub' }, ...row.rows.map((r, i) => plusMenuRowNode(which, r, i))));
+    }
+    case 'manage': {
+      if (row.target === 'vendor' && row.url) {
+        return h('a', { class: 'ew-picker-row ew-plus-manage', href: row.url, target: '_blank', rel: 'noreferrer', title: `${row.label} — opens in a new tab` },
+          h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
+      }
+      if (row.target === 'integrations') {
+        return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', onclick: () => {
+          closePicker();
+          document.querySelector('.nav-item[data-view="integrations"]')?.click();
+        } }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
+      }
+      // A manage row whose address the shipped data does not carry
+      // yet (Mistral's, until a later bite supplies it): the row
+      // stands, disabled — never a link to nowhere.
+      return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', disabled: true, title: 'This address is not in the library data yet' },
+        h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Not available yet'));
+    }
+    default: return h('p', { class: 'ew-note' }, '');
+  }
+}
+
+function renderPicker(which) {
   const panel = $(PICKER_IDS[which].panel); if (!panel) return;
   if (ws.pickerFor !== which) { panel.hidden = true; return; }
   panel.hidden = false;
-  if (!ws.pickerFacts) await loadPickerData().catch(() => {});
-  if (ws.pickerFor !== which) return; // closed while the registry loaded
-  const model = ws.pickerFacts ? currentPickerModel(which) : pickerModel();
-  const attached = new Set(ws.attach[which].map(attachmentKey));
-  const groups = [];
-  for (const g of model.groups) {
-    if (g.id === 'agent') {
-      // One of the six agents' own groups: its own connection as a
-      // status row (never an attachment), its by-name skills, and the
-      // bridge plugins it can be handed — each with its truthful state
-      // from the model.
-      const nameInput = h('input', { class: 'ew-picker-input', maxlength: 64, placeholder: 'Skill name — e.g. deploy, or plugin:skill', 'aria-label': 'Skill name' });
-      const note = h('p', { class: 'ew-note' });
-      const add = h('button', { type: 'button', class: 'ew-btn sm', onclick: () => {
-        const r = addAttachment(ws.attach[which], { kind: 'skill', name: nameInput.value });
-        if (!r.added) { note.textContent = r.reason; return; }
-        ws.attach[which] = r.list; note.textContent = '';
-        renderAttachChips(which); renderPicker(which);
-      } }, 'Attach skill');
-      const rows = g.items.map((item) => {
-        if (item.kind === 'provider') {
-          return h('button', { type: 'button', class: 'ew-picker-row', disabled: true, title: `${item.name} is the agent you are talking to — this is its own connection` },
-            h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.state === 'connected' ? 'on' : 'off'}` }, item.stateLabel));
-        }
-        const on = attached.has(`plugin:${item.name}`);
-        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`, onclick: () => {
-          if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'plugin', name: item.name }); renderAttachChips(which); renderPicker(which); return; }
-          const r = addAttachment(ws.attach[which], { kind: 'plugin', name: item.name }, { catalog: g.items });
-          if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
-        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.brings), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'Attached' : item.stateLabel));
-      });
-      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, g.title.toUpperCase()), h('p', { class: 'ew-note' }, g.note), h('div', { class: 'ew-row' }, nameInput, add), note, ...rows));
-    } else if (g.id === 'connectors') {
-      const rows = g.items.map((item) => {
-        const on = attached.has(`connector:${item.key}`);
-        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, disabled: item.connected ? null : true, title: item.connected ? (on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message — it rides as a note for the agent`) : `${item.name}: ${item.statusText ?? 'Not connected'}`, onclick: () => {
-          if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'connector', key: item.key }); renderAttachChips(which); renderPicker(which); return; }
-          const r = addAttachment(ws.attach[which], { kind: 'connector', key: item.key }, { catalog: g.items });
-          if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
-        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.kindLabel), h('span', { class: `ew-picker-state ${item.connected ? 'on' : 'off'}` }, on ? 'Attached' : item.stateLabel));
-      });
-      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'CONNECTORS'), ...(g.note ? [h('p', { class: 'ew-note' }, g.note)] : []), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No connectors in the registry.')])));
-    } else if (g.id === 'plugins') {
-      const rows = g.items.map((item) => {
-        const on = attached.has(`plugin:${item.name}`);
-        return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: on ? `Remove ${item.name} from this message` : `Attach ${item.name} to this message`, onclick: () => {
-          if (on) { ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'plugin', name: item.name }); renderAttachChips(which); renderPicker(which); return; }
-          const r = addAttachment(ws.attach[which], { kind: 'plugin', name: item.name }, { catalog: g.items });
-          if (r.added) { ws.attach[which] = r.list; renderAttachChips(which); renderPicker(which); }
-        } }, h('span', {}, item.name), h('span', { class: 'ew-picker-kind' }, item.brings), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'Attached' : item.stateLabel));
-      });
-      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'PLUGINS'), h('p', { class: 'ew-note' }, g.note), ...(rows.length ? rows : [h('p', { class: 'ew-note' }, 'No plugins installed on your PC bridge yet.')])));
-    } else if (g.id === 'upload') {
-      const note = h('p', { class: 'ew-note' }, g.note);
-      const fileInput = h('input', { type: 'file', class: 'ew-file-input', 'aria-label': 'Choose a file to attach to this message' });
-      fileInput.addEventListener('change', async () => {
-        const file = fileInput.files?.[0];
-        fileInput.value = '';
-        if (!file) return;
-        // Refuse on name/type/size before reading a single byte.
-        const refusal = fileRefusalReason({ name: file.name, mediaType: file.type || '', size: file.size });
-        if (refusal) { note.textContent = refusal; return; }
-        try {
-          const data = await readFileAsBase64(file);
-          const r = addAttachment(ws.attach[which], { kind: 'file', name: file.name, mediaType: file.type || '', size: file.size, data });
-          if (!r.added) { note.textContent = r.reason; return; }
-          ws.attach[which] = r.list;
-          renderAttachChips(which); renderPicker(which);
-        } catch { note.textContent = 'That file could not be read.'; }
-      });
-      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'UPLOAD'), fileInput, note));
-    } else if (g.id === 'web-search') {
-      const on = ws.webSearch[which] === true;
-      const row = h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: on ? 'Web search is on for this message — tap to turn it off' : 'Turn web search on for this message', onclick: () => {
-        ws.webSearch[which] = !on;
-        renderAttachChips(which); renderPicker(which);
-      } }, h('span', {}, 'Web search'), h('span', { class: 'ew-picker-kind' }, 'per message'), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'On' : 'Off'));
-      groups.push(h('div', { class: 'ew-picker-group' }, h('div', { class: 'ew-subhead' }, 'WEB SEARCH'), h('p', { class: 'ew-note' }, g.note), row));
-    }
+  if (ws.libraryPanel.level === 2 && ws.libraryPanel.seatId) {
+    panel.replaceChildren(...renderPlusMenuLevel2(which));
+  } else {
+    panel.replaceChildren(...renderPlusMenuLevel1(which));
   }
-  panel.replaceChildren(
-    h('div', { class: 'ew-picker-head' }, h('strong', {}, 'Add to this message'), h('span', { class: 'ew-spacer' }), h('button', { type: 'button', class: 'ew-icon', 'aria-label': 'Close picker', onclick: () => closePicker() }, '×')),
-    ...renderLibrarySection(which),
-    ...groups);
 }
 
 // ---------- composer "/" menu: the workspace's slash commands ----------
@@ -2443,7 +2571,7 @@ function renderMessages() {
       ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${motionCls ? ` ${motionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : msgSeatAvatar(who.provider, liveMotion.get(who.provider) ?? null))
       : who.kind === 'me'
         ? msgOwnerAvatar()
-        : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
+        : (who.authorEmoji ? (isLibraryFaceToken(who.authorEmoji) ? h('div', { class: 'ew-avatar lib-ava' }, libraryFaceImg(who.authorEmoji)) : h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji))) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
     const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
     const src = who.kind === 'agent'
       ? h('span', { class: 'ew-src agent' }, who.custom?.jobTitle ? `AGENT · ${who.custom.jobTitle}` : 'AGENT')
@@ -2483,6 +2611,16 @@ function renderMessages() {
 // message's full new summary). Unicode stays the data there too — the
 // store keeps bite 1's SLUG, the desk renders the slug's own art, and a
 // slug this build ships no art for never renders as a broken image.
+//
+// Face-library extension: Maestro Library pieces ride the same store
+// under 'lib-<name>' slugs with pack 'maestro-library' (the pack seam
+// sql/068 built). The desk renders a library slug's still from
+// face-library.mjs; the chip model carries library entries beside
+// emoji entries, and an entry neither vocabulary knows is dropped, so
+// a slug with no art never renders. NOTE: the store still validates
+// against the emoji map — library toggles answer
+// ENVOY_REACTION_EMOJI_UNSUPPORTED until the named server gap
+// (FACE-LIBRARY-REPORT.md) lands; the desk's failure toast covers it.
 // Live updates: the desk has no Ably client (the server's `reaction`
 // mirror event has no subscriber here), so agent reactions land via the
 // message poll — loadMessages refreshes the summaries on a throttle
@@ -2495,13 +2633,23 @@ export function reactionActorLabel(actors = []) {
 }
 // One message's chip model from a bite-2 summary entry list: server
 // order preserved, unknown slugs and empty counts dropped, the slugs
-// the signed-in member has on flagged as mine.
+// the signed-in member has on flagged as mine. Library entries carry
+// library:true, the piece name and its spoken label, and char:null —
+// the two vocabularies share one chip row without pretending a library
+// piece is an emoji.
 export function reactionChipModel(summary = [], mine = []) {
   const mineSet = new Set(mine ?? []);
   const out = [];
   for (const e of summary ?? []) {
+    if (!(e?.count > 0)) continue;
+    const libName = libraryReactionName(e?.emoji);
+    if (libName) {
+      const piece = libraryReaction(libName);
+      out.push({ slug: e.emoji, char: null, library: true, name: libName, label: piece.label, count: e.count, mine: mineSet.has(e.emoji), actors: reactionActorLabel(e.actors) });
+      continue;
+    }
     const char = reactionChar(e?.emoji);
-    if (!char || !(e?.count > 0)) continue;
+    if (!char) continue;
     out.push({ slug: e.emoji, char, count: e.count, mine: mineSet.has(e.emoji), actors: reactionActorLabel(e.actors) });
   }
   return out;
@@ -2521,13 +2669,15 @@ export function mergeReactionPost(state, body) {
   }
   return { byId, mine };
 }
-const reactionFace = (slug) => h('img', { class: 'hx-emoji ew-rchip-face', src: emojiAssetUrl(slug, { still: emojiStill() }), alt: '', 'aria-hidden': 'true', loading: 'lazy' });
+const reactionFace = (slug) => libraryReactionName(slug)
+  ? h('img', { class: 'hx-emoji ew-rchip-face ew-rchip-lib', src: libraryReactionStillUrl(slug), alt: '', 'aria-hidden': 'true', loading: 'lazy' })
+  : h('img', { class: 'hx-emoji ew-rchip-face', src: emojiAssetUrl(slug, { still: emojiStill() }), alt: '', 'aria-hidden': 'true', loading: 'lazy' });
 function reactionChipKids(messageId) {
   if (ws.reactions.channelId !== ws.channelId) return [];
   return reactionChipModel(ws.reactions.byId[messageId], ws.reactions.mine[messageId]).map((c) => h('button', {
     type: 'button', class: `ew-rchip${c.mine ? ' mine' : ''}`,
     title: c.actors || 'Reaction', 'aria-pressed': String(c.mine),
-    'aria-label': `${c.char} reaction, ${c.count} ${c.count === 1 ? 'person' : 'people'}${c.mine ? ', including you' : ''} — activate to ${c.mine ? 'remove yours' : 'add yours'}`,
+    'aria-label': `${c.library ? c.label : c.char} reaction, ${c.count} ${c.count === 1 ? 'person' : 'people'}${c.mine ? ', including you' : ''} — activate to ${c.mine ? 'remove yours' : 'add yours'}`,
     onclick: () => toggleReaction(messageId, c.slug),
   }, reactionFace(c.slug), h('span', { class: 'ew-rchip-count' }, String(c.count))));
 }
@@ -2611,12 +2761,24 @@ function openReactionPicker(messageId, anchor) {
   const mine = new Set(ws.reactions.mine[messageId] ?? []);
   const grid = h('div', { class: 'ew-emoji-grid ew-react-grid', role: 'group', 'aria-label': 'Emoji' },
     ...Object.entries(EMOJI_MAP).map(([ch, slug]) => h('button', { type: 'button', class: `ew-emoji-btn${mine.has(slug) ? ' on' : ''}`, title: slug, 'aria-label': `React with ${slug}`, 'aria-pressed': String(mine.has(slug)), onclick: () => { closeReactionPicker(); toggleReaction(messageId, slug); } }, emojiNode(ch))));
+  // The Maestro Library section: the glossy reaction pieces as stills
+  // with their names — the library's own grid, under its own heading,
+  // riding the same toggle road as the emoji grid above it.
+  const libGrid = h('div', { class: 'ew-lib-react-grid', role: 'group', 'aria-label': 'Maestro Library reactions' },
+    ...LIBRARY_REACTIONS.map((piece) => {
+      const slug = libraryReactionSlug(piece.name);
+      return h('button', { type: 'button', class: `ew-lib-react-btn${mine.has(slug) ? ' on' : ''}`, title: piece.use, 'aria-label': `React with ${piece.label}`, 'aria-pressed': String(mine.has(slug)), onclick: () => { closeReactionPicker(); toggleReaction(messageId, slug); } },
+        h('img', { src: libraryReactionStillUrl(piece.name), alt: '', loading: 'lazy', width: 28, height: 28 }),
+        h('span', { class: 'ew-lib-react-name' }, piece.label));
+    }));
   reactionPop.replaceChildren(
     h('div', { class: 'ew-react-pop-head' }, h('span', {}, 'React'), h('button', { type: 'button', class: 'ew-chip-x', 'aria-label': 'Close reaction picker', onclick: closeReactionPicker }, '×')),
-    grid);
+    grid,
+    h('div', { class: 'ew-react-pop-head ew-react-sec' }, h('span', {}, 'Maestro Library')),
+    libGrid);
   reactionPop.hidden = false;
   const r = anchor.getBoundingClientRect();
-  const w = Math.min(324, window.innerWidth - 16);
+  const w = Math.min(384, window.innerWidth - 16);
   reactionPop.style.width = `${w}px`;
   const popH = reactionPop.offsetHeight;
   reactionPop.style.top = `${r.bottom + 6 + popH <= window.innerHeight ? r.bottom + 6 : Math.max(8, r.top - 6 - popH)}px`;
@@ -3125,6 +3287,17 @@ function wire() {
   box.addEventListener('keydown', (e) => { slashKeydown('channel', e); });
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
   $('maestro-plus').addEventListener('click', () => togglePicker('channel'));
+  // The "+" menu wears its popup shape from here (bite 3R-b): the
+  // panel element keeps .ew-picker's chrome; this class narrows it
+  // and anchors it above the button (envoy.css).
+  $('ew-picker')?.classList.add('ew-plus-menu');
+  // An outside press closes the menu, like the reaction picker below:
+  // the button itself is excluded — its own click toggles.
+  document.addEventListener('pointerdown', (e) => {
+    if (!ws.pickerFor) return;
+    const panel = $(PICKER_IDS[ws.pickerFor].panel);
+    if (panel && !panel.hidden && !panel.contains(e.target) && !$('maestro-plus')?.contains(e.target)) closePicker();
+  });
   $('maestro-mention-all')?.addEventListener('click', () => setCrewTarget('all'));
   $('maestro-mention')?.addEventListener('click', insertAtSignAtCaret);
   $('ew-debate-toggle')?.addEventListener('click', openDebateModal);
