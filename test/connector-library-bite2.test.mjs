@@ -262,8 +262,9 @@ test('catalog data: every seat’s definitions are well-formed, unique per seat,
       } else {
         assert.ok(def.mcpEndpointUrl?.startsWith('https://'), `${seatId}/${def.id}: helmian entry carries its endpoint`);
       }
-      // The two natives are in every seat's library (§3.2).
-      assert.ok(ids.has('helmian-github') && ids.has('helmian-scribe'), `${seatId}: natives present`);
+      // The native is in every seat's library (§3.2) — and the cut
+      // Scribe entry is in none of them (Scribe × Helmian separation).
+      assert.ok(ids.has('helmian-github') && !ids.has('helmian-scribe'), `${seatId}: native present, scribe absent`);
     }
   }
 });
@@ -286,10 +287,9 @@ test('brokerMode follows §3.1: vendor-brokered ecosystems mirror; only reachabl
   assert.equal(byId('cloudflare', 'cloudflare-docs').brokerMode, 'helmian');
   // Natives are Helmian's own pipes.
   assert.equal(byId('owner', 'helmian-github').brokerMode, 'helmian');
-  assert.equal(byId('owner', 'helmian-scribe').brokerMode, 'helmian');
   // Seats with no documented vendor library seed Source 2 only.
   for (const seat of ['mistral', 'groq', 'nvidia', 'openrouter', 'qwen', 'muse', 'maestro', 'helm', 'owner']) {
-    assert.equal(catalogEntriesForSeat(seat).length, 2, `${seat}: natives only`);
+    assert.equal(catalogEntriesForSeat(seat).length, 1, `${seat}: natives only`);
   }
 });
 

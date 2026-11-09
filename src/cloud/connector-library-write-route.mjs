@@ -10,15 +10,14 @@
 //       authMode "header" → returns the vault reference the person's
 //                           key must be stored under (the record will
 //                           hold the reference, never the key).
-//       authMode "oauth"  → helmian-scribe starts the Scribe door
-//                           OAuth road from inside Helmian (DCR +
-//                           PKCE S256 + a remembered pending row);
-//                           every other OAuth entry answers with its
-//                           consent boundary — the provider's
-//                           authorization endpoint and resource
-//                           metadata — because Helmian holds no OAuth
-//                           client registration for it yet; landing
-//                           those callbacks is M3's leg.
+//       authMode "oauth"  → the entry answers with its consent
+//                           boundary — the provider's authorization
+//                           endpoint and resource metadata — because
+//                           Helmian holds no OAuth client registration
+//                           for it yet; starting the OAuth road from
+//                           inside Helmian (DCR + PKCE S256 + a
+//                           remembered pending row) and landing those
+//                           callbacks is M3's leg.
 //     Vendor-brokered entries are refused plainly: they are mirrors,
 //     managed in the vendor's own garden (§1.5).
 //   POST /api/admin/connector-library/connect/header
@@ -28,7 +27,7 @@
 //     ever receives a credential value; every other action refuses
 //     credential-value keys by name, and the store refuses them too.
 //   GET  /api/admin/connector-library/oauth/callback
-//     The Scribe door redirect lands here: the pending handshake is
+//     An OAuth provider redirect lands here: the pending handshake is
 //     consumed, the code is exchanged, the token pair is stored in
 //     the credential service under the connection's vault references,
 //     and the connection is recorded. Answers a small HTML page that
@@ -74,11 +73,6 @@ import {
   createConnectorOAuthPendingStore,
   createScribeDoorOAuth,
   hashOAuthState,
-  newOAuthState,
-  newPkceVerifier,
-  pkceChallenge,
-  SCRIBE_DOOR_ISSUER,
-  SCRIBE_DOOR_SCOPES,
 } from './connector-oauth-pending.mjs';
 
 export const CONNECTOR_LIBRARY_WRITE_BASE = '/api/admin/connector-library';
@@ -122,13 +116,11 @@ function refuseCredentialValues(input, { allow = [] } = {}) {
 }
 
 const providerIdFor = (seatId, entryId) => `connector.${seatId}.${entryId}`;
-const isScribeEntry = (entry) => entry.id === 'helmian-scribe'
-  || String(entry.mcpEndpointUrl ?? '').startsWith(SCRIBE_DOOR_ISSUER);
 
 // The catalog definition is the authority for a seeded entry's auth
 // road — never the stored row alone. Rows seeded under an older
 // catalog keep its label (the read-route seed refreshes only tenants
-// holding zero entries), and helmian-scribe's live rows still said
+// holding zero entries), and a live OAuth entry's rows still said
 // 'none' long after the catalog's correction to 'oauth': connect
 // dispatched on the stale label and recorded a "No sign-in"
 // connection no consent produced (live exercise, 2026-11-09). So the
@@ -137,7 +129,7 @@ const isScribeEntry = (entry) => entry.id === 'helmian-scribe'
 // only entries the catalog does not define (custom entries are a
 // person's own — their stored mode is their truth). A stored row
 // can therefore never reroute an OAuth entry onto a direct road,
-// whatever the seed says. (sql/079 aligns the stored rows; the
+// whatever the seed says. (A migration aligns the stored rows; the
 // guard stands either way.)
 export function effectiveAuthMode(entry) {
   if (!entry || entry.kind === 'custom') return entry?.authMode ?? null;
@@ -352,25 +344,6 @@ export function createConnectorLibraryWriteHandler({
           return true;
         }
         // authMode oauth
-        if (isScribeEntry(entry)) {
-          const credentials = resolveCredentials();
-          if (!credentials) { sendJson(503, { error: 'Helmian\u2019s credential storage is not switched on, so this sign-in cannot be kept yet', code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' }); return true; }
-          const pendingStore = resolvePending();
-          if (!pendingStore) { sendJson(503, { error: 'the OAuth road is not switched on yet (no database configured)', code: 'OAUTH_ROAD_NOT_READY' }); return true; }
-          const redirectUri = `${String(requestUrl.origin ?? '')}${CONNECTOR_OAUTH_CALLBACK_PATH}`;
-          const door = resolveDoor();
-          const { clientId } = await door.registerClient({ redirectUri, clientName: 'Helmian' });
-          const state = newOAuthState();
-          const verifier = newPkceVerifier();
-          const saved = await pendingStore.save(tenantId, {
-            stateHash: hashOAuthState(state), personId, seatId, entryId,
-            provider: 'scribe', clientId, codeVerifier: verifier, redirectUri, scopes: [...SCRIBE_DOOR_SCOPES],
-          });
-          if (!saved) { sendJson(503, { error: 'the OAuth road is not switched on yet (the pending-handshake table is missing — migration 078)', code: 'OAUTH_ROAD_NOT_READY' }); return true; }
-          const authorizeUrl = await door.authorizeUrl({ clientId, redirectUri, state, challenge: pkceChallenge(verifier) });
-          sendJson(200, { status: 'consent', provider: 'scribe', authorizeUrl, note: 'The Scribe door asks the person, in person — approve it there and the connection lands back here.' });
-          return true;
-        }
         sendJson(200, await consentBoundary(entry, fetchImpl));
         return true;
       }

@@ -403,7 +403,7 @@
         <ol class="gs-steps">
           <li><strong>Link your PC.</strong> Install the Helmian spoke, then open <a href="#devices">Devices</a>. Agents run on your PC, so it needs to be on and linked.</li>
           <li><strong>Add an agent.</strong> Open <a href="#desktop">Workspace</a>, pick the Team channel and press <em>+ Claude</em>, <em>+ ChatGPT</em>, <em>+ Grok</em> or <em>+ Gemini</em>.</li>
-          <li><strong>Connect shared memory.</strong> Add Scribe as a custom connector in your AI app. See <a href="#settings">Settings → Scribe shared memory</a>.</li>
+          <li><strong>One shared memory.</strong> Every agent in this workspace reads and writes the same shared notebook, so what one AI picks up, the others can use.</li>
           <li><strong>Stay in charge.</strong> When an agent asks to do something on your PC, Guard asks you first in <a href="#approvals">Approvals</a>.</li>
         </ol></div>
       <div class="panel"><div class="eyebrow">USAGE &amp; LIMITS</div><div id="home-usage"></div></div>
@@ -486,17 +486,6 @@
         <p class="muted sm">Every AI connects the same way: with its account email and password, right on its card on the Integrations page. These cards just show connection status.</p>
         <div id="providers-cards" class="cards"></div>
       </div>
-      <div class="panel scribe-card" id="scribe-panel"><div class="eyebrow">SCRIBE SHARED MEMORY</div>
-        <p class="muted sm">Scribe gives every AI you use the same memory and a shared mailbox. Add it once in each AI app as a custom connector.</p>
-        <div class="invite-new"><input id="scribe-url" readonly value="https://connect.helmian.cloud/mcp" aria-label="Scribe connector URL"><button id="scribe-copy" class="btn sm" type="button">Copy</button></div>
-        <ol class="gs-steps sm">
-          <li>In Claude, ChatGPT, Grok or Gemini, open the connectors settings and choose <em>Add custom connector</em>.</li>
-          <li>Paste the URL above and save.</li>
-          <li>Sign in when asked (OAuth), then type your own Scribe passphrase. Helmian never sees or stores it.</li>
-          <li>Back in chat, ask the AI to "check my Scribe mail" to test it.</li>
-        </ol>
-        <p class="muted sm">Your AI app may ask "allow this tool?" the first time. That is expected: you stay in charge.</p>
-      </div>
       <div class="panel"><div class="eyebrow">DESKTOP APP</div>
         <p class="muted sm">Link the desktop app for Team chat: press the button, then type the code in the EXE Team chat panel.</p>
         <div class="row-btns left"><button id="desktop-link" class="btn primary sm" type="button">Link desktop app</button></div>
@@ -558,7 +547,7 @@
         <p class="muted sm">Each seat&rsquo;s own connector library — connect and manage inside Helmian, never in a vendor window.</p>
         <div id="connector-manage" class="cm-page"></div>
       </section>
-      <div class="empty empty-hint" data-empty-for="integrations" hidden><p class="t">Nothing connected yet</p><p class="sm">Link Discord or Slack from the Team channel, link a PC in Devices, and connect Scribe shared memory in Settings.</p><a class="btn sm" href="#settings">Open Settings</a></div>
+      <div class="empty empty-hint" data-empty-for="integrations" hidden><p class="t">Nothing connected yet</p><p class="sm">Link Discord or Slack from the Team channel, and link a PC in Devices.</p><a class="btn sm" href="#devices">Link a PC</a></div>
     </section>
 
     

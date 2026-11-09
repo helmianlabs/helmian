@@ -108,7 +108,7 @@ test('level 1 model: seat rows carry name, provider and connected count', () => 
 // the Bite 1 store's own output shapes — the same rows the route will
 // serve. Claude's library: a vendor-brokered Gmail (mirror-reported
 // connected), the surfaced native GitHub (tool-connections verified),
-// a vendor Linear nobody connected, and Scribe (no record yet).
+// a vendor Linear nobody connected.
 
 const NOW = Date.now();
 const entry = (over) => ({
@@ -121,7 +121,6 @@ const CLAUDE_ENTRIES = [
   entry({ id: 'gmail', name: 'Gmail', oneLiner: 'Draft replies, summarize threads, & search your inbox', iconRef: 'icon:gmail', vendorName: 'Google', trustLabel: 'verified', brokerMode: 'vendor', vendorConnectorRef: { ref: 'anthropic:gmail', manageUrl: 'https://claude.ai/settings/connectors' } }),
   entry({ id: 'helmian-github', kind: 'helmian-native', name: 'GitHub', oneLiner: 'Work with the repositories this workspace already reaches', iconRef: 'icon:helmian-github', vendorName: 'Helmian', trustLabel: 'verified', brokerMode: 'helmian', mcpEndpointUrl: 'https://api.githubcopilot.com/mcp/' }),
   entry({ id: 'linear', name: 'Linear', oneLiner: 'Look up issues, check project status, and file new work', iconRef: 'icon:linear', vendorName: 'Linear', trustLabel: 'verified', brokerMode: 'vendor', vendorConnectorRef: { ref: 'anthropic:linear', manageUrl: 'https://claude.ai/settings/connectors' } }),
-  entry({ id: 'helmian-scribe', kind: 'helmian-native', name: 'Scribe', oneLiner: 'Reach the shared memory and the other agents', iconRef: 'icon:helmian-scribe', vendorName: 'Helmian', trustLabel: 'verified', brokerMode: 'helmian', mcpEndpointUrl: 'https://connect.helmian.cloud/mcp' }),
 ];
 const GROK_ENTRIES = [
   entry({ seatId: 'grok', id: 'github', name: 'GitHub', oneLiner: 'Review pull requests, issues, and repository activity', iconRef: 'icon:github', vendorName: 'GitHub', trustLabel: 'verified', brokerMode: 'helmian', mcpEndpointUrl: 'https://api.githubcopilot.com/mcp/' }),
@@ -182,13 +181,6 @@ test('level 2 model over the read: mirror rows never toggle, Helmian connected r
   assert.equal(linear.toggleable, false);
   assert.ok(model.catalog.includes(linear));
 
-  // Scribe: no per-person record exists yet, so the row honestly
-  // reads not-connected — no state invented at render time.
-  const scribe = byId.get('helmian-scribe');
-  assert.equal(scribe.state, 'not-connected');
-  assert.equal(scribe.toggleable, false);
-  assert.equal(scribe.mirror, null);
-
   // The custom row is present but not actionable in this bite.
   assert.equal(model.customRow.enabled, false);
 });
@@ -242,6 +234,6 @@ test('server validator: connectors are accepted, frozen, and bounded', () => {
   // attachments behave exactly as before.
   assert.equal(normalizeMessageMetadata({}), null);
   assert.deepEqual(normalizeMessageMetadata({ webSearch: true }), { webSearch: true });
-  const both = normalizeMessageMetadata({ webSearch: false, connectors: [{ seatId: 'claude', entryId: 'helmian-scribe' }] });
-  assert.deepEqual(both, { webSearch: false, connectors: [{ seatId: 'claude', entryId: 'helmian-scribe' }] });
+  const both = normalizeMessageMetadata({ webSearch: false, connectors: [{ seatId: 'claude', entryId: 'helmian-github' }] });
+  assert.deepEqual(both, { webSearch: false, connectors: [{ seatId: 'claude', entryId: 'helmian-github' }] });
 });

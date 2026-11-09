@@ -39,19 +39,6 @@ export const PROVIDER_KEY_ENV = {
   cloudflare: 'CLOUDFLARE_API_TOKEN',
   openrouter: 'OPENROUTER_API_KEY',
   muse: 'MODEL_API_KEY',
-  // NOT a provider: the Scribe door's OAuth bundle (connectors bite
-  // 4R2). The door (connect.helmian.cloud) is OAuth-only, and the
-  // runner is the compute that hands Anthropic's cloud the door's
-  // one-hour access key on an armed turn — so the door's thirty-day
-  // renewal key lives here, in the runner's own custody, exactly the
-  // way the SuperGrok session does (setOAuth/getOAuth under this
-  // key). The env name exists only to satisfy this map's shape: no
-  // code injects it into a child's environment (loadVaultKey runs
-  // per served AGENT provider, and 'scribe' is never one), and
-  // bin/pc-bridge.mjs keeps this key out of its presence and
-  // served-agent claims — holding the door's credential must never
-  // read as "a scribe agent is served here".
-  scribe: 'HELMIAN_SCRIBE_TOKEN',
 };
 
 function deriveDataKey(deviceToken, salt) {

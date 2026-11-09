@@ -728,7 +728,7 @@ test('armed Helmian skills ride metadata.skills — and only while armed', () =>
   assert.equal(req.payload.body, 'wash this one carefully', 'a Helmian skill never touches the body — it is not the by-name road');
   const bare = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'ks2', skills: [] });
   assert.equal(bare.metadata, null, 'no skill armed → no metadata at all, the pre-skills wire');
-  const mixed = buildMessageRequest({ channelId: 'c1', body: 'and this', idempotencyKey: 'ks3', attachments: [skill('deploy')], connectors: [{ seatId: 'claude', entryId: 'helmian-scribe' }], skills: [{ skillId: 'wash-check', seatId: 'all' }] });
+  const mixed = buildMessageRequest({ channelId: 'c1', body: 'and this', idempotencyKey: 'ks3', attachments: [skill('deploy')], connectors: [{ seatId: 'claude', entryId: 'helmian-github' }], skills: [{ skillId: 'wash-check', seatId: 'all' }] });
   assert.deepEqual(normalizeMessageMetadata(mixed.payload.metadata), mixed.metadata, 'skills ride beside attachments and connectors without merging the roads');
   assert.equal(mixed.payload.body, '/deploy and this', 'the by-name skill still leads the body on its own road');
   const over = attachmentMetadata([], { skills: [1, 2, 3, 4].map((n) => ({ skillId: `skill-${n}`, seatId: 'all' })) });

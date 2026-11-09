@@ -776,8 +776,6 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .gs-steps { margin:8px 0 0; padding-left:20px; line-height:1.6; }
 .gs-steps li { margin:4px 0; }
 .gs-steps a { color:var(--accent); }
-.scribe-card .invite-new { display:flex; gap:8px; margin:8px 0; }
-.scribe-card input { flex:1 1 auto; min-width:0; font-family:ui-monospace, monospace; }
 
 /* ---- Monday Launch: Custom Agents, Free-Willy Debate, GitHub Link & Full Mobile Clone Pass ---- */
 .ew-badge.github { background:rgba(148,163,184,.18); color:#E2E8F0; border:1px solid rgba(148,163,184,.45); }

@@ -486,11 +486,11 @@ test('message metadata: skills round-trip, omit when empty, and ride beside othe
   assert.equal(normalizeMessageMetadata({}), null);
   const mixed = normalizeMessageMetadata({
     webSearch: true,
-    connectors: [{ seatId: 'claude', entryId: 'helmian-scribe' }],
+    connectors: [{ seatId: 'claude', entryId: 'helmian-github' }],
     skills: [{ skillId: 'wash-check', seatId: 'grok' }],
   });
   assert.deepEqual(mixed.skills, [{ skillId: 'wash-check', seatId: 'grok' }]);
-  assert.deepEqual(mixed.connectors, [{ seatId: 'claude', entryId: 'helmian-scribe' }], 'the two roads stay separate in one metadata object');
+  assert.deepEqual(mixed.connectors, [{ seatId: 'claude', entryId: 'helmian-github' }], 'the two roads stay separate in one metadata object');
   assert.equal(mixed.webSearch, true);
   assert.throws(() => normalizeMessageMetadata({ skills: [{ skillId: 'x', seatId: 'all' }, { skillId: 'x', seatId: 'all' }] }), /duplicated/);
 });
