@@ -1042,4 +1042,16 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   .ew.channels-rest .ew-split[data-split="channels"] { flex-basis:0; pointer-events:none; }
   .ew-channels.rail-rest.peeking { position:fixed; top:52px; bottom:0; left:var(--side-w); width:var(--ew-channels); flex:none; z-index:55; box-shadow:24px 0 48px rgba(0,0,0,.45); }
   .ew-channels.rail-rest.peeking .ew-channels-rail-tab { display:none; }
+  /* Hover-push (Troy, 2026-11-09): while the pane peeks it PUSHES the
+     rest of the row right — it never covers the chat. The peeking pane
+     is fixed, so its in-flow 48px slot is gone: the chat takes a left
+     margin of the pane's full open width and lands with its left edge
+     exactly on the pane's right edge, the same place it sits when the
+     pane is pinned open. The margin animates on the panes' own
+     --dur/--ease (the .ew-pane transition list with margin-left added;
+     .ew.dragging still freezes it, out-specifying this rule), so the
+     push out and the settle back move at the pane's own rate. At rest
+     no offset applies at all: the resting row is pixel-identical. */
+  .ew > .ew-chat { transition:flex-basis var(--dur) var(--ease), opacity var(--dur) var(--ease), transform var(--dur) var(--ease), margin-left var(--dur) var(--ease); }
+  .ew-channels.rail-rest.peeking ~ .ew-chat { margin-left:var(--ew-channels); }
 }
