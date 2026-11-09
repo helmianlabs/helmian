@@ -991,3 +991,96 @@ test('bite 5 wiring: faces route, member face, channel face, custom pill art', a
     assert.ok(css.includes(needle), `envoy.css has ${needle}`);
   }
 });
+
+// ---------- Speaking proof (speaker-proof bite) ----------
+// Troy's ask: a speaker icon on the seat's message that lights while
+// that seat's voice is actually playing. The voice controller reports
+// playback start/end; envoy draws the marker. These tests pin the
+// envoy half with a minimal fake DOM: noteSpeaking patches the icon
+// onto the spoken message's meta line (or after it, for a grouped
+// follow-up whose meta is hidden), the marker carries the checkable
+// data attributes, and clearing removes it.
+
+class FakeEl {
+  constructor(tag) { this.tagName = tag; this.children = []; this.attrs = {}; this.className = ''; this.dataset = {}; this.parentNode = null; }
+  setAttribute(k, v) { this.attrs[k] = String(v); if (k.startsWith('data-')) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
+  append(...kids) { for (const kid of kids.flat()) { if (kid && typeof kid === 'object') { kid.parentNode = this; this.children.push(kid); } } }
+  after(node) { const p = this.parentNode; const i = p.children.indexOf(this); node.parentNode = p; p.children.splice(i + 1, 0, node); }
+  remove() { if (this.parentNode) { const i = this.parentNode.children.indexOf(this); if (i >= 0) this.parentNode.children.splice(i, 1); this.parentNode = null; } }
+  get classList() { const self = this; return { contains: (c) => self.className.split(/\s+/).includes(c) }; }
+  descendants() { const out = []; const walk = (n) => { for (const c of n.children) { if (c instanceof FakeEl) { out.push(c); walk(c); } } }; walk(this); return out; }
+  querySelectorAll(sel) { const cls = sel.replace(/^\./, ''); return this.descendants().filter((n) => n.classList.contains(cls)); }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
+}
+
+function withFakeRoom(fn) {
+  const prevDocument = globalThis.document;
+  const prevNode = globalThis.Node;
+  const box = new FakeEl('div');
+  globalThis.Node = FakeEl;
+  globalThis.document = {
+    getElementById: (id) => (id === 'ew-messages' ? box : null),
+    createElement: (tag) => new FakeEl(tag),
+    createTextNode: (text) => ({ text }),
+  };
+  const mkRow = (id, cont = false) => {
+    const row = new FakeEl('div');
+    row.className = cont ? 'ew-msg cont' : 'ew-msg';
+    row.setAttribute('data-id', id);
+    const cell = new FakeEl('div');
+    const meta = new FakeEl('div');
+    meta.className = 'ew-meta';
+    cell.append(meta);
+    row.append(cell);
+    box.append(row);
+    return { row, meta };
+  };
+  try { return fn(box, mkRow); } finally {
+    if (prevDocument === undefined) delete globalThis.document; else globalThis.document = prevDocument;
+    if (prevNode === undefined) delete globalThis.Node; else globalThis.Node = prevNode;
+  }
+}
+
+test('speaking proof: noteSpeaking patches the marker onto the spoken message and clearing removes it', () => {
+  withFakeRoom((box, mkRow) => {
+    const a = mkRow('m1');
+    mkRow('m2');
+    envoyWorkspace.noteSpeaking({ seat: 'claude', engine: 'kokoro', ref: 'm1' });
+    const icons = box.querySelectorAll('.ew-speaking');
+    assert.equal(icons.length, 1, 'exactly one message is lit');
+    assert.equal(icons[0].attrs['data-speaking'], 'true');
+    assert.equal(icons[0].attrs['data-seat'], 'claude');
+    assert.equal(icons[0].attrs['data-engine'], 'kokoro');
+    assert.equal(icons[0].parentNode, a.meta, 'the icon stands in the spoken message’s meta line');
+    envoyWorkspace.noteSpeaking({ seat: 'grok', engine: 'backup', ref: 'm2' });
+    const moved = box.querySelectorAll('.ew-speaking');
+    assert.equal(moved.length, 1, 'a new speaker moves the one light');
+    assert.equal(moved[0].attrs['data-seat'], 'grok');
+    envoyWorkspace.noteSpeaking(null);
+    assert.equal(box.querySelectorAll('.ew-speaking').length, 0, 'playback end clears the marker');
+  });
+});
+
+test('speaking proof: a grouped follow-up carries the marker after its hidden meta', () => {
+  withFakeRoom((box, mkRow) => {
+    const { row, meta } = mkRow('m9', true);
+    envoyWorkspace.noteSpeaking({ seat: 'gemini', engine: 'backup', ref: 'm9' });
+    const icons = box.querySelectorAll('.ew-speaking');
+    assert.equal(icons.length, 1);
+    assert.notEqual(icons[0].parentNode, meta, 'not buried in the hidden meta');
+    assert.equal(icons[0].parentNode, meta.parentNode, 'it stands in the message body column, beside the text');
+    assert.equal(row.querySelectorAll('.ew-speaking').length, 1, 'and inside the spoken message’s row');
+    envoyWorkspace.noteSpeaking(null);
+  });
+});
+
+test('speaking proof: wiring — the speak call carries the message id, renders consult the signal, the style exists', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.ok(js.includes('ws.ctx.voiceSpeak(m.body, who.provider ?? null, m.id)'), 'speakNewMessages passes the message id as the speaking ref');
+  assert.ok(js.includes('export function noteSpeaking(info)'), 'envoy exports the controller signal sink');
+  assert.ok(js.includes('speakingNow.ref === m.id'), 'renderMessages draws the icon from the standing signal (poll rebuilds keep it)');
+  assert.ok(js.includes("'data-speaking': 'true'"), 'the marker carries data-speaking="true" for checkers');
+  assert.ok(css.includes('.ew-speaking {'), 'the lit style exists');
+  assert.ok(css.includes('@media (prefers-reduced-motion: reduce) { .ew-speaking { animation:none; } }'), 'reduced motion stills the pulse');
+});

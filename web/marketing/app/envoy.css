@@ -217,6 +217,13 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-meta strong { font-weight:650; }
 .ew-meta .agent { color:var(--accent); }
 .ew-meta time { color:var(--faint); font-size:11px; }
+/* Speaking proof (speaker-proof bite): the speaker icon on the one
+   message being spoken right now — present and pulsing only while
+   that seat's audio actually plays (the voice controller reports
+   playback start/end per engine; envoy-workspace.js draws it, in the
+   meta line or, for a grouped follow-up, right after the meta). */
+.ew-speaking { display:inline-flex; align-items:center; font-size:12px; line-height:1; animation:ew-pulse .9s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ew-speaking { animation:none; } }
 /* Role tag (bite 2): plain muted text — no fill, no border, no chip. */
 /* Bite 2b: app.css carries a generic .agent rule (background, padding,
    radius, flex) meant for agent list rows; the message header's name

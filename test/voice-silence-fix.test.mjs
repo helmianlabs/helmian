@@ -299,3 +299,153 @@ test('lockstep: the app.js inline copy carries the same silence-law machinery as
     assert.ok(shared.includes(needle), `shared module has: ${needle}`);
   }
 });
+
+// ---------- Speaking proof (speaker-proof bite) ----------
+// Troy's ask: a speaker icon on each seat's message that lights while
+// that seat's voice is actually playing. The controller owns the
+// signal (setSpeakingListener / speakingNow); these tests pin that it
+// reflects ACTUAL playback on both engines — lit at playback start,
+// cleared at playback end / cancel / voice-off — and never lights for
+// dictate mode or text-only replies.
+
+function watchSpeaking(v) {
+  const events = [];
+  v.setSpeakingListener((info) => events.push(info ? { ...info } : null));
+  return events;
+}
+
+test('speaking proof: Kokoro road lights at buffer start with seat + ref, clears at onended', async () => {
+  const f = makeFakes();
+  const calls = [];
+  const v = voiceOn(f, { kokoroLoader: async () => fakeEngine(calls) });
+  const events = watchSpeaking(v);
+  assert.equal(v.speak('Voice check one two three.', 'claude', 'msg-1'), true);
+  await until(() => events.length === 1);
+  assert.deepEqual(events[0], { seat: 'claude', engine: 'kokoro', ref: 'msg-1' });
+  assert.deepEqual(v.speakingNow, { seat: 'claude', engine: 'kokoro', ref: 'msg-1' });
+  assert.equal(f.sources.length, 1);
+  assert.equal(f.sources[0].started, true, 'the light waits for the buffer source to actually start');
+  f.sources[0].onended();
+  assert.equal(events.length, 2);
+  assert.equal(events[1], null, 'playback end clears the light');
+  assert.equal(v.speakingNow, null);
+});
+
+test('speaking proof: generation alone never lights the icon (no start, no light)', async () => {
+  const f = makeFakes();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const engine = { generate: async () => { await gate; return { audio: new Float32Array(240), sampling_rate: 24000 }; } };
+  const v = voiceOn(f, { kokoroLoader: async () => engine });
+  const events = watchSpeaking(v);
+  assert.equal(v.speak('Still being generated.', 'grok', 'msg-2'), true);
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(events.length, 0, 'while generate() is still running nothing is playing, so nothing lights');
+  release();
+  await until(() => events.length === 1);
+  assert.deepEqual(events[0], { seat: 'grok', engine: 'kokoro', ref: 'msg-2' });
+  f.sources[0].onended();
+});
+
+test('speaking proof: backup road lights at utterance speak with seat + ref, clears at onend', async () => {
+  const f = makeFakes();
+  const v = voiceOn(f, {}); // no loader, no AudioContext in this shell: backup road
+  const events = watchSpeaking(v);
+  assert.equal(v.speak('Backup voice speaking.', 'gemini', 'msg-3'), true);
+  assert.equal(f.spoken.length, 1);
+  assert.deepEqual(events, [{ seat: 'gemini', engine: 'backup', ref: 'msg-3' }]);
+  f.spoken[0].onend();
+  assert.deepEqual(events, [{ seat: 'gemini', engine: 'backup', ref: 'msg-3' }, null]);
+  assert.equal(v.speakingNow, null);
+});
+
+test('speaking proof: backup chunks of one reply keep the seat across the chain', async () => {
+  const f = makeFakes();
+  const v = voiceOn(f, {});
+  const events = watchSpeaking(v);
+  const s1 = `${'Alpha '.repeat(28).trim()}.`;
+  const s2 = `${'Bravo '.repeat(28).trim()}.`;
+  assert.equal(v.speak(`${s1} ${s2}`, 'mistral', 'msg-4'), true);
+  assert.equal(f.spoken.length, 1, 'first chunk is uttered first');
+  assert.deepEqual(events.at(-1), { seat: 'mistral', engine: 'backup', ref: 'msg-4' });
+  f.spoken[0].onend();
+  assert.equal(f.spoken.length, 2, 'the chain advances to the second chunk');
+  assert.deepEqual(events.at(-1), { seat: 'mistral', engine: 'backup', ref: 'msg-4' }, 'second chunk is the same seat + message');
+  f.spoken[1].onend();
+  assert.equal(events.at(-1), null);
+  assert.equal(v.speakingNow, null);
+});
+
+test('speaking proof: a Kokoro generate failure hands the light to the backup with the same seat + ref', async () => {
+  const f = makeFakes();
+  const engine = { generate: async () => { throw new Error('generate broke'); } };
+  const v = voiceOn(f, { kokoroLoader: async () => engine });
+  const events = watchSpeaking(v);
+  assert.equal(v.speak('This will fall back.', 'chatgpt', 'msg-5'), true);
+  await until(() => f.spoken.length === 1);
+  assert.deepEqual(events, [{ seat: 'chatgpt', engine: 'backup', ref: 'msg-5' }], 'the fallback utterance carries the Kokoro item’s seat + ref');
+  f.spoken[0].onend();
+  assert.equal(events.at(-1), null);
+});
+
+test('speaking proof: cancel and voice-off both clear the light', async () => {
+  const f = makeFakes();
+  const calls = [];
+  const v = voiceOn(f, { kokoroLoader: async () => fakeEngine(calls) });
+  const events = watchSpeaking(v);
+  v.speak('First reply.', 'claude', 'msg-6');
+  await until(() => events.length === 1 && events[0] !== null);
+  v.cancelSpeech();
+  assert.equal(events.at(-1), null, 'cancel clears the light');
+  assert.equal(v.speakingNow, null);
+  v.speak('Second reply.', 'grok', 'msg-7');
+  await until(() => events.filter(Boolean).length === 2);
+  assert.equal(v.setVoiceMode(false, {}), true);
+  assert.equal(events.at(-1), null, 'turning voice off clears the light');
+  assert.equal(v.speakingNow, null);
+});
+
+test('speaking proof: dictate mode and voice-off never light, never speak', async () => {
+  const f = makeFakes();
+  const v = createVoiceController({
+    Recognition: f.FakeRecognition,
+    synthesis: f.synthesis,
+    Utterance: f.FakeUtterance,
+    makeAudioContext: f.makeAudioContext,
+    kokoroLoader: async () => fakeEngine([]),
+  });
+  const events = watchSpeaking(v);
+  assert.equal(v.speak('Nobody is listening.', 'claude', 'msg-8'), false, 'voice off: no speak');
+  assert.equal(v.setVoiceMode(true, { mode: 'dictate', onTranscript() {}, onSubmit() {}, onState() {}, onError() {} }), true);
+  f.instances[0].onstart();
+  assert.equal(v.speak('Dictated, not spoken.', 'claude', 'msg-8'), false, 'dictate mode never speaks');
+  assert.equal(events.length, 0);
+  assert.equal(f.spoken.length, 0);
+  assert.equal(v.speakingNow, null);
+});
+
+test('lockstep: the app.js inline copy carries the same speaking-proof machinery as the shared module', async () => {
+  const needles = [
+    'function noteSpeaking(seat, engine, ref, source)',
+    'function clearSpeaking(source)',
+    'function setSpeakingListener(fn)',
+    "noteSpeaking(item.seat, 'kokoro', item.ref, src)",
+    "noteSpeaking(item.seat, 'backup', item.ref, utter)",
+    'clearSpeaking(src)',
+    'seat: seat ?? null, ref: ref ?? null',
+    'synthEngine.enqueue(entries, { interrupt: false })',
+    'get speakingNow() { return speakingNow; }',
+    'speak(text, seat, ref)',
+    'voice.setSpeakingListener',
+    'voiceSpeak: (text, seat, ref)',
+  ];
+  const appJs = await readFile(new URL('../web/marketing/app/app.js', import.meta.url), 'utf8');
+  const shared = await readFile(new URL('../web/shared/voice-dictation.mjs', import.meta.url), 'utf8');
+  for (const needle of needles.slice(0, 10)) {
+    assert.ok(appJs.includes(needle), `app.js inline copy has: ${needle}`);
+    assert.ok(shared.includes(needle), `shared module has: ${needle}`);
+  }
+  for (const needle of needles.slice(10)) {
+    assert.ok(appJs.includes(needle), `app.js wiring has: ${needle}`);
+  }
+});
