@@ -372,6 +372,53 @@ test('connect/complete: only the exact minted reference lands, and only once a c
   assert.equal((await refused.run(`${P}/connect/complete`, { body: { seatId: 'grok', entryId: 'custom-keys', accessTokenRef: ref } })).status, 400);
 });
 
+test('connect: a DRIFTED scribe row (stored authMode none, catalog oauth) starts the door road and records nothing', async () => {
+  // The 2026-11-09 live bug: live rows seeded under the old catalog
+  // still said 'none', and connect dispatched on the stored label —
+  // one click recorded a "No sign-in" connection no consent produced.
+  // The catalog is the authority: the door road must start anyway.
+  const store = fakeStore({ 'claude/helmian-scribe': ENTRY({ authMode: 'none' }) });
+  const pending = fakePending();
+  const door = fakeDoor();
+  const h = harness({ store, pending, door });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } });
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'consent');
+  assert.match(out.json.authorizeUrl, /^https:\/\/connect\.helmian\.cloud\/authorize\?state=/);
+  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 1);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0, 'no connection may be recorded without the door exchange');
+});
+
+test('connect: a scribe row stored as header still takes the OAuth road, and the header road refuses it', async () => {
+  const store = fakeStore({ 'claude/helmian-scribe': ENTRY({ authMode: 'header' }) });
+  const h = harness({ store });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } });
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'consent');
+  const landed = await h.run(`${P}/connect/header`, { body: { seatId: 'claude', entryId: 'helmian-scribe', apiKey: 'sk-x' } });
+  assert.equal(landed.status, 400);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
+});
+
+test('connect/complete: an OAuth entry can never be landed from a stored reference — drifted or not', async () => {
+  for (const storedMode of ['oauth', 'none']) {
+    const store = fakeStore({ 'claude/helmian-scribe': ENTRY({ authMode: storedMode }) });
+    const h = harness({ store });
+    const ref = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-scribe', personId: 'user:troy', tokenKind: 'access' });
+    const out = await h.run(`${P}/connect/complete`, { body: { seatId: 'claude', entryId: 'helmian-scribe', accessTokenRef: ref } });
+    assert.equal(out.status, 400, `stored authMode ${storedMode}`);
+    assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
+  }
+});
+
+test('connect: a custom entry keeps its own stored mode — a custom none lands at once', async () => {
+  const store = fakeStore({ 'grok/custom-notes': ENTRY({ seatId: 'grok', id: 'custom-notes', kind: 'custom', authMode: 'none', mcpEndpointUrl: 'https://notes.example.com/mcp' }) });
+  const h = harness({ store });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'grok', entryId: 'custom-notes' } });
+  assert.equal(out.status, 201);
+  assert.equal(out.json.status, 'connected');
+});
+
 test('an unknown write action is a 404, answered by the route', async () => {
   const h = harness();
   const out = await h.run(`${P}/frobnicate`, { body: {} });

@@ -2224,6 +2224,13 @@ async function loadEvidence() {
 }
 let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let apiKeyFieldsMod = null; let connectorManageMod = null;
 async function loadIntegrations() {
+  // A loading line lands in the page at once: the view's empty hint
+  // ("Nothing connected yet") keys off this box sitting empty, and
+  // the reads below take long enough on a cold landing that the hint
+  // showed as a false empty state (live exercise, 2026-11-09). The
+  // sections render replaces the line when the reads are in.
+  const intBox = $('#integrations');
+  if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
   integrationsMod ??= await import('./integrations-view.mjs');
   connectFieldsMod ??= await import('./connect-fields.mjs');
   apiKeyFieldsMod ??= await import('./api-key-fields.mjs');
