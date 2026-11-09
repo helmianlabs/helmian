@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { plusMenuLevel2Model } from '../app/envoy-workspace.js';
+import { LIBRARY_STALE_MS, connectorPromptsState, ensureConnectorPrompts, loadSeatLibrary, plusMenuLevel2Model, resetLibrarySession } from '../app/envoy-workspace.js';
 import { connectorsForTurn, level1Model, toggleConnector } from '../app/connector-panel.mjs';
 import { MENU_SEAT_IDS, collectCatalogEntryIds, menuForSeat } from '../app/connector-menu.mjs';
 
@@ -373,4 +373,63 @@ test('plus menu: the old full-width panel is gone from the face — no code path
   for (const gone of ['Add to this message', 'CONNECTOR LIBRARY', 'renderLibrarySection', 'loadPickerData', 'currentPickerModel', "g.id ===", 'ew-picker-input', 'pickerModel']) {
     assert.ok(!js.includes(gone), `envoy-workspace.js no longer contains ${gone}`);
   }
+});
+
+test('seat library loader (fix D): a row added mid-session appears on the next open past the staleness window — no page reload', async () => {
+  // The real loader, driven end to end against a fake read whose
+  // second response adds a row (the Idiolect shape: created in the
+  // store while the page session was already open).
+  let libraryReads = 0;
+  let grown = false;
+  const api = async (path) => {
+    if (path === '/api/admin/connector-library/seats') return { seats: [{ seatId: 'claude' }] };
+    if (path.startsWith('/api/admin/connector-library?seat=')) {
+      libraryReads += 1;
+      const rows = [libRow('claude', 'gmail', 'Gmail', { state: 'connected' })];
+      if (grown) rows.push(libRow('claude', 'idiolect', 'Idiolect', { brokerMode: 'vendor', kind: 'catalog' }));
+      return { connectedCount: 1, rows };
+    }
+    throw new Error(`unexpected read: ${path}`);
+  };
+  resetLibrarySession({ api });
+  const t0 = 1_000_000;
+  const first = await loadSeatLibrary('claude', t0);
+  assert.deepEqual(first.rows.map((r) => r.entryId), ['gmail'], 'the first read serves what the store holds');
+  assert.equal(libraryReads, 1);
+  grown = true;
+  const cached = await loadSeatLibrary('claude', t0 + 30_000);
+  assert.equal(libraryReads, 1, 'inside the window the cache stands — no re-read');
+  assert.deepEqual(cached.rows.map((r) => r.entryId), ['gmail']);
+  const fresh = await loadSeatLibrary('claude', t0 + LIBRARY_STALE_MS + 1);
+  assert.equal(libraryReads, 2, 'past the window the next open re-reads');
+  assert.deepEqual(fresh.rows.map((r) => r.entryId), ['gmail', 'idiolect'], 'the row added mid-session appears without a page reload');
+});
+
+test('arm-time prompts (fix D): a PROMPTS_NOT_HELD refusal is the silent unsupported outcome — no failure note', async () => {
+  // The route's by-design refusal for an entry Helmian holds no
+  // token for (the tokenless native GitHub entry): there are no
+  // starters to list, so arming it must not paint a failure.
+  const refusal = Object.assign(new Error('PROMPTS_NOT_HELD'), { status: 409, body: { code: 'PROMPTS_NOT_HELD', error: 'Helmian does not hold a sign-in token for this connector, so its starter prompts cannot be listed here yet' } });
+  resetLibrarySession({ post: async () => { throw refusal; } });
+  ensureConnectorPrompts('claude', 'helmian-github');
+  await new Promise((resolve) => setImmediate(resolve));
+  const state = connectorPromptsState('claude', 'helmian-github');
+  assert.equal(state?.status, 'unsupported', 'the by-design refusal lands on the silent outcome');
+  const lib = library('claude', [libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' })]);
+  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-github');
+  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-github': state } });
+  assert.ok(!brief(model).some((l) => l.includes('could not be listed')), 'no failure note under the armed row');
+});
+
+test('arm-time prompts (fix D): any other listing failure still renders the failure note', async () => {
+  const refusal = Object.assign(new Error('NOT_CONNECTED'), { status: 409, body: { code: 'NOT_CONNECTED', error: 'connect this connector first — its starters are listed for the person connected to it' } });
+  resetLibrarySession({ post: async () => { throw refusal; } });
+  ensureConnectorPrompts('claude', 'helmian-scribe');
+  await new Promise((resolve) => setImmediate(resolve));
+  const state = connectorPromptsState('claude', 'helmian-scribe');
+  assert.equal(state?.status, 'error', 'a real failure keeps the error state');
+  const lib = library('claude', [libRow('claude', 'helmian-scribe', 'Helmian Scribe', { state: 'connected' })]);
+  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-scribe');
+  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-scribe': state } });
+  assert.ok(brief(model).includes("note:Helmian Scribe's starters could not be listed."), 'the honest note stands for a real failure');
 });

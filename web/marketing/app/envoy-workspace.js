@@ -838,7 +838,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, connectorPrompts: {}, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryFetchedAt: {}, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, connectorPrompts: {}, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2172,19 +2172,46 @@ async function loadLibraryFacts() {
   })();
   return ws.libraryLoading;
 }
-async function loadSeatLibrary(seatId) {
+// A cached seat library is served for a short window only (fix D).
+// The store can change under an open page — a connector connected
+// from another surface, an operator catalog refresh — and a cache
+// with no invalidation hides the change until a full page reload:
+// the Idiolect row, created mid-session on 2026-11-09, stayed
+// invisible in a tab opened earlier for exactly this reason. Past
+// the window the next load re-reads; inside it the cache stands.
+// No polling, no timers — the check rides the surface opens that
+// already call this loader. (The Manage surface needs no such
+// rule: it builds fresh state and re-reads on every open.)
+export const LIBRARY_STALE_MS = 60_000;
+function seatLibraryStale(seatId, now) {
+  if (!ws.libraryFacts?.libraries?.[seatId]) return true;
+  return now - (ws.libraryFetchedAt[seatId] ?? 0) >= LIBRARY_STALE_MS;
+}
+export async function loadSeatLibrary(seatId, now = Date.now()) {
   const facts = await loadLibraryFacts();
-  if (facts.libraries[seatId]) return facts.libraries[seatId];
+  if (facts.libraries[seatId] && !seatLibraryStale(seatId, now)) return facts.libraries[seatId];
   let library;
   try {
     const body = await ws.ctx.api(`/api/admin/connector-library?seat=${encodeURIComponent(seatId)}`);
     library = { seatId, connectedCount: body?.connectedCount ?? 0, rows: Array.isArray(body?.rows) ? body.rows : [] };
+    for (const key of Object.keys(facts.names)) if (key.startsWith(`${seatId}:`)) delete facts.names[key];
     for (const row of library.rows) facts.names[`${seatId}:${row.entryId}`] = row.name;
   } catch {
     library = { seatId, connectedCount: 0, rows: [], error: true };
   }
   facts.libraries[seatId] = library;
+  ws.libraryFetchedAt[seatId] = now;
   return library;
+}
+// The test seam for the session caches above and the prompts cache
+// below: installs the read context and clears every cached copy, so
+// tests drive the real loaders end to end against a fake read.
+export function resetLibrarySession(ctx) {
+  ws.ctx = ctx;
+  ws.libraryFacts = null;
+  ws.libraryLoading = null;
+  ws.libraryFetchedAt = {};
+  ws.connectorPrompts = {};
 }
 // A seat's face on the crew tile: the library-pack still by seat slug
 // (the pack's slugs ARE the library seat ids), falling back to the
@@ -2415,7 +2442,7 @@ function renderPlusMenuLevel1(which) {
 function renderPlusMenuLevel2(which) {
   const seatId = ws.libraryPanel.seatId;
   const library = ws.libraryFacts?.libraries?.[seatId] ?? null;
-  if (!library) {
+  if (!library || seatLibraryStale(seatId, Date.now())) {
     void loadSeatLibrary(seatId).then(() => { if (ws.pickerFor === which) renderPicker(which); });
   }
   // The feed-bound groups and the project row lazy-load their own
@@ -2875,8 +2902,18 @@ async function setActiveProjectFromMenu(projectKey) {
 // M2): the write-route read resolves the caller's own credential
 // server-side and returns the snapshot only. The result is cached
 // per seat+entry for the session; an unsupported server renders no
-// rows at all, a failed read renders its honest note.
-function ensureConnectorPrompts(seatId, entryId) {
+// rows at all, a failed read renders its honest note. One refusal
+// is not a failure (fix D): PROMPTS_NOT_HELD is the route's
+// by-design answer for an entry Helmian holds no token for at all
+// (the tokenless native GitHub entry — its connected state joins
+// from channel repo links, there is no connection record and no
+// server to list from). There are no starters to list, so it lands
+// on the same silent unsupported outcome as a 200
+// { supported: false }; every other refusal keeps the note.
+export function connectorPromptsState(seatId, entryId) {
+  return ws.connectorPrompts[`${seatId}:${entryId}`] ?? null;
+}
+export function ensureConnectorPrompts(seatId, entryId) {
   const key = `${seatId}:${entryId}`;
   if (ws.connectorPrompts[key]) return;
   ws.connectorPrompts[key] = { status: 'loading', prompts: [] };
@@ -2886,7 +2923,11 @@ function ensureConnectorPrompts(seatId, entryId) {
         ? { status: 'ok', prompts: Array.isArray(body.prompts) ? body.prompts : [] }
         : { status: 'unsupported', prompts: [] };
     })
-    .catch(() => { ws.connectorPrompts[key] = { status: 'error', prompts: [] }; })
+    .catch((error) => {
+      ws.connectorPrompts[key] = error?.body?.code === 'PROMPTS_NOT_HELD'
+        ? { status: 'unsupported', prompts: [] }
+        : { status: 'error', prompts: [] };
+    })
     .finally(() => { if (ws.pickerFor) renderPicker(ws.pickerFor); });
 }
 // The name a seat id wears in chips, badges and scope rows: a
