@@ -59,6 +59,7 @@ function applyEmojiMode(mode) {
   renderAgentIcons();
   const current = document.querySelector('.nav-item.active')?.dataset.view;
   if (current) $('#view-title').textContent = stripLeadingEmoji(titles[current] ?? '');
+  syncWorkspaceViewTitle();
   const sel = $('#emoji-mode');
   if (sel) sel.value = state.emojiMode;
 }
@@ -243,6 +244,7 @@ function show(view) {
   for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view && !p.closest('#chat-panel');
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
   $('#view-title').textContent = stripLeadingEmoji(viewTitles(state.emojiMode)[view]);
+  if (view === 'desktop') syncWorkspaceViewTitle();
   // ADVANCED is never forced by navigation: it offers itself once when a
   // view inside it is opened directly, and after that it simply keeps the
   // state it was left in (wireCollapsibles restores + remembers it).
@@ -374,12 +376,51 @@ async function loadSessions() {
 // final transcript ending with "send it" submits the composer; agent
 // replies are spoken aloud. Toggle off stops everything.
 //
-// TTS: Kokoro (fully local) is the primary engine; the ~300MB model
-// lazy-loads on the first spoken reply via the import map in index.html.
-// speechSynthesis is the automatic fallback.
+// TTS: Kokoro (fully local) is the primary engine. The model warms up as
+// soon as voice chat is enabled — not at the first spoken reply — via the
+// full-URL import below, and the one-time download is cached by the
+// browser afterwards (the engine's own transformers.js Cache Storage; no
+// second cache is built here), so later visits warm from cache. While the
+// model loads, replies queue behind it and the engine status reads
+// "Voice loading…". speechSynthesis is the BACKUP voice only: it speaks
+// when Kokoro truly cannot load (or where Web Audio is missing), and
+// whenever it speaks the engine status says it is the backup voice — it
+// is never substituted silently.
 // Default Kokoro voice preset (a voice setting UI comes later).
 const KOKORO_VOICE = 'af_heart';
 const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+
+// Per-seat voices. Every id below is a voice the bundled model actually
+// ships (onnx-community/Kokoro-82M-v1.0-ONNX, voices/<id>.bin — verified
+// against the model repo's file list). af_heart stays the house voice:
+// Maestro speaks with it, and so does anything unmapped that is not a
+// custom seat. Named seats get their own voice so who's talking is
+// audible; unmapped custom seats hash into a small pool so distinct
+// seats usually sound distinct, stably across sessions.
+const SEAT_VOICES = {
+  maestro: 'af_heart',
+  claude: 'af_bella',
+  chatgpt: 'am_michael',
+  grok: 'am_fenrir',
+  gemini: 'af_nova',
+  mistral: 'bf_emma',
+  groq: 'am_puck',
+  nvidia: 'am_onyx',
+  openrouter: 'bf_isabella',
+  cloudflare: 'af_sky',
+  qwen: 'af_kore',
+  muse: 'af_aoede',
+  helm: 'bm_george',
+};
+const SEAT_VOICE_POOL = ['af_nicole', 'am_adam', 'bf_lily', 'am_liam', 'af_sarah', 'bm_daniel'];
+function voiceForSeat(seat) {
+  const key = String(seat ?? '').trim().toLowerCase();
+  if (!key) return KOKORO_VOICE;
+  if (SEAT_VOICES[key]) return SEAT_VOICES[key];
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return SEAT_VOICE_POOL[hash % SEAT_VOICE_POOL.length];
+}
 const KOKORO_SAMPLE_RATE = 24000;
 function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition, synthesis = globalThis.speechSynthesis, Utterance = globalThis.SpeechSynthesisUtterance, kokoroLoader = null, makeAudioContext = null } = {}) {
   const supported = typeof Recognition === 'function';
@@ -479,8 +520,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   }
 
   function setVoiceMode(on, next = {}) {
+    // Enabling voice chat also warms the Kokoro model (warmup call in the
+    // on-branch below): the load starts at enable time, not first speak.
     if (!supported) { next.onError?.('Voice mode is not supported by this browser. You can still type or paste a message.'); return false; }
-    if (on && !voiceMode) { voiceMode = true; voiceKind = next.mode === 'voice' ? 'voice' : 'dictate'; handlers = next; startTurn(); return true; }
+    if (on && !voiceMode) { voiceMode = true; voiceKind = next.mode === 'voice' ? 'voice' : 'dictate'; handlers = next; startTurn(); if (voiceKind === 'voice') void warmup(); return true; }
     if (!on && voiceMode) { voiceMode = false; voiceKind = 'dictate'; handlers = {}; if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; } stopTurn(); cancelSpeech(); next.onState?.('idle'); return true; }
     return false;
   }
@@ -540,19 +583,26 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
 
   // ---- Kokoro engine (primary where Web Audio exists) ----
   let kokoro = null;          // loaded KokoroTTS instance
+  let kokoroPromise = null;   // in-flight load, shared by warmup + speaks
+  let kokoroState = 'idle';   // load state: idle | loading | ready | failed
   let kokoroFailedAt = 0;     // timestamp of last Kokoro failure; retry after 60s
   const KOKORO_RETRY_MS = 60000;
   let playToken = 0;          // cancel() bumps it; late audio is ignored
   let activeSource = null;    // currently playing AudioBufferSourceNode
   let audioCtx = null;
-  const kokoroQueue = [];     // [{ text, token }]
+  const kokoroQueue = [];     // [{ text, token, voice }]
   let kokoroPlaying = false;
 
+  // Engine status, shown next to the voice controls on every surface
+  // (all .voice-engine elements: the console composer and both room
+  // composers). This is what makes the backup voice honest: whenever
+  // speechSynthesis is what will actually speak, the status says so.
   function setVoiceStatus(text, cls) {
-    const el = document.getElementById('voice-engine');
-    if (!el) return;
-    el.textContent = text;
-    el.className = 'voice-engine ' + (cls || '');
+    if (typeof document === 'undefined' || !document.querySelectorAll) return;
+    for (const el of document.querySelectorAll('.voice-engine')) {
+      el.textContent = text;
+      el.className = 'voice-engine ' + (cls || '');
+    }
   }
 
   function canTryKokoro() {
@@ -568,8 +618,8 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
 
   function defaultKokoroLoader() {
     // Full URL (no inline import map: the page CSP forbids inline scripts, which
-    // silently broke the map). The ~300MB model downloads
-    // once, on first use, and is cached by the browser afterwards.
+    // silently broke the map). The model downloads once — warmed at
+    // voice-enable, see warmup() — and is cached by the browser afterwards.
     // Try WebGPU first (faster), fall back to WASM if it fails (mobile).
     return import(KOKORO_URL).then(async (mod) => {
       const opts = { dtype: 'q8' };
@@ -585,11 +635,43 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     });
   }
 
-  async function ensureKokoro() {
-    if (kokoro) return kokoro;
-    setVoiceStatus('Loading voice...', '');
-    kokoro = await (kokoroLoader ?? defaultKokoroLoader)();
-    return kokoro;
+  // One load, shared: warmup and any number of queued speaks all await
+  // the same promise, so the model is never downloaded twice. The load
+  // rides the engine's own browser caching (transformers.js Cache
+  // Storage) — warmup on a later visit resolves from that cache.
+  function ensureKokoro() {
+    if (kokoro) return Promise.resolve(kokoro);
+    if (kokoroPromise) return kokoroPromise;
+    kokoroState = 'loading';
+    setVoiceStatus('Voice loading…', '');
+    kokoroPromise = (async () => {
+      try {
+        const engine = await (kokoroLoader ?? defaultKokoroLoader)();
+        kokoro = engine;
+        kokoroState = 'ready';
+        setVoiceStatus('Kokoro', 'kokoro');
+        return engine;
+      } catch (err) {
+        kokoroFailedAt = Date.now();
+        kokoroState = 'failed';
+        setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
+        throw err;
+      } finally {
+        kokoroPromise = null;
+      }
+    })();
+    return kokoroPromise;
+  }
+
+  // Start the Kokoro load ahead of the first reply. Called when voice
+  // chat is enabled; also safe to call any time. Respects the post-
+  // failure retry window so a dead network is not hammered. Returns
+  // true when a load is in flight or the model is already warm.
+  function warmup() {
+    if (kokoro || kokoroPromise) return true;
+    if (!canSpeak || !canTryKokoro()) return false;
+    ensureKokoro().catch(() => {}); // failure surfaces via status + fallback
+    return true;
   }
 
   function ensureAudioCtx() {
@@ -615,9 +697,9 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   }
 
   // A Kokoro failure hands the failed chunk and everything still queued to
-  // speechSynthesis instead.
+  // speechSynthesis instead — under the backup-voice status, never quietly.
   function kokoroFallback(failedItem) {
-    setVoiceStatus('System voice', 'fallback');
+    setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
     const chunks = [];
     if (failedItem) chunks.push(failedItem.text);
     for (const item of kokoroQueue.splice(0)) chunks.push(item.text);
@@ -631,7 +713,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     let out;
     try {
       const engine = await ensureKokoro();
-      out = await engine.generate(item.text, { voice: KOKORO_VOICE });
+      out = await engine.generate(item.text, { voice: item.voice ?? KOKORO_VOICE });
     } catch (err) {
       kokoroPlaying = false;
       kokoroFailedAt = Date.now();
@@ -674,7 +756,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   }
 
   const tts = {
-    speak(text) {
+    speak(text, seat) {
       const clean = stripSpeechMarkup(text);
       if (!clean) return false;
       const chunks = chunkForSpeech(clean);
@@ -682,11 +764,18 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       // A new reply replaces anything in progress, on either engine.
       synthEngine.cancel();
       kokoroCancel();
-      if (canTryKokoro()) {
-        for (const c of chunks) kokoroQueue.push({ text: c, token: playToken });
+      // Kokoro road whenever the model is warm, loading, or loadable:
+      // queued chunks wait behind an in-flight warmup instead of
+      // dropping to the backup voice just because they arrived early.
+      if (kokoro || kokoroPromise || canTryKokoro()) {
+        const voice = voiceForSeat(seat);
+        for (const c of chunks) kokoroQueue.push({ text: c, token: playToken, voice });
         void pumpKokoro();
         return true;
       }
+      // Backup voice: Kokoro cannot run here, or it failed and the
+      // retry window is still open. It speaks — labelled as the backup.
+      setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
       return synthEngine.speakChunks(chunks);
     },
     cancel() {
@@ -695,14 +784,14 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     },
   };
 
-  function speak(text) {
+  function speak(text, seat) {
     if (!voiceMode || voiceKind !== 'voice') return false; // dictate mode never speaks
-    return tts.speak(text);
+    return tts.speak(text, seat);
   }
   function cancelSpeech() {
     tts.cancel();
   }
-  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, setVoiceMode, speak, cancelSpeech };
+  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, get engineState() { return kokoroState; }, setVoiceMode, speak, cancelSpeech, warmup };
 }
 function stripSpeechMarkup(text) {
   return String(text ?? '')
@@ -2660,7 +2749,7 @@ async function loadDesktop() {
     // mode. The view gate keeps exactly one surface speaking — while
     // the session console is up, its own poll (loadLog) is the speaker
     // and Envoy stays silent.
-    voiceSpeak: (text) => (shell.dataset.view === 'console' ? false : voice.speak(text)),
+    voiceSpeak: (text, seat) => (shell.dataset.view === 'console' ? false : voice.speak(text, seat)),
     renderFeed,
     loadFeedData,
     ackAll: () => document.getElementById('feed-ack-all')?.click(),
@@ -2982,12 +3071,27 @@ function wsDisplayName(row, actor = state.actor) {
   if (named) return named;
   return row?.tenantId && actor?.tenantId === row.tenantId ? workspaceName(actor) : friendlyWorkspace(row?.tenantId);
 }
+function selectedWorkspaceStoredName() {
+  const rows = Array.isArray(wsState.memberships) ? wsState.memberships : null;
+  const named = String(rows?.find((r) => r.selected)?.name ?? '').trim();
+  return named || null;
+}
+// The room's header title names the workspace you are in: while the
+// desktop view is showing, the topbar title carries the selected
+// membership's stored name once the memberships read has landed.
+// With no stored name the view's own title stands ("Workspace").
+function syncWorkspaceViewTitle() {
+  if (document.querySelector('.nav-item.active')?.dataset.view !== 'desktop') return;
+  const named = selectedWorkspaceStoredName();
+  if (named) $('#view-title').textContent = named;
+}
 function renderWorkspaceButton(actor = state.actor) {
   if (!wsBtn) return;
   const rows = Array.isArray(wsState.memberships) ? wsState.memberships : null;
   const selected = rows?.find((r) => r.selected) ?? null;
-  if (selected) { $('#workspace-name').textContent = wsDisplayName(selected, actor); $('#workspace-role').textContent = String(selected.role ?? '').trim(); return; }
+  if (selected) { $('#workspace-name').textContent = wsDisplayName(selected, actor); $('#workspace-role').textContent = String(selected.role ?? '').trim(); syncWorkspaceViewTitle(); return; }
   if (!rows || !rows.length) { $('#workspace-name').textContent = workspaceName(actor ?? {}); $('#workspace-role').textContent = String(actor?.role ?? '').trim(); }
+  syncWorkspaceViewTitle();
 }
 function renderWorkspaceMenu() {
   wsMenuNote.hidden = true; wsMenuNote.textContent = '';

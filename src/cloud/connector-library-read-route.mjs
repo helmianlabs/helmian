@@ -21,17 +21,28 @@
 // request naming one is refused (400), never honoured — so a caller
 // can only ever read their own library in their own workspace (§3.4).
 //
+// The actor threads into every read: the native GitHub entry's
+// repo-link join reads the tenant's channels through the envoy
+// store's membership-checked list, which is keyed to the actor —
+// there is no tenant-aimed channel read on the wire either.
+//
 // Wiring note: same shape as tool-connections-read.mjs — live-admin.mjs
 // is frozen at the push size limit, so the route hangs off the
 // envoy-ably delegate hook with its own lazy pool (same env var, same
-// ssl rule). When sql/074 has not been applied yet the library store
-// answers empty (42P01-safe), so an unseeded tenant reads an empty
-// library — never a guess, never a crash.
+// ssl rule). The read self-seeds a tenant whose library holds zero
+// catalog entries (seed-on-first-read, connector-library-read.mjs);
+// when a seed was attempted its outcome rides in the response's `seed`
+// metadata — including a failure, which still answers 200 with what
+// exists. When sql/074 has not been applied yet the library store
+// answers empty (42P01-safe) and the seed attempt fails into that same
+// metadata, so the response is an honest empty library — never a
+// guess, never a crash.
 import { Pool } from 'pg';
 import { createConnectorLibraryStore } from './connector-library.mjs';
 import { createToolConnectionsStore } from './tool-connections.mjs';
 import { createSeatLibraryRead } from './connector-library-read.mjs';
 import { LIVE_SEATS } from './connector-catalog.mjs';
+import { createEnvoyStore } from './envoy-chat.mjs';
 
 export const CONNECTOR_LIBRARY_PATH = '/api/admin/connector-library';
 export const CONNECTOR_LIBRARY_SEATS_PATH = '/api/admin/connector-library/seats';
@@ -60,6 +71,10 @@ function productionRead() {
   return createSeatLibraryRead({
     libraryStore: createConnectorLibraryStore(pool),
     toolConnectionsStore: createToolConnectionsStore(pool),
+    // The envoy store is the channel-config store of record: its
+    // listChannels is where the native GitHub entry's per-channel
+    // repo links join from (connector-library-read.mjs).
+    envoyStore: createEnvoyStore(pool),
   });
 }
 
@@ -93,24 +108,29 @@ export async function handleConnectorLibraryRoute({
     if (isSeats) {
       // One read per catalog seat; a seat with no entries in this
       // tenant has no library to pick, so it is not a Level 1 row.
+      // The first read on an unseeded tenant runs the one seed; its
+      // outcome (at most one attempt happens) is surfaced once here.
       const seats = [];
+      let seed = null;
       for (const seatId of LIVE_SEATS) {
-        const result = await library.readSeatLibrary(actor.tenantId, { personId, seatId });
+        const result = await library.readSeatLibrary(actor.tenantId, { personId, seatId, actor });
+        if (!seed && result.seed?.attempted) seed = result.seed;
         if (result.rows.length) seats.push({ seatId, connectedCount: result.connectedCount, entryCount: result.rows.length });
       }
-      send(response, 200, JSON.stringify({ valid: true, seats }));
+      send(response, 200, JSON.stringify({ valid: true, seats, ...(seed ? { seed } : {}) }));
       return true;
     }
     const seatId = String(requestUrl.searchParams.get('seat') ?? '').trim();
     if (!seatId) {
       throw Object.assign(new Error('seat is required'), { status: 400, code: 'CONNECTOR_LIBRARY_SEAT_REQUIRED' });
     }
-    const result = await library.readSeatLibrary(actor.tenantId, { personId, seatId });
+    const result = await library.readSeatLibrary(actor.tenantId, { personId, seatId, actor });
     send(response, 200, JSON.stringify({
       valid: true,
       seatId: result.seatId,
       connectedCount: result.connectedCount,
       rows: result.rows,
+      ...(result.seed?.attempted ? { seed: result.seed } : {}),
     }));
   } catch (error) {
     const status = membershipError(error) ? 403 : error?.status === 400 ? 400 : 503;

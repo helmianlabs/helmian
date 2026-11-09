@@ -7,15 +7,26 @@
 //     (connector-library.mjs);
 //   - vendor-brokered entries   → the person's mirror record — only
 //     ever what the seat's vendor side last reported (§1.5);
-//   - the Helmian-native GitHub entry → the EXISTING tool-connections
-//     store (sql/061), joined by service id through the narrow adapter
-//     below. The tool-connections store is the room's established truth
-//     for that connection — its probe receipt earned the state, and
+//   - the Helmian-native GitHub entry → joined from the two places
+//     that truth already lives, through the two narrow adapters below:
+//     the workspace's per-channel repo links (the envoy store's
+//     channels list — a channel whose config carries github.repo is
+//     linked, and that link is the connection the room lives by), and
+//     the EXISTING tool-connections store (sql/061), joined by service
+//     id. Either source reading connected makes the row connected;
 //     this read mints NO second connection record for it (§3.2).
 //
-// THE READ NEVER WRITES. Every store call below is a read; the bite's
-// gate asserts zero writes against the library tables during a read,
-// and that a read leaves the connections table exactly as it found it.
+// THE READ WRITES EXACTLY ONE THING, EXACTLY ONCE: the first read for
+// a tenant whose library holds ZERO catalog entries seeds that
+// tenant's catalog (seed-on-first-read — see maybeSeedTenant below),
+// because the catalog otherwise exists only as data in code and a
+// fresh workspace's library would sit empty until someone ran the
+// refresh by hand. The seed goes through the catalog refresh road
+// (connector-catalog.mjs), which writes ENTRIES ONLY — never
+// connections, mirrors, or snapshots — and reports brokerMode
+// conflicts instead of forcing them. Every other read path is
+// read-only: a read of a tenant holding any entries performs zero
+// writes, and a read never touches the connections table.
 //
 // Row shape: the five §1.2 fields first — iconRef, name, oneLiner,
 // vendorLabel ("Connector by <vendor>") + trustLabel, state — then the
@@ -26,7 +37,7 @@
 // 'needs-reconnect', 'disabled-by-owner'.
 
 import { isVerifiedFresh } from './tool-connections.mjs';
-import { NATIVE_STATE_SOURCES } from './connector-catalog.mjs';
+import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh } from './connector-catalog.mjs';
 
 // How long a tool-connections probe receipt still counts as Connected
 // — the same window the room's surfaces already use
@@ -39,6 +50,49 @@ function badRequest(message) {
 function requireString(value, field) {
   if (typeof value !== 'string' || !value.trim()) throw badRequest(`${field} is required`);
   return value.trim();
+}
+
+// ------------------------------------------------------- seed-on-first-read
+// In-flight seed promises, keyed by tenant, at MODULE level — on
+// purpose. The live route builds a fresh read object per request
+// (connector-library-read-route.mjs productionRead), so a closure-level
+// map would give every concurrent request its own seed. Module level
+// means every read object in this process shares one in-flight seed
+// per tenant: two simultaneous first reads await the SAME refresh and
+// the refresh runs once. The entry is removed when the seed settles —
+// a failed seed on a still-empty tenant may be retried by a later
+// read; a settled seed is never needed again because the tenant then
+// holds entries and the zero-check keeps every later read out of here.
+// Cross-process races (two server processes seeding at once) are
+// covered differently: the refresh upserts entry by entry, and a
+// uniqueness collision (23505) lands in the same catch as any other
+// seed failure — the read continues and serves whatever has landed.
+const seedInFlightByTenant = new Map();
+
+const SEED_NOT_ATTEMPTED = Object.freeze({ attempted: false, seeded: false, conflicts: Object.freeze([]) });
+
+// Flatten a refresh summary's brokerMode conflicts, whichever job
+// shape produced it: refreshAll → { seats: [{ conflicts }] },
+// runCatalogRefreshOnce → [{ seats: [...] }]. Conflicts are how the
+// refresh says "this stored entry disagrees; I skipped it" — the seed
+// surfaces them, it never forces the entry (§3.1).
+function collectSeedConflicts(summary) {
+  const perTenant = Array.isArray(summary) ? summary : [summary];
+  const conflicts = [];
+  for (const tenantSummary of perTenant) {
+    for (const seatSummary of tenantSummary?.seats ?? []) {
+      for (const conflict of seatSummary?.conflicts ?? []) conflicts.push(conflict);
+    }
+  }
+  return conflicts;
+}
+
+function seedErrorShape(error) {
+  return {
+    message: String(error?.message ?? error ?? 'catalog seed failed'),
+    code: error?.code ?? null,
+    status: error?.status ?? null,
+  };
 }
 
 // ------------------------------------------------- tool-connections join
@@ -91,6 +145,62 @@ export function createToolConnectionSurface(toolConnectionsStore) {
   };
 }
 
+// ------------------------------------------- channel repo-link join
+// The second GitHub truth, and the one the room lives by: the
+// per-channel repo link. A channel's config (the latest
+// 'system:envoy-config' record for the channel, parsed by
+// envoy-agents.mjs) carries github.repo once an owner links a repo to
+// that channel; the rail's GITHUB section, the channel header badge,
+// and the GitHub webhook's commit/PR stream all read that same link.
+//
+// The adapter wraps the envoy store's channels-list-with-config read
+// (createEnvoyStore(pool).listChannels in envoy-chat.mjs — the read
+// the rail's channel list is built from, whose attachChannelLinks
+// puts the parsed config's github link on each channel). No second
+// link store exists or is created here: the config records remain
+// the only place a link lives, and this adapter only reads them.
+//
+// Tenant scope is the ACTOR's own: listChannels runs inside the
+// actor's tenant transaction behind the active-membership check, so
+// the links it returns are that tenant's and no other's — the read
+// cannot be aimed at another workspace's channels.
+export function createChannelRepoLinkSurface(envoyStore) {
+  if (!envoyStore || typeof envoyStore.listChannels !== 'function') {
+    throw Object.assign(new Error('createChannelRepoLinkSurface needs the envoy store'), { status: 500 });
+  }
+  return {
+    /**
+     * Every repo link in the actor's tenant: one entry per channel
+     * whose config links a repo, in a deterministic order (channel
+     * display name, then repo) so the headline link is stable.
+     * Read-only: listChannels is the only store method called.
+     */
+    async linksFor(actor) {
+      const { channels } = await envoyStore.listChannels(actor);
+      const links = [];
+      for (const channel of channels ?? []) {
+        const repo = String(channel?.github?.repo ?? '').trim();
+        if (!repo) continue;
+        links.push({
+          channelId: String(channel.id),
+          slug: channel.slug ?? null,
+          title: channel.title ?? null,
+          repo,
+          linkedAt: channel.github?.linkedAt ?? null,
+        });
+      }
+      links.sort((a, b) => channelDisplayName(a).localeCompare(channelDisplayName(b)) || a.repo.localeCompare(b.repo));
+      return links;
+    },
+  };
+}
+
+// How a linked channel is named in state details: '#Team' — the
+// title the room shows, falling back to the slug.
+export function channelDisplayName(link) {
+  return `#${link?.title || link?.slug || 'channel'}`;
+}
+
 // ------------------------------------------------------------ state joins
 
 // Headline state for a surfaced native entry, from the tool-connections
@@ -120,13 +230,51 @@ function nativeRowState(surface) {
   return { state: 'not-connected', accountIdentity: null, detail };
 }
 
-function joinedState(entry, { connection, mirror, nativeSurface }) {
+// Headline state for the Helmian-native GitHub entry, from BOTH of
+// its sources. Ranking, honestly:
+//   · A repo link is CONNECTED, full stop. The link is live config
+//     the room acts on continuously — the header badge renders from
+//     it and commits/PRs stream through it — not a probe receipt, so
+//     no freshness window applies to it, and it outranks even a
+//     failed or stale tool-connections row (the probe's opinion of a
+//     different road cannot unplug the link the room is using).
+//   · No link → the tool-connections surface decides, exactly as
+//     nativeRowState has always ruled it (verified+fresh only).
+// When both fire, the detail names the link as the source and still
+// records the agreeing receipt underneath.
+function nativeGithubState({ surface, repoLinks }) {
+  const links = Array.isArray(repoLinks) ? repoLinks : [];
+  if (!links.length) return nativeRowState(surface);
+  const first = links[0];
+  const via = channelDisplayName(first);
+  const detail = {
+    source: 'channel-repo-links',
+    repo: first.repo,
+    repos: [...new Set(links.map((link) => link.repo))],
+    viaChannel: via,
+    channelCount: links.length,
+    channels: links.map((link) => ({ channel: channelDisplayName(link), repo: link.repo })),
+    summary: links.length === 1
+      ? `${first.repo} via ${via}`
+      : `${first.repo} via ${via} +${links.length - 1} more channel${links.length === 2 ? '' : 's'}`,
+  };
+  if (surface?.status === 'connected') {
+    detail.toolStatus = 'connected';
+    detail.toolAccountLabel = surface.row?.accountLabel ?? null;
+  }
+  return { state: 'connected', accountIdentity: first.repo, detail };
+}
+
+function joinedState(entry, { connection, mirror, nativeSurface, repoLinks }) {
   // The owner's disable wins over every other state (§1.2's fourth
   // state is entry-level, §2.1).
   if (entry.state === 'disabled-by-owner') {
     return { state: 'disabled-by-owner', accountIdentity: null, detail: null };
   }
   const source = NATIVE_STATE_SOURCES[entry.id];
+  if (source?.repoLinks === true) {
+    return nativeGithubState({ surface: nativeSurface, repoLinks });
+  }
   if (source?.stateSource === 'tool-connections') {
     return nativeRowState(nativeSurface);
   }
@@ -183,14 +331,88 @@ function rowOf(entry, joined) {
 
 // ------------------------------------------------------------------- read
 
-export function createSeatLibraryRead({ libraryStore, toolConnectionsStore } = {}) {
+export function createSeatLibraryRead({
+  libraryStore,
+  toolConnectionsStore,
+  envoyStore = null,
+  seedCatalog = null,
+  catalogRefresh = null,
+  seedSubject = 'system',
+  seedLogger = null,
+} = {}) {
   if (!libraryStore
     || typeof libraryStore.listEntries !== 'function'
     || typeof libraryStore.listConnections !== 'function'
     || typeof libraryStore.listMirrors !== 'function') {
     throw Object.assign(new Error('createSeatLibraryRead needs the connector library store'), { status: 500 });
   }
+  if (seedCatalog !== null && typeof seedCatalog !== 'function') {
+    throw Object.assign(new Error('seedCatalog must be an async (tenantId) => refreshSummary function when given'), { status: 500 });
+  }
+  if (catalogRefresh !== null && typeof catalogRefresh?.refreshAll !== 'function') {
+    throw Object.assign(new Error('catalogRefresh must be a createCatalogRefresh result when given'), { status: 500 });
+  }
   const surface = toolConnectionsStore ? createToolConnectionSurface(toolConnectionsStore) : null;
+  const repoLinkSurface = envoyStore ? createChannelRepoLinkSurface(envoyStore) : null;
+
+  // The default seed IS the existing catalog refresh machinery, built
+  // on the same store this read reads through — no second seeding road.
+  const runSeedCatalog = seedCatalog ?? (async (tenantId) => {
+    const refresh = catalogRefresh ?? createCatalogRefresh({ libraryStore, subject: seedSubject });
+    return refresh.refreshAll(tenantId);
+  });
+
+  function logSeedFailure(tenantId, error) {
+    const line = `[connector-library] catalog seed failed for tenant ${tenantId}: ${error?.message ?? error}`;
+    try {
+      if (typeof seedLogger === 'function') seedLogger(line, error);
+      else if (seedLogger && typeof seedLogger.error === 'function') seedLogger.error(line);
+      else console.error(line);
+    } catch { /* a logger must never break the read either */ }
+  }
+
+  // Run the seed for one tenant, sharing one in-flight run per tenant
+  // across every read object in the process (see the map above). The
+  // first caller's refresh is the run; concurrent callers join it.
+  // NEVER rejects: the outcome — seeded, or failed with the error's
+  // shape — is data the read returns, not an exception it throws.
+  function runSeedOnce(tenantId) {
+    const inFlight = seedInFlightByTenant.get(tenantId);
+    if (inFlight) return inFlight;
+    const promise = (async () => {
+      try {
+        const summary = await runSeedCatalog(tenantId);
+        return { attempted: true, seeded: true, conflicts: collectSeedConflicts(summary) };
+      } catch (error) {
+        // Includes the cross-process uniqueness race (23505): another
+        // seeder's rows are landing (or have landed) — say so in the
+        // metadata and let the read serve what exists.
+        logSeedFailure(tenantId, error);
+        return { attempted: true, seeded: false, conflicts: [], error: seedErrorShape(error) };
+      }
+    })();
+    seedInFlightByTenant.set(tenantId, promise);
+    promise.then(() => {
+      if (seedInFlightByTenant.get(tenantId) === promise) seedInFlightByTenant.delete(tenantId);
+    });
+    return promise;
+  }
+
+  // Seed only when the TENANT holds zero catalog entries — not merely
+  // when this seat is empty (a partly-seeded or partly-deleted tenant
+  // is a state a human refresh decides about, never a read). The probe
+  // covers the requested seat (already listed by the caller) plus the
+  // catalog seats; it runs only on the empty-seat path, so a populated
+  // read pays nothing for it.
+  async function maybeSeedTenant(tenantId, seatId, entriesForSeat) {
+    if (entriesForSeat.length > 0) return SEED_NOT_ATTEMPTED;
+    for (const otherSeat of LIVE_SEATS) {
+      if (otherSeat === seatId) continue;
+      const other = await libraryStore.listEntries(tenantId, otherSeat);
+      if (other.length > 0) return SEED_NOT_ATTEMPTED;
+    }
+    return runSeedOnce(tenantId);
+  }
 
   return {
     /**
@@ -199,14 +421,27 @@ export function createSeatLibraryRead({ libraryStore, toolConnectionsStore } = {
      * name (§1.2's browse rule). Person and seat are both required —
      * there is no cross-seat or cross-person read (§3.4).
      */
-    async readSeatLibrary(tenantId, { personId, seatId, now = Date.now(), verifiedMaxAgeMs = CONNECTOR_LIBRARY_FRESH_MS } = {}) {
+    async readSeatLibrary(tenantId, { personId, seatId, now = Date.now(), verifiedMaxAgeMs = CONNECTOR_LIBRARY_FRESH_MS, actor = null } = {}) {
       const person = requireString(personId ?? '', 'personId');
       const seat = requireString(seatId ?? '', 'seatId');
-      const [entries, connections, mirrors] = await Promise.all([
+      let [entries, connections, mirrors] = await Promise.all([
         libraryStore.listEntries(tenantId, seat),
         libraryStore.listConnections(tenantId, { personId: person, seatId: seat }),
         libraryStore.listMirrors(tenantId, { personId: person, seatId: seat }),
       ]);
+      // Seed-on-first-read: a tenant with zero catalog entries gets
+      // one refresh, then the read re-lists and serves the seeded
+      // rows. A failed seed never fails the read — the listings are
+      // re-read (another seeder may have landed rows meanwhile) and
+      // the failure rides in the result's `seed` metadata.
+      const seed = await maybeSeedTenant(tenantId, seat, entries);
+      if (seed.attempted) {
+        [entries, connections, mirrors] = await Promise.all([
+          libraryStore.listEntries(tenantId, seat),
+          libraryStore.listConnections(tenantId, { personId: person, seatId: seat }),
+          libraryStore.listMirrors(tenantId, { personId: person, seatId: seat }),
+        ]);
+      }
       const connectionByEntry = new Map(connections.map((c) => [c.entryId, c]));
       const mirrorByEntry = new Map(mirrors.map((m) => [m.entryId, m]));
 
@@ -223,6 +458,18 @@ export function createSeatLibraryRead({ libraryStore, toolConnectionsStore } = {
         }
       }
 
+      // Join the tenant's per-channel repo links for the natives
+      // that name them (today: helmian-github), one channels read per
+      // library read. The envoy store's list is membership-checked
+      // against the ACTOR, so the join needs the caller's actor; a
+      // read without one (a test, a non-route caller) simply leaves
+      // this source silent and the tool-connections surface decides —
+      // it never guesses at links it could not read.
+      let tenantRepoLinks = null;
+      if (repoLinkSurface && actor && entries.some((entry) => NATIVE_STATE_SOURCES[entry.id]?.repoLinks === true)) {
+        tenantRepoLinks = await repoLinkSurface.linksFor(actor);
+      }
+
       const rows = entries.map((entry) => {
         const source = NATIVE_STATE_SOURCES[entry.id];
         const nativeSurface = source?.stateSource === 'tool-connections'
@@ -232,6 +479,7 @@ export function createSeatLibraryRead({ libraryStore, toolConnectionsStore } = {
           connection: connectionByEntry.get(entry.id) ?? null,
           mirror: mirrorByEntry.get(entry.id) ?? null,
           nativeSurface,
+          repoLinks: tenantRepoLinks,
         }));
       });
       rows.sort((a, b) => (STATE_RANK[a.state] - STATE_RANK[b.state]) || a.name.localeCompare(b.name));
@@ -240,6 +488,10 @@ export function createSeatLibraryRead({ libraryStore, toolConnectionsStore } = {
         personId: person,
         connectedCount: rows.filter((row) => row.state === 'connected').length,
         rows,
+        // Seed metadata: { attempted, seeded, conflicts } plus, on
+        // failure, error { message, code, status }. attempted:false
+        // is the normal read — the tenant already held entries.
+        seed,
       };
     },
   };
