@@ -241,7 +241,7 @@ test('desk config: desk flag round-trips and stays out of configs that never had
   assert.equal(publicConfig(parseConfig(oldBody)).desk, false);
 });
 
-test('maestroFollow config: flag round-trips and stays out of configs that never had it', () => {
+test('maestroFollow config (legacy field): round-trips for backward compatibility; routing never consults it', () => {
   const plain = emptyConfig();
   assert.equal(plain.maestroFollow, false);
   // Byte-stability: a config without the follow flag serializes

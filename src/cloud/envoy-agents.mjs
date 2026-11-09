@@ -27,11 +27,15 @@
 // behind the name to answer. Agent-authored and system messages route
 // nobody in the desk too.
 //
-// Maestro follow (maestroFollow:true on an ordinary channel's config)
-// opts that channel into the same desk dispatch rules without being
-// the desk: the mesh passes desk:true to agentsToAnswer when either
-// flag is set (see envoy-mesh.mjs agentWork). The desk channel itself
-// is unchanged, and Maestro still never answers.
+// Maestro always-on (Troy's ruling, 2026-11-09, superseding the
+// per-channel Maestro follow switch shipped the same morning): desk
+// dispatch rules are how EVERY channel routes — the mesh passes
+// desk:true to agentsToAnswer unconditionally (see envoy-mesh.mjs
+// agentWork). The stored maestroFollow field survives in parse /
+// serialize / public config purely for backward compatibility with
+// configs written while the switch existed; routing never consults
+// it, and a stored false does not restore the old silence. Maestro
+// still never answers.
 
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
 export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter', muse: 'Muse' });
