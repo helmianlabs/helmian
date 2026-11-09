@@ -9,12 +9,15 @@ const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
 
 test('three columns: sidebar, center console, Guard Feed', () => {
   for (const id of ['sidebar', 'main', 'guard', 'project-filter', 'new-project-form', 'appearance', 'sessions', 'log', 'prompt', 'mcp-panel', 'session-chips', 'session-form', 'feed', 'feed-filter', 'feed-clear', 'run-suite', 'active-agent']) assert.match(html, new RegExp(`id="${id}"`), id);
-  for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'SESSIONS', 'GUARD FEED', 'MCP SECURITY', 'Full screen', 'Prompt...', 'Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'SHOW DETAILS', 'ADVANCED', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap', 'Devices', 'Connect phone', 'No Desktop connected yet', 'Chat', 'Projects', 'Approvals']) assert.ok(html.includes(label), label);
+  for (const label of ['HELMIAN', 'Personal Pilot', 'PROJECTS', 'APPEARANCE', 'CHATS', 'GUARD FEED', 'MCP SECURITY', 'Full screen', 'Prompt...', 'Tools', 'Voice chat', 'Dictate', 'NEW SESSION', 'Start session', 'Run tool suite', 'SHOW DETAILS', 'ADVANCED', 'Live activity', 'Evidence', 'Integrations', 'Release roadmap', 'Devices', 'Connect phone', 'No Desktop connected yet', 'Chat', 'Projects', 'Approvals']) assert.ok(html.includes(label), label);
   for (const p of ['Claude', 'ChatGPT', 'Grok', 'Gemini']) assert.match(html, new RegExp(`data-provider="${p}"`));
   for (const view of VIEWS) {
     // Browser, Canvas, Preview, Create live in the right workbench panel now
     // (BROWSE-001), not as center views.
     if (PANEL_VIEWS.includes(view)) assert.match(html, new RegExp(`data-panel-pane="${view}"`), view);
+    // Chats is the general-list face of the console panel (nav-build):
+    // show() aliases it onto data-view-panel="console", no panel of its own.
+    else if (view === 'chats') assert.match(html, /data-view-panel="console"/, view);
     else assert.match(html, new RegExp(`data-view-panel="${view}"`), view);
   }
   assert.match(html, /href="\/admin\/auth\/login\?return=\/app"/);
@@ -184,7 +187,7 @@ test('desktopsModel empty and rows', () => {
 });
 
 test('phone primary nav + Advanced + Show details (Troy polish)', () => {
-  assert.deepEqual([...PRIMARY_VIEWS], ['desktop', 'home', 'workspace', 'approvals']);
+  assert.deepEqual([...PRIMARY_VIEWS], ['desktop', 'home', 'workspace', 'approvals', 'chats']);
   assert.ok(ADVANCED_VIEWS.includes('devices'));
   assert.equal(VIEW_TITLES.console, '💬 Session console');
   assert.equal(VIEW_TITLES.desktop, '🖥️ Workspace');
@@ -194,7 +197,7 @@ test('phone primary nav + Advanced + Show details (Troy polish)', () => {
   assert.doesNotMatch(html, /id="mcp-toggle"/);
   // Primary nav lists Chat/Projects/Approvals; Advanced holds Devices etc.
   const primary = html.match(/aria-label="Primary"[\s\S]*?<\/nav>/)[0];
-  for (const v of ['desktop', 'home', 'workspace', 'approvals']) assert.match(primary, new RegExp(`data-view="${v}"`));
+  for (const v of ['desktop', 'home', 'workspace', 'approvals', 'chats']) assert.match(primary, new RegExp(`data-view="${v}"`));
   assert.doesNotMatch(primary, /data-view="devices"/);
   const advanced = html.match(/id="advanced-nav"[\s\S]*?<\/details>/)[0];
   for (const v of ADVANCED_VIEWS) assert.match(advanced, new RegExp(`data-view="${v}"`));
@@ -305,5 +308,5 @@ test('the session console always stays inline (the Workspace is the one chat; no
   assert.doesNotMatch(place, /panelBody\.appendChild\(consoleView\)/);
   assert.match(place, /\{[\s\S]*consoleHome\.after\(consoleView\)[\s\S]*panel\.hidden = true[\s\S]*toggle\.hidden = true/);
   assert.match(js, /if \(!consolePollTimer\) consolePollTimer = setInterval/, 'one chat poll timer, not one per visit');
-  assert.match(js, /p\.hidden = p\.dataset\.viewPanel !== view && !p\.closest\('#chat-panel'\)/);
+  assert.match(js, /p\.hidden = p\.dataset\.viewPanel !== panelView && !p\.closest\('#chat-panel'\)/);
 });

@@ -176,7 +176,7 @@ test('desktop layout: no agent CLI or agents panes; channels are plain', async (
   for (const gone of ['id="ew-cli"', 'id="ew-agents"', 'data-pane="cli"', 'data-pane="agents"', 'data-toggle="cli"', 'data-toggle="agents"', 'data-split="cli"', 'data-split="agents"', 'id="ew-cli-new"', 'id="ew-create-agent-btn"', 'id="ew-agent-add"']) {
     assert.equal(html.indexOf(gone), -1, `index.html no longer has ${gone}`);
   }
-  assert.match(html, /id="ew-add-channel"[^>]*>\+ New channel</);
+  assert.match(html, /id="ew-add-channel"[^>]*>\+</);
   assert.doesNotMatch(html, /ew-new-channel-agent/);
   // The one pane function with no other home — adding a seat to the
   // channel — moved into the CREW section of the channels rail.
@@ -290,6 +290,42 @@ test('nav rail: the pin lives on the rail, hover peek is desktop-pointer only', 
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
   assert.match(css, /@media \(min-width: 901px\) and \(hover: hover\) and \(pointer: fine\)/);
   assert.match(css, /\.sidebar\.rail\.peek \{/);
+});
+
+// Panel bite (Troy's final word, 2026-11-08): the channels pane rests as
+// a slim rail everywhere, hover opens it over the chat, a click pins it;
+// the nav sidebar's rail is likewise the default at every width; the
+// named surfaces carry no scrollbar at all; the "+" menu byline wraps.
+test('panel bite: channels pane rests as a rail, peeks on hover, pins on click', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="ew-channels-rail-tab"/);
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /function setChannelsRest\(rest, \{ user = false \} = \{\}\)/);
+  assert.match(js, /function wireChannelsRail\(\)/);
+  assert.match(js, /classList\.add\('peeking'\)/);
+  assert.match(js, /if \(ls\.get\('open\.channels', false\)\) setPane\('channels', true\);/);
+  assert.match(js, /if \(n === 'channels'\) \{ setChannelsRest\(true, \{ user: true \}\); return; \}/);
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.match(css, /\.ew-channels\.rail-rest \{ flex:0 0 48px; min-width:48px; \}/);
+  assert.match(css, /\.ew-channels\.rail-rest\.peeking \{ position:fixed;[^}]*width:var\(--ew-channels\)/);
+  assert.match(css, /\.ew-channels\.rail-rest:not\(\.peeking\) > :not\(\.ew-channels-rail-tab\) \{ display:none !important; \}/);
+});
+
+test('panel bite: sleek scrollbars — the named surfaces carry no bar, and no arrows', async () => {
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  for (const sel of ['.ew-messages', '.ew-channel-list', '.ew-crew-list', '.ew-picker', '.sidebar']) {
+    assert.match(css, new RegExp(sel.replace('.', '\\.') + '[\\s\\S]{0,240}?\\{ scrollbar-width:none; \\}'), sel);
+    assert.match(css, new RegExp(sel.replace('.', '\\.') + '::-webkit-scrollbar[\\s\\S]{0,320}?\\{ width:0; height:0; display:none; \\}'), sel);
+  }
+  // The byline in the "+" popup wraps instead of clipping mid-word.
+  assert.match(css, /\.ew-lib-line \{[^}]*white-space:normal/);
+  assert.doesNotMatch(css, /\.ew-lib-line \{[^}]*text-overflow:ellipsis/);
+});
+
+test('panel bite: the nav rail is the default at every width; a stored pin still wins', async () => {
+  const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  assert.match(js, /store\.get\('navPinned', false\)/);
+  assert.doesNotMatch(js, /store\.get\('navPinned', window\.innerWidth/);
 });
 
 // Polish Bites C/D (audit 2026-10-23): F2's leftover double animation, the

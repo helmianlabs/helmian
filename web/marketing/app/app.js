@@ -242,7 +242,10 @@ function show(view) {
     view = 'desktop';
   }
   shell.dataset.view = view;
-  for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== view && !p.closest('#chat-panel');
+  // Chats is the general-list face of the session console: the same panel
+  // and loaders under its own nav item, title and hash.
+  const panelView = view === 'chats' ? 'console' : view;
+  for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== panelView && !p.closest('#chat-panel');
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
   $('#view-title').textContent = stripLeadingEmoji(viewTitles(state.emojiMode)[view]);
   if (view === 'desktop') syncWorkspaceViewTitle();
@@ -252,7 +255,7 @@ function show(view) {
   const adv = $('#advanced-nav');
   if (adv && !adv.open && ADVANCED_VIEWS.includes(view) && !store.get('advancedManual', false)) adv.open = true;
   if (narrow()) drawer('sidebar', false);
-  loaders[view]?.().catch(() => {});
+  loaders[panelView]?.().catch(() => {});
 }
 
 // ---- workbench panel tabs (Browser | Canvas | Preview | Create; Guard is its own panel) ----
@@ -340,7 +343,7 @@ function renderSessions() {
     for (const s of old) { try { await post('/api/admin/app/sessions/archive', { id: s.id }); } catch {} }
     toast('Old sessions closed', 'ok'); loadSessions();
   };
-  if (!sorted.length) { ul.replaceChildren(el('li', 'faint sm', 'No sessions yet')); ul.firstChild.style.cursor = 'default'; }
+  if (!sorted.length) { ul.replaceChildren(el('li', 'faint sm', 'No chats yet')); ul.firstChild.style.cursor = 'default'; }
   else ul.replaceChildren(...shown.map((s) => { const li = el('li', s.id === state.activeSession ? 'active' : null); const title = sessionTitle(s); li.title = `${title} (${s.provider})`; li.append(el('span', 'dot'), el('span', 'name', title)); if (state.serverSessions) { const x = el('button', 'x', '×'); x.type = 'button'; x.title = 'Close session'; x.setAttribute('aria-label', `Close ${title}`); x.onclick = async (ev) => { ev.stopPropagation(); try { await post('/api/admin/app/sessions/archive', { id: s.id }); } catch {} loadSessions(); }; li.append(x); } li.onclick = () => { state.activeSession = s.id; store.set('activeSession', s.id); state.steps = null; renderSessions(); loadSteps(); location.hash = 'console'; }; return li; }));
   const active = state.sessions.find((s) => s.id === state.activeSession);
   const sessionLabel = $('#session-label'); if (sessionLabel) sessionLabel.textContent = active ? `CONSOLE · ${active.name.toUpperCase()} · ${active.provider.toUpperCase()}` : 'CONSOLE';
@@ -371,6 +374,24 @@ async function loadSessions() {
   if (!state.sessions.some((s) => s.id === state.activeSession)) state.activeSession = state.sessions[0]?.id ?? null;
   renderSessions();
 }
+// One-tap New chat (Chats section head): the same creation path the
+// console's session form uses — POST /api/admin/app/sessions with a name
+// and provider (or the local store when the server list is unavailable) —
+// with the house default provider, then straight into the fresh chat.
+async function startNewChat() {
+  const provider = 'Claude';
+  const name = `${provider} session`;
+  if (state.serverSessions) {
+    try { const r = await post('/api/admin/app/sessions', { name, provider, idempotencyKey: crypto.randomUUID() }); await loadSessions(); state.activeSession = r.session.id; state.steps = null; loadSteps(); }
+    catch { toast('Chat not saved — try again'); return; }
+  } else {
+    state.sessions = addSession(state.sessions, { name, provider }); state.activeSession = state.sessions[0]?.id ?? null; store.set('sessions', state.sessions);
+  }
+  store.set('activeSession', state.activeSession);
+  renderSessions(); toast('Chat started', 'ok');
+  if (location.hash !== '#chats') location.hash = 'chats'; else show('chats');
+}
+$('#new-chat').onclick = () => { startNewChat().catch(() => toast('Chat not saved — try again')); };
 // Inline copy of web/shared/voice-dictation.mjs (web/shared/ is not
 // URL-served; same pattern as the inlined guard-motion copy). Voice mode:
 // a toggle enabling a full voice loop. Dictation inserts into #prompt; a
@@ -392,6 +413,11 @@ async function loadSessions() {
 // when it lands. A load that never settles at all — a hung import, fetch,
 // or GPU session cannot be caught, only abandoned — is abandoned past
 // KOKORO_LOAD_ABANDON_MS and retried fresh. The room never goes silent.
+// The same law bounds each generate: one still running past
+// KOKORO_GENERATE_MS is treated as a generate failure — the backup
+// voice speaks the chunk and the queue moves on — so a wedged generate
+// can neither silence a reply nor, by holding the reply in flight
+// forever, hold the microphone with it.
 // speechSynthesis is the BACKUP voice only: it speaks when Kokoro truly
 // cannot load, is still loading past the bound, or where Web Audio is
 // missing, and whenever it speaks the engine status says it is the backup
@@ -446,45 +472,21 @@ function voiceForSeat(seat) {
   return SEAT_VOICE_POOL[hash % SEAT_VOICE_POOL.length];
 }
 const KOKORO_SAMPLE_RATE = 24000;
-// Adapter-first device choice for the Kokoro load. The presence of
-// navigator.gpu is NOT proof WebGPU can run: a browser can expose the
-// API yet return a null adapter (no usable GPU, a blocked driver, a
-// headless shell), and a from_pretrained WebGPU attempt in that state
-// fails with "no available backend found" — and poisons the follow-on
-// WASM attempt, which then fails instantly with the same WebGPU error
-// (both proven live in the real room browser, 2026-11-08). So the
-// adapter is probed BEFORE any from_pretrained call: adapter in hand
-// -> WebGPU first, with the WASM catch-fallback kept for a genuine
-// WebGPU load failure; no adapter, a throwing probe, a probe that
-// hangs past the bound, or no API at all -> straight to WASM, WebGPU
-// never attempted. preferWasm (set when a load is abandoned as stuck)
-// skips the probe and WebGPU entirely.
-const KOKORO_ADAPTER_PROBE_MS = 10000;
-
-async function kokoroAdapterInHand(probeMs) {
-  const gpu = typeof navigator !== 'undefined' ? navigator.gpu : undefined;
-  if (!gpu || typeof gpu.requestAdapter !== 'function') return false;
-  let probe;
-  try {
-    probe = Promise.resolve(gpu.requestAdapter()).catch(() => null);
-  } catch { return false; }
-  let timer = null;
-  const bound = new Promise((resolve) => { timer = setTimeout(() => resolve(null), probeMs); });
-  const adapter = await Promise.race([probe, bound]);
-  clearTimeout(timer);
-  return adapter != null;
-}
-
-async function loadKokoroEngine(mod, { preferWasm = false, probeMs = KOKORO_ADAPTER_PROBE_MS } = {}) {
-  const opts = { dtype: 'q8' };
-  if (!preferWasm && (await kokoroAdapterInHand(probeMs))) {
-    try {
-      return await mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'webgpu' });
-    } catch (err) {
-      console.warn('[voice] WebGPU failed, falling back to WASM:', err?.message ?? err);
-    }
-  }
-  return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'wasm' });
+// WASM-only device choice for the Kokoro load. WebGPU is never
+// used, with or without an adapter in hand: on the vendored runtime
+// versions (onnxruntime-web 1.22 + transformers.js 3.8.1) the q8
+// model on WebGPU loads without a murmur and then silently computes
+// garbage — right length, right engine label, unintelligible tonal
+// mush where the words should be (published measurements on this
+// model + runtime; heard in Troy's own tab, 2026-11-08). The
+// underlying vocoder bug was also measured at fp32, so no dtype swap
+// rescues the GPU road — and every clean proof of this pipeline ran
+// q8 on WASM. So there is no device decision left to make: no
+// adapter probe, no WebGPU attempt, just the WASM load. (The loader
+// used to probe the adapter and try WebGPU first; the probe went
+// away with the road it served.)
+async function loadKokoroEngine(mod) {
+  return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: 'q8', device: 'wasm' });
 }
 
 function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition, synthesis = globalThis.speechSynthesis, Utterance = globalThis.SpeechSynthesisUtterance, kokoroLoader = null, makeAudioContext = null } = {}) {
@@ -578,18 +580,34 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       listening = false;
       recognition = null;
       const hidden = typeof document !== 'undefined' && document.hidden;
-      if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a reply is speaking
+      if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a reply is in flight
       else if (!voiceMode) handlers.onState?.('idle');
     };
     recognition.start();
   }
-  // Whether a reply is currently being read aloud (either engine:
-  // queued, generating, or playing). startTurn() cancels speech, so
-  // the loop's automatic restart must not fire while a reply speaks —
-  // it would cut the reply off, and the mic would transcribe the
-  // speaker. restartTurn holds the next listening turn until speech
-  // drains, then starts it.
+  // Whether sound is actually coming out of the speakers right now
+  // (either engine: a Kokoro buffer source playing, or a backup
+  // utterance speaking). This — and only this — is what the mic must
+  // not hear: the echo guard drops recognition results while it is
+  // true, and a pending auto-submit holds until it clears. A reply
+  // that is merely queued or still generating is NOT speech yet and
+  // must not close the mic (mic-hostage fix): while an answer is
+  // being prepared, the user's words are accepted normally.
   function speechActive() {
+    if (activeSource) return true;
+    if (synthSpeaking) return true;
+    try { return !!(synthesis?.speaking); } catch { return false; }
+  }
+
+  // Whether a reply is in flight on either engine — playing,
+  // generating, waiting behind the model load, or queued. The mic
+  // loop's restart keys on this rather than speechActive: starting a
+  // turn cancels speech (startTurn), so a restart fired while a reply
+  // is being prepared would kill the reply before it ever played.
+  // The hold can no longer hold the mic hostage: the load wait and
+  // every generate are bounded, so an in-flight reply always drains
+  // or fails forward within its bounds, and the restart follows.
+  function speechInFlight() {
     if (kokoroPlaying || activeSource || kokoroQueue.length > 0) return true;
     if (synthSpeaking || synthQueue.length > 0) return true;
     try { return !!(synthesis?.speaking || synthesis?.pending); } catch { return false; }
@@ -598,7 +616,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   function restartTurn() {
     if (!voiceMode) return;
     if (typeof document !== 'undefined' && document.hidden) return;
-    if (speechActive()) {
+    if (speechInFlight()) {
       if (!restartTimer) {
         restartTimer = setTimeout(() => { restartTimer = null; restartTurn(); }, 400);
       }
@@ -613,8 +631,9 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // onSubmit with an empty remainder submits the composer as-is, and
   // every wiring's own empty-composer guard keeps a late or duplicate
   // fire harmless. Firing never happens from a hidden tab, and holds
-  // while a reply is being read aloud (turn-taking: the send goes out
-  // the moment the reply drains, on the restart loop's poll rhythm).
+  // while a reply is actually playing (turn-taking: the send goes out
+  // once the playback ends, on the restart loop's poll rhythm). A
+  // reply still being generated does not hold the send.
   function fireAutoSubmit() {
     autoSubmitTimer = null;
     if (!voiceMode || voiceKind !== 'voice') { autoSubmitPending = false; return; }
@@ -765,12 +784,19 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   const KOKORO_SPEAK_WAIT_MS = 15000;
   const KOKORO_LOAD_ABANDON_MS = 60000;
   const KOKORO_WAIT_POLL_MS = 250;
+  // One generate gets the same budget family as the wait: a generate
+  // still running KOKORO_GENERATE_MS after the call is treated as a
+  // generate failure — the backup voice speaks the chunk and the queue
+  // moves on. A generate is a promise that may never settle (a wedged
+  // worker behind a cold incognito model); unbounded, it held
+  // kokoroPlaying — and with it the reply queue and the mic — forever
+  // (mic-hostage fix).
+  const KOKORO_GENERATE_MS = 15000;
   let kokoroLoadStartedAt = 0; // when the current load attempt began
   let kokoroLoadGen = 0;       // generation of the current load attempt
   let kokoroLastError = null;  // last load failure, kept for the console proof point
   let kokoroErrorLatch = '';   // last Kokoro failure message, latched so setVoiceStatus can re-apply it as data-error after any re-render
   let kokoroBackupWhileLoading = false; // bounded wait expired: backup speaks until the load lands
-  let kokoroPreferWasm = false; // a load was abandoned as stuck: the next attempt skips WebGPU
   let kokoroRetryTimer = null;
   let playToken = 0;          // cancel() bumps it; late audio is ignored
   let activeSource = null;    // currently playing AudioBufferSourceNode
@@ -838,7 +864,14 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // /kokoro-model/ tree through the transformers.js env kokoro-js
   // re-exports; if those files are absent, the library still falls
   // back to the HuggingFace originals on its own.
-  const KOKORO_LOCAL_URL = '/kokoro-js/kokoro-js@1.2.1.mjs';
+  // KOKORO_GRAPH_VERSION stamps the vendored graph: bump it whenever
+  // anything under /kokoro-js/ changes. It rides the import as a query,
+  // so a browser holding a cached answer for the bare path — including
+  // a cached 404, which is what left a tab importing a missing runtime
+  // all evening on 2026-11-08 — asks for a new URL instead of reusing
+  // the dead one.
+  const KOKORO_GRAPH_VERSION = '2026-11-09.1';
+  const KOKORO_LOCAL_URL = `/kokoro-js/kokoro-js@1.2.1.mjs?v=${KOKORO_GRAPH_VERSION}`;
   const KOKORO_MODEL_PATH = '/kokoro-model/';
 
   async function importKokoro() {
@@ -863,12 +896,9 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     // Full URL for the CDN fallback (no inline import map: the page CSP
     // forbids inline scripts, which silently broke the map). The model
     // downloads once — warmed at voice-enable, see warmup() — and is
-    // cached by the browser afterwards. The device is chosen
-    // adapter-first by loadKokoroEngine: WebGPU is attempted only with
-    // an adapter in hand, otherwise the load goes straight to WASM.
-    // kokoroPreferWasm — set when a load is abandoned as stuck — skips
-    // WebGPU entirely.
-    return importKokoro().then((mod) => loadKokoroEngine(mod, { preferWasm: kokoroPreferWasm }));
+    // cached by the browser afterwards. loadKokoroEngine always loads
+    // on WASM — the WebGPU road is not taken (see its note for why).
+    return importKokoro().then((mod) => loadKokoroEngine(mod));
   }
 
   // One load, shared: warmup and any number of queued speaks all await
@@ -996,6 +1026,28 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     if (entries.length) synthEngine.enqueue(entries, { interrupt: false });
   }
 
+  // engine.generate with a hard bound, in the load wait's own idiom:
+  // a deadline on Date.now, polled on KOKORO_WAIT_POLL_MS. Past the
+  // deadline the race resolves null and the caller treats the chunk
+  // exactly like a generate failure. The underlying generate promise
+  // is left to settle or hang on its own: its late result is never
+  // used, and a late rejection stays handled by the race.
+  async function kokoroGenerateBounded(engine, item) {
+    let settled = false;
+    const gen = Promise.resolve(engine.generate(item.text, { voice: item.voice ?? KOKORO_VOICE }))
+      .then((out) => { settled = true; return out; }, (err) => { settled = true; throw err; });
+    const deadline = Date.now() + KOKORO_GENERATE_MS;
+    const bound = (async () => {
+      while (!settled && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, KOKORO_WAIT_POLL_MS));
+      }
+      return null;
+    })();
+    const out = await Promise.race([gen, bound]);
+    if (out === null) throw new Error(`Kokoro generate passed the ${KOKORO_GENERATE_MS}ms bound`);
+    return out;
+  }
+
   async function pumpKokoro() {
     if (kokoroPlaying || kokoroQueue.length === 0) return;
     const item = kokoroQueue.shift();
@@ -1015,11 +1067,9 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
         // voice speaks this reply — and, via kokoroBackupWhileLoading,
         // the replies behind it — while the load continues in the
         // background; Kokoro takes over when it lands, and the retry
-        // timer starts a fresh attempt once the stuck load crosses the
-        // abandon bound (skipping WebGPU, the stage a hang cannot be
-        // caught in). The room never goes silent.
+        // timer starts a fresh attempt once the stuck load crosses
+        // the abandon bound. The room never goes silent.
         kokoroBackupWhileLoading = true;
-        kokoroPreferWasm = true;
         scheduleKokoroRetry();
         kokoroFallback(item, 'loading');
       }
@@ -1027,8 +1077,9 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     }
     let out;
     try {
-      out = await engine.generate(item.text, { voice: item.voice ?? KOKORO_VOICE });
+      out = await kokoroGenerateBounded(engine, item);
     } catch (err) {
+      if (item.token !== playToken) { kokoroPlaying = false; pumpKokoro(); return; } // cancelled mid-generate
       kokoroPlaying = false;
       kokoroFailedAt = Date.now();
       noteKokoroError(err);
@@ -2089,10 +2140,9 @@ function countdownLabel(iso) {
 }
 let upcomingTimer = null;
 function setUpcomingBadge(total) {
-  const badge = $('#upcoming-badge');
-  if (!badge) return;
-  badge.hidden = !total;
-  badge.textContent = String(total || '');
+  // The badge lived on the removed Upcoming nav entry (nav-build); the
+  // Approvals queue still refreshes it, so it simply no-ops without one.
+  const badge = $('#upcoming-badge'); if (badge) { badge.hidden = !total; badge.textContent = String(total || ''); }
 }
 async function fetchUpcoming() {
   const res = await fetch('/api/admin/guard/pc-upcoming', { credentials: 'same-origin' });
@@ -3164,8 +3214,11 @@ function wireRail() {
     sidebar.classList.toggle('rail', on); shellEl.classList.toggle('sidebar-rail', on);
     if (btn) { btn.setAttribute('aria-pressed', String(!on)); btn.title = on ? 'Pin navigation open' : 'Unpin navigation (folds to the icon rail)'; }
   };
-  // First visit on a laptop-sized screen starts unpinned so the chat gets the room.
-  let pinned = store.get('navPinned', window.innerWidth >= 1600);
+  // First visit starts unpinned at EVERY width (Troy's final word,
+  // 2026-11-08): the rail is the rest state, hover opens it, and the
+  // pin is the user's own choice to keep it open. A stored choice
+  // still wins over this default.
+  let pinned = store.get('navPinned', false);
   setRail(!pinned);
   if (btn) btn.onclick = () => { pinned = !pinned; store.set('navPinned', pinned); setRail(!pinned); };
   // "More" (visible at rest in rail mode only, envoy.css) is the hint that
@@ -3260,6 +3313,11 @@ function toggleMaestroVoice(mode) {
       onState: updateMaestroVoiceChips,
       onError: (msg) => { clearInterim(document.getElementById('maestro-input')); toast(msg); updateMaestroVoiceChips(); },
     });
+    // Voice-on catch-up (catch-up bite): the room speaks the newest
+    // seat reply that landed before voice chat was switched on —
+    // the owner's ask-everybody-then-listen move. The workspace
+    // module owns the pick; dictate never catches up.
+    if (mode === 'voice') workspaceModule?.speakCatchUp?.();
   }
   updateMaestroVoiceChips();
 }
@@ -3713,35 +3771,73 @@ async function boot() {
 boot();
 
 // Installable PWA (scope /app/). Herald keeps its own /herald/ worker until the merge lands.
-// Long-open tabs: notice a new deploy (the shell ETags change) and pick it up.
-// Reload silently when nothing is being typed; otherwise offer a reload.
+// Long-open tabs: the service worker is sound (network-first, no-cache
+// revalidation), but it only speaks on the NEXT load — a tab that stays
+// open keeps running the app.js it loaded with. On 2026-11-08 a tab ran
+// a pre-fix build all evening that way. The lever here is a nudge, not a
+// takeover: when an update is noticed, show the small "A new version is
+// ready" notice with its Reload button, ONCE per update, and let the
+// human tap it. This code never reloads on its own (the previous watch
+// reloaded silently whenever nothing was being typed) and the notice
+// never takes focus, so typing is never interrupted — it just sits
+// there until it is tapped or the tab is closed.
+// Two voices carry the same news: (a) the deploy watch below — the
+// shell ETags change when a deploy lands; (b) the service worker — a
+// new worker taking over (controllerchange), or an update found while
+// the app is open (updatefound). Whichever speaks first shows the
+// notice; the latch keeps the other from showing it again.
 // The watch set is EVERY first-party file the desk loads — shell, desk
 // module, its imports, the shell's dynamic imports, and both stylesheets.
 // envoy-workspace.js was missing from this set until 2026-11-05, so a
-// deploy that changed only the desk itself (most fixes) never reloaded
+// deploy that changed only the desk itself (most fixes) never reached
 // an open desk: Troy had to hard-refresh to see new work. A file that
 // disappears in a deploy reads as 'gone', which also counts as a change.
 const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/connector-panel.mjs', '/app/connector-menu.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/face-library.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
 (() => {
-  let known = null; let offeredFor = null;
+  let nudgedFor = null; // the update the notice is already up for — one showing per update
+  const showUpdateNudge = (key) => {
+    if (nudgedFor !== null) return;
+    const nudge = $('#update-nudge');
+    if (!nudge) return;
+    nudgedFor = key;
+    nudge.hidden = false;
+  };
+  const reloadBtn = $('#update-reload');
+  if (reloadBtn) reloadBtn.addEventListener('click', () => location.reload());
+
+  let known = null;
   const one = async (u) => { const r = await fetch(u, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' }); return r.ok ? (r.headers.get('etag') ?? 'noetag') : 'gone'; };
   const etag = async () => { try { const tags = await Promise.all(DEPLOY_WATCH.map(one)); return tags.join('|'); } catch { return null; } };
   const check = async () => {
     const now = await etag(); if (!now) return;
     if (!known) { known = now; return; }
     if (now === known) return;
-    const typing = [...document.querySelectorAll('textarea, input[type="text"], input:not([type])')].some((f) => f.value && f.value.trim() && f.offsetParent);
-    if (!typing && document.visibilityState === 'visible') { location.reload(); return; }
-    // Blocked this cycle (typing, or the tab is in the background): say
-    // so ONCE per version, then KEEP CHECKING — when the typing clears
-    // or the tab comes forward, the reload fires on its own. The old
-    // one-shot latch gave up forever after a single offer, so a desk
-    // that was busy at deploy time stayed stale until a hard refresh
-    // (proven in the 2026-11-05 untouched-desk watch).
-    if (offeredFor !== now) { offeredFor = now; toast('A new version of Helmian is ready. It loads itself when you are done typing.', 'ok'); }
+    showUpdateNudge(now);
   };
   check();
   setInterval(check, 5 * 60 * 1000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+
+  if ('serviceWorker' in navigator) {
+    // Only a takeover after this page was ALREADY controlled is an
+    // update; the first install claiming a fresh page is not, and must
+    // not produce a notice on a first visit.
+    const hadController = !!navigator.serviceWorker.controller;
+    if (hadController) {
+      navigator.serviceWorker.addEventListener('controllerchange', () => showUpdateNudge('sw-takeover'));
+    }
+    addEventListener('load', () => {
+      navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).then((reg) => {
+        if (!hadController) return;
+        if (reg.waiting) showUpdateNudge('sw-waiting');
+        reg.addEventListener('updatefound', () => {
+          const worker = reg.installing;
+          if (!worker) return;
+          worker.addEventListener('statechange', () => {
+            if (worker.state === 'installed') showUpdateNudge('sw-update');
+          });
+        });
+      }).catch(() => {});
+    });
+  }
 })();
-if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {}));

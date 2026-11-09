@@ -1,26 +1,29 @@
-// Voice device-choice bite — tests for the adapter-first Kokoro load
+// Voice device-choice bite — tests for the WASM-only Kokoro load
 // (loadKokoroEngine in web/shared/voice-dictation.mjs, mirrored into
-// the app.js inline copy). The shipped device order — WebGPU whenever
-// navigator.gpu exists — is the live load-stage break: where the API
-// exists but requestAdapter() returns null, the WebGPU from_pretrained
-// fails with "no available backend found" and poisons the follow-on
-// WASM attempt, which fails instantly with the same WebGPU error
-// (proven live in the real room browser, 2026-11-08). These tests pin
-// the fix: the adapter is probed BEFORE any from_pretrained call,
-// WebGPU is attempted only with an adapter in hand, and every other
-// outcome goes straight to WASM with WebGPU never attempted.
+// the app.js inline copy). History: the loader used to probe the GPU
+// adapter and try WebGPU first (the adapter-first bite). That road
+// is the "sounds like Chinese" break: on the vendored runtime
+// versions (onnxruntime-web 1.22 + transformers.js 3.8.1) the q8
+// model on WebGPU loads fine and then silently computes garbage —
+// right length, right engine label, unintelligible tonal mush
+// (published measurements on this model + runtime; heard live in
+// Troy's own tab, 2026-11-08; full evidence in the kokoro-chinese
+// findings). The vocoder bug was also measured at fp32, so no dtype
+// swap rescues WebGPU, and every clean proof ran q8 on WASM. These
+// tests pin the fix: the engine is requested on WASM always — even
+// with a GPU adapter in hand, the adapter is never even probed, and
+// no WebGPU attempt exists anywhere in either copy.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { loadKokoroEngine, KOKORO_MODEL } from '../web/shared/voice-dictation.mjs';
 
 // A KokoroTTS-like module that records every from_pretrained call.
-function fakeMod(calls, { webgpuFails = false } = {}) {
+function fakeMod(calls) {
   return {
     KokoroTTS: {
       from_pretrained: async (model, opts) => {
         calls.push({ model, ...opts });
-        if (webgpuFails && opts.device === 'webgpu') throw new Error('webgpu session died');
         return { device: opts.device };
       },
     },
@@ -37,7 +40,9 @@ function stubNavigator(value) {
 }
 
 // A navigator whose GPU hands back the given adapter ({} = a real
-// adapter in hand, null = the live failure state), counting probes.
+// adapter in hand, null = none), counting probes. Under the WASM-only
+// loader the probe count must stay at zero in every case: the device
+// decision the probe served no longer exists.
 function gpuReturning(adapter, probes) {
   return {
     gpu: {
@@ -48,31 +53,31 @@ function gpuReturning(adapter, probes) {
 
 const WASM_ONLY = [{ model: KOKORO_MODEL, dtype: 'q8', device: 'wasm' }];
 
-test('adapter granted: the probe runs once and WebGPU is attempted first', async () => {
+test('adapter in hand: the engine is STILL requested on WASM, and the adapter is never probed', async () => {
   const calls = [];
   const probes = [];
   const restore = stubNavigator(gpuReturning({ limits: {} }, probes));
   try {
     const engine = await loadKokoroEngine(fakeMod(calls));
-    assert.equal(probes.length, 1, 'the adapter was probed exactly once');
-    assert.deepEqual(calls, [{ model: KOKORO_MODEL, dtype: 'q8', device: 'webgpu' }]);
-    assert.equal(engine.device, 'webgpu');
+    assert.equal(probes.length, 0, 'no adapter probe — there is no device decision left to feed one');
+    assert.deepEqual(calls, WASM_ONLY, 'the only from_pretrained call is q8 on WASM, adapter or no adapter');
+    assert.equal(engine.device, 'wasm');
   } finally { restore(); }
 });
 
-test('adapter null: straight to WASM — WebGPU is never attempted', async () => {
+test('adapter null: WASM, unprobed', async () => {
   const calls = [];
   const probes = [];
   const restore = stubNavigator(gpuReturning(null, probes));
   try {
     const engine = await loadKokoroEngine(fakeMod(calls));
-    assert.equal(probes.length, 1, 'the adapter was probed');
-    assert.deepEqual(calls, WASM_ONLY, 'the only from_pretrained call is the WASM one — no doomed WebGPU attempt to poison it');
+    assert.equal(probes.length, 0);
+    assert.deepEqual(calls, WASM_ONLY);
     assert.equal(engine.device, 'wasm');
   } finally { restore(); }
 });
 
-test('requestAdapter throws: straight to WASM', async () => {
+test('requestAdapter throws: the loader never touches it — WASM carries the load', async () => {
   const calls = [];
   const probes = [];
   const restore = stubNavigator({
@@ -82,13 +87,13 @@ test('requestAdapter throws: straight to WASM', async () => {
   });
   try {
     const engine = await loadKokoroEngine(fakeMod(calls));
-    assert.equal(probes.length, 1);
+    assert.equal(probes.length, 0, 'a throwing requestAdapter cannot matter — it is never called');
     assert.deepEqual(calls, WASM_ONLY);
     assert.equal(engine.device, 'wasm');
   } finally { restore(); }
 });
 
-test('requestAdapter rejects: straight to WASM', async () => {
+test('requestAdapter rejects: the loader never touches it — WASM carries the load', async () => {
   const calls = [];
   const probes = [];
   const restore = stubNavigator({
@@ -98,41 +103,13 @@ test('requestAdapter rejects: straight to WASM', async () => {
   });
   try {
     const engine = await loadKokoroEngine(fakeMod(calls));
-    assert.equal(probes.length, 1);
+    assert.equal(probes.length, 0);
     assert.deepEqual(calls, WASM_ONLY);
     assert.equal(engine.device, 'wasm');
   } finally { restore(); }
 });
 
-test('requestAdapter hangs past the probe bound: straight to WASM', async () => {
-  const calls = [];
-  const probes = [];
-  const restore = stubNavigator({
-    gpu: {
-      requestAdapter: () => { probes.push(1); return new Promise(() => {}); },
-    },
-  });
-  try {
-    const engine = await loadKokoroEngine(fakeMod(calls), { probeMs: 40 });
-    assert.equal(probes.length, 1, 'the probe was started');
-    assert.deepEqual(calls, WASM_ONLY, 'the hung probe could not stall the load — WASM carried it');
-    assert.equal(engine.device, 'wasm');
-  } finally { restore(); }
-});
-
-test('preferWasm (a load was abandoned as stuck): WASM without probing at all', async () => {
-  const calls = [];
-  const probes = [];
-  const restore = stubNavigator(gpuReturning({ limits: {} }, probes));
-  try {
-    const engine = await loadKokoroEngine(fakeMod(calls), { preferWasm: true });
-    assert.equal(probes.length, 0, 'the probe never runs when WASM is preferred');
-    assert.deepEqual(calls, WASM_ONLY);
-    assert.equal(engine.device, 'wasm');
-  } finally { restore(); }
-});
-
-test('no WebGPU API at all: straight to WASM', async () => {
+test('no WebGPU API at all: WASM', async () => {
   const calls = [];
   const restore = stubNavigator({}); // a navigator with no gpu property
   try {
@@ -142,34 +119,37 @@ test('no WebGPU API at all: straight to WASM', async () => {
   } finally { restore(); }
 });
 
-test('adapter granted but the WebGPU load itself fails: the WASM catch-fallback still carries the load', async () => {
+test('no navigator at all: WASM', async () => {
   const calls = [];
-  const probes = [];
-  const restore = stubNavigator(gpuReturning({ limits: {} }, probes));
+  const restore = stubNavigator(undefined);
   try {
-    const engine = await loadKokoroEngine(fakeMod(calls, { webgpuFails: true }));
-    assert.deepEqual(calls, [
-      { model: KOKORO_MODEL, dtype: 'q8', device: 'webgpu' },
-      { model: KOKORO_MODEL, dtype: 'q8', device: 'wasm' },
-    ], 'WebGPU attempted with an adapter in hand, then the kept fallback');
+    const engine = await loadKokoroEngine(fakeMod(calls));
+    assert.deepEqual(calls, WASM_ONLY);
     assert.equal(engine.device, 'wasm');
   } finally { restore(); }
 });
 
-test('lockstep: the app.js inline copy carries the same adapter-first device choice as the shared module', async () => {
+test('lockstep: both copies load WASM-only, and the WebGPU road is gone from both', async () => {
   const needles = [
-    'const KOKORO_ADAPTER_PROBE_MS = 10000',
-    'async function kokoroAdapterInHand',
-    'gpu.requestAdapter()',
     'async function loadKokoroEngine',
-    "device: 'webgpu'",
     "device: 'wasm'",
-    'loadKokoroEngine(mod, { preferWasm: kokoroPreferWasm })',
+    'loadKokoroEngine(mod)',
+  ];
+  const gone = [
+    "device: 'webgpu'",
+    'requestAdapter',
+    'kokoroPreferWasm',
+    'preferWasm',
+    'kokoroAdapterInHand',
   ];
   const appJs = await readFile(new URL('../web/marketing/app/app.js', import.meta.url), 'utf8');
   const shared = await readFile(new URL('../web/shared/voice-dictation.mjs', import.meta.url), 'utf8');
   for (const needle of needles) {
     assert.ok(appJs.includes(needle), `app.js inline copy has: ${needle}`);
     assert.ok(shared.includes(needle), `shared module has: ${needle}`);
+  }
+  for (const needle of gone) {
+    assert.ok(!appJs.includes(needle), `app.js inline copy no longer carries: ${needle}`);
+    assert.ok(!shared.includes(needle), `shared module no longer carries: ${needle}`);
   }
 });

@@ -109,6 +109,9 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .ew-btn.primary:hover { background:var(--accent-hover); }
 .ew-btn.ghost { background:transparent; }
 .ew-btn.full { margin:6px 12px; width:calc(100% - 24px); }
+/* New channel is a compact plus now (nav-build sleek pass): the .ew-icon
+   30px grid carries the glyph; this only places it in the pane. */
+.ew-add-channel { margin:6px 12px; font-size:19px; line-height:1; }
 .ew-btn[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
 .ew-btn:disabled { opacity:.5; cursor:default; }
 /* Chat-head control pill (header bite 2): Free-Willy, Workbench, Guard and
@@ -290,7 +293,11 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-lib-icon { flex:none; width:28px; height:28px; border-radius:8px; background:var(--panel-2); border:1px solid var(--border); color:var(--muted); display:grid; place-items:center; font-weight:700; font-size:13px; }
 .ew-lib-text { display:flex; flex-direction:column; min-width:0; }
 .ew-lib-name { font-weight:600; }
-.ew-lib-line { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* The byline WRAPS (panel bite, 2026-11-08): forced onto one line it
+   was clipped mid-word inside the 340px "+" popup ("Connector by
+   Google · Verifi…"). A wrapped second line costs a little height and
+   never cuts a word in half. */
+.ew-lib-line { color:var(--muted); font-size:12px; white-space:normal; overflow-wrap:break-word; }
 .ew-lib-row { cursor:default; }
 .ew-lib-row:hover { border-color:var(--border); }
 .ew-lib-back { align-self:flex-start; }
@@ -961,4 +968,62 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 }
 @media (max-width: 900px) {
   [data-theme="light"] .ew-pane.ew-channels, [data-theme="light"] .ew-pane.ew-bench, [data-theme="light"] .ew-pane.ew-guard { box-shadow:0 0 40px rgba(13,42,67,.30); }
+}
+
+/* ---- Panel bite (2026-11-08): sleek scrollbars + the channels rail ----
+   Troy's final word, given twice the same night: "get rid of all these
+   funky buttons and you just scroll... make it all sleek", and the side
+   panel "just automatically collapses, and hovering over it opens it —
+   scroll and do everything inside it — that's how it should be",
+   everywhere, not only in a narrow window. */
+
+/* Sleek scrollbars: on the surfaces he named — the channel list, the
+   crew list, the messages on the right side of the chat window, the
+   side panels and the popup panels — there is NO bar at all. No arrow
+   buttons, no fat track, no pill. Scrolling is the wheel, touch, or a
+   drag on the content itself. This drops the earlier hover-arrows idea
+   outright: no arrow buttons anywhere. envoy.css loads after app.css
+   and these selectors carry class-level specificity, so they win over
+   app.css's global 8px pill for exactly these containers; every other
+   surface keeps the themed pill.
+   Why removal rather than thinner paint: the thin rules DO ship —
+   app.css on the live site is byte-identical to this tree and carries
+   the 8px pill with scrollbar buttons display:none — yet Troy's own
+   screenshots show wide bars WITH arrow triangles. A Chromium-painted
+   custom scrollbar cannot show those buttons; the bars in his pictures
+   are the browser/OS native bars, which his environment paints over
+   the styled ones. A native bar cannot be argued thinner — but a
+   container whose scrollbar is display:none / scrollbar-width:none
+   has no native bar to paint, in any environment. */
+.ew-messages, .ew-channel-list, .ew-crew-list, .ew-scroll,
+.ew-approvals-list, .ew-picker, .ew-tabs, #ew-crew-add,
+.sidebar, .slide-panel-body { scrollbar-width:none; }
+.ew-messages::-webkit-scrollbar, .ew-channel-list::-webkit-scrollbar,
+.ew-crew-list::-webkit-scrollbar, .ew-scroll::-webkit-scrollbar,
+.ew-approvals-list::-webkit-scrollbar, .ew-picker::-webkit-scrollbar,
+.ew-tabs::-webkit-scrollbar, #ew-crew-add::-webkit-scrollbar,
+.sidebar::-webkit-scrollbar, .slide-panel-body::-webkit-scrollbar { width:0; height:0; display:none; }
+
+/* The channels rail tab: the pane's face at rest. Hidden unless the
+   pane is resting (the rail rules below reveal it). */
+.ew-channels-rail-tab { display:none; }
+
+/* Channels rail rest + hover peek, desktop pointers only — the same
+   shape the nav sidebar's rail peek already uses. At rest the pane is
+   a 48px strip showing only its rail tab; every other child is out of
+   the layout entirely (display:none, restored by simply no longer
+   matching once .peeking lands). The splitter parks while resting.
+   While peeking, the pane floats over the chat at its full width —
+   left offset by the shell sidebar (--side-w lives on .shell), top
+   under the 52px topbar the desktop view's height already reserves —
+   and its lists scroll inside it exactly as they do pinned. */
+@media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+  .ew-channels.rail-rest { flex:0 0 48px; min-width:48px; }
+  .ew-channels.rail-rest:not(.peeking) > :not(.ew-channels-rail-tab) { display:none !important; }
+  .ew-channels.rail-rest .ew-channels-rail-tab { display:flex; flex:1 1 auto; width:100%; flex-direction:column; align-items:center; gap:10px; padding:12px 0; background:transparent; border:0; color:var(--muted); font:inherit; font-size:13px; cursor:pointer; }
+  .ew-channels.rail-rest .ew-channels-rail-tab span { writing-mode:vertical-rl; letter-spacing:.14em; font-size:11px; font-weight:700; text-transform:uppercase; }
+  .ew-channels.rail-rest .ew-channels-rail-tab:hover { color:var(--text); background:var(--panel-2); }
+  .ew.channels-rest .ew-split[data-split="channels"] { flex-basis:0; pointer-events:none; }
+  .ew-channels.rail-rest.peeking { position:fixed; top:52px; bottom:0; left:var(--side-w); width:var(--ew-channels); flex:none; z-index:55; box-shadow:24px 0 48px rgba(0,0,0,.45); }
+  .ew-channels.rail-rest.peeking .ew-channels-rail-tab { display:none; }
 }
