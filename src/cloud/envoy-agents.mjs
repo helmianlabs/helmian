@@ -465,6 +465,12 @@ export const MAX_MESSAGE_ATTACHMENTS = 8;
 // person armed for this turn from the "+" library panel. Ids are the
 // library's slugs (seat ids from the catalog, entry ids from the read).
 export const MAX_MESSAGE_CONNECTORS = 16;
+// The Helmian-store skills a message may carry (metadata.skills,
+// slash-skills DESIGN §3.1): one { skillId, seatId } per skill the
+// person attached for this turn from the "/" picker. Bodies inject
+// whole into a turn (src/agent/attachments.mjs caps them), unlike
+// connector toggles which inject a descriptor — hence the small cap.
+export const MAX_MESSAGE_SKILLS = 3;
 const CONNECTOR_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
 const ATTACHMENT_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ATTACHMENT_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*(:[a-z0-9][a-z0-9_-]*)?$/;
@@ -606,10 +612,50 @@ export function normalizeConnectorToggles(input) {
 }
 
 /**
+ * The Helmian-store skills a message carries (slash-skills DESIGN
+ * §3.1): the set of workspace skills the person attached for this turn
+ * from the "/" picker. Each entry names its skill and its target — a
+ * library seat id, a custom-agent handle, or the literal 'all' for
+ * every agent — so the pair is the identity and duplicates are
+ * refused, exactly like connector toggles. The message's target is
+ * only ever a request: dispatch (envoy-mesh.mjs) clamps it to the
+ * skill record's own scope, so a message cannot widen a seat-scoped
+ * skill. Absent (nothing attached) is the default every layer already
+ * treats as "no skills".
+ *
+ * This is a SEPARATE road from the by-name { kind: 'skill' }
+ * attachment above: that one rides the message body as a leading
+ * /name and expands a markdown command file on the seat's own
+ * computer; this one names a Helmian-store skill and is resolved
+ * cloud-side at dispatch. The one-skill-per-message rule in the
+ * composer governs the by-name road only (one leading command is all
+ * a body can carry) — this list has its own cap, MAX_MESSAGE_SKILLS.
+ * Neither road dedupes against the other.
+ */
+export function normalizeSkillToggles(input) {
+  if (input === undefined || input === null) return undefined;
+  if (!Array.isArray(input)) throw new Error('message skills are invalid');
+  if (input.length > MAX_MESSAGE_SKILLS) throw new Error('too many skills');
+  const seen = new Set();
+  const out = input.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('message skills are invalid');
+    const skillId = String(item.skillId ?? '');
+    const seatId = String(item.seatId ?? '');
+    if (!CONNECTOR_ID_PATTERN.test(skillId) || !CONNECTOR_ID_PATTERN.test(seatId)) throw new Error('message skills are invalid');
+    const id = `${skillId}:${seatId}`;
+    if (seen.has(id)) throw new Error('skill is duplicated');
+    seen.add(id);
+    return Object.freeze({ skillId, seatId });
+  });
+  return out.length ? Object.freeze(out) : undefined;
+}
+
+/**
  * The metadata object stored on a message. Accepts the wire shapes the
  * client may send — `{ attachments: [...], webSearch?: boolean,
- * connectors?: [...] }` — plus the bridge's source stamp, and returns
- * the canonical frozen form, or null when nothing was attached.
+ * connectors?: [...], skills?: [...] }` — plus the bridge's source
+ * stamp, and returns the canonical frozen form, or null when nothing
+ * was attached.
  */
 export function normalizeMessageMetadata(input) {
   if (input === undefined || input === null) return null;
@@ -631,12 +677,14 @@ export function normalizeMessageMetadata(input) {
   if (fileBytes > FILE_ATTACHMENTS_MAX_TOTAL_BYTES) throw new Error('attached files are too large in total');
   const webSearch = input.webSearch === undefined ? undefined : input.webSearch === true;
   const connectors = normalizeConnectorToggles(input.connectors);
+  const skills = normalizeSkillToggles(input.skills);
   const source = normalizeSourceRef(input.source);
-  if (!attachments.length && webSearch === undefined && !connectors && !source) return null;
+  if (!attachments.length && webSearch === undefined && !connectors && !skills && !source) return null;
   return Object.freeze({
     ...(attachments.length ? { attachments: Object.freeze(attachments) } : {}),
     ...(webSearch !== undefined ? { webSearch } : {}),
     ...(connectors ? { connectors } : {}),
+    ...(skills ? { skills } : {}),
     ...(source ? { source } : {}),
   });
 }

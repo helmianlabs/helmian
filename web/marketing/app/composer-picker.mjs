@@ -53,13 +53,21 @@
 //   is listed on anything but real data: a service with no registry row
 //   and no tool-connections row is simply not here. A connector can be
 //   attached only when its truth says it is connected.
-// - Skills: there is deliberately NO skill list here. Skills are markdown
-//   command files that live with the agent runtime — .helmion/commands/
-//   plus plugin commands/ (src/agent/commands.mjs, src/agent/plugins.mjs) —
-//   discovered on the PC bridge at turn time. No cloud API lists them, so
-//   the picker attaches a skill BY NAME and the message carries it the one
-//   way the turn path already understands: as the leading /name the
-//   bridge's turn handler expands (src/agent/bridge.mjs).
+// - Skills, two separate roads that never dedupe against each other
+//   (slash-skills DESIGN §3.1/§5.3): (1) the by-name road below —
+//   markdown command files that live with the agent runtime —
+//   .helmion/commands/ plus plugin commands/ (src/agent/commands.mjs,
+//   src/agent/plugins.mjs) — discovered on the PC bridge at turn time.
+//   No cloud API lists THOSE, so this picker attaches one BY NAME and
+//   the message carries it as the leading /name the bridge's turn
+//   handler expands (src/agent/bridge.mjs). (2) HELMIAN skills — the
+//   workspace's own cloud store (src/cloud/skill-library.mjs), listed
+//   by GET /api/admin/skills and picked from the "/" menu's Skills
+//   group; they ride as metadata.skills ({ skillId, seatId } pairs,
+//   normalizeSkillToggles below), resolved cloud-side at dispatch.
+//   The one-skill rule in addAttachment governs road (1) only — one
+//   leading command is all a body can carry; road (2) has its own
+//   cap (MESSAGE_SKILLS_MAX).
 // - Plugins: installed on the PC bridge — the workspace registry plus the
 //   install ledger's verdicts (src/agent/plugins.mjs) — and listed by GET
 //   /api/admin/plugins (src/cloud/installed-plugins.mjs): the same enabled
@@ -101,6 +109,14 @@
 //   canonical validator. Carried only when at least one toggle is on —
 //   an untouched panel changes nothing on the wire, the same absence
 //   rule as webSearch.
+// - the Helmian skills ride as metadata.skills — also not attachments:
+//   the armed set the "/" menu's Skills group produces ({ skillId,
+//   seatId } pairs, 'all' for every agent), armed per conversation and
+//   cleared when the message lands, exactly like the connector
+//   toggles. Dispatch resolves each id against the workspace's skill
+//   store and clamps the target to the record's own scope — a message
+//   can narrow a skill, never widen it (DESIGN §2.1/§3.2). Carried
+//   only when at least one skill is armed, the same absence rule.
 import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs';
 
 // Truthful attachment states (see the header): what attaching an entry
@@ -457,15 +473,78 @@ export function normalizeConnectorToggles(connectors = []) {
   return Object.freeze(out);
 }
 
+// Mirror of MAX_MESSAGE_SKILLS in src/cloud/envoy-agents.mjs: the
+// most Helmian skills one message may carry. Skills inject whole
+// bodies into a turn, unlike connector toggles, so the cap is small.
+// The server re-checks; this exists so the menu's own model never
+// builds a request the validator would refuse.
+export const MESSAGE_SKILLS_MAX = 3;
+
+// The same id shape the canonical validator applies to both halves
+// of a skill toggle (CONNECTOR_ID_PATTERN in src/cloud/envoy-agents
+// .mjs, which normalizeSkillToggles there reuses): a lowercase slug
+// of at most 128 characters. 'all' — the blanket target — matches it,
+// as do library seat ids and custom-agent handles.
+const SKILL_TOGGLE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+
+// The armed Helmian-skill set for one turn, cleaned to the wire
+// shape: { skillId, seatId } pairs, slug-shaped, deduped, capped.
+// Anything malformed is dropped here, the normalizeConnectorToggles
+// discipline — the menu only ever arms rows the skills list returned,
+// so a malformed entry is a bug, and dropping it keeps the message
+// sendable (the server refuses the whole metadata otherwise).
+export function normalizeSkillToggles(skills = []) {
+  if (!Array.isArray(skills)) return Object.freeze([]);
+  const seen = new Set();
+  const out = [];
+  for (const item of skills) {
+    const skillId = String(item?.skillId ?? '').trim();
+    const seatId = String(item?.seatId ?? '').trim();
+    if (!SKILL_TOGGLE_ID_PATTERN.test(skillId) || !SKILL_TOGGLE_ID_PATTERN.test(seatId)) continue;
+    const key = `${skillId}:${seatId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(Object.freeze({ skillId, seatId }));
+    if (out.length >= MESSAGE_SKILLS_MAX) break;
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * Arm one Helmian skill for the conversation's next message, in the
+ * addAttachment idiom ({ list, added, reason }): the pair is
+ * validated, an exact duplicate is refused, and the set is capped at
+ * MESSAGE_SKILLS_MAX. The same skill MAY arm for two seats — each
+ * pair is its own entry — but never twice for the same seat.
+ */
+export function addSkillAttach(list = [], entry) {
+  const skillId = String(entry?.skillId ?? '').trim();
+  const seatId = String(entry?.seatId ?? '').trim();
+  if (!SKILL_TOGGLE_ID_PATTERN.test(skillId)) return { list, added: false, reason: 'Pick a skill first.' };
+  if (!SKILL_TOGGLE_ID_PATTERN.test(seatId)) return { list, added: false, reason: 'Pick who the skill is for.' };
+  const current = normalizeSkillToggles(list);
+  if (current.some((s) => s.skillId === skillId && s.seatId === seatId)) return { list: current, added: false, reason: 'Already attached.' };
+  if (current.length >= MESSAGE_SKILLS_MAX) return { list: current, added: false, reason: `Up to ${MESSAGE_SKILLS_MAX} skills per message.` };
+  return { list: Object.freeze([...current, Object.freeze({ skillId, seatId })]), added: true, reason: null };
+}
+
+/** Disarm one armed skill entry (the composer's chip ×). */
+export function removeSkillAttach(list = [], entry) {
+  const skillId = String(entry?.skillId ?? '');
+  const seatId = String(entry?.seatId ?? '');
+  return Object.freeze(normalizeSkillToggles(list).filter((s) => !(s.skillId === skillId && s.seatId === seatId)));
+}
+
 // The structured metadata shape the server accepts, stores and hands to
 // the turn (normalizeMessageMetadata in src/cloud/envoy-agents.mjs is the
 // canonical validator). Plain JSON, frozen. The web-search toggle joins
 // the same object as `webSearch` — carried only when ON (see the header);
 // the connector-library toggles join as `connectors`, carried only when
-// at least one is armed.
-export function attachmentMetadata(list = [], { webSearch = false, connectors = [] } = {}) {
+// at least one is armed; the Helmian skills join as `skills`, same rule.
+export function attachmentMetadata(list = [], { webSearch = false, connectors = [], skills = [] } = {}) {
   const armed = normalizeConnectorToggles(connectors);
-  if (!list.length && webSearch !== true && !armed.length) return null;
+  const skilled = normalizeSkillToggles(skills);
+  if (!list.length && webSearch !== true && !armed.length && !skilled.length) return null;
   return Object.freeze({
     ...(list.length ? {
       attachments: Object.freeze(list.map((a) => (a.kind === 'connector'
@@ -476,6 +555,7 @@ export function attachmentMetadata(list = [], { webSearch = false, connectors = 
     } : {}),
     ...(webSearch === true ? { webSearch: true } : {}),
     ...(armed.length ? { connectors: armed } : {}),
+    ...(skilled.length ? { skills: skilled } : {}),
   });
 }
 
@@ -498,9 +578,9 @@ export function applySkillToBody(body, list = []) {
   return { body: `/${skill.name} ${text}`, skillCarried: true, note: null };
 }
 
-export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [], webSearch = false, connectors = [] } = {}) {
+export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [], webSearch = false, connectors = [], skills = [] } = {}) {
   const applied = applySkillToBody(body, attachments);
-  const metadata = attachmentMetadata(attachments, { webSearch, connectors });
+  const metadata = attachmentMetadata(attachments, { webSearch, connectors, skills });
   return Object.freeze({
     // The fields POST /api/admin/envoy/messages accepts: the original
     // three, plus `metadata` when something is attached or web search is

@@ -593,6 +593,28 @@ export async function runAgentBridge() {
           && typeof req.slashExpansion.expanded === 'boolean'
           ? { name: req.slashExpansion.name, expanded: req.slashExpansion.expanded }
           : null;
+        // Helmian-store skills for this turn (slash-skills bite S1):
+        // dispatch resolved them cloud-side (envoy-mesh.mjs) and the
+        // composing side rides them here already sliced for this seat
+        // — {id, name?, body, seatId} or {id, missing: true, seatId}.
+        // Shape-checked like slashExpansion above: an entry without a
+        // string id, or with neither a body nor the missing mark, is
+        // not a skill this turn can state honestly, so it is dropped
+        // here rather than guessed at downstream. The count is capped
+        // at MAX_MESSAGE_SKILLS (envoy-agents.mjs), the metadata
+        // road's cap, so both roads carry the same most.
+        const helmianSkills = Array.isArray(req.skills)
+          ? req.skills
+            .filter((s) => s && typeof s === 'object' && typeof s.id === 'string' && s.id
+              && (s.missing === true || typeof s.body === 'string'))
+            .slice(0, 3)
+            .map((s) => ({
+              id: s.id,
+              ...(typeof s.name === 'string' ? { name: s.name } : {}),
+              ...(s.missing === true ? { missing: true } : { body: s.body }),
+              ...(typeof s.seatId === 'string' ? { seatId: s.seatId } : {}),
+            }))
+          : [];
         let turnText = text;
         let turnRuntime = state.runtime;
         let attachmentDispose = null;
@@ -631,9 +653,9 @@ export async function runAgentBridge() {
             return null;
           },
         } : null;
-        if (attachmentMetadata) {
+        if (attachmentMetadata || helmianSkills.length) {
           try {
-            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion, providerId: provider.id, credentialType: provider.credentialType ?? null, connectorArming });
+            const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion, providerId: provider.id, credentialType: provider.credentialType ?? null, connectorArming, helmianSkills });
             if (resolved.contextText) turnText = `${resolved.contextText}\n\n${text}`;
             if (resolved.toolNames.length) {
               turnRuntime = createToolRuntime(workspace, { ...runtimeOptions(), extraTools: resolved.extraTools });
@@ -643,6 +665,9 @@ export async function runAgentBridge() {
             turnMcpServers = Array.isArray(resolved.mcpServers) ? resolved.mcpServers : [];
             if (Array.isArray(resolved.connectorOutcomes) && resolved.connectorOutcomes.length) {
               emit({ event: 'connector_outcomes', outcomes: resolved.connectorOutcomes });
+            }
+            if (Array.isArray(resolved.skillOutcomes) && resolved.skillOutcomes.length) {
+              emit({ event: 'skill_outcomes', outcomes: resolved.skillOutcomes });
             }
             if (turnMcpServers.length) emit({ event: 'status', message: `Attachments armed ${turnMcpServers.length} connector(s) for this turn (the provider's cloud runs them).` });
             // File attachments that are images ride the same images

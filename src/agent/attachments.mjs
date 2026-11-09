@@ -41,6 +41,18 @@
 //               slashExpansion, and the skill line below states it
 //               truthfully: "already expanded" only when expansion
 //               really happened, NOT expanded when the attempt missed.
+// - skills    → HELMIAN-STORE skills (metadata.skills, slash-skills
+//               bite S1) — a separate road from the by-name skill
+//               above: the cloud resolves the workspace's own skill
+//               records at dispatch (envoy-mesh.mjs) and the resolved
+//               bodies ride the work item into this module as
+//               `helmianSkills`, already scope-clamped to their
+//               records. Each body is injected into the context block
+//               between markers, capped per skill and per turn with
+//               any cut stated; a skill that no longer exists rides as
+//               { missing: true } and gets the honest line, never a
+//               silent drop. Every entry's outcome is recorded in
+//               `skillOutcomes`, the connectorOutcomes idiom.
 // - file      → REAL content. The file's bytes ride inline in the
 //               metadata (base64; the cloud has no byte store — see
 //               envoy-agents.mjs). Images join the turn's images, the
@@ -70,6 +82,16 @@ import { catalogEntryById } from '../cloud/connector-catalog.mjs';
 // head is shown and the cut is stated, so the agent never mistakes a
 // partial file for the whole file.
 export const FILE_TEXT_INLINE_MAX_CHARS = 48_000;
+
+// Helmian skill bodies (slash-skills DESIGN §3.3): a stored body may
+// run to 24,000 characters (skill-library.mjs SKILL_BODY_MAX_CHARS),
+// but a channel turn's composed prompt is small by design — one skill
+// is shown at most 12,000 characters of, and all skills together at
+// most 24,000, so a skill can never evict the conversation. A cut
+// body is truncated with the file section's own words, stated in the
+// turn.
+export const SKILL_INLINE_MAX_CHARS = 12_000;
+export const SKILLS_TURN_MAX_CHARS = 24_000;
 
 // Adapter (provider) id → connector-library seat id. See the toggle
 // resolution below for why this seam exists and is crossed only here.
@@ -124,11 +146,18 @@ function resolveArgs(declaration, pluginRoot) {
  *   mintAccessToken({refreshTokenRef, seatId, entryId}) →
  *   {ok: true, accessToken} | {ok: false, code, reason}. Absent seam =
  *   nothing arms, stated plainly — never a pretend arm.
+ *   `helmianSkills` is the dispatch-resolved Helmian-store skills for
+ *   this turn (envoy-mesh.mjs via the bridges): entries of
+ *   {id, name?, body, seatId} or {id, missing: true, seatId}, seatId
+ *   being the effective target after the record-scope clamp ('all' or
+ *   one seat). They are consumed whether or not the message carried
+ *   other metadata — the direct road hands them over on their own.
  * @returns {Promise<{extraTools: object, toolNames: string[], contextText: string|null,
  *          images: Array<{fileName: string, mediaType: string, data: string}>,
  *          webSearch: boolean,
  *          mcpServers: Array<{entryId: string, name: string, url: string, authorizationToken: string}>,
  *          connectorOutcomes: Array<{seatId: string, entryId: string, armed: boolean, reason?: string, detail?: string}>,
+ *          skillOutcomes: Array<{skillId: string, seatId: string, applied: boolean, reason?: string}>,
  *          dispose: () => Promise<void>}>}
  *   `webSearch` is true only when the toggle was ON *and* this seat has a
  *   provider-native search tool for the loop to enable — never merely
@@ -138,17 +167,21 @@ function resolveArgs(declaration, pluginRoot) {
  *   Pattern-A servers armed for this turn — for the loop/adapter only,
  *   never local tools. `connectorOutcomes` is the per-toggle record:
  *   every toggle the person armed for this seat, and whether it armed.
+ *   `skillOutcomes` is the per-skill record: every Helmian skill that
+ *   targeted this seat for this turn, and whether its instructions
+ *   actually rode the turn.
  */
-export async function resolveTurnAttachments({ metadata = null, plugins = [], connectorInfo = {}, slashExpansion = null, providerId = null, seatId = null, credentialType = null, connectorArming = null, createMcpClientImpl = createMcpClient } = {}) {
+export async function resolveTurnAttachments({ metadata = null, plugins = [], connectorInfo = {}, slashExpansion = null, providerId = null, seatId = null, credentialType = null, connectorArming = null, helmianSkills = null, createMcpClientImpl = createMcpClient } = {}) {
   const clean = normalizeMessageMetadata(metadata ?? undefined);
   const lines = [];
   const extraTools = {};
   const clients = [];
   const fileImages = [];
-  if (!clean) {
-    return { extraTools, toolNames: [], contextText: null, images: fileImages, webSearch: false, mcpServers: [], connectorOutcomes: [], dispose: async () => {} };
+  const skillList = Array.isArray(helmianSkills) ? helmianSkills : [];
+  if (!clean && !skillList.length) {
+    return { extraTools, toolNames: [], contextText: null, images: fileImages, webSearch: false, mcpServers: [], connectorOutcomes: [], skillOutcomes: [], dispose: async () => {} };
   }
-  for (const attachment of clean.attachments ?? []) {
+  for (const attachment of clean?.attachments ?? []) {
     if (attachment.kind === 'file') {
       const how = classifyFileAttachment(attachment);
       const label = attachment.mediaType || 'unknown type';
@@ -248,7 +281,7 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
     }
   }
   let webSearch = false;
-  if (clean.webSearch !== undefined) {
+  if (clean?.webSearch !== undefined) {
     if (clean.webSearch && providerHasNativeWebSearch(providerId)) {
       // REAL: the loop will declare the provider's own search tool on this
       // turn's request. The line tells the agent it may actually search —
@@ -277,7 +310,7 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
   // toggles key off seat ids (claude, chatgpt, grok…). normalizeProvider
   // is the fallback for engine names a direct caller might pass.
   const turnSeat = seatId ?? SEAT_BY_PROVIDER_ID[providerId] ?? normalizeProvider(providerId);
-  for (const toggle of clean.connectors ?? []) {
+  for (const toggle of clean?.connectors ?? []) {
     if (turnSeat && toggle.seatId !== turnSeat) continue;
     const outcome = { seatId: toggle.seatId, entryId: toggle.entryId, armed: false };
     connectorOutcomes.push(outcome);
@@ -352,6 +385,49 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
     lines.push(`Connector armed for this message: ${entry.name} — it is handed to Anthropic's cloud for this turn, and Anthropic runs its tools itself; the calls and their results are part of this turn's record. Use its tools when the request calls for them.`);
   }
 
+  // ── Helmian-store skills (helmianSkills) ───────────────────────────
+  // Dispatch (envoy-mesh.mjs) resolved these against the workspace's
+  // skill records and clamped each entry's target to its record's
+  // scope; the bridges sliced the work item per seat. Filtered AGAIN
+  // here by this turn's seat (the same SEAT_BY_PROVIDER_ID seam the
+  // connector section crosses, via turnSeat above): an entry that
+  // targets another seat leaves no trace in this turn — no line, no
+  // outcome. An entry with no target named was composed for this
+  // turn by the calling side and applies as-is.
+  const skillOutcomes = [];
+  const seenSkillIds = new Set();
+  let skillCharsUsed = 0;
+  for (const skill of skillList) {
+    if (!skill || typeof skill.id !== 'string' || !skill.id) continue;
+    const target = typeof skill.seatId === 'string' && skill.seatId ? skill.seatId : 'all';
+    if (target !== 'all' && target !== turnSeat) continue;
+    // One skill, one injection per turn: a message may name the same
+    // skill for 'all' and for this seat specifically, and the body
+    // (and its budget) must not land twice.
+    if (seenSkillIds.has(skill.id)) continue;
+    seenSkillIds.add(skill.id);
+    const outcome = { skillId: skill.id, seatId: target, applied: false };
+    skillOutcomes.push(outcome);
+    if (skill.missing === true || typeof skill.body !== 'string') {
+      // The honest line (DESIGN §2.4): the skill was attached, and it
+      // is not part of this turn. Never a silent drop, never a claim
+      // it ran.
+      outcome.reason = 'missing';
+      lines.push(`Skill attached: /${skill.id}. It is no longer in this workspace's skills, so its instructions are not part of this turn.`);
+      continue;
+    }
+    const remaining = SKILLS_TURN_MAX_CHARS - skillCharsUsed;
+    if (remaining <= 0) {
+      outcome.reason = 'turn-budget-exhausted';
+      lines.push(`Skill attached: /${skill.id} (Helmian skill). This turn's skill budget (${SKILLS_TURN_MAX_CHARS} characters across all skills) is already used up by the skills above, so its instructions are NOT part of this turn.`);
+      continue;
+    }
+    const shown = skill.body.slice(0, Math.min(SKILL_INLINE_MAX_CHARS, remaining));
+    skillCharsUsed += shown.length;
+    outcome.applied = true;
+    lines.push(`Skill attached: /${skill.id} (Helmian skill, ${target === 'all' ? 'attached for every agent' : 'attached for this seat'}). Its instructions for this turn follow between the markers:\n--- begin skill: ${skill.id} ---\n${shown}${skill.body.length > shown.length ? `\n[truncated: the skill is ${skill.body.length} characters; only the first ${shown.length} are shown]` : ''}\n--- end skill: ${skill.id} ---`);
+  }
+
   return {
     extraTools,
     toolNames: Object.keys(extraTools),
@@ -360,6 +436,7 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
     webSearch,
     mcpServers,
     connectorOutcomes,
+    skillOutcomes,
     dispose: async () => { for (const client of clients) { try { await client.close(); } catch { /* already gone */ } } },
   };
 }

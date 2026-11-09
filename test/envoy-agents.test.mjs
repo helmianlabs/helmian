@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentsToAnswer, mentionsIn, normalizeProvider, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, emptyConfig, normalizeMessageMetadata, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES, sanitizeChannelAvatar, CHANNEL_AVATAR_CHARACTERS, CHANNEL_AVATAR_COLORS } from '../src/cloud/envoy-agents.mjs';
+import { agentsToAnswer, mentionsIn, normalizeProvider, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, emptyConfig, normalizeMessageMetadata, normalizeSkillToggles, MAX_MESSAGE_SKILLS, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES, sanitizeChannelAvatar, CHANNEL_AVATAR_CHARACTERS, CHANNEL_AVATAR_COLORS } from '../src/cloud/envoy-agents.mjs';
 import { CHARACTERS, COLORS } from '../web/marketing/app/avatars.mjs';
 
 const human = (body) => ({ authorKind: 'human', authorSubject: 'user_x', body });
@@ -412,4 +412,53 @@ test('a config without an avatar keeps its exact stored shape', () => {
   assert.equal(publicConfig(parseConfig(body)).avatar, null);
   const junk = parseConfig(JSON.stringify({ format: 'helmian.envoy.channel-config.v1', avatar: { k: 'char', id: 'nope' } }));
   assert.equal(junk.avatar, null, 'a stored junk avatar reads back as none');
+});
+
+test('skill toggles: canonical pairs pass, including the blanket target', () => {
+  assert.equal(normalizeSkillToggles(undefined), undefined);
+  assert.equal(normalizeSkillToggles(null), undefined);
+  assert.equal(normalizeSkillToggles([]), undefined, 'an empty attach list is the untouched composer — the field is omitted');
+  const out = normalizeSkillToggles([
+    { skillId: 'deep-research', seatId: 'all' },
+    { skillId: 'wash-check', seatId: 'claude' },
+    { skillId: 'wash-check', seatId: 'grok' },
+  ]);
+  assert.deepEqual(out, [
+    { skillId: 'deep-research', seatId: 'all' },
+    { skillId: 'wash-check', seatId: 'claude' },
+    { skillId: 'wash-check', seatId: 'grok' },
+  ], 'one skill may target two seats — the pair is the identity');
+  assert.ok(Object.isFrozen(out) && Object.isFrozen(out[0]));
+});
+
+test('skill toggles: fail-closed on shape, duplicates and the cap', () => {
+  assert.throws(() => normalizeSkillToggles('deep-research'), /invalid/);
+  assert.throws(() => normalizeSkillToggles([{ skillId: 'deep-research' }]), /invalid/, 'a toggle names its target');
+  assert.throws(() => normalizeSkillToggles([{ skillId: 'Deep Research', seatId: 'all' }]), /invalid/);
+  assert.throws(() => normalizeSkillToggles([{ skillId: 'deep-research', seatId: 'bad seat!' }]), /invalid/);
+  assert.throws(() => normalizeSkillToggles([
+    { skillId: 'deep-research', seatId: 'all' },
+    { skillId: 'deep-research', seatId: 'all' },
+  ]), /duplicated/);
+  assert.equal(MAX_MESSAGE_SKILLS, 3);
+  assert.throws(() => normalizeSkillToggles([
+    { skillId: 'a', seatId: 'all' }, { skillId: 'b', seatId: 'all' },
+    { skillId: 'c', seatId: 'all' }, { skillId: 'd', seatId: 'all' },
+  ]), /too many skills/);
+});
+
+test('message metadata: skills round-trip, omit when empty, and ride beside other fields', () => {
+  const meta = normalizeMessageMetadata({ skills: [{ skillId: 'deep-research', seatId: 'all' }] });
+  assert.deepEqual(meta, { skills: [{ skillId: 'deep-research', seatId: 'all' }] });
+  assert.equal(normalizeMessageMetadata({ skills: [] }), null, 'no skills and nothing else is no metadata');
+  assert.equal(normalizeMessageMetadata({}), null);
+  const mixed = normalizeMessageMetadata({
+    webSearch: true,
+    connectors: [{ seatId: 'claude', entryId: 'helmian-scribe' }],
+    skills: [{ skillId: 'wash-check', seatId: 'grok' }],
+  });
+  assert.deepEqual(mixed.skills, [{ skillId: 'wash-check', seatId: 'grok' }]);
+  assert.deepEqual(mixed.connectors, [{ seatId: 'claude', entryId: 'helmian-scribe' }], 'the two roads stay separate in one metadata object');
+  assert.equal(mixed.webSearch, true);
+  assert.throws(() => normalizeMessageMetadata({ skills: [{ skillId: 'x', seatId: 'all' }, { skillId: 'x', seatId: 'all' }] }), /duplicated/);
 });

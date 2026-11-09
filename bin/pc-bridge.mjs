@@ -288,7 +288,7 @@ async function loadVaultKey(deps) {
 // assistant text once the turn's `done` event arrives.
 // onPermissionRequest(event) is called for broker `permission_request` events
 // so the host can surface approvals (envoy channel) while the turn is blocked.
-function runTurn(child, text, { onPermissionRequest = null, metadata = null, slashExpansion = null, connectorConnections = null } = {}) {
+function runTurn(child, text, { onPermissionRequest = null, metadata = null, slashExpansion = null, connectorConnections = null, skills = null } = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let buffer = '';
@@ -312,7 +312,7 @@ function runTurn(child, text, { onPermissionRequest = null, metadata = null, sla
       }
     };
     child.stdout.on('data', onData);
-    child.stdin.write(`${JSON.stringify({ cmd: 'turn', text, ...(metadata ? { metadata } : {}), ...(slashExpansion ? { slashExpansion } : {}), ...(Array.isArray(connectorConnections) && connectorConnections.length ? { connectorConnections } : {}) })}\n`, (err) => {
+    child.stdin.write(`${JSON.stringify({ cmd: 'turn', text, ...(metadata ? { metadata } : {}), ...(slashExpansion ? { slashExpansion } : {}), ...(Array.isArray(connectorConnections) && connectorConnections.length ? { connectorConnections } : {}), ...(Array.isArray(skills) && skills.length ? { skills } : {}) })}\n`, (err) => {
       if (err) { child.stdout.off('data', onData); reject(err); }
     });
   });
@@ -533,7 +533,16 @@ export async function runBridge(overrides = {}) {
       // bite 4R2). Absent today: the child then answers connectionFor
       // from its own runner vault for the Scribe door, and every other
       // toggle records unarmed rather than pretending.
-      const reply = await runTurn(child, text, { metadata: item.message?.metadata ?? null, slashExpansion: prepared.slashExpansion, connectorConnections: item.connectorConnections ?? null });
+      // The work item's Helmian skills (slash-skills bite S1) are
+      // resolved and scope-clamped cloud-side for the item's due
+      // seats, each entry carrying its effective target; this turn
+      // takes only its own seat's slice ('all', or this provider —
+      // a library seat id or a custom handle). The child re-checks
+      // the target per turn (attachments.mjs), so a slice that
+      // somehow names another seat still leaves no trace there.
+      const skills = (Array.isArray(item.skills) ? item.skills : [])
+        .filter((s) => s && (s.seatId === 'all' || s.seatId === provider));
+      const reply = await runTurn(child, text, { metadata: item.message?.metadata ?? null, slashExpansion: prepared.slashExpansion, connectorConnections: item.connectorConnections ?? null, skills });
       if (!reply || !reply.trim()) { log(`agent ${provider}: no text for ${item.message.id}`); return; }
       const body = reply.length > 4000 ? `${reply.slice(0, 3997)}...` : reply;
       await api(deps, '/api/admin/envoy/agent-messages', { method: 'POST', token: creds.token, body: { channelId: item.channel.id, provider, replyTo: item.message.id, body } });
