@@ -343,7 +343,7 @@ test('the session console carries the picker too: plus button, panel, chips, its
   const plus = html.match(/<button[^>]*id="console-plus"[^>]*>([\s\S]*?)<\/button>/);
   assert.ok(plus, '#console-plus exists');
   assert.match(plus[1], /\+/, 'console composer button shows the plus');
-  assert.match(plus[1], /Add/, 'console composer button is labelled Add');
+  assert.doesNotMatch(plus[1], /Add/, 'console composer button is a bare plus — no Add label');
   const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
   assert.match(js, /from '\.\/composer-picker\.mjs'/, 'app.js imports the shared picker model — no forked picker logic');
   assert.match(js, /\$\('#console-plus'\)\.onclick = \(\) => toggleConsolePicker\(\)/, 'the console plus toggles the console picker');

@@ -315,7 +315,7 @@ test('I2 landed: the channel composer "+" opens the attach picker; the console T
   const maestro = html.match(/<button[^>]*id="maestro-plus"[^>]*>([\s\S]*?)<\/button>/);
   assert.ok(maestro, '#maestro-plus exists');
   assert.match(maestro[1], /\+/, 'maestro composer button shows the plus');
-  assert.match(maestro[1], /Add/, 'maestro composer button is labelled Add');
+  assert.doesNotMatch(maestro[1], /Add/, 'maestro composer button is a bare plus — no Add label');
   assert.doesNotMatch(maestro[1], /Tools/, 'maestro composer button no longer routes to Tools');
   const consoleBtn = html.match(/<button[^>]*data-tool="tools"[^>]*>([\s\S]*?)<\/button>/);
   assert.ok(consoleBtn, 'console composer tools button exists');
