@@ -126,10 +126,13 @@ export function createAppSessionStore(pool) {
           and st.tenant_id=$1 and st.session_id=$2 and st.position=$3 returning st.position, st.label, st.status, st.updated_at, s.name`, [scoped.tenantId, u.sessionId, u.position, u.status, scoped.actorSubject]);
         if (r.rowCount !== 1) throw Object.assign(new Error('step not found'), { status: 404 });
         const step = r.rows[0];
-        if (u.status !== 'pending') {
-          const verb = { running: 'Started', done: 'Finished', failed: 'Failed', skipped: 'Skipped' }[u.status];
-          await appendAuditEvent(client, scoped, { actionType: `app.task.step_${u.status}`, canonicalTarget: { sessionId: u.sessionId, position: u.position }, policyVersion: 'app-sessions.v1', decision: 'ALLOW', privacySummary: `${verb}: ${step.label} (${step.name})`.slice(0, 240), result: { status: u.status } });
-        }
+        // Every status transition is audited, a reset to 'pending'
+        // included: it mutates the step like any other transition,
+        // and an unaudited mutation is a silent hole in "who did
+        // what" (librarian bite, 2026-11-09 — the setPlan-class
+        // coverage pass; setPlan itself already appends above).
+        const verb = { pending: 'Reset', running: 'Started', done: 'Finished', failed: 'Failed', skipped: 'Skipped' }[u.status];
+        await appendAuditEvent(client, scoped, { actionType: `app.task.step_${u.status}`, canonicalTarget: { sessionId: u.sessionId, position: u.position }, policyVersion: 'app-sessions.v1', decision: 'ALLOW', privacySummary: `${verb}: ${step.label} (${step.name})`.slice(0, 240), result: { status: u.status } });
         return { sessionId: u.sessionId, step: stepRow(step) };
       });
     },

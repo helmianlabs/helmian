@@ -17,6 +17,7 @@
 // corresponding migration is applied.
 
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
+import { readChannelEvidence } from './envoy-librarian.mjs';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -216,6 +217,16 @@ export function createEvidenceStore(pool) {
       };
     },
 
+    // Per-chat evidence roll-up (envoy-librarian.mjs): the audit
+    // rows naming this channel, its Guard findings, and its message
+    // counts, joined in one read. The query lives with the librarian
+    // — the memory's coordinator owns the join — and this surface
+    // consumes it under the same owner/admin gate as every read here.
+    async getChannelEvidence(actor, channelId, limit) {
+      requireOwnerOrAdmin(actor);
+      return readChannelEvidence(pool, actor, channelId, { limit });
+    },
+
     async listLeasePosture(actor) {
       requireOwnerOrAdmin(actor);
       const [workspaceLeases, maestroLeases] = await Promise.all([
@@ -254,6 +265,7 @@ export const EVIDENCE_HANDOFFS_PATH = '/api/admin/maestro/handoffs';
 export const EVIDENCE_CHECKPOINTS_PATH = '/api/admin/maestro/checkpoints';
 export const EVIDENCE_RUNS_LEDGER_PATH = '/api/admin/runs/ledger';
 export const EVIDENCE_LEASES_POSTURE_PATH = '/api/admin/leases/posture';
+export const EVIDENCE_CHANNEL_PATH = '/api/admin/envoy/channel-evidence';
 
 // HTTP route handling for the evidence reads. Kept here (instead of the live
 // admin handler) so the route surface lives next to the store. Returns true
@@ -278,6 +290,11 @@ export async function handleEvidenceRoute({ request, response, requestUrl, evide
   if (request.method === 'GET' && requestUrl.pathname === EVIDENCE_LEASES_POSTURE_PATH) {
     try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await evidence.listLeasePosture(actor) })); }
     catch (error) { send(response, membershipError(error) ? 403 : 503, JSON.stringify({ valid: false, code: membershipError(error) ? 'EVIDENCE_MEMBERSHIP_REQUIRED' : 'EVIDENCE_LEASES_READ_FAILED' })); }
+    return true;
+  }
+  if (request.method === 'GET' && requestUrl.pathname === EVIDENCE_CHANNEL_PATH) {
+    try { const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await evidence.getChannelEvidence(actor, requestUrl.searchParams.get('channel_id'), requestUrl.searchParams.get('limit')) })); }
+    catch (error) { send(response, membershipError(error) ? 403 : 503, JSON.stringify({ valid: false, code: membershipError(error) ? 'EVIDENCE_MEMBERSHIP_REQUIRED' : 'EVIDENCE_CHANNEL_READ_FAILED' })); }
     return true;
   }
   return false;
