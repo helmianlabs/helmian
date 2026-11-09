@@ -53,7 +53,6 @@ const findRow = (model, entryId) => flat(model).find((r) => r.row?.entryId === e
 
 const CLAUDE_LIB = library('claude', [
   libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' }),
-  libRow('claude', 'helmian-scribe', 'Helmian Scribe', { state: 'connected' }),
   libRow('claude', 'gmail', 'Gmail', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'troy@example.com', kind: 'oauth-app' }),
   libRow('claude', 'slack', 'Slack', { brokerMode: 'vendor', kind: 'oauth-app' }),
 ]);
@@ -93,7 +92,6 @@ test('plus menu Level 2 — Claude: attach, screenshot, project, GitHub, Skills,
     'note:Loading skills...',
     'submenu:Connectors',
     'toggle:helmian-github=off',
-    'toggle:helmian-scribe=off',
     'mirror:gmail',
     'mirror:slack',
     'action:Tool access:tool-access',
@@ -110,7 +108,6 @@ test('plus menu Level 2 — Claude: attach, screenshot, project, GitHub, Skills,
 test('plus menu Level 2 — Claude (bite M2): the Connectors badge is the needs-reconnect roll-up over the seat read', () => {
   const lib = library('claude', [
     libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' }),
-    libRow('claude', 'helmian-scribe', 'Helmian Scribe', { state: 'connected' }),
     libRow('claude', 'gmail', 'Gmail', { state: 'needs-reconnect', brokerMode: 'vendor', kind: 'oauth-app' }),
     libRow('claude', 'slack', 'Slack', { state: 'needs-reconnect', brokerMode: 'vendor', kind: 'oauth-app' }),
   ]);
@@ -124,18 +121,17 @@ test('plus menu Level 2 — Claude (bite M2): the Connectors badge is the needs-
 test('plus menu Level 2 — Claude (bite M2): catalog starter actions ride under their connector; MCP prompts ride under an ARMED toggle only', () => {
   const lib = library('claude', [
     libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' }),
-    libRow('claude', 'helmian-scribe', 'Helmian Scribe', { state: 'connected' }),
     libRow('claude', 'idiolect', 'Idiolect', {
       state: 'connected', brokerMode: 'vendor', kind: 'oauth-app',
       starterActions: [{ label: 'Write an email in my style', prompt: 'Write an email in my style' }],
     }),
   ]);
-  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-scribe');
-  const promptsByEntry = { 'helmian-scribe': { status: 'ok', prompts: [{ name: 'daily-note', title: 'Daily note', arguments: [] }] } };
+  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-github');
+  const promptsByEntry = { 'helmian-github': { status: 'ok', prompts: [{ name: 'daily-note', title: 'Daily note', arguments: [] }] } };
   const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry });
   const lines = brief(model);
-  const scribeAt = lines.indexOf('toggle:helmian-scribe=on');
-  assert.equal(lines[scribeAt + 1], 'prompt:Daily note', 'the armed server\u2019s starter prompt follows its toggle');
+  const githubAt = lines.indexOf('toggle:helmian-github=on');
+  assert.equal(lines[githubAt + 1], 'prompt:Daily note', 'the armed server\u2019s starter prompt follows its toggle');
   const idiolectAt = lines.indexOf('mirror:idiolect');
   assert.equal(lines[idiolectAt + 1], 'starter:Write an email in my style', 'the catalog starter action follows its connector row');
   // Disarmed: the same prompts input renders nothing — prompts are
@@ -143,8 +139,8 @@ test('plus menu Level 2 — Claude (bite M2): catalog starter actions ride under
   const disarmed = plusMenuLevel2Model({ seatId: 'claude', library: lib, conversationId: 'c1', promptsByEntry });
   assert.ok(!brief(disarmed).some((l) => l.startsWith('prompt:')), 'no prompt row under a disarmed toggle');
   // A failed listing is one honest note, not a silent gap.
-  const failed = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-scribe': { status: 'error', prompts: [] } } });
-  assert.ok(brief(failed).includes("note:Helmian Scribe's starters could not be listed."));
+  const failed = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-github': { status: 'error', prompts: [] } } });
+  assert.ok(brief(failed).includes("note:Helmian GitHub's starters could not be listed."));
 });
 
 test('plus menu Level 2 — Claude (bite M2): Skills binds the workspace library, Plugins the bridge list, Projects the registry', () => {
@@ -155,7 +151,7 @@ test('plus menu Level 2 — Claude (bite M2): Skills binds the workspace library
     { id: 'retired', name: 'Retired', description: '', scope: 'blanket', seatIds: [], state: 'disabled-by-owner' },
   ];
   const skillAttach = [{ skillId: 'helm', seatId: 'claude' }];
-  const plugins = [{ name: 'scribe-tools', brings: 'Scribe reads' }, { name: 'forge-tools', brings: 'Forge reads' }];
+  const plugins = [{ name: 'notes-tools', brings: 'Notes reads' }, { name: 'forge-tools', brings: 'Forge reads' }];
   const attachments = [{ kind: 'plugin', name: 'forge-tools' }];
   const projects = [{ key: 'helmian', name: 'Helmian' }, { key: 'forge', name: 'Forge' }];
   const model = plusMenuLevel2Model({
@@ -168,7 +164,7 @@ test('plus menu Level 2 — Claude (bite M2): Skills binds the workspace library
   assert.ok(!lines.some((l) => l.includes('Grok craft')), 'a skill scoped to another seat never shows here');
   const retired = flat(model).find((r) => r.kind === 'skill' && r.skillId === 'retired');
   assert.equal(retired.disabled, true, 'an owner-disabled skill shows as turned off, never armable');
-  assert.ok(lines.includes('plugin:scribe-tools=off'));
+  assert.ok(lines.includes('plugin:notes-tools=off'));
   assert.ok(lines.includes('plugin:forge-tools=on'), 'the attached plugin shows on');
   assert.ok(lines.includes('project:Helmian'));
   assert.ok(lines.includes('project:Forge=active'), 'the active project is marked');
@@ -197,9 +193,9 @@ test('plus menu Level 2 — plugins that failed to load are named, never read as
   assert.ok(!emptyLines.some((l) => l.includes('could not be loaded')), 'no failure line over a clean empty read');
   // (c) Loaded plugins AND failures: the list and the count line
   // both render.
-  const mixed = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1', skills: [], plugins: [{ name: 'scribe-tools', brings: 'Scribe reads' }], pluginsUnavailable: [failed[0]], projects: [] });
+  const mixed = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1', skills: [], plugins: [{ name: 'notes-tools', brings: 'Notes reads' }], pluginsUnavailable: [failed[0]], projects: [] });
   const mixedLines = brief(mixed);
-  assert.ok(mixedLines.includes('plugin:scribe-tools=off'), 'the loaded plugin still lists');
+  assert.ok(mixedLines.includes('plugin:notes-tools=off'), 'the loaded plugin still lists');
   assert.ok(mixedLines.includes('note:1 plugin could not be loaded.'), 'the singular count line renders beside it');
   assert.ok(!mixedLines.includes('note:No plugins are installed.'));
 });
@@ -214,7 +210,6 @@ test('plus menu Level 2 — Claude web search reflects the per-message flag', ()
 test('plus menu Level 2 — ChatGPT: no web-search row (the attachments layer cannot honour it there, REPORT §6)', () => {
   const lib = library('chatgpt', [
     libRow('chatgpt', 'helmian-github', 'Helmian GitHub', { state: 'connected' }),
-    libRow('chatgpt', 'helmian-scribe', 'Helmian Scribe'),
     libRow('chatgpt', 'gmail', 'Gmail', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'troy@example.com', kind: 'oauth-app' }),
   ]);
   const model = plusMenuLevel2Model({ seatId: 'chatgpt', library: lib, conversationId: 'c1' });
@@ -222,7 +217,6 @@ test('plus menu Level 2 — ChatGPT: no web-search row (the attachments layer ca
     'attach:Add photos & files',
     'submenu:More',
     'toggle:helmian-github=off',
-    'row:helmian-scribe',
     'mirror:gmail',
     'manage:Manage connectors:integrations:none',
   ]);
@@ -234,7 +228,6 @@ test('plus menu Level 2 — Grok: account-level rows are state rows, with the ac
     libRow('grok', 'github', 'GitHub', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'helmianlabs', kind: 'oauth-app' }),
     libRow('grok', 'gmail', 'Gmail', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'troy@example.com', kind: 'oauth-app' }),
     libRow('grok', 'helmian-github', 'Helmian GitHub', { state: 'connected' }),
-    libRow('grok', 'helmian-scribe', 'Helmian Scribe'),
   ]);
   const model = plusMenuLevel2Model({ seatId: 'grok', library: lib, conversationId: 'c1' });
   const stateRow = flat(model).find((r) => r.row?.entryId === 'gmail' && r.rowShape === 'state');
@@ -424,12 +417,12 @@ test('arm-time prompts (fix D): a PROMPTS_NOT_HELD refusal is the silent unsuppo
 test('arm-time prompts (fix D): any other listing failure still renders the failure note', async () => {
   const refusal = Object.assign(new Error('NOT_CONNECTED'), { status: 409, body: { code: 'NOT_CONNECTED', error: 'connect this connector first — its starters are listed for the person connected to it' } });
   resetLibrarySession({ post: async () => { throw refusal; } });
-  ensureConnectorPrompts('claude', 'helmian-scribe');
+  ensureConnectorPrompts('claude', 'helmian-github');
   await new Promise((resolve) => setImmediate(resolve));
-  const state = connectorPromptsState('claude', 'helmian-scribe');
+  const state = connectorPromptsState('claude', 'helmian-github');
   assert.equal(state?.status, 'error', 'a real failure keeps the error state');
-  const lib = library('claude', [libRow('claude', 'helmian-scribe', 'Helmian Scribe', { state: 'connected' })]);
-  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-scribe');
-  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-scribe': state } });
-  assert.ok(brief(model).includes("note:Helmian Scribe's starters could not be listed."), 'the honest note stands for a real failure');
+  const lib = library('claude', [libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' })]);
+  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-github');
+  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-github': state } });
+  assert.ok(brief(model).includes("note:Helmian GitHub's starters could not be listed."), 'the honest note stands for a real failure');
 });

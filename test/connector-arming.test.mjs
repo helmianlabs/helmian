@@ -1,8 +1,7 @@
 // Connectors bite 4R2 — the Claude Pattern-A hand-off, end to end on
-// fakes: catalog data model (Scribe is an OAuth entry the library can
-// hold token refs for), the Scribe door token minter (refresh success /
-// failure / timeout against a stubbed token endpoint), toggle
-// consumption in attachments.mjs (armed resolution + arm-state
+// fakes: catalog data model (a native OAuth entry the library can
+// hold token refs for), toggle consumption in attachments.mjs
+// (armed resolution + arm-state
 // honesty), the adapter change in providers.mjs (armed request shape;
 // UNARMED REQUEST BYTE-IDENTICAL to the pre-connector request), MCP
 // evidence capture, and loop threading (servers carried separately,
@@ -12,26 +11,17 @@
 // live door, or a real Anthropic key. The live gate — a real Anthropic
 // response carrying the Scribe MCP blocks — is UNVERIFIED by design
 // and runs after the human consent step + push (see BUILD-REPORT.md).
+//
+// The Scribe door module tests that once lived in this file (door
+// client, minter, vault resolver, arming composition) were removed
+// with src/agent/scribe-door.mjs itself in the dead-module deletion
+// (2026-11-09); the armed fixtures below keep the JWT-shaped fake as
+// their token.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { catalogEntryById, LIVE_SEATS } from '../src/cloud/connector-catalog.mjs';
 import { createConnectorLibraryStore, buildConnectorTokenRef } from '../src/cloud/connector-library.mjs';
-import { openVault, PROVIDER_KEY_ENV } from '../src/runner/vault.mjs';
-import {
-  createScribeDoorClient,
-  createScribeAccessTokenMinter,
-  createRunnerVaultScribeResolver,
-  createScribeArming,
-  runnerVaultHasScribe,
-  ScribeDoorError,
-  SCRIBE_TOKEN_URL,
-  SCRIBE_MCP_URL,
-} from '../src/agent/scribe-door.mjs';
 import { resolveTurnAttachments } from '../src/agent/attachments.mjs';
 import { chatWithTools, ANTHROPIC_MCP_BETA } from '../src/agent/providers.mjs';
 import { runAgentTurn } from '../src/agent/loop.mjs';
@@ -41,6 +31,10 @@ import { makeProvenanceWorkspace, cleanProvenanceWorkspace } from '../test-suppo
 // redaction-ordering pin below is real — redactSecrets replaces this
 // shape with [REDACTED] wherever it sees it in a serialized body.
 const FAKE_DOOR_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJydW5uZXIiLCJzY29wZSI6Im1lbW9yeS5yZWFkIn0.fakesignaturepart0123456789';
+
+// The surviving native entry's endpoint (connector-catalog.mjs) —
+// the Pattern-A armed server in the toggle/adapter fixtures below.
+const GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/';
 
 // ------------------------------------------------------------ fetch stub
 function stubFetch(handler) {
@@ -60,16 +54,18 @@ const jsonResponse = (status, obj) => ({
 
 // ============================================================ data model
 
-test('catalog: helmian-scribe is an oauth entry on every seat, endpoint unchanged', () => {
+test('catalog: helmian-github is an oauth entry on every seat, endpoint unchanged; helmian-scribe is gone', () => {
   for (const seatId of LIVE_SEATS) {
-    const entry = catalogEntryById(seatId, 'helmian-scribe');
-    assert.equal(entry.authMode, 'oauth', `${seatId}: scribe authMode`);
+    const entry = catalogEntryById(seatId, 'helmian-github');
+    assert.equal(entry.authMode, 'oauth', `${seatId}: github authMode`);
     assert.equal(entry.brokerMode, 'helmian');
-    assert.equal(entry.mcpEndpointUrl, SCRIBE_MCP_URL);
+    assert.equal(entry.mcpEndpointUrl, GITHUB_MCP_URL);
     assert.ok(entry.scopesSummary, `${seatId}: scopes summary present`);
+    // The Scribe cut (2026-11-09): the entry exists on no seat.
+    assert.equal(catalogEntryById(seatId, 'helmian-scribe'), null, `${seatId}: scribe entry cut`);
   }
   // The other genuinely-public entry keeps its 'none': Cloudflare's
-  // docs server takes no sign-in, and this bite changed only Scribe.
+  // docs server takes no sign-in.
   assert.equal(catalogEntryById('cloudflare', 'cloudflare-docs').authMode, 'none');
 });
 
@@ -146,7 +142,7 @@ function fakeLibraryPool() {
   };
 }
 
-test('library: a scribe connection now holds access + refresh token refs; the refresh road carries the flip', async () => {
+test('library: a native oauth connection holds access + refresh token refs; the catalog refresh carries the flip', async () => {
   const TENANT = 'tenant-a';
   const PERSON = 'user:troy';
   const store = createConnectorLibraryStore(fakeLibraryPool());
@@ -154,14 +150,14 @@ test('library: a scribe connection now holds access + refresh token refs; the re
   // The stored legacy record: authMode 'none', as seeded before this
   // bite. A connection with token refs is refused under it — the 4R
   // step-0 blocker, reproduced at the store.
-  const legacy = { ...catalogEntryById('claude', 'helmian-scribe'), authMode: 'none' };
+  const legacy = { ...catalogEntryById('claude', 'helmian-github'), authMode: 'none' };
   await store.createEntry(TENANT, PERSON, legacy);
-  const accessRef = buildConnectorTokenRef({ tenantId: TENANT, seatId: 'claude', entryId: 'helmian-scribe', personId: PERSON, tokenKind: 'access' });
-  const refreshRef = buildConnectorTokenRef({ tenantId: TENANT, seatId: 'claude', entryId: 'helmian-scribe', personId: PERSON, tokenKind: 'refresh' });
+  const accessRef = buildConnectorTokenRef({ tenantId: TENANT, seatId: 'claude', entryId: 'helmian-github', personId: PERSON, tokenKind: 'access' });
+  const refreshRef = buildConnectorTokenRef({ tenantId: TENANT, seatId: 'claude', entryId: 'helmian-github', personId: PERSON, tokenKind: 'refresh' });
   await assert.rejects(
     () => store.createConnection(TENANT, PERSON, {
-      personId: PERSON, seatId: 'claude', entryId: 'helmian-scribe',
-      accountIdentity: 'Troy (Scribe door)', accessTokenRef: accessRef, refreshTokenRef: refreshRef,
+      personId: PERSON, seatId: 'claude', entryId: 'helmian-github',
+      accountIdentity: 'Troy (native oauth)', accessTokenRef: accessRef, refreshTokenRef: refreshRef,
     }),
     /no tokens to reference/,
   );
@@ -169,30 +165,31 @@ test('library: a scribe connection now holds access + refresh token refs; the re
   // The catalog refresh re-creates the entry from the corrected
   // catalog data — its update path writes auth_mode — and the same
   // connection now lands, holding both refs like any oauth entry.
-  const refreshed = await store.createEntry(TENANT, PERSON, catalogEntryById('claude', 'helmian-scribe'));
+  const refreshed = await store.createEntry(TENANT, PERSON, catalogEntryById('claude', 'helmian-github'));
   assert.equal(refreshed.authMode, 'oauth');
   const connection = await store.createConnection(TENANT, PERSON, {
-    personId: PERSON, seatId: 'claude', entryId: 'helmian-scribe',
-    accountIdentity: 'Troy (Scribe door)', accessTokenRef: accessRef, refreshTokenRef: refreshRef,
-    grantedScopes: ['memory.read', 'memory.write', 'hands.read', 'hands.act'],
+    personId: PERSON, seatId: 'claude', entryId: 'helmian-github',
+    accountIdentity: 'Troy (native oauth)', accessTokenRef: accessRef, refreshTokenRef: refreshRef,
+    grantedScopes: ['repo.read', 'repo.write'],
   });
   assert.equal(connection.accessTokenRef, accessRef);
   assert.equal(connection.refreshTokenRef, refreshRef);
   assert.equal(connection.state, 'connected');
-  const readBack = await store.getConnection(TENANT, { personId: PERSON, seatId: 'claude', entryId: 'helmian-scribe' });
+  const readBack = await store.getConnection(TENANT, { personId: PERSON, seatId: 'claude', entryId: 'helmian-github' });
   assert.equal(readBack.refreshTokenRef, refreshRef);
 
-  // And the oauth branch's discipline applies to Scribe too: no
+  // And the oauth branch's discipline applies to this entry too: no
   // access ref, no connection.
   await assert.rejects(
     () => store.createConnection(TENANT, PERSON, {
-      personId: 'user:other', seatId: 'claude', entryId: 'helmian-scribe',
+      personId: 'user:other', seatId: 'claude', entryId: 'helmian-github',
       accountIdentity: 'No Ref', refreshTokenRef: refreshRef,
     }),
     /accessTokenRef is required/,
   );
 
-  // A true 'none' entry still refuses refs — the flip is Scribe-only.
+  // A true 'none' entry still refuses refs — the discipline follows
+  // the auth mode, not the entry.
   await store.createEntry(TENANT, PERSON, {
     seatId: 'claude', id: 'open-tools', kind: 'custom', name: 'Open Tools', oneLiner: 'No sign-in tools',
     vendorName: 'Example', brokerMode: 'helmian', mcpEndpointUrl: 'https://open.example.com/mcp',
@@ -207,153 +204,11 @@ test('library: a scribe connection now holds access + refresh token refs; the re
   );
 });
 
-// ============================================================ door client
-
-test('door client: refresh posts the renewal grant form and returns the minted bundle', async () => {
-  const seen = [];
-  const client = createScribeDoorClient({
-    now: () => Date.parse('2026-11-09T00:00:00.000Z'),
-    fetchImpl: async (url, init) => {
-      seen.push({ url, init });
-      return jsonResponse(200, { access_token: 'door-access-1', refresh_token: 'door-renewal-2', expires_in: 3600 });
-    },
-  });
-  const minted = await client.refreshAccessToken({ refreshToken: 'door-renewal-1', clientId: 'runner-client-7' });
-  assert.equal(minted.accessToken, 'door-access-1');
-  assert.equal(minted.refreshToken, 'door-renewal-2');
-  assert.equal(minted.expiresAt, '2026-11-09T01:00:00.000Z');
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].url, SCRIBE_TOKEN_URL);
-  assert.equal(seen[0].init.method, 'POST');
-  assert.equal(seen[0].init.headers['Content-Type'], 'application/x-www-form-urlencoded');
-  const form = new URLSearchParams(seen[0].init.body);
-  assert.equal(form.get('grant_type'), 'refresh_token');
-  assert.equal(form.get('refresh_token'), 'door-renewal-1');
-  assert.equal(form.get('client_id'), 'runner-client-7');
-  assert.ok(seen[0].init.signal, 'the call carries a bounding signal');
-});
-
-test('door client: an OAuth refusal surfaces its code, never the token', async () => {
-  const client = createScribeDoorClient({
-    fetchImpl: async () => jsonResponse(400, { error: 'invalid_grant', error_description: 'revoked' }),
-  });
-  await assert.rejects(
-    () => client.refreshAccessToken({ refreshToken: 'door-renewal-1' }),
-    (err) => {
-      assert.ok(err instanceof ScribeDoorError);
-      assert.equal(err.code, 'invalid_grant');
-      assert.ok(!err.message.includes('door-renewal-1'), 'the renewal key never rides an error');
-      return true;
-    },
-  );
-});
-
-test('door client: a hung door times out bounded', async () => {
-  const hanging = (url, init) => new Promise((_, reject) => {
-    init.signal.addEventListener('abort', () => reject(init.signal.reason));
-  });
-  const client = createScribeDoorClient({ fetchImpl: hanging, timeoutMs: 25 });
-  await assert.rejects(
-    () => client.refreshAccessToken({ refreshToken: 'door-renewal-1' }),
-    (err) => err instanceof ScribeDoorError && err.code === 'door_timeout',
-  );
-});
-
-test('door client: a missing renewal key is refused before any call', async () => {
-  let calls = 0;
-  const client = createScribeDoorClient({ fetchImpl: async () => { calls += 1; return jsonResponse(200, {}); } });
-  await assert.rejects(
-    () => client.refreshAccessToken({ refreshToken: '' }),
-    (err) => err instanceof ScribeDoorError && err.code === 'missing_refresh_token',
-  );
-  assert.equal(calls, 0);
-});
-
-// ============================================================ the minter
-
-test('minter: success, no-key, resolver failure, and door failure — and it never throws', async () => {
-  const okClient = createScribeDoorClient({ fetchImpl: async () => jsonResponse(200, { access_token: 'door-access-9', expires_in: 3600 }) });
-  const mintOk = createScribeAccessTokenMinter({ doorClient: okClient, resolveRefreshToken: async () => 'renewal-1' });
-  const ok = await mintOk({ refreshTokenRef: 'vault://tenant/t/connector.claude.helmian-scribe/p-x.refresh' });
-  assert.equal(ok.ok, true);
-  assert.equal(ok.accessToken, 'door-access-9');
-
-  const mintNone = createScribeAccessTokenMinter({ doorClient: okClient, resolveRefreshToken: async () => null });
-  const none = await mintNone({ refreshTokenRef: 'vault://tenant/t/x' });
-  assert.equal(none.ok, false);
-  assert.equal(none.code, 'no_refresh_token');
-
-  const mintBroken = createScribeAccessTokenMinter({
-    doorClient: okClient,
-    resolveRefreshToken: async () => { throw new Error('VAULT_DECRYPT_FAILED'); },
-  });
-  const broken = await mintBroken({ refreshTokenRef: 'vault://tenant/t/x' });
-  assert.equal(broken.ok, false);
-  assert.equal(broken.code, 'refresh_resolve_failed');
-
-  const refusingClient = createScribeDoorClient({ fetchImpl: async () => jsonResponse(400, { error: 'invalid_grant' }) });
-  const mintRefused = createScribeAccessTokenMinter({ doorClient: refusingClient, resolveRefreshToken: async () => 'renewal-1' });
-  const refused = await mintRefused({ refreshTokenRef: 'vault://tenant/t/x' });
-  assert.equal(refused.ok, false);
-  assert.equal(refused.code, 'invalid_grant');
-  assert.ok(refused.reason.length > 0);
-});
-
-test('vault resolver: the scribe slot holds the door bundle and a bare renewal key', async (t) => {
-  assert.equal(PROVIDER_KEY_ENV.scribe, 'HELMIAN_SCRIBE_TOKEN');
-  const dir = await mkdtemp(join(tmpdir(), 'helmion-scribe-vault-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const vaultPath = join(dir, 'vault.json');
-  const deviceToken = 'device-token-for-tests-0123456789';
-
-  const vault = await openVault({ vaultPath, deviceToken });
-  assert.equal(await runnerVaultHasScribe(vault), false);
-  assert.equal(await createRunnerVaultScribeResolver({ vault })(), null);
-
-  await vault.setOAuth('scribe', {
-    accessToken: 'door-access-old', refreshToken: 'door-renewal-30d',
-    expiresAt: '2026-11-09T01:00:00.000Z', email: null, origin: 'door-consent',
-  });
-  assert.equal(await runnerVaultHasScribe(vault), true);
-  assert.equal(await createRunnerVaultScribeResolver({ vault })(), 'door-renewal-30d');
-
-  // A bundle with no renewal key cannot mint — the resolver does not
-  // hand back the stale access key as if it were renewable.
-  await vault.setOAuth('scribe', {
-    accessToken: 'door-access-old', refreshToken: null, expiresAt: null, email: null, origin: 'door-consent',
-  });
-  assert.equal(await createRunnerVaultScribeResolver({ vault })(), null);
-
-  // The bare-key road (runner-vault CLI `store scribe`): the renewal
-  // key stored as a plain key record resolves the same way.
-  const vault2 = await openVault({ vaultPath: join(dir, 'vault2.json'), deviceToken });
-  await vault2.set('scribe', 'api_key', 'bare-renewal-key');
-  assert.equal(await runnerVaultHasScribe(vault2), true);
-  assert.equal(await createRunnerVaultScribeResolver({ vault: vault2 })(), 'bare-renewal-key');
-});
-
-test('arming composition: vault bundle + fake door mints through createScribeArming', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'helmion-scribe-arm-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const vault = await openVault({ vaultPath: join(dir, 'vault.json'), deviceToken: 'device-token-for-tests-0123456789' });
-  await vault.setOAuth('scribe', {
-    accessToken: 'old', refreshToken: 'door-renewal-30d', expiresAt: null, email: null, origin: 'door-consent',
-  });
-  const arming = createScribeArming({
-    vault,
-    doorClient: createScribeDoorClient({ fetchImpl: async () => jsonResponse(200, { access_token: FAKE_DOOR_JWT, expires_in: 3600 }) }),
-    connectionFor: async () => ({ state: 'connected', refreshTokenRef: null }),
-  });
-  const minted = await arming.mintAccessToken({ refreshTokenRef: null, seatId: 'claude', entryId: 'helmian-scribe' });
-  assert.equal(minted.ok, true);
-  assert.equal(minted.accessToken, FAKE_DOOR_JWT);
-});
-
 // ======================================================= toggle consumption
 
-const SCRIBE_TOGGLE = { connectors: [{ seatId: 'claude', entryId: 'helmian-scribe' }] };
+const NATIVE_TOGGLE = { connectors: [{ seatId: 'claude', entryId: 'helmian-github' }] };
 const armingOk = {
-  connectionFor: async () => ({ state: 'connected', refreshTokenRef: 'vault://tenant/t/connector.claude.helmian-scribe/p-x.refresh' }),
+  connectionFor: async () => ({ state: 'connected', refreshTokenRef: 'vault://tenant/t/connector.claude.helmian-github/p-x.refresh' }),
   mintAccessToken: async () => ({ ok: true, accessToken: FAKE_DOOR_JWT }),
 };
 
@@ -366,23 +221,23 @@ test('attachments: no toggles — nothing armed, nothing recorded', async () => 
   assert.deepEqual(empty.connectorOutcomes, []);
 });
 
-test('attachments: an armed scribe toggle produces the Pattern-A server, outside the local tools', async () => {
-  const resolved = await resolveTurnAttachments({ metadata: SCRIBE_TOGGLE, providerId: 'anthropic', connectorArming: armingOk });
+test('attachments: an armed native toggle produces the Pattern-A server, outside the local tools', async () => {
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: armingOk });
   assert.deepEqual(resolved.mcpServers, [{
-    entryId: 'helmian-scribe',
-    name: 'helmian-scribe',
-    url: SCRIBE_MCP_URL,
+    entryId: 'helmian-github',
+    name: 'helmian-github',
+    url: GITHUB_MCP_URL,
     authorizationToken: FAKE_DOOR_JWT,
   }]);
   // Never a local tool: the local catalog is untouched by arming.
   assert.deepEqual(resolved.toolNames, []);
-  assert.deepEqual(resolved.connectorOutcomes, [{ seatId: 'claude', entryId: 'helmian-scribe', armed: true }]);
+  assert.deepEqual(resolved.connectorOutcomes, [{ seatId: 'claude', entryId: 'helmian-github', armed: true }]);
   assert.match(resolved.contextText, /handed to Anthropic's cloud for this turn/);
 });
 
 test('attachments: another seat\'s toggle is not this turn\'s business', async () => {
   const resolved = await resolveTurnAttachments({
-    metadata: { connectors: [{ seatId: 'grok', entryId: 'helmian-scribe' }] },
+    metadata: { connectors: [{ seatId: 'grok', entryId: 'helmian-github' }] },
     providerId: 'anthropic',
     connectorArming: armingOk,
   });
@@ -391,7 +246,7 @@ test('attachments: another seat\'s toggle is not this turn\'s business', async (
 });
 
 test('attachments: toggle-off by absence of the seam — nothing arms, and it says so', async () => {
-  const resolved = await resolveTurnAttachments({ metadata: SCRIBE_TOGGLE, providerId: 'anthropic', connectorArming: null });
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: null });
   assert.deepEqual(resolved.mcpServers, []);
   assert.equal(resolved.connectorOutcomes.length, 1);
   assert.equal(resolved.connectorOutcomes[0].armed, false);
@@ -401,7 +256,7 @@ test('attachments: toggle-off by absence of the seam — nothing arms, and it sa
 
 test('attachments: a non-Claude seat records the toggle unarmed (no Pattern-A path yet)', async () => {
   const resolved = await resolveTurnAttachments({
-    metadata: { connectors: [{ seatId: 'chatgpt', entryId: 'helmian-scribe' }] },
+    metadata: { connectors: [{ seatId: 'chatgpt', entryId: 'helmian-github' }] },
     providerId: 'openai',
     connectorArming: armingOk,
   });
@@ -412,7 +267,7 @@ test('attachments: a non-Claude seat records the toggle unarmed (no Pattern-A pa
 
 test('attachments: a subscription (CLI) turn cannot arm', async () => {
   const resolved = await resolveTurnAttachments({
-    metadata: SCRIBE_TOGGLE, providerId: 'anthropic', credentialType: 'cli', connectorArming: armingOk,
+    metadata: NATIVE_TOGGLE, providerId: 'anthropic', credentialType: 'cli', connectorArming: armingOk,
   });
   assert.deepEqual(resolved.mcpServers, []);
   assert.equal(resolved.connectorOutcomes[0].reason, 'cli-turn');
@@ -430,12 +285,12 @@ test('attachments: a vendor-brokered entry never arms through Helmian', async ()
 
 test('attachments: not connected, and needs-reconnect, both record unarmed', async () => {
   const notConnected = await resolveTurnAttachments({
-    metadata: SCRIBE_TOGGLE, providerId: 'anthropic',
+    metadata: NATIVE_TOGGLE, providerId: 'anthropic',
     connectorArming: { connectionFor: async () => null, mintAccessToken: armingOk.mintAccessToken },
   });
   assert.equal(notConnected.connectorOutcomes[0].reason, 'not-connected');
   const stale = await resolveTurnAttachments({
-    metadata: SCRIBE_TOGGLE, providerId: 'anthropic',
+    metadata: NATIVE_TOGGLE, providerId: 'anthropic',
     connectorArming: { connectionFor: async () => ({ state: 'needs-reconnect', refreshTokenRef: null }), mintAccessToken: armingOk.mintAccessToken },
   });
   assert.deepEqual(stale.mcpServers, []);
@@ -444,11 +299,11 @@ test('attachments: not connected, and needs-reconnect, both record unarmed', asy
 
 test('attachments: REFRESH FAILURE = unarmed + recorded, never a fake arm', async () => {
   const resolved = await resolveTurnAttachments({
-    metadata: SCRIBE_TOGGLE,
+    metadata: NATIVE_TOGGLE,
     providerId: 'anthropic',
     connectorArming: {
       connectionFor: armingOk.connectionFor,
-      mintAccessToken: async () => ({ ok: false, code: 'invalid_grant', reason: 'The Scribe renewal key is no longer valid.' }),
+      mintAccessToken: async () => ({ ok: false, code: 'invalid_grant', reason: 'The renewal key is no longer valid.' }),
     },
   });
   assert.deepEqual(resolved.mcpServers, []);
@@ -521,21 +376,21 @@ test('adapter: an unarmed request WITH function tools is also byte-identical', a
 
 test('adapter: an ARMED request carries mcp_servers + mcp_toolset + the beta header, token intact', async () => {
   const { calls } = await anthropicTurnCapture({
-    mcpServers: [{ entryId: 'helmian-scribe', name: 'helmian-scribe', url: SCRIBE_MCP_URL, authorizationToken: FAKE_DOOR_JWT }],
+    mcpServers: [{ entryId: 'helmian-github', name: 'helmian-github', url: GITHUB_MCP_URL, authorizationToken: FAKE_DOOR_JWT }],
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].init.headers['anthropic-beta'], ANTHROPIC_MCP_BETA);
   const body = JSON.parse(calls[0].init.body);
   assert.deepEqual(body.mcp_servers, [{
     type: 'url',
-    url: SCRIBE_MCP_URL,
-    name: 'helmian-scribe',
+    url: GITHUB_MCP_URL,
+    name: 'helmian-github',
     // INTACT — not [REDACTED]. The token is attached after the
     // redaction pass precisely so this holds; if the ordering ever
     // regresses, this assertion is the one that catches it.
     authorization_token: FAKE_DOOR_JWT,
   }]);
-  assert.deepEqual(body.tools, [{ type: 'mcp_toolset', mcp_server_name: 'helmian-scribe' }]);
+  assert.deepEqual(body.tools, [{ type: 'mcp_toolset', mcp_server_name: 'helmian-github' }]);
 });
 
 test('adapter: armed beside function tools and web search, both survive', async () => {
@@ -546,7 +401,7 @@ test('adapter: armed beside function tools and web search, both survive', async 
   const { calls } = await anthropicTurnCapture({
     toolDefs,
     webSearch: true,
-    mcpServers: [{ name: 'helmian-scribe', url: SCRIBE_MCP_URL, authorizationToken: FAKE_DOOR_JWT }],
+    mcpServers: [{ name: 'helmian-github', url: GITHUB_MCP_URL, authorizationToken: FAKE_DOOR_JWT }],
   });
   const body = JSON.parse(calls[0].init.body);
   assert.deepEqual(
@@ -560,18 +415,18 @@ test('adapter: MCP response blocks are captured as evidence, never as local tool
   const reply = {
     content: [
       { type: 'text', text: 'I searched the shared memory.' },
-      { type: 'mcp_tool_use', id: 'mcp-1', name: 'search_memory', server_name: 'helmian-scribe', input: { query: 'Bryce' } },
+      { type: 'mcp_tool_use', id: 'mcp-1', name: 'search_memory', server_name: 'helmian-github', input: { query: 'Bryce' } },
       { type: 'mcp_tool_result', tool_use_id: 'mcp-1', is_error: false, content: [{ type: 'text', text: 'three messages found' }] },
     ],
   };
   const { reply: out } = await anthropicTurnCapture({
     reply,
-    mcpServers: [{ name: 'helmian-scribe', url: SCRIBE_MCP_URL, authorizationToken: FAKE_DOOR_JWT }],
+    mcpServers: [{ name: 'helmian-github', url: GITHUB_MCP_URL, authorizationToken: FAKE_DOOR_JWT }],
   });
   assert.equal(out.content, 'I searched the shared memory.');
   assert.deepEqual(out.toolCalls, []);
   assert.deepEqual(out.mcpToolCalls, [{
-    id: 'mcp-1', name: 'search_memory', serverName: 'helmian-scribe', input: { query: 'Bryce' },
+    id: 'mcp-1', name: 'search_memory', serverName: 'helmian-github', input: { query: 'Bryce' },
   }]);
   assert.deepEqual(out.mcpToolResults, [{
     toolUseId: 'mcp-1', isError: false, content: 'three messages found',
@@ -609,7 +464,7 @@ test('loop: armed servers ride beside the tools and MCP evidence lands in the tu
   const mcpReply = {
     content: [
       { type: 'text', text: 'Found it in the shared memory.' },
-      { type: 'mcp_tool_use', id: 'mcp-1', name: 'search_memory', server_name: 'helmian-scribe', input: { query: 'Bryce' } },
+      { type: 'mcp_tool_use', id: 'mcp-1', name: 'search_memory', server_name: 'helmian-github', input: { query: 'Bryce' } },
       { type: 'mcp_tool_result', tool_use_id: 'mcp-1', is_error: false, content: [{ type: 'text', text: 'three messages found' }] },
     ],
   };
@@ -621,15 +476,15 @@ test('loop: armed servers ride beside the tools and MCP evidence lands in the tu
       messages: [{ role: 'system', content: 'You are a test seat.' }],
       provider: { id: 'anthropic', key: 'test-anthropic-key', label: 'Claude' },
       runtime: stubRuntime(workspace),
-      mcpServers: [{ entryId: 'helmian-scribe', name: 'helmian-scribe', url: SCRIBE_MCP_URL, authorizationToken: FAKE_DOOR_JWT }],
+      mcpServers: [{ entryId: 'helmian-github', name: 'helmian-github', url: GITHUB_MCP_URL, authorizationToken: FAKE_DOOR_JWT }],
       onEvent: (ev) => events.push(ev),
     });
     assert.equal(result.text, 'Found it in the shared memory.');
     // The wire: mcp_servers present, and the ONLY tool declared is the
     // toolset — no local function tools were invented for the server.
     const body = JSON.parse(calls[0].init.body);
-    assert.equal(body.mcp_servers[0].name, 'helmian-scribe');
-    assert.deepEqual(body.tools, [{ type: 'mcp_toolset', mcp_server_name: 'helmian-scribe' }]);
+    assert.equal(body.mcp_servers[0].name, 'helmian-github');
+    assert.deepEqual(body.tools, [{ type: 'mcp_toolset', mcp_server_name: 'helmian-github' }]);
     // The turn record: one evidence entry, round 0, naming the call
     // and its result; the same evidence was announced as an event.
     assert.equal(result.mcpEvidence.length, 1);
@@ -638,7 +493,7 @@ test('loop: armed servers ride beside the tools and MCP evidence lands in the tu
     assert.equal(result.mcpEvidence[0].results[0].content, 'three messages found');
     const announced = events.filter((ev) => ev.type === 'mcp_evidence');
     assert.equal(announced.length, 1);
-    assert.equal(announced[0].calls[0].serverName, 'helmian-scribe');
+    assert.equal(announced[0].calls[0].serverName, 'helmian-github');
   } finally {
     restore();
     cleanProvenanceWorkspace(workspace);

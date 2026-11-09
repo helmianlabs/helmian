@@ -1,7 +1,7 @@
 // Connector library WRITE routes (mirror M1, DESIGN §5): the
 // manage surface's server half, exercised with a fake store that
 // honours the real store's contract, a fake credential service, a
-// fake pending store, and a fake Scribe door.
+// fake pending store, and a fake OAuth door.
 //
 // What is proven here:
 //   - gating: membership required; auditors never write; workspace
@@ -12,10 +12,9 @@
 //     vault references minted by buildConnectorTokenRef, and the key
 //     itself goes to the credential service under that reference;
 //   - per-kind connect truth: vendor → plain refusal; none → lands
-//     at once; header → needs-credential + reference; scribe → the
-//     door road starts (DCR + PKCE + pending row, state hashed);
-//     other OAuth → the consent boundary, nothing connected;
-//   - the callback lands the Scribe connection: code exchanged, the
+//     at once; header → needs-credential + reference; OAuth → the
+//     consent boundary, nothing connected;
+//   - the callback lands the OAuth connection: code exchanged, the
 //     pair stored as oauth_bundle under BOTH references, connection
 //     recorded — and only for the person who started it;
 //   - disconnect runs the revoke hook BEFORE the record clears, and
@@ -36,8 +35,8 @@ const MEMBER = { subject: 'user:pat', tenantId: 'tenant-a', role: 'member' };
 const AUDITOR = { subject: 'user:aud', tenantId: 'tenant-a', role: 'auditor' };
 
 const ENTRY = (over = {}) => ({
-  seatId: 'claude', id: 'helmian-scribe', kind: 'helmian-native', brokerMode: 'helmian',
-  authMode: 'oauth', state: 'available', mcpEndpointUrl: 'https://connect.helmian.cloud/mcp', ...over,
+  seatId: 'claude', id: 'helmian-github', kind: 'helmian-native', brokerMode: 'helmian',
+  authMode: 'oauth', state: 'available', mcpEndpointUrl: 'https://api.githubcopilot.com/mcp/', ...over,
 });
 
 function fakeStore(entries = {}) {
@@ -100,7 +99,7 @@ function fakeDoor() {
 }
 
 function harness({ actor = OWNER, store, pending, credentials, door, fetchImpl } = {}) {
-  const s = store ?? fakeStore({ 'claude/helmian-scribe': ENTRY() });
+  const s = store ?? fakeStore({ 'claude/helmian-github': ENTRY() });
   const handler = createConnectorLibraryWriteHandler({
     store: s,
     pendingStore: pending ?? fakePending(),
@@ -136,7 +135,7 @@ test('gating: membership failure is 403, auditor writes are 403, other paths are
   const h = harness();
   assert.equal((await h.run(`${P}/connect`, { actorError: new TenantAuthorizationError('nope') })).status, 403);
   const a = harness({ actor: AUDITOR });
-  assert.equal((await a.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } })).status, 403);
+  assert.equal((await a.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-github' } })).status, 403);
   assert.equal((await h.run('/api/admin/something-else', {})).handled, false);
   assert.equal((await h.run(`${P}/connect`, { method: 'GET' })).handled, false);
 });
@@ -170,9 +169,9 @@ test('connect: authMode none lands the connection at once, with no token referen
 });
 
 test('connect: a disabled entry is a 409 before any road starts', async () => {
-  const store = fakeStore({ 'claude/helmian-scribe': ENTRY({ state: 'disabled-by-owner' }) });
+  const store = fakeStore({ 'claude/helmian-github': ENTRY({ state: 'disabled-by-owner' }) });
   const h = harness({ store });
-  assert.equal((await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } })).status, 409);
+  assert.equal((await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-github' } })).status, 409);
 });
 
 test('connect: header entries answer the minted vault reference and connect nothing yet', async () => {
@@ -210,33 +209,6 @@ test('connect/header: a credential-service refusal connects nothing', async () =
   assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
 });
 
-test('connect: helmian-scribe starts the door road — DCR, PKCE, and a pending row keyed by the hashed state', async () => {
-  const pending = fakePending();
-  const door = fakeDoor();
-  const h = harness({ pending, door });
-  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } });
-  assert.equal(out.status, 200);
-  assert.equal(out.json.status, 'consent');
-  assert.match(out.json.authorizeUrl, /^https:\/\/connect\.helmian\.cloud\/authorize\?state=/);
-  const [, reg] = door.calls.find(([n]) => n === 'registerClient');
-  assert.equal(reg.redirectUri, 'https://helmian.cloud/api/admin/connector-library/oauth/callback');
-  const [, saved] = pending.calls.find(([n]) => n === 'save');
-  const state = new URL(out.json.authorizeUrl).searchParams.get('state');
-  assert.equal(saved.stateHash, hashOAuthState(state));
-  assert.equal(saved.personId, 'user:troy');
-  assert.equal(saved.clientId, 'client-123');
-  assert.ok(saved.codeVerifier.length >= 32);
-  const [, authCall] = door.calls.find(([n]) => n === 'authorizeUrl');
-  assert.ok(authCall.challenge && authCall.challenge !== saved.codeVerifier, 'the URL carries the challenge, never the verifier');
-});
-
-test('connect: scribe with the pending table missing answers 503 OAUTH_ROAD_NOT_READY (migration 078 unapplied)', async () => {
-  const h = harness({ pending: fakePending({ saveResult: null }) });
-  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } });
-  assert.equal(out.status, 503);
-  assert.equal(out.json.code, 'OAUTH_ROAD_NOT_READY');
-});
-
 test('connect: GitHub OAuth reaches its consent boundary and connects nothing', async () => {
   const store = fakeStore({ 'claude/helmian-github': ENTRY({ id: 'helmian-github', authMode: 'oauth', mcpEndpointUrl: 'https://api.githubcopilot.com/mcp/' }) });
   const fetchImpl = async (url) => {
@@ -255,17 +227,17 @@ test('connect: GitHub OAuth reaches its consent boundary and connects nothing', 
 
 test('callback: the door code lands the connection — pair stored under both references, record holds references only', async () => {
   const pending = fakePending({
-    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-scribe', provider: 'scribe', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['memory.read'] },
+    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['memory.read'] },
   });
   const credentials = fakeCredentials();
-  const store = fakeStore({ 'claude/helmian-scribe': ENTRY() });
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
   const door = fakeDoor();
   const h = harness({ pending, credentials, store, door });
   const out = await h.run(`${P}/oauth/callback?code=code-9&state=state-9`, { method: 'GET' });
   assert.equal(out.status, 200);
   assert.match(out.raw, /Scribe is connected/);
-  const accessRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-scribe', personId: 'user:troy', tokenKind: 'access' });
-  const refreshRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-scribe', personId: 'user:troy', tokenKind: 'refresh' });
+  const accessRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-github', personId: 'user:troy', tokenKind: 'access' });
+  const refreshRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-github', personId: 'user:troy', tokenKind: 'refresh' });
   const storedRefs = credentials.calls.filter(([n]) => n === 'storeCredential').map(([, i]) => i.credentialReference).sort();
   assert.deepEqual(storedRefs, [accessRef, refreshRef].sort());
   const [, bundle] = credentials.calls.find(([n]) => n === 'storeCredential');
@@ -279,8 +251,8 @@ test('callback: the door code lands the connection — pair stored under both re
 });
 
 test('callback: a handshake started by someone else, or an expired one, lands nothing', async () => {
-  const store = fakeStore({ 'claude/helmian-scribe': ENTRY() });
-  const other = harness({ store, pending: fakePending({ takeRow: { personId: 'user:pat', seatId: 'claude', entryId: 'helmian-scribe', provider: 'scribe', clientId: 'c', codeVerifier: 'v', redirectUri: 'r', scopes: [] } }) });
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
+  const other = harness({ store, pending: fakePending({ takeRow: { personId: 'user:pat', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'c', codeVerifier: 'v', redirectUri: 'r', scopes: [] } }) });
   const out = await other.run(`${P}/oauth/callback?code=c&state=s`, { method: 'GET' });
   assert.match(out.raw, /did not land/);
   const expired = harness({ store, pending: fakePending({ takeRow: null }) });
@@ -290,15 +262,15 @@ test('callback: a handshake started by someone else, or an expired one, lands no
 });
 
 test('disconnect: the revoke hook runs for both stored references and the answer names them', async () => {
-  const store = fakeStore({ 'claude/helmian-scribe': ENTRY() });
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
   const credentials = fakeCredentials();
   const h = harness({ store, credentials });
-  await h.run(`${P}/connect/header`, { body: { seatId: 'claude', entryId: 'helmian-scribe', apiKey: 'x' } }).catch(() => {});
+  await h.run(`${P}/connect/header`, { body: { seatId: 'claude', entryId: 'helmian-github', apiKey: 'x' } }).catch(() => {});
   // Seed a connected record directly (header road refuses oauth entries).
-  const accessRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-scribe', personId: 'user:troy', tokenKind: 'access' });
-  const refreshRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-scribe', personId: 'user:troy', tokenKind: 'refresh' });
-  store.connections.set('user:troy/claude/helmian-scribe', { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-scribe', accessTokenRef: accessRef, refreshTokenRef: refreshRef, state: 'connected' });
-  const out = await h.run(`${P}/disconnect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } });
+  const accessRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-github', personId: 'user:troy', tokenKind: 'access' });
+  const refreshRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-github', personId: 'user:troy', tokenKind: 'refresh' });
+  store.connections.set('user:troy/claude/helmian-github', { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', accessTokenRef: accessRef, refreshTokenRef: refreshRef, state: 'connected' });
+  const out = await h.run(`${P}/disconnect`, { body: { seatId: 'claude', entryId: 'helmian-github' } });
   assert.equal(out.status, 200);
   assert.deepEqual(out.json.revokedRefs.sort(), [accessRef, refreshRef].sort());
   assert.equal(out.json.custodyRevoked, true);
@@ -307,31 +279,31 @@ test('disconnect: the revoke hook runs for both stored references and the answer
 });
 
 test('disconnect: a revoke refusal aborts before the record clears', async () => {
-  const store = fakeStore({ 'claude/helmian-scribe': ENTRY() });
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
   const h = harness({ store, credentials: fakeCredentials({ refuseRevoke: true }) });
-  const accessRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-scribe', personId: 'user:troy', tokenKind: 'access' });
-  store.connections.set('user:troy/claude/helmian-scribe', { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-scribe', accessTokenRef: accessRef, refreshTokenRef: null, state: 'connected' });
-  const out = await h.run(`${P}/disconnect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } });
+  const accessRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-github', personId: 'user:troy', tokenKind: 'access' });
+  store.connections.set('user:troy/claude/helmian-github', { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', accessTokenRef: accessRef, refreshTokenRef: null, state: 'connected' });
+  const out = await h.run(`${P}/disconnect`, { body: { seatId: 'claude', entryId: 'helmian-github' } });
   assert.equal(out.status, 502);
-  assert.equal(store.connections.get('user:troy/claude/helmian-scribe').state, 'connected');
+  assert.equal(store.connections.get('user:troy/claude/helmian-github').state, 'connected');
 });
 
 test('posture: a valid posture is set on the caller\u2019s own connection; an invalid one is 400', async () => {
   const h = harness();
-  const ok = await h.run(`${P}/posture`, { body: { seatId: 'claude', entryId: 'helmian-scribe', posture: 'read' } });
+  const ok = await h.run(`${P}/posture`, { body: { seatId: 'claude', entryId: 'helmian-github', posture: 'read' } });
   assert.equal(ok.status, 200);
   assert.equal(ok.json.connection.posture, 'read');
-  assert.equal((await h.run(`${P}/posture`, { body: { seatId: 'claude', entryId: 'helmian-scribe', posture: 'everything' } })).status, 400);
+  assert.equal((await h.run(`${P}/posture`, { body: { seatId: 'claude', entryId: 'helmian-github', posture: 'everything' } })).status, 400);
 });
 
 test('entry-state and add/remove custom are owner/admin acts; members are refused', async () => {
   const member = harness({ actor: MEMBER });
-  assert.equal((await member.run(`${P}/entry-state`, { body: { seatId: 'claude', entryId: 'helmian-scribe', state: 'disabled-by-owner' } })).status, 403);
+  assert.equal((await member.run(`${P}/entry-state`, { body: { seatId: 'claude', entryId: 'helmian-github', state: 'disabled-by-owner' } })).status, 403);
   assert.equal((await member.run(`${P}/entries`, { body: { seatId: 'claude', name: 'Mine', mcpEndpointUrl: 'https://example.com/mcp', authMode: 'none' } })).status, 403);
   const owner = harness();
-  const ok = await owner.run(`${P}/entry-state`, { body: { seatId: 'claude', entryId: 'helmian-scribe', state: 'disabled-by-owner' } });
+  const ok = await owner.run(`${P}/entry-state`, { body: { seatId: 'claude', entryId: 'helmian-github', state: 'disabled-by-owner' } });
   assert.equal(ok.status, 200);
-  assert.equal((await owner.run(`${P}/entry-state`, { body: { seatId: 'claude', entryId: 'helmian-scribe', state: 'gone' } })).status, 400);
+  assert.equal((await owner.run(`${P}/entry-state`, { body: { seatId: 'claude', entryId: 'helmian-github', state: 'gone' } })).status, 400);
 });
 
 test('add-custom: the entry is created kind custom, helmian-brokered, labelled by the store, id from the name', async () => {
@@ -351,11 +323,11 @@ test('add-custom: the entry is created kind custom, helmian-brokered, labelled b
 
 test('entries/remove: only custom entries go; catalog entries are refused', async () => {
   const store = fakeStore({
-    'claude/helmian-scribe': ENTRY(),
+    'claude/helmian-github': ENTRY(),
     'claude/custom-x': ENTRY({ id: 'custom-x', kind: 'custom', authMode: 'none', mcpEndpointUrl: 'https://x.example.com/mcp' }),
   });
   const h = harness({ store });
-  assert.equal((await h.run(`${P}/entries/remove`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } })).status, 400);
+  assert.equal((await h.run(`${P}/entries/remove`, { body: { seatId: 'claude', entryId: 'helmian-github' } })).status, 400);
   const ok = await h.run(`${P}/entries/remove`, { body: { seatId: 'claude', entryId: 'custom-x' } });
   assert.equal(ok.status, 200);
   assert.equal(ok.json.status, 'removed');
@@ -372,40 +344,38 @@ test('connect/complete: only the exact minted reference lands, and only once a c
   assert.equal((await refused.run(`${P}/connect/complete`, { body: { seatId: 'grok', entryId: 'custom-keys', accessTokenRef: ref } })).status, 400);
 });
 
-test('connect: a DRIFTED scribe row (stored authMode none, catalog oauth) starts the door road and records nothing', async () => {
+test('connect: a DRIFTED native row (stored authMode none, catalog oauth) takes the OAuth road and records nothing', async () => {
   // The 2026-11-09 live bug: live rows seeded under the old catalog
   // still said 'none', and connect dispatched on the stored label —
   // one click recorded a "No sign-in" connection no consent produced.
-  // The catalog is the authority: the door road must start anyway.
-  const store = fakeStore({ 'claude/helmian-scribe': ENTRY({ authMode: 'none' }) });
+  // The catalog is the authority: the OAuth road must answer anyway.
+  const store = fakeStore({ 'claude/helmian-github': ENTRY({ authMode: 'none' }) });
   const pending = fakePending();
-  const door = fakeDoor();
-  const h = harness({ store, pending, door });
-  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } });
+  const h = harness({ store, pending });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-github' } });
   assert.equal(out.status, 200);
-  assert.equal(out.json.status, 'consent');
-  assert.match(out.json.authorizeUrl, /^https:\/\/connect\.helmian\.cloud\/authorize\?state=/);
-  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 1);
-  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0, 'no connection may be recorded without the door exchange');
+  assert.equal(out.json.status, 'consent-boundary');
+  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 0, 'no handshake starts inside Helmian — starting one is M3 work');
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0, 'no connection may be recorded without consent');
 });
 
-test('connect: a scribe row stored as header still takes the OAuth road, and the header road refuses it', async () => {
-  const store = fakeStore({ 'claude/helmian-scribe': ENTRY({ authMode: 'header' }) });
+test('connect: a native row stored as header still takes the OAuth road, and the header road refuses it', async () => {
+  const store = fakeStore({ 'claude/helmian-github': ENTRY({ authMode: 'header' }) });
   const h = harness({ store });
-  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-scribe' } });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-github' } });
   assert.equal(out.status, 200);
-  assert.equal(out.json.status, 'consent');
-  const landed = await h.run(`${P}/connect/header`, { body: { seatId: 'claude', entryId: 'helmian-scribe', apiKey: 'sk-x' } });
+  assert.equal(out.json.status, 'consent-boundary');
+  const landed = await h.run(`${P}/connect/header`, { body: { seatId: 'claude', entryId: 'helmian-github', apiKey: 'sk-x' } });
   assert.equal(landed.status, 400);
   assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
 });
 
 test('connect/complete: an OAuth entry can never be landed from a stored reference — drifted or not', async () => {
   for (const storedMode of ['oauth', 'none']) {
-    const store = fakeStore({ 'claude/helmian-scribe': ENTRY({ authMode: storedMode }) });
+    const store = fakeStore({ 'claude/helmian-github': ENTRY({ authMode: storedMode }) });
     const h = harness({ store });
-    const ref = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-scribe', personId: 'user:troy', tokenKind: 'access' });
-    const out = await h.run(`${P}/connect/complete`, { body: { seatId: 'claude', entryId: 'helmian-scribe', accessTokenRef: ref } });
+    const ref = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-github', personId: 'user:troy', tokenKind: 'access' });
+    const out = await h.run(`${P}/connect/complete`, { body: { seatId: 'claude', entryId: 'helmian-github', accessTokenRef: ref } });
     assert.equal(out.status, 400, `stored authMode ${storedMode}`);
     assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
   }

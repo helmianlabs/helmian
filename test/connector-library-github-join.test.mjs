@@ -27,7 +27,7 @@
 //   7. tenant isolation: the join is keyed to the actor's tenant —
 //      another tenant's links never surface, and a read with no
 //      actor gets no link join at all;
-//   8. helmian-scribe keeps its honest unjoined state;
+//   8. helmian-scribe is gone from the library entirely (the cut);
 //   9. the route threads the actor into the read, so the join fires
 //      on the live road.
 
@@ -293,16 +293,14 @@ test('7 — tenant isolation: another tenant’s links never surface; a read wit
   assert.equal(githubRow(noActor).stateDetail.source, 'tool-connections');
 });
 
-test('8 — helmian-scribe keeps its honest unjoined state while GitHub connects', async () => {
-  const tenant = 'tenant-scribe-untouched';
+test('8 — helmian-scribe is absent from the library while GitHub connects', async () => {
+  const tenant = 'tenant-scribe-cut';
   const channels = new Map([[tenant, [channel('c-team', 'Team', repoLink('helmianlabs/helmian'))]]]);
   const { refresh, read } = await makeWorld({ channels });
   await refresh.refreshAll(tenant);
 
   const view = await read.readSeatLibrary(tenant, { personId: PERSON, seatId: 'claude', now: NOW, actor: actorFor(tenant) });
-  const scribe = view.rows.find((r) => r.entryId === 'helmian-scribe');
-  assert.equal(scribe.state, 'not-connected');
-  assert.equal(scribe.stateDetail.source, 'helmian-service');
+  assert.equal(view.rows.find((r) => r.entryId === 'helmian-scribe'), undefined, 'the cut entry never surfaces in a seat library');
   assert.equal(view.rows.length, catalogEntriesForSeat('claude').length, 'the seat’s full library still reads');
 });
 

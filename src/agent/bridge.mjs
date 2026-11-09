@@ -21,7 +21,6 @@ import {
 } from './commands.mjs';
 import { loadEnabledPlugins } from './plugins.mjs';
 import { resolveTurnAttachments } from './attachments.mjs';
-import { createScribeArming, runnerVaultHasScribe } from './scribe-door.mjs';
 
 /**
  * NDJSON bridge for the Windows Pilot EXE.
@@ -191,19 +190,12 @@ export async function runAgentBridge() {
   // resolver null and today's env-key behavior completely untouched. The
   // token file path matches bin/pc-bridge.mjs / bin/runner-vault.mjs.
   let supergrokResolver = null;
-  // The opened runner vault, kept for the Scribe door arming below
-  // (connectors bite 4R2): the door's renewal key lives in the same
-  // custody as the SuperGrok session, and the minter reads it from
-  // here. Null whenever the vault could not be opened — arming then
-  // stays unwired and attachments.mjs says so honestly.
-  let runnerVault = null;
   try {
     const deviceToken = await readDeviceToken(
       join(homedir(), 'AppData', 'Roaming', 'Helmian', 'pc-bridge-token.json'),
     );
     if (deviceToken) {
       const vault = await openVault({ vaultPath: defaultVaultPath(homedir()), deviceToken });
-      runnerVault = vault;
       supergrokResolver = createSuperGrokCredentialResolver({
         vault,
         onAuthProblem: (message) => emit({ event: 'status', message }),
@@ -212,18 +204,7 @@ export async function runAgentBridge() {
     }
   } catch {
     supergrokResolver = null;
-    runnerVault = null;
   }
-
-  // Scribe door arming (connectors bite 4R2): the turn-time minter over
-  // the runner vault. The per-turn connectionFor is composed in the
-  // turn handler — it depends on what the individual turn carries.
-  const scribeArming = runnerVault
-    ? createScribeArming({
-      vault: runnerVault,
-      onProblem: (message) => emit({ event: 'status', message }),
-    })
-    : null;
 
   // Human-in-the-loop approval for 'ask' mode. The broker is the only source of
   // an allow: it hands out ids and waits for a matching permission_response.
@@ -627,32 +608,12 @@ export async function runAgentBridge() {
         // resolves them from the message's library toggles; loop.mjs
         // carries them beside the local tools, never in them).
         let turnMcpServers = [];
-        // The arming seam for THIS turn (connectors bite 4R2): the Scribe
-        // minter built at startup, plus a connectionFor that answers from
-        // what this turn carries — a composing side may ride the person's
-        // connections on the request as `connectorConnections`
-        // ([{seatId, entryId, refreshTokenRef, state}]; references are
-        // vault pointers, never values) — and, for the Scribe door, from
-        // this runner's own vault: holding the door's credential here IS
-        // the person's connection act for the runner custody, the same
-        // claim the bridge makes for provider keys.
-        const connectorArming = scribeArming ? {
-          mintAccessToken: scribeArming.mintAccessToken,
-          connectionFor: async ({ seatId, entryId }) => {
-            const carried = (Array.isArray(req.connectorConnections) ? req.connectorConnections : [])
-              .find((c) => c && c.seatId === seatId && c.entryId === entryId);
-            if (carried) {
-              return {
-                state: typeof carried.state === 'string' ? carried.state : 'connected',
-                refreshTokenRef: carried.refreshTokenRef ?? null,
-              };
-            }
-            if (entryId === 'helmian-scribe' && runnerVault && await runnerVaultHasScribe(runnerVault)) {
-              return { state: 'connected', refreshTokenRef: null };
-            }
-            return null;
-          },
-        } : null;
+        // The arming seam for THIS turn: no minter is wired on this
+        // runner (the Scribe door minter was the only one, and it came
+        // out with the Scribe cut), so the seam stays null and
+        // attachments.mjs records every toggle unarmed with the
+        // 'arming-not-wired' reason — stated honestly, never faked.
+        const connectorArming = null;
         if (attachmentMetadata || helmianSkills.length) {
           try {
             const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion, providerId: provider.id, credentialType: provider.credentialType ?? null, connectorArming, helmianSkills });

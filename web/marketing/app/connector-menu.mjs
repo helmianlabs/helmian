@@ -112,10 +112,10 @@ const mirrorGroup = ({ label = null, managedIn, rowShape = 'mirror', entryIds = 
 const submenu = (label, items) => ({ type: 'submenu', label, items });
 const manageLink = ({ label, target }) => ({ type: 'manage-link', label, target });
 
-// The two Helmian-native entries every seat's library holds
+// The Helmian-native entries every seat's library holds
 // (connector-catalog.mjs Source 2) — the Helmian-brokered core of
 // every seat's live toggle group.
-const NATIVES = ['helmian-github', 'helmian-scribe'];
+const NATIVES = ['helmian-github'];
 const manageInHelmian = () => manageLink({ label: 'Manage connectors', target: 'integrations' });
 // The plain Helmian list (REPORT §3.6–§3.10 + §3.11): seats with no
 // vendor furniture get attach, the live toggles, and the manager —

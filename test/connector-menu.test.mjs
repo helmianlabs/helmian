@@ -77,7 +77,7 @@ function project(items) {
   return out;
 }
 
-const NATIVES = 'helmian-github,helmian-scribe';
+const NATIVES = 'helmian-github';
 const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES}`, 'manage:Manage connectors:integrations'];
 
 const EXPECTED = {

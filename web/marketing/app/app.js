@@ -3481,14 +3481,6 @@ function wireEmptyHints() {
   }
 }
 wireEmptyHints();
-{
-  const copy = document.getElementById('scribe-copy');
-  if (copy) copy.onclick = async () => {
-    const url = document.getElementById('scribe-url')?.value ?? '';
-    try { await navigator.clipboard.writeText(url); toast('Scribe link copied', 'ok'); }
-    catch { document.getElementById('scribe-url')?.select(); toast('Press Ctrl+C to copy'); }
-  };
-}
 
 // ---- bottom-corner account menu (sidebar foot; model: account-menu.mjs) ----
 const acctBtn = $('#account-menu-btn');

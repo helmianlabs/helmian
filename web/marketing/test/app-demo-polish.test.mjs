@@ -30,10 +30,10 @@ test('title-only pages carry an empty state that points at a next step', () => {
   assert.match(html, /id="getting-started"/);
 });
 
-test('Settings explains connecting Scribe with a copyable connector URL', () => {
-  assert.match(html, /id="scribe-url" readonly value="https:\/\/connect\.helmian\.cloud\/mcp"/);
-  assert.match(html, /id="scribe-copy"/);
-  assert.match(html, /passphrase/);
+test('the app carries no Scribe section or reference (Scribe is a separate product)', () => {
+  assert.doesNotMatch(html, /\bScribe\b/);
+  assert.doesNotMatch(html, /id="scribe-panel"/);
+  assert.doesNotMatch(html, /id="scribe-url"/);
 });
 
 test('no jargon left on the Devices page', () => {
