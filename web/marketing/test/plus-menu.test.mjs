@@ -176,9 +176,32 @@ test('plus menu Level 2 — Claude (bite M2): Skills binds the workspace library
   const empty = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1', skills: [], plugins: [], projects: [] });
   const emptyLines = brief(empty);
   assert.ok(emptyLines.includes("note:No skills on Claude's shelf yet."));
-  assert.ok(emptyLines.includes('note:No plugins are installed on the PC bridge.'));
+  assert.ok(emptyLines.includes('note:No plugins are installed.'));
   assert.ok(emptyLines.includes('note:No projects in this workspace yet.'));
   assert.ok(!emptyLines.includes('note:Nothing here yet.'), 'no feed group falls back to the eternal empty note');
+});
+
+test('plus menu Level 2 — plugins that failed to load are named, never read as none installed (fix B)', () => {
+  const failed = [{ name: 'broken-one', error: 'boom' }, { name: 'broken-two', error: 'bang' }];
+  // (a) Zero loaded + failures behind the read: the count line
+  // renders and the bare empty note does not stand — not alone, not
+  // at all: "none installed" would be a lie here.
+  const onlyFailed = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1', skills: [], plugins: [], pluginsUnavailable: failed, projects: [] });
+  const failedLines = brief(onlyFailed);
+  assert.ok(failedLines.includes('note:2 plugins could not be loaded.'));
+  assert.ok(!failedLines.includes('note:No plugins are installed.'), 'the empty note never stands over a failed load');
+  // (b) Truly empty: the empty note only, no count line.
+  const trulyEmpty = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1', skills: [], plugins: [], pluginsUnavailable: [], projects: [] });
+  const emptyLines = brief(trulyEmpty);
+  assert.ok(emptyLines.includes('note:No plugins are installed.'));
+  assert.ok(!emptyLines.some((l) => l.includes('could not be loaded')), 'no failure line over a clean empty read');
+  // (c) Loaded plugins AND failures: the list and the count line
+  // both render.
+  const mixed = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1', skills: [], plugins: [{ name: 'scribe-tools', brings: 'Scribe reads' }], pluginsUnavailable: [failed[0]], projects: [] });
+  const mixedLines = brief(mixed);
+  assert.ok(mixedLines.includes('plugin:scribe-tools=off'), 'the loaded plugin still lists');
+  assert.ok(mixedLines.includes('note:1 plugin could not be loaded.'), 'the singular count line renders beside it');
+  assert.ok(!mixedLines.includes('note:No plugins are installed.'));
 });
 
 test('plus menu Level 2 — Claude web search reflects the per-message flag', () => {

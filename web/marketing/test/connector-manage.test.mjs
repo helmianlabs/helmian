@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
-import { rowControls, seatName, toolAccessRows, MIRROR_LINE, MANAGE_SEAT_STORAGE_KEY, NO_SNAPSHOT_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
+import { rowControls, seatName, toolAccessRows, pluginsListModel, pluginsUnavailableLine, MIRROR_LINE, MANAGE_SEAT_STORAGE_KEY, NO_SNAPSHOT_LINE, NO_PLUGINS_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
 
 const manage = await readFile(new URL('../app/connector-manage.mjs', import.meta.url), 'utf8');
 const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
@@ -120,6 +120,41 @@ test('toolAccessRows: no snapshot is an honest state, not an empty tool list', (
   assert.equal(empty.connected, false);
   assert.equal(empty.posture, null);
   assert.equal(empty.hasSnapshot, false);
+});
+
+test('pluginsListModel: plugins that failed to load are named, never read as none installed (fix B)', () => {
+  // (a) Zero loaded + failures behind the read: the count line, and
+  // no empty line — "none installed" would be a lie here.
+  const onlyFailed = pluginsListModel({ plugins: [], unavailable: [{ name: 'a', error: 'x' }, { name: 'b', error: 'y' }] });
+  assert.equal(onlyFailed.unavailableCount, 2);
+  assert.equal(onlyFailed.unavailableLine, '2 plugins could not be loaded.');
+  assert.equal(onlyFailed.emptyLine, null);
+  assert.deepEqual(onlyFailed.plugins, []);
+  // (b) Truly empty: the empty line only, no count line.
+  const trulyEmpty = pluginsListModel({ plugins: [], unavailable: [] });
+  assert.equal(trulyEmpty.emptyLine, 'No plugins are installed.');
+  assert.equal(trulyEmpty.emptyLine, NO_PLUGINS_LINE);
+  assert.equal(trulyEmpty.unavailableLine, null);
+  assert.equal(pluginsListModel(null).emptyLine, NO_PLUGINS_LINE, 'a missing body reads as a clean empty');
+  assert.equal(pluginsListModel({}).unavailableLine, null, 'a missing unavailable list is no failures, not an error');
+  // (c) Loaded plugins AND a failure: both survive the model.
+  const mixed = pluginsListModel({ plugins: [{ name: 'scribe-tools' }], unavailable: [{ name: 'c', error: 'z' }] });
+  assert.equal(mixed.plugins.length, 1);
+  assert.equal(mixed.unavailableLine, '1 plugin could not be loaded.');
+  assert.equal(mixed.emptyLine, null);
+  // The line builder itself: singular, plural, and silence at zero.
+  assert.equal(pluginsUnavailableLine(0), null);
+  assert.equal(pluginsUnavailableLine(1), '1 plugin could not be loaded.');
+  assert.equal(pluginsUnavailableLine(3), '3 plugins could not be loaded.');
+});
+
+test('wiring: the Plugins tab renders the plugins model, and neither surface claims the old shelf (fix B)', () => {
+  assert.match(manage, /const model = pluginsListModel\(body\);/);
+  assert.match(manage, /if \(model\.unavailableLine\) frag\.append/);
+  assert.ok(!manage.includes('No plugins are installed in this workspace.'), 'the Manage empty note no longer names a shelf the read never reaches');
+  assert.ok(!workspace.includes('No plugins are installed on the PC bridge.'), 'the menu empty note no longer names the PC bridge');
+  assert.match(workspace, /ws\.plugins\.unavailable = Array\.isArray\(body\?\.unavailable\)/, 'the menu loader keeps the unavailable list on the plugins state');
+  assert.match(workspace, /pluginsUnavailable: ws\.plugins\.loaded \? ws\.plugins\.unavailable : \[\]/, 'the menu model receives the unavailable list');
 });
 
 test('wiring: the surface paints a loading state first — empty states wait for the first reads', () => {

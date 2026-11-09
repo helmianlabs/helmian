@@ -112,6 +112,32 @@ export function toolAccessRows(body) {
   });
 }
 
+export const NO_PLUGINS_LINE = 'No plugins are installed.';
+
+// The plugins read's failure line (fix B): one wording, shared with
+// the plus menu's Plugins group.
+export function pluginsUnavailableLine(count) {
+  const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  return n ? `${n} plugin${n === 1 ? '' : 's'} could not be loaded.` : null;
+}
+
+// The plugins read's shape, normalized for the face (fix B). The
+// route answers { plugins, unavailable } — `unavailable` carries
+// every plugin that failed to load. The face must say so: the empty
+// line stands only when the read is truly empty (no plugins AND
+// none unavailable); a list with failures behind it names the count
+// instead of reading as "none installed".
+export function pluginsListModel(body) {
+  const plugins = Array.isArray(body?.plugins) ? body.plugins : (Array.isArray(body?.items) ? body.items : []);
+  const unavailableCount = Array.isArray(body?.unavailable) ? body.unavailable.length : 0;
+  return Object.freeze({
+    plugins: Object.freeze(plugins),
+    unavailableCount,
+    unavailableLine: pluginsUnavailableLine(unavailableCount),
+    emptyLine: !plugins.length && !unavailableCount ? NO_PLUGINS_LINE : null,
+  });
+}
+
 // ---------------------------------------------------------------------
 // The renderer. `api` is app.js's api() (throws on non-2xx with the
 // server's error message where present), `el` its element helper.
@@ -424,9 +450,9 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
     const frag = el('div', 'cm-list');
     try {
       const body = await api('/api/admin/plugins');
-      const plugins = Array.isArray(body?.plugins) ? body.plugins : (Array.isArray(body?.items) ? body.items : []);
-      if (!plugins.length) frag.append(el('p', 'muted sm', 'No plugins are installed in this workspace.'));
-      for (const p of plugins) {
+      const model = pluginsListModel(body);
+      if (model.emptyLine) frag.append(el('p', 'muted sm', model.emptyLine));
+      for (const p of model.plugins) {
         const card = el('article', 'cm-row');
         const main = el('div', 'cm-row-main');
         main.append(el('div', 'cm-row-name', p.name ?? p.id ?? 'Plugin'));
@@ -434,6 +460,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
         card.append(main);
         frag.append(card);
       }
+      if (model.unavailableLine) frag.append(el('p', 'muted sm', model.unavailableLine));
     } catch (error) { frag.append(el('p', 'muted sm', error?.message || 'Plugins did not load.')); }
     return frag;
   }

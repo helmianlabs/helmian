@@ -838,7 +838,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, connectorPrompts: {}, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, connectorPrompts: {}, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2262,7 +2262,17 @@ function libraryRowNode(which, row, { shape = null } = {}) {
 // read joined, and — when the row is armed — the brokered server's
 // own starter prompts, listed at arm time. A group that resolves to
 // no rows renders one honest note row, never a dead control.
-export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, skillAttach = [], attachments = [], promptsByEntry = {}, projects = null, activeProjectKey = null } = {}) {
+// The plugins read's failure line (fix B): the read answers an
+// `unavailable` list beside the plugins — every plugin that failed
+// to load. When it is non-empty the menu says so in words; an empty
+// plugin list with failures behind it never reads as "none
+// installed". One wording, shared with the Manage Plugins tab.
+export function pluginsUnavailableNote(count) {
+  const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  return n ? `${n} plugin${n === 1 ? '' : 's'} could not be loaded.` : null;
+}
+
+export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, pluginsUnavailable = [], skillAttach = [], attachments = [], promptsByEntry = {}, projects = null, activeProjectKey = null } = {}) {
   const definition = menuForSeat(seatId);
   if (!definition) return null;
   const byId = new Map();
@@ -2317,12 +2327,16 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
     }
     if (item.feed === 'bridge-plugins') {
       if (!Array.isArray(plugins)) { out.push({ kind: 'note', text: 'Loading plugins...' }); return out; }
-      if (!plugins.length) { out.push({ kind: 'note', text: 'No plugins are installed on the PC bridge.' }); return out; }
+      const unavailableNote = pluginsUnavailableNote(Array.isArray(pluginsUnavailable) ? pluginsUnavailable.length : 0);
+      // The empty note stands only when the read is truly empty —
+      // no plugins AND none that failed to load (fix B).
+      if (!plugins.length && !unavailableNote) { out.push({ kind: 'note', text: 'No plugins are installed.' }); return out; }
       for (const p of plugins) {
         const name = String(p?.name ?? '').trim().toLowerCase();
         if (!name) continue;
         out.push({ kind: 'plugin', name, brings: String(p?.brings ?? ''), on: (attachments ?? []).some((a) => a.kind === 'plugin' && a.name === name) });
       }
+      if (unavailableNote) out.push({ kind: 'note', text: unavailableNote });
       return out;
     }
     out.push({ kind: 'note', text: 'Nothing here yet.' });
@@ -2426,6 +2440,7 @@ function renderPlusMenuLevel2(which) {
     webSearchOn: ws.webSearch[which] === true,
     skills: ws.skills.loaded ? ws.skills.list : null,
     plugins: ws.plugins.loaded ? ws.plugins.list : null,
+    pluginsUnavailable: ws.plugins.loaded ? ws.plugins.unavailable : [],
     skillAttach: ws.skillAttach[which] ?? [],
     attachments: ws.attach[which] ?? [],
     promptsByEntry,
@@ -2801,17 +2816,20 @@ async function loadSkills() {
 function invalidateSkills() {
   ws.skills.list = null; ws.skills.loaded = false; ws.skills.loading = null;
 }
-// The PC bridge's real plugin list (bite M2): the Plugins submenu
-// binds to GET /api/admin/plugins — the plugins whose tools join a
-// seat's turns. When the bridge is off the read answers
-// { plugins: [], unavailable } and the menu shows its honest empty
-// note; a failed read leaves the list null and the next open tries
-// again, the same shape as the Skills loader above.
+// The plugin list (bite M2): the Plugins submenu binds to
+// GET /api/admin/plugins — the plugins whose tools join a seat's
+// turns. The read answers from the serving process's own workspace
+// and carries { plugins, unavailable }: `unavailable` names every
+// plugin that failed to load, and it is kept on the state so the
+// menu can surface it (fix B) — an empty list with failures behind
+// it is not "no plugins installed". A failed read leaves the list
+// null and the next open tries again, the same shape as the Skills
+// loader above.
 async function loadBridgePlugins() {
   if (ws.plugins.loaded) return ws.plugins.list;
   if (!ws.plugins.loading) {
     ws.plugins.loading = ws.ctx.api('/api/admin/plugins')
-      .then((body) => { ws.plugins.list = Array.isArray(body?.plugins) ? body.plugins : []; ws.plugins.loaded = true; })
+      .then((body) => { ws.plugins.list = Array.isArray(body?.plugins) ? body.plugins : []; ws.plugins.unavailable = Array.isArray(body?.unavailable) ? body.unavailable : []; ws.plugins.loaded = true; })
       .catch(() => { ws.plugins.list = null; })
       .finally(() => { ws.plugins.loading = null; });
   }
