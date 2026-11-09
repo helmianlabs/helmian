@@ -541,8 +541,15 @@
     <section id="view-integrations" class="view" data-view-panel="integrations" hidden>
       <h2>Integrations</h2>
       <p class="muted sm">Connect the things Helmian works with. Passwords and keys are never shown here.</p>
+      <div class="int-tabs" role="tablist" aria-label="Integrations sections">
+        <button type="button" class="int-tab" role="tab" data-int-tab="agents" aria-selected="true">Agents</button>
+        <button type="button" class="int-tab" role="tab" data-int-tab="connectors" aria-selected="false">Connectors</button>
+        <button type="button" class="int-tab" role="tab" data-int-tab="devices" aria-selected="false">Devices</button>
+        <button type="button" class="int-tab" role="tab" data-int-tab="chat" aria-selected="false">Chat and code</button>
+        <button type="button" class="int-tab" role="tab" data-int-tab="account" aria-selected="false">Account</button>
+      </div>
       <div id="integrations" class="int-page"></div>
-      <section class="cm-section">
+      <section class="cm-section" data-int-pane="connectors">
         <h3 class="int-head">Manage connectors, per seat</h3>
         <p class="muted sm">Each seat&rsquo;s own connector library — connect and manage inside Helmian, never in a vendor window.</p>
         <div id="connector-manage" class="cm-page"></div>
