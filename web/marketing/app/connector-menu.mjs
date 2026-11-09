@@ -46,9 +46,12 @@
 //   submenu           a "›" row holding further items (Skills ›,
 //                     Connectors ›, Plugins ›, More ›, Tools ›,
 //                     Connected Apps ›).
-//   manage-link       the footer row out to the manager surface —
-//                     Helmian's Integrations view ('integrations')
-//                     or the vendor's own manager ('vendor').
+//   manage-link       the footer row — always Helmian's own
+//                     Integrations view ('integrations'). A vendor's
+//                     own manager is never a menu row: Troy's ruling
+//                     (2026-11-08) — a seat's connections are managed
+//                     inside Helmian, never on a vendor page the
+//                     customer has to go manage.
 //
 // GROUP BINDINGS. A connector group binds its rows in exactly one of
 // two ways: `entryIds` — ids into the shipped catalog
@@ -85,7 +88,7 @@ const mirrorGroup = ({ label = null, managedIn, rowShape = 'mirror', entryIds = 
   type: 'mirror-group', label, managedIn, rowShape, ...(entryIds ? { entryIds } : { feed }),
 });
 const submenu = (label, items) => ({ type: 'submenu', label, items });
-const manageLink = ({ label, target, url = null }) => ({ type: 'manage-link', label, target, ...(url ? { url } : {}) });
+const manageLink = ({ label, target }) => ({ type: 'manage-link', label, target });
 
 // The two Helmian-native entries every seat's library holds
 // (connector-catalog.mjs Source 2) — the Helmian-brokered core of
@@ -138,7 +141,8 @@ export const MENU_DEFINITIONS = deepFreeze({
 
   // -------------------------------------------------------- ChatGPT
   // REPORT §3.2: Add photos & files · More › (the connector list) ·
-  // Manage in ChatGPT. (Create image, Deep research and Web search
+  // the manage footer — Helmian's, per the header note (REPORT §3's
+  // vendor manage row is not carried). (Create image, Deep research and Web search
   // are excluded — the room runs none of them for this seat; see the
   // exclusion list.)
   chatgpt: [
@@ -150,7 +154,7 @@ export const MENU_DEFINITIONS = deepFreeze({
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'slack', 'notion', 'github', 'canva', 'dropbox'],
       }),
     ]),
-    manageLink({ label: 'Manage in ChatGPT', target: 'vendor', url: 'https://chatgpt.com/plugins' }),
+    manageInHelmian(),
   ],
 
   // ------------------------------------------------------------ Grok
@@ -168,7 +172,7 @@ export const MENU_DEFINITIONS = deepFreeze({
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'onedrive', 'outlook', 'microsoft-teams', 'sharepoint', 'salesforce', 'box', 'canva', 'gamma', 'linear', 'meltwater', 'notion', 'sp-global', 'vercel'],
       }),
     ]),
-    manageLink({ label: 'Manage in Grok', target: 'vendor', url: 'https://grok.com/connectors' }),
+    manageInHelmian(),
   ],
 
   // ---------------------------------------------------------- Gemini
@@ -187,7 +191,7 @@ export const MENU_DEFINITIONS = deepFreeze({
       }),
     ]),
     liveGroup({ label: 'Connectors', entryIds: [...NATIVES] }),
-    manageLink({ label: 'Manage in Gemini', target: 'vendor', url: 'https://gemini.google.com' }),
+    manageInHelmian(),
   ],
 
   // --------------------------------------------------------- Mistral
@@ -195,9 +199,9 @@ export const MENU_DEFINITIONS = deepFreeze({
   // as live toggles; Vibe-brokered as mirror rows — none are in the
   // shipped catalog yet, so the mirror group binds an empty set and
   // renders nothing until the catalog grows one) · Agents (mirror —
-  // a Studio/Vibe surface, fed by the bite-7 intake) · Manage in
-  // Mistral. (The manager URL is not in the shipped data — the link
-  // carries its target and words; 3R-b/7R supplies the address.)
+  // a Studio/Vibe surface, fed by the bite-7 intake) · the manage
+  // footer — Helmian's, per the header note (REPORT §3's vendor
+  // manage row is not carried, so no vendor address is needed).
   mistral: [
     attach('Add files'),
     submenu('Tools', [
@@ -205,7 +209,7 @@ export const MENU_DEFINITIONS = deepFreeze({
       mirrorGroup({ managedIn: 'Mistral', entryIds: [] }),
     ]),
     mirrorGroup({ label: 'Agents', managedIn: 'Mistral', feed: 'vendor-agents' }),
-    manageLink({ label: 'Manage in Mistral', target: 'vendor' }),
+    manageInHelmian(),
   ],
 
   // ------------------------------------------------------------ Groq
