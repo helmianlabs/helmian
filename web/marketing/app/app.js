@@ -587,44 +587,91 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       } catch {}
     });
   }
+  // ---- Speaking proof (speaker-proof bite) ----
+  // A truthful, per-seat "this reply is being spoken right now" signal:
+  // Troy asked for a little speaker icon on each seat's message that
+  // lights while that seat's voice is actually playing, so a person —
+  // or an automated checker — can see WHICH seat's voice fired. The
+  // controller owns no message DOM; it reports the signal through the
+  // listener registered with setSpeakingListener, and the surface that
+  // renders messages (the Envoy room) draws the icon. The signal
+  // reflects ACTUAL playback, never intent: on the Kokoro road it is
+  // lit from the buffer source's start() until its onended; on the
+  // backup road from the utterance's speak() until its onend/onerror.
+  // Loading, generating, and queueing never light it.
+  // info = { seat, engine: 'kokoro' | 'backup', ref } — ref is the
+  // caller-supplied reference speak() was handed (the room passes the
+  // message id), or null when the caller has none.
+  let speakingListener = null;
+  let speakingNow = null;    // the info currently lit, or null
+  let speakingSource = null; // the source/utterance that lit it
+  function noteSpeaking(seat, engine, ref, source) {
+    speakingNow = { seat: seat ?? null, engine, ref: ref ?? null };
+    speakingSource = source ?? null;
+    try { speakingListener?.(speakingNow); } catch {}
+  }
+  function clearSpeaking(source) {
+    if (!speakingNow) return;
+    // A stale source ending (a stopped buffer source, an interrupted
+    // utterance) must not clear a newer source's light.
+    if (source !== undefined && speakingSource !== source) return;
+    speakingNow = null;
+    speakingSource = null;
+    try { speakingListener?.(null); } catch {}
+  }
+  function setSpeakingListener(fn) {
+    speakingListener = typeof fn === 'function' ? fn : null;
+  }
+
   // ---- Legacy speechSynthesis engine (fallback) ----
   // Long replies are chunked: Chrome's speechSynthesis truncates long
   // utterances, so a reply goes out as sentence-sized pieces chained via
   // onend. A new reply clears the queue; toggle-off cancels everything.
+  // Queue entries carry the seat and message ref beside the text so the
+  // speaking proof can name the seat each chunk belongs to.
   const synthQueue = [];
   let synthSpeaking = false;
   function pumpSynth() {
     if (synthSpeaking || synthQueue.length === 0 || !canSpeak) return;
-    const utter = new Utterance(synthQueue.shift());
+    const item = synthQueue.shift();
+    const utter = new Utterance(item.text);
     synthSpeaking = true;
-    utter.onend = () => { synthSpeaking = false; pumpSynth(); };
-    utter.onerror = () => { synthSpeaking = false; pumpSynth(); };
-    try { synthesis.speak(utter); }
+    utter.onend = () => { synthSpeaking = false; clearSpeaking(utter); pumpSynth(); };
+    utter.onerror = () => { synthSpeaking = false; clearSpeaking(utter); pumpSynth(); };
+    try { synthesis.speak(utter); noteSpeaking(item.seat, 'backup', item.ref, utter); }
     catch { synthSpeaking = false; }
   }
+  function enqueueSynth(entries, { interrupt = true } = {}) {
+    if (!canSpeak || !entries.length) return false;
+    let wasSpeaking = false;
+    if (interrupt) {
+      try { wasSpeaking = !!synthesis.speaking; } catch {}
+      try { synthesis.cancel(); } catch {}
+      synthQueue.length = 0;
+      synthSpeaking = false;
+    }
+    synthQueue.push(...entries);
+    // Chrome quirk: cancel() takes effect asynchronously, so a speak()
+    // issued in the same tick can be swallowed. Only delay when we actually
+    // interrupted playing audio; the common case stays synchronous.
+    if (interrupt && wasSpeaking) setTimeout(pumpSynth, 150);
+    else pumpSynth();
+    return true;
+  }
   const synthEngine = {
-    // Speak pre-chunked text. interrupt=false appends without silencing
-    // what is playing (used when Kokoro hands a reply over mid-stream).
-    speakChunks(chunks, { interrupt = true } = {}) {
-      if (!canSpeak || !chunks.length) return false;
-      let wasSpeaking = false;
-      if (interrupt) {
-        try { wasSpeaking = !!synthesis.speaking; } catch {}
-        try { synthesis.cancel(); } catch {}
-        synthQueue.length = 0;
-        synthSpeaking = false;
-      }
-      synthQueue.push(...chunks);
-      // Chrome quirk: cancel() takes effect asynchronously, so a speak()
-      // issued in the same tick can be swallowed. Only delay when we actually
-      // interrupted playing audio; the common case stays synchronous.
-      if (interrupt && wasSpeaking) setTimeout(pumpSynth, 150);
-      else pumpSynth();
-      return true;
+    // Speak queue entries ({ text, seat, ref }). interrupt=false
+    // appends without silencing what is playing (used when Kokoro
+    // hands a reply over mid-stream).
+    enqueue: enqueueSynth,
+    // Speak pre-chunked text for one seat. interrupt=false appends
+    // without silencing what is playing.
+    speakChunks(chunks, { interrupt = true, seat = null, ref = null } = {}) {
+      return enqueueSynth(chunks.map((text) => ({ text, seat, ref })), { interrupt });
     },
     cancel() {
       synthQueue.length = 0;
       synthSpeaking = false;
+      clearSpeaking();
       if (!canSpeak) return;
       try { synthesis.cancel(); } catch {}
     },
@@ -872,10 +919,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     if (reason === 'loading') setVoiceStatus('Backup voice — Kokoro still loading', 'fallback');
     else if (reason === 'failed') setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
     else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
-    const chunks = [];
-    if (failedItem) chunks.push(failedItem.text);
-    for (const item of kokoroQueue.splice(0)) chunks.push(item.text);
-    if (chunks.length) synthEngine.speakChunks(chunks, { interrupt: false });
+    const entries = [];
+    if (failedItem) entries.push({ text: failedItem.text, seat: failedItem.seat, ref: failedItem.ref });
+    for (const item of kokoroQueue.splice(0)) entries.push({ text: item.text, seat: item.seat, ref: item.ref });
+    if (entries.length) synthEngine.enqueue(entries, { interrupt: false });
   }
 
   async function pumpKokoro() {
@@ -937,9 +984,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     src.onended = () => {
       kokoroPlaying = false;
       if (activeSource === src) activeSource = null;
+      clearSpeaking(src);
       pumpKokoro();
     };
-    try { src.start(); }
+    try { src.start(); noteSpeaking(item.seat, 'kokoro', item.ref, src); }
     catch { kokoroPlaying = false; if (activeSource === src) activeSource = null; pumpKokoro(); }
   }
 
@@ -947,6 +995,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     playToken += 1; // orphan any in-flight generation
     kokoroQueue.length = 0;
     kokoroPlaying = false;
+    clearSpeaking();
     if (activeSource) {
       try { activeSource.stop(); } catch {}
       activeSource = null;
@@ -954,7 +1003,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   }
 
   const tts = {
-    speak(text, seat) {
+    speak(text, seat, ref) {
       const clean = stripSpeechMarkup(text);
       if (!clean) return false;
       const chunks = chunkForSpeech(clean);
@@ -968,7 +1017,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       // never land.
       if (!kokoro && kokoroBackupWhileLoading) {
         setVoiceStatus('Backup voice — Kokoro still loading', 'fallback');
-        return synthEngine.speakChunks(chunks);
+        return synthEngine.speakChunks(chunks, { seat, ref });
       }
       // Kokoro road whenever the model is warm, loading, or loadable:
       // queued chunks wait behind an in-flight warmup (bounded — see
@@ -976,7 +1025,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       // just because they arrived early.
       if (kokoro || kokoroPromise || canTryKokoro()) {
         const voice = voiceForSeat(seat);
-        for (const c of chunks) kokoroQueue.push({ text: c, token: playToken, voice });
+        for (const c of chunks) kokoroQueue.push({ text: c, token: playToken, voice, seat: seat ?? null, ref: ref ?? null });
         void pumpKokoro();
         return true;
       }
@@ -988,7 +1037,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       // first reply exactly here).
       if (kokoroState === 'failed') setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
       else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
-      return synthEngine.speakChunks(chunks);
+      return synthEngine.speakChunks(chunks, { seat, ref });
     },
     cancel() {
       synthEngine.cancel();
@@ -996,14 +1045,14 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     },
   };
 
-  function speak(text, seat) {
+  function speak(text, seat, ref) {
     if (!voiceMode || voiceKind !== 'voice') return false; // dictate mode never speaks
-    return tts.speak(text, seat);
+    return tts.speak(text, seat, ref);
   }
   function cancelSpeech() {
     tts.cancel();
   }
-  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, get engineState() { return kokoroState; }, setVoiceMode, speak, cancelSpeech, warmup };
+  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, get engineState() { return kokoroState; }, get speakingNow() { return speakingNow; }, setSpeakingListener, setVoiceMode, speak, cancelSpeech, warmup };
 }
 // Spoken mentions (mention-buttons bite, 2026-11-08) — inline copy of
 // mapSpokenMentions + SPOKEN_MENTION_TAGS in web/shared/voice-dictation.mjs
@@ -1062,6 +1111,12 @@ function openTools() { if (location.hash !== '#integrations') location.hash = 'i
 const dictateChip = document.querySelector('.tool[data-tool="dictate"]');
 const voiceChatChip = document.querySelector('.tool[data-tool="voice"]');
 const voice = createVoiceController();
+// Speaking proof (speaker-proof bite): forward the controller's
+// per-seat speaking signal to the Envoy room, which draws the speaker
+// icon on the message being spoken. workspaceModule is the lazily
+// imported envoy module (assigned in loadDesktop); the listener can
+// only fire after a voice toggle, long after this file has loaded.
+voice.setSpeakingListener((info) => { workspaceModule?.noteSpeaking?.(info); });
 const seenMessageIds = new Set();
 const voicePrivacy = (mode) => mode === 'voice'
   ? es(
@@ -3012,7 +3067,7 @@ async function loadDesktop() {
     // mode. The view gate keeps exactly one surface speaking — while
     // the session console is up, its own poll (loadLog) is the speaker
     // and Envoy stays silent.
-    voiceSpeak: (text, seat) => (shell.dataset.view === 'console' ? false : voice.speak(text, seat)),
+    voiceSpeak: (text, seat, ref) => (shell.dataset.view === 'console' ? false : voice.speak(text, seat, ref)),
     renderFeed,
     loadFeedData,
     ackAll: () => document.getElementById('feed-ack-all')?.click(),

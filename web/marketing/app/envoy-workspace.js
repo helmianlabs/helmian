@@ -2480,7 +2480,47 @@ function speakNewMessages(streamId, messages) {
     if (m.authorKind === 'system' || who.kind === 'me') continue;
     // The seat key rides along so the controller can speak in that
     // seat's own Kokoro voice (per-seat voice map in the controller).
-    ws.ctx.voiceSpeak(m.body, who.provider ?? null);
+    // The message id rides too, so the speaking proof can light the
+    // speaker icon on THIS message while it is being spoken.
+    ws.ctx.voiceSpeak(m.body, who.provider ?? null, m.id);
+  }
+}
+// ---------- speaking proof (speaker-proof bite) ----------
+// Troy's ask (2026-11-08): a little speaker icon on a seat's message
+// that lights while that seat's voice is actually playing, so he —
+// and an automated checker — can see which seat's voice fired. The
+// voice controller owns the truth (it reports playback start/end per
+// engine through the listener app.js forwards to noteSpeaking here);
+// this module owns the drawing. The marker is machine-readable: a
+// checker counts `.ew-speaking[data-speaking="true"]` inside
+// `#ew-messages` and reads the seat from its data-seat (the engine
+// from data-engine). State lives in this module, not on DOM nodes,
+// because renderMessages rebuilds the list on every poll: renders
+// draw the icon from speakingNow, and noteSpeaking patches the live
+// DOM immediately between renders.
+let speakingNow = null;
+export function noteSpeaking(info) {
+  speakingNow = info ?? null;
+  patchSpeakingIcon();
+}
+export function speakingIconNode(info) {
+  return h('span', { class: 'ew-speaking', 'data-speaking': 'true', 'data-seat': info?.seat ?? '', 'data-engine': info?.engine ?? '', role: 'img', 'aria-label': 'Speaking now' }, '🔊');
+}
+function patchSpeakingIcon() {
+  if (typeof document === 'undefined') return;
+  const box = $('ew-messages');
+  if (!box) return;
+  for (const n of box.querySelectorAll('.ew-speaking')) n.remove();
+  if (!speakingNow?.ref) return;
+  for (const row of box.querySelectorAll('.ew-msg')) {
+    if (row.dataset.id !== speakingNow.ref) continue;
+    const meta = row.querySelector('.ew-meta');
+    if (!meta) return;
+    // A grouped follow-up's meta line is CSS-hidden; its icon stands
+    // right after the meta instead, beside the spoken text.
+    if (row.classList.contains('cont')) meta.after(speakingIconNode(speakingNow));
+    else meta.append(speakingIconNode(speakingNow));
+    return;
   }
 }
 function whoOf(m) {
@@ -2583,8 +2623,13 @@ function renderMessages() {
     // (bite 2). Every per-message action lives in the one hover
     // toolbar — the reaction button moved inside it, beside Copy.
     const firstCell = cont ? h('time', { class: 'ew-gutter-time', datetime: m.createdAt }, clock(m.createdAt)) : avatar;
+    // Speaking proof: the message being spoken right now carries the
+    // speaker icon — in its meta line, or (grouped follow-up, whose
+    // meta is hidden) standing right after the meta, beside the text.
+    const speakIcon = speakingNow && speakingNow.ref === m.id ? speakingIconNode(speakingNow) : null;
     out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}`, 'data-id': m.id }, firstCell,
-      h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
+      h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt)), cont ? null : speakIcon),
+        cont ? speakIcon : null,
         h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })),
         h('div', { class: 'ew-reactions' }, ...reactionChipKids(m.id)), dispatch),
       m._pending ? null : h('div', { class: 'ew-msg-tools', role: 'toolbar', 'aria-label': 'Message actions' }, reactionAddButton(m), copyMessageButton(m))));
