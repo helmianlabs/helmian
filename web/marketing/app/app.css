@@ -847,6 +847,20 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   border-color: var(--accent, #4a9eff);
   background: var(--bg-hover, #252a35);
 }
+/* Maestro Library faces in the profile picker (face-library bite):
+   the glossy stills ride the same option shell as the emoji picks. */
+.avatar-option-lib {
+  display: grid;
+  place-items: center;
+  background: #10151F;
+}
+.avatar-option-lib img {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+}
 @media (max-width: 600px) {
   .avatar-grid { grid-template-columns: repeat(6, 1fr); }
 }

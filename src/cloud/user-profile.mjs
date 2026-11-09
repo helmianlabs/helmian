@@ -5,6 +5,7 @@
 
 import pg from 'pg';
 import { createIdentityGateway } from './identity-gateway.mjs';
+import { parseLibraryFaceToken } from '../../web/marketing/app/face-library.mjs';
 
 let _pool = null;
 const pool = {
@@ -79,7 +80,24 @@ export function createProfileHandler({ getIdentity = defaultIdentity } = {}) {
       }
 
       const nickname = typeof data.nickname === 'string' ? data.nickname.trim().slice(0, 50) : null;
-      const avatarEmoji = typeof data.avatarEmoji === 'string' ? data.avatarEmoji.trim().slice(0, 10) : null;
+      // Maestro Library face token
+      // ('lib:glossy:<slug>') is longer than an emoji, so the 10-char
+      // trim below would silently cut it in half. Accept a token whole
+      // when it names a real library piece and refuse it otherwise —
+      // a stored face must never point at art that does not exist.
+      // Emoji values keep the existing trim, byte for byte.
+      let avatarEmoji = null;
+      if (typeof data.avatarEmoji === 'string') {
+        const rawAvatar = data.avatarEmoji.trim();
+        if (rawAvatar.startsWith('lib:')) {
+          if (!parseLibraryFaceToken(rawAvatar)) {
+            return json(res, 400, { error: 'Unknown library face' });
+          }
+          avatarEmoji = rawAvatar.slice(0, 64);
+        } else {
+          avatarEmoji = rawAvatar.slice(0, 10);
+        }
+      }
 
       if (nickname !== null && nickname === '') {
         return json(res, 400, { error: 'Nickname cannot be empty' });

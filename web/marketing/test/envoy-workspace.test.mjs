@@ -619,12 +619,14 @@ test('picker agent context: Agent Chat talks to its picked agent', () => {
   assert.equal(pickerAgentContext({ which: 'cli', cliProvider: null }), null);
 });
 
-test('picker wiring: the workspace renders the per-agent model with truthful states', async () => {
+test('picker wiring: the "+" face renders the seat menu model, not the old registry panel (bite 3R-b)', async () => {
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
-  assert.match(js, /pickerModel\(\{ \.\.\.ws\.pickerFacts, agent \}\)/, 'each render builds the model from the cached registry facts for the agent in context');
-  assert.match(js, /g\.id === 'agent'/, 'the picker renders the ecosystem group');
-  assert.match(js, /item\.stateLabel/, 'rows show the model\'s truthful state labels');
-  assert.match(js, /g\.note \? \[h\('p', \{ class: 'ew-note' \}, g\.note\)\]/, 'the connectors group renders the model note that says attaching is a note, not an open door');
+  assert.match(js, /menuForSeat/, 'Level 2 comes from the shipped per-seat menu definitions');
+  assert.match(js, /plusMenuLevel2Model/, 'the workspace composes the definitions with the library read');
+  assert.match(js, /renderPlusMenuLevel1/, 'Level 1 is the seat pick');
+  assert.match(js, /ew-plus-menu/, 'the room picker wears the narrow popup class');
+  assert.doesNotMatch(js, /pickerModel/, 'the old generic picker model is no longer consulted by the face');
+  assert.doesNotMatch(js, /Add to this message/, 'the old full-width panel head is gone');
 });
 
 // Slack link button (stacked on the G-1 inbound bite): the client half of

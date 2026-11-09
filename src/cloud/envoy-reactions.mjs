@@ -37,11 +37,21 @@ import { withTenantTransaction, requireActiveTenantMembership } from '../core/te
 import { CONFIG_SUBJECT, agentSubject, describeAuthor, normalizeCustomHandle, normalizeProvider, parseConfig } from './envoy-agents.mjs';
 import { envoyChannelName, parseAblyApiKey } from './envoy-ably.mjs';
 import { EMOJI_MAP, emojiAssetSlug } from '../../web/marketing/app/emoji-map.mjs';
+import { LIBRARY_REACTIONS, LIBRARY_REACTION_PACK, LIBRARY_REACTION_PREFIX } from '../../web/marketing/app/face-library.mjs';
 
 export const MESSAGE_REACTIONS_PATH = '/api/admin/envoy/message-reactions';
 export const REACTION_PACK_DEFAULT = 'default';
 export const REACTION_EMOJI_SLUGS = Object.freeze([...new Set(Object.values(EMOJI_MAP))].sort());
 const SLUG_SET = new Set(REACTION_EMOJI_SLUGS);
+// The Maestro Library reaction vocabulary. Library
+// pieces are named by their stored slug ('lib-<name>') from the same
+// pure module the desk renders by (face-library.mjs), so the store's
+// set and the desk's set can never drift. A library slug is data of a
+// different shape than an emoji character — it never normalizes
+// through the emoji map.
+export const REACTION_LIBRARY_SLUGS = Object.freeze(LIBRARY_REACTIONS.map((r) => `${LIBRARY_REACTION_PREFIX}${r.name}`).sort());
+const LIBRARY_SLUG_SET = new Set(REACTION_LIBRARY_SLUGS);
+export const isLibraryReactionSlug = (slug) => LIBRARY_SLUG_SET.has(String(slug ?? ''));
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const PACK_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_MESSAGE_IDS = 100;
@@ -59,6 +69,7 @@ export function normalizeReactionEmoji(input) {
   const raw = String(input ?? '').trim();
   if (!raw) throw fail(400, 'ENVOY_REACTION_EMOJI_REQUIRED');
   if (SLUG_SET.has(raw)) return raw;
+  if (LIBRARY_SLUG_SET.has(raw)) return raw;
   const slug = emojiAssetSlug(raw);
   if (slug) return slug;
   throw fail(400, 'ENVOY_REACTION_EMOJI_UNSUPPORTED');
@@ -265,7 +276,11 @@ export function createEnvoyReactionsStore(pool, { publishImpl = null } = {}) {
       const channelId = uuid(input?.channelId, 'ENVOY_CHANNEL_INVALID');
       const messageId = uuid(input?.messageId, 'ENVOY_MESSAGE_INVALID');
       const emoji = normalizeReactionEmoji(input?.emoji);
-      const pack = normalizeReactionPack(input?.pack);
+      // A library piece always records
+      // the library pack — the pack is a property of the piece, not of
+      // the caller, so a client cannot file a library reaction under
+      // 'default' (or any other pack) by naming one.
+      const pack = LIBRARY_SLUG_SET.has(emoji) ? LIBRARY_REACTION_PACK : normalizeReactionPack(input?.pack);
       const action = normalizeReactionAction(input?.action);
       const isDevice = actor?.viaDeviceToken === true;
       // The provider is validated here, but the agent's subject is only

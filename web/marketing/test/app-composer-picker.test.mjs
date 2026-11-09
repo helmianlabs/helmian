@@ -309,10 +309,10 @@ test('the channel composer carries the picker: plus button, panel, chips, wiring
   assert.match(js, /from '\.\/composer-picker\.mjs'/);
   assert.match(js, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => togglePicker\('channel'\)\)/);
   assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: connectorsForTurn\(ws\.connectorToggles, convId\) \}\)/, 'channel send builds its request through the picker model, web-search toggle and connector toggles included');
-  assert.match(js, /g\.id === 'web-search'/, 'the workspace picker renders the web-search toggle group');
+  assert.match(js, /menuForSeat\(seatId\)/, 'the channel picker renders the shipped per-seat menu definitions (bite 3R-b)');
   assert.match(js, /ws\.webSearch\[which\] = !on/, 'the toggle flips per-composer state, never the attach list');
-  assert.match(js, /api\('\/api\/admin\/cora\/connectors'\)/, 'the picker reads the same connectors registry as Integrations');
-  assert.match(js, /api\('\/api\/admin\/plugins'\)/, 'the picker reads the installed-plugins list the bridge ledger backs');
+  assert.match(js, /api\('\/api\/admin\/connector-library\/seats'\)/, 'Level 1 reads the per-seat connector libraries');
+  assert.match(js, /api\(`\/api\/admin\/connector-library\?seat=/, 'Level 2 reads the picked seat\'s library');
 });
 
 test('the picker model reuses the Integrations registry instead of inventing one', async () => {
