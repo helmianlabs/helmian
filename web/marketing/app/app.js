@@ -2298,52 +2298,99 @@ function integrationCard(card) {
   else if (card.icon?.mark) icon.append(el('span', `ew-${card.icon.mark === 'github' ? 'gh' : card.icon.mark}-mark`));
   else if (INT_SVG[card.key]) icon.innerHTML = INT_SVG[card.key];
   else icon.textContent = card.icon?.glyph ?? '';
-  const text = el('div', 'int-text'); text.append(el('div', 'int-name', card.name), el('div', 'int-blurb', card.blurb));
-  const status = el('span', `int-status ${card.status}`, card.statusText);
-  const top = el('div', 'int-top'); top.append(icon, text, status); a.append(top);
+  // R2 resting row (Integrations redesign §2): icon, name and state
+  // on one line, ONE button at the right (appended below) — nothing
+  // else at rest. The second-line slot carries the account line on a
+  // connected AI seat (the working account's exact email, plus the
+  // stack count when the seat holds more than one), and on a card
+  // with no expansion it carries the one-line description, so no
+  // card's words are lost by compacting.
+  const text = el('div', 'int-text');
+  const line1 = el('div', 'int-line1');
+  line1.append(el('div', 'int-name', card.name));
+  const state = el('span', `int-state ${card.status}`);
+  state.append(el('span', 'int-dot'), el('span', 'int-state-words', card.statusText));
+  line1.append(state);
+  text.append(line1);
+  const expandable = Boolean(card.connect || card.apiKeyConnect || card.changeConnect || card.changeApiKey);
+  if (card.accountEmail) text.append(el('div', 'int-sub', `${card.accountEmail}${card.accountCount > 1 ? ` · ${card.accountCount} accounts` : ''}`));
+  else if (!expandable) text.append(el('div', 'int-sub', card.blurb));
+  const top = el('div', 'int-top'); top.append(icon, text); a.append(top);
   if (card.qr) { const q = el('div', 'int-qr'); q.dataset.qr = card.qr; q.setAttribute('role', 'img'); q.setAttribute('aria-label', 'QR code that opens Helmian on your phone'); const steps = el('ol', 'int-steps'); const onPhone = matchMedia('(max-width: 900px) and (pointer: coarse)').matches; for (const t of onPhone ? ['You are on your phone already.', 'Tap Share, then Add to Home Screen to keep Helmian one tap away.'] : ['Point your phone camera at the code.', 'Sign in with this same account.', 'Tap Share, then Add to Home Screen.']) steps.append(el('li', '', t)); const row = el('div', 'int-qr-row'); row.append(q, steps); a.append(row); }
-  // The one connect road (2026-11-01): a not-connected AI card carries
-  // the shared email + password fields. A successful store re-reads the
-  // page from the connections store — the card's next status is the
-  // store's, never the click's.
-  if (card.connect && connectFieldsMod) {
-    const fields = connectFieldsMod.createConnectFields({ provider: card.connect.provider, post, onStored: () => loadIntegrations() });
-    if (fields) a.append(fields);
-  }
-  // The provider-catalog seats connect with a pasted key instead (one
-  // key, or Cloudflare's two pieces): same store, same re-read after a
-  // successful save — the card's next status is the store's.
-  if (card.apiKeyConnect && apiKeyFieldsMod) {
-    const fields = apiKeyFieldsMod.createApiKeyFields({ provider: card.apiKeyConnect.provider, fields: card.apiKeyConnect.fields, post, onStored: () => loadIntegrations() });
-    if (fields) a.append(fields);
-  }
-  // The change road (owner's order, 2026-11-06): a connected card
-  // carries a plain button — "New username and password" on a sign-in
-  // seat, "New API key" on a key seat — that opens the same fields in
-  // change mode. Saving stores the new values over the old ones
-  // through the same connect route, and the page then re-reads the
-  // store exactly as a first connect does.
-  const changeSpec = card.changeConnect && connectFieldsMod
-    ? { label: card.changeConnect.label, make: () => connectFieldsMod.createConnectFields({ provider: card.changeConnect.provider, connected: true, change: true, post, onStored: () => loadIntegrations() }) }
-    : card.changeApiKey && apiKeyFieldsMod
-      ? { label: card.changeApiKey.label, make: () => apiKeyFieldsMod.createApiKeyFields({ provider: card.changeApiKey.provider, fields: card.changeApiKey.fields, connected: true, change: true, post, onStored: () => loadIntegrations() }) }
-      : null;
-  if (changeSpec) {
-    const row = el('div', 'int-actions');
-    const b = el('button', 'btn sm', changeSpec.label);
-    b.type = 'button';
-    let form = null;
-    b.onclick = () => {
-      if (form) { form.remove(); form = null; return; }
-      form = changeSpec.make();
-      if (form) a.append(form);
+  // R2: an AI card's whole working surface — the description, the
+  // connect fields, the change road — lives in the Manage expansion,
+  // opened in place by the resting row's one button (Connect when
+  // signed out, Manage when connected). One card open at a time.
+  // Nothing about the roads themselves changes: same components, same
+  // submit paths, same words — only where they sit.
+  if (expandable) {
+    const open = el('div', 'int-open'); open.hidden = true;
+    open.append(el('div', 'int-blurb', card.blurb));
+    // The one connect road (2026-11-01): a not-connected AI card carries
+    // the shared email + password fields. A successful store re-reads the
+    // page from the connections store — the card's next status is the
+    // store's, never the click's.
+    if (card.connect && connectFieldsMod) {
+      const fields = connectFieldsMod.createConnectFields({ provider: card.connect.provider, post, onStored: () => loadIntegrations() });
+      if (fields) open.append(fields);
+    }
+    // The provider-catalog seats connect with a pasted key instead (one
+    // key, or Cloudflare's two pieces): same store, same re-read after a
+    // successful save — the card's next status is the store's.
+    if (card.apiKeyConnect && apiKeyFieldsMod) {
+      const fields = apiKeyFieldsMod.createApiKeyFields({ provider: card.apiKeyConnect.provider, fields: card.apiKeyConnect.fields, post, onStored: () => loadIntegrations() });
+      if (fields) open.append(fields);
+    }
+    // The change road (owner's order, 2026-11-06): a connected card
+    // carries a plain button — "New username and password" on a sign-in
+    // seat, "New API key" on a key seat — that opens the same fields in
+    // change mode. Saving stores the new values over the old ones
+    // through the same connect route, and the page then re-reads the
+    // store exactly as a first connect does.
+    const changeSpec = card.changeConnect && connectFieldsMod
+      ? { label: card.changeConnect.label, make: () => connectFieldsMod.createConnectFields({ provider: card.changeConnect.provider, connected: true, change: true, post, onStored: () => loadIntegrations() }) }
+      : card.changeApiKey && apiKeyFieldsMod
+        ? { label: card.changeApiKey.label, make: () => apiKeyFieldsMod.createApiKeyFields({ provider: card.changeApiKey.provider, fields: card.changeApiKey.fields, connected: true, change: true, post, onStored: () => loadIntegrations() }) }
+        : null;
+    if (changeSpec) {
+      const row = el('div', 'int-actions');
+      const b = el('button', 'btn sm', changeSpec.label);
+      b.type = 'button';
+      let form = null;
+      b.onclick = () => {
+        if (form) { form.remove(); form = null; return; }
+        form = changeSpec.make();
+        if (form) open.append(form);
+      };
+      row.append(b);
+      open.append(row);
+    }
+    const connected = Boolean(card.changeConnect || card.changeApiKey);
+    const btn = el('button', `btn sm ${connected ? '' : 'primary'}`.trim(), connected ? 'Manage' : 'Connect');
+    btn.type = 'button';
+    btn.setAttribute('aria-expanded', 'false');
+    btn.onclick = () => {
+      const willOpen = open.hidden;
+      const scope = a.closest('#integrations') ?? a.parentElement;
+      if (scope) {
+        for (const other of scope.querySelectorAll('.int-open')) if (other !== open) other.hidden = true;
+        for (const other of scope.querySelectorAll('.int-card.open')) if (other !== a) other.classList.remove('open');
+        for (const other of scope.querySelectorAll('[aria-expanded="true"]')) if (other !== btn) other.setAttribute('aria-expanded', 'false');
+      }
+      open.hidden = !willOpen;
+      a.classList.toggle('open', willOpen);
+      btn.setAttribute('aria-expanded', String(willOpen));
     };
-    row.append(b);
-    a.append(row);
+    top.append(btn);
+    a.append(open);
   }
-  if (card.action) {
-    const row = el('div', 'int-actions');
-    if (card.action.href) { const link = el('a', `btn sm ${card.status === 'on' ? '' : 'primary'}`.trim(), card.action.label); link.href = card.action.href; row.append(link); }
+  // Cards with no expansion keep their one action in the resting row —
+  // the same link or act button the card has always carried (chat and
+  // device cards, usage). A connected AI card's model action (Manage)
+  // is the expansion above, not the old link to the Agents view: this
+  // tab is the home for signing in and accounts (redesign §1).
+  if (!expandable && card.action) {
+    if (card.action.href) { const link = el('a', `btn sm ${card.status === 'on' ? '' : 'primary'}`.trim(), card.action.label); link.href = card.action.href; top.append(link); }
     else {
       const b = el('button', 'btn sm primary', card.action.label);
       b.type = 'button';
@@ -2369,9 +2416,8 @@ function integrationCard(card) {
         if (card.action.act === 'pc-help') { const g = el('a', 'btn sm', 'Get started'); g.href = '/get-started'; help.append(g); }
         a.append(help);
       };
-      row.append(b);
+      top.append(b);
     }
-    a.append(row);
   }
   return a;
 }
