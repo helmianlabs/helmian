@@ -3,7 +3,7 @@
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
 import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs';
-import { clearConversationToggles, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, starterDraftText, toggleConnector } from './connector-panel.mjs';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs';
 import { menuForSeat, walkMenuItems } from './connector-menu.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs';
 import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs';
@@ -838,7 +838,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryFetchedAt: {}, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, connectorPrompts: {}, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryFetchedAt: {}, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -1735,6 +1735,14 @@ async function loadConfig() {
     const body = await ws.ctx.api(`/api/admin/envoy/channel-config?channel_id=${encodeURIComponent(id)}`);
     if (id !== ws.channelId) return;
     ws.config = body.config ?? { agents: [] }; ws.configured = Boolean(body.configured); ws.discordBot = body.discordBot ?? null; ws.slackBot = body.slackBot ?? null;
+    // The channel's standing armed set (bite A2) hydrates from the
+    // config that carries it: the toggle store is re-seeded from
+    // the stored pairs on every load, so a reload, a second device,
+    // or a config change elsewhere never leaves this composer
+    // holding a set the channel no longer has. The hydrated state
+    // is also the last-saved snapshot a failed persist reverts to.
+    ws.connectorToggles = armedStateFromConfig(ws.config, `channel:${id}`);
+    ws.armedSaved = ws.connectorToggles;
   } catch {
     // A failed refresh must not blank the room: keep the last good
     // config (roster, debate state, turn cap) and seed the empty
@@ -1746,7 +1754,38 @@ async function loadConfig() {
   }
   const ch = ws.channels.find((c) => c.id === id);
   if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); ch._github = Boolean(ws.config.github?.repo); if ('avatar' in (ws.config ?? {})) ch.avatar = ws.config.avatar; const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack, g: ch._github }; ls.set('chanMeta', seen); }
+  renderAttachChips('channel');
   renderHeader(); renderAgents(); renderChannels();
+}
+
+// The standing set's write road (bite A2): every flip — from the
+// toggle list or a chip's × — posts the channel's WHOLE armed set
+// through the channel-config road, the same road every other
+// per-channel setting travels (the set-armed-connectors action in
+// envoy-mesh.mjs). The write is optimistic in the composer and
+// honest on failure: a failed post reverts the store to the last
+// state the server confirmed (ws.armedSaved, seeded by every
+// config load) and says so, so a switch never shows a state the
+// channel does not hold. Concurrent flips are not queued: each post
+// carries the full set as of its own flip, and the server's newest
+// config row wins — the same last-write discipline the config
+// store itself runs on.
+async function persistArmedConnectors() {
+  const channelId = ws.channelId;
+  if (!channelId) return;
+  const pairs = armedConnectorPairs(ws.connectorToggles, `channel:${channelId}`);
+  try {
+    const body = await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'set-armed-connectors', channelId, armedConnectors: pairs });
+    if (channelId !== ws.channelId) return;
+    ws.armedSaved = ws.connectorToggles;
+    if (body?.config) ws.config = body.config;
+  } catch {
+    if (channelId !== ws.channelId) return;
+    ws.connectorToggles = ws.armedSaved ?? {};
+    ws.ctx.toast('That connector change could not be saved.');
+    renderAttachChips('channel');
+    if (ws.pickerFor) renderPicker(ws.pickerFor);
+  }
 }
 function renderHeader() {
   const ch = ws.channels.find((c) => c.id === ws.channelId);
@@ -2052,13 +2091,23 @@ export function spokenMentionTags(customAgents = []) {
 // (bite 3R-a, frozen): per seat, the items and their order. The row
 // STATE comes from connector-panel.mjs — its Level 1 / Level 2
 // models stay the single source of row state — and the toggle store
-// is bite 3's, untouched: toggles are held per (seat, conversation)
-// in ws.connectorToggles, ride the next message as
-// metadata.connectors, and clear when that message lands — one
-// message only, never the next one's defaults, never another seat's
-// or another conversation's (SPEC §1.6/§3.4). Closing the menu (the
-// button, Escape, an outside press, or the send) never touches the
-// composer text; nothing in this section writes to the draft boxes.
+// is bite 3's shape, re-homed by bite A2 (Amendment 1 §2.3): the
+// Connectors list is a STANDING toggle list. Toggles are held per
+// (seat, channel) in ws.connectorToggles, persisted on the channel's
+// own config through the channel-config road (action
+// 'set-armed-connectors') and hydrated back from it on every config
+// load, so the set survives reloads and follows the channel, never
+// another seat's list or another channel's (SPEC §1.6/§3.4). Every
+// message the composer sends carries the set's still-connected
+// pairs as metadata.connectors; a send consumes nothing. What a
+// flip does NOT do yet, stated plainly: nothing on the turn path
+// reads the armed set — the connectorArming seam is unwired until
+// Mirror M3's G4 — so an armed connector's tools do not join a turn
+// on the strength of this list. The switch records the channel's
+// choice, and the chips below show it; that is the whole effect
+// today. Closing the menu (the button, Escape, an outside press,
+// or the send) never touches the composer text; nothing in this
+// section writes to the draft boxes.
 //
 // What the old full-width panel carried that this menu does not —
 // named, not silently dropped (the frozen definitions have no row
@@ -2070,8 +2119,10 @@ export function spokenMentionTags(customAgents = []) {
 //   it waits on a definition, not a workaround.
 // - Registry connectors as note-only attachments (the old CONNECTORS
 //   group). The library toggles are the connector road now: an armed
-//   Helmian-brokered connector really rides the turn, which the
-//   note-only attach never did.
+//   Helmian-brokered connector rides every message as
+//   metadata.connectors, which the note-only attach never did — and
+//   its tools join the turn when the arming seam is wired (M3 G4),
+//   per the honesty note above.
 // The session console's "+" keeps its own panel (app.js): a console
 // message addresses ONE session agent and its send carries no
 // connector toggles, so this menu's toggles would arm nothing there —
@@ -2112,15 +2163,27 @@ function renderAttachChips(which) {
       'Web search',
       h('button', { type: 'button', class: 'ew-chip-x', title: 'Turn web search off for this message', 'aria-label': 'Turn web search off', onclick: () => { ws.webSearch[which] = false; renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×')));
   }
-  // Connector-library toggles armed for this conversation ride the
-  // next message the same way: one chip each while armed, gone with
-  // the send (or the ×). The names come from the library reads that
-  // armed them — a toggle can only exist for a row the panel showed.
+  // The channel's standing armed set shows as chips above the
+  // message box (Amendment 1 §2.3): one chip per armed connector,
+  // each with its remove control — the × flips the same toggle the
+  // menu's switch flips, and persists it the same way. The chips do
+  // NOT leave with a send; the set stands until flipped off. A pair
+  // whose connector the seat's loaded library read no longer shows
+  // as connected (disconnected, or the connection now needs
+  // reconnect) wears no chip — the stored pair stays in the config
+  // but rides nothing and promises nothing, exactly as the send
+  // path treats it. The names come from the library reads — a
+  // toggle can only exist for a row the panel showed.
   for (const { seatId, entryId } of connectorsForTurn(ws.connectorToggles, conversationIdFor(which))) {
+    const library = ws.libraryFacts?.libraries?.[seatId];
+    if (library && !library.error) {
+      const row = library.rows.find((r) => r.entryId === entryId);
+      if (!row || row.state !== 'connected' || row.brokerMode !== 'helmian') continue;
+    }
     const name = ws.libraryFacts?.names?.[`${seatId}:${entryId}`] ?? entryId;
     chips.push(h('span', { class: 'ew-chip connector' },
       name,
-      h('button', { type: 'button', class: 'ew-chip-x', title: `Turn ${name} off for this message`, 'aria-label': `Turn ${name} off`, onclick: () => { ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), seatId, entryId); renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×')));
+      h('button', { type: 'button', class: 'ew-chip-x', title: `Turn ${name} off in this channel`, 'aria-label': `Turn ${name} off`, onclick: () => { ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), seatId, entryId); void persistArmedConnectors(); renderAttachChips(which); if (ws.pickerFor === which) renderPicker(which); } }, '×')));
   }
   // Helmian skills armed from the "/" menu's Skills group ride the
   // next message the same way (metadata.skills): one chip each —
@@ -2153,8 +2216,9 @@ async function togglePicker(which) {
 // The reads behind both levels. Level 1 picks the seat (face, name,
 // connected count); Level 2 is that seat's library, read from
 // GET /api/admin/connector-library (the Bite 2 read behind the Bite 3
-// route). The conversation a composer's toggles belong to: the open
-// channel (menu and send always name the same conversation).
+// route). The scope a composer's toggles belong to: the open channel
+// — the standing set is the channel's, so the scope key names it
+// (menu, chips and send all read the same scope).
 function conversationIdFor(which) {
   return `channel:${ws.channelId ?? 'none'}`;
 }
@@ -2203,15 +2267,14 @@ export async function loadSeatLibrary(seatId, now = Date.now()) {
   ws.libraryFetchedAt[seatId] = now;
   return library;
 }
-// The test seam for the session caches above and the prompts cache
-// below: installs the read context and clears every cached copy, so
-// tests drive the real loaders end to end against a fake read.
+// The test seam for the session caches above: installs the read
+// context and clears every cached copy, so tests drive the real
+// loaders end to end against a fake read.
 export function resetLibrarySession(ctx) {
   ws.ctx = ctx;
   ws.libraryFacts = null;
   ws.libraryLoading = null;
   ws.libraryFetchedAt = {};
-  ws.connectorPrompts = {};
 }
 // A seat's face on the crew tile: the library-pack still by seat slug
 // (the pack's slugs ARE the library seat ids), falling back to the
@@ -2237,13 +2300,12 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     h('span', { class: 'ew-lib-line' }, row.oneLiner),
     h('span', { class: 'ew-lib-line' }, vendorLine));
   if (row.toggleable) {
-    return h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on for your next message — tap to turn it off` : `Turn ${row.name} on for your next message`, onclick: () => {
-      const wasOn = row.on;
+    return h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on in this channel — tap to turn it off` : `Turn ${row.name} on in this channel`, onclick: () => {
       ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId);
-      // Arming a brokered MCP server lists its starter prompts at
-      // arm time (§4): the fetch rides the person's own armed state,
-      // and the rows it returns seed drafts — never sends.
-      if (!wasOn) ensureConnectorPrompts(row.seatId, row.entryId);
+      // The flip persists to the channel's config before anything
+      // else renders from it (bite A2); a failed save reverts the
+      // store and re-renders, inside persistArmedConnectors.
+      void persistArmedConnectors();
       renderAttachChips(which); renderPicker(which);
     } }, libraryIconTile(row), text,
       h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
@@ -2276,19 +2338,22 @@ function libraryRowNode(which, row, { shape = null } = {}) {
 //   { kind: 'label', label }                       (a group heading)
 //   { kind: 'note', text }
 //   { kind: 'toggle' | 'mirror' | 'row', row, rowShape }
-//   { kind: 'starter', label, prompt, entryId }    (catalog starter action)
-//   { kind: 'prompt', prompt, entryId }            (MCP starter prompt)
 //   { kind: 'skill', skillId, name, description, on, disabled }
-//   { kind: 'plugin', name, brings, on }
+//   { kind: 'plugin', name, brings, toolCount, on }
 //   { kind: 'project', key, name, active }
 //   { kind: 'submenu', label, rows, badge? }       (badge = needs-reconnect count)
 //   { kind: 'manage', label, target }
 // A connector group binds its rows from the read by entry id, in the
-// definition's own order. Under a bound connector row ride its
-// action rows (mirror-design §4): the catalog starter actions the
-// read joined, and — when the row is armed — the brokered server's
-// own starter prompts, listed at arm time. A group that resolves to
-// no rows renders one honest note row, never a dead control.
+// definition's own order. A live-toggle group — the Connectors list —
+// renders ONLY its Connected, Helmian-brokered rows, as switches in
+// the channel's standing set (Amendment 1 §2.3, bite A2): a row that
+// is not connected, or that Helmian does not hold the pipe for, is
+// not offered, and a group with nothing connected says so in one
+// note. Connector rows seed no drafts: the catalog starter actions
+// and the arm-time MCP prompt rows the M2 face rendered under a
+// connector are gone with the per-message arming they served. A
+// group that resolves to no rows renders one honest note row, never
+// a dead control.
 // The plugins read's failure line (fix B): the read answers an
 // `unavailable` list beside the plugins — every plugin that failed
 // to load. When it is non-empty the menu says so in words; an empty
@@ -2299,7 +2364,7 @@ export function pluginsUnavailableNote(count) {
   return n ? `${n} plugin${n === 1 ? '' : 's'} could not be loaded.` : null;
 }
 
-export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, pluginsUnavailable = [], skillAttach = [], attachments = [], promptsByEntry = {}, projects = null, activeProjectKey = null } = {}) {
+export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, pluginsUnavailable = [], skillAttach = [], attachments = [], projects = null, activeProjectKey = null } = {}) {
   const definition = menuForSeat(seatId);
   if (!definition) return null;
   const byId = new Map();
@@ -2317,21 +2382,6 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
     if (!Array.isArray(item.entryIds)) return null;
     const rows = item.entryIds.map((id) => byId.get(id)).filter(Boolean);
     return rows.length ? rows : null;
-  };
-  const actionRowsFor = (row) => {
-    const out = [];
-    for (const starter of row.starterActions ?? []) {
-      out.push({ kind: 'starter', label: starter.label, prompt: starter.prompt, entryId: row.entryId, entryName: row.name });
-    }
-    if (row.toggleable && row.on) {
-      const listed = promptsByEntry[row.entryId];
-      if (listed?.status === 'ok') {
-        for (const prompt of listed.prompts ?? []) out.push({ kind: 'prompt', prompt, entryId: row.entryId, entryName: row.name });
-      } else if (listed?.status === 'error') {
-        out.push({ kind: 'note', text: `${row.name}'s starters could not be listed.` });
-      }
-    }
-    return out;
   };
   const feedRows = (item) => {
     const out = [];
@@ -2361,7 +2411,12 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
       for (const p of plugins) {
         const name = String(p?.name ?? '').trim().toLowerCase();
         if (!name) continue;
-        out.push({ kind: 'plugin', name, brings: String(p?.brings ?? ''), on: (attachments ?? []).some((a) => a.kind === 'plugin' && a.name === name) });
+        // The tool count rides only when the plugins read provides
+        // one; today's read (installed-plugins.mjs) reports a
+        // `tools` boolean and a `brings` line, no count — so the
+        // count is null and the row draws none, never an invented
+        // number.
+        out.push({ kind: 'plugin', name, brings: String(p?.brings ?? ''), toolCount: Number.isSafeInteger(p?.toolCount) ? p.toolCount : null, on: (attachments ?? []).some((a) => a.kind === 'plugin' && a.name === name) });
       }
       if (unavailableNote) out.push({ kind: 'note', text: unavailableNote });
       return out;
@@ -2378,9 +2433,19 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
     if (library.error) { out.push({ kind: 'note', text: 'This library could not be loaded.' }); return out; }
     const rows = boundRows(item);
     if (!rows) { out.push({ kind: 'note', text: 'Nothing here yet.' }); return out; }
+    if (item.type === 'live-toggle-group') {
+      // The standing toggle list (Amendment 1 §2.3): only the rows
+      // this seat can truly arm today — Connected, on a pipe
+      // Helmian holds (row.toggleable is exactly that test). Every
+      // other bound row is not offered: not a switch that cannot
+      // work, not a state row filling the list.
+      const toggles = rows.filter((r) => r.toggleable);
+      if (!toggles.length) { out.push({ kind: 'note', text: `No connectors are connected for ${seatName(seatId)} yet.` }); return out; }
+      for (const row of toggles) out.push({ kind: 'toggle', row, rowShape });
+      return out;
+    }
     for (const row of rows) {
       out.push({ kind: row.toggleable ? 'toggle' : row.mirror ? 'mirror' : 'row', row, rowShape });
-      out.push(...actionRowsFor(row));
     }
     if (rowShape === 'state') out.push({ kind: 'note', text: 'On for the whole account — name it in a message to use it.' });
     return out;
@@ -2454,11 +2519,6 @@ function renderPlusMenuLevel2(which) {
   if (feeds.has('helmian-skills') && !ws.skills.loaded && !ws.skills.loading) loadSkills().then(() => { if (ws.pickerFor === which) renderPicker(which); }).catch(() => {});
   if (feeds.has('bridge-plugins') && !ws.plugins.loaded && !ws.plugins.loading) loadBridgePlugins().then(() => { if (ws.pickerFor === which) renderPicker(which); }).catch(() => {});
   if (!ws.projects.loaded && !ws.projects.loading) loadWorkspaceProjects().then(() => { if (ws.pickerFor === which) renderPicker(which); }).catch(() => {});
-  const promptsByEntry = {};
-  for (const [key, value] of Object.entries(ws.connectorPrompts)) {
-    const [s, entryId] = key.split(':');
-    if (s === seatId) promptsByEntry[entryId] = value;
-  }
   const model = plusMenuLevel2Model({
     seatId,
     library,
@@ -2470,7 +2530,6 @@ function renderPlusMenuLevel2(which) {
     pluginsUnavailable: ws.plugins.loaded ? ws.plugins.unavailable : [],
     skillAttach: ws.skillAttach[which] ?? [],
     attachments: ws.attach[which] ?? [],
-    promptsByEntry,
     projects: ws.projects.loaded ? ws.projects.list : null,
     activeProjectKey: ws.projects.activeKey ?? ws.ctx?.state?.activeProjectKey ?? null,
   });
@@ -2580,19 +2639,6 @@ function openManageForSeat(which) {
   closePicker();
   document.querySelector('.nav-item[data-view="integrations"]')?.click();
 }
-// Seed the composer with a DRAFT (mirror-design §4): the slash menu
-// inserts text the same way — the value goes in, the menu closes,
-// the input takes focus. Nothing is ever sent by a starter row;
-// sending stays the person's own act on their Send button.
-function seedComposerDraft(which, text) {
-  const input = $(PICKER_IDS[which]?.input);
-  if (!input) return;
-  input.value = text;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  closePicker();
-  input.focus({ preventScroll: true });
-  try { input.setSelectionRange(input.value.length, input.value.length); } catch {}
-}
 // The GitHub file source (mirror-design §4): browse the channel's
 // linked repo through the cloud read and pick a file into the
 // message. The repo is never typed here — it is the channel's link,
@@ -2688,28 +2734,6 @@ function plusMenuRowNode(which, row, index) {
       }
       return h('p', { class: 'ew-note' }, '');
     }
-    case 'starter': {
-      // A catalog starter action: seeds the composer with its own
-      // published prompt text as a DRAFT — never a send.
-      return h('button', { type: 'button', class: 'ew-picker-row ew-plus-starter', title: `Start a draft with ${row.entryName}`, onclick: () => seedComposerDraft(which, row.prompt) },
-        h('span', {}, row.label), h('span', { class: 'ew-picker-kind' }, 'draft'));
-    }
-    case 'prompt': {
-      // An MCP starter prompt from the brokered server itself. With
-      // required arguments the row seeds the fill-in draft; without,
-      // the server's own rendered text is fetched and seeded. Either
-      // way the composer holds a draft — never a send.
-      const prompt = row.prompt;
-      const label = prompt.title || prompt.name;
-      return h('button', { type: 'button', class: 'ew-picker-row ew-plus-starter', title: prompt.description || `Start a draft with ${row.entryName}`, onclick: async () => {
-        const needsArgs = Array.isArray(prompt.arguments) && prompt.arguments.some((a) => a.required);
-        if (needsArgs) { seedComposerDraft(which, starterDraftText(prompt)); return; }
-        try {
-          const body = await ws.ctx.post('/api/admin/connector-library/prompts/get', { seatId: ws.libraryPanel.seatId, entryId: row.entryId, name: prompt.name });
-          seedComposerDraft(which, String(body?.text ?? '') || starterDraftText(prompt));
-        } catch { seedComposerDraft(which, starterDraftText(prompt)); }
-      } }, h('span', {}, label), h('span', { class: 'ew-picker-kind' }, 'draft'));
-    }
     case 'skill': {
       if (row.disabled) {
         return h('div', { class: 'ew-picker-row ew-plus-skill off' }, h('span', {}, row.name), h('span', { class: 'ew-picker-kind' }, 'turned off'));
@@ -2737,7 +2761,12 @@ function plusMenuRowNode(which, row, index) {
           ws.attach[which] = res.list;
         }
         renderAttachChips(which); renderPicker(which);
-      } }, h('span', {}, row.name), h('span', { class: 'ew-picker-kind' }, 'plugin'), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'On' : 'Off'));
+      } }, h('span', {}, row.name),
+      // The tool count shows only when the plugins read provided
+      // one (the model's toolCount) — today's read provides none,
+      // so no count renders; an invented count never does.
+      ...(row.toolCount != null ? [h('span', { class: 'ew-picker-kind' }, `${row.toolCount} tool${row.toolCount === 1 ? '' : 's'}`)] : [h('span', { class: 'ew-picker-kind' }, 'plugin')]),
+      h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'On' : 'Off'));
     }
     case 'project': {
       return h('button', { type: 'button', class: `ew-picker-row${row.active ? ' on' : ''}`, title: row.active ? 'The active project — this conversation\u2019s messages carry it' : 'Make this the active project for your messages', onclick: async () => {
@@ -2897,38 +2926,6 @@ async function setActiveProjectFromMenu(projectKey) {
     if (ws.ctx?.state) ws.ctx.state.activeProjectKey = projectKey;
     ws.ctx.toast?.('Active project set', 'ok');
   } catch { ws.ctx.toast?.('Could not set the active project'); }
-}
-// A brokered server's starter prompts, listed at arm time (bite
-// M2): the write-route read resolves the caller's own credential
-// server-side and returns the snapshot only. The result is cached
-// per seat+entry for the session; an unsupported server renders no
-// rows at all, a failed read renders its honest note. One refusal
-// is not a failure (fix D): PROMPTS_NOT_HELD is the route's
-// by-design answer for an entry Helmian holds no token for at all
-// (the tokenless native GitHub entry — its connected state joins
-// from channel repo links, there is no connection record and no
-// server to list from). There are no starters to list, so it lands
-// on the same silent unsupported outcome as a 200
-// { supported: false }; every other refusal keeps the note.
-export function connectorPromptsState(seatId, entryId) {
-  return ws.connectorPrompts[`${seatId}:${entryId}`] ?? null;
-}
-export function ensureConnectorPrompts(seatId, entryId) {
-  const key = `${seatId}:${entryId}`;
-  if (ws.connectorPrompts[key]) return;
-  ws.connectorPrompts[key] = { status: 'loading', prompts: [] };
-  ws.ctx.post('/api/admin/connector-library/prompts', { seatId, entryId })
-    .then((body) => {
-      ws.connectorPrompts[key] = body?.supported === true
-        ? { status: 'ok', prompts: Array.isArray(body.prompts) ? body.prompts : [] }
-        : { status: 'unsupported', prompts: [] };
-    })
-    .catch((error) => {
-      ws.connectorPrompts[key] = error?.body?.code === 'PROMPTS_NOT_HELD'
-        ? { status: 'unsupported', prompts: [] }
-        : { status: 'error', prompts: [] };
-    })
-    .finally(() => { if (ws.pickerFor) renderPicker(ws.pickerFor); });
 }
 // The name a seat id wears in chips, badges and scope rows: a
 // library seat's room name, a custom agent's own name, or the id
@@ -3797,12 +3794,30 @@ async function send(e) {
   if (!body || !ws.channelId) return;
   const key = crypto.randomUUID();
   const convId = conversationIdFor('channel');
-  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel, connectors: connectorsForTurn(ws.connectorToggles, convId), skills: ws.skillAttach.channel, projectKey: ws.projects.activeKey ?? ws.ctx?.state?.activeProjectKey ?? null });
+  // The channel's standing armed set rides every message (bite A2) —
+  // but only its still-connected pairs. A connector that has since
+  // disconnected (or whose connection now needs reconnect) is
+  // filtered out here against the seat's library read, loading the
+  // read first when this session has not opened the menu yet, so a
+  // set hydrated from the channel config is judged by the same
+  // truth the toggle list showed. A seat whose read fails keeps its
+  // pairs off the wire — unproven is unarmed. The set itself is
+  // NOT cleared by the send: it stands until a flip changes it.
+  const armedPairs = connectorsForTurn(ws.connectorToggles, convId);
+  for (const seatId of [...new Set(armedPairs.map((p) => p.seatId))]) {
+    try { await loadSeatLibrary(seatId); } catch {}
+  }
+  const sendableConnectors = armedPairs.filter((pair) => {
+    const library = ws.libraryFacts?.libraries?.[pair.seatId];
+    const row = library && !library.error ? library.rows.find((r) => r.entryId === pair.entryId) : null;
+    return Boolean(row && row.state === 'connected' && row.brokerMode === 'helmian');
+  });
+  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel, connectors: sendableConnectors, skills: ws.skillAttach.channel, projectKey: ws.projects.activeKey ?? ws.ctx?.state?.activeProjectKey ?? null });
   const btn = $('maestro-send'); btn.disabled = true;
   ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
   box.value = ''; grow(); closeSlashMenu();
-  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; ws.connectorToggles = clearConversationToggles(ws.connectorToggles, convId); ws.skillAttach.channel = []; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); }
+  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; ws.skillAttach.channel = []; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
   finally { btn.disabled = false; }
 }

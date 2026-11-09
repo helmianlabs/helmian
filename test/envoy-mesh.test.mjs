@@ -411,6 +411,49 @@ test('mesh on Postgres: set-channel-avatar stores the channel face on its config
   }
 });
 
+test('mesh on Postgres: set-armed-connectors stores the channel standing set on its config (bite A2)', { skip }, async () => {
+  const pg = (await import('pg')).default;
+  const pool = new pg.Pool({ connectionString: url, max: 4 });
+  const tenantId = `t-${randomUUID().slice(0, 8)}`;
+  const owner = { tenantId, subject: `user_${randomUUID().replaceAll('-', '').slice(0, 20)}`, role: 'owner', get sessionId() { return randomUUID(); }, get requestId() { return randomUUID(); } };
+  const memberActor = { tenantId, subject: `user_${randomUUID().replaceAll('-', '').slice(0, 20)}`, role: 'member', get sessionId() { return randomUUID(); }, get requestId() { return randomUUID(); } };
+  const auditorActor = { tenantId, subject: `user_${randomUUID().replaceAll('-', '').slice(0, 20)}`, role: 'auditor', get sessionId() { return randomUUID(); }, get requestId() { return randomUUID(); } };
+  await pool.query('insert into helmion.tenants(tenant_id, display_name) values ($1,$2)', [tenantId, 'Mesh armed-set test']);
+  for (const [actor, role] of [[owner, 'owner'], [memberActor, 'member'], [auditorActor, 'auditor']]) {
+    await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, actor.subject, role]);
+  }
+  const mesh = createEnvoyMesh({ pool, publishImpl: async () => {}, nameLookup: async () => 'Troy' });
+  const chat = createEnvoyStore(pool);
+  try {
+    const { channel } = await chat.createChannel(owner, { slug: 'armed', title: 'armed', kind: 'team' });
+    let cfg = await mesh.getConfig(owner, channel.id);
+    assert.deepEqual(cfg.config.armedConnectors, [], 'a new channel has nothing armed');
+    // Any non-auditor member may set it; the config answer carries it.
+    const set = await mesh.changeConfig(memberActor, { action: 'set-armed-connectors', channelId: channel.id, armedConnectors: [{ seatId: 'claude', entryId: 'helmian-github' }] });
+    assert.deepEqual(set.config.armedConnectors, [{ seatId: 'claude', entryId: 'helmian-github' }]);
+    // Junk pairs sanitize away per-entry; a non-array refuses.
+    const dirty = await mesh.changeConfig(owner, { action: 'set-armed-connectors', channelId: channel.id, armedConnectors: [{ seatId: 'Bad Seat', entryId: 'x' }, { seatId: 'grok', entryId: 'helmian-github' }, { seatId: 'grok', entryId: 'helmian-github' }] });
+    assert.deepEqual(dirty.config.armedConnectors, [{ seatId: 'grok', entryId: 'helmian-github' }]);
+    await assert.rejects(
+      mesh.changeConfig(owner, { action: 'set-armed-connectors', channelId: channel.id, armedConnectors: 'github' }),
+      /ENVOY_ARMED_CONNECTORS_INVALID/,
+    );
+    // An auditor may not write at all, and the refused write changed nothing.
+    await assert.rejects(
+      mesh.changeConfig(auditorActor, { action: 'set-armed-connectors', channelId: channel.id, armedConnectors: [] }),
+      /ENVOY_ROLE_FORBIDDEN/,
+    );
+    cfg = await mesh.getConfig(owner, channel.id);
+    assert.deepEqual(cfg.config.armedConnectors, [{ seatId: 'grok', entryId: 'helmian-github' }]);
+    // Clearing is a write of the empty set.
+    const cleared = await mesh.changeConfig(owner, { action: 'set-armed-connectors', channelId: channel.id, armedConnectors: [] });
+    assert.deepEqual(cleared.config.armedConnectors, []);
+  } finally {
+    await pool.query('delete from helmion.tenants where tenant_id=$1', [tenantId]).catch(() => {});
+    await pool.end();
+  }
+});
+
 // ---------- Helmian skills at dispatch (slash-skills bite S1) ----------
 // resolveDispatchSkills is the pure half of the dispatch resolution:
 // message toggles × store records × the due seats → the work item's

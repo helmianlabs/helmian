@@ -25,6 +25,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  armedConnectorPairs,
+  armedStateFromConfig,
   clearConversationToggles,
   connectorsForTurn,
   isConnectorOn,
@@ -76,6 +78,33 @@ test('toggle store: clearing on send restores the next message\'s defaults', () 
   assert.equal(isConnectorOn(off, CONV, 'grok', 'github'), false);
   // The input state was never mutated (immutable updates).
   assert.equal(isConnectorOn(state, CONV, 'grok', 'github'), true);
+});
+
+test('standing set bridges (bite A2): config pairs fold under the channel scope and back', () => {
+  // Hydration from the channel config's flat pair list.
+  const state = armedStateFromConfig({ armedConnectors: [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'grok', entryId: 'github' },
+  ] }, CONV);
+  assert.equal(isConnectorOn(state, CONV, 'claude', 'helmian-github'), true);
+  assert.equal(isConnectorOn(state, OTHER_CONV, 'claude', 'helmian-github'), false, 'the folded set belongs to its own channel scope only');
+  assert.deepEqual(connectorsForTurn(state, CONV), [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'grok', entryId: 'github' },
+  ]);
+  // Extraction is the inverse: sorted flat pairs, this scope only.
+  assert.deepEqual(armedConnectorPairs(state, CONV), [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'grok', entryId: 'github' },
+  ]);
+  assert.deepEqual(armedConnectorPairs(state, OTHER_CONV), []);
+  // A flip through the ordinary toggle API is what extraction sees.
+  const flipped = toggleConnector(state, CONV, 'claude', 'helmian-github');
+  assert.deepEqual(armedConnectorPairs(flipped, CONV), [{ seatId: 'grok', entryId: 'github' }]);
+  // Fail-closed: junk pairs and junk configs hydrate to nothing.
+  assert.deepEqual(armedStateFromConfig({ armedConnectors: [{ seatId: 'Bad Seat', entryId: 'x' }, 'junk', null] }, CONV), {});
+  assert.deepEqual(armedStateFromConfig(null, CONV), {});
+  assert.deepEqual(armedStateFromConfig('nope', CONV), {});
 });
 
 // ------------------------------------------------------------- seat names

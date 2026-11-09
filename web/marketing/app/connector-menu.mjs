@@ -37,12 +37,17 @@
 //   projects          the "Add to project" row: the composer's
 //                     active-project picker, bound to the workspace
 //                     project registry (mirror-design §3.1).
-//   live-toggle-group connector rows the person arms per message
-//                     (connector-panel.mjs's toggle store). Binds
-//                     catalog entries by id, and binds ONLY
-//                     brokerMode:'helmian' entries — a live toggle on
-//                     a pipe Helmian does not hold is a fake (SPEC
-//                     §1.5/§5.3, REPORT §6).
+//   live-toggle-group the channel's standing toggle list
+//                     (Amendment 1 §2.3): connector rows the person
+//                     switches on for the channel until switched off
+//                     (connector-panel.mjs's toggle store, persisted
+//                     on the channel config). Binds catalog entries
+//                     by id, and binds ONLY brokerMode:'helmian'
+//                     entries — a live toggle on a pipe Helmian does
+//                     not hold is a fake (SPEC §1.5/§5.3, REPORT §6).
+//                     The face renders only the group's Connected
+//                     rows as switches; the rest of the group is not
+//                     offered.
 //   mirror-group      vendor-brokered rows: state + "Managed in
 //                     <product>", nothing else. THE NEVER-FAKE LAW IS
 //                     STRUCTURAL HERE: a mirror group has no toggle
