@@ -650,6 +650,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   let kokoroLoadStartedAt = 0; // when the current load attempt began
   let kokoroLoadGen = 0;       // generation of the current load attempt
   let kokoroLastError = null;  // last load failure, kept for the console proof point
+  let kokoroErrorLatch = '';   // last Kokoro failure message, latched so setVoiceStatus can re-apply it as data-error after any re-render
   let kokoroBackupWhileLoading = false; // bounded wait expired: backup speaks until the load lands
   let kokoroPreferWasm = false; // a load was abandoned as stuck: the next attempt skips WebGPU
   let kokoroRetryTimer = null;
@@ -668,6 +669,8 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     for (const el of document.querySelectorAll('.voice-engine')) {
       el.textContent = text;
       el.className = 'voice-engine ' + (cls || '');
+      if (kokoroErrorLatch) el.dataset.error = kokoroErrorLatch;
+      else delete el.dataset.error;
     }
   }
 
@@ -677,10 +680,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // is not reachable from every checking browser, and "unavailable"
   // alone does not say which stage broke. Cleared when Kokoro is ready.
   function noteKokoroError(err) {
+    kokoroErrorLatch = String(err?.message ?? err ?? '').slice(0, 300);
     if (typeof document === 'undefined' || !document.querySelectorAll) return;
-    const msg = String(err?.message ?? err ?? '').slice(0, 300);
     for (const el of document.querySelectorAll('.voice-engine')) {
-      if (msg) el.dataset.error = msg;
+      if (kokoroErrorLatch) el.dataset.error = kokoroErrorLatch;
       else delete el.dataset.error;
     }
   }
