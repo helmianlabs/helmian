@@ -215,19 +215,27 @@ const SOURCE1_BY_SEAT = Object.freeze({
 // Present in EVERY seat's library (§3.2), "Connector by Helmian",
 // trust 'verified'. Two entries on day one:
 //
-//   helmian-github — the room's existing tool-connection, SURFACED.
+//   helmian-github — the room's existing GitHub reach, SURFACED.
 //     Its state is not a library connection record: it is joined at
-//     read time from the tool-connections store (see
+//     read time from the two places that truth already lives (see
 //     NATIVE_STATE_SOURCES below and connector-library-read.mjs), so
-//     the verified probe receipt the workspace already earned shows
-//     here without a second, parallel connection being minted.
+//     no second, parallel connection is minted:
+//       · the workspace's per-channel repo links — a channel whose
+//         config carries github.repo is linked, full stop. The rail's
+//         GITHUB section, the channel header badge, and the commit/PR
+//         stream all live by that link; it is the connection the room
+//         actually uses (repoLinks: true below);
+//       · the tool-connections store (sql/061) — a verified probe
+//         receipt there also reads connected, under that store's own
+//         freshness rule.
+//     Either source suffices; neither invents a state.
 //
 //   helmian-scribe — Scribe, Helmian's own shared memory and
 //     inter-agent mail: how the seats already reach each other. Its
 //     endpoint is Helmian's own hosted MCP door. State joins when a
 //     seat-side report exists; the read never invents one.
 export const NATIVE_STATE_SOURCES = Object.freeze({
-  'helmian-github': Object.freeze({ stateSource: 'tool-connections', serviceId: 'github' }),
+  'helmian-github': Object.freeze({ stateSource: 'tool-connections', serviceId: 'github', repoLinks: true }),
   'helmian-scribe': Object.freeze({ stateSource: 'helmian-service' }),
 });
 

@@ -151,39 +151,38 @@ test('room lookup: finds the room by kind and slug only', () => {
   assert.equal(agentRoomFor([], 'claude'), null);
 });
 
-test('agent-first increment 1: the pane has a conversation region and the workspace renders into it', async () => {
+test('panes removal: no agent-chat pane remains; rooms render as channels', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
-  const sessions = html.indexOf('id="ew-cli-sessions"');
-  const thread = html.indexOf('id="ew-cli-thread"');
-  const form = html.indexOf('id="ew-cli-form"');
-  assert.ok(sessions !== -1 && thread > sessions && thread < form, 'the conversation region sits between the sessions and the composer, inside the Agent Chat pane');
-  assert.ok(js.includes('function renderCliThread'), 'envoy-workspace.js renders the pane conversation');
-  assert.ok((js.match(/renderCliThread\(\)/g) ?? []).length >= 4, 'the conversation re-renders on message loads and target changes');
-  assert.match(css, /\.ew-cli-thread \{/, 'envoy.css styles the conversation region');
+  for (const id of ['ew-cli', 'ew-cli-sessions', 'ew-cli-thread', 'ew-cli-form', 'ew-agents']) {
+    assert.equal(html.indexOf(`id="${id}"`), -1, `index.html no longer has #${id}`);
+  }
+  assert.ok(!js.includes('function renderCliThread'), 'envoy-workspace.js no longer renders a pane conversation');
+  assert.doesNotMatch(css, /\.ew-cli-thread \{/, 'envoy.css no longer styles the pane conversation');
+  assert.ok(js.includes('AGENT ROOMS'), 'agent rooms still render as their own section of the channel list');
 });
 
-// Layout bite 1 (Troy's ruling, 2026-10-23): the agent CLI is its own
-// center pane between the human chat and the agents roster; the channels
-// pane creates plain channels (no agent select), and "+ New session"
-// lives in the CLI pane.
-test('desktop layout: agent CLI pane sits between chat and agents; channels are plain', async () => {
+// Panes removal (Troy's order, 2026-11-08): the room is channels | chat |
+// guard | workbench — the agent CLI pane and the agents roster pane are
+// deleted outright, splits, toggles and all; channels stay plain.
+test('desktop layout: no agent CLI or agents panes; channels are plain', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const chat = html.indexOf('id="ew-chat"');
-  const cli = html.indexOf('id="ew-cli"');
-  const agents = html.indexOf('id="ew-agents"');
-  assert.ok(chat !== -1 && cli !== -1 && agents !== -1, 'chat, CLI and agents panes all exist');
-  assert.ok(chat < cli && cli < agents, 'CLI pane is between the chat and the agents roster');
-  assert.match(html, /data-pane="cli"/);
-  assert.match(html, /data-toggle="cli"/);
-  assert.match(html, /data-split="cli"/);
-  for (const id of ['ew-cli-chips', 'ew-cli-new', 'ew-cli-session-form', 'ew-cli-session-name', 'ew-cli-sessions', 'ew-cli-form', 'ew-cli-input', 'ew-cli-dictate', 'ew-cli-voice', 'ew-cli-send']) {
-    assert.match(html, new RegExp(`id="${id}"`), id);
+  const guard = html.indexOf('id="ew-guard"');
+  const bench = html.indexOf('id="ew-bench"');
+  assert.ok(chat !== -1 && guard !== -1 && bench !== -1, 'chat, guard and workbench panes exist');
+  assert.ok(chat < guard && guard < bench, 'guard sits between the chat and the workbench');
+  for (const gone of ['id="ew-cli"', 'id="ew-agents"', 'data-pane="cli"', 'data-pane="agents"', 'data-toggle="cli"', 'data-toggle="agents"', 'data-split="cli"', 'data-split="agents"', 'id="ew-cli-new"', 'id="ew-create-agent-btn"', 'id="ew-agent-add"']) {
+    assert.equal(html.indexOf(gone), -1, `index.html no longer has ${gone}`);
   }
-  assert.match(html, /id="ew-cli-new"[^>]*>\+ New session</);
   assert.match(html, /id="ew-add-channel"[^>]*>\+ New channel</);
   assert.doesNotMatch(html, /ew-new-channel-agent/);
+  // The one pane function with no other home — adding a seat to the
+  // channel — moved into the CREW section of the channels rail.
+  const crew = html.indexOf('id="ew-crew"');
+  const crewAdd = html.indexOf('id="ew-crew-add"');
+  assert.ok(crew !== -1 && crewAdd > crew, 'the add-to-channel pills render inside the CREW section');
 });
 
 // Sliders fix (Troy's live report, 2026-10-23): every pane must drag in
@@ -191,12 +190,12 @@ test('desktop layout: agent CLI pane sits between chat and agents; channels are 
 // the nav rail must collapse/peek from the rail itself.
 test('pane sliders: every pane has a split, a collapse control and a way back', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
-  for (const name of ['channels', 'cli', 'agents', 'guard', 'bench']) {
+  for (const name of ['channels', 'guard', 'bench']) {
     assert.match(html, new RegExp(`id="ew-${name}"`), name);
     assert.match(html, new RegExp(`data-split="${name}"`), name);
     assert.match(html, new RegExp(`data-collapse="${name}"`), name);
   }
-  for (const name of ['cli', 'agents', 'guard', 'bench']) {
+  for (const name of ['guard', 'bench']) {
     assert.match(html, new RegExp(`data-toggle="${name}"`), name);
   }
   assert.match(html, /data-open="channels"/);
@@ -206,13 +205,13 @@ test('splitter drag: pointer capture with cancel handling, per-pane floors, slid
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.match(js, /setPointerCapture/);
   assert.match(js, /pointercancel/);
-  assert.match(js, /PANE_MIN = \{ channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 \}/);
+  assert.match(js, /PANE_MIN = \{ channels: 132, guard: 150, bench: 200 \}/);
   assert.match(js, /will-collapse/);
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
   assert.match(css, /\.ew\.dragging \.ew-pane \{ transition:none; flex-shrink:0; \}/);
   assert.match(css, /\.ew-pane\.will-collapse/);
   // CSS floors match the JS PANE_MIN table (a mismatch = dead drag travel).
-  for (const [pane, min] of Object.entries({ channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 })) {
+  for (const [pane, min] of Object.entries({ channels: 132, guard: 150, bench: 200 })) {
     assert.match(css, new RegExp(`\\.ew-${pane} \\{[^}]*min-width:${min}px`), pane);
   }
 });
@@ -355,12 +354,16 @@ test('drag travel: with room in the chat, a +300px drag lands the full +300 and 
 });
 
 test('drag travel: growth is taken farthest-first, so the panes next to the pointer stay put longest', () => {
-  const lay = fullRow('channels', 300); // +100: bench (farthest) yields to its floor, guard yields the rest
+  // The live row since the panes removal: channels | chat | guard | bench,
+  // chat exactly at its floor so every pixel comes from the sized panes.
+  const FLOORS3 = { channels: 132, guard: 150, bench: 200 };
+  const row3 = (name, target) => dragLayout({ widths: { channels: 200, guard: 300, bench: 280 }, floors: FLOORS3, chatFloor: 380, containerW: 1170, splitsW: 10, name, target });
+  const lay = row3('channels', 300); // +100: bench (farthest) yields to its floor, guard yields the rest
   assert.equal(lay.width, 300);
-  assert.deepEqual(lay.widths, { channels: 300, cli: 220, agents: 200, guard: 180, bench: 200 });
-  const fromRight = fullRow('bench', 480); // +200 from the right edge yields channels first
+  assert.deepEqual(lay.widths, { channels: 300, guard: 280, bench: 200 });
+  const fromRight = row3('bench', 480); // +200 from the right edge yields channels first, then guard
   assert.equal(fromRight.width, 480);
-  assert.deepEqual(fromRight.widths, { channels: 132, cli: 150, agents: 150, guard: 188, bench: 480 });
+  assert.deepEqual(fromRight.widths, { channels: 132, guard: 168, bench: 480 });
 });
 
 test('drag travel: the chat yields before any sized pane does', () => {
@@ -481,7 +484,7 @@ test('desk targets: agent and system messages dispatch nobody', () => {
   assert.deepEqual(deskTargets(sysMsg, DESK_TEAM), []);
 });
 
-test('the desk on screen: no banner, no manager mode, no seat to leave — the desk panel and hooks stay', async () => {
+test('the desk on screen: no banner, no manager mode, no seat to leave — desk hooks stay, the pane panel is gone', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
@@ -489,15 +492,18 @@ test('the desk on screen: no banner, no manager mode, no seat to leave — the d
   assert.equal(html.indexOf('id="ew-maestro-exit"'), -1, 'no Leave-the-seat button in the shell');
   assert.doesNotMatch(html, /You are Maestro — manager mode/, 'the banner copy is gone');
   assert.doesNotMatch(html, /Leave the seat/, 'the way-out-of-the-seat copy is gone');
+  // Panes removal (2026-11-08): the desk panel that rode in the Agents
+  // pane is gone with the pane; the handoff/checkpoint lists' surviving
+  // home is the shell's Evidence view (app.js, same endpoints).
   for (const id of ['ew-desk', 'ew-desk-handoffs', 'ew-desk-checkpoints', 'ew-desk-note']) {
-    assert.match(html, new RegExp(`id="${id}"`), id);
+    assert.equal(html.indexOf(`id="${id}"`), -1, `index.html no longer has #${id}`);
   }
-  const agentsPane = html.indexOf('id="ew-agents"');
-  const deskPanel = html.indexOf('id="ew-desk"');
-  assert.ok(deskPanel > agentsPane, 'the desk panel lives in the Agents pane');
-  for (const needle of ['function renderMaestroMode', 'function openDeskChannel', 'function loadDeskLists', "post('/api/admin/envoy/maestro-desk'", "'/api/admin/maestro/handoffs'", "'/api/admin/maestro/checkpoints'", 'inMaestroMode()', 'Dispatched to', '@name for one agent, no name for everyone']) {
+  assert.ok(!js.includes('function loadDeskLists') && !js.includes('function renderDeskLists'), 'envoy-workspace.js no longer renders desk lists');
+  for (const needle of ['function renderMaestroMode', 'function openDeskChannel', "post('/api/admin/envoy/maestro-desk'", 'inMaestroMode()', 'Dispatched to', '@name for one agent, no name for everyone']) {
     assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
   }
+  const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  assert.ok(appJs.includes('/api/admin/maestro/handoffs') && appJs.includes('/api/admin/maestro/checkpoints'), 'the Evidence view in app.js still reads the handoff and checkpoint lists');
   for (const gone of ['function enterMaestroSeat', 'function leaveMaestroSeat', 'ew-maestro-exit', 'ew-maestro-banner', 'maestro-mode']) {
     assert.ok(!js.includes(gone), `envoy-workspace.js no longer has ${gone}`);
   }
@@ -752,8 +758,11 @@ test('monday launch: custom agent creator, free-willy debate, github link, phone
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.match(js, /id: 'ew-left-create-agent'/, 'envoy-workspace.js renders #ew-left-create-agent in left rail');
   for (const id of [
-    'ew-create-agent-btn',
+    // 'ew-create-agent-btn' (the Agents pane's button) is gone with the
+    // pane (panes removal, 2026-11-08); the creator's homes are the
+    // channels footer button below, the rail '+' above, and #ew-crew-add.
     'ew-foot-create-agent',
+    'ew-crew-add',
     'ew-link-github',
     'ew-github-badge',
     'ew-debate-toggle',

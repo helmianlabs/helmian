@@ -866,25 +866,35 @@ h1 { font-size:22px; margin:4px 0 8px; } h2 { font-size:16px; margin:0 0 10px; }
   .icon-btn.sm { width: 32px; height: 32px; }
 }
 
-/* Themed scrollbars: thin and pill-shaped, no arrow buttons, colored
-   only from the theme tokens so every theme rides its own grey ramp.
-   Thumb = --border, the structural grey each theme already separates
-   its panes with; hover = --muted, one step up that ramp (in the light
-   theme --muted sits one step darker than --border, so hover deepens
-   there instead — same one-step move, read against a white ground).
-   The black theme is the one exception: its --border (#2A2A2A) sits
-   only ~1.4:1 on its near-black panels, too faint to find, so its
-   thumb uses --faint (inherited #64748B, ~4:1 on black) — the grey
-   that theme already uses for quiet-but-visible marks. */
-html { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+/* Themed scrollbars — visibility pass: thin and pill-shaped, no arrow
+   buttons, and DYNAMIC per theme. Each theme carries its own thumb ramp
+   (--sb-thumb / --sb-thumb-hover / --sb-thumb-active) so the bar stays
+   seeable on every surface it rides on, in every theme.
+   Why not the theme tokens: the first bite coloured the thumb from
+   --border, which measures 1.2–1.9:1 against the midnight and slate
+   panels — at 8px wide that line vanishes, worst in the dark themes
+   (the owner's near-black screenshot). These ramps are picked by
+   measured WCAG contrast against each theme's --bg / --panel /
+   --panel-2 (full table in SCROLLBAR2-REPORT.md): the dark themes
+   share one warm eggshell-grey ramp — rest is 4.4:1 or better even on
+   each theme's lightest panel — brightening on hover and again while
+   dragging; the light theme gets a solid slate-grey ramp, 4.4:1 or
+   better on its white panels and still 3:1 or better on the console
+   log's dark island (#060A14), the one dark surface light theme has.
+   Firefox reads the rest colour through scrollbar-color on the root
+   element; data-theme always holds the RESOLVED theme (System becomes
+   light or midnight in applyTheme before these rules ever paint), so
+   System is covered by the midnight and light ramps. The old black
+   theme special-case is gone — black now rides the shared dark ramp. */
+:root, html[data-theme="midnight"] { --sb-thumb:#A39C8E; --sb-thumb-hover:#C4BFB2; --sb-thumb-active:#E7E2D5; }
+[data-theme="black"] { --sb-thumb:#A39C8E; --sb-thumb-hover:#C4BFB2; --sb-thumb-active:#E7E2D5; }
+[data-theme="slate"] { --sb-thumb:#A39C8E; --sb-thumb-hover:#C4BFB2; --sb-thumb-active:#E7E2D5; }
+[data-theme="light"] { --sb-thumb:#5E7288; --sb-thumb-hover:#54687E; --sb-thumb-active:#4E6178; }
+html { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
+::-webkit-scrollbar-thumb:active { background: var(--sb-thumb-active); }
 ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 ::-webkit-scrollbar-corner { background: transparent; }
-[data-theme="black"] { scrollbar-color: var(--faint) transparent; }
-[data-theme="black"]::-webkit-scrollbar-thumb,
-[data-theme="black"] ::-webkit-scrollbar-thumb { background: var(--faint); }
-[data-theme="black"]::-webkit-scrollbar-thumb:hover,
-[data-theme="black"] ::-webkit-scrollbar-thumb:hover { background: var(--muted); }

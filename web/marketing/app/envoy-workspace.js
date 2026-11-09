@@ -1,8 +1,7 @@
-// Envoy workspace for the Desktop view: channels | chat | agent CLI | agents | workbench.
+// Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
-import { addSession, sessionsFromServer } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, fileRefusalReason, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { clearConversationToggles, connectorsForTurn, level1Model, level2Model, providerForSeat, seatName, toggleConnector } from './connector-panel.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel } from './slash-menu.mjs';
@@ -357,15 +356,14 @@ function activityRow(provider, event, customAgents = [], now = Date.now()) {
 }
 
 // The rendered-activity signature: provider + stage + elapsed second
-// per visible cue, for the open channel and the open room. When it
+// per visible cue, for the open channel. When it
 // changes — a stage moved, a cue appeared or cleared, or a live clock
-// ticked into a new second — the two message views re-render; when it
+// ticked into a new second — the message view re-renders; when it
 // doesn't, polls leave the DOM alone.
 let activityViewSig = '';
 function activityViewSignature(now = Date.now()) {
   const parts = [];
   for (const c of activityCues(ws.activity, ws.channelId, ws.config?.customAgents, now)) parts.push(`ch:${c.provider}:${c.event.stage}:${activityElapsed(c.event, now)}`);
-  if (ws.cli.roomId) for (const c of activityCues(ws.activity, ws.cli.roomId, ws.config?.customAgents, now)) parts.push(`rm:${c.provider}:${c.event.stage}:${activityElapsed(c.event, now)}`);
   return parts.join(',');
 }
 function syncActivityViews() {
@@ -373,7 +371,6 @@ function syncActivityViews() {
   if (sig === activityViewSig) return;
   activityViewSig = sig;
   renderMessages();
-  renderCliThread();
   syncCrewMotion();
 }
 
@@ -594,7 +591,7 @@ function msgOwnerAvatar() {
   return h('div', { class: 'ew-avatar' }, crewOwnerFaceImg());
 }
 
-function renderFaceViews() { renderAgents(); renderMessages(); renderCliChips(); renderCliSessions(); renderCliThread(); }
+function renderFaceViews() { renderAgents(); renderMessages(); }
 
 async function loadFaces() {
   try {
@@ -734,7 +731,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, agentsPinned: ls.get('agentsPinned', {}), linkPoll: null, cli: { provider: 'claude', pending: null, sessions: [], server: false, activeId: ls.get('cliSession', null), threadSig: null, roomId: null, roomFor: null, roomMessages: [], roomSig: null, roomJoined: {}, roomPromise: null }, attach: { channel: [], cli: [] }, webSearch: { channel: false, cli: false }, pickerFor: null, pickerFacts: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null }, connectorToggles: {}, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null }, desk: { handoffs: null, checkpoints: null, denied: false, promise: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, pickerFacts: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null }, connectorToggles: {}, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -825,7 +822,7 @@ function setPane(name, open, { user = false } = {}) {
     if (name === 'channels') $('ew').classList.toggle('no-channels', !open);
     const split = document.querySelector(`.ew-split[data-split="${name}"]`);
     if (split) split.classList.toggle('hidden', !open);
-    if (user && name !== 'agents') ls.set(`open.${name}`, open);
+    if (user) ls.set(`open.${name}`, open);
   }
   for (const b of document.querySelectorAll(`[data-toggle="${name}"]`)) { b.setAttribute('aria-pressed', String(open)); if (b.classList.contains('ew-mnav-btn')) b.classList.toggle('on', open); }
   if (narrow()) { const mc = $('ew-mnav-chat'); if (mc) mc.classList.toggle('on', !document.querySelector('.ew-pane.sheet-open')); }
@@ -846,32 +843,23 @@ function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.she
 function applyLayout() {
   const root = document.documentElement;
   for (const [k, v] of Object.entries(ls.get('widths', {}))) if (v > 120 && v < 1400) root.style.setProperty(`--ew-${k}`, `${v}px`);
-  if (narrow()) { for (const p of ['channels', 'cli', 'agents', 'guard', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
+  applyHeights();
+  if (narrow()) { for (const p of ['channels', 'guard', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
   setPane('channels', ls.get('open.channels', true));
-  setPane('cli', ls.get('open.cli', true));
   setPane('guard', ls.get('open.guard', true));
   setPane('bench', ls.get('open.bench', window.innerWidth >= 1680));
-  syncAgentsPane();
 }
-function syncAgentsPane() {
-  if (narrow()) return;
-  const count = ws.config?.agents?.length ?? 0;
-  const pinned = ws.agentsPinned[ws.channelId];
-  // Agents pane opens in agent chats and folds away elsewhere, unless the user chose.
-  setPane('agents', pinned === undefined ? false : pinned);
-}
-
 // Splitter floors per pane. The CSS min-widths in envoy.css match these
 // exactly — when the two disagreed (JS clamped at 180, CSS floored the
 // workbench at 320) the drag had dead travel in both directions. Releasing
 // a drag below SNAP collapses the pane instead of parking it at the floor;
 // the pre-drag width stays in the var, so reopening restores it.
-const PANE_MIN = { channels: 132, cli: 150, agents: 150, guard: 150, bench: 200 };
+const PANE_MIN = { channels: 132, guard: 150, bench: 200 };
 const PANE_MAX = 900;
 const SNAP = 76;
-// Sized panes in DOM order (the chat sits between channels and cli but is
+// Sized panes in DOM order (the chat sits between channels and guard but is
 // not sized — it is the flexible pane every drag trades space with).
-const PANE_ORDER = ['channels', 'cli', 'agents', 'guard', 'bench'];
+const PANE_ORDER = ['channels', 'guard', 'bench'];
 
 // Pure drag geometry, exported for tests. A drag must move the pane edge
 // 1:1 with the pointer, so the dragged pane's growth is bounded by what
@@ -996,7 +984,6 @@ function wireSplitters() {
           // neighbour that yielded during the drag gets its width back.
           restore(snap, name);
           setVar(name, startW);
-          if (name === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); }
           setPane(name, false, { user: true });
           return;
         }
@@ -1018,7 +1005,6 @@ function wireSplitters() {
       // End/Enter resets to the default width, like the dblclick reset.
       if (e.key === 'Home') {
         e.preventDefault();
-        if (name === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); }
         setPane(name, false, { user: true });
         return;
       }
@@ -1039,9 +1025,154 @@ function wireSplitters() {
   }
 }
 
+// ---------- shelves: resizable sections inside a pane ----------
+// The width splitters above trade a whole pane against the chat; these
+// trade the SECTIONS stacked inside one pane against each other (Troy,
+// 2026-11-08: the channels column scrunches — as the crew grows it
+// squeezes the channel list, and a pile of Guard approvals pushes the
+// feed away). Two shelves exist: the CREW section in the channels pane
+// (separator on both its edges — the channel list above it is the
+// flexible sibling) and the APPROVALS section in the Guard pane
+// (separator on its bottom edge — the findings feed below it is the
+// flexible sibling). The footer's link block is fixed-height content;
+// the crew shelf's bottom separator resizes the crew from that edge.
+// A shelf's height is a user var (--ew-crew-h / --ew-appr-h) applied
+// only while the pane carries its *-sized class; stored heights live in
+// ls 'heights', the shelf sibling of the width splitters' 'widths'.
+const SHELF_MIN = { crew: 112, approvals: 104 };
+// The room the flexible sibling always keeps, whatever the drag asks.
+const SHELF_FLEX_MIN = 120;
+const SHELF_DEFS = {
+  crew: { pane: () => $('ew-channels'), section: () => $('ew-crew'), flex: () => $('ew-channel-list'), cls: 'crew-sized', varName: '--ew-crew-h' },
+  approvals: { pane: () => $('ew-guard'), section: () => document.querySelector('#ew-guard .ew-approvals'), flex: () => $('guard-findings'), cls: 'appr-sized', varName: '--ew-appr-h' },
+};
+
+// Pure shelf geometry, exported for tests. A shelf drag moves the
+// section's boundary edge 1:1 with the pointer: at the 'top' edge the
+// section shrinks as the pointer moves down, at the 'bottom' edge it
+// grows. The result clamps to [min, max]; the floor wins when the pane
+// is too short for both (max < min), so a shelf can never be dragged
+// out of existence.
+export function shelfDrag({ startH, dy, edge, min, max }) {
+  const raw = edge === 'top' ? startH - dy : startH + dy;
+  return Math.max(min, Math.min(max, raw));
+}
+
+// The tallest a shelf may grow inside its pane: the pane's height minus
+// everything that is neither the shelf nor its flexible sibling
+// (fixedH), minus the room the sibling keeps. Never below the floor.
+export function shelfCeiling({ paneH, fixedH, flexMin, min }) {
+  return Math.max(min, paneH - fixedH - flexMin);
+}
+
+// Live ceiling for one shelf: the fixed share is measured now (pane
+// height minus the shelf's and the sibling's rendered heights), so it
+// stays right as the content above and below changes height. A pane
+// with no height (a hidden view) has no ceiling.
+function shelfCeilingNow(key) {
+  const def = SHELF_DEFS[key];
+  const pane = def.pane(); const section = def.section(); const flex = def.flex();
+  if (!pane || !section || !flex) return Infinity;
+  const paneH = pane.clientHeight;
+  if (!paneH) return Infinity;
+  const fixedH = paneH - section.getBoundingClientRect().height - flex.getBoundingClientRect().height;
+  return shelfCeiling({ paneH, fixedH, flexMin: SHELF_FLEX_MIN, min: SHELF_MIN[key] });
+}
+
+// Stored shelf heights back onto the panes (applyLayout's shelf half,
+// the exact sibling of its widths loop). Narrow keeps the stacked
+// layout untouched: the vars come off and the sections size naturally.
+// On a window shorter than the one a height was stored on, the applied
+// var clamps to the live ceiling so the flexible sibling is never
+// stranded — storage keeps the user's number for a taller window.
+function applyHeights() {
+  const root = document.documentElement;
+  const heights = ls.get('heights', {});
+  for (const [key, def] of Object.entries(SHELF_DEFS)) {
+    const pane = def.pane(); if (!pane) continue;
+    const v = heights[key];
+    if (narrow() || !(v >= SHELF_MIN[key] && v <= 2400)) { root.style.removeProperty(def.varName); pane.classList.remove(def.cls); continue; }
+    const ceiling = shelfCeilingNow(key);
+    root.style.setProperty(def.varName, `${Math.round(Math.min(v, ceiling))}px`);
+    pane.classList.add(def.cls);
+  }
+}
+
+function wireShelves() {
+  const ew = $('ew'); if (!ew) return;
+  wireShelfSplitter(ew, { key: 'crew', edge: 'top', label: 'Resize crew section', before: () => $('ew-crew') });
+  wireShelfSplitter(ew, { key: 'crew', edge: 'bottom', label: 'Resize crew section', before: () => document.querySelector('#ew-channels .ew-foot') });
+  wireShelfSplitter(ew, { key: 'approvals', edge: 'bottom', label: 'Resize approvals section', before: () => document.querySelector('#ew-guard > .ew-subhead') });
+}
+
+function wireShelfSplitter(ew, { key, edge, label, before }) {
+  const def = SHELF_DEFS[key];
+  const pane = def.pane(); const section = def.section(); const anchor = before();
+  if (!pane || !section || !anchor) return;
+  // The separators are built here rather than written into index.html:
+  // the sections they divide are static shells whose contents other
+  // code renders into, and a built separator can never drift out of
+  // the markup the way a hand-placed one could.
+  const split = h('div', { class: 'ew-hsplit', role: 'separator', 'aria-orientation': 'horizontal', 'aria-label': label, tabindex: '0', 'data-shelf': `${key}-${edge}` });
+  anchor.before(split);
+  const setH = (px) => {
+    document.documentElement.style.setProperty(def.varName, `${Math.round(px)}px`);
+    pane.classList.add(def.cls);
+    for (const s of document.querySelectorAll(`[data-shelf^="${key}-"]`)) s.setAttribute('aria-valuenow', String(Math.round(px)));
+  };
+  const clearH = () => {
+    document.documentElement.style.removeProperty(def.varName);
+    pane.classList.remove(def.cls);
+    const now = String(Math.round(section.getBoundingClientRect().height));
+    for (const s of document.querySelectorAll(`[data-shelf^="${key}-"]`)) s.setAttribute('aria-valuenow', now);
+  };
+  const persist = (px) => { const heights = ls.get('heights', {}); heights[key] = Math.round(px); ls.set('heights', heights); };
+  const reset = () => { const heights = ls.get('heights', {}); delete heights[key]; ls.set('heights', heights); clearH(); };
+  const ceiling = () => { const max = shelfCeilingNow(key); split.setAttribute('aria-valuemax', String(Math.round(Math.min(max, 2400)))); return max; };
+  split.setAttribute('aria-valuemin', String(SHELF_MIN[key]));
+  split.setAttribute('aria-valuenow', String(Math.round(section.getBoundingClientRect().height)));
+  split.addEventListener('pointerdown', (e) => {
+    if (narrow()) return;
+    e.preventDefault(); split.setPointerCapture(e.pointerId);
+    const startY = e.clientY; const startH = section.getBoundingClientRect().height;
+    const max = ceiling();
+    const prior = ls.get('heights', {})[key];
+    split.classList.add('dragging'); ew.classList.add('shelf-dragging');
+    let current = startH; let done = false;
+    const move = (ev) => { current = shelfDrag({ startH, dy: ev.clientY - startY, edge, min: SHELF_MIN[key], max }); setH(current); };
+    const finish = (commit) => {
+      if (done) return; done = true;
+      split.classList.remove('dragging'); ew.classList.remove('shelf-dragging');
+      split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); split.removeEventListener('pointercancel', cancel);
+      if (commit) persist(current);
+      else if (prior === undefined) clearH();
+      else setH(prior);
+    };
+    const up = () => finish(true);
+    const cancel = () => finish(false);
+    split.addEventListener('pointermove', move); split.addEventListener('pointerup', up); split.addEventListener('pointercancel', cancel);
+  });
+  split.addEventListener('dblclick', reset);
+  split.addEventListener('keydown', (e) => {
+    // Keyboard parity with the pointer, mirroring the width splitters:
+    // arrows move the boundary edge 24px the way the arrow points,
+    // Enter/End reset to the natural height like the dblclick reset,
+    // Home parks the shelf at its floor (a shelf has no collapse —
+    // the floor is its smallest honest state).
+    if (e.key === 'Enter' || e.key === 'End') { e.preventDefault(); reset(); return; }
+    if (narrow()) return;
+    if (e.key === 'Home') { e.preventDefault(); setH(SHELF_MIN[key]); persist(SHELF_MIN[key]); return; }
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const startH = section.getBoundingClientRect().height;
+    const next = shelfDrag({ startH, dy: e.key === 'ArrowDown' ? 24 : -24, edge, min: SHELF_MIN[key], max: ceiling() });
+    setH(next); persist(next);
+  });
+}
+
 // ---------- channels ----------
 // Per-channel link flags for the channel list: the channels API now
-// carries each channel's Discord / Slack link itself (server truth from
+// carries each channel's Discord / Slack / GitHub link itself (server truth from
 // the channel's config row — the same rows the bridges read), so the
 // flags are right for every channel from this one read, including a
 // room this browser has never opened. The chanMeta cache only fills
@@ -1053,6 +1184,7 @@ export function applyChannelLinks(channels, meta = {}) {
     if (cached) c._agents = cached.a;
     c._discord = 'discord' in c ? Boolean(c.discord) : Boolean(cached?.d);
     c._slack = 'slack' in c ? Boolean(c.slack) : Boolean(cached?.s);
+    c._github = 'github' in c ? Boolean(c.github?.repo) : Boolean(cached?.g);
   }
   return channels;
 }
@@ -1096,6 +1228,8 @@ function openNewChannel() {
 // _discord flag); the open channel's config load still refreshes its
 // own flag and the chanMeta cache.
 export const linkedChannels = (channels = ws.channels) => channels.filter((c) => c._discord);
+const slackLinkedChannels = (channels = ws.channels) => channels.filter((c) => c._slack);
+const githubLinkedChannels = (channels = ws.channels) => channels.filter((c) => c._github);
 const modeChannels = () => (ws.mode === 'discord' ? linkedChannels() : ws.channels);
 function renderNetSwitch() {
   const envoy = $('ew-net-envoy'); const discord = $('ew-net-discord'); if (!envoy || !discord) return;
@@ -1301,7 +1435,6 @@ async function selectChannel(id) {
   $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Loading…'));
   if (narrow()) closeSheets();
   await Promise.allSettled([loadConfig(), loadMessages()]);
-  if (inMaestroMode()) loadDeskLists();
   $('maestro-input').focus({ preventScroll: true });
 }
 
@@ -1335,6 +1468,69 @@ export function githubLinkHeader({ github = null, admin = false } = {}) {
     statusText: repo ? `linked to ${repo}` : 'ready to link',
   };
 }
+// The channels-column footer's Discord line is a WORKSPACE summary —
+// it sits in the .ew-foot source list ("Helmian Envoy / Discord: … /
+// Slack: … / GitHub: …") — so it derives from the per-channel link
+// data the channels API carries (applyChannelLinks → _discord, the
+// same read linkedChannels() and the Discord rail consume), never
+// from the open channel's config alone: a workspace's Discord pair
+// can live on any channel, and reading only the open channel's
+// config printed "ready to link" in the footer while another room
+// in the workspace was linked. The open channel's loaded config is
+// passed only as a NAME hint for that channel's own link (the
+// netStripText fallback pattern), never as the existence test.
+// Pure; unit tested.
+export function discordFooterStatus({ channels = [], bot = null, openChannelId = null, openLink = null } = {}) {
+  if (!bot?.configured) return 'bot not set up yet';
+  const linked = linkedChannels(channels);
+  if (!linked.length) return 'ready to link';
+  const first = linked[0];
+  const link = first.discord ?? (openLink && first.id === openChannelId ? openLink : null);
+  const name = link?.channelName || link?.channelId || first.title || first.slug || 'channel';
+  return linked.length === 1 ? `linked to #${name}` : `linked to #${name} + ${linked.length - 1} more`;
+}
+// The footer's Slack line is the same workspace summary as the
+// Discord line above (footer truth, part 2): Slack links are
+// per-channel pairs too, so the line derives from the per-channel
+// Slack data the channels API carries (applyChannelLinks → _slack,
+// each channel's link object riding the same list) — never from the
+// open channel's config alone, which printed "ready to link" for a
+// linked workspace whenever the open room was not the one holding
+// the pair. The open channel's loaded config is passed only as a
+// NAME hint for that channel's own link (the discordFooterStatus
+// pattern), never as the existence test. Wording mirrors
+// mirrorLinkHeader's statusText exactly. Pure; unit tested.
+export function slackFooterStatus({ channels = [], bot = null, openChannelId = null, openLink = null } = {}) {
+  if (!bot?.configured) return 'bot not set up yet';
+  const linked = slackLinkedChannels(channels);
+  if (!linked.length) return 'ready to link';
+  const first = linked[0];
+  const link = first.slack ?? (openLink && first.id === openChannelId ? openLink : null);
+  const name = link?.channelName || link?.channelId || first.title || first.slug || 'channel';
+  return linked.length === 1 ? `linked to #${name}` : `linked to #${name} + ${linked.length - 1} more`;
+}
+// The footer's GitHub line, same workspace law again: GitHub links
+// are per-channel pairs (each channel's config carries at most one
+// repo — the rail's GITHUB section reads that config), and the
+// channels API already returns every channel's GitHub link next to
+// its Discord / Slack links (server-side attachChannelLinks builds
+// all three from the same per-channel config rows the rail and the
+// bridges read), so this derives from the list exactly like the two
+// lines above — no second state source, no new endpoint. The open
+// channel's loaded config is only a name hint for its own link.
+// Wording mirrors githubLinkHeader's statusText; when a link is
+// known only by its flag (the chanMeta cache standing in for an
+// older server that did not send the field) the line stays truthful
+// but coarse — "linked to GitHub" — the same coarseness the Discord
+// line accepts with its title fallback. Pure; unit tested.
+export function githubFooterStatus({ channels = [], openChannelId = null, openLink = null } = {}) {
+  const linked = githubLinkedChannels(channels);
+  if (!linked.length) return 'ready to link';
+  const first = linked[0];
+  const link = first.github ?? (openLink && first.id === openChannelId ? openLink : null);
+  const repo = link?.repo || 'GitHub';
+  return linked.length === 1 ? `linked to ${repo}` : `linked to ${repo} + ${linked.length - 1} more`;
+}
 export function debateHeaderState({ debateMode = 'off', maxRoundTurns = 10 } = {}) {
   const active = debateMode === 'free-willy';
   return {
@@ -1362,8 +1558,8 @@ async function loadConfig() {
     if (!ws.config) { ws.config = { agents: [], discord: null, slack: null }; ws.configured = false; }
   }
   const ch = ws.channels.find((c) => c.id === id);
-  if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); if ('avatar' in (ws.config ?? {})) ch.avatar = ws.config.avatar; const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack }; ls.set('chanMeta', seen); }
-  renderHeader(); renderAgents(); renderChannels(); syncAgentsPane();
+  if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); ch._github = Boolean(ws.config.github?.repo); if ('avatar' in (ws.config ?? {})) ch.avatar = ws.config.avatar; const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack, g: ch._github }; ls.set('chanMeta', seen); }
+  renderHeader(); renderAgents(); renderChannels();
 }
 function renderHeader() {
   const ch = ws.channels.find((c) => c.id === ws.channelId);
@@ -1389,7 +1585,7 @@ function renderHeader() {
   const gh = githubLinkHeader({ github: ws.config?.github, admin });
   if (ghBadge) { ghBadge.hidden = gh.badgeHidden; ghBadge.textContent = gh.badgeText; }
   const ghStatus = $('ew-github-status-text');
-  if (ghStatus) ghStatus.textContent = gh.statusText;
+  if (ghStatus) ghStatus.textContent = githubFooterStatus({ channels: ws.channels, openChannelId: ws.channelId, openLink: ws.config?.github });
   const deb = debateHeaderState({ debateMode: ws.config?.debateMode, maxRoundTurns: ws.config?.maxRoundTurns });
   const debBadge = $('ew-debate-badge');
   const debBtn = $('ew-debate-toggle');
@@ -1398,52 +1594,23 @@ function renderHeader() {
   if (debBtn) { const l = debBtn.querySelector('.lbl'); if (l) l.textContent = deb.buttonLabel; debBtn.setAttribute('aria-pressed', String(deb.active)); }
   if (debStop) debStop.hidden = deb.stopHidden;
   const agentCount = $('ew-agent-count'); if (agentCount) agentCount.textContent = String((ws.config?.agents?.length ?? 0));
-  $('ew-discord-status-text').textContent = dh.statusText;
-  $('ew-slack-status-text').textContent = sh.statusText;
+  $('ew-discord-status-text').textContent = discordFooterStatus({ channels: ws.channels, bot: ws.discordBot, openChannelId: ws.channelId, openLink: d });
+  $('ew-slack-status-text').textContent = slackFooterStatus({ channels: ws.channels, bot: ws.slackBot, openChannelId: ws.channelId, openLink: s });
   renderNetStrip();
   renderMaestroMode();
 }
 // The desk's on-screen state (fun pass F4): the desk channel wears
 // no costume — no banner over the thread, no mode styling on the
-// pane, no seat to leave. What this still owns is the desk panel in
-// the Agents pane (handoffs and checkpoints, shown only while the
-// desk is open) and the one plain composer hint that says how a desk
-// send is addressed. Everything else about the open desk is ordinary
-// channel furniture, rendered by the ordinary paths.
+// pane, no seat to leave. What this still owns is the one plain
+// composer hint that says how a desk send is addressed. (The desk's
+// handoff and checkpoint lists live in the shell's Evidence view —
+// the Agents pane that used to carry a second copy is gone.)
+// Everything else about the open desk is ordinary channel
+// furniture, rendered by the ordinary paths.
 function renderMaestroMode() {
   const on = inMaestroMode();
-  const panel = $('ew-desk'); if (panel) panel.hidden = !on;
   const hint = $('ew-composer-hint');
   if (hint) hint.textContent = on ? '@name for one agent, no name for everyone' : 'Enter to send · Shift+Enter for a new line';
-}
-// The desk surface: the manager's existing handoff and checkpoint lists
-// (the Session console's Evidence endpoints), shown beside the thread
-// while the seat is occupied. Failures stay honest: owner/admin-only
-// lists say so instead of pretending to be empty.
-function renderDeskLists() {
-  const hBox = $('ew-desk-handoffs'); const cBox = $('ew-desk-checkpoints'); const note = $('ew-desk-note');
-  if (!hBox || !cBox || !note) return;
-  const item = (title, sub) => h('div', { class: 'ew-desk-item' }, h('strong', {}, title), sub ? h('span', { class: 'meta' }, sub) : null);
-  if (ws.desk.denied) {
-    note.textContent = 'Handoffs and checkpoints are visible to owners and admins.';
-    hBox.replaceChildren(); cBox.replaceChildren();
-    return;
-  }
-  note.textContent = '';
-  hBox.replaceChildren(...(ws.desk.handoffs === null ? [h('p', { class: 'ew-note' }, 'Loading…')]
-    : ws.desk.handoffs.length ? ws.desk.handoffs.map((x) => item(String(x.title ?? x.id ?? 'Handoff'), [x.state, x.owner].filter(Boolean).join(' · ')))
-    : [h('p', { class: 'ew-note' }, 'No handoffs recorded.')]));
-  cBox.replaceChildren(...(ws.desk.checkpoints === null ? [h('p', { class: 'ew-note' }, 'Loading…')]
-    : ws.desk.checkpoints.length ? ws.desk.checkpoints.map((x) => item(String(x.title ?? x.id ?? 'Checkpoint'), [x.state, x.agent].filter(Boolean).join(' · ')))
-    : [h('p', { class: 'ew-note' }, 'No checkpoints recorded.')]));
-}
-async function loadDeskLists() {
-  if (!inMaestroMode()) return;
-  const [hRes, cRes] = await Promise.allSettled([ws.ctx.api('/api/admin/maestro/handoffs'), ws.ctx.api('/api/admin/maestro/checkpoints')]);
-  ws.desk.denied = (hRes.status === 'rejected' && hRes.reason?.status === 403) || (cRes.status === 'rejected' && cRes.reason?.status === 403);
-  if (hRes.status === 'fulfilled') ws.desk.handoffs = Array.isArray(hRes.value?.handoffs) ? hRes.value.handoffs : [];
-  if (cRes.status === 'fulfilled') ws.desk.checkpoints = Array.isArray(cRes.value?.checkpoints) ? cRes.value.checkpoints : [];
-  renderDeskLists();
 }
 // ---------- CREW rail (UI polish bite 1) ----------
 // The sidebar presence rail that replaces the composer's pill strip
@@ -1604,7 +1771,7 @@ function renderCrew(roster, customList, states, desk) {
   const ownerRow = crewRow({ key: 'all', name: 'Whole crew', faceImg: crewOwnerFaceClip(null), status: { kind: 'live', line: desk ? 'Everyone on the desk' : 'Everyone in this channel' }, motionStage: null, title: desk ? 'Dispatch to everyone on the desk' : 'Target the whole crew — clears a single-seat target' });
   const activeKey = document.activeElement?.classList?.contains('ew-crew-row') ? document.activeElement.getAttribute('data-provider') : null;
   list.replaceChildren(ownerRow, ...entries.map((e) => e.make()),
-    ...(total ? [] : [h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one from the Agents panel.' : 'No agents in this channel yet. Add one from the Agents panel.')]));
+    ...(total ? [] : [h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one from the row below.' : 'No agents in this channel yet. Add one from the row below.')]));
   if (activeKey) for (const row of list.querySelectorAll('.ew-crew-row')) if (row.getAttribute('data-provider') === activeKey) { row.focus({ preventScroll: true }); break; }
 }
 
@@ -1614,14 +1781,13 @@ function renderAgents() {
   const customList = ws.config?.customAgents ?? [];
   const roster = deskRoster(raw);
   const states = agentStates(ws.messages, roster, ws.online, Date.now(), desk ? deskTargets : addressed);
-  const totalCount = roster.length + customList.length;
-  $('ew-agents-summary').textContent = desk
-    ? (totalCount ? `${totalCount} on the desk` : 'the desk is empty')
-    : (totalCount ? `${totalCount} in this channel` : 'none in this channel');
   // The CREW rail (sidebar) is the seat surface now — the Agents
-  // pane's cards and the composer's pill strip are gone (bite 1).
+  // pane's cards and the composer's pill strip are gone (bite 1),
+  // and the pane itself is gone (panes removal, 2026-11-08): the
+  // member count rides the CREW title, and the add-pills live
+  // under the crew list in the same rail (#ew-crew-add).
   renderCrew(roster, customList, states, desk);
-  $('ew-agent-add').replaceChildren(
+  $('ew-crew-add').replaceChildren(
     ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)),
     h('button', { type: 'button', class: 'ew-pill create-custom', title: 'Create a custom agent with emoji, name, job & AI provider', onclick: openCreateAgentModal }, '✨ + Custom Agent')
   );
@@ -1630,7 +1796,6 @@ async function changeAgent(action, provider) {
   try {
     const body = await ws.ctx.post('/api/admin/envoy/channel-config', { action, channelId: ws.channelId, provider });
     ws.config = body.config; ws.configured = true;
-    if (action === 'add-agent') { delete ws.agentsPinned[ws.channelId]; ls.set('agentsPinned', ws.agentsPinned); }
     await loadConfig(); await loadMessages();
   } catch (e) { ws.ctx.toast(e?.body?.code === 'ENVOY_ROLE_FORBIDDEN' ? 'Auditors cannot change agents.' : 'Could not change agents. Try again.'); }
 }
@@ -1643,7 +1808,7 @@ function insertMention(name) {
 }
 
 // ---------- composer "+" picker: agents, connectors, plugins, upload, web search ----------
-// One picker for both composers (channel + agent chat); the pure model in
+// The channel composer's one picker; the pure model in
 // composer-picker.mjs decides what can be attached and how it travels.
 // The model is AGENTS FIRST: the registry facts load once, and each
 // render builds the model for the agent that composer is talking to
@@ -1651,12 +1816,11 @@ function insertMention(name) {
 // (the desk, an unaddressed channel), where no group leads.
 const PICKER_IDS = {
   channel: { panel: 'ew-picker', chips: 'ew-attach-chips' },
-  cli: { panel: 'ew-cli-picker', chips: 'ew-cli-attach-chips' },
 };
 
 // Which agent a composer is talking to, in workspace agent keys — or
-// null for the shared picker. Pure, so it is unit tested: the Agent Chat
-// pane talks to its picked agent ('maestro' is the human's own seat, so
+// null for the shared picker. Pure, so it is unit tested: a 'cli'
+// caller talks to its picked agent ('maestro' is the human's own seat, so
 // it gets the shared model); a private room talks to the room's agent; a
 // channel talks to the agent its draft addresses (@name), and the desk —
 // where Maestro dispatches to everyone — always keeps the shared model.
@@ -1685,9 +1849,8 @@ async function loadPickerData() {
 function currentPickerModel(which) {
   const agent = pickerAgentContext({
     which,
-    cliProvider: ws.cli.provider,
     channel: openChannel(),
-    draft: $(which === 'cli' ? 'ew-cli-input' : 'maestro-input')?.value ?? '',
+    draft: $('maestro-input')?.value ?? '',
   });
   return pickerModel({ ...ws.pickerFacts, agent });
 }
@@ -1726,8 +1889,6 @@ async function togglePicker(which) {
   ws.pickerFor = which;
   // The library always opens on Level 1 (pick the seat, SPEC §1.1).
   ws.libraryPanel = { level: 1, seatId: null };
-  const other = which === 'channel' ? 'cli' : 'channel';
-  const op = $(PICKER_IDS[other].panel); if (op) op.hidden = true;
   await renderPicker(which);
 }
 // ---------- composer "+" library: per-seat connector libraries (SPEC §1.1 Surface A, bite 3) ----------
@@ -1742,12 +1903,10 @@ async function togglePicker(which) {
 // or another conversation's (SPEC §1.6/§3.4). Closing the panel never
 // touches the composer text; nothing in this section writes to the
 // draft boxes.
-// The conversation a composer's toggles belong to: the open channel,
-// or the picked agent's private room for the agent-chat composer (the
-// room is per agent, resolved from the same cliTarget() the send
-// uses, so panel and send always name the same conversation).
+// The conversation a composer's toggles belong to: the open channel
+// (panel and send always name the same conversation).
 function conversationIdFor(which) {
-  return which === 'cli' ? `cli:${cliTarget().key}` : `channel:${ws.channelId ?? 'none'}`;
+  return `channel:${ws.channelId ?? 'none'}`;
 }
 async function loadLibraryFacts() {
   if (ws.libraryFacts) return ws.libraryFacts;
@@ -1952,7 +2111,7 @@ async function renderPicker(which) {
 }
 
 // ---------- composer "/" menu: the workspace's slash commands ----------
-// One menu for both composers (channel + agent chat); the pure model in
+// The channel composer's slash menu; the pure model in
 // slash-menu.mjs decides when it opens and what it lists. The list is the
 // served workspace's real command registry (GET /api/admin/commands) —
 // the same set the bridge will expand — fetched lazily on the first "/"
@@ -1960,7 +2119,6 @@ async function renderPicker(which) {
 // the input; sending is always the human's own Enter.
 const SLASH_IDS = {
   channel: { input: 'maestro-input', menu: 'ew-slash-menu' },
-  cli: { input: 'ew-cli-input', menu: 'ew-cli-slash-menu' },
 };
 const SLASH_ORIGIN_LABEL = { workspace: 'workspace', personal: 'personal', plugin: 'plugin' };
 async function loadSlashCommands() {
@@ -2014,7 +2172,7 @@ function pickSlashCommand(which, name) {
   closeSlashMenu();
   box.focus();
   box.setSelectionRange(box.value.length, box.value.length);
-  (which === 'channel' ? grow : growCli)();
+  grow();
 }
 // True when the key belonged to the open menu (and has been handled, so
 // the composer's own Enter-to-send must not also fire). Registered
@@ -2062,19 +2220,19 @@ function readFileAsBase64(file) {
 
 // ---------- messages ----------
 async function loadMessages() {
-  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); renderCliThread(); return; }
+  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); return; }
   const body = await ws.ctx.api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(id)}&limit=100`);
   if (id !== ws.channelId) return;
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const sig = messages.map((m) => m.id).join(',');
   if (sig === ws.sig) {
-    renderAgents(); renderCliThread();
+    renderAgents();
     loadReactions(); // throttled — a reaction lands without any message change
     return;
   }
   ws.sig = sig; ws.messages = messages;
   speakNewMessages(id, messages);
-  renderMessages(); renderAgents(); renderCliThread();
+  renderMessages(); renderAgents();
   loadReactions({ force: true });
 }
 // ---------- spoken replies (voice bite 2d) ----------
@@ -2100,8 +2258,11 @@ function speakNewMessages(streamId, messages) {
   for (const m of messages ?? []) {
     if (!m?.id || m._pending || spokenIds.has(m.id)) continue;
     spokenIds.add(m.id);
-    if (m.authorKind === 'system' || whoOf(m).kind === 'me') continue;
-    ws.ctx.voiceSpeak(m.body);
+    const who = whoOf(m);
+    if (m.authorKind === 'system' || who.kind === 'me') continue;
+    // The seat key rides along so the controller can speak in that
+    // seat's own Kokoro voice (per-seat voice map in the controller).
+    ws.ctx.voiceSpeak(m.body, who.provider ?? null);
   }
 }
 function whoOf(m) {
@@ -2387,225 +2548,6 @@ async function send(e) {
 }
 
 // ---------- agent chat pane: sessions + prompt composer ----------
-// The agent chat pane: the human's conversation with one picked agent,
-// shown on its own inside the pane. Sessions reuse the Session console's plumbing
-// (/api/admin/app/sessions — the same create/list payloads as app.js's
-// #session-form, with the same local fallback); prompts post through the
-// same envoy messages endpoint the console composer uses, into the picked
-// agent's private room (see the rooms block below) — the room seats
-// exactly that agent, so no @mention routing is needed there.
-// Maestro has no chip and no room here: Maestro is the human's manager
-// seat (the channel list), never a chat agent (Bite 2).
-const CLI_KEY_BY_PROVIDER = { Claude: 'claude', ChatGPT: 'openai', Grok: 'grok', Gemini: 'gemini' };
-function cliTarget() {
-  const s = ws.cli.sessions.find((x) => x.id === ws.cli.activeId);
-  if (s) return { key: CLI_KEY_BY_PROVIDER[s.provider] ?? 'claude', session: s };
-  return { key: ws.cli.provider, session: null };
-}
-function renderCliChips() {
-  const active = cliTarget().key;
-  $('ew-cli-chips').replaceChildren(...AGENTS.filter((p) => p !== 'maestro').map((p) => h('button', { type: 'button', class: `ew-pill${p === active ? ' on' : ''}`, title: `Show your conversation with ${NAMES[p]}`, onclick: () => pickCliProvider(p) }, seatFaceImg(p), NAMES[p])));
-}
-function renderCliTo() {
-  const { key, session } = cliTarget();
-  $('ew-cli-to').textContent = session ? `${session.provider} · your private room with ${NAMES[key]}` : `${NAMES[key]} · your private room`;
-  $('ew-cli-input').placeholder = `Prompt ${NAMES[key]}...`;
-}
-function renderCliSessions() {
-  const box = $('ew-cli-sessions');
-  if (!ws.cli.sessions.length) { box.replaceChildren(h('p', { class: 'ew-note' }, 'No sessions yet. Pick an agent above to start one.')); return; }
-  box.replaceChildren(...ws.cli.sessions.map((s) => {
-    const key = CLI_KEY_BY_PROVIDER[s.provider] ?? 'claude';
-    const prog = s.progress && s.progress.total ? `${s.progress.done}/${s.progress.total} steps${s.progress.current ? ` · now: ${s.progress.current}` : ''}` : clock(s.createdAt);
-    return h('button', { type: 'button', class: `ew-cli-session${s.id === ws.cli.activeId ? ' active' : ''}`, title: `${s.name} (${s.provider})`, onclick: () => selectCliSession(s.id) },
-      seatFaceImg(key), h('strong', {}, s.name), h('span', { class: 'meta' }, `${s.provider} · ${prog}`));
-  }));
-}
-// ---------- private agent rooms ----------
-// The pane's conversation lives in the picked agent's own room. The room
-// id is resolved once per provider: from the channel list when the room
-// already exists, otherwise the server creates it lazily on first open.
-function setCliRoom(key, channel) {
-  const id = channel?.id ?? null;
-  if (ws.cli.roomFor === key && ws.cli.roomId === id) return;
-  ws.cli.roomFor = key; ws.cli.roomId = id; ws.cli.roomMessages = []; ws.cli.roomSig = null; ws.cli.roomJoined = {};
-  if (id) void loadCliRoomConfig();
-}
-async function ensureCliRoom(key) {
-  const known = agentRoomFor(ws.channels, key);
-  if (known) { setCliRoom(key, known); return known.id; }
-  if (ws.cli.roomFor === key && ws.cli.roomId) return ws.cli.roomId;
-  if (ws.cli.roomPromise) return ws.cli.roomPromise;
-  ws.cli.roomPromise = (async () => {
-    try {
-      const body = await ws.ctx.post('/api/admin/envoy/agent-room', { provider: key });
-      if (body.channel) {
-        const i = ws.channels.findIndex((c) => c.id === body.channel.id);
-        if (i >= 0) ws.channels[i] = { ...ws.channels[i], ...body.channel }; else ws.channels = [...ws.channels, body.channel];
-        renderChannels();
-        if (cliTarget().key === key) setCliRoom(key, body.channel);
-        return body.channel.id;
-      }
-    } catch { /* the pane keeps its opening note until a send retries */ }
-    return null;
-  })();
-  try { return await ws.cli.roomPromise; } finally { ws.cli.roomPromise = null; }
-}
-async function openCliRoom() {
-  const { key } = cliTarget();
-  const id = await ensureCliRoom(key);
-  if (id) await loadCliRoom();
-  else renderCliThread();
-}
-// The room's roster (exactly one agent, joined when the room was made) —
-// fetched once per room.
-async function loadCliRoomConfig() {
-  const id = ws.cli.roomId; if (!id) return;
-  try {
-    const body = await ws.ctx.api(`/api/admin/envoy/channel-config?channel_id=${encodeURIComponent(id)}`);
-    if (id !== ws.cli.roomId) return;
-    ws.cli.roomJoined = Object.fromEntries((body.config?.agents ?? []).map((a) => [a.provider, a.joinedAt]));
-  } catch { ws.cli.roomJoined = {}; }
-  renderCliThread();
-}
-async function loadCliRoom() {
-  const id = ws.cli.roomId;
-  if (!id) { renderCliThread(); return; }
-  try {
-    const body = await ws.ctx.api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(id)}&limit=100`);
-    if (id !== ws.cli.roomId) return;
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const sig = messages.map((m) => m.id).join(',');
-    if (sig !== ws.cli.roomSig) { ws.cli.roomSig = sig; ws.cli.roomMessages = messages; speakNewMessages(id, messages); }
-  } catch { /* keep the last good room state */ }
-  renderCliThread();
-}
-// The room's live activity renders inside renderCliThread below, from
-// the same runner activity feed as the desk's (see the activity
-// helpers above). The age-derived roomWorking() that fed this pane's
-// "answering" cue and the fast-poll decision was removed 2026-11-04 on
-// Troy's order, together with the cue itself; the fast-poll decision
-// now reads the feed (see the mount poll).
-
-// The pane's own conversation stream: the picked agent's room, rendered
-// where the human is looking instead of inside a shared channel.
-// Signature-guarded like the message list, so calm polls don't rebuild it.
-function renderCliThread() {
-  const box = $('ew-cli-thread'); if (!box) return;
-  const { key } = cliTarget();
-  const inRoom = ws.cli.roomFor === key && Boolean(ws.cli.roomId);
-  const list = inRoom ? agentRoomThread(ws.cli.roomMessages) : [];
-  const cue = inRoom ? activityCue(ws.activity, key, ws.cli.roomId) : null;
-  const sig = `${key}|${ws.cli.roomId ?? ''}|${list.map((m) => m.id).join(',')}|${cue ? `${cue.stage}:${activityElapsed(cue)}` : ''}`;
-  if (sig === ws.cli.threadSig) return;
-  ws.cli.threadSig = sig;
-  // The room seat's avatar motion (emoji bite 4): its live cue stage
-  // for this room, terminal linger excluded — same feed, same gate
-  // as the channel stream.
-  const roomMotion = cue && !ACTIVITY_TERMINAL_STAGES.has(cue.stage) ? cue.stage : null;
-  if (!list.length) {
-    box.replaceChildren(...(cue
-      ? [activityRow(key, cue, ws.config?.customAgents)]
-      : [h('p', { class: 'ew-note' }, inRoom
-        ? `Nothing with ${NAMES[key]} yet — send a prompt below and the conversation shows up here, in ${NAMES[key]}'s own room.`
-        : `Opening your room with ${NAMES[key]}…`)]));
-    return;
-  }
-  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  const onLink = (url) => { openBench('browser'); navigate(url); };
-  // Agent replies open their links in a full tab: a build reveal is one
-  // click at full size and the desk stays put (navigate() gives Helmian's
-  // own pages the same treatment). Other links keep the bench browser.
-  const onAgentLink = (url) => { window.open(url, '_blank', 'noopener'); };
-  const onCanvas = (code) => { openBench('canvas'); setCanvas(code); };
-  const out = [];
-  let prev = null;
-  for (const m of list) {
-    const who = whoOf(m);
-    const cont = prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
-    const threadMotionCls = who.kind === 'agent' ? activityMotionClass((who.custom ? who.custom.handle : who.provider) === key ? roomMotion : null) : '';
-    const avatar = who.kind === 'agent' ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${threadMotionCls ? ` ${threadMotionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : msgSeatAvatar(who.provider, who.provider === key ? roomMotion : null)) : who.kind === 'me' ? msgOwnerAvatar() : (who.authorEmoji ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji)) : h('div', { class: 'ew-avatar' }, who.name.slice(0, 1).toUpperCase()));
-    const src = who.kind === 'agent' ? h('span', { class: 'ew-src agent' }, 'AGENT') : null;
-    out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}` }, avatar,
-      h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt))),
-        h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })))));
-    prev = m;
-  }
-  // The room seat's real activity (activity desk bite): its newest
-  // unexpired event for this room renders here, or nothing at all —
-  // the age-derived "answering" cue that stood here was removed
-  // 2026-11-04 on Troy's order.
-  if (cue) out.push(activityRow(key, cue, ws.config?.customAgents));
-  box.replaceChildren(...out);
-  if (atBottom) box.scrollTop = box.scrollHeight;
-}
-function selectCliSession(id) {
-  const s = ws.cli.sessions.find((x) => x.id === id); if (!s) return;
-  ws.cli.activeId = id; ls.set('cliSession', id);
-  ws.cli.provider = CLI_KEY_BY_PROVIDER[s.provider] ?? ws.cli.provider;
-  if (ws.ctx.state) ws.ctx.state.activeSession = id;
-  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
-  void openCliRoom();
-  $('ew-cli-input').focus({ preventScroll: true });
-}
-function pickCliProvider(p) {
-  ws.cli.provider = p; ws.cli.activeId = null; ls.set('cliSession', null);
-  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
-  void openCliRoom();
-  ws.cli.pending = p;
-  const input = $('ew-cli-session-name');
-  $('ew-cli-session-form').hidden = false;
-  input.value = `${NAMES[p]} session`; input.select(); input.focus();
-}
-async function loadCliSessions() {
-  try {
-    const body = await ws.ctx.api('/api/admin/app/sessions');
-    ws.cli.sessions = sessionsFromServer(body); ws.cli.server = true;
-  } catch { ws.cli.server = false; ws.cli.sessions = ls.get('cliSessions', []); }
-  // Adopt the shared active session (sidebar / Session console) when listed.
-  const shared = ws.ctx.state?.activeSession;
-  if (shared && ws.cli.sessions.some((s) => s.id === shared)) ws.cli.activeId = shared;
-  if (!ws.cli.sessions.some((s) => s.id === ws.cli.activeId)) ws.cli.activeId = null;
-  renderCliChips(); renderCliSessions(); renderCliTo(); renderCliThread();
-}
-async function createCliSession(name) {
-  const provider = NAMES[ws.cli.pending] ?? 'Claude';
-  try {
-    const r = await ws.ctx.post('/api/admin/app/sessions', { name, provider, idempotencyKey: crypto.randomUUID() });
-    await loadCliSessions();
-    if (r.session?.id) selectCliSession(r.session.id);
-  } catch {
-    // Same offline fallback as the Session console: keep the session locally.
-    ws.cli.sessions = addSession(ws.cli.sessions, { name, provider });
-    ls.set('cliSessions', ws.cli.sessions);
-    ws.cli.activeId = ws.cli.sessions[0]?.id ?? null; ls.set('cliSession', ws.cli.activeId);
-    renderCliChips(); renderCliSessions(); renderCliTo();
-  }
-  ws.ctx.toast('Session started', 'ok');
-}
-const growCli = () => { const t = $('ew-cli-input'); t.style.height = 'auto'; t.style.height = `${Math.min(t.scrollHeight, 200)}px`; };
-async function sendCli(e) {
-  e?.preventDefault?.();
-  const box = $('ew-cli-input'); const raw = box.value.trim();
-  if (!raw) return;
-  const { key } = cliTarget();
-  // The prompt lands in the picked agent's own room — no @tag needed:
-  // the room seats exactly that agent, so everything in it is for them.
-  // The room is created lazily here if this is the first prompt ever.
-  const roomId = await ensureCliRoom(key);
-  if (!roomId) { ws.ctx.toast(`Could not open your room with ${NAMES[key]}. Your prompt is still in the box.`); return; }
-  const convId = conversationIdFor('cli');
-  const req = buildMessageRequest({ channelId: roomId, body: raw, idempotencyKey: crypto.randomUUID(), attachments: ws.attach.cli, webSearch: ws.webSearch.cli, connectors: connectorsForTurn(ws.connectorToggles, convId) });
-  const btn = $('ew-cli-send'); btn.disabled = true;
-  try {
-    await ws.ctx.post('/api/admin/envoy/messages', req.payload);
-    box.value = ''; growCli(); closeSlashMenu(); ws.attach.cli = []; ws.webSearch.cli = false; ws.connectorToggles = clearConversationToggles(ws.connectorToggles, convId); renderAttachChips('cli'); if (ws.pickerFor === 'cli') closePicker();
-    await loadCliRoom();
-    loadPresence().catch(() => {});
-  } catch { ws.ctx.toast('Not sent. Your prompt is still in the box.'); }
-  finally { btn.disabled = false; }
-}
-
 // ---------- Discord + Slack link ----------
 function openModal(title, body) { $('ew-modal-title').textContent = title; $('ew-modal-body').replaceChildren(...body); $('ew-modal').classList.add('open'); }
 function closeModal() { $('ew-modal').classList.remove('open'); if (ws.linkPoll) { clearInterval(ws.linkPoll); ws.linkPoll = null; } }
@@ -3036,12 +2978,12 @@ function setCanvas(code) { $('ew-canvas-code').value = code; $('ew-canvas-code')
 function wire() {
   ws.wired = true;
   wireSplitters();
-  for (const b of document.querySelectorAll('#ew [data-collapse]')) b.addEventListener('click', () => { const n = b.dataset.collapse; if (narrow()) { closeSheets(); return; } if (n === 'agents') { ws.agentsPinned[ws.channelId] = false; ls.set('agentsPinned', ws.agentsPinned); } setPane(n, false, { user: true }); });
+  wireShelves();
+  for (const b of document.querySelectorAll('#ew [data-collapse]')) b.addEventListener('click', () => { const n = b.dataset.collapse; if (narrow()) { closeSheets(); return; } setPane(n, false, { user: true }); });
   for (const b of document.querySelectorAll('#ew [data-open]')) b.addEventListener('click', () => setPane(b.dataset.open, true));
   for (const b of document.querySelectorAll('#ew [data-toggle]')) b.addEventListener('click', () => {
     const n = b.dataset.toggle; const open = !paneOpen(n);
     if (narrow()) closeSheets();
-    if (n === 'agents' && !narrow()) { ws.agentsPinned[ws.channelId] = open; ls.set('agentsPinned', ws.agentsPinned); }
     setPane(n, open, { user: true });
   });
   $('ew-scrim').addEventListener('click', closeSheets);
@@ -3091,28 +3033,9 @@ function wire() {
   box.addEventListener('keydown', (e) => { slashKeydown('channel', e); });
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
   $('maestro-plus').addEventListener('click', () => togglePicker('channel'));
-  $('ew-cli-plus').addEventListener('click', () => togglePicker('cli'));
-  // Agent CLI pane
-  renderCliChips(); renderCliSessions(); renderCliTo();
-  $('ew-cli-new').addEventListener('click', () => pickCliProvider(ws.cli.provider));
-  $('ew-cli-session-cancel').addEventListener('click', () => { $('ew-cli-session-form').hidden = true; });
-  $('ew-cli-session-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = $('ew-cli-session-name').value.trim(); if (!name) return;
-    $('ew-cli-session-form').hidden = true;
-    await createCliSession(name);
-    $('ew-cli-input').focus({ preventScroll: true });
-  });
-  $('ew-cli-form').addEventListener('submit', sendCli);
-  const cliBox = $('ew-cli-input');
-  cliBox.addEventListener('input', () => { growCli(); refreshSlashMenu('cli'); });
-  cliBox.addEventListener('keydown', (e) => { slashKeydown('cli', e); });
-  cliBox.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); sendCli(); } });
-  ws.ctx.wireCliVoice?.();
   $('ew-debate-toggle')?.addEventListener('click', openDebateModal);
   $('ew-debate-stop')?.addEventListener('click', stopDebateNow);
   $('ew-phone-qr')?.addEventListener('click', openPhoneCloneModal);
-  $('ew-create-agent-btn')?.addEventListener('click', openCreateAgentModal);
   $('ew-foot-create-agent')?.addEventListener('click', openCreateAgentModal);
   $('ew-foot-phone-qr')?.addEventListener('click', openPhoneCloneModal);
   $('ew-mnav-chat')?.addEventListener('click', () => { closeSheets(); $('maestro-input')?.focus({ preventScroll: true }); });
@@ -3172,13 +3095,11 @@ export async function mountWorkspace(ctx) {
   if (ctx.benchTab) { openBench(ctx.benchTab); ctx.benchTab = null; }
   ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
-  await Promise.allSettled([loadPresence(), loadAgentState(), loadConfig(), loadMessages(), loadCliSessions(), loadFaces(), loadProfile()]);
-  if (inMaestroMode()) loadDeskLists();
-  await openCliRoom().catch(() => {});
+  await Promise.allSettled([loadPresence(), loadAgentState(), loadConfig(), loadMessages(), loadFaces(), loadProfile()]);
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
   const visible = () => document.visibilityState === 'visible' && document.getElementById('shell')?.dataset.view === 'desktop';
   // Message poll: calm at rest, fast while the runner activity feed
-  // shows a seat working in the open channel or the open room — and on
+  // shows a seat working in the open channel — and on
   // that fast cadence presence (which carries the feed) refreshes too,
   // so stage changes and the elapsed clock stay live. This is the
   // event-driven return of the adaptive poll the age-derived mirror
@@ -3188,14 +3109,14 @@ export async function mountWorkspace(ctx) {
   const gen = (ws.pollGen = (ws.pollGen ?? 0) + 1);
   const tick = async () => {
     if (gen !== ws.pollGen) return;
-    if (visible()) { await loadMessages().catch(() => {}); await loadCliRoom().catch(() => {}); }
+    if (visible()) { await loadMessages().catch(() => {}); }
     if (gen !== ws.pollGen) return;
-    let live = activityLive(ws.activity, ws.channelId, ws.config?.customAgents) || (ws.cli.roomId ? activityLive(ws.activity, ws.cli.roomId, ws.config?.customAgents) : false);
-    if (visible() && live) { await loadPresence().catch(() => {}); live = activityLive(ws.activity, ws.channelId, ws.config?.customAgents) || (ws.cli.roomId ? activityLive(ws.activity, ws.cli.roomId, ws.config?.customAgents) : false); }
+    let live = activityLive(ws.activity, ws.channelId, ws.config?.customAgents);
+    if (visible() && live) { await loadPresence().catch(() => {}); live = activityLive(ws.activity, ws.channelId, ws.config?.customAgents); }
     if (gen !== ws.pollGen) return;
     syncActivityViews();
     ws.timer = setTimeout(tick, live ? ACTIVITY_POLL_MS : CALM_POLL_MS);
   };
   ws.timer = setTimeout(tick, CALM_POLL_MS);
-  ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadAgentState(); loadConfig(); loadFaces(); if (inMaestroMode()) loadDeskLists(); } }, 15000);
+  ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadAgentState(); loadConfig(); loadFaces(); } }, 15000);
 }

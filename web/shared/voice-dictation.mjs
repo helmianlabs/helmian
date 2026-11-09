@@ -19,12 +19,20 @@
 // - Toggle OFF stops everything: recognition stops, speech cancels.
 // - The mic pauses while the tab is hidden and resumes when visible.
 //
-// TTS ENGINE SEAM: the controller only calls tts.speak(text) / tts.cancel().
+// TTS ENGINE SEAM: the controller only calls tts.speak(text, seat) /
+// tts.cancel(). The seat selects the per-seat Kokoro voice (voiceForSeat).
 //
-// Primary engine is Kokoro (kokoro-js, fully local, Apache 2.0): the ~300MB
-// model lazy-loads on the first spoken reply (dynamic import via the import
-// map in index.html) and is cached by the browser afterwards. Fallback is the
-// browser's speechSynthesis, which also covers environments without Web Audio.
+// Primary engine is Kokoro (kokoro-js, fully local, Apache 2.0). The model
+// warms up as soon as voice chat is enabled — not at the first spoken reply —
+// and the one-time download (dynamic import via the import map in
+// index.html) is cached by the browser afterwards (the engine's own
+// transformers.js Cache Storage; no second cache is built here), so later
+// visits warm from cache. While the model loads, replies queue behind it
+// and the engine status reads "Voice loading…". The browser's
+// speechSynthesis is the BACKUP voice only: it speaks when Kokoro truly
+// cannot load (or in environments without Web Audio), and whenever it
+// speaks the engine status says it is the backup voice — it is never
+// substituted silently.
 //
 // Recognition and speech are dependency-injected for tests. Defaults use
 // the browser's SpeechRecognition (Chrome/Edge; Firefox has neither, so
@@ -34,6 +42,38 @@
 export const KOKORO_VOICE = 'af_heart';
 export const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 const KOKORO_SAMPLE_RATE = 24000;
+
+// Per-seat voices. Every id below is a voice the bundled model actually
+// ships (onnx-community/Kokoro-82M-v1.0-ONNX, voices/<id>.bin — verified
+// against the model repo's file list). af_heart stays the house voice:
+// Maestro speaks with it, and so does anything unmapped that is not a
+// custom seat. Named seats get their own voice so who's talking is
+// audible; unmapped custom seats hash into a small pool so distinct
+// seats usually sound distinct, stably across sessions.
+export const SEAT_VOICES = {
+  maestro: 'af_heart',
+  claude: 'af_bella',
+  chatgpt: 'am_michael',
+  grok: 'am_fenrir',
+  gemini: 'af_nova',
+  mistral: 'bf_emma',
+  groq: 'am_puck',
+  nvidia: 'am_onyx',
+  openrouter: 'bf_isabella',
+  cloudflare: 'af_sky',
+  qwen: 'af_kore',
+  muse: 'af_aoede',
+  helm: 'bm_george',
+};
+const SEAT_VOICE_POOL = ['af_nicole', 'am_adam', 'bf_lily', 'am_liam', 'af_sarah', 'bm_daniel'];
+export function voiceForSeat(seat) {
+  const key = String(seat ?? '').trim().toLowerCase();
+  if (!key) return KOKORO_VOICE;
+  if (SEAT_VOICES[key]) return SEAT_VOICES[key];
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return SEAT_VOICE_POOL[hash % SEAT_VOICE_POOL.length];
+}
 
 export function createVoiceController({
   Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition,
@@ -161,6 +201,9 @@ export function createVoiceController({
       voiceKind = next.mode === 'voice' ? 'voice' : 'dictate';
       handlers = next;
       startTurn();
+      // Voice chat speaks, so warm the Kokoro model NOW — at enable time,
+      // not inside the first reply. Dictate never speaks, never warms.
+      if (voiceKind === 'voice') void warmup();
       return true;
     }
     if (!on && voiceMode) {
@@ -233,19 +276,33 @@ export function createVoiceController({
 
   // ---- Kokoro engine (primary where Web Audio exists) ----
   let kokoro = null;          // loaded KokoroTTS instance
+  let kokoroPromise = null;   // in-flight load, shared by warmup + speaks
+  let kokoroState = 'idle';   // load state: idle | loading | ready | failed
   let kokoroFailedAt = 0;     // timestamp of last Kokoro failure; retry after 60s
   const KOKORO_RETRY_MS = 60000;
   let playToken = 0;          // cancel() bumps it; late audio is ignored
   let activeSource = null;    // currently playing AudioBufferSourceNode
   let audioCtx = null;
-  const kokoroQueue = [];     // [{ text, token }]
+  const kokoroQueue = [];     // [{ text, token, voice }]
   let kokoroPlaying = false;
+
+  // Engine status, shown next to the voice controls on every surface
+  // (all .voice-engine elements: the console composer and both room
+  // composers). This is what makes the backup voice honest: whenever
+  // speechSynthesis is what will actually speak, the status says so.
+  function setVoiceStatus(text, cls) {
+    if (typeof document === 'undefined' || !document.querySelectorAll) return;
+    for (const el of document.querySelectorAll('.voice-engine')) {
+      el.textContent = text;
+      el.className = 'voice-engine ' + (cls || '');
+    }
+  }
 
   function canTryKokoro() {
     if (kokoro) return true;
-    if (kokoroLoader) return true; // injected (tests) -> environment is faked too
     // Allow retry 60s after a failure (transient: network, phone sleep, memory)
     if (kokoroFailedAt && Date.now() - kokoroFailedAt < KOKORO_RETRY_MS) return false;
+    if (kokoroLoader) return true; // injected (tests) -> environment is faked too
     try {
       const AC = globalThis.AudioContext ?? globalThis.webkitAudioContext;
       return typeof AC === 'function';
@@ -270,10 +327,43 @@ export function createVoiceController({
     });
   }
 
-  async function ensureKokoro() {
-    if (kokoro) return kokoro;
-    kokoro = await (kokoroLoader ?? defaultKokoroLoader)();
-    return kokoro;
+  // One load, shared: warmup and any number of queued speaks all await
+  // the same promise, so the model is never downloaded twice. The load
+  // rides the engine's own browser caching (transformers.js Cache
+  // Storage) — warmup on a later visit resolves from that cache.
+  function ensureKokoro() {
+    if (kokoro) return Promise.resolve(kokoro);
+    if (kokoroPromise) return kokoroPromise;
+    kokoroState = 'loading';
+    setVoiceStatus('Voice loading…', '');
+    kokoroPromise = (async () => {
+      try {
+        const engine = await (kokoroLoader ?? defaultKokoroLoader)();
+        kokoro = engine;
+        kokoroState = 'ready';
+        setVoiceStatus('Kokoro', 'kokoro');
+        return engine;
+      } catch (err) {
+        kokoroFailedAt = Date.now();
+        kokoroState = 'failed';
+        setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
+        throw err;
+      } finally {
+        kokoroPromise = null;
+      }
+    })();
+    return kokoroPromise;
+  }
+
+  // Start the Kokoro load ahead of the first reply. Called when voice
+  // chat is enabled; also safe to call any time. Respects the post-
+  // failure retry window so a dead network is not hammered. Returns
+  // true when a load is in flight or the model is already warm.
+  function warmup() {
+    if (kokoro || kokoroPromise) return true;
+    if (!canSpeak || !canTryKokoro()) return false;
+    ensureKokoro().catch(() => {}); // failure surfaces via status + fallback
+    return true;
   }
 
   function ensureAudioCtx() {
@@ -299,8 +389,9 @@ export function createVoiceController({
   }
 
   // A Kokoro failure hands the failed chunk and everything still queued to
-  // speechSynthesis instead.
+  // speechSynthesis instead — under the backup-voice status, never quietly.
   function kokoroFallback(failedItem) {
+    setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
     const chunks = [];
     if (failedItem) chunks.push(failedItem.text);
     for (const item of kokoroQueue.splice(0)) chunks.push(item.text);
@@ -314,7 +405,7 @@ export function createVoiceController({
     let out;
     try {
       const engine = await ensureKokoro();
-      out = await engine.generate(item.text, { voice: KOKORO_VOICE });
+      out = await engine.generate(item.text, { voice: item.voice ?? KOKORO_VOICE });
     } catch (err) {
       kokoroPlaying = false;
       kokoroFailedAt = Date.now();
@@ -336,6 +427,7 @@ export function createVoiceController({
       return;
     }
     activeSource = src;
+    setVoiceStatus('Kokoro', 'kokoro');
     src.onended = () => {
       kokoroPlaying = false;
       if (activeSource === src) activeSource = null;
@@ -356,7 +448,7 @@ export function createVoiceController({
   }
 
   const tts = {
-    speak(text) {
+    speak(text, seat) {
       const clean = stripSpeechMarkup(text);
       if (!clean) return false;
       const chunks = chunkForSpeech(clean);
@@ -364,11 +456,18 @@ export function createVoiceController({
       // A new reply replaces anything in progress, on either engine.
       synthEngine.cancel();
       kokoroCancel();
-      if (canTryKokoro()) {
-        for (const c of chunks) kokoroQueue.push({ text: c, token: playToken });
+      // Kokoro road whenever the model is warm, loading, or loadable:
+      // queued chunks wait behind an in-flight warmup instead of
+      // dropping to the backup voice just because they arrived early.
+      if (kokoro || kokoroPromise || canTryKokoro()) {
+        const voice = voiceForSeat(seat);
+        for (const c of chunks) kokoroQueue.push({ text: c, token: playToken, voice });
         void pumpKokoro();
         return true;
       }
+      // Backup voice: Kokoro cannot run here, or it failed and the
+      // retry window is still open. It speaks — labelled as the backup.
+      setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
       return synthEngine.speakChunks(chunks);
     },
     cancel() {
@@ -377,9 +476,9 @@ export function createVoiceController({
     },
   };
 
-  function speak(text) {
+  function speak(text, seat) {
     if (!voiceMode || voiceKind !== 'voice') return false; // dictate mode never speaks
-    return tts.speak(text);
+    return tts.speak(text, seat);
   }
 
   function cancelSpeech() {
@@ -392,9 +491,11 @@ export function createVoiceController({
     get voiceMode() { return voiceMode; },
     get mode() { return voiceKind; },
     get listening() { return listening; },
+    get engineState() { return kokoroState; },
     setVoiceMode,
     speak,
     cancelSpeech,
+    warmup,
   };
 }
 

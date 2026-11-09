@@ -295,18 +295,20 @@ test('buildMessageRequest: the wire payload is exactly the fields the route acce
   assert.equal(bare.payload.body, 'hi');
 });
 
-test('both composers carry the picker: plus buttons, panels, chips, wiring', async () => {
+test('the channel composer carries the picker: plus button, panel, chips, wiring', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
-  for (const id of ['maestro-plus', 'ew-picker', 'ew-attach-chips', 'ew-cli-plus', 'ew-cli-picker', 'ew-cli-attach-chips']) {
+  for (const id of ['maestro-plus', 'ew-picker', 'ew-attach-chips']) {
     assert.ok(html.includes(`id="${id}"`), `index.html has #${id}`);
+  }
+  // Panes removal (2026-11-08): the agent-chat composer's picker instance
+  // went with its pane; the channel composer's panel is the only one.
+  for (const id of ['ew-cli-plus', 'ew-cli-picker', 'ew-cli-attach-chips']) {
+    assert.ok(!html.includes(`id="${id}"`), `index.html no longer has #${id}`);
   }
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.match(js, /from '\.\/composer-picker\.mjs'/);
   assert.match(js, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => togglePicker\('channel'\)\)/);
-  assert.match(js, /\$\('ew-cli-plus'\)\.addEventListener\('click', \(\) => togglePicker\('cli'\)\)/);
-  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel \}\)/, 'channel send builds its request through the picker model, web-search toggle included');
-  assert.match(js, /attachments: ws\.attach\.cli/, 'agent-chat send carries its own attachments');
-  assert.match(js, /attachments: ws\.attach\.cli, webSearch: ws\.webSearch\.cli/, 'agent-chat send carries its own web-search toggle');
+  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: connectorsForTurn\(ws\.connectorToggles, convId\) \}\)/, 'channel send builds its request through the picker model, web-search toggle and connector toggles included');
   assert.match(js, /g\.id === 'web-search'/, 'the workspace picker renders the web-search toggle group');
   assert.match(js, /ws\.webSearch\[which\] = !on/, 'the toggle flips per-composer state, never the attach list');
   assert.match(js, /api\('\/api\/admin\/cora\/connectors'\)/, 'the picker reads the same connectors registry as Integrations');
