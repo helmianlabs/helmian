@@ -20,7 +20,8 @@ import {
   serializeRegistry,
 } from './commands.mjs';
 import { loadEnabledPlugins } from './plugins.mjs';
-import { resolveTurnAttachments } from './attachments.mjs';
+import { resolveTurnAttachments, seatIdForProviderId } from './attachments.mjs';
+import { buildConnectorArming, sanitizeArmingRecords } from './connector-arming.mjs';
 
 /**
  * NDJSON bridge for the Windows Pilot EXE.
@@ -608,13 +609,26 @@ export async function runAgentBridge() {
         // resolves them from the message's library toggles; loop.mjs
         // carries them beside the local tools, never in them).
         let turnMcpServers = [];
-        // The arming seam for THIS turn: no minter is wired on this
-        // runner (the Scribe door minter was the only one, and it came
-        // out with the Scribe cut), so the seam stays null and
-        // attachments.mjs records every toggle unarmed with the
-        // 'arming-not-wired' reason — stated honestly, never faked.
-        const connectorArming = null;
-        if (attachmentMetadata || helmianSkills.length) {
+        // The arming seam for THIS turn (Mirror M3, bite G4):
+        // dispatch resolved the message's armed connectors
+        // cloud-side (envoy-mesh.mjs, from the author's own library
+        // connections) and the records rode the work item into this
+        // turn request as connectorConnections — posture, the frozen
+        // tool set, the enable map, and the turn's token. The seam
+        // is built from THIS seat's slice of the records only; the
+        // posture approver is this bridge's own approval broker, the
+        // same one the local tools answer to. A turn that arrives
+        // with no records builds a null seam, and attachments.mjs
+        // records every toggle 'arming-not-wired' — exactly the
+        // pre-G4 outcome, stated honestly, never faked.
+        const armingRecords = sanitizeArmingRecords(req.connectorConnections)
+          .filter((record) => record.seatId === seatIdForProviderId(provider.id));
+        const connectorArming = buildConnectorArming(armingRecords, {
+          approver: broker.approver,
+          workspace,
+          permissionMode,
+        });
+        if (attachmentMetadata || helmianSkills.length || armingRecords.length) {
           try {
             const resolved = await resolveTurnAttachments({ metadata: attachmentMetadata, plugins: loadedPlugins, slashExpansion, providerId: provider.id, credentialType: provider.credentialType ?? null, connectorArming, helmianSkills });
             if (resolved.contextText) turnText = `${resolved.contextText}\n\n${text}`;
