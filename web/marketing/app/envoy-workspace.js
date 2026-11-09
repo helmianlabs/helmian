@@ -2554,9 +2554,10 @@ function seedComposerDraft(which, text) {
 // The GitHub file source (mirror-design §4): browse the channel's
 // linked repo through the cloud read and pick a file into the
 // message. The repo is never typed here — it is the channel's link,
-// the one source the server will serve (a token never rides; public
-// repos read unauthenticated, and a private repo answers with the
-// read's own plain words).
+// the one source the server will serve. A refusal renders the
+// route's own plain words — the error body's error text — in
+// preference to the bare code the shared api() helper throws with,
+// so the person reads the reason, not the code.
 function githubFileNode(which, row) {
   const gf = ws.githubFile;
   const repo = typeof ws.config?.github?.repo === 'string' ? ws.config.github.repo : '';
@@ -2605,7 +2606,7 @@ async function loadGithubEntries(which, path) {
     if (body?.kind === 'dir') { gf.entries = body.entries ?? []; gf.path = body.path ?? path ?? ''; }
     else if (body?.kind === 'file') { await ingestGithubBody(which, body, null); gf.entries = null; }
     else gf.note = 'That path could not be read.';
-  } catch (error) { gf.note = error?.message || 'That path could not be read.'; }
+  } catch (error) { gf.note = error?.body?.error || error?.message || 'That path could not be read.'; }
   gf.loading = false;
   if (ws.pickerFor === which) renderPicker(which);
 }
@@ -2616,7 +2617,7 @@ async function pickGithubFile(which, entry, note) {
     const body = await ws.ctx.api(`/api/admin/connector-library/github-file?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(entry.path)}`);
     if (body?.kind !== 'file') { ws.githubFile.note = 'That file could not be read.'; renderPicker(which); return; }
     await ingestGithubBody(which, body, note);
-  } catch (error) { ws.githubFile.note = error?.message || 'That file could not be read.'; renderPicker(which); }
+  } catch (error) { ws.githubFile.note = error?.body?.error || error?.message || 'That file could not be read.'; renderPicker(which); }
 }
 // A GitHub file body joins the message through the same ingest as a
 // picked local file: base64 → Blob → File, with the media type
