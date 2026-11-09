@@ -814,6 +814,58 @@ test('monday launch: custom agent creator, free-willy debate, github link, phone
   }
 });
 
+// Maestro follow (2026-11-09): the per-channel choice that brings the
+// desk's dispatch rules into an ordinary channel. The header carries
+// the toggle beside the debate toggle; the pure helpers derive its
+// state, the composer placeholder and the empty-channel line.
+test('maestro follow: header state, placeholder and empty text follow the flag', async () => {
+  const { maestroFollowHeaderState, composerPlaceholderText, emptyChannelText, netStripText } = await import('../app/envoy-workspace.js');
+
+  const off = maestroFollowHeaderState({ maestroFollow: false });
+  assert.equal(off.active, false);
+  assert.equal(off.badgeHidden, true);
+  assert.equal(off.buttonLabel, 'Maestro');
+  assert.equal(off.toggleHidden, false);
+
+  const on = maestroFollowHeaderState({ maestroFollow: true });
+  assert.equal(on.active, true);
+  assert.equal(on.follows, true);
+  assert.equal(on.badgeHidden, false);
+  assert.equal(on.badgeText, 'Maestro following');
+  assert.equal(on.buttonLabel, 'Maestro: ON');
+
+  const desk = maestroFollowHeaderState({ maestroFollow: false, desk: true });
+  assert.equal(desk.active, true, 'the desk always dispatches');
+  assert.equal(desk.toggleHidden, true, 'the desk shows no follow toggle — Maestro is already home there');
+  assert.equal(desk.badgeHidden, true);
+
+  assert.equal(composerPlaceholderText({ mode: 'envoy', title: 'Team', hasAgents: true, follow: true }),
+    'Message #Team · Maestro follows you here — @name for one agent, no name for everyone');
+  assert.equal(composerPlaceholderText({ mode: 'envoy', title: 'Team', hasAgents: true, follow: false }),
+    'Message #Team · @ an agent to get an answer', 'off keeps today\'s wording exactly');
+  assert.equal(composerPlaceholderText({ mode: 'discord', title: 'Team', follow: true }), 'Message #Team');
+
+  assert.match(emptyChannelText({ follow: true, hasAgents: true }), /Maestro follows you here/);
+  assert.match(emptyChannelText({ follow: true, hasAgents: true }), /name nobody and it goes to everyone in this channel/);
+  assert.equal(emptyChannelText({ desk: true }), 'This is your desk. Send a dispatch — @name for one agent, @all for everyone, or name nobody and it goes to everyone on the desk.');
+  assert.equal(emptyChannelText({ hasAgents: true }), 'Say hello. Name an agent with @ to get an answer — a message that names nobody is just posted, for people.', 'off keeps today\'s wording exactly');
+
+  const channel = { id: 'c1', slug: 'team', title: 'Team', kind: 'team' };
+  assert.match(netStripText({ mode: 'envoy', channel, config: { maestroFollow: true } }), /Maestro follows you in #Team/);
+  assert.equal(netStripText({ mode: 'envoy', channel, config: { maestroFollow: false } }), "You're posting to Envoy · #Team");
+  assert.equal(netStripText({ mode: 'envoy', channel, config: {} }), "You're posting to Envoy · #Team");
+
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  for (const id of ['ew-maestro-follow-toggle', 'ew-maestro-follow-badge']) {
+    assert.match(html, new RegExp(`id="${id}"`), `index.html has #${id}`);
+  }
+  assert.ok(js.includes("action: 'set-maestro-follow'"), 'the toggle posts the set-maestro-follow config action');
+  assert.ok(js.includes("addEventListener('click', toggleMaestroFollow)"), 'the header toggle is wired');
+  assert.ok(css.includes('.ew-badge.maestro'), 'envoy.css styles the follow badge');
+});
+
 // One-road Bite 5 (2026-11-01): the create-agent dialog's connect step
 // is the shared ConnectFields (email + password) for the provider
 // currently picked, and the seat-mode select is dead — there is no

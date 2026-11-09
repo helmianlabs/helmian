@@ -161,6 +161,16 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
   }
 });
 
+test('maestro follow wiring: agentWork passes the desk switch when either flag is set, and the config action exists', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/cloud/envoy-mesh.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes('desk: config.desk === true || config.maestroFollow === true'), 'agentWork derives the desk switch from desk OR maestroFollow');
+  assert.ok(src.includes("action === 'set-maestro-follow'"), 'changeConfig carries the set-maestro-follow action');
+  const actionAt = src.indexOf("action === 'set-maestro-follow'");
+  const gateAt = src.indexOf('ENVOY_ADMIN_REQUIRED', actionAt);
+  assert.ok(gateAt > actionAt && gateAt - actionAt < 200, 'the follow action is owner/admin-gated like link-github');
+});
+
 test('messageOut carries stored attachments metadata to the bridge work queue', async () => {
   const { messageOut } = await import('../src/cloud/envoy-mesh.mjs');
   const row = { id: 'm1', channel_id: 'c1', author_subject: 'user-1', author_kind: 'human', body: 'hi', idempotency_key: 'k-00000001', created_at: 'now', metadata: { attachments: [{ kind: 'plugin', name: 'calcplug' }] } };
@@ -258,6 +268,70 @@ test('mesh desk: the seat seeds its roster once, refuses other channels, and dis
     work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === desk.id && w.message.id === all.id);
     assert.equal(work.length, 1);
     assert.deepEqual(work[0].agents, ['gemini']);
+  } finally {
+    await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('mesh maestro follow: owner/admin gate, notice, and routing both ways', { skip }, async () => {
+  const pg = (await import('pg')).default;
+  const pool = new pg.Pool({ connectionString: url, max: 4 });
+  const tenantId = `t-${randomUUID()}`;
+  const owner = { tenantId, subject: 'user:owner', role: 'owner' };
+  const memberActor = { tenantId, subject: 'user:member', role: 'member' };
+  const device = { tenantId, subject: 'user:owner', role: 'owner', viaDeviceToken: true };
+  const chat = createEnvoyStore(pool);
+  const mesh = createEnvoyMesh({ pool });
+  try {
+    await pool.query('insert into helmion.tenants (tenant_id, owner_subject) values ($1,$2)', [tenantId, owner.subject]);
+    const { channel } = await chat.createChannel(owner, { slug: 'follow', title: 'Follow', kind: 'team' });
+    await mesh.changeConfig(owner, { action: 'add-agent', channelId: channel.id, provider: 'claude' });
+    await mesh.changeConfig(owner, { action: 'add-agent', channelId: channel.id, provider: 'gemini' });
+
+    // Default off: the public config says so, and an unnamed human
+    // message earns nobody a turn (today's silence rule stands).
+    let cfg = await mesh.getConfig(owner, channel.id);
+    assert.equal(cfg.config.maestroFollow, false);
+    const before = (await chat.appendMessage(owner, { channelId: channel.id, body: 'status, everyone', idempotencyKey: randomUUID() })).receipt.message;
+    let work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === before.id);
+    assert.equal(work.length, 0, 'follow off: unnamed message is silence');
+
+    // Owner/admin gate, exactly like link-github: a member is refused
+    // and the refused write changes nothing.
+    await assert.rejects(
+      mesh.changeConfig(memberActor, { action: 'set-maestro-follow', channelId: channel.id, maestroFollow: true }),
+      /ENVOY_ADMIN_REQUIRED/,
+    );
+    cfg = await mesh.getConfig(owner, channel.id);
+    assert.equal(cfg.config.maestroFollow, false, 'the refused write changed nothing');
+
+    // Owner turns follow on: the config answer carries it and the
+    // standard channel notice posts.
+    const set = await mesh.changeConfig(owner, { action: 'set-maestro-follow', channelId: channel.id, maestroFollow: true });
+    assert.equal(set.config.maestroFollow, true);
+    const listed = await chat.listMessages(owner, channel.id);
+    assert.ok(listed.messages.some((m) => m.body.includes('Maestro now follows you in #Follow')), 'the follow notice posted to the channel');
+
+    // Follow on: an unnamed send routes like the desk — the whole
+    // crew — and a named send still picks the named seat alone.
+    const all = (await chat.appendMessage(owner, { channelId: channel.id, body: 'status, everyone', idempotencyKey: randomUUID() })).receipt.message;
+    work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === all.id);
+    assert.equal(work.length, 1);
+    assert.deepEqual(work[0].agents, ['claude', 'gemini'], 'unnamed send reaches the whole crew when Maestro follows');
+    const one = (await chat.appendMessage(owner, { channelId: channel.id, body: '@claude the numbers please', idempotencyKey: randomUUID() })).receipt.message;
+    work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === one.id);
+    assert.equal(work.length, 1);
+    assert.deepEqual(work[0].agents, ['claude'], 'a named send still picks the named seat alone');
+
+    // Owner turns follow back off: silence returns for unnamed sends.
+    const off = await mesh.changeConfig(owner, { action: 'set-maestro-follow', channelId: channel.id, maestroFollow: false });
+    assert.equal(off.config.maestroFollow, false);
+    const after = (await chat.appendMessage(owner, { channelId: channel.id, body: 'anyone there', idempotencyKey: randomUUID() })).receipt.message;
+    work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === channel.id && w.message.id === after.id);
+    assert.equal(work.length, 0, 'follow off again: unnamed message is silence');
+    const listedOff = await chat.listMessages(owner, channel.id);
+    assert.ok(listedOff.messages.some((m) => m.body.includes('Maestro no longer follows you in #Follow')), 'the unfollow notice posted to the channel');
   } finally {
     await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
     await pool.end();

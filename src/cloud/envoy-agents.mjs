@@ -26,6 +26,12 @@
 // target: in the desk, Maestro is the human sending, so there is no agent
 // behind the name to answer. Agent-authored and system messages route
 // nobody in the desk too.
+//
+// Maestro follow (maestroFollow:true on an ordinary channel's config)
+// opts that channel into the same desk dispatch rules without being
+// the desk: the mesh passes desk:true to agentsToAnswer when either
+// flag is set (see envoy-mesh.mjs agentWork). The desk channel itself
+// is unchanged, and Maestro still never answers.
 
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
 export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter', muse: 'Muse' });
@@ -176,6 +182,7 @@ export function emptyConfig() {
     github: null,
     pendingLink: null,
     desk: false,
+    maestroFollow: false,
     customAgents: [],
     debateMode: 'off',
     maxRoundTurns: DEFAULT_DEBATE_TURNS,
@@ -225,7 +232,7 @@ export function parseConfig(body) {
     const rawTurns = Number(raw.maxRoundTurns);
     const maxRoundTurns = Number.isFinite(rawTurns) ? Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(rawTurns))) : DEFAULT_DEBATE_TURNS;
     const avatar = sanitizeChannelAvatar(raw.avatar);
-    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, customAgents, debateMode, maxRoundTurns, avatar };
+    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, maestroFollow: raw.maestroFollow === true, customAgents, debateMode, maxRoundTurns, avatar };
   } catch { return null; }
 }
 
@@ -239,6 +246,9 @@ export function serializeConfig(config) {
   // desk is written only when true, so every config stored before the
   // desk existed keeps its exact bytes.
   if (config.desk === true) stored.desk = true;
+  // maestroFollow is written only when true, so every config stored
+  // before Maestro follow existed keeps its exact bytes.
+  if (config.maestroFollow === true) stored.maestroFollow = true;
   if (Array.isArray(config.customAgents) && config.customAgents.length > 0) stored.customAgents = config.customAgents;
   if (config.debateMode === 'free-willy') stored.debateMode = 'free-willy';
   // The turn cap is the operator's setting, not part of the on/off state:
@@ -284,6 +294,7 @@ export function publicConfig(config, now = Date.now()) {
     debateMode: c.debateMode === 'free-willy' ? 'free-willy' : 'off',
     maxRoundTurns: c.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
     desk: c.desk === true,
+    maestroFollow: c.maestroFollow === true,
     discord: c.discord,
     slack: c.slack ?? null,
     github: c.github ?? null,
