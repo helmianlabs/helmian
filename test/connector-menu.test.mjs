@@ -17,9 +17,13 @@
 //   (4) Grok/Gemini connector rows are account-level STATE rows,
 //       distinct in shape from Claude/ChatGPT/Mistral's mirror rows
 //       and from every live toggle group (REPORT §5.1);
-//   (5) capability discipline: the only capability row in the whole
-//       model is Claude's Web search — the one capability with a
-//       real per-seat road in the room's turn path (REPORT §6);
+//   (5) capability discipline: the only capability rows in the
+//       whole model are Claude's — Web search (a real per-seat road
+//       in the room's turn path, REPORT §6) and Take a screenshot
+//       (the browser's own capture into the attach road,
+//       mirror-design §3.1, bite M2). Bite M2 also adds the two
+//       §5.1 row kinds the shell was missing — action rows and the
+//       projects row — pinned in the same projection;
 //   (6) the module is pure (no DOM, no fetch, one relative import)
 //       and the definitions are frozen;
 //   (7) the manage footer is Helmian's Integrations view for EVERY
@@ -57,6 +61,8 @@ function project(items) {
   for (const { item } of walkMenuItems(items)) {
     if (item.type === 'attach') out.push(`attach:${item.label}`);
     else if (item.type === 'capability') out.push(`capability:${item.label}:${item.capability}`);
+    else if (item.type === 'action') out.push(`action:${item.label}:${item.action}`);
+    else if (item.type === 'projects') out.push(`projects:${item.label}`);
     else if (item.type === 'submenu') out.push(`submenu:${item.label}`);
     else if (item.type === 'manage-link') out.push(`manage:${item.label}:${item.target}`);
     else if (item.type === 'live-toggle-group') {
@@ -77,14 +83,17 @@ const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES}`, 'manage:Ma
 const EXPECTED = {
   claude: [
     'attach:Add files or photos',
+    'capability:Take a screenshot:screenshot',
+    'projects:Add to project',
+    'action:Add from GitHub:github-file',
     'submenu:Skills',
-    'live:-:feed:seat-skills-api',
-    'mirror:-:Claude:mirror:feed:seat-skills-vendor',
+    'live:-:feed:helmian-skills',
     'submenu:Connectors',
     `live:-:${NATIVES}`,
-    'mirror:-:Claude:mirror:gmail,google-calendar,google-drive,github,slack,notion,linear,stripe,atlassian,canva',
+    'mirror:-:Claude:mirror:gmail,google-calendar,google-drive,github,slack,notion,linear,stripe,atlassian,canva,idiolect',
+    'action:Tool access:tool-access',
     'submenu:Plugins',
-    'mirror:-:Claude:mirror:feed:vendor-plugins',
+    'live:-:feed:bridge-plugins',
     'capability:Web search:web-search',
     'manage:Manage connectors:integrations',
   ],
@@ -114,7 +123,6 @@ const EXPECTED = {
     'submenu:Tools',
     `live:-:${NATIVES}`,
     'mirror:-:Mistral:mirror:',
-    'mirror:Agents:Mistral:mirror:feed:vendor-agents',
     'manage:Manage connectors:integrations',
   ],
   groq: ['attach:Add files', `live:Connectors:${NATIVES}:note:Beta — Groq remote MCP`, 'manage:Manage connectors:integrations'],
@@ -146,7 +154,7 @@ test('§3 shape: every seat emits exactly its REPORT §3 items, in words and ord
   }
 });
 
-test('item types: only the six menu types appear, anywhere', () => {
+test('item types: only the eight menu types appear, anywhere', () => {
   for (const seatId of MENU_SEAT_IDS) {
     for (const { item } of walkMenuItems(menuForSeat(seatId))) {
       assert.ok(MENU_ITEM_TYPES.includes(item.type), `${seatId}: ${item.type}`);
@@ -272,14 +280,30 @@ test('manage footer: every seat closes on Helmian\'s Integrations — no vendor 
 
 // -------------------------------------------- (5) capability honesty
 
-test('capabilities: the only capability row in the model is Claude\'s Web search', () => {
+test('capabilities: the only capability rows in the model are Claude\'s — Web search and Take a screenshot', () => {
   const found = [];
   for (const seatId of MENU_SEAT_IDS) {
     for (const { item } of walkMenuItems(menuForSeat(seatId))) {
       if (item.type === 'capability') found.push({ seatId, label: item.label, capability: item.capability });
     }
   }
-  assert.deepEqual(found, [{ seatId: 'claude', label: 'Web search', capability: 'web-search' }]);
+  assert.deepEqual(found, [
+    { seatId: 'claude', label: 'Take a screenshot', capability: 'screenshot' },
+    { seatId: 'claude', label: 'Web search', capability: 'web-search' },
+  ]);
+});
+
+test('bite M2 rows: no definition still binds a dead vendor feed — feeds resolve to Helmian sources or are gone', () => {
+  const feeds = new Set();
+  for (const seatId of MENU_SEAT_IDS) {
+    for (const { item } of walkMenuItems(menuForSeat(seatId))) {
+      if (item.feed) feeds.add(item.feed);
+    }
+  }
+  // The design §8 law: a feed that can only ever render "Nothing
+  // here yet" is deleted or rebound. What remains is exactly the two
+  // lawful Helmian-side sources the renderer fills.
+  assert.deepEqual([...feeds].sort(), ['bridge-plugins', 'helmian-skills']);
 });
 
 // ------------------------------------------------------- (6) purity

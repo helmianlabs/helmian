@@ -58,11 +58,15 @@ function catalogEntry(seatId, def) {
     authMode: def.pipe.mode === 'helmian' ? def.pipe.authMode : 'oauth',
     addedBy: 'system',
   };
+  const actions = Array.isArray(def.actions) && def.actions.length
+    ? { actions: Object.freeze(def.actions.map((a) => Object.freeze({ label: String(a.label), prompt: String(a.prompt) }))) }
+    : {};
   if (def.pipe.mode === 'vendor') {
     return {
       ...base,
       brokerMode: 'vendor',
       vendorConnectorRef: mirror(def.pipe.manageUrl, def.pipe.ref),
+      ...actions,
     };
   }
   return {
@@ -70,6 +74,7 @@ function catalogEntry(seatId, def) {
     brokerMode: 'helmian',
     mcpEndpointUrl: def.pipe.endpoint,
     ...(def.pipe.scopesSummary ? { scopesSummary: def.pipe.scopesSummary } : {}),
+    ...actions,
   };
 }
 
@@ -97,6 +102,24 @@ const CLAUDE_CATALOG = Object.freeze([
   claudeCatalog({ id: 'stripe', name: 'Stripe', oneLiner: 'Look up payments, customers, and invoices', vendorName: 'Stripe', trustLabel: 'verified', category: 'data' }),
   claudeCatalog({ id: 'atlassian', name: 'Atlassian', oneLiner: 'Search Jira issues and Confluence pages', vendorName: 'Atlassian', trustLabel: 'verified', category: 'productivity' }),
   claudeCatalog({ id: 'canva', name: 'Canva', oneLiner: 'Find designs and work from your Canva library', vendorName: 'Canva', trustLabel: 'community', category: 'design' }),
+  // Idiolect is in Troy's own Claude connectors set (his 2026-11-09
+  // screenshots, mirror-design §2.1) and is the one directory entry
+  // whose published menu actions the record holds verbatim: the three
+  // quick actions §4 names ("Write an email in my style", "Write a
+  // LinkedIn post in my style", "Set up my Writing Profile"). They
+  // ride as CATALOG STARTER ACTIONS — Helmian's catalogued copy of the
+  // vendor's published starters, labelled as Helmian's copy wherever
+  // they render; choosing one seeds the composer as a draft and never
+  // sends. The trust label is the conservative 'community': the
+  // vendor's published label for this entry was not in the research.
+  claudeCatalog({
+    id: 'idiolect', name: 'Idiolect', oneLiner: 'Write in your own style — emails, posts, and a writing profile', vendorName: 'Idiolect', trustLabel: 'community', category: 'productivity',
+    actions: [
+      { label: 'Write an email in my style', prompt: 'Write an email in my style' },
+      { label: 'Write a LinkedIn post in my style', prompt: 'Write a LinkedIn post in my style' },
+      { label: 'Set up my Writing Profile', prompt: 'Set up my Writing Profile' },
+    ],
+  }),
 ]);
 
 // --------------------------------------------------------- ChatGPT (OpenAI)
@@ -304,6 +327,21 @@ export const CONNECTOR_CATALOG = Object.freeze(
 
 export function catalogEntryById(seatId, entryId) {
   return catalogEntriesForSeat(seatId).find((entry) => entry.id === entryId) ?? null;
+}
+
+/**
+ * The catalog starter actions for one entry (mirror-design §4): the
+ * vendor-published quick actions Helmian's catalog carries a copy of,
+ * as frozen { label, prompt } rows, or null when the catalog holds
+ * none for the entry. This is catalog DATA, not library state — it is
+ * joined onto the read at read time (connector-library-read.mjs) and
+ * never stored on the entry record, the same discipline as the
+ * catalog's other descriptive fields before a refresh carries them.
+ */
+export function catalogStarterActions(seatId, entryId) {
+  let entry = null;
+  try { entry = catalogEntryById(seatId, entryId); } catch { entry = null; }
+  return entry && Array.isArray(entry.actions) && entry.actions.length ? entry.actions : null;
 }
 
 // ------------------------------------------------------------ refresh road

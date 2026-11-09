@@ -541,10 +541,15 @@ export function removeSkillAttach(list = [], entry) {
 // the same object as `webSearch` — carried only when ON (see the header);
 // the connector-library toggles join as `connectors`, carried only when
 // at least one is armed; the Helmian skills join as `skills`, same rule.
-export function attachmentMetadata(list = [], { webSearch = false, connectors = [], skills = [] } = {}) {
+export function attachmentMetadata(list = [], { webSearch = false, connectors = [], skills = [], projectKey = null } = {}) {
   const armed = normalizeConnectorToggles(connectors);
   const skilled = normalizeSkillToggles(skills);
-  if (!list.length && webSearch !== true && !armed.length && !skilled.length) return null;
+  // The composer's active project (mirror-design §3.1, bite M2): the
+  // key rides the metadata so the message records the project it was
+  // sent under, exactly as the server validator accepts it — carried
+  // only when a project is active, the same absence rule as the rest.
+  const project = typeof projectKey === 'string' && projectKey.trim() ? projectKey.trim().toLowerCase() : null;
+  if (!list.length && webSearch !== true && !armed.length && !skilled.length && !project) return null;
   return Object.freeze({
     ...(list.length ? {
       attachments: Object.freeze(list.map((a) => (a.kind === 'connector'
@@ -556,6 +561,7 @@ export function attachmentMetadata(list = [], { webSearch = false, connectors = 
     ...(webSearch === true ? { webSearch: true } : {}),
     ...(armed.length ? { connectors: armed } : {}),
     ...(skilled.length ? { skills: skilled } : {}),
+    ...(project ? { projectKey: project } : {}),
   });
 }
 
@@ -578,9 +584,9 @@ export function applySkillToBody(body, list = []) {
   return { body: `/${skill.name} ${text}`, skillCarried: true, note: null };
 }
 
-export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [], webSearch = false, connectors = [], skills = [] } = {}) {
+export function buildMessageRequest({ channelId, body, idempotencyKey, attachments = [], webSearch = false, connectors = [], skills = [], projectKey = null } = {}) {
   const applied = applySkillToBody(body, attachments);
-  const metadata = attachmentMetadata(attachments, { webSearch, connectors, skills });
+  const metadata = attachmentMetadata(attachments, { webSearch, connectors, skills, projectKey });
   return Object.freeze({
     // The fields POST /api/admin/envoy/messages accepts: the original
     // three, plus `metadata` when something is attached or web search is

@@ -295,6 +295,16 @@ test('buildMessageRequest: the wire payload is exactly the fields the route acce
   assert.equal(bare.payload.body, 'hi');
 });
 
+test('buildMessageRequest: the active project rides the metadata only when one is active (bite M2)', () => {
+  const withProject = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'k7', projectKey: 'Helmian' });
+  assert.deepEqual(withProject.metadata, { projectKey: 'helmian' }, 'the key is normalized the way the server validator accepts it');
+  assert.deepEqual(withProject.payload.metadata, { projectKey: 'helmian' });
+  const none = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'k8', projectKey: null });
+  assert.equal(none.metadata, null, 'no active project → no metadata, the original wire shape');
+  const blank = buildMessageRequest({ channelId: 'c1', body: 'hi', idempotencyKey: 'k9', projectKey: '   ' });
+  assert.equal(blank.metadata, null, 'a blank key is no key');
+});
+
 test('the channel composer carries the picker: plus button, panel, chips, wiring', async () => {
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   for (const id of ['maestro-plus', 'ew-picker', 'ew-attach-chips']) {
@@ -308,7 +318,7 @@ test('the channel composer carries the picker: plus button, panel, chips, wiring
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.match(js, /from '\.\/composer-picker\.mjs'/);
   assert.match(js, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => togglePicker\('channel'\)\)/);
-  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: connectorsForTurn\(ws\.connectorToggles, convId\), skills: ws\.skillAttach\.channel \}\)/, 'channel send builds its request through the picker model, web-search toggle, connector toggles and armed Helmian skills included');
+  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: connectorsForTurn\(ws\.connectorToggles, convId\), skills: ws\.skillAttach\.channel, projectKey: ws\.projects\.activeKey \?\? ws\.ctx\?\.state\?\.activeProjectKey \?\? null \}\)/, 'channel send builds its request through the picker model, web-search toggle, connector toggles, armed Helmian skills and the active project included');
   assert.match(js, /menuForSeat\(seatId\)/, 'the channel picker renders the shipped per-seat menu definitions (bite 3R-b)');
   assert.match(js, /ws\.webSearch\[which\] = !on/, 'the toggle flips per-composer state, never the attach list');
   assert.match(js, /api\('\/api\/admin\/connector-library\/seats'\)/, 'Level 1 reads the per-seat connector libraries');

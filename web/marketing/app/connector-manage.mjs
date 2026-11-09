@@ -9,7 +9,10 @@
 //   Connectors — the seat's library, live from the store's read, with
 //     the write controls the entry kind supports wired to the M1
 //     write routes: Connect / Disconnect / posture picker / owner
-//     turn-off, and the add-custom form. Mirror (vendor-brokered)
+//     turn-off, the Tool access expander (bite M2: the connection's
+//     frozen tool snapshot with per-tool switches, wired to the
+//     tool-access read + tool-enable write), and the add-custom
+//     form. Mirror (vendor-brokered)
 //     rows stay view-only with one plain line: they are managed in
 //     the vendor's own garden; connecting them there does not
 //     connect them here.
@@ -31,6 +34,12 @@ export const POSTURE_LINES = Object.freeze({
   all: 'Use it without asking',
 });
 export const MIRROR_LINE = 'This connector lives in the vendor\u2019s own product — Helmian only mirrors what that account reports. It is managed there, and connecting it there does not connect it here.';
+export const TOOL_ANNOTATION_LABELS = Object.freeze({
+  read: 'Reads',
+  write: 'Changes things',
+  undeclared: 'Undeclared — treated as changes',
+});
+export const NO_SNAPSHOT_LINE = 'No tool list has been frozen for this connection yet — tools appear here after the first discovery.';
 
 export function seatName(seatId) {
   return LIBRARY_SEATS.find((s) => s.seatId === seatId)?.name ?? String(seatId ?? '');
@@ -52,6 +61,11 @@ export function rowControls(row, { role = '' } = {}) {
       canDisconnect: true,
       canDisable: owner,
       canRemove: owner && row.kind === 'custom',
+      // The Tool access face (bite M2): the per-connection posture +
+      // the frozen snapshot's per-tool list. Mirror rows never reach
+      // this branch (they return above), so this is Helmian-held
+      // state only — the vendor's tools are never shown here.
+      canToolAccess: true,
     };
   }
   return {
@@ -69,11 +83,40 @@ const STATE_TEXT = Object.freeze({
   'disabled-by-owner': 'Turned off by the workspace owner',
 });
 
+// The Tool access read's shape, normalized for the face (bite M2).
+// The route answers { connected, posture, tools: [{ name,
+// description, annotation, effectiveAnnotation, enabled }],
+// snapshotTakenAt, snapshotHash } for a connection the caller holds.
+// `hasSnapshot` is the honest line the face needs most: no
+// connection has a frozen snapshot until a discovery freezes one,
+// and the face must say so in words instead of showing an empty
+// tool list that looks like "no tools exist".
+export function toolAccessRows(body) {
+  const tools = (Array.isArray(body?.tools) ? body.tools : [])
+    .filter((t) => t && typeof t.name === 'string' && t.name)
+    .map((t) => Object.freeze({
+      name: t.name,
+      description: typeof t.description === 'string' ? t.description : '',
+      annotation: TOOL_ANNOTATION_LABELS[t.annotation] ? t.annotation : 'undeclared',
+      annotationLabel: TOOL_ANNOTATION_LABELS[t.annotation] ?? TOOL_ANNOTATION_LABELS.undeclared,
+      enabled: t.enabled !== false,
+    }));
+  const posture = CONNECTOR_POSTURES.includes(body?.posture) ? body.posture : null;
+  return Object.freeze({
+    connected: body?.connected === true,
+    posture,
+    postureLine: posture ? POSTURE_LINES[posture] : null,
+    hasSnapshot: Boolean(body?.snapshotHash) || tools.length > 0,
+    snapshotTakenAt: typeof body?.snapshotTakenAt === 'string' ? body.snapshotTakenAt : null,
+    tools: Object.freeze(tools),
+  });
+}
+
 // ---------------------------------------------------------------------
 // The renderer. `api` is app.js's api() (throws on non-2xx with the
 // server's error message where present), `el` its element helper.
 export function renderConnectorManage(box, { api, el, role = '', initialSeat = null } = {}) {
-  const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false };
+  const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false, toolAccess: new Map() };
   box.replaceChildren();
   const root = el('div', 'cm-root');
   const note = el('p', 'cm-note muted sm');
@@ -218,7 +261,77 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       }, 'ghost'));
     }
     card.append(side);
+    if (ctl.canToolAccess) card.append(toolAccessSection(row));
     return card;
+  }
+
+  // The Tool access expander (bite M2): the connection's posture in
+  // words, then the frozen snapshot's tool list — each tool with
+  // what it does (Reads / Changes things / Undeclared), and a switch
+  // that writes the per-tool enable map through the tool-enable
+  // route. The read is lazy (first expand), cached per seat+entry
+  // for the surface's life, and honest about the common case: no
+  // snapshot has been frozen yet, so there is no tool list to show.
+  // Turn-time enforcement of posture + this map is M3's leg; this
+  // face only reads and writes the stored state.
+  function toolAccessSection(row) {
+    const key = `${state.seat}:${row.entryId}`;
+    let rec = state.toolAccess.get(key);
+    if (!rec) { rec = { open: false, loading: false, body: null, error: '' }; state.toolAccess.set(key, rec); }
+    const wrap = el('section', 'cm-tools');
+    const toggle = el('button', 'btn sm ghost', rec.open ? 'Hide tool access' : 'Tool access');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', String(rec.open));
+    toggle.addEventListener('click', async () => {
+      rec.open = !rec.open;
+      if (rec.open && !rec.body && !rec.loading) {
+        rec.loading = true; rec.error = '';
+        try {
+          rec.body = await api(`/api/admin/connector-library/tool-access?seat=${encodeURIComponent(state.seat)}&entry=${encodeURIComponent(row.entryId)}`);
+        } catch (error) { rec.error = error?.message || 'Tool access did not load.'; }
+        rec.loading = false;
+      }
+      await refresh();
+    });
+    wrap.append(toggle);
+    if (!rec.open) return wrap;
+    if (rec.loading) { wrap.append(el('p', 'muted sm', 'Loading tools…')); return wrap; }
+    if (rec.error) { wrap.append(el('p', 'muted sm', rec.error)); return wrap; }
+    if (!rec.body) return wrap;
+    const view = toolAccessRows(rec.body);
+    if (view.postureLine) wrap.append(el('p', 'sm cm-tool-posture', `When a message arms it: ${view.postureLine}`));
+    if (!view.hasSnapshot) { wrap.append(el('p', 'muted sm', NO_SNAPSHOT_LINE)); return wrap; }
+    if (view.snapshotTakenAt) wrap.append(el('p', 'muted sm', `Tool list frozen at ${view.snapshotTakenAt}`));
+    for (const tool of view.tools) {
+      const line = el('div', 'cm-tool');
+      const text = el('div', 'cm-tool-main');
+      text.append(el('div', 'cm-tool-name', tool.name));
+      if (tool.description) text.append(el('div', 'muted sm', tool.description));
+      text.append(el('div', 'muted sm cm-tool-anno', tool.annotationLabel));
+      line.append(text);
+      const sw = el('label', 'cm-tool-switch');
+      const input = el('input');
+      input.type = 'checkbox';
+      input.checked = tool.enabled;
+      input.setAttribute('aria-label', `Allow ${tool.name}`);
+      input.addEventListener('change', async () => {
+        input.disabled = true;
+        try {
+          await call('/api/admin/connector-library/tool-enable', { seatId: state.seat, entryId: row.entryId, toolEnableMap: { [tool.name]: input.checked } });
+          const raw = (Array.isArray(rec.body?.tools) ? rec.body.tools : []).find((t) => t?.name === tool.name);
+          if (raw) raw.enabled = input.checked;
+          say(`${row.name}: the ${tool.name} tool is ${input.checked ? 'on' : 'off'}.`);
+        } catch (error) {
+          input.checked = !input.checked;
+          say(error?.message || 'That tool switch did not go through.', true);
+        }
+        input.disabled = false;
+      });
+      sw.append(input, el('span', 'sm', tool.enabled ? 'On' : 'Off'));
+      line.append(sw);
+      wrap.append(line);
+    }
+    return wrap;
   }
 
   function actionButton(label, fn, kind = '') {

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
-import { rowControls, seatName, MIRROR_LINE, MANAGE_SEAT_STORAGE_KEY } from '../app/connector-manage.mjs';
+import { rowControls, seatName, toolAccessRows, MIRROR_LINE, MANAGE_SEAT_STORAGE_KEY, NO_SNAPSHOT_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
 
 const manage = await readFile(new URL('../app/connector-manage.mjs', import.meta.url), 'utf8');
 const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
@@ -68,9 +68,58 @@ test('wiring: the surface reads the existing reads and writes through the M1 rou
     '/api/admin/connector-library/entry-state',
     '/api/admin/connector-library/entries',
     '/api/admin/connector-library/entries/remove',
+    '/api/admin/connector-library/tool-access?seat=',
+    '/api/admin/connector-library/tool-enable',
     '/api/admin/skills',
     '/api/admin/plugins',
   ]) assert.ok(manage.includes(path), path);
+});
+
+test('rowControls: a connected Helmian row carries Tool access; a mirror row never does (bite M2)', () => {
+  const row = { brokerMode: 'helmian', state: 'connected', kind: 'catalog', stateDetail: { posture: 'ask' } };
+  assert.equal(rowControls(row, { role: 'member' }).canToolAccess, true);
+  const mirror = rowControls({ brokerMode: 'vendor', state: 'connected' }, { role: 'owner' });
+  assert.equal(mirror.mode, 'mirror');
+  assert.equal(mirror.canToolAccess, undefined, 'vendor tools are never shown on Helmian\u2019s face');
+  assert.equal(rowControls({ brokerMode: 'helmian', state: 'not-connected' }).canToolAccess, undefined);
+});
+
+test('toolAccessRows: posture in words, per-tool annotations labelled, enabled defaults on', () => {
+  const view = toolAccessRows({
+    connected: true,
+    posture: 'read',
+    snapshotHash: 'abc123',
+    snapshotTakenAt: '2026-11-09T10:00:00.000Z',
+    tools: [
+      { name: 'search', description: 'Search mail', annotation: 'read', enabled: true },
+      { name: 'send', description: 'Send mail', annotation: 'write', enabled: false },
+      { name: 'mystery', description: '', annotation: 'undeclared' },
+      { name: '', description: 'nameless rows are dropped' },
+      { description: 'no name at all' },
+    ],
+  });
+  assert.equal(view.connected, true);
+  assert.equal(view.posture, 'read');
+  assert.equal(view.postureLine, 'Reading is fine; ask before changes');
+  assert.equal(view.hasSnapshot, true);
+  assert.equal(view.snapshotTakenAt, '2026-11-09T10:00:00.000Z');
+  assert.deepEqual(view.tools.map((t) => [t.name, t.annotationLabel, t.enabled]), [
+    ['search', 'Reads', true],
+    ['send', 'Changes things', false],
+    ['mystery', 'Undeclared — treated as changes', true],
+  ]);
+  assert.equal(TOOL_ANNOTATION_LABELS.undeclared, 'Undeclared — treated as changes');
+});
+
+test('toolAccessRows: no snapshot is an honest state, not an empty tool list', () => {
+  const view = toolAccessRows({ connected: true, posture: 'ask', tools: [], snapshotTakenAt: null, snapshotHash: null });
+  assert.equal(view.hasSnapshot, false);
+  assert.deepEqual(view.tools, []);
+  assert.match(NO_SNAPSHOT_LINE, /No tool list has been frozen/);
+  const empty = toolAccessRows(null);
+  assert.equal(empty.connected, false);
+  assert.equal(empty.posture, null);
+  assert.equal(empty.hasSnapshot, false);
 });
 
 test('wiring: the surface paints a loading state first — empty states wait for the first reads', () => {
