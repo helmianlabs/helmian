@@ -1414,6 +1414,9 @@ export function netStripText({ mode, channel, config = null } = {}) {
   if (mode !== 'discord' && isDeskChannel(channel)) {
     return "You're dispatching as Maestro · the desk — replies come back under each agent's own name";
   }
+  if (mode !== 'discord' && config?.maestroFollow === true) {
+    return `You're dispatching as Maestro · Maestro follows you in #${title} — replies come back under each agent's own name`;
+  }
   return mode === 'discord'
     ? (channel ? `You're posting to Discord · #${channel.discord?.channelName || config?.discord?.channelName || title}` : "You're in Discord · no channel linked yet")
     : `You're posting to Envoy · #${title}`;
@@ -1698,6 +1701,38 @@ export function debateHeaderState({ debateMode = 'off', maxRoundTurns = 10 } = {
     stopHidden: !active,
   };
 }
+// Maestro follow (2026-11-09): the per-channel choice that brings the
+// desk's dispatch rules into an ordinary channel — Maestro follows
+// the human here, so an unnamed send reaches the crew. Pure header
+// state, in the debate pattern: the desk channel itself always
+// dispatches, so it shows no toggle and no badge (nothing to follow —
+// Maestro is already home there).
+export function maestroFollowHeaderState({ maestroFollow = false, desk = false } = {}) {
+  const follows = maestroFollow === true;
+  const active = desk === true || follows;
+  return {
+    active,
+    follows,
+    badgeHidden: desk === true || !follows,
+    badgeText: !desk && follows ? 'Maestro following' : '',
+    buttonLabel: active ? 'Maestro: ON' : 'Maestro',
+    toggleHidden: desk === true,
+  };
+}
+// The composer placeholder for the open channel. Follow channels get
+// the desk wording: an unnamed message reaches the crew.
+export function composerPlaceholderText({ mode, title, hasAgents = false, narrowScreen = false, follow = false } = {}) {
+  if (mode === 'discord') return `Message #${title}`;
+  if (follow) return `Message #${title} · Maestro follows you here — @name for one agent, no name for everyone`;
+  return hasAgents && !narrowScreen ? `Message #${title} · @ an agent to get an answer` : `Message #${title}`;
+}
+// The empty-channel line. Follow channels get the desk wording with
+// the channel standing where the desk stands in its own line.
+export function emptyChannelText({ desk = false, follow = false, hasAgents = false } = {}) {
+  if (desk) return 'This is your desk. Send a dispatch — @name for one agent, @all for everyone, or name nobody and it goes to everyone on the desk.';
+  if (follow) return 'Maestro follows you here. Send a message — @name for one agent, @all for everyone, or name nobody and it goes to everyone in this channel.';
+  return hasAgents ? 'Say hello. Name an agent with @ to get an answer — a message that names nobody is just posted, for people.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.';
+}
 async function loadConfig() {
   if (!ws.channelId) return;
   const id = ws.channelId;
@@ -1724,7 +1759,7 @@ function renderHeader() {
   $('ew-channel-title').textContent = title; renderHeadAvatar();
   // The placeholder names the destination channel in both modes; the
   // long @agent hint is an Envoy-side extra and stays there.
-  $('maestro-input').placeholder = ws.mode === 'discord' ? `Message #${title}` : (ws.config?.agents?.length && !narrow() ? `Message #${title} · @ an agent to get an answer` : `Message #${title}`);
+  $('maestro-input').placeholder = composerPlaceholderText({ mode: ws.mode, title, hasAgents: Boolean(ws.config?.agents?.length), narrowScreen: narrow(), follow: !inMaestroMode() && ws.config?.maestroFollow === true });
   const badge = $('ew-discord-badge');
   const d = ws.config?.discord;
   const admin = ['owner', 'admin'].includes(ws.ctx.state.actor?.role);
@@ -1750,6 +1785,11 @@ function renderHeader() {
   if (debBadge) { debBadge.hidden = deb.badgeHidden; debBadge.textContent = deb.badgeText; }
   if (debBtn) { const l = debBtn.querySelector('.lbl'); if (l) l.textContent = deb.buttonLabel; debBtn.setAttribute('aria-pressed', String(deb.active)); }
   if (debStop) debStop.hidden = deb.stopHidden;
+  const mf = maestroFollowHeaderState({ maestroFollow: ws.config?.maestroFollow, desk: inMaestroMode() });
+  const mfBadge = $('ew-maestro-follow-badge');
+  if (mfBadge) { mfBadge.hidden = mf.badgeHidden; mfBadge.textContent = mf.badgeText; }
+  const mfBtn = $('ew-maestro-follow-toggle');
+  if (mfBtn) { const l = mfBtn.querySelector('.lbl'); if (l) l.textContent = mf.buttonLabel; mfBtn.setAttribute('aria-pressed', String(mf.active)); mfBtn.hidden = mf.toggleHidden; }
   const agentCount = $('ew-agent-count'); if (agentCount) agentCount.textContent = String((ws.config?.agents?.length ?? 0));
   $('ew-discord-status-text').textContent = discordFooterStatus({ channels: ws.channels, bot: ws.discordBot, openChannelId: ws.channelId, openLink: d });
   $('ew-slack-status-text').textContent = slackFooterStatus({ channels: ws.channels, bot: ws.slackBot, openChannelId: ws.channelId, openLink: s });
@@ -1765,9 +1805,20 @@ function renderHeader() {
 // Everything else about the open desk is ordinary channel
 // furniture, rendered by the ordinary paths.
 function renderMaestroMode() {
-  const on = inMaestroMode();
+  const on = inMaestroMode() || ws.config?.maestroFollow === true;
   const hint = $('ew-composer-hint');
   if (hint) hint.textContent = on ? '@name for one agent, no name for everyone' : 'Enter to send · Shift+Enter for a new line';
+}
+async function toggleMaestroFollow() {
+  if (!ws.channelId || inMaestroMode()) return;
+  const next = ws.config?.maestroFollow !== true;
+  try {
+    const body = await ws.ctx.post('/api/admin/envoy/channel-config', { action: 'set-maestro-follow', channelId: ws.channelId, maestroFollow: next });
+    ws.config = body.config; ws.configured = true;
+    renderHeader(); renderNetStrip();
+    await loadMessages();
+    ws.ctx.toast(next ? 'Maestro now follows you in this channel.' : 'Maestro no longer follows you in this channel.', 'ok');
+  } catch (e) { ws.ctx.toast(e?.body?.code === 'ENVOY_ADMIN_REQUIRED' ? 'Only workspace owners and admins can set Maestro follow.' : 'Could not change Maestro follow. Try again.'); }
 }
 // ---------- CREW rail (UI polish bite 1) ----------
 // The sidebar presence rail that replaces the composer's pill strip
@@ -3027,7 +3078,9 @@ function markChannelSeen(channelId, messages) {
 }
 function renderMessages() {
   const box = $('ew-messages');
-  const desk = inMaestroMode();
+  const deskChannel = inMaestroMode();
+  const follow = !deskChannel && ws.config?.maestroFollow === true;
+  const desk = deskChannel || follow;
   unreadSnapshot();
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   const out = []; let prev = null; let prevDay = ''; let newShown = false;
@@ -3099,9 +3152,7 @@ function renderMessages() {
   // answering…" cue that stood here was removed 2026-11-04 on Troy's
   // order; it lit seats from message age alone, job or no job.
   for (const cue of cues) out.push(activityRow(cue.provider, cue.event, ws.config?.customAgents));
-  if (!ws.messages.length) out.push(h('div', { class: 'ew-empty' }, desk
-    ? 'This is your desk. Send a dispatch — @name for one agent, @all for everyone, or name nobody and it goes to everyone on the desk.'
-    : (ws.config?.agents?.length ? 'Say hello. Name an agent with @ to get an answer — a message that names nobody is just posted, for people.' : 'No messages yet. Say hello, or add an agent to make this an agent chat.')));
+  if (!ws.messages.length) out.push(h('div', { class: 'ew-empty' }, emptyChannelText({ desk: deskChannel, follow, hasAgents: Boolean(ws.config?.agents?.length) })));
   box.replaceChildren(...out);
   if (atBottom || ws.messages.at(-1)?._pending || ws.messages.at(-1)?.authorSubject === ws.ctx.state.actor?.subject) box.scrollTop = box.scrollHeight;
 }
@@ -3804,6 +3855,7 @@ function wire() {
   $('maestro-mention')?.addEventListener('click', insertAtSignAtCaret);
   $('ew-debate-toggle')?.addEventListener('click', openDebateModal);
   $('ew-debate-stop')?.addEventListener('click', stopDebateNow);
+  $('ew-maestro-follow-toggle')?.addEventListener('click', toggleMaestroFollow);
   $('ew-phone-qr')?.addEventListener('click', openPhoneCloneModal);
   $('ew-foot-create-agent')?.addEventListener('click', openCreateAgentModal);
   $('ew-foot-phone-qr')?.addEventListener('click', openPhoneCloneModal);

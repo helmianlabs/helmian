@@ -241,6 +241,30 @@ test('desk config: desk flag round-trips and stays out of configs that never had
   assert.equal(publicConfig(parseConfig(oldBody)).desk, false);
 });
 
+test('maestroFollow config: flag round-trips and stays out of configs that never had it', () => {
+  const plain = emptyConfig();
+  assert.equal(plain.maestroFollow, false);
+  // Byte-stability: a config without the follow flag serializes
+  // exactly as before Maestro follow existed (no "maestroFollow").
+  assert.ok(!serializeConfig(plain).includes('maestroFollow'));
+  assert.equal(parseConfig(serializeConfig(plain)).maestroFollow, false);
+  // An old stored body (no maestroFollow field at all) parses off.
+  const oldBody = JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: ['claude'], joined: {}, discord: null, pendingLink: null });
+  assert.equal(parseConfig(oldBody).maestroFollow, false);
+  assert.equal(publicConfig(parseConfig(oldBody)).maestroFollow, false);
+
+  const follow = emptyConfig();
+  follow.maestroFollow = true; follow.agents = ['claude', 'gemini'];
+  const back = parseConfig(serializeConfig(follow));
+  assert.equal(back.maestroFollow, true);
+  assert.equal(back.desk, false, 'follow is its own flag, never the desk flag');
+  assert.deepEqual(back.agents, ['claude', 'gemini']);
+  assert.equal(publicConfig(back).maestroFollow, true);
+  // A truthy non-boolean in a stored body does not turn follow on.
+  const junk = JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: [], joined: {}, discord: null, pendingLink: null, maestroFollow: 'yes' });
+  assert.equal(parseConfig(junk).maestroFollow, false);
+});
+
 
 test('slack bot status: app id plus bridge token, no secret ever shown', async () => {
   const { slackBotStatus } = await import('../src/cloud/envoy-mesh.mjs');

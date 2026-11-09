@@ -342,6 +342,16 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             await writeConfig(client, actor.tenantId, channelId, config);
             posted = await notice(client, actor.tenantId, channelId, `#${channel.title} is no longer linked to GitHub repository ${was.repo}.`);
           }
+        } else if (action === 'set-maestro-follow') {
+          if (!admin) throw fail(403, 'ENVOY_ADMIN_REQUIRED');
+          const follow = typeof input?.maestroFollow === 'boolean' ? input.maestroFollow : config.maestroFollow !== true;
+          if (follow !== (config.maestroFollow === true)) {
+            config.maestroFollow = follow;
+            await writeConfig(client, actor.tenantId, channelId, config);
+            posted = await notice(client, actor.tenantId, channelId, follow
+              ? `Maestro now follows you in #${channel.title} — a message that names nobody reaches the crew here.`
+              : `Maestro no longer follows you in #${channel.title}.`);
+          }
         } else if (action === 'link-discord') {
           if (!admin) throw fail(403, 'ENVOY_ADMIN_REQUIRED');
           linkCode = newLinkCode();
@@ -508,8 +518,8 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             if (message.guard) continue;
             const at = new Date(row.created_at).getTime();
             let due = agentsToAnswer(message, config.agents, {
-              desk: config.desk === true,
-              room: channel.kind === 'agent' && config.desk !== true,
+              desk: config.desk === true || config.maestroFollow === true,
+              room: channel.kind === 'agent' && config.desk !== true && config.maestroFollow !== true,
               debateMode: config.debateMode ?? 'off',
               roundTurns,
               maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,

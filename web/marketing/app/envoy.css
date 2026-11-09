@@ -773,6 +773,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 /* ---- Monday Launch: Custom Agents, Free-Willy Debate, GitHub Link & Full Mobile Clone Pass ---- */
 .ew-badge.github { background:rgba(148,163,184,.18); color:#E2E8F0; border:1px solid rgba(148,163,184,.45); }
 .ew-badge.debate { background:rgba(245,158,11,.18); color:#FBBF24; border:1px solid rgba(245,158,11,.55); animation:ew-pulse 1.6s ease-in-out infinite; }
+.ew-badge.maestro { background:rgba(56,189,248,.16); color:#7DD3FC; border:1px solid rgba(56,189,248,.5); }
 .ew-btn.danger { background:rgba(239,68,68,.18); border-color:rgba(239,68,68,.55); color:#FCA5A5; }
 .ew-btn.danger:hover { background:rgba(239,68,68,.3); border-color:#EF4444; }
 .ew-custom-ava, .ew-avatar.custom { width:30px; height:30px; border-radius:50%; background:var(--panel); border:1px solid rgba(56,189,248,.4); display:grid; place-items:center; font-size:17px; grid-row:span 2; }
@@ -941,6 +942,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 [data-theme="light"] .ew-badge.slack { background:rgba(74,21,75,.08); color:#4A154B; border-color:rgba(74,21,75,.35); }
 [data-theme="light"] .ew-badge.github { background:rgba(113,134,157,.16); color:#2F3A47; border-color:rgba(113,134,157,.45); }
 [data-theme="light"] .ew-badge.debate { background:#FBF0DA; color:var(--amber); border-color:rgba(137,94,13,.45); }
+[data-theme="light"] .ew-badge.maestro { background:rgba(2,132,199,.1); color:#0369A1; border-color:rgba(2,132,199,.45); }
 [data-theme="light"] .ew-src.discord { color:#5865F2; }
 [data-theme="light"] .ew-src.slack { color:#4A154B; }
 [data-theme="light"] .ew-net-strip.discord { color:#5865F2; }
