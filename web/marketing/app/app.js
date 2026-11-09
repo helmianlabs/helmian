@@ -375,7 +375,9 @@ async function loadSessions() {
 // URL-served; same pattern as the inlined guard-motion copy). Voice mode:
 // a toggle enabling a full voice loop. Dictation inserts into #prompt; a
 // final transcript ending with "send it" submits the composer; agent
-// replies are spoken aloud. Toggle off stops everything.
+// replies are spoken aloud. Voice chat needs no "send it": when the
+// speaker stops, the utterance submits itself after a short silence
+// (dictation keeps the command word). Toggle off stops everything.
 //
 // TTS: Kokoro (fully local) is the primary engine. The model warms up as
 // soon as voice chat is enabled — not at the first spoken reply — via the
@@ -397,14 +399,27 @@ async function loadSessions() {
 // Default Kokoro voice preset (a voice setting UI comes later).
 const KOKORO_VOICE = 'af_heart';
 const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+// Two-way voice: the silence that ends an utterance. A final transcript
+// only reaches this controller after the recogniser's own end-pointing
+// has already heard a pause, so this bound is not the speech detector —
+// it spans the gap between recognition turns when a speaker pauses
+// mid-thought (a turn ends, the loop restarts, they resume) and leaves
+// a conversational beat before the room answers. 1.5s: long enough to
+// never cut a thinking speaker off, short enough to feel like talk.
+const VOICE_AUTO_SUBMIT_MS = 1500;
 
 // Per-seat voices. Every id below is a voice the bundled model actually
 // ships (onnx-community/Kokoro-82M-v1.0-ONNX, voices/<id>.bin — verified
 // against the model repo's file list). af_heart stays the house voice:
 // Maestro speaks with it, and so does anything unmapped that is not a
-// custom seat. Named seats get their own voice so who's talking is
-// audible; unmapped custom seats hash into a small pool so distinct
-// seats usually sound distinct, stably across sessions.
+// custom seat. Every one of the fourteen room seats carries a NAMED
+// entry below — a seat's voice is its spoken identity, fixed across
+// sessions and devices, never a dice roll — and all fourteen are
+// distinct. The owner takes bm_daniel, the strongest unused male
+// voice, rather than af_heart: af_heart is Maestro's (above). Unmapped
+// custom seats hash into a small pool so distinct seats usually sound
+// distinct, stably across sessions; the pool never reuses a named
+// seat's voice, so a custom seat can never collide with a known one.
 const SEAT_VOICES = {
   maestro: 'af_heart',
   claude: 'af_bella',
@@ -419,8 +434,9 @@ const SEAT_VOICES = {
   qwen: 'af_kore',
   muse: 'af_aoede',
   helm: 'bm_george',
+  owner: 'bm_daniel',
 };
-const SEAT_VOICE_POOL = ['af_nicole', 'am_adam', 'bf_lily', 'am_liam', 'af_sarah', 'bm_daniel'];
+const SEAT_VOICE_POOL = ['af_nicole', 'am_adam', 'bf_lily', 'am_liam', 'af_sarah'];
 function voiceForSeat(seat) {
   const key = String(seat ?? '').trim().toLowerCase();
   if (!key) return KOKORO_VOICE;
@@ -480,6 +496,8 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   let voiceKind = 'dictate'; // 'dictate' (text only) or 'voice' (two-way)
   let handlers = {};
   let restartTimer = null; // held mic restart while a reply is speaking (see restartTurn)
+  let autoSubmitTimer = null; // two-way voice: the pending end-of-utterance submit (see scheduleAutoSubmit)
+  let autoSubmitPending = false; // an utterance has landed and is inside its silence bound
   const ERROR_MESSAGES = {
     'not-allowed': 'Microphone permission was not granted. Nothing was recorded.',
     'no-speech': 'No speech detected — try again.',
@@ -508,6 +526,14 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     recognition.onresult = (event) => {
       if (!voiceMode) return; // commands only act while the toggle is on
       if (typeof document !== 'undefined' && document.hidden) return; // never transcribe a hidden tab
+      // Echo guard (two-way voice): while a reply is being read aloud,
+      // results are the reply's own audio coming back through the mic —
+      // a turn can still be open when a reply starts (e.g. one a typed
+      // message set off). They are dropped whole: never displayed,
+      // never inserted, never submitted, and they never arm or re-arm
+      // the auto-submit. The loop's restart is already held until the
+      // reply drains (restartTurn), so the next real turn starts clean.
+      if (voiceKind === 'voice' && speechActive()) return;
       // Interim/final tracking (bite 2a): results before event.resultIndex
       // were already reported by earlier events in this turn, so each
       // final is committed exactly once (the old handler re-joined every
@@ -526,10 +552,23 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
         else interimText = interimText ? `${interimText} ${transcript}` : transcript;
       }
       if (interimText) handlers.onInterim?.(interimText);
+      // Still talking: interim words from a resumed turn push a pending
+      // auto-submit's bound out — the send waits for a real stop, not
+      // for a breath between recognition turns.
+      if (interimText && autoSubmitPending) scheduleAutoSubmit();
       if (!finalText) return;
       const cmd = sendCommand(finalText);
-      if (cmd === undefined) handlers.onTranscript?.(finalText);
-      else handlers.onSubmit?.(cmd ?? ''); // null = bare "send it": submit the composer as-is
+      if (cmd === undefined) {
+        handlers.onTranscript?.(finalText);
+        // Two-way voice: no "send it" needed — the utterance that just
+        // landed submits itself once the speaker has stopped (the
+        // silence bound in scheduleAutoSubmit). Dictate keeps the
+        // command word; scheduleAutoSubmit arms only in voice kind.
+        scheduleAutoSubmit();
+      } else {
+        clearAutoSubmit(); // an explicit "send it" supersedes a pending auto-submit
+        handlers.onSubmit?.(cmd ?? ''); // null = bare "send it": submit the composer as-is
+      }
     };
     recognition.onerror = (event) => {
       if (event?.error === 'aborted') return; // user tapped to stop; silent
@@ -568,12 +607,44 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     startTurn();
   }
 
+  // Two-way voice auto-submit (voice kind only). The utterance already
+  // sits in the composer — it arrived through onTranscript like any
+  // dictation — so firing is exactly the bare "send it" contract:
+  // onSubmit with an empty remainder submits the composer as-is, and
+  // every wiring's own empty-composer guard keeps a late or duplicate
+  // fire harmless. Firing never happens from a hidden tab, and holds
+  // while a reply is being read aloud (turn-taking: the send goes out
+  // the moment the reply drains, on the restart loop's poll rhythm).
+  function fireAutoSubmit() {
+    autoSubmitTimer = null;
+    if (!voiceMode || voiceKind !== 'voice') { autoSubmitPending = false; return; }
+    if (typeof document !== 'undefined' && document.hidden) { autoSubmitPending = false; return; }
+    if (speechActive()) {
+      autoSubmitTimer = setTimeout(fireAutoSubmit, 400);
+      return;
+    }
+    autoSubmitPending = false;
+    handlers.onSubmit?.('');
+  }
+
+  function scheduleAutoSubmit() {
+    if (!voiceMode || voiceKind !== 'voice') return; // dictate never auto-submits
+    autoSubmitPending = true;
+    if (autoSubmitTimer) clearTimeout(autoSubmitTimer);
+    autoSubmitTimer = setTimeout(fireAutoSubmit, VOICE_AUTO_SUBMIT_MS);
+  }
+
+  function clearAutoSubmit() {
+    autoSubmitPending = false;
+    if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; }
+  }
+
   function setVoiceMode(on, next = {}) {
     // Enabling voice chat also warms the Kokoro model (warmup call in the
     // on-branch below): the load starts at enable time, not first speak.
     if (!supported) { next.onError?.('Voice mode is not supported by this browser. You can still type or paste a message.'); return false; }
     if (on && !voiceMode) { voiceMode = true; voiceKind = next.mode === 'voice' ? 'voice' : 'dictate'; handlers = next; startTurn(); if (voiceKind === 'voice') void warmup(); return true; }
-    if (!on && voiceMode) { voiceMode = false; voiceKind = 'dictate'; handlers = {}; if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; } stopTurn(); cancelSpeech(); setVoiceStatus('', ''); next.onState?.('idle'); return true; }
+    if (!on && voiceMode) { voiceMode = false; voiceKind = 'dictate'; handlers = {}; if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; } clearAutoSubmit(); stopTurn(); cancelSpeech(); setVoiceStatus('', ''); next.onState?.('idle'); return true; }
     return false;
   }
   // Pause the mic while the tab is hidden: speech meant for another tab must
@@ -582,7 +653,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   if (typeof document !== 'undefined' && document.addEventListener) {
     document.addEventListener('visibilitychange', () => {
       try {
-        if (document.hidden) { stopTurn(); cancelSpeech(); }
+        if (document.hidden) { stopTurn(); cancelSpeech(); clearAutoSubmit(); }
         else if (voiceMode && !listening) { startTurn(); }
       } catch {}
     });
@@ -1120,8 +1191,8 @@ voice.setSpeakingListener((info) => { workspaceModule?.noteSpeaking?.(info); });
 const seenMessageIds = new Set();
 const voicePrivacy = (mode) => mode === 'voice'
   ? es(
-    '🎙️ Voice chat: talk, say "send it" to submit, and replies are spoken aloud in a natural voice. First use downloads a one-time ~300MB voice model, use WiFi. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.',
-    'Voice chat: talk, say "send it" to submit, and replies are spoken aloud in a natural voice. First use downloads a one-time ~300MB voice model, use WiFi. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.'
+    '🎙️ Voice chat: just talk — when you stop talking, your message sends itself, and replies are spoken aloud in a natural voice. First use downloads a one-time ~300MB voice model, use WiFi. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.',
+    'Voice chat: just talk — when you stop talking, your message sends itself, and replies are spoken aloud in a natural voice. First use downloads a one-time ~300MB voice model, use WiFi. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Voice chat again to turn it off.'
   )
   : es(
     '🎙️ Dictate: talk, text lands in the composer, say "send it" to submit. Replies are not spoken aloud — you read them. Dictation uses your browser\u2019s speech service — in Chrome, audio is sent to Google for transcription. Tap Dictate again to turn it off.',
