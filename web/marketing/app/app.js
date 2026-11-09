@@ -685,6 +685,9 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // is not reachable from every checking browser, and "unavailable"
   // alone does not say which stage broke. Cleared when Kokoro is ready.
   function noteKokoroError(err) {
+    // A latched local-import failure is sticky: the ready path clearing
+    // the latch after a CDN fallback load would bury the root cause.
+    if (kokoroErrorLatch && kokoroErrorLatch.startsWith('local import:')) return;
     const msg = String(err?.message ?? err ?? '').slice(0, 300);
     // First failure wins: it is the root cause. A later error in the same
     // session is downstream of it (the CDN fallback failing after the
