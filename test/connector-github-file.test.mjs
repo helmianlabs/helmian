@@ -4,11 +4,14 @@
 //   - the GitHub file source serves ONLY repos a channel in this
 //     workspace links to (the link is the room's repo truth) — an
 //     unlinked repo is refused before any fetch, whatever it is;
-//   - listings and file reads come from the public GitHub API (the
-//     cloud holds no GitHub token): a private or missing path
-//     answers in plain words that cover both, and a file over the
-//     256 KB attach limit is refused by size before its bytes are
-//     handed over;
+//   - listings and file reads come from the GitHub API —
+//     unauthenticated unless a token provider is wired (production
+//     wires none today: no establishable lawful token source,
+//     FIX-A Step 0). A spent rate limit answers with its own code
+//     and words, a private or missing path answers in plain words
+//     that cover both, any other upstream error keeps a distinct
+//     message, and a file over the 256 KB attach limit is refused
+//     by size before its bytes are handed over;
 //   - '..' path segments never reach the API;
 //   - the read route carries both new GETs behind the same member
 //     gate as the library reads, passes a read's status-coded
@@ -46,8 +49,9 @@ function fakeGithubFetch(handler) {
   return { calls, fetchImpl };
 }
 
-const jsonResponse = (body, { ok = true, status = 200 } = {}) => ({
+const jsonResponse = (body, { ok = true, status = 200, headers = {} } = {}) => ({
   ok, status, json: async () => body,
+  headers: { get: (name) => (Object.prototype.hasOwnProperty.call(headers, String(name).toLowerCase()) ? headers[String(name).toLowerCase()] : null) },
 });
 
 test('githubEntryRow: dirs and files map to the picker shape; other kinds drop', () => {
@@ -127,6 +131,62 @@ test('github file: a private or missing path answers in words that cover both an
     (e) => e.status === 502 && e.code === 'GITHUB_FILE_UNAVAILABLE');
 });
 
+test('github file: a token provider\u2019s token rides as a Bearer header; a failing or blank provider falls back to the public read', async () => {
+  const { calls, fetchImpl } = fakeGithubFetch(() => jsonResponse([]));
+  const authed = createGithubFileRead({
+    envoyStore: fakeEnvoyStore(['helmianlabs/helmian']),
+    fetchImpl,
+    tokenProvider: async () => 'test-operator-token',
+  });
+  await authed(ACTOR, { repo: 'helmianlabs/helmian', path: '' });
+  assert.equal(calls[0].headers.authorization, 'Bearer test-operator-token', 'the provider\u2019s token is sent on the API call');
+  const broken = createGithubFileRead({
+    envoyStore: fakeEnvoyStore(['helmianlabs/helmian']),
+    fetchImpl,
+    tokenProvider: async () => { throw new Error('vault unreachable'); },
+  });
+  const out = await broken(ACTOR, { repo: 'helmianlabs/helmian', path: '' });
+  assert.equal(out.kind, 'dir');
+  assert.equal(calls[1].headers.authorization, undefined, 'a provider failure never breaks the public read');
+  const blank = createGithubFileRead({
+    envoyStore: fakeEnvoyStore(['helmianlabs/helmian']),
+    fetchImpl,
+    tokenProvider: async () => '   ',
+  });
+  await blank(ACTOR, { repo: 'helmianlabs/helmian', path: '' });
+  assert.equal(calls[2].headers.authorization, undefined, 'a blank token is no token');
+});
+
+test('github file: a spent rate limit answers with its own code and words — never the private/missing words', async () => {
+  const limited = createGithubFileRead({
+    envoyStore: fakeEnvoyStore(['helmianlabs/helmian']),
+    fetchImpl: async () => jsonResponse({ message: 'API rate limit exceeded' }, { ok: false, status: 403, headers: { 'x-ratelimit-remaining': '0' } }),
+  });
+  await assert.rejects(() => limited(ACTOR, { repo: 'helmianlabs/helmian', path: 'README.md' }),
+    (e) => e.status === 503 && e.code === 'GITHUB_RATE_LIMITED' && /rate limit for this server is spent/.test(e.message) && !/private/.test(e.message));
+  const throttled = createGithubFileRead({
+    envoyStore: fakeEnvoyStore(['helmianlabs/helmian']),
+    fetchImpl: async () => jsonResponse({ message: 'Too Many Requests' }, { ok: false, status: 429 }),
+  });
+  await assert.rejects(() => throttled(ACTOR, { repo: 'helmianlabs/helmian', path: '' }),
+    (e) => e.status === 503 && e.code === 'GITHUB_RATE_LIMITED');
+  // The remaining-budget header alone marks the throttle even on
+  // another status: the budget being gone is the fact that matters.
+  const headerOnly = createGithubFileRead({
+    envoyStore: fakeEnvoyStore(['helmianlabs/helmian']),
+    fetchImpl: async () => jsonResponse({ message: 'Forbidden' }, { ok: false, status: 403, headers: { 'x-ratelimit-remaining': '12' } }),
+  });
+  await assert.rejects(() => headerOnly(ACTOR, { repo: 'helmianlabs/helmian', path: '' }),
+    (e) => e.code === 'GITHUB_RATE_LIMITED', 'a 403 is a throttle answer on this road');
+});
+
+test('github file: another upstream error keeps a distinct message — not the missing/private words, not the rate-limit words', async () => {
+  const { fetchImpl } = fakeGithubFetch(() => jsonResponse({ message: 'Internal Server Error' }, { ok: false, status: 500 }));
+  const read = createGithubFileRead({ envoyStore: fakeEnvoyStore(['helmianlabs/helmian']), fetchImpl });
+  await assert.rejects(() => read(ACTOR, { repo: 'helmianlabs/helmian', path: 'x.md' }),
+    (e) => e.status === 502 && e.code === 'GITHUB_FILE_UNAVAILABLE' && /HTTP 500/.test(e.message) && !/private/.test(e.message) && !/rate limit/.test(e.message));
+});
+
 // ------------------------------------------------------------ the route
 
 function routeHarness({ actor = ACTOR, actorError = null, toolAccess = null, githubFile = null } = {}) {
@@ -187,6 +247,19 @@ test('route: github-file passes the read through, and a status-coded refusal kee
   assert.equal(no.status, 404);
   assert.equal(no.json.code, 'GITHUB_REPO_NOT_LINKED');
   assert.match(no.json.error, /not linked to any channel/);
+});
+
+test('route: a rate-limited github read reaches the picker as 503 with the route\u2019s plain words in the error field', async () => {
+  const h = routeHarness({
+    githubFile: createGithubFileRead({
+      envoyStore: fakeEnvoyStore(['helmianlabs/helmian']),
+      fetchImpl: async () => jsonResponse({ message: 'API rate limit exceeded' }, { ok: false, status: 403, headers: { 'x-ratelimit-remaining': '0' } }),
+    }),
+  });
+  const out = await h.run(`${CONNECTOR_GITHUB_FILE_PATH}?repo=helmianlabs/helmian&path=README.md`);
+  assert.equal(out.status, 503);
+  assert.equal(out.json.code, 'GITHUB_RATE_LIMITED');
+  assert.match(out.json.error, /rate limit for this server is spent/, 'the words ride the body — the picker renders them, not the code');
 });
 
 test('route: both new reads sit behind the same member gate; other methods and paths are refused or unhandled', async () => {

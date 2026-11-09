@@ -15,13 +15,25 @@
 //   - The repo must be one this workspace's channels link to. This
 //     is never an arbitrary-repo proxy: a repo no channel names is
 //     refused before any fetch.
-//   - The cloud holds no GitHub token (no env, no vault record — the
-//     workspace's GitHub sign-in lives on the person's own roads),
-//     so the fetch is the public GitHub API read, the same
-//     unauthenticated read live-admin already makes for releases. A
-//     private repo answers 404 from that API, and the refusal says
-//     plainly that the file could not be read — it never invents a
-//     listing.
+//   - The read accepts an optional token provider; when one is
+//     wired and yields a token, the fetch carries it as a Bearer
+//     header and GitHub's authenticated budget applies. Production
+//     wires NONE today (FIX-A, Step 0): whether the operator
+//     GITHUB_TOKEN the marketing download counter reads is set on
+//     this deployment could not be established from any reachable
+//     env listing, and the credential vault holds no GitHub
+//     credential at all — so the fetch is the public GitHub API
+//     read, the same unauthenticated read live-admin already makes
+//     for releases, until the env fact is settled or M3's
+//     per-person GitHub connection lands. The provider's token is
+//     held in memory for the one call — never returned, never
+//     logged.
+//   - Upstream failures split honestly: a spent rate limit (403 /
+//     429, or x-ratelimit-remaining: 0) gets its own code and words;
+//     a 404 keeps the missing/private words (a private repo is
+//     indistinguishable from a missing one on the public read);
+//     any other upstream error keeps a distinct message. One code
+//     for all three is what made the picker lie.
 //   - Files ride the attach road's bounds: 256 KB per file, and the
 //     kinds a turn can receive (text-shaped + PNG/JPEG/WebP). A
 //     bigger or unreadable file is refused with the reason, here —
@@ -48,16 +60,22 @@ export function githubEntryRow(entry) {
 /**
  * The read itself, injectable for tests: `envoyStore` is the envoy
  * channel store (its listChannels is the repo-link truth), `fetchImpl`
- * the GitHub API transport. Returns one of:
+ * the GitHub API transport, and `tokenProvider` — optional — an
+ * async function yielding a GitHub token (or nothing). A provider
+ * that throws or yields a blank value falls back to the public
+ * read; the provider's failure never breaks the read. Returns one of:
  *   { kind: 'dir', repo, path, entries: [...] }   — a listing
  *   { kind: 'file', repo, path, name, size, mediaType, data }  — base64
  * and throws a status-coded error with plain words for every refusal.
  */
-export function createGithubFileRead({ envoyStore, fetchImpl = globalThis.fetch } = {}) {
+export function createGithubFileRead({ envoyStore, fetchImpl = globalThis.fetch, tokenProvider = null } = {}) {
   if (!envoyStore || typeof envoyStore.listChannels !== 'function') {
     throw new TypeError('createGithubFileRead needs the envoy store (listChannels is the repo-link truth)');
   }
   if (typeof fetchImpl !== 'function') throw new TypeError('createGithubFileRead needs a fetch implementation');
+  if (tokenProvider !== null && typeof tokenProvider !== 'function') {
+    throw new TypeError('createGithubFileRead tokenProvider must be a function when given');
+  }
 
   async function linkedRepos(actor) {
     const { channels } = await envoyStore.listChannels(actor);
@@ -80,20 +98,38 @@ export function createGithubFileRead({ envoyStore, fetchImpl = globalThis.fetch 
     }
     const cleanPath = String(path ?? '').split('/').filter((seg) => seg && seg !== '.' && seg !== '..').join('/');
     const url = `https://api.github.com/repos/${repoName.split('/').map(encodeURIComponent).join('/')}/contents/${cleanPath.split('/').map(encodeURIComponent).join('/')}`;
+    const headers = { accept: 'application/vnd.github+json', 'user-agent': 'helmian-cloud' };
+    if (tokenProvider) {
+      let token = null;
+      try { token = await tokenProvider(); } catch { token = null; }
+      if (typeof token === 'string' && token.trim()) headers.authorization = `Bearer ${token}`;
+    }
     let response;
     try {
       response = await fetchImpl(url, {
-        headers: { accept: 'application/vnd.github+json', 'user-agent': 'helmian-cloud' },
+        headers,
         signal: AbortSignal.timeout(10000),
       });
     } catch {
       throw failure(502, 'GITHUB_FILE_UNAVAILABLE', 'GitHub could not be reached to read that file');
     }
     if (!response?.ok) {
-      // A private repo is indistinguishable from a missing one on
-      // the public read (404 either way) — the words cover both and
-      // claim neither.
-      throw failure(404, 'GITHUB_FILE_UNAVAILABLE', 'that file could not be read from GitHub — it may be missing, or the repository may be private (Helmian\u2019s cloud read holds no GitHub sign-in)');
+      const status = Number.isInteger(response?.status) ? response.status : 0;
+      const remaining = response?.headers?.get?.('x-ratelimit-remaining');
+      if (status === 403 || status === 429 || String(remaining ?? '').trim() === '0') {
+        // The unauthenticated budget is per egress address and is
+        // shared with every other tenant of it — on the cloud road
+        // it is routinely spent by someone else. That is a
+        // throttle, not a missing file, and the words say so.
+        throw failure(503, 'GITHUB_RATE_LIMITED', 'GitHub\u2019s rate limit for this server is spent — try again shortly');
+      }
+      if (status === 404) {
+        // A private repo is indistinguishable from a missing one on
+        // the public read (404 either way) — the words cover both and
+        // claim neither.
+        throw failure(404, 'GITHUB_FILE_UNAVAILABLE', 'that file could not be read from GitHub — it may be missing, or the repository may be private (Helmian\u2019s cloud read holds no GitHub sign-in)');
+      }
+      throw failure(502, 'GITHUB_FILE_UNAVAILABLE', `GitHub answered that read with an error${status ? ` (HTTP ${status})` : ''} — the file could not be read`);
     }
     const body = await response.json().catch(() => null);
     if (Array.isArray(body)) {

@@ -110,6 +110,17 @@ async function productionToolAccess(tenantId, { personId, seatId, entryId }) {
 }
 
 function productionGithubFile() {
+  // No token provider is wired (FIX-A, Step 0): the operator
+  // GITHUB_TOKEN that web/marketing/api/download-count.js reads
+  // lives in this same Vercel project's env IF it is set for
+  // production — its presence could not be established from any
+  // reachable env listing, the one live consumer answers 500
+  // today, and the credential vault holds no GitHub credential at
+  // all. The read therefore runs on the public API budget until
+  // the env fact is settled (the provider then wires here in one
+  // line) or M3's per-person GitHub connection lands and the
+  // token resolves through the credential service instead
+  // (the write route's brokeredToken road).
   return createGithubFileRead({ envoyStore: createEnvoyStore(getPool()) });
 }
 

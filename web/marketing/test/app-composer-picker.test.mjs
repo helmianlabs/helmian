@@ -325,6 +325,15 @@ test('the channel composer carries the picker: plus button, panel, chips, wiring
   assert.match(js, /api\(`\/api\/admin\/connector-library\?seat=/, 'Level 2 reads the picked seat\'s library');
 });
 
+test('the GitHub picker shows the route\u2019s plain words, not the bare code', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  // The shared api() helper throws Error(body.code || body.error) with
+  // the body attached; the picker must render the body's words first
+  // or the person reads GITHUB_FILE_UNAVAILABLE instead of the reason.
+  assert.match(js, /gf\.note = error\?\.body\?\.error \|\| error\?\.message/, 'the listing refusal renders the error body\u2019s words in preference to the code');
+  assert.match(js, /ws\.githubFile\.note = error\?\.body\?\.error \|\| error\?\.message/, 'the file-pick refusal renders the error body\u2019s words in preference to the code');
+});
+
 test('the picker model reuses the Integrations registry instead of inventing one', async () => {
   const src = await readFile(new URL('../app/composer-picker.mjs', import.meta.url), 'utf8');
   assert.match(src, /import \{ bestToolConnectionStatus, integrationsModel \} from '\.\/app-model\.mjs'/, 'connection truth comes from the same model the Integrations page renders');
