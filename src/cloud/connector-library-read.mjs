@@ -16,17 +16,25 @@
 //     id. Either source reading connected makes the row connected;
 //     this read mints NO second connection record for it (§3.2).
 //
-// THE READ WRITES EXACTLY ONE THING, EXACTLY ONCE: the first read for
-// a tenant whose library holds ZERO catalog entries seeds that
-// tenant's catalog (seed-on-first-read — see maybeSeedTenant below),
-// because the catalog otherwise exists only as data in code and a
-// fresh workspace's library would sit empty until someone ran the
-// refresh by hand. The seed goes through the catalog refresh road
-// (connector-catalog.mjs), which writes ENTRIES ONLY — never
-// connections, mirrors, or snapshots — and reports brokerMode
-// conflicts instead of forcing them. Every other read path is
-// read-only: a read of a tenant holding any entries performs zero
-// writes, and a read never touches the connections table.
+// THE READ WRITES IN EXACTLY TWO CASES, both through the same
+// one-flight catalog refresh road (connector-catalog.mjs), which
+// writes ENTRIES ONLY — never connections, mirrors, or snapshots —
+// and reports brokerMode conflicts instead of forcing them:
+//   1. SEED — the first read for a tenant whose library holds ZERO
+//      catalog entries seeds that tenant's catalog
+//      (seed-on-first-read — see maybeSeedTenant below), because the
+//      catalog otherwise exists only as data in code and a fresh
+//      workspace's library would sit empty until someone ran the
+//      refresh by hand.
+//   2. HEAL — a read for a seat that already holds catalog entries
+//      but lacks ids the code catalog has since gained runs the
+//      refresh once (see maybeHealCatalog below), because a
+//      populated tenant otherwise never refreshes and a new catalog
+//      entry — Idiolect, added by bite M2 — would never reach its
+//      library at all (the M2 live-walk defect C).
+// Every other read path is read-only: a read whose seat library is
+// current performs ZERO writes, and a read never touches the
+// connections table.
 //
 // Row shape: the five §1.2 fields first — iconRef, name, oneLiner,
 // vendorLabel ("Connector by <vendor>") + trustLabel, state — then the
@@ -37,7 +45,7 @@
 // 'needs-reconnect', 'disabled-by-owner'.
 
 import { isVerifiedFresh } from './tool-connections.mjs';
-import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh, catalogStarterActions } from './connector-catalog.mjs';
+import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh, catalogEntriesForSeat, catalogStarterActions } from './connector-catalog.mjs';
 
 // How long a tool-connections probe receipt still counts as Connected
 // — the same window the room's surfaces already use
@@ -406,11 +414,13 @@ export function createSeatLibraryRead({
   }
 
   // Seed only when the TENANT holds zero catalog entries — not merely
-  // when this seat is empty (a partly-seeded or partly-deleted tenant
-  // is a state a human refresh decides about, never a read). The probe
-  // covers the requested seat (already listed by the caller) plus the
-  // catalog seats; it runs only on the empty-seat path, so a populated
-  // read pays nothing for it.
+  // when this seat is empty (a partly-seeded tenant — some seats
+  // seeded, this one empty — is a state a human refresh decides
+  // about, never a read; the heal below covers the different case of
+  // a populated seat missing additions). The probe covers the
+  // requested seat (already listed by the caller) plus the catalog
+  // seats; it runs only on the empty-seat path, so a populated read
+  // pays nothing for it.
   async function maybeSeedTenant(tenantId, seatId, entriesForSeat) {
     if (entriesForSeat.length > 0) return SEED_NOT_ATTEMPTED;
     for (const otherSeat of LIVE_SEATS) {
@@ -418,6 +428,49 @@ export function createSeatLibraryRead({
       const other = await libraryStore.listEntries(tenantId, otherSeat);
       if (other.length > 0) return SEED_NOT_ATTEMPTED;
     }
+    return runSeedOnce(tenantId);
+  }
+
+  // Heal for catalog ADDITIONS: a seat that already holds catalog
+  // entries but lacks ids the code catalog now holds for that seat
+  // runs the same one-flight refresh, and the read then re-lists.
+  // This is the durable half of the Idiolect fix (M2 walk defect C):
+  // the catalog gained an entry in code, populated tenants never
+  // refreshed, and the entry — plus the starter actions that ride
+  // under it — never reached the menu.
+  //
+  // The trigger is deliberately narrow:
+  //   · the seat must already hold at least one catalog/native entry
+  //     (a wholly empty seat in a populated tenant stays the seed
+  //     gate's settled case above — a human refresh decides);
+  //   · only ids the CATALOG holds and the store lacks count —
+  //     stored ids the catalog no longer holds never trigger, and
+  //     the refresh never removes anything;
+  //   · custom entries count toward neither set: the refresh writes
+  //     catalog/native entries only and cannot touch a custom.
+  //
+  // THE DELETION TRADE-OFF, chosen deliberately (FIX-C report): the
+  // refresh only ever adds/updates, so a catalog entry a person
+  // deliberately removed from a populated seat RETURNS on that
+  // seat's next read. Catalog entries are operator-curated — they
+  // mirror a vendor's published catalog — and resurrection-on-read
+  // is the accepted behaviour for them; the entry-level disable
+  // ('disabled-by-owner') is the durable way to keep one out of the
+  // way, and a refresh preserves it. Recording deletions
+  // (tombstones) is the future fix if deleting catalog entries ever
+  // becomes a real product act.
+  async function maybeHealCatalog(tenantId, seatId, entriesForSeat) {
+    if (!LIVE_SEATS.includes(seatId)) return SEED_NOT_ATTEMPTED;
+    const storedCatalogIds = new Set(
+      entriesForSeat
+        .filter((entry) => entry.kind === 'catalog' || entry.kind === 'helmian-native')
+        .map((entry) => entry.id),
+    );
+    if (storedCatalogIds.size === 0) return SEED_NOT_ATTEMPTED;
+    const missing = catalogEntriesForSeat(seatId)
+      .map((entry) => entry.id)
+      .filter((id) => !storedCatalogIds.has(id));
+    if (missing.length === 0) return SEED_NOT_ATTEMPTED;
     return runSeedOnce(tenantId);
   }
 
@@ -438,10 +491,13 @@ export function createSeatLibraryRead({
       ]);
       // Seed-on-first-read: a tenant with zero catalog entries gets
       // one refresh, then the read re-lists and serves the seeded
-      // rows. A failed seed never fails the read — the listings are
-      // re-read (another seeder may have landed rows meanwhile) and
-      // the failure rides in the result's `seed` metadata.
-      const seed = await maybeSeedTenant(tenantId, seat, entries);
+      // rows. Heal-on-read: a populated seat missing catalog
+      // additions gets the same one refresh (maybeHealCatalog). A
+      // failed run never fails the read — the listings are re-read
+      // (another seeder may have landed rows meanwhile) and the
+      // failure rides in the result's `seed` metadata.
+      let seed = await maybeSeedTenant(tenantId, seat, entries);
+      if (!seed.attempted) seed = await maybeHealCatalog(tenantId, seat, entries);
       if (seed.attempted) {
         [entries, connections, mirrors] = await Promise.all([
           libraryStore.listEntries(tenantId, seat),
@@ -496,8 +552,11 @@ export function createSeatLibraryRead({
         connectedCount: rows.filter((row) => row.state === 'connected').length,
         rows,
         // Seed metadata: { attempted, seeded, conflicts } plus, on
-        // failure, error { message, code, status }. attempted:false
-        // is the normal read — the tenant already held entries.
+        // failure, error { message, code, status }. attempted:true
+        // covers the empty-tenant seed AND the additions heal — both
+        // are the same one-flight refresh. attempted:false is the
+        // normal read — the tenant held entries and this seat's
+        // catalog is current, so the read wrote nothing.
         seed,
       };
     },
