@@ -671,6 +671,20 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     }
   }
 
+  // Diagnostic mirror (2026-11-08): the last Kokoro failure is copied
+  // onto every .voice-engine element as a data-error attribute, so the
+  // exact failure can be read off the page itself — the browser console
+  // is not reachable from every checking browser, and "unavailable"
+  // alone does not say which stage broke. Cleared when Kokoro is ready.
+  function noteKokoroError(err) {
+    if (typeof document === 'undefined' || !document.querySelectorAll) return;
+    const msg = String(err?.message ?? err ?? '').slice(0, 300);
+    for (const el of document.querySelectorAll('.voice-engine')) {
+      if (msg) el.dataset.error = msg;
+      else delete el.dataset.error;
+    }
+  }
+
   function canTryKokoro() {
     if (kokoro) return true;
     // Allow retry 60s after a failure (transient: network, phone sleep, memory)
@@ -748,6 +762,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
           kokoroBackupWhileLoading = false;
           if (gen === kokoroLoadGen || kokoroState === 'failed') {
             kokoroState = 'ready';
+            noteKokoroError(null);
             setVoiceStatus('Kokoro', 'kokoro');
           }
         }
@@ -758,6 +773,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
           kokoroState = 'failed';
           kokoroLastError = err;
           kokoroBackupWhileLoading = false;
+          noteKokoroError(err);
           setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
         }
         throw err;
@@ -880,6 +896,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     } catch (err) {
       kokoroPlaying = false;
       kokoroFailedAt = Date.now();
+      noteKokoroError(err);
       console.warn('[voice] Kokoro generate failed, falling back:', err?.message ?? err);
       kokoroFallback(item);
       return;
@@ -893,6 +910,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     } catch (err) {
       kokoroPlaying = false;
       kokoroFailedAt = Date.now();
+      noteKokoroError(err);
       console.warn('[voice] Kokoro playback failed, falling back:', err?.message ?? err);
       kokoroFallback(item);
       return;
