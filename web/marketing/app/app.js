@@ -272,6 +272,30 @@ function selectPanelTab(name, { openDrawer = false } = {}) {
   panelLoaders[tab]?.().catch(() => {});
 }
 for (const b of document.querySelectorAll('.panel-tab')) b.onclick = () => selectPanelTab(b.dataset.panelTab);
+
+// ---- Integrations view tabs (R1: Agents | Connectors | Devices | Chat and code | Account) ----
+// Same pattern as the workbench panel tabs above: one pane visible at a
+// time, the pick remembered in the store so it survives a reload. The
+// four card sections render into #integrations (loadIntegrations tags
+// each with data-int-section); the Manage-connectors section is the
+// Connectors pane. Sections not yet rendered are simply absent.
+const INT_TABS = ['agents', 'connectors', 'devices', 'chat', 'account'];
+const INT_TAB_SECTIONS = { agents: 'ai', devices: 'devices', chat: 'chat', account: 'account' };
+function selectIntegrationsTab(name) {
+  const tab = INT_TABS.includes(name) ? name : 'agents';
+  for (const b of document.querySelectorAll('.int-tab')) {
+    const active = b.dataset.intTab === tab;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  }
+  const secId = INT_TAB_SECTIONS[tab];
+  for (const s of document.querySelectorAll('#integrations .int-section')) s.hidden = s.dataset.intSection !== secId;
+  const cm = document.querySelector('#view-integrations .cm-section');
+  if (cm) cm.hidden = tab !== 'connectors';
+  store.set('integrationsTab', tab);
+}
+for (const b of document.querySelectorAll('.int-tab')) b.onclick = () => selectIntegrationsTab(b.dataset.intTab);
+selectIntegrationsTab(store.get('integrationsTab', 'agents'));
 for (const b of document.querySelectorAll('.nav-item')) b.onclick = () => { if (location.hash !== `#${b.dataset.view}`) location.hash = b.dataset.view; else show(b.dataset.view); };
 window.addEventListener('hashchange', () => { if (hashIsGuard()) { openGuardPanel(); return; } show(viewFromHash(location.hash, { phone: narrow() })); });
 
@@ -2238,7 +2262,7 @@ async function loadIntegrations() {
   const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
   box.replaceChildren(...sections.map((sec) => {
-    const wrap = el('section', 'int-section'); wrap.append(el('h3', 'int-head', sec.title));
+    const wrap = el('section', 'int-section'); wrap.dataset.intSection = sec.id; wrap.append(el('h3', 'int-head', sec.title));
     const grid = el('div', 'int-grid'); wrap.append(grid);
     for (const card of sec.cards) grid.append(integrationCard(card));
     return wrap;
@@ -2252,6 +2276,9 @@ async function loadIntegrations() {
     connectorManageMod ??= await import('./connector-manage.mjs');
     await connectorManageMod.mountConnectorManage(manageBox, { api, el, role: state.actor?.role ?? '' }).catch(() => {});
   }
+  // Freshly rendered sections start visible; re-apply the remembered
+  // Integrations tab so a re-render never dumps every section back out.
+  selectIntegrationsTab(store.get('integrationsTab', 'agents'));
   return p.value;
 }
 function integrationCard(card) {
