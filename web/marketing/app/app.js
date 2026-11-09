@@ -667,7 +667,12 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   function setVoiceStatus(text, cls) {
     if (typeof document === 'undefined' || !document.querySelectorAll) return;
     for (const el of document.querySelectorAll('.voice-engine')) {
-      el.textContent = text;
+      // While the diagnostic latch holds a failure, the reason rides IN
+      // the visible label text itself — snapshots and find-in-page read
+      // text reliably; data attributes do not survive every checker.
+      el.textContent = (cls === 'fallback' && kokoroErrorLatch && !text.includes(kokoroErrorLatch))
+        ? text + ' · ' + kokoroErrorLatch
+        : text;
       el.className = 'voice-engine ' + (cls || '');
       if (kokoroErrorLatch) el.dataset.error = kokoroErrorLatch;
       else delete el.dataset.error;
