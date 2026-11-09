@@ -142,6 +142,28 @@
       </div>
     </section>
 
+    <!-- One-time, first setup only: a brand-new workspace meets Maestro
+         before its channels. app.js boot asks the activation route;
+         maestro-activation.mjs shows this section only when the
+         workspace has not met Maestro yet, and the click stamps it.
+         It never renders for a workspace that has already met him. -->
+    <section id="maestro-activation" class="maestro-activation" hidden>
+      <div class="hero-card maestro-activation-card">
+        <div class="eyebrow accent">HELMIAN</div>
+        <h1>Meet Maestro</h1>
+        <p>Maestro sits in the middle of your workspace. You talk to Maestro, and Maestro takes your words to the AIs you connect, then brings their answers back under their own names. One conversation, with every AI you work with in it.</p>
+        <p>One click turns on the whole bundle:</p>
+        <ul class="maestro-pillars">
+          <li><strong>The security.</strong> The Executive Guard watches every action your AIs take, and anything risky pauses for your say so.</li>
+          <li><strong>The self-learning flywheel.</strong> The librarian files every fix, every mistake and the solution that worked, so any of your AIs can recall them right away.</li>
+          <li><strong>The rule base.</strong> Your AIs work under the rules of this workspace. The rules live here, and the librarian keeps them.</li>
+          <li><strong>Maestro himself.</strong> Always on, in every channel. Name one AI to talk to that one. Name nobody, and Maestro routes it for you.</li>
+        </ul>
+        <button id="maestro-activation-button" class="btn primary" type="button">Turn on Maestro</button>
+        <p class="muted sm">This shows once, at setup. After this click, Maestro is simply on.</p>
+      </div>
+    </section>
+
     <!-- Desktop: Envoy workspace (channels | chat | guard | workbench). envoy-workspace.js drives it. -->
     <section id="view-desktop" class="view desktop" data-view-panel="desktop" hidden>
       <div class="ew" id="ew">

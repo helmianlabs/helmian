@@ -3722,6 +3722,18 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
   };
 }
 
+// One-time Meet Maestro ceremony (Troy's design, 2026-11-09): a
+// brand-new workspace meets Maestro once, before its channels.
+// The gate lives in maestro-activation.mjs and fails soft — any
+// error at all and the app simply opens, because the ceremony
+// never blocks a workspace.
+async function maestroActivationGate(actor) {
+  try {
+    const mod = await import('./maestro-activation.mjs');
+    await mod.runMaestroActivationGate({ role: actor?.role });
+  } catch { /* fail soft: proceed without the ceremony */ }
+}
+
 // ---- boot ----
 async function boot() {
   let model;
@@ -3747,8 +3759,9 @@ async function boot() {
     }
     return;
   }
-  wireRail();
   state.actor = model.actor;
+  await maestroActivationGate(model.actor);
+  wireRail();
   $('#svc-dot').classList.add('live'); $('#svc-text').textContent = 'Connected';
   { const ws = workspaceName(model.actor); $('#account').textContent = ws === 'your workspace' ? `Signed in · ${model.actor.role}` : `${ws} · ${model.actor.role}`; $('#account-name').textContent = ws === 'your workspace' ? 'Account' : ws; $('#account-avatar').textContent = $('#account-name').textContent.charAt(0).toUpperCase(); }
   initWorkspaceSwitcher(model.actor);
@@ -3792,7 +3805,7 @@ boot();
 // deploy that changed only the desk itself (most fixes) never reached
 // an open desk: Troy had to hard-refresh to see new work. A file that
 // disappears in a deploy reads as 'gone', which also counts as a change.
-const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/connector-panel.mjs', '/app/connector-menu.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/face-library.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
+const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/connector-panel.mjs', '/app/connector-menu.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/face-library.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/maestro-activation.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
 (() => {
   let nudgedFor = null; // the update the notice is already up for — one showing per update
   const showUpdateNudge = (key) => {
