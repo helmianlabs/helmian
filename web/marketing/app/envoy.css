@@ -705,41 +705,62 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .int-tab:hover { color:var(--text); background:var(--panel-2); }
 .int-tab.active { color:var(--text); box-shadow:inset 0 -2px 0 var(--accent); }
 .int-head { margin:0 0 8px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); font-weight:700; }
-.int-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:10px; }
-.int-card { border:1px solid var(--border); background:var(--panel); border-radius:14px; padding:12px; display:flex; flex-direction:column; gap:10px; transition:border-color .15s, transform .15s var(--ease); animation:ew-in .22s var(--ease); }
+/* R2 (Integrations redesign §2): the compact card. Grid per spec —
+   minmax(232px, 1fr), 8px gap; cards size to their own content
+   (align-items:start) so a resting card is its own 60–72px, never
+   stretched by a taller neighbour. */
+.int-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(232px, 1fr)); gap:8px; align-items:start; }
+.int-card { border:1px solid var(--border); background:var(--panel); border-radius:14px; padding:12px; display:flex; flex-direction:column; gap:8px; transition:border-color .15s, transform .15s var(--ease); animation:ew-in .22s var(--ease); }
 .int-card:hover { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); transform:translateY(-1px); }
 .int-card.wide { grid-column:span 2; }
-.int-top { display:grid; grid-template-columns:36px minmax(0,1fr) auto; gap:10px; align-items:start; }
-.int-icon { width:36px; height:36px; border-radius:10px; background:var(--panel-2); border:1px solid var(--border); display:grid; place-items:center; font-size:19px; }
-.int-icon img { border-radius:7px; }
+/* The resting row: 28px icon, name + state on one line, one button.
+   min-height 36px + the card's 12px padding lands the resting card
+   at 62px; the second-line slot (account line / one-line
+   description) fits inside the same 36px before it can grow it. */
+.int-top { display:flex; align-items:center; gap:10px; min-height:36px; }
+.int-icon { width:28px; height:28px; flex:none; border-radius:9px; background:var(--panel-2); border:1px solid var(--border); display:grid; place-items:center; font-size:15px; }
+.int-icon img { border-radius:6px; }
 /* Letter tile for AI cards with no settled asset file (Mistral,
    Runway): the same construction as the /assets/agents/ tiles — a
    filled circle, dark ring, near-black initial — coloured from the
    app's plain-avatar palette (avatars.mjs, via --ava). */
-.int-tile { width:26px; height:26px; box-sizing:border-box; border-radius:50%; background:var(--ava); border:2px solid #141a22; color:#0d1117; display:grid; place-items:center; font-size:13px; font-weight:800; line-height:1; }
-.int-icon .ew-discord-mark, .int-icon .ew-gh-mark, .int-icon .ew-slack-mark { width:18px; height:18px; }
-.int-name { font-weight:700; font-size:14px; }
-.int-blurb { color:var(--muted); font-size:12.5px; line-height:1.35; margin-top:2px; }
-.int-status { font-size:11px; font-weight:700; border-radius:999px; padding:3px 9px; white-space:nowrap; border:1px solid var(--border); color:var(--muted); }
-.int-status.on { color:#4ade80; border-color:rgba(74,222,128,.35); background:rgba(74,222,128,.08); }
-.int-status.off { color:#fbbf24; border-color:rgba(251,191,36,.35); background:rgba(251,191,36,.08); }
-.int-status.soon { color:var(--faint); }
-.int-status.qr, .int-status.info { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 40%, transparent); }
-.int-actions { display:flex; gap:8px; margin-top:auto; }
+.int-tile { width:24px; height:24px; box-sizing:border-box; border-radius:50%; background:var(--ava); border:2px solid #141a22; color:#0d1117; display:grid; place-items:center; font-size:12px; font-weight:800; line-height:1; }
+.int-icon .ew-discord-mark, .int-icon .ew-gh-mark, .int-icon .ew-slack-mark { width:16px; height:16px; }
+.int-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; justify-content:center; }
+.int-line1 { display:flex; align-items:center; gap:8px; min-width:0; }
+.int-name { font-weight:700; font-size:14px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+/* State is a dot and the model's own words — the pill is retired.
+   The dot carries the colour the pill's border used to carry. */
+.int-state { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--muted); white-space:nowrap; flex:none; }
+.int-dot { width:8px; height:8px; border-radius:50%; background:var(--faint); flex:none; }
+.int-state.on .int-dot { background:#4ade80; }
+.int-state.off .int-dot { background:#fbbf24; }
+.int-state.qr .int-dot, .int-state.info .int-dot { background:var(--accent); }
+/* The second line: the account line on a connected AI seat, else the
+   card's description held to one line. Same slot, same size. */
+.int-sub { font-size:11.5px; line-height:1.3; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.int-blurb { color:var(--muted); font-size:12.5px; line-height:1.35; }
+/* The Manage expansion: everything a card does lives here, opened in
+   place under the resting row. Width is the card's own (≤ the grid
+   cell, well under the design's 560px cap). */
+.int-open { border-top:1px solid var(--border); padding-top:10px; display:flex; flex-direction:column; gap:10px; animation:ew-in .2s var(--ease); }
+.int-actions { display:flex; gap:8px; }
 .int-help { border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:4px; animation:ew-in .2s var(--ease); }
 .int-help p { margin:0; }
 .connect-fields { display:flex; flex-direction:column; gap:8px; margin-top:auto; }
 .connect-fields-label { display:flex; flex-direction:column; gap:4px; font-size:12px; font-weight:600; color:var(--muted); }
 .connect-fields-input { width:100%; box-sizing:border-box; }
 .connect-fields-note { margin:0; }
+/* The phone card is the one exception to the resting height (§2):
+   two cells wide, the QR at 96px, its three steps across. */
 .int-qr-row { display:flex; gap:16px; align-items:center; }
-.int-qr { width:148px; height:148px; flex:none; border-radius:12px; overflow:hidden; background:#fff; }
+.int-qr { width:96px; height:96px; flex:none; border-radius:12px; overflow:hidden; background:#fff; }
 .int-qr svg { width:100%; height:100%; display:block; }
-.int-steps { margin:0; padding-left:18px; color:var(--muted); font-size:13px; display:flex; flex-direction:column; gap:6px; }
+.int-steps { margin:0; padding-left:18px; color:var(--muted); font-size:13px; display:flex; flex-direction:row; gap:14px; }
+.int-steps li { flex:1 1 0; }
 @media (max-width: 900px) {
   .int-grid { grid-template-columns:1fr; }
   .int-card.wide { grid-column:auto; }
-  .int-qr { width:120px; height:120px; }
 }
 
 /* On the phone itself the QR is pointless; keep the steps. */
@@ -967,8 +988,8 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 [data-theme="light"] .ew-approval { background:#FBF0DA; border-color:rgba(137,94,13,.4); }
 [data-theme="light"] .ew-approval:hover { border-color:var(--amber); }
 [data-theme="light"] .ew-count { background:#F6C453; }
-[data-theme="light"] .int-status.on { color:var(--green); border-color:rgba(26,119,75,.35); background:#E4F4EB; }
-[data-theme="light"] .int-status.off { color:var(--amber); border-color:rgba(137,94,13,.35); background:#FBF0DA; }
+[data-theme="light"] .int-state.on .int-dot { background:var(--green); }
+[data-theme="light"] .int-state.off .int-dot { background:var(--amber); }
 [data-theme="light"] .ew-btn.danger { background:#FDECEB; border-color:rgba(179,58,54,.5); color:var(--red); }
 [data-theme="light"] .ew-btn.danger:hover { background:rgba(179,58,54,.16); border-color:var(--red); }
 [data-theme="light"] .ew-body .mention { background:rgba(11,110,153,.10); }

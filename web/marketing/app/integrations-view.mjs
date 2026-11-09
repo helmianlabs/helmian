@@ -24,6 +24,24 @@ const API_KEY_CONNECT_FIELDS = Object.freeze({
   openrouter: ['api_key'],
   muse: ['api_key'],
 });
+// The names a seat's saved connection rows can carry, per card key —
+// the same lists the truth model matches on (app-model.mjs
+// PROVIDER_SOURCE_NAMES, connections side). Used only to find the
+// seat's own rows in the raw connections read for the account line
+// below; Runway has no registry row and never matches.
+const ACCOUNT_ROW_NAMES = Object.freeze({
+  claude: ['anthropic', 'claude'],
+  openai: ['openai'],
+  gemini: ['google', 'gemini'],
+  grok: ['xai', 'grok'],
+  mistral: ['mistral'],
+  runway: [],
+  groq: ['groq'],
+  nvidia: ['nvidia'],
+  cloudflare: ['cloudflare'],
+  openrouter: ['openrouter'],
+  muse: ['muse'],
+});
 
 // presence: rows from the runner presence feed (null when that read never
 // arrived); connectors/providers/toolConnections: the cloud's connection
@@ -91,7 +109,24 @@ export function integrationSections({ presence = null, connectors = {}, provider
     const changeApiKey = connected && API_KEY_CONNECT_FIELDS[key]
       ? { provider: key, fields: API_KEY_CONNECT_FIELDS[key], label: key === 'cloudflare' ? 'New account number and API key' : 'New API key' }
       : null;
+    // The account line (redesign §2): a connected seat's resting card
+    // names the working account by its exact email, plus the stack
+    // count when the seat holds more than one account. The reads this
+    // page makes today return connection rows of providerId, authMode
+    // and lifecycle only — the saved username lives in the credential
+    // service and no read surfaces it — so this stays null until a
+    // read returns the account (the stack read is R4's gate). It
+    // prints only what a read actually returned, never a guess: the
+    // seat's own rows in the raw connections read, and only a value
+    // shaped like the email the sign-in road stores.
+    const savedRows = connected && Array.isArray(providers?.connections)
+      ? providers.connections.filter((c) => (ACCOUNT_ROW_NAMES[key] ?? []).includes(String(c?.providerId ?? c?.provider ?? c?.providerKey ?? '').toLowerCase()))
+      : [];
+    const accountEmail = savedRows
+      .map((c) => c?.username ?? c?.email ?? c?.accountEmail ?? null)
+      .find((v) => typeof v === 'string' && v.includes('@')) ?? null;
     return { key, name, blurb, icon, status: connected || answered.has(key) ? 'on' : 'off', statusText, connect, apiKeyConnect, changeConnect, changeApiKey,
+      accountEmail, accountCount: savedRows.length,
       action: connected ? { label: 'Manage', href: '#agents' } : null };
   });
   const discord = truth.get('discord');
