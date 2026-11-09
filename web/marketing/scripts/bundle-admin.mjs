@@ -15,9 +15,12 @@ await cp(join(repo, 'src'), join(out, 'src'), { recursive: true });
 await cp(join(repo, 'sql'), join(out, 'sql'), { recursive: true });
 await cp(join(repo, 'web', 'cloud-admin'), join(out, 'web', 'cloud-admin'), { recursive: true });
 // src/cloud/envoy-reactions.mjs imports the emoji map by its repo-relative
-// path (../../web/marketing/app/emoji-map.mjs). Reproduce that exact layout
-// inside the bundle, or the bundled module graph fails to resolve it and
-// every helmian-admin function dies at import time.
+// path (../../web/marketing/app/emoji-map.mjs), and burst 6's server files
+// (envoy-reactions.mjs, user-profile.mjs) import the face library by the
+// same path (../../web/marketing/app/face-library.mjs). Reproduce that exact
+// layout inside the bundle, or the bundled module graph fails to resolve it
+// and every helmian-admin function dies at import time.
 await mkdir(join(out, 'web', 'marketing', 'app'), { recursive: true });
 await cp(join(repo, 'web', 'marketing', 'app', 'emoji-map.mjs'), join(out, 'web', 'marketing', 'app', 'emoji-map.mjs'));
+await cp(join(repo, 'web', 'marketing', 'app', 'face-library.mjs'), join(out, 'web', 'marketing', 'app', 'face-library.mjs'));
 console.log('bundled Helmian admin backend into', out);
