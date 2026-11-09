@@ -698,12 +698,26 @@ export function normalizeMessageMetadata(input) {
   const connectors = normalizeConnectorToggles(input.connectors);
   const skills = normalizeSkillToggles(input.skills);
   const source = normalizeSourceRef(input.source);
-  if (!attachments.length && webSearch === undefined && !connectors && !skills && !source) return null;
+  // The composer's active project rides the message the way the
+  // attachments do (mirror-design §3.1 "Add to project", bite M2):
+  // the key is validated with the workspace project registry's own
+  // shape (workspace-project-repository.mjs assertCloudProjectKey) —
+  // a malformed key is refused, never carried.
+  let projectKey;
+  if (input.projectKey !== undefined && input.projectKey !== null) {
+    const key = String(input.projectKey).trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._:-]{0,95}$/.test(key) || key.includes('..') || /^[a-z]:/.test(key)) {
+      throw new Error('message project is invalid');
+    }
+    projectKey = key;
+  }
+  if (!attachments.length && webSearch === undefined && !connectors && !skills && !source && !projectKey) return null;
   return Object.freeze({
     ...(attachments.length ? { attachments: Object.freeze(attachments) } : {}),
     ...(webSearch !== undefined ? { webSearch } : {}),
     ...(connectors ? { connectors } : {}),
     ...(skills ? { skills } : {}),
     ...(source ? { source } : {}),
+    ...(projectKey ? { projectKey } : {}),
   });
 }

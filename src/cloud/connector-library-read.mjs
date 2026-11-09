@@ -37,7 +37,7 @@
 // 'needs-reconnect', 'disabled-by-owner'.
 
 import { isVerifiedFresh } from './tool-connections.mjs';
-import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh } from './connector-catalog.mjs';
+import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh, catalogStarterActions } from './connector-catalog.mjs';
 
 // How long a tool-connections probe receipt still counts as Connected
 // — the same window the room's surfaces already use
@@ -326,6 +326,13 @@ function rowOf(entry, joined) {
     category: entry.category ?? null,
     accountIdentity: joined.accountIdentity,
     stateDetail: joined.detail,
+    // Catalog starter actions (mirror-design §4, bite M2): the
+    // vendor-published quick actions the catalog carries a copy of
+    // for this entry, joined from the catalog data — never stored
+    // state. Absent (not empty) when the catalog holds none.
+    ...(catalogStarterActions(entry.seatId, entry.id)
+      ? { starterActions: catalogStarterActions(entry.seatId, entry.id) }
+      : {}),
   };
 }
 

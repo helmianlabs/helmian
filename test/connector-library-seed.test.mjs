@@ -131,7 +131,7 @@ test('1+2+8 — first read on an empty tenant seeds and returns rows; second rea
   assert.deepEqual(first.seed.conflicts, []);
   assert.equal(first.rows.length, catalogEntriesForSeat('claude').length, 'the seeded catalog reads back');
   assert.ok(first.rows.every((r) => r.name && r.oneLiner && r.state), 'rows are real library rows');
-  assert.equal(store.entryCount(tenant), 67, 'the whole catalog landed (all seats), not just the read seat');
+  assert.equal(store.entryCount(tenant), 68, 'the whole catalog landed (all seats), not just the read seat — 68 since bite M2 added Idiolect to the Claude set');
 
   const createCallsAfterSeed = store.stats.createEntryCalls;
   const second = await read.readSeatLibrary(tenant, { personId: PERSON, seatId: 'claude' });
@@ -154,7 +154,7 @@ test('9 — default wiring seeds through the real refresh machinery on the read�
   const view = await read.readSeatLibrary(tenant, { personId: PERSON, seatId: 'grok' });
   assert.equal(view.seed.seeded, true);
   assert.equal(view.rows.length, catalogEntriesForSeat('grok').length);
-  assert.equal(store.entryCount(tenant), 67);
+  assert.equal(store.entryCount(tenant), 68);
 });
 
 test('3 — a seeded tenant with a single entry deleted does NOT re-seed, and the entry stays deleted', async () => {

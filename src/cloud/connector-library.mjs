@@ -231,6 +231,69 @@ export function diffToolSnapshots(storedTools, freshTools) {
   return { added, removed, changed };
 }
 
+/**
+ * Plan a prompt snapshot from a raw prompts/list result (mirror-design
+ * §4, bite M2): the MCP prompt primitive is the protocol's own carrier
+ * for server-published starter templates, so a brokered server's
+ * prompts get the same treatment as its tools — per-prompt
+ * {name, title, description, arguments:[{name, description, required}]}
+ * sorted by name, plus the hash over the whole list. The plan is the
+ * shape the prompts route answers with and the shape a future freeze
+ * would store; argument schemas beyond name/required are dropped, the
+ * same discipline as tool input schemas (hashed for tools, unused for
+ * prompts — a prompt's draft is rendered by prompts/get, not built
+ * from its schema).
+ */
+export function planPromptSnapshot(prompts) {
+  if (!Array.isArray(prompts)) throw badRequest('a prompt snapshot needs the prompts/list result array');
+  const seen = new Set();
+  const planned = prompts.map((prompt, index) => {
+    if (!prompt || typeof prompt !== 'object') throw badRequest(`prompt at index ${index} is not an object`);
+    const name = typeof prompt.name === 'string' ? prompt.name.trim() : '';
+    if (!name) throw badRequest(`prompt at index ${index} has no name`);
+    if (seen.has(name)) throw badRequest(`prompt "${name}" appears twice in one prompts/list result — the menu is keyed by name, so a duplicate is ambiguous`);
+    seen.add(name);
+    const args = (Array.isArray(prompt.arguments) ? prompt.arguments : []).map((arg, argIndex) => {
+      const argName = typeof arg?.name === 'string' ? arg.name.trim() : '';
+      if (!argName) throw badRequest(`prompt "${name}" argument at index ${argIndex} has no name`);
+      return {
+        name: argName,
+        description: typeof arg.description === 'string' ? arg.description : '',
+        required: arg.required === true,
+      };
+    });
+    return {
+      name,
+      title: typeof prompt.title === 'string' ? prompt.title : null,
+      description: typeof prompt.description === 'string' ? prompt.description : '',
+      arguments: args,
+    };
+  });
+  planned.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const snapshotHash = sha256Hex(canonicalJson(planned.map((p) => [p.name, p.title, p.description, p.arguments.map((a) => [a.name, a.description, a.required])])));
+  return { prompts: planned, snapshotHash };
+}
+
+/**
+ * The composer draft a prompt row seeds when the prompt cannot be
+ * rendered without input (mirror-design §4: choosing a starter seeds
+ * a DRAFT — it never silently sends). Built only from the prompt's
+ * own descriptor: its description (or name) as the ask, then one
+ * fill-in line per required argument. Prompts with no required
+ * arguments are rendered by the server instead (prompts/get) and
+ * never pass through here.
+ */
+export function promptDraftText(prompt) {
+  const head = (typeof prompt?.description === 'string' && prompt.description.trim())
+    ? prompt.description.trim()
+    : String(prompt?.title ?? prompt?.name ?? '').trim();
+  const lines = [head || 'Use this starter:'];
+  for (const arg of Array.isArray(prompt?.arguments) ? prompt.arguments : []) {
+    if (arg?.required) lines.push(`${arg.name}: `);
+  }
+  return lines.join('\n');
+}
+
 // ------------------------------------------------------------------ row maps
 
 function entryOf(row) {

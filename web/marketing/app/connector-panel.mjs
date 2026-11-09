@@ -135,6 +135,26 @@ export function clearConversationToggles(state, conversationId) {
   return out;
 }
 
+/**
+ * The composer draft an MCP prompt row seeds when the prompt takes
+ * required arguments and so cannot be rendered sight-unseen
+ * (mirror-design §4, bite M2): the prompt's own description (or
+ * title/name) as the ask, then one fill-in line per required
+ * argument. Mirrors promptDraftText in src/cloud/connector-library
+ * .mjs — the two must word the draft the same way. Choosing the row
+ * only ever fills the composer; sending stays the person's act.
+ */
+export function starterDraftText(prompt) {
+  const head = (typeof prompt?.description === 'string' && prompt.description.trim())
+    ? prompt.description.trim()
+    : String(prompt?.title ?? prompt?.name ?? '').trim();
+  const lines = [head || 'Use this starter:'];
+  for (const arg of Array.isArray(prompt?.arguments) ? prompt.arguments : []) {
+    if (arg?.required) lines.push(`${arg.name}: `);
+  }
+  return lines.join('\n');
+}
+
 // ------------------------------------------------------------ view models
 
 const TRUST_TEXT = Object.freeze({ verified: 'Verified', community: 'Community', custom: 'Custom' });
@@ -177,6 +197,13 @@ function rowModel(row, state, conversationId) {
     toggleable,
     on: toggleable ? isConnectorOn(state, conversationId, row.seatId, row.entryId) : false,
     mirror,
+    // Catalog starter actions (mirror-design §4, bite M2): the read
+    // joins them from the catalog; the menu renders them as draft-
+    // seeding rows under this connector. Absent → empty, never
+    // invented.
+    starterActions: Object.freeze((Array.isArray(row.starterActions) ? row.starterActions : [])
+      .filter((a) => a && typeof a.label === 'string' && typeof a.prompt === 'string')
+      .map((a) => Object.freeze({ label: a.label, prompt: a.prompt }))),
   });
 }
 

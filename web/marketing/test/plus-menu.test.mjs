@@ -42,7 +42,13 @@ const brief = (model) => flat(model).map((r) => r.kind === 'toggle' || r.kind ==
   ? `${r.kind}:${r.row.entryId}${r.kind === 'toggle' ? (r.row.on ? '=on' : '=off') : ''}`
   : r.kind === 'note' ? `note:${r.text}`
     : r.kind === 'manage' ? `manage:${r.label}:${r.target}:${r.url ?? 'none'}`
-      : `${r.kind}:${r.label ?? ''}`);
+      : r.kind === 'action' ? `action:${r.label}:${r.action}`
+        : r.kind === 'starter' ? `starter:${r.label}`
+          : r.kind === 'prompt' ? `prompt:${r.prompt.title ?? r.prompt.name}`
+            : r.kind === 'skill' ? `skill:${r.name}${r.on ? '=on' : '=off'}`
+              : r.kind === 'plugin' ? `plugin:${r.name}${r.on ? '=on' : '=off'}`
+                : r.kind === 'project' ? `project:${r.name}${r.active ? '=active' : ''}`
+                  : `${r.kind}:${r.label ?? ''}`);
 const findRow = (model, entryId) => flat(model).find((r) => r.row?.entryId === entryId);
 
 const CLAUDE_LIB = library('claude', [
@@ -75,26 +81,104 @@ test('plus menu Level 1: every seat the seats read returns, name and connected c
   }
 });
 
-test('plus menu Level 2 — Claude: attach, Skills, Connectors, Plugins, Web search, Manage, in his words and order', () => {
+test('plus menu Level 2 — Claude: attach, screenshot, project, GitHub, Skills, Connectors, Plugins, Web search, Manage, in his words and order', () => {
   const model = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1' });
   assert.deepEqual(brief(model), [
     'attach:Add files or photos',
+    'screenshot:Take a screenshot',
+    'submenu:Add to project',
+    'note:Loading projects...',
+    'action:Add from GitHub:github-file',
     'submenu:Skills',
-    'note:Nothing here yet.',
-    'note:Nothing here yet.',
+    'note:Loading skills...',
     'submenu:Connectors',
     'toggle:helmian-github=off',
     'toggle:helmian-scribe=off',
     'mirror:gmail',
     'mirror:slack',
+    'action:Tool access:tool-access',
     'submenu:Plugins',
-    'note:Nothing here yet.',
+    'note:Loading plugins...',
     'capability:Web search',
     'manage:Manage connectors:integrations:none',
   ]);
   const gmail = findRow(model, 'gmail');
   assert.equal(gmail.row.mirror.managedIn, 'Claude', 'the mirror row names where the vendor manages it');
   assert.equal(gmail.row.toggleable, false);
+});
+
+test('plus menu Level 2 — Claude (bite M2): the Connectors badge is the needs-reconnect roll-up over the seat read', () => {
+  const lib = library('claude', [
+    libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' }),
+    libRow('claude', 'helmian-scribe', 'Helmian Scribe', { state: 'connected' }),
+    libRow('claude', 'gmail', 'Gmail', { state: 'needs-reconnect', brokerMode: 'vendor', kind: 'oauth-app' }),
+    libRow('claude', 'slack', 'Slack', { state: 'needs-reconnect', brokerMode: 'vendor', kind: 'oauth-app' }),
+  ]);
+  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, conversationId: 'c1' });
+  const connectors = model.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors');
+  assert.equal(connectors.badge, 2, 'two needs-reconnect rows roll up to ⚠ 2, wherever they sit in the library');
+  const healthy = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1' });
+  assert.equal(healthy.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors').badge, undefined, 'a healthy library wears no badge');
+});
+
+test('plus menu Level 2 — Claude (bite M2): catalog starter actions ride under their connector; MCP prompts ride under an ARMED toggle only', () => {
+  const lib = library('claude', [
+    libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' }),
+    libRow('claude', 'helmian-scribe', 'Helmian Scribe', { state: 'connected' }),
+    libRow('claude', 'idiolect', 'Idiolect', {
+      state: 'connected', brokerMode: 'vendor', kind: 'oauth-app',
+      starterActions: [{ label: 'Write an email in my style', prompt: 'Write an email in my style' }],
+    }),
+  ]);
+  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-scribe');
+  const promptsByEntry = { 'helmian-scribe': { status: 'ok', prompts: [{ name: 'daily-note', title: 'Daily note', arguments: [] }] } };
+  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry });
+  const lines = brief(model);
+  const scribeAt = lines.indexOf('toggle:helmian-scribe=on');
+  assert.equal(lines[scribeAt + 1], 'prompt:Daily note', 'the armed server\u2019s starter prompt follows its toggle');
+  const idiolectAt = lines.indexOf('mirror:idiolect');
+  assert.equal(lines[idiolectAt + 1], 'starter:Write an email in my style', 'the catalog starter action follows its connector row');
+  // Disarmed: the same prompts input renders nothing — prompts are
+  // listed at arm time, never before.
+  const disarmed = plusMenuLevel2Model({ seatId: 'claude', library: lib, conversationId: 'c1', promptsByEntry });
+  assert.ok(!brief(disarmed).some((l) => l.startsWith('prompt:')), 'no prompt row under a disarmed toggle');
+  // A failed listing is one honest note, not a silent gap.
+  const failed = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-scribe': { status: 'error', prompts: [] } } });
+  assert.ok(brief(failed).includes("note:Helmian Scribe's starters could not be listed."));
+});
+
+test('plus menu Level 2 — Claude (bite M2): Skills binds the workspace library, Plugins the bridge list, Projects the registry', () => {
+  const skills = [
+    { id: 'helm', name: 'Helm', description: 'Steer the fleet', scope: 'blanket', seatIds: [], state: 'available' },
+    { id: 'claude-only', name: 'Claude craft', description: '', scope: 'seats', seatIds: ['claude'], state: 'available' },
+    { id: 'grok-only', name: 'Grok craft', description: '', scope: 'seats', seatIds: ['grok'], state: 'available' },
+    { id: 'retired', name: 'Retired', description: '', scope: 'blanket', seatIds: [], state: 'disabled-by-owner' },
+  ];
+  const skillAttach = [{ skillId: 'helm', seatId: 'claude' }];
+  const plugins = [{ name: 'scribe-tools', brings: 'Scribe reads' }, { name: 'forge-tools', brings: 'Forge reads' }];
+  const attachments = [{ kind: 'plugin', name: 'forge-tools' }];
+  const projects = [{ key: 'helmian', name: 'Helmian' }, { key: 'forge', name: 'Forge' }];
+  const model = plusMenuLevel2Model({
+    seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1',
+    skills, skillAttach, plugins, attachments, projects, activeProjectKey: 'forge',
+  });
+  const lines = brief(model);
+  assert.ok(lines.includes('skill:Helm=on'), 'a blanket skill armed for this seat shows on');
+  assert.ok(lines.includes('skill:Claude craft=off'), 'a seat-scoped skill for this seat shows, off until armed');
+  assert.ok(!lines.some((l) => l.includes('Grok craft')), 'a skill scoped to another seat never shows here');
+  const retired = flat(model).find((r) => r.kind === 'skill' && r.skillId === 'retired');
+  assert.equal(retired.disabled, true, 'an owner-disabled skill shows as turned off, never armable');
+  assert.ok(lines.includes('plugin:scribe-tools=off'));
+  assert.ok(lines.includes('plugin:forge-tools=on'), 'the attached plugin shows on');
+  assert.ok(lines.includes('project:Helmian'));
+  assert.ok(lines.includes('project:Forge=active'), 'the active project is marked');
+  // Loaded-empty is a specific honest note, never "Nothing here yet".
+  const empty = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1', skills: [], plugins: [], projects: [] });
+  const emptyLines = brief(empty);
+  assert.ok(emptyLines.includes("note:No skills on Claude's shelf yet."));
+  assert.ok(emptyLines.includes('note:No plugins are installed on the PC bridge.'));
+  assert.ok(emptyLines.includes('note:No projects in this workspace yet.'));
+  assert.ok(!emptyLines.includes('note:Nothing here yet.'), 'no feed group falls back to the eternal empty note');
 });
 
 test('plus menu Level 2 — Claude web search reflects the per-message flag', () => {
@@ -167,15 +251,13 @@ test('plus menu Level 2 — Groq: the beta note rides its live group', () => {
   ]);
 });
 
-test('plus menu Level 2 — Mistral: empty groups are honest notes; the footer is Helmian\'s manage road like every seat', () => {
+test('plus menu Level 2 — Mistral: empty groups are honest notes; the Agents mirror is deleted (bite M2); the footer is Helmian\'s manage road like every seat', () => {
   const lib = library('mistral', [libRow('mistral', 'helmian-github', 'Helmian GitHub', { state: 'connected' })]);
   const model = plusMenuLevel2Model({ seatId: 'mistral', library: lib, conversationId: 'c1' });
   assert.deepEqual(brief(model), [
     'attach:Add files',
     'submenu:Tools',
     'toggle:helmian-github=off',
-    'note:Nothing here yet.',
-    'label:Agents',
     'note:Nothing here yet.',
     'manage:Manage connectors:integrations:none',
   ]);

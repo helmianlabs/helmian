@@ -3,8 +3,8 @@
 // happens once, data refreshes every time.
 import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
 import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs';
-import { clearConversationToggles, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs';
-import { menuForSeat } from './connector-menu.mjs';
+import { clearConversationToggles, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, starterDraftText, toggleConnector } from './connector-panel.mjs';
+import { menuForSeat, walkMenuItems } from './connector-menu.mjs';
 import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs';
 import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs';
 import { createConnectFields } from './connect-fields.mjs';
@@ -838,7 +838,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, connectorPrompts: {}, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2211,7 +2211,12 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     h('span', { class: 'ew-lib-line' }, vendorLine));
   if (row.toggleable) {
     return h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on for your next message — tap to turn it off` : `Turn ${row.name} on for your next message`, onclick: () => {
+      const wasOn = row.on;
       ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId);
+      // Arming a brokered MCP server lists its starter prompts at
+      // arm time (§4): the fetch rides the person's own armed state,
+      // and the rows it returns seed drafts — never sends.
+      if (!wasOn) ensureConnectorPrompts(row.seatId, row.entryId);
       renderAttachChips(which); renderPicker(which);
     } }, libraryIconTile(row), text,
       h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
@@ -2239,17 +2244,25 @@ function libraryRowNode(which, row, { shape = null } = {}) {
 // Rows are descriptors the renderer maps to nodes:
 //   { kind: 'attach', label }
 //   { kind: 'capability', label, capability, on }  (web search only)
+//   { kind: 'screenshot', label }                  (browser capture)
+//   { kind: 'action', label, action }              (github-file / tool-access)
 //   { kind: 'label', label }                       (a group heading)
 //   { kind: 'note', text }
 //   { kind: 'toggle' | 'mirror' | 'row', row, rowShape }
-//   { kind: 'submenu', label, rows }
+//   { kind: 'starter', label, prompt, entryId }    (catalog starter action)
+//   { kind: 'prompt', prompt, entryId }            (MCP starter prompt)
+//   { kind: 'skill', skillId, name, description, on, disabled }
+//   { kind: 'plugin', name, brings, on }
+//   { kind: 'project', key, name, active }
+//   { kind: 'submenu', label, rows, badge? }       (badge = needs-reconnect count)
 //   { kind: 'manage', label, target }
 // A connector group binds its rows from the read by entry id, in the
-// definition's own order. A group that resolves to no rows — a
-// feed-bound group whose read lands in a later bite, an entry set
-// the catalog does not hold yet — renders one honest note row, never
-// a dead control.
-export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false } = {}) {
+// definition's own order. Under a bound connector row ride its
+// action rows (mirror-design §4): the catalog starter actions the
+// read joined, and — when the row is armed — the brokered server's
+// own starter prompts, listed at arm time. A group that resolves to
+// no rows renders one honest note row, never a dead control.
+export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, skillAttach = [], attachments = [], promptsByEntry = {}, projects = null, activeProjectKey = null } = {}) {
   const definition = menuForSeat(seatId);
   if (!definition) return null;
   const byId = new Map();
@@ -2257,22 +2270,84 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
     const model = level2Model(library, toggles, conversationId);
     for (const row of [...model.connected, ...model.catalog]) byId.set(row.entryId, row);
   }
+  // The Connectors badge (mirror-design §3.1, bite M2): Troy's
+  // Claude.ai shot carries ⚠ 1 on the Connectors row — Canva needs
+  // reconnect. Ours is a roll-up over the seat's whole library read:
+  // the count of rows whose state is needs-reconnect, whoever holds
+  // them. Zero renders no badge — a healthy library wears nothing.
+  const reconnectCount = [...byId.values()].filter((row) => row.state === 'needs-reconnect').length;
   const boundRows = (item) => {
     if (!Array.isArray(item.entryIds)) return null;
     const rows = item.entryIds.map((id) => byId.get(id)).filter(Boolean);
     return rows.length ? rows : null;
   };
+  const actionRowsFor = (row) => {
+    const out = [];
+    for (const starter of row.starterActions ?? []) {
+      out.push({ kind: 'starter', label: starter.label, prompt: starter.prompt, entryId: row.entryId, entryName: row.name });
+    }
+    if (row.toggleable && row.on) {
+      const listed = promptsByEntry[row.entryId];
+      if (listed?.status === 'ok') {
+        for (const prompt of listed.prompts ?? []) out.push({ kind: 'prompt', prompt, entryId: row.entryId, entryName: row.name });
+      } else if (listed?.status === 'error') {
+        out.push({ kind: 'note', text: `${row.name}'s starters could not be listed.` });
+      }
+    }
+    return out;
+  };
+  const feedRows = (item) => {
+    const out = [];
+    if (item.label) out.push({ kind: 'label', label: item.label });
+    if (item.feed === 'helmian-skills') {
+      if (!Array.isArray(skills)) { out.push({ kind: 'note', text: 'Loading skills...' }); return out; }
+      const mine = skills.filter((s) => s && (s.scope !== 'seats' || (Array.isArray(s.seatIds) && s.seatIds.map(String).includes(seatId))));
+      if (!mine.length) { out.push({ kind: 'note', text: `No skills on ${seatName(seatId)}'s shelf yet.` }); return out; }
+      for (const s of mine) {
+        const skillId = String(s.id ?? '');
+        if (!skillId) continue;
+        out.push({
+          kind: 'skill', skillId, name: String(s.name ?? skillId),
+          description: typeof s.description === 'string' ? s.description : '',
+          on: (skillAttach ?? []).some((a) => a.skillId === skillId && a.seatId === seatId),
+          disabled: s.state === 'disabled-by-owner',
+        });
+      }
+      return out;
+    }
+    if (item.feed === 'bridge-plugins') {
+      if (!Array.isArray(plugins)) { out.push({ kind: 'note', text: 'Loading plugins...' }); return out; }
+      if (!plugins.length) { out.push({ kind: 'note', text: 'No plugins are installed on the PC bridge.' }); return out; }
+      for (const p of plugins) {
+        const name = String(p?.name ?? '').trim().toLowerCase();
+        if (!name) continue;
+        out.push({ kind: 'plugin', name, brings: String(p?.brings ?? ''), on: (attachments ?? []).some((a) => a.kind === 'plugin' && a.name === name) });
+      }
+      return out;
+    }
+    out.push({ kind: 'note', text: 'Nothing here yet.' });
+    return out;
+  };
   const groupRows = (item, rowShape) => {
     const out = [];
     if (item.label) out.push({ kind: 'label', label: item.label });
     if (item.note) out.push({ kind: 'note', text: item.note });
+    if (!Array.isArray(item.entryIds) && item.feed) return [...out, ...feedRows(item).filter((r) => r.kind !== 'label')];
     if (!library) { out.push({ kind: 'note', text: `Loading ${seatName(seatId)}'s library...` }); return out; }
     if (library.error) { out.push({ kind: 'note', text: 'This library could not be loaded.' }); return out; }
     const rows = boundRows(item);
     if (!rows) { out.push({ kind: 'note', text: 'Nothing here yet.' }); return out; }
-    for (const row of rows) out.push({ kind: row.toggleable ? 'toggle' : row.mirror ? 'mirror' : 'row', row, rowShape });
+    for (const row of rows) {
+      out.push({ kind: row.toggleable ? 'toggle' : row.mirror ? 'mirror' : 'row', row, rowShape });
+      out.push(...actionRowsFor(row));
+    }
     if (rowShape === 'state') out.push({ kind: 'note', text: 'On for the whole account — name it in a message to use it.' });
     return out;
+  };
+  const projectRows = () => {
+    if (!Array.isArray(projects)) return [{ kind: 'note', text: 'Loading projects...' }];
+    if (!projects.length) return [{ kind: 'note', text: 'No projects in this workspace yet.' }];
+    return projects.map((p) => ({ kind: 'project', key: p.key, name: p.name, active: p.key === activeProjectKey }));
   };
   const itemRows = (item) => {
     switch (item?.type) {
@@ -2282,12 +2357,18 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
         // per-message webSearch flag every consumer already reads.
         // Any other capability key renders nothing rather than a row
         // the room cannot run for this seat (REPORT §6).
-        return item.capability === 'web-search'
-          ? [{ kind: 'capability', label: item.label, capability: item.capability, on: webSearchOn === true }]
-          : [];
+        if (item.capability === 'web-search') return [{ kind: 'capability', label: item.label, capability: item.capability, on: webSearchOn === true }];
+        if (item.capability === 'screenshot') return [{ kind: 'screenshot', label: item.label }];
+        return [];
+      case 'action': return [{ kind: 'action', label: item.label, action: item.action }];
+      case 'projects': return [{ kind: 'submenu', label: item.label, rows: projectRows() }];
       case 'live-toggle-group': return groupRows(item, 'mirror');
       case 'mirror-group': return groupRows(item, item.rowShape ?? 'mirror');
-      case 'submenu': return [{ kind: 'submenu', label: item.label, rows: (item.items ?? []).flatMap(itemRows) }];
+      case 'submenu': {
+        const rows = (item.items ?? []).flatMap(itemRows);
+        const hasConnectorRows = rows.some((r) => r.kind === 'toggle' || r.kind === 'mirror' || r.kind === 'row');
+        return [{ kind: 'submenu', label: item.label, rows, ...(hasConnectorRows && reconnectCount > 0 ? { badge: reconnectCount } : {}) }];
+      }
       case 'manage-link': return [{ kind: 'manage', label: item.label, target: item.target }];
       default: return [];
     }
@@ -2323,7 +2404,34 @@ function renderPlusMenuLevel2(which) {
   if (!library) {
     void loadSeatLibrary(seatId).then(() => { if (ws.pickerFor === which) renderPicker(which); });
   }
-  const model = plusMenuLevel2Model({ seatId, library, toggles: ws.connectorToggles, conversationId: conversationIdFor(which), webSearchOn: ws.webSearch[which] === true });
+  // The feed-bound groups and the project row lazy-load their own
+  // sources on first open (the same promise-cache shape the Skills
+  // library read uses): the model renders their loading notes until
+  // the read lands, then this render runs again.
+  const feeds = new Set();
+  for (const { item } of walkMenuItems(menuForSeat(seatId) ?? [])) if (item.feed) feeds.add(item.feed);
+  if (feeds.has('helmian-skills') && !ws.skills.loaded && !ws.skills.loading) loadSkills().then(() => { if (ws.pickerFor === which) renderPicker(which); }).catch(() => {});
+  if (feeds.has('bridge-plugins') && !ws.plugins.loaded && !ws.plugins.loading) loadBridgePlugins().then(() => { if (ws.pickerFor === which) renderPicker(which); }).catch(() => {});
+  if (!ws.projects.loaded && !ws.projects.loading) loadWorkspaceProjects().then(() => { if (ws.pickerFor === which) renderPicker(which); }).catch(() => {});
+  const promptsByEntry = {};
+  for (const [key, value] of Object.entries(ws.connectorPrompts)) {
+    const [s, entryId] = key.split(':');
+    if (s === seatId) promptsByEntry[entryId] = value;
+  }
+  const model = plusMenuLevel2Model({
+    seatId,
+    library,
+    toggles: ws.connectorToggles,
+    conversationId: conversationIdFor(which),
+    webSearchOn: ws.webSearch[which] === true,
+    skills: ws.skills.loaded ? ws.skills.list : null,
+    plugins: ws.plugins.loaded ? ws.plugins.list : null,
+    skillAttach: ws.skillAttach[which] ?? [],
+    attachments: ws.attach[which] ?? [],
+    promptsByEntry,
+    projects: ws.projects.loaded ? ws.projects.list : null,
+    activeProjectKey: ws.projects.activeKey ?? ws.ctx?.state?.activeProjectKey ?? null,
+  });
   const back = h('button', { type: 'button', class: 'ew-btn sm ghost ew-lib-back', onclick: () => { ws.libraryPanel = { level: 1, seatId: null, sub: null }; renderPicker(which); } }, '‹ All agents');
   const head = h('div', { class: 'ew-plus-head' }, back, h('strong', {}, seatName(seatId)));
   if (!model) return [head, h('p', { class: 'ew-note' }, 'This menu could not be loaded.')];
@@ -2334,6 +2442,24 @@ function renderPlusMenuLevel2(which) {
 // file input itself stays hidden in the row's group; picking a file
 // runs the same refusal-then-read path the old panel ran, and the
 // file joins the same attach list the chips render.
+// One ingest for every file that joins a message — the picker row,
+// Ctrl+U, a screenshot, a GitHub file: refuse on name/type/size
+// before reading a single byte, then the same add-attachment road
+// the chips render. A refusal lands in the caller's note element
+// when it has one, else in a toast.
+async function ingestPickedFile(which, file, note = null) {
+  const show = (text) => { if (note) { note.textContent = text; note.hidden = false; } else ws.ctx?.toast?.(text); };
+  const refusal = fileRefusalReason({ name: file.name, mediaType: file.type || '', size: file.size });
+  if (refusal) { show(refusal); return false; }
+  try {
+    const data = await readFileAsBase64(file);
+    const r = addAttachment(ws.attach[which], { kind: 'file', name: file.name, mediaType: file.type || '', size: file.size, data });
+    if (!r.added) { show(r.reason); return false; }
+    ws.attach[which] = r.list;
+    renderAttachChips(which); renderPicker(which);
+    return true;
+  } catch { show('That file could not be read.'); return false; }
+}
 function attachRowNode(which, row) {
   const note = h('p', { class: 'ew-note' });
   note.hidden = true;
@@ -2342,25 +2468,240 @@ function attachRowNode(which, row) {
     const file = fileInput.files?.[0];
     fileInput.value = '';
     if (!file) return;
-    // Refuse on name/type/size before reading a single byte.
-    const refusal = fileRefusalReason({ name: file.name, mediaType: file.type || '', size: file.size });
-    if (refusal) { note.textContent = refusal; note.hidden = false; return; }
-    try {
-      const data = await readFileAsBase64(file);
-      const r = addAttachment(ws.attach[which], { kind: 'file', name: file.name, mediaType: file.type || '', size: file.size, data });
-      if (!r.added) { note.textContent = r.reason; note.hidden = false; return; }
-      ws.attach[which] = r.list;
-      renderAttachChips(which); renderPicker(which);
-    } catch { note.textContent = 'That file could not be read.'; note.hidden = false; }
+    await ingestPickedFile(which, file, note);
   });
   const btn = h('button', { type: 'button', class: 'ew-picker-row', title: UPLOAD_NOTE, onclick: () => fileInput.click() },
     h('span', {}, row.label));
   return h('div', { class: 'ew-picker-group' }, btn, fileInput, note);
 }
+// Ctrl+U on the composer (mirror-design §3.1): Claude's own attach
+// shortcut opens the same file picker without the "+" menu. The
+// input is created once and reused; its change runs the same
+// ingest as the menu row.
+function pickFileForComposer(which) {
+  if (!ws.fileInput) {
+    const input = h('input', { type: 'file', class: 'ew-file-input', 'aria-label': 'Choose a file to attach to this message' });
+    input.hidden = true;
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      input.value = '';
+      if (file) await ingestPickedFile(which, file, null);
+    });
+    ws.fileInput = input;
+    ($('maestro-input')?.parentElement ?? document.body).append(input);
+  }
+  ws.fileInput.click();
+}
+// Take a screenshot (mirror-design §3.1): the browser's own screen
+// capture. One frame is taken at capture time, scaled to the image
+// road's lane, and ingested as a JPEG through the same file road —
+// nothing is captured until the person picks a surface in the
+// browser's own chooser, and a cancel is a quiet note, not an error.
+async function captureScreenshot(which, note) {
+  if (!navigator.mediaDevices?.getDisplayMedia) { note.textContent = 'Screen capture is not available in this browser.'; note.hidden = false; return; }
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    await video.play();
+    const scale = Math.min(1, 1600 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round((video.videoWidth || 1) * scale));
+    canvas.height = Math.max(1, Math.round((video.videoHeight || 1) * scale));
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob) { note.textContent = 'The screenshot could not be taken.'; note.hidden = false; return; }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    await ingestPickedFile(which, new File([blob], `screenshot-${stamp}.jpg`, { type: 'image/jpeg' }), note);
+  } catch { note.textContent = 'The screenshot was cancelled.'; note.hidden = false; }
+  finally { if (stream) for (const track of stream.getTracks()) track.stop(); }
+}
+function screenshotRowNode(which, row) {
+  const note = h('p', { class: 'ew-note' });
+  note.hidden = true;
+  const btn = h('button', { type: 'button', class: 'ew-picker-row', title: 'Capture a screen, window or tab and attach it to this message', onclick: () => { void captureScreenshot(which, note); } },
+    h('span', {}, row.label));
+  return h('div', { class: 'ew-picker-group' }, btn, note);
+}
+
+// Land on the Manage surface at the panel seat's tab (mirror M1):
+// the marker is read once by the surface as it mounts. Shared by the
+// manage footer row and the Tool access action row (bite M2) — the
+// Tool access face lives on that surface, under the seat.
+function openManageForSeat(which) {
+  try {
+    if (ws.libraryPanel.seatId) sessionStorage.setItem('helmian.manageSeat', ws.libraryPanel.seatId);
+    else sessionStorage.removeItem('helmian.manageSeat');
+  } catch {}
+  closePicker();
+  document.querySelector('.nav-item[data-view="integrations"]')?.click();
+}
+// Seed the composer with a DRAFT (mirror-design §4): the slash menu
+// inserts text the same way — the value goes in, the menu closes,
+// the input takes focus. Nothing is ever sent by a starter row;
+// sending stays the person's own act on their Send button.
+function seedComposerDraft(which, text) {
+  const input = $(PICKER_IDS[which]?.input);
+  if (!input) return;
+  input.value = text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  closePicker();
+  input.focus({ preventScroll: true });
+  try { input.setSelectionRange(input.value.length, input.value.length); } catch {}
+}
+// The GitHub file source (mirror-design §4): browse the channel's
+// linked repo through the cloud read and pick a file into the
+// message. The repo is never typed here — it is the channel's link,
+// the one source the server will serve (a token never rides; public
+// repos read unauthenticated, and a private repo answers with the
+// read's own plain words).
+function githubFileNode(which, row) {
+  const gf = ws.githubFile;
+  const repo = typeof ws.config?.github?.repo === 'string' ? ws.config.github.repo : '';
+  const note = h('p', { class: 'ew-note' });
+  note.hidden = !gf.note;
+  if (gf.note) note.textContent = gf.note;
+  const head = h('button', { type: 'button', class: 'ew-picker-row', 'aria-expanded': String(gf.open), onclick: () => {
+    gf.open = !gf.open;
+    if (gf.open && repo && gf.entries === null && !gf.loading) void loadGithubEntries(which, '');
+    renderPicker(which);
+  } }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, gf.open ? '▾' : '›'));
+  if (!gf.open) return head;
+  const children = [head];
+  if (!repo) {
+    children.push(h('p', { class: 'ew-note' }, 'Link a GitHub repo to this channel first — then its files can be added here.'));
+    return h('div', { class: 'ew-picker-group' }, ...children);
+  }
+  children.push(h('p', { class: 'ew-note' }, `Repo: ${repo}${gf.path ? ` — ${gf.path}` : ''}`));
+  const pathInput = h('input', { type: 'text', class: 'ew-gh-path', placeholder: 'Folder or file path (blank = repo root)', value: gf.path, 'aria-label': 'Path in the linked GitHub repo' });
+  const listBtn = h('button', { type: 'button', class: 'ew-btn sm', onclick: () => { void loadGithubEntries(which, pathInput.value.trim()); } }, 'List');
+  children.push(h('div', { class: 'ew-gh-bar' }, pathInput, listBtn));
+  if (gf.loading) children.push(h('p', { class: 'ew-note' }, 'Reading the repo...'));
+  if (Array.isArray(gf.entries)) {
+    for (const entry of gf.entries) {
+      if (entry.kind === 'dir') {
+        children.push(h('button', { type: 'button', class: 'ew-picker-row ew-gh-entry', onclick: () => { void loadGithubEntries(which, entry.path); } },
+          h('span', {}, `${entry.name}/`), h('span', { class: 'ew-picker-kind' }, 'folder')));
+      } else {
+        children.push(h('button', { type: 'button', class: 'ew-picker-row ew-gh-entry', onclick: () => { void pickGithubFile(which, entry, note); } },
+          h('span', {}, entry.name), h('span', { class: 'ew-picker-kind' }, 'file')));
+      }
+    }
+    if (!gf.entries.length) children.push(h('p', { class: 'ew-note' }, 'Nothing at that path.'));
+  }
+  children.push(note);
+  return h('div', { class: 'ew-picker-group' }, ...children);
+}
+async function loadGithubEntries(which, path) {
+  const gf = ws.githubFile;
+  const repo = typeof ws.config?.github?.repo === 'string' ? ws.config.github.repo : '';
+  if (!repo) return;
+  gf.loading = true; gf.note = ''; gf.entries = null; gf.path = path || '';
+  if (ws.pickerFor === which) renderPicker(which);
+  try {
+    const body = await ws.ctx.api(`/api/admin/connector-library/github-file?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path || '')}`);
+    if (body?.kind === 'dir') { gf.entries = body.entries ?? []; gf.path = body.path ?? path ?? ''; }
+    else if (body?.kind === 'file') { await ingestGithubBody(which, body, null); gf.entries = null; }
+    else gf.note = 'That path could not be read.';
+  } catch (error) { gf.note = error?.message || 'That path could not be read.'; }
+  gf.loading = false;
+  if (ws.pickerFor === which) renderPicker(which);
+}
+async function pickGithubFile(which, entry, note) {
+  const repo = typeof ws.config?.github?.repo === 'string' ? ws.config.github.repo : '';
+  if (!repo) return;
+  try {
+    const body = await ws.ctx.api(`/api/admin/connector-library/github-file?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(entry.path)}`);
+    if (body?.kind !== 'file') { ws.githubFile.note = 'That file could not be read.'; renderPicker(which); return; }
+    await ingestGithubBody(which, body, note);
+  } catch (error) { ws.githubFile.note = error?.message || 'That file could not be read.'; renderPicker(which); }
+}
+// A GitHub file body joins the message through the same ingest as a
+// picked local file: base64 → Blob → File, with the media type
+// guessed from the extension where the read carries none (an image
+// road needs its type to classify at all).
+async function ingestGithubBody(which, body, note) {
+  const binary = atob(String(body.data ?? ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  const name = String(body.name ?? 'github-file');
+  const lower = name.toLowerCase();
+  const mediaType = body.mediaType || (lower.endsWith('.png') ? 'image/png' : lower.endsWith('.jpg') || lower.endsWith('.jpeg') ? 'image/jpeg' : lower.endsWith('.webp') ? 'image/webp' : '');
+  const file = new File([bytes], name, { type: mediaType });
+  await ingestPickedFile(which, file, note);
+}
 
 function plusMenuRowNode(which, row, index) {
   switch (row.kind) {
     case 'attach': return attachRowNode(which, row);
+    case 'screenshot': return screenshotRowNode(which, row);
+    case 'action': {
+      if (row.action === 'github-file') return githubFileNode(which, row);
+      if (row.action === 'tool-access') {
+        return h('button', { type: 'button', class: 'ew-picker-row', title: 'See what this seat\u2019s connections can do — the posture and per-tool switches on the Manage surface', onclick: () => openManageForSeat(which) },
+          h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
+      }
+      return h('p', { class: 'ew-note' }, '');
+    }
+    case 'starter': {
+      // A catalog starter action: seeds the composer with its own
+      // published prompt text as a DRAFT — never a send.
+      return h('button', { type: 'button', class: 'ew-picker-row ew-plus-starter', title: `Start a draft with ${row.entryName}`, onclick: () => seedComposerDraft(which, row.prompt) },
+        h('span', {}, row.label), h('span', { class: 'ew-picker-kind' }, 'draft'));
+    }
+    case 'prompt': {
+      // An MCP starter prompt from the brokered server itself. With
+      // required arguments the row seeds the fill-in draft; without,
+      // the server's own rendered text is fetched and seeded. Either
+      // way the composer holds a draft — never a send.
+      const prompt = row.prompt;
+      const label = prompt.title || prompt.name;
+      return h('button', { type: 'button', class: 'ew-picker-row ew-plus-starter', title: prompt.description || `Start a draft with ${row.entryName}`, onclick: async () => {
+        const needsArgs = Array.isArray(prompt.arguments) && prompt.arguments.some((a) => a.required);
+        if (needsArgs) { seedComposerDraft(which, starterDraftText(prompt)); return; }
+        try {
+          const body = await ws.ctx.post('/api/admin/connector-library/prompts/get', { seatId: ws.libraryPanel.seatId, entryId: row.entryId, name: prompt.name });
+          seedComposerDraft(which, String(body?.text ?? '') || starterDraftText(prompt));
+        } catch { seedComposerDraft(which, starterDraftText(prompt)); }
+      } }, h('span', {}, label), h('span', { class: 'ew-picker-kind' }, 'draft'));
+    }
+    case 'skill': {
+      if (row.disabled) {
+        return h('div', { class: 'ew-picker-row ew-plus-skill off' }, h('span', {}, row.name), h('span', { class: 'ew-picker-kind' }, 'turned off'));
+      }
+      const on = row.on;
+      return h('button', { type: 'button', class: `ew-picker-row ew-plus-skill${on ? ' on' : ''}`, title: row.description || row.name, onclick: () => {
+        const seatId = ws.libraryPanel.seatId;
+        if (on) ws.skillAttach[which] = removeSkillAttach(ws.skillAttach[which], { skillId: row.skillId, seatId });
+        else {
+          const res = addSkillAttach(ws.skillAttach[which], { skillId: row.skillId, seatId });
+          if (!res.added) { ws.ctx?.toast?.(res.reason); return; }
+          ws.skillAttach[which] = res.list;
+        }
+        renderAttachChips(which); renderPicker(which);
+      } }, h('span', {}, row.name), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'On' : 'Off'));
+    }
+    case 'plugin': {
+      const on = row.on;
+      return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: row.brings || row.name, onclick: () => {
+        if (on) ws.attach[which] = removeAttachment(ws.attach[which], { kind: 'plugin', name: row.name });
+        else {
+          const catalog = (ws.plugins.list ?? []).map((p) => ({ kind: 'plugin', name: String(p?.name ?? '').trim().toLowerCase() })).filter((p) => p.name);
+          const res = addAttachment(ws.attach[which], { kind: 'plugin', name: row.name }, { catalog });
+          if (!res.added) { ws.ctx?.toast?.(res.reason); return; }
+          ws.attach[which] = res.list;
+        }
+        renderAttachChips(which); renderPicker(which);
+      } }, h('span', {}, row.name), h('span', { class: 'ew-picker-kind' }, 'plugin'), h('span', { class: `ew-picker-state ${on ? 'on' : 'off'}` }, on ? 'On' : 'Off'));
+    }
+    case 'project': {
+      return h('button', { type: 'button', class: `ew-picker-row${row.active ? ' on' : ''}`, title: row.active ? 'The active project — this conversation\u2019s messages carry it' : 'Make this the active project for your messages', onclick: async () => {
+        if (!row.active) await setActiveProjectFromMenu(row.key);
+        renderPicker(which);
+      } }, h('span', {}, row.name), h('span', { class: `ew-picker-state ${row.active ? 'on' : 'off'}` }, row.active ? 'Active' : 'Set active'));
+    }
     case 'capability': {
       const on = row.on;
       return h('button', { type: 'button', class: `ew-picker-row${on ? ' on' : ''}`, title: on ? 'Web search is on for this message — tap to turn it off' : 'Turn web search on for this message', onclick: () => {
@@ -2376,7 +2717,9 @@ function plusMenuRowNode(which, row, index) {
       const head = h('button', { type: 'button', class: 'ew-picker-row', 'aria-expanded': String(open), onclick: () => {
         ws.libraryPanel = { ...ws.libraryPanel, sub: open ? null : index };
         renderPicker(which);
-      } }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, open ? '▾' : '›'));
+      } }, h('span', {}, row.label),
+      ...(row.badge ? [h('span', { class: 'ew-picker-badge', title: `${row.badge} connection${row.badge === 1 ? '' : 's'} need${row.badge === 1 ? 's' : ''} reconnecting` }, `⚠ ${row.badge}`)] : []),
+      h('span', { class: 'ew-picker-state off' }, open ? '▾' : '›'));
       if (!open) return head;
       return h('div', { class: 'ew-picker-group' }, head,
         h('div', { class: 'ew-plus-sub' }, ...row.rows.map((r, i) => plusMenuRowNode(which, r, i))));
@@ -2387,16 +2730,7 @@ function plusMenuRowNode(which, row, index) {
       // are managed inside Helmian, never in a vendor window, so no
       // vendor manage row and no dead placeholder row exists).
       if (row.target === 'integrations') {
-        return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', onclick: () => {
-          // Land on the Manage surface at THIS seat's tab (mirror M1):
-          // the marker is read once by the surface as it mounts.
-          try {
-            if (ws.libraryPanel.seatId) sessionStorage.setItem('helmian.manageSeat', ws.libraryPanel.seatId);
-            else sessionStorage.removeItem('helmian.manageSeat');
-          } catch {}
-          closePicker();
-          document.querySelector('.nav-item[data-view="integrations"]')?.click();
-        } }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
+        return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', onclick: () => openManageForSeat(which) }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
       }
       return h('p', { class: 'ew-note' }, '');
     }
@@ -2465,6 +2799,76 @@ async function loadSkills() {
 // store's own truth on its next open.
 function invalidateSkills() {
   ws.skills.list = null; ws.skills.loaded = false; ws.skills.loading = null;
+}
+// The PC bridge's real plugin list (bite M2): the Plugins submenu
+// binds to GET /api/admin/plugins — the plugins whose tools join a
+// seat's turns. When the bridge is off the read answers
+// { plugins: [], unavailable } and the menu shows its honest empty
+// note; a failed read leaves the list null and the next open tries
+// again, the same shape as the Skills loader above.
+async function loadBridgePlugins() {
+  if (ws.plugins.loaded) return ws.plugins.list;
+  if (!ws.plugins.loading) {
+    ws.plugins.loading = ws.ctx.api('/api/admin/plugins')
+      .then((body) => { ws.plugins.list = Array.isArray(body?.plugins) ? body.plugins : []; ws.plugins.loaded = true; })
+      .catch(() => { ws.plugins.list = null; })
+      .finally(() => { ws.plugins.loading = null; });
+  }
+  await ws.plugins.loading;
+  return ws.plugins.list;
+}
+// The workspace project registry for the "Add to project" row:
+// the project list + the durable per-person active project. The
+// app shell keeps its own copy in ctx.state; both write through the
+// same route, and this cache re-reads on first open.
+async function loadWorkspaceProjects() {
+  if (ws.projects.loaded) return ws.projects.list;
+  if (!ws.projects.loading) {
+    ws.projects.loading = Promise.all([
+      ws.ctx.api('/api/admin/workspace/projects').catch(() => null),
+      ws.ctx.api('/api/admin/workspace/active-project').catch(() => null),
+    ]).then(([listBody, activeBody]) => {
+      ws.projects.list = (Array.isArray(listBody?.projects) ? listBody.projects : [])
+        .map((p) => ({ key: String(p?.projectKey ?? ''), name: String(p?.displayName ?? p?.projectKey ?? '') }))
+        .filter((p) => p.key);
+      const active = typeof activeBody?.projectKey === 'string' ? activeBody.projectKey : null;
+      ws.projects.activeKey = active;
+      if (ws.ctx?.state) ws.ctx.state.activeProjectKey = active;
+      ws.projects.loaded = true;
+    }).catch(() => { ws.projects.list = null; })
+      .finally(() => { ws.projects.loading = null; });
+  }
+  await ws.projects.loading;
+  return ws.projects.list;
+}
+// Setting the active project from the menu writes the same durable
+// per-person selection the Agents page writes; the send then rides
+// it in the message metadata. There is no per-conversation stash.
+async function setActiveProjectFromMenu(projectKey) {
+  try {
+    await ws.ctx.post('/api/admin/workspace/active-project', { projectKey });
+    ws.projects.activeKey = projectKey;
+    if (ws.ctx?.state) ws.ctx.state.activeProjectKey = projectKey;
+    ws.ctx.toast?.('Active project set', 'ok');
+  } catch { ws.ctx.toast?.('Could not set the active project'); }
+}
+// A brokered server's starter prompts, listed at arm time (bite
+// M2): the write-route read resolves the caller's own credential
+// server-side and returns the snapshot only. The result is cached
+// per seat+entry for the session; an unsupported server renders no
+// rows at all, a failed read renders its honest note.
+function ensureConnectorPrompts(seatId, entryId) {
+  const key = `${seatId}:${entryId}`;
+  if (ws.connectorPrompts[key]) return;
+  ws.connectorPrompts[key] = { status: 'loading', prompts: [] };
+  ws.ctx.post('/api/admin/connector-library/prompts', { seatId, entryId })
+    .then((body) => {
+      ws.connectorPrompts[key] = body?.supported === true
+        ? { status: 'ok', prompts: Array.isArray(body.prompts) ? body.prompts : [] }
+        : { status: 'unsupported', prompts: [] };
+    })
+    .catch(() => { ws.connectorPrompts[key] = { status: 'error', prompts: [] }; })
+    .finally(() => { if (ws.pickerFor) renderPicker(ws.pickerFor); });
 }
 // The name a seat id wears in chips, badges and scope rows: a
 // library seat's room name, a custom agent's own name, or the id
@@ -3333,7 +3737,7 @@ async function send(e) {
   if (!body || !ws.channelId) return;
   const key = crypto.randomUUID();
   const convId = conversationIdFor('channel');
-  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel, connectors: connectorsForTurn(ws.connectorToggles, convId), skills: ws.skillAttach.channel });
+  const req = buildMessageRequest({ channelId: ws.channelId, body, idempotencyKey: key, attachments: ws.attach.channel, webSearch: ws.webSearch.channel, connectors: connectorsForTurn(ws.connectorToggles, convId), skills: ws.skillAttach.channel, projectKey: ws.projects.activeKey ?? ws.ctx?.state?.activeProjectKey ?? null });
   const btn = $('maestro-send'); btn.disabled = true;
   ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
@@ -3829,6 +4233,10 @@ function wire() {
   box.addEventListener('input', () => { grow(); refreshSlashMenu('channel'); syncCrewSelection(); });
   box.addEventListener('keydown', (e) => { slashKeydown('channel', e); });
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
+  // Ctrl+U attaches a file (mirror-design §3.1 — Claude's own
+  // composer shortcut): opens the same hidden file input the "+"
+  // menu's attach row uses, so the picked file runs the same ingest.
+  box.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'u') { e.preventDefault(); pickFileForComposer('channel'); } });
   $('maestro-plus').addEventListener('click', () => togglePicker('channel'));
   // The "+" menu wears its popup shape from here (bite 3R-b): the
   // panel element keeps .ew-picker's chrome; this class narrows it

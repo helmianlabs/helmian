@@ -977,6 +977,13 @@ html { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
 .cm-key-form { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-top: 1px solid var(--line, #1F2937); padding-top: 10px; }
 .cm-key-form p { flex-basis: 100%; margin: 0; }
 .cm-key-input, .cm-key-label { background: var(--bg, #0B1120); color: var(--text, #F8FAFC); border: 1px solid var(--line, #1F2937); border-radius: 6px; padding: 7px 10px; font: inherit; font-size: .85rem; min-width: 220px; }
+.cm-tools { flex-basis: 100%; border-top: 1px solid var(--line, #1F2937); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.cm-tool-posture { margin: 0; }
+.cm-tool { display: flex; gap: 10px 18px; align-items: flex-start; justify-content: space-between; border: 1px solid var(--line, #1F2937); border-radius: 6px; padding: 8px 12px; }
+.cm-tool-main { min-width: 200px; flex: 1; }
+.cm-tool-name { font-weight: 600; font-size: .9rem; }
+.cm-tool-anno { margin-top: 2px; }
+.cm-tool-switch { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 .cm-add { border: 1px dashed var(--line, #1F2937); border-radius: var(--radius, 8px); padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .cm-add-head { flex-basis: 100%; margin: 0; }
 .cm-add p { flex-basis: 100%; margin: 0; }

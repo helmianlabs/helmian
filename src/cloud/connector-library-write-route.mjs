@@ -38,6 +38,15 @@
 //     credential service: stored credentials are revoked BEFORE the
 //     record's references are cleared.
 //   POST /api/admin/connector-library/posture        {seatId, entryId, posture}
+//   POST /api/admin/connector-library/prompts        {seatId, entryId}          (bite M2)
+//     The brokered server's published starter prompts, listed at arm
+//     time for the caller (their token is resolved from the
+//     credential service and rides only on that one server call).
+//   POST /api/admin/connector-library/prompts/get    {seatId, entryId, name, arguments?}
+//     One prompt rendered into composer draft text — a draft, never
+//     a send.
+//   POST /api/admin/connector-library/tool-enable    {seatId, entryId, toolEnableMap}
+//     Per-tool on/off against the connection's frozen snapshot.
 //   POST /api/admin/connector-library/entry-state    {seatId, entryId, state}   owner/admin
 //   POST /api/admin/connector-library/entries        add a custom entry         owner/admin
 //   POST /api/admin/connector-library/entries/remove {seatId, entryId}          owner/admin
@@ -54,10 +63,12 @@ import pg from 'pg';
 import {
   buildConnectorTokenRef,
   createConnectorLibraryStore,
+  planPromptSnapshot,
   validateVaultTokenRef,
   CONNECTOR_POSTURES,
 } from './connector-library.mjs';
-import { LIVE_SEATS, catalogEntryById } from './connector-catalog.mjs';
+import { LIVE_SEATS, NATIVE_STATE_SOURCES, catalogEntryById } from './connector-catalog.mjs';
+import { createMcpPromptsClient, renderPromptText } from './connector-mcp-prompts.mjs';
 import { createCredentialConnectClient } from './credential-connect.mjs';
 import {
   createConnectorOAuthPendingStore,
@@ -182,12 +193,14 @@ export function createConnectorLibraryWriteHandler({
   pendingStore: injectedPending,
   credentialClient: injectedCredentials,
   doorOAuth: injectedDoor,
+  promptsClient: injectedPrompts,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const resolveStore = () => injectedStore ?? (getPool() ? createConnectorLibraryStore(getPool()) : null);
   const resolvePending = () => injectedPending ?? (getPool() ? createConnectorOAuthPendingStore(getPool()) : null);
   const resolveCredentials = () => injectedCredentials !== undefined ? injectedCredentials : createCredentialConnectClient();
   const resolveDoor = () => injectedDoor ?? createScribeDoorOAuth({ fetchImpl });
+  const resolvePrompts = () => injectedPrompts ?? createMcpPromptsClient({ fetchImpl });
 
   return async function connectorLibraryWrite({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson }) {
     const path = requestUrl?.pathname ?? '';
@@ -263,6 +276,48 @@ export function createConnectorLibraryWriteHandler({
       const entryId = String(body.entryId ?? '');
       const key = { personId, seatId, entryId };
       const ownerAct = () => { if (!['owner', 'admin'].includes(role)) throw failure(403, 'this is a workspace-level change — it takes the workspace owner or an admin'); };
+
+      // The caller's brokered-pipe token for the prompts actions
+      // (mirror-design §4, bite M2): the entry must be Helmian-
+      // brokered and the caller connected to it; the token is
+      // resolved from the credential service under the connection's
+      // own vault reference, held in memory for the one call, and
+      // never returned, stored, or logged. Entries whose state joins
+      // from elsewhere (helmian-github: channel repo links) hold no
+      // token in the library at all — the honest answer for them is
+      // PROMPTS_NOT_HELD, not a faked list.
+      const brokeredToken = async (entry) => {
+        if (entry.brokerMode !== 'helmian') {
+          throw failure(400, 'this connector is a mirror of the seat\u2019s own account — Helmian does not hold its sign-in, so it cannot list starters for it', { code: 'VENDOR_MANAGED' });
+        }
+        if (entry.state !== 'available') throw failure(409, 'this connector is turned off by the workspace owner');
+        const connection = await store.getConnection(tenantId, key);
+        if (!connection || connection.state === 'disconnected') {
+          if (NATIVE_STATE_SOURCES[entryId]) {
+            throw failure(409, 'Helmian does not hold a sign-in token for this connector, so its starter prompts cannot be listed here yet', { code: 'PROMPTS_NOT_HELD' });
+          }
+          throw failure(409, 'connect this connector first — its starters are listed for the person connected to it', { code: 'NOT_CONNECTED' });
+        }
+        if (connection.state !== 'connected') {
+          throw failure(409, 'this connector needs reconnecting before its starters can be listed', { code: 'NOT_CONNECTED' });
+        }
+        if (effectiveAuthMode(entry) === 'none') return { connection, accessToken: null };
+        if (!connection.accessTokenRef) {
+          throw failure(409, 'Helmian does not hold a sign-in token for this connector, so its starter prompts cannot be listed here yet', { code: 'PROMPTS_NOT_HELD' });
+        }
+        const credentials = resolveCredentials();
+        if (!credentials) throw failure(503, 'Helmian\u2019s credential storage is not switched on, so the sign-in cannot be read', { code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' });
+        const resolved = await credentials.resolveVaultCredential({
+          tenantId, providerId: providerIdFor(seatId, entryId), credentialReference: connection.accessTokenRef, reasonClass: 'provider_call',
+        });
+        if (!resolved?.accepted) throw failure(502, 'the stored sign-in could not be read, so the starters could not be listed', { code: 'CREDENTIAL_NOT_RESOLVABLE' });
+        const cred = resolved.credential;
+        const accessToken = cred && typeof cred === 'object'
+          ? (typeof cred.accessToken === 'string' && cred.accessToken ? cred.accessToken : (typeof cred.apiKey === 'string' && cred.apiKey ? cred.apiKey : null))
+          : (typeof cred === 'string' && cred ? cred : null);
+        if (!accessToken) throw failure(502, 'the stored sign-in could not be read, so the starters could not be listed', { code: 'CREDENTIAL_NOT_RESOLVABLE' });
+        return { connection, accessToken };
+      };
 
       if (action === 'connect') {
         refuseCredentialValues(body);
@@ -395,6 +450,54 @@ export function createConnectorLibraryWriteHandler({
         if (!CONNECTOR_POSTURES.includes(posture)) throw failure(400, `posture must be one of ${CONNECTOR_POSTURES.join(', ')}`);
         const connection = await store.setPosture(tenantId, key, posture, personId);
         sendJson(200, { status: 'posture-set', connection });
+        return true;
+      }
+
+      if (action === 'prompts' || action === 'prompts/get') {
+        // The MCP-prompts mechanism (mirror-design §4, bite M2): a
+        // brokered server's published starter prompts, listed at arm
+        // time for the person connected to it, and — on the /get
+        // half — one prompt rendered into composer draft text. The
+        // token rides only on the call to the server itself.
+        refuseCredentialValues(body);
+        const entry = await store.getEntry(tenantId, seatId, entryId);
+        if (!entry) throw failure(404, 'connector entry not found in this seat\u2019s library');
+        const { accessToken } = await brokeredToken(entry);
+        const client = resolvePrompts();
+        if (action === 'prompts') {
+          const listed = await client.listPrompts({ endpoint: entry.mcpEndpointUrl, accessToken });
+          if (!listed.supported) {
+            sendJson(200, { status: 'ok', supported: false, prompts: [], note: 'This connector\u2019s server publishes no starter prompts.' });
+            return true;
+          }
+          const plan = planPromptSnapshot(listed.prompts);
+          sendJson(200, { status: 'ok', supported: true, prompts: plan.prompts, snapshotHash: plan.snapshotHash });
+          return true;
+        }
+        const name = String(body.name ?? '').trim();
+        if (!name) throw failure(400, 'the prompt name is required');
+        const rawArgs = body.arguments && typeof body.arguments === 'object' && !Array.isArray(body.arguments) ? body.arguments : {};
+        const args = {};
+        for (const [k, v] of Object.entries(rawArgs)) {
+          if (typeof v !== 'string') throw failure(400, 'prompt arguments are text — they seed a draft, nothing more');
+          args[k] = v.slice(0, 2000);
+        }
+        const rendered = await client.getPrompt({ endpoint: entry.mcpEndpointUrl, accessToken, name, args });
+        sendJson(200, { status: 'ok', name, text: renderPromptText(rendered) });
+        return true;
+      }
+
+      if (action === 'tool-enable') {
+        // Per-tool on/off against the connection's frozen snapshot
+        // (mirror-design §3.1 Tool access, bite M2): the store
+        // refuses any tool the snapshot does not name, so a stale
+        // face can never invent one. Posture stays the 'posture'
+        // action's business; this is only the tool map.
+        refuseCredentialValues(body);
+        const map = body.toolEnableMap;
+        if (!map || typeof map !== 'object' || Array.isArray(map)) throw failure(400, 'toolEnableMap must be an object keyed by tool name');
+        const connection = await store.setToolEnableMap(tenantId, key, map, personId);
+        sendJson(200, { status: 'tool-map-set', connection });
         return true;
       }
 

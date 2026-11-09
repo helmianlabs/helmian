@@ -17,13 +17,26 @@
 // definition never carries state, and never invents a row the read
 // cannot fill.
 //
-// ITEM TYPES — exactly six, nothing else:
+// ITEM TYPES — exactly eight, nothing else (six from bite 3R-a; the
+// mirror design §5.1 names the shell's three missing row kinds —
+// action rows, the badge roll-up, the Add row — and bite M2 lands
+// the first two of them here):
 //   attach            the files row (the room's upload is real for
 //                     every seat: composer-picker.mjs's upload group).
 //   capability        a room capability row. A row exists ONLY where
 //                     the room can actually run the capability for
 //                     that seat (REPORT §6) — see the exclusions
 //                     named in the bite report.
+//   action            a row that DOES something in the room when
+//                     picked (mirror-design §4): 'github-file' opens
+//                     the GitHub file source (the picker's picked
+//                     file rides the attach road); 'tool-access'
+//                     lands on the seat's Tool access face on the
+//                     Manage surface. An action exists ONLY where
+//                     its carrier is real for that seat.
+//   projects          the "Add to project" row: the composer's
+//                     active-project picker, bound to the workspace
+//                     project registry (mirror-design §3.1).
 //   live-toggle-group connector rows the person arms per message
 //                     (connector-panel.mjs's toggle store). Binds
 //                     catalog entries by id, and binds ONLY
@@ -59,15 +72,22 @@
 // every id resolves, that live groups bind only helmian-brokered
 // entries, mirror groups only vendor-brokered ones, and that every
 // catalog entry of the seat is bound exactly once across its menu) —
-// or `feed`, naming a non-catalog source a later bite reads (Claude's
-// API-account skills and claude.ai skills, Claude's plugins, Mistral's
-// agents: vendor surfaces whose state arrives by the bite-7 intake,
-// never from the connector catalog). A feed-bound group names no
-// connector, so it can never invent one.
+// or `feed`, naming a non-catalog HELMIAN-side source the renderer
+// fills: 'helmian-skills' (the workspace skill library, GET
+// /api/admin/skills — the skills that actually run on Helmian's
+// turns for the seat) and 'bridge-plugins' (the PC bridge's real
+// plugin list, GET /api/admin/plugins). Bite M2 closed the old
+// vendor feeds (seat-skills-api, seat-skills-vendor, vendor-plugins,
+// vendor-agents) under the mirror design §8 law: a feed-bound group
+// that can only ever render "Nothing here yet" is a broken promise —
+// each was either rebound to a lawful Helmian source (skills,
+// plugins) or deleted (the vendor skills mirror, Mistral's agents;
+// M7 re-points Mistral's at Helmian's custom agents). A feed-bound
+// group names no connector, so it can never invent one.
 import { LIBRARY_SEATS } from './connector-panel.mjs';
 
 export const MENU_ITEM_TYPES = Object.freeze([
-  'attach', 'capability', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',
+  'attach', 'capability', 'action', 'projects', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',
 ]);
 
 const deepFreeze = (value) => {
@@ -80,6 +100,8 @@ const deepFreeze = (value) => {
 
 const attach = (label) => ({ type: 'attach', label });
 const capability = (label, capabilityKey) => ({ type: 'capability', label, capability: capabilityKey });
+const action = (label, actionKey) => ({ type: 'action', label, action: actionKey });
+const projects = (label) => ({ type: 'projects', label });
 const liveGroup = ({ label = null, entryIds = null, feed = null, note = null, requiresToolCapableModel = false }) => ({
   type: 'live-toggle-group', label, ...(entryIds ? { entryIds } : { feed }), ...(note ? { note } : {}),
   ...(requiresToolCapableModel ? { requiresToolCapableModel: true } : {}),
@@ -112,25 +134,45 @@ export const MENU_DEFINITIONS = deepFreeze({
   // room's turn path; see the bite report's exclusion list.)
   claude: [
     attach('Add files or photos'),
+    // Take a screenshot (mirror-design §3.1, bite M2): the browser's
+    // own screen capture, framed into the existing image-attach
+    // road — a real road in the web room, so the row ships.
+    capability('Take a screenshot', 'screenshot'),
+    // Add to project: the composer's active-project picker over the
+    // workspace project registry; the picked project rides the
+    // message metadata (§3.1).
+    projects('Add to project'),
+    // Add from GitHub (§4's file-source action): the picker's repo
+    // is the channel's linked repo; the picked file rides the
+    // attach road.
+    action('Add from GitHub', 'github-file'),
     submenu('Skills', [
-      // API-account skills: live per-message attach (the Skills road
-      // is real for this seat only — REPORT §5.3). Fed by the Skills
-      // Management API read (bite 4R), not by the connector catalog.
-      liveGroup({ feed: 'seat-skills-api' }),
-      // The person's claude.ai skills are a different store: mirror.
-      mirrorGroup({ managedIn: 'Claude', feed: 'seat-skills-vendor' }),
+      // The skills that run on Helmian's turns for this seat: the
+      // workspace skill library (blanket + seat-scoped), armed per
+      // message exactly like the "/" menu arms them. Claude.ai's own
+      // skill store is Anthropic-account state with no read road —
+      // its mirror group was deleted in M2 (design §8 law) rather
+      // than left rendering "Nothing here yet" forever.
+      liveGroup({ feed: 'helmian-skills' }),
     ]),
     submenu('Connectors', [
       liveGroup({ entryIds: [...NATIVES] }),
       mirrorGroup({
         managedIn: 'Claude',
-        entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva'],
+        entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva', 'idiolect'],
       }),
+      // Tool access (§3.1): lands on the seat's Manage surface,
+      // where the per-connection posture + the frozen snapshot's
+      // per-tool list live (bites M1/M2). Enforcement on armed
+      // turns is M3's leg.
+      action('Tool access', 'tool-access'),
     ]),
     submenu('Plugins', [
-      // Plugins are a claude.ai / Claude Code surface with no API
-      // road: mirror rows, and no control of any kind (REPORT §3.1).
-      mirrorGroup({ managedIn: 'Claude', feed: 'vendor-plugins' }),
+      // Bound to the room's REAL plugin list — the PC bridge's
+      // installed plugins (GET /api/admin/plugins), whose tools
+      // genuinely join this seat's turns. Claude.ai's own plugin
+      // garden stays (c): no API road, not Helmian's to show.
+      liveGroup({ feed: 'bridge-plugins' }),
     ]),
     // The one capability row with a real road for this seat: the
     // per-message webSearch toggle is honored natively for Claude
@@ -208,7 +250,10 @@ export const MENU_DEFINITIONS = deepFreeze({
       liveGroup({ entryIds: [...NATIVES] }),
       mirrorGroup({ managedIn: 'Mistral', entryIds: [] }),
     ]),
-    mirrorGroup({ label: 'Agents', managedIn: 'Mistral', feed: 'vendor-agents' }),
+    // The Agents mirror group (feed 'vendor-agents') was deleted in
+    // bite M2 under the mirror design §8 law: it could only ever
+    // render "Nothing here yet". M7 re-points the row at Helmian's
+    // own custom-agent list, the lawful Helmian-side source.
     manageInHelmian(),
   ],
 

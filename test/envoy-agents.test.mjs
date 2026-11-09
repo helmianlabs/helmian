@@ -113,6 +113,14 @@ test('message metadata: the bridge source stamp survives normalization, junk is 
   assert.equal(normalizeMessageMetadata({ source: { provider: 'slack', channelId: 'not an id' } }), null);
   assert.equal(normalizeMessageMetadata({ source: { provider: 'myspace', channelId: 'C0BN7LCK946' } }), null);
   assert.equal(normalizeMessageMetadata({}), null);
+  // The composer's active project (mirror-design §3.1, bite M2): a
+  // well-shaped key is carried and normalized; a malformed one is
+  // refused outright, never silently dropped or carried.
+  assert.deepEqual(normalizeMessageMetadata({ projectKey: 'Helmian' }), { projectKey: 'helmian' });
+  assert.equal(normalizeMessageMetadata({ projectKey: null }), null);
+  assert.throws(() => normalizeMessageMetadata({ projectKey: 'bad key!' }), /project is invalid/);
+  assert.throws(() => normalizeMessageMetadata({ projectKey: 'a..b' }), /project is invalid/);
+  assert.throws(() => normalizeMessageMetadata({ projectKey: '-leading-dash' }), /project is invalid/);
   // The stamp rides alongside attachments without disturbing them.
   const both = normalizeMessageMetadata({ source: { provider: 'discord', channelId: '222222', channelName: 'general' }, webSearch: true });
   assert.equal(both.source.provider, 'discord');
