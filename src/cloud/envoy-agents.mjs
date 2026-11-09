@@ -159,6 +159,40 @@ export function sanitizeCustomAgent(raw) {
 export const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 const GITHUB_EVENTS = new Set(['push', 'pull_request', 'issues']);
 
+// The channel's standing armed connector set (Amendment 1 §2.3,
+// bite A2): the { seatId, entryId } pairs the plus menu's Connectors
+// toggle list has switched on for this channel, persisted on the
+// channel config the way every other per-channel setting persists.
+// Ids are the connector library's slugs — the same pattern the
+// message toggles validate against (normalizeConnectorToggles
+// below) — and the set is capped at the message cap: a channel can
+// never arm more in standing state than one message may carry. The
+// sanitizer is fail-closed per entry: a malformed pair is dropped,
+// never carried, and duplicates collapse. What the set may contain
+// is a preference; what a pair DOES is decided at compose time
+// against the live library read (a pair whose connector is no
+// longer connected rides nothing), and whether an armed turn runs
+// the connector's tools at all is the arming road's own question
+// (Mirror M3) — this field is the choice, not the effect.
+const ARMED_CONNECTOR_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+export function sanitizeArmedConnectors(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const seatId = String(item.seatId ?? '');
+    const entryId = String(item.entryId ?? '');
+    if (!ARMED_CONNECTOR_ID_PATTERN.test(seatId) || !ARMED_CONNECTOR_ID_PATTERN.test(entryId)) continue;
+    const id = `${seatId}:${entryId}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(Object.freeze({ seatId, entryId }));
+    if (out.length >= MAX_MESSAGE_CONNECTORS) break;
+  }
+  return out;
+}
+
 export function sanitizeGithubLink(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const repo = String(raw.repo ?? '').trim();
@@ -191,6 +225,7 @@ export function emptyConfig() {
     debateMode: 'off',
     maxRoundTurns: DEFAULT_DEBATE_TURNS,
     avatar: null,
+    armedConnectors: [],
   };
 }
 
@@ -236,7 +271,8 @@ export function parseConfig(body) {
     const rawTurns = Number(raw.maxRoundTurns);
     const maxRoundTurns = Number.isFinite(rawTurns) ? Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(rawTurns))) : DEFAULT_DEBATE_TURNS;
     const avatar = sanitizeChannelAvatar(raw.avatar);
-    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, maestroFollow: raw.maestroFollow === true, customAgents, debateMode, maxRoundTurns, avatar };
+    const armedConnectors = sanitizeArmedConnectors(raw.armedConnectors);
+    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, maestroFollow: raw.maestroFollow === true, customAgents, debateMode, maxRoundTurns, avatar, armedConnectors };
   } catch { return null; }
 }
 
@@ -266,6 +302,11 @@ export function serializeConfig(config) {
   // channel faces existed keeps its exact bytes.
   const avatar = sanitizeChannelAvatar(config.avatar);
   if (avatar) stored.avatar = avatar;
+  // armedConnectors is written only when non-empty, so every config
+  // stored before the standing toggle list existed keeps its exact
+  // bytes (the avatar/desk discipline above).
+  const armedConnectors = sanitizeArmedConnectors(config.armedConnectors);
+  if (armedConnectors.length) stored.armedConnectors = armedConnectors;
   const body = JSON.stringify(stored);
   if (body.length > 4000) throw new Error('channel config is too large');
   return body;
@@ -302,6 +343,7 @@ export function publicConfig(config, now = Date.now()) {
     discord: c.discord,
     slack: c.slack ?? null,
     github: c.github ?? null,
+    armedConnectors: sanitizeArmedConnectors(c.armedConnectors),
     pendingLink: c.pendingLink && Date.parse(c.pendingLink.expiresAt) > now ? { expiresAt: c.pendingLink.expiresAt } : null,
   };
 }

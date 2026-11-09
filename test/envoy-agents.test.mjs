@@ -249,6 +249,45 @@ test('desk config: desk flag round-trips and stays out of configs that never had
   assert.equal(publicConfig(parseConfig(oldBody)).desk, false);
 });
 
+test('armedConnectors config (bite A2): the standing set round-trips, sanitizes, and stays out of configs that never had it', () => {
+  const plain = emptyConfig();
+  assert.deepEqual(plain.armedConnectors, []);
+  // Byte-stability: an empty set serializes exactly as before the
+  // field existed (no "armedConnectors" key in the stored body).
+  assert.ok(!serializeConfig(plain).includes('armedConnectors'));
+  assert.deepEqual(parseConfig(serializeConfig(plain)).armedConnectors, []);
+  // An old stored body (no armedConnectors field at all) parses empty.
+  const oldBody = JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: ['claude'], joined: {}, discord: null, pendingLink: null });
+  assert.deepEqual(parseConfig(oldBody).armedConnectors, []);
+
+  const armed = emptyConfig();
+  armed.armedConnectors = [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'grok', entryId: 'helmian-github' },
+  ];
+  const back = parseConfig(serializeConfig(armed));
+  assert.deepEqual(back.armedConnectors, armed.armedConnectors);
+  assert.deepEqual(publicConfig(back).armedConnectors, armed.armedConnectors, 'the face reads the set from the public config');
+
+  // The sanitizer (shared by the write road and the parse): junk
+  // pairs drop per-entry, duplicates collapse, a non-array is empty.
+  const dirty = emptyConfig();
+  dirty.armedConnectors = [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'Bad Seat', entryId: 'helmian-github' },
+    { seatId: 'claude', entryId: '' },
+    { entryId: 'helmian-github' },
+    'junk',
+    null,
+  ];
+  assert.deepEqual(parseConfig(serializeConfig(dirty)).armedConnectors, [
+    { seatId: 'claude', entryId: 'helmian-github' },
+  ]);
+  const notArray = JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: [], joined: {}, discord: null, pendingLink: null, armedConnectors: 'github' });
+  assert.deepEqual(parseConfig(notArray).armedConnectors, []);
+});
+
 test('maestroFollow config (legacy field): round-trips for backward compatibility; routing never consults it', () => {
   const plain = emptyConfig();
   assert.equal(plain.maestroFollow, false);

@@ -318,7 +318,7 @@ test('the channel composer carries the picker: plus button, panel, chips, wiring
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.match(js, /from '\.\/composer-picker\.mjs'/);
   assert.match(js, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => togglePicker\('channel'\)\)/);
-  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: connectorsForTurn\(ws\.connectorToggles, convId\), skills: ws\.skillAttach\.channel, projectKey: ws\.projects\.activeKey \?\? ws\.ctx\?\.state\?\.activeProjectKey \?\? null \}\)/, 'channel send builds its request through the picker model, web-search toggle, connector toggles, armed Helmian skills and the active project included');
+  assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: sendableConnectors, skills: ws\.skillAttach\.channel, projectKey: ws\.projects\.activeKey \?\? ws\.ctx\?\.state\?\.activeProjectKey \?\? null \}\)/, 'channel send builds its request through the picker model, web-search toggle, the standing connector set (filtered to still-connected pairs, bite A2), armed Helmian skills and the active project included');
   assert.match(js, /menuForSeat\(seatId\)/, 'the channel picker renders the shipped per-seat menu definitions (bite 3R-b)');
   assert.match(js, /ws\.webSearch\[which\] = !on/, 'the toggle flips per-composer state, never the attach list');
   assert.match(js, /api\('\/api\/admin\/connector-library\/seats'\)/, 'Level 1 reads the per-seat connector libraries');

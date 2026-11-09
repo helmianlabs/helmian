@@ -102,8 +102,9 @@
 //   only when ON; off is the absence every layer already treats as the
 //   default, so an untouched toggle changes nothing on the wire.
 // - the connector-library toggles ride as metadata.connectors — not
-//   attachments either: the per-(seat, conversation) armed set from the
-//   "+" library panel (connector-panel.mjs). Each entry names its seat
+//   attachments either: the channel's standing armed set from the
+//   "+" menu's toggle list (connector-panel.mjs; the set persists on
+//   the channel config, Amendment 1 §2.3). Each entry names its seat
 //   ({ seatId, entryId }); a seat's turn consumes only its own entries,
 //   and normalizeMessageMetadata (src/cloud/envoy-agents.mjs) is the
 //   canonical validator. Carried only when at least one toggle is on —

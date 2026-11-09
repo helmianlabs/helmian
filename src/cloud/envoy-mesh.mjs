@@ -3,7 +3,7 @@
 // Routes (hung off handleEnvoyAblyRoute; live-admin.mjs stays untouched):
 //   Signed-in members and paired desktops (session cookie or device token):
 //     GET  /api/admin/envoy/channel-config?channel_id=   agents + Discord / Slack links for one channel
-//     POST /api/admin/envoy/channel-config               add-agent | remove-agent | link-discord | unlink-discord | link-slack | unlink-slack
+//     POST /api/admin/envoy/channel-config               add-agent | remove-agent | link-discord | unlink-discord | link-slack | unlink-slack | set-armed-connectors | (and the later actions below)
 //     GET  /api/admin/envoy/agent-work?providers=a,b     device token: messages waiting for an agent reply
 //     POST /api/admin/envoy/agent-messages               device token: post as an agent member
 //   Bridge services (Hetzner, bearer HELMIAN_ENVOY_BRIDGE_TOKEN):
@@ -26,7 +26,7 @@ import { publishEnvoyMessage } from './envoy-ably.mjs';
 import {
   AGENT_NAMES, AGENT_PROVIDERS, CONFIG_SUBJECT, DESK_ROSTER_FALLBACK, MAESTRO_DESK_SLUG, MAX_CHANNEL_AGENTS, MAX_DEBATE_TURNS, DEFAULT_DEBATE_TURNS, NOTICE_SUBJECT,
   agentSubject, agentsToAnswer, describeAuthor, discordSubject, isSlackId, slackSubject,
-  emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeChannelAvatar, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
+  emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeArmedConnectors, sanitizeChannelAvatar, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { classifySeatAsk } from './envoy-actions.mjs';
@@ -320,6 +320,23 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           config.debateMode = 'off';
           await writeConfig(client, actor.tenantId, channelId, config);
           posted = await notice(client, actor.tenantId, channelId, `Multi-agent debate stopped in #${channel.title}.`);
+        } else if (action === 'set-armed-connectors') {
+          if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
+          // The plus menu's standing toggle list (Amendment 1 §2.3,
+          // bite A2): the whole armed set for this channel, replaced
+          // on every flip — the menu sends the full set, so the
+          // stored set is exactly what the last flip left. A
+          // non-array payload is refused outright; malformed pairs
+          // are dropped by the sanitizer, never stored. No notice —
+          // a connector choice is composer furniture, not a room
+          // event (the channel-avatar precedent). The set is a
+          // preference only: dispatch does not consult it yet — a
+          // message's own metadata.connectors remains the only set
+          // a turn consumes until the arming wiring (Mirror M3)
+          // reads the channel's set at dispatch.
+          if (!Array.isArray(input?.armedConnectors)) throw fail(400, 'ENVOY_ARMED_CONNECTORS_INVALID');
+          config.armedConnectors = sanitizeArmedConnectors(input.armedConnectors);
+          await writeConfig(client, actor.tenantId, channelId, config);
         } else if (action === 'set-channel-avatar') {
           if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
           // The channel's face (emoji bite 5): a sanitized avatar

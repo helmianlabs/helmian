@@ -9,21 +9,30 @@
 // count. Tapping a seat opens Level 2 — that seat's library, read from
 // GET /api/admin/connector-library (the Bite 2 read behind the Bite 3
 // route): connected connectors first, each with a toggle that arms
-// the connector FOR THIS MESSAGE ONLY, then the rest of the catalog
-// with its state label. A back affordance returns to Level 1; closing
-// the panel leaves the composer text untouched (the workspace owns
-// that — this model never sees the draft).
+// the connector for the CHANNEL until flipped off (the standing set,
+// Amendment 1 §2.3), then the rest of the catalog with its state
+// label. A back affordance returns to Level 1; closing the panel
+// leaves the composer text untouched (the workspace owns that —
+// this model never sees the draft).
 //
-// THE TOGGLE LAWS (§1.6, §3.4, and the Bite 3 gate):
-// - Toggle state is held per (seat, conversation). Nothing about one
+// THE TOGGLE LAWS (§1.6, §3.4, and the Bite 3 gate — the standing
+// set per Amendment 1 §2.3, bite A2):
+// - Toggle state is held per (seat, channel). Nothing about one
 //   seat's toggles is visible in, or affects, another seat's library
-//   or another conversation.
-// - A toggle arms its connector for the NEXT message in that
-//   conversation and is consumed by that send: connectorsForTurn()
-//   reads the armed set for the ask path, and the workspace clears
-//   the conversation's set once the message lands, so the next
-//   message starts from the same defaults (nothing armed) — arming a
-//   connector for one message never quietly re-arms it for the next.
+//   or another channel.
+// - A toggle is STANDING: it records the channel's armed set for
+//   that seat until it is flipped off — it is not consumed by a
+//   send. The set persists on the channel's own config (the
+//   channel-config road, action 'set-armed-connectors';
+//   armedStateFromConfig / armedConnectorPairs below are the two
+//   bridges between that stored shape and this store), and every
+//   message the composer sends carries the set's still-connected
+//   pairs as metadata.connectors. HONESTY, stated once and kept:
+//   carrying the set on a message is all a flip does today — the
+//   turn path's connectorArming seam is not wired yet (Mirror M3
+//   G4), so an armed connector's tools do not join a turn on the
+//   strength of this set. The switch records the choice; it does
+//   not yet run anything.
 // - Only a Connected, Helmian-brokered row can be armed. A
 //   vendor-brokered row is a mirror (§1.5): its state is what the
 //   seat's vendor side last reported, its management lives in the
@@ -101,7 +110,7 @@ export function isConnectorOn(state, conversationId, seatId, entryId) {
   return branchOf(state, conversationId, seatId).includes(entryId);
 }
 
-/** Arm or disarm one connector for the conversation's next message. */
+/** Arm or disarm one connector in the scope's standing set. */
 export function toggleConnector(state, conversationId, seatId, entryId) {
   const conv = { ...(state?.[conversationId] ?? {}) };
   const list = branchOf(state, conversationId, seatId);
@@ -113,7 +122,7 @@ export function toggleConnector(state, conversationId, seatId, entryId) {
 }
 
 /**
- * The armed set for a conversation, as the ask path carries it: one
+ * The armed set for a scope, as the ask path carries it: one
  * { seatId, entryId } per armed connector, sorted so the wire shape
  * is deterministic. Every entry names its seat — a seat's turn
  * consumes only its own (§3.4).
@@ -127,12 +136,66 @@ export function connectorsForTurn(state, conversationId) {
   return Object.freeze(out);
 }
 
-/** Drop a conversation's whole armed set (its message has landed). */
+/** Drop a scope's whole armed set. */
 export function clearConversationToggles(state, conversationId) {
   if (!state || !Object.hasOwn(state, conversationId)) return state ?? {};
   const out = { ...state };
   delete out[conversationId];
   return out;
+}
+
+// ------------------------------------------------- the standing set
+// The bridges between the channel config's stored shape and this
+// store. The config (GET /api/admin/envoy/channel-config →
+// config.armedConnectors, written by the 'set-armed-connectors'
+// action) carries the set as a flat [{ seatId, entryId }] list —
+// the same pairs connectorsForTurn returns — because the config is
+// per channel already and needs no scope key. The store keys its
+// branches by scope (`channel:<id>`), so hydration folds the flat
+// list under the channel's scope and extraction reads it back out.
+// Ids are slug-checked with the same pattern the message metadata
+// validator uses; a malformed stored pair is dropped, never armed.
+
+const ARMED_PAIR_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+
+function cleanArmedPairs(pairs) {
+  const seen = new Set();
+  const out = [];
+  for (const item of Array.isArray(pairs) ? pairs : []) {
+    const seatId = String(item?.seatId ?? '');
+    const entryId = String(item?.entryId ?? '');
+    if (!ARMED_PAIR_ID_PATTERN.test(seatId) || !ARMED_PAIR_ID_PATTERN.test(entryId)) continue;
+    const id = `${seatId}:${entryId}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ seatId, entryId });
+  }
+  return out;
+}
+
+/**
+ * The toggle-store state for one channel, hydrated from its public
+ * config (the shape publicConfig returns: armedConnectors as a flat
+ * pair list). An absent or malformed list hydrates to the empty
+ * store — nothing armed is the honest default.
+ */
+export function armedStateFromConfig(config, scopeId) {
+  const pairs = cleanArmedPairs(config?.armedConnectors);
+  if (!pairs.length || !scopeId) return Object.freeze({});
+  const branch = {};
+  for (const { seatId, entryId } of pairs) {
+    if (!branch[seatId]) branch[seatId] = [];
+    branch[seatId].push(entryId);
+  }
+  return Object.freeze({ [scopeId]: Object.freeze(branch) });
+}
+
+/**
+ * The flat pair list the channel-config write carries: the scope's
+ * armed set, sorted (connectorsForTurn's deterministic order).
+ */
+export function armedConnectorPairs(state, scopeId) {
+  return connectorsForTurn(state, scopeId);
 }
 
 /**
@@ -178,7 +241,7 @@ function rowModel(row, state, conversationId) {
     ? Object.freeze({ manageUrl: row.stateDetail?.manageUrl ?? null, managedIn: seatName(row.seatId) })
     : null;
   // The one toggle law: only a Connected row on a pipe Helmian holds
-  // can be armed for a message. Mirror rows never carry a toggle.
+  // can be armed for the channel. Mirror rows never carry a toggle.
   const toggleable = row.state === 'connected' && row.brokerMode === 'helmian';
   return Object.freeze({
     entryId: row.entryId,

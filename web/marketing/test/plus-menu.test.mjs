@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { LIBRARY_STALE_MS, connectorPromptsState, ensureConnectorPrompts, loadSeatLibrary, plusMenuLevel2Model, resetLibrarySession } from '../app/envoy-workspace.js';
-import { connectorsForTurn, level1Model, toggleConnector } from '../app/connector-panel.mjs';
+import { LIBRARY_STALE_MS, loadSeatLibrary, plusMenuLevel2Model, resetLibrarySession } from '../app/envoy-workspace.js';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, toggleConnector } from '../app/connector-panel.mjs';
 import { MENU_SEAT_IDS, collectCatalogEntryIds, menuForSeat } from '../app/connector-menu.mjs';
 
 // Bite 3R-b — the "+" MENU FACE (Troy, 2026-11-08): the old bite-3
@@ -118,7 +118,11 @@ test('plus menu Level 2 — Claude (bite M2): the Connectors badge is the needs-
   assert.equal(healthy.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors').badge, undefined, 'a healthy library wears no badge');
 });
 
-test('plus menu Level 2 — Claude (bite M2): catalog starter actions ride under their connector; MCP prompts ride under an ARMED toggle only', () => {
+test('plus menu Level 2 — Claude (bite A2): connector rows seed NO drafts — no starter rows, no prompt rows, armed or not', async () => {
+  // The M2 face rendered catalog starter actions and arm-time MCP
+  // prompts under a connector, each seeding the composer with a
+  // draft. The standing toggle list (Amendment 1 §2.3) replaces
+  // that behaviour: a connector row is a switch and nothing else.
   const lib = library('claude', [
     libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' }),
     libRow('claude', 'idiolect', 'Idiolect', {
@@ -127,20 +131,74 @@ test('plus menu Level 2 — Claude (bite M2): catalog starter actions ride under
     }),
   ]);
   const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-github');
-  const promptsByEntry = { 'helmian-github': { status: 'ok', prompts: [{ name: 'daily-note', title: 'Daily note', arguments: [] }] } };
-  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry });
-  const lines = brief(model);
-  const githubAt = lines.indexOf('toggle:helmian-github=on');
-  assert.equal(lines[githubAt + 1], 'prompt:Daily note', 'the armed server\u2019s starter prompt follows its toggle');
-  const idiolectAt = lines.indexOf('mirror:idiolect');
-  assert.equal(lines[idiolectAt + 1], 'starter:Write an email in my style', 'the catalog starter action follows its connector row');
-  // Disarmed: the same prompts input renders nothing — prompts are
-  // listed at arm time, never before.
-  const disarmed = plusMenuLevel2Model({ seatId: 'claude', library: lib, conversationId: 'c1', promptsByEntry });
-  assert.ok(!brief(disarmed).some((l) => l.startsWith('prompt:')), 'no prompt row under a disarmed toggle');
-  // A failed listing is one honest note, not a silent gap.
-  const failed = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-github': { status: 'error', prompts: [] } } });
-  assert.ok(brief(failed).includes("note:Helmian GitHub's starters could not be listed."));
+  for (const model of [
+    plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1' }),
+    plusMenuLevel2Model({ seatId: 'claude', library: lib, conversationId: 'c1' }),
+  ]) {
+    const lines = brief(model);
+    assert.ok(!lines.some((l) => l.startsWith('starter:')), 'no catalog starter row under any connector');
+    assert.ok(!lines.some((l) => l.startsWith('prompt:')), 'no MCP prompt row under any connector');
+    assert.ok(!flat(model).some((r) => r.kind === 'starter' || r.kind === 'prompt'), 'the descriptors themselves are gone');
+  }
+  // The renderer carries no draft-seeding road at all any more.
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.ok(!js.includes('seedComposerDraft'), 'the draft seeder is deleted from the workspace');
+  assert.ok(!js.includes('ensureConnectorPrompts'), 'the arm-time prompt fetch is deleted with the rows it fed');
+  assert.ok(!js.includes('/api/admin/connector-library/prompts'), 'the menu no longer calls the prompts list road');
+});
+
+test('plus menu Level 2 — the toggle list offers ONLY connected Helmian-brokered rows (bite A2)', () => {
+  // The seat's native entry present in the read but NOT connected:
+  // the list is one honest note, never a switch that cannot work.
+  const notConnected = library('claude', [
+    libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'available' }),
+    libRow('claude', 'gmail', 'Gmail', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'troy@example.com', kind: 'oauth-app' }),
+  ]);
+  const model = plusMenuLevel2Model({ seatId: 'claude', library: notConnected, conversationId: 'c1' });
+  const connectors = model.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors');
+  assert.ok(connectors, 'the Connectors submenu still composes');
+  assert.ok(!connectors.rows.some((r) => r.kind === 'toggle'), 'no toggle is offered for a connector that is not connected');
+  assert.ok(connectors.rows.some((r) => r.kind === 'note' && r.text === 'No connectors are connected for Claude yet.'), 'the empty list says so in one note');
+  // Needs-reconnect is not connected: same honest note, no switch.
+  const needsReconnect = library('claude', [
+    libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'needs-reconnect' }),
+  ]);
+  const model2 = plusMenuLevel2Model({ seatId: 'claude', library: needsReconnect, conversationId: 'c1' });
+  const connectors2 = model2.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors');
+  assert.ok(!connectors2.rows.some((r) => r.kind === 'toggle'), 'a needs-reconnect connector is not offered as a switch');
+  assert.ok(connectors2.rows.some((r) => r.kind === 'note' && r.text === 'No connectors are connected for Claude yet.'));
+});
+
+test('standing armed set: the config bridges round-trip (bite A2)', () => {
+  // Hydration: the channel config's flat pair list folds under the
+  // channel's scope; malformed pairs drop, duplicates collapse.
+  const state = armedStateFromConfig({ armedConnectors: [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'Bad Seat', entryId: 'helmian-github' },
+    { seatId: 'grok', entryId: 'helmian-github' },
+    'junk',
+  ] }, 'channel:c1');
+  assert.deepEqual(connectorsForTurn(state, 'channel:c1'), [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'grok', entryId: 'helmian-github' },
+  ], 'the hydrated set carries exactly the stored pairs');
+  assert.deepEqual(connectorsForTurn(state, 'channel:c2'), [], 'another channel\u2019s scope stays empty');
+  // Extraction: the write road carries the same flat shape back.
+  const flipped = toggleConnector(state, 'channel:c1', 'grok', 'helmian-github');
+  assert.deepEqual(armedConnectorPairs(flipped, 'channel:c1'), [
+    { seatId: 'claude', entryId: 'helmian-github' },
+  ], 'a flip off is what the next persist would store');
+  // Absent config hydrates to nothing armed.
+  assert.deepEqual(armedStateFromConfig(null, 'channel:c1'), {});
+  assert.deepEqual(armedStateFromConfig({}, 'channel:c1'), {});
+});
+
+test('standing armed set: flips persist through the channel-config road (bite A2, source pins)', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.ok(js.includes("action: 'set-armed-connectors'"), 'the persist posts the channel-config action');
+  assert.ok(js.includes('armedStateFromConfig'), 'the config load hydrates the toggle store');
+  assert.ok(!js.includes('clearConversationToggles'), 'a send no longer clears the standing set');
 });
 
 test('plus menu Level 2 — Claude (bite M2): Skills binds the workspace library, Plugins the bridge list, Projects the registry', () => {
@@ -166,6 +224,12 @@ test('plus menu Level 2 — Claude (bite M2): Skills binds the workspace library
   assert.equal(retired.disabled, true, 'an owner-disabled skill shows as turned off, never armable');
   assert.ok(lines.includes('plugin:notes-tools=off'));
   assert.ok(lines.includes('plugin:forge-tools=on'), 'the attached plugin shows on');
+  // The plugins read provides no tool count today (a `tools`
+  // boolean + a brings line only), so the row carries none — and
+  // when a read ever provides one, it passes through untouched.
+  assert.equal(flat(model).find((r) => r.kind === 'plugin' && r.name === 'notes-tools').toolCount, null, 'no count is invented from a read that carries none');
+  const counted = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, conversationId: 'c1', skills: [], plugins: [{ name: 'notes-tools', brings: 'Notes reads', toolCount: 3 }], projects: [] });
+  assert.equal(flat(counted).find((r) => r.kind === 'plugin').toolCount, 3, 'a count the read does provide rides the row');
   assert.ok(lines.includes('project:Helmian'));
   assert.ok(lines.includes('project:Forge=active'), 'the active project is marked');
   // Loaded-empty is a specific honest note, never "Nothing here yet".
@@ -234,7 +298,12 @@ test('plus menu Level 2 — Grok: account-level rows are state rows, with the ac
   assert.ok(stateRow, 'Grok\'s Gmail renders as an account-level state row');
   assert.equal(stateRow.kind, 'mirror');
   assert.ok(brief(model).includes('note:On for the whole account — name it in a message to use it.'), 'the state group carries the honest account note');
-  assert.equal(findRow(model, 'github').kind, 'mirror', 'GitHub sits in Grok\'s live group but is vendor-brokered there — it renders as a mirror, never a toggle');
+  // Bite A2: Grok's GitHub is bound in the live group but is
+  // vendor-brokered there — the standing toggle list offers only
+  // rows Helmian can arm, so it no longer appears in the menu at
+  // all (it is not a switch, and the toggle list carries no state
+  // rows; its state lives on the Manage surface).
+  assert.equal(findRow(model, 'github'), undefined, 'a vendor-brokered row bound in the live group is not offered in the toggle list');
   assert.equal(findRow(model, 'helmian-github').kind, 'toggle', 'the Helmian-brokered row still toggles');
 });
 
@@ -300,15 +369,17 @@ test('plus menu face: no vendor eject renders — no mirror manage anchor, no ve
   assert.ok(!css.includes('.ew-lib-manage'), 'the removed anchor\'s style rule is gone too');
 });
 
-test('plus menu: cross-seat toggle isolation — arming Claude\'s GitHub arms nothing for Grok, and nothing in another conversation', () => {
+test('plus menu: cross-seat toggle isolation — arming Claude\'s GitHub arms nothing for Grok, and nothing in another channel', () => {
+  // The scope keys are channel ids (conversationIdFor names the
+  // open channel): the standing set is per (seat, channel).
   const t1 = toggleConnector({}, 'c1', 'claude', 'helmian-github');
   const claude = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, toggles: t1, conversationId: 'c1' });
-  assert.equal(findRow(claude, 'helmian-github').row.on, true, 'the armed row shows on in its own seat and conversation');
+  assert.equal(findRow(claude, 'helmian-github').row.on, true, 'the armed row shows on in its own seat and channel');
   const grokLib = library('grok', [libRow('grok', 'helmian-github', 'Helmian GitHub', { state: 'connected' })]);
   const grok = plusMenuLevel2Model({ seatId: 'grok', library: grokLib, toggles: t1, conversationId: 'c1' });
   assert.equal(findRow(grok, 'helmian-github').row.on, false, 'the same entry under another seat stays off');
   const elsewhere = plusMenuLevel2Model({ seatId: 'claude', library: CLAUDE_LIB, toggles: t1, conversationId: 'c2' });
-  assert.equal(findRow(elsewhere, 'helmian-github').row.on, false, 'another conversation stays off');
+  assert.equal(findRow(elsewhere, 'helmian-github').row.on, false, 'another channel stays off');
   assert.deepEqual(connectorsForTurn(t1, 'c1'), [{ seatId: 'claude', entryId: 'helmian-github' }], 'the ask-path vehicle carries exactly the armed pair');
   assert.deepEqual(connectorsForTurn(t1, 'c2'), []);
 });
@@ -398,31 +469,13 @@ test('seat library loader (fix D): a row added mid-session appears on the next o
   assert.deepEqual(fresh.rows.map((r) => r.entryId), ['gmail', 'idiolect'], 'the row added mid-session appears without a page reload');
 });
 
-test('arm-time prompts (fix D): a PROMPTS_NOT_HELD refusal is the silent unsupported outcome — no failure note', async () => {
-  // The route's by-design refusal for an entry Helmian holds no
-  // token for (the tokenless native GitHub entry): there are no
-  // starters to list, so arming it must not paint a failure.
-  const refusal = Object.assign(new Error('PROMPTS_NOT_HELD'), { status: 409, body: { code: 'PROMPTS_NOT_HELD', error: 'Helmian does not hold a sign-in token for this connector, so its starter prompts cannot be listed here yet' } });
-  resetLibrarySession({ post: async () => { throw refusal; } });
-  ensureConnectorPrompts('claude', 'helmian-github');
-  await new Promise((resolve) => setImmediate(resolve));
-  const state = connectorPromptsState('claude', 'helmian-github');
-  assert.equal(state?.status, 'unsupported', 'the by-design refusal lands on the silent outcome');
-  const lib = library('claude', [libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' })]);
-  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-github');
-  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-github': state } });
-  assert.ok(!brief(model).some((l) => l.includes('could not be listed')), 'no failure note under the armed row');
-});
-
-test('arm-time prompts (fix D): any other listing failure still renders the failure note', async () => {
-  const refusal = Object.assign(new Error('NOT_CONNECTED'), { status: 409, body: { code: 'NOT_CONNECTED', error: 'connect this connector first — its starters are listed for the person connected to it' } });
-  resetLibrarySession({ post: async () => { throw refusal; } });
-  ensureConnectorPrompts('claude', 'helmian-github');
-  await new Promise((resolve) => setImmediate(resolve));
-  const state = connectorPromptsState('claude', 'helmian-github');
-  assert.equal(state?.status, 'error', 'a real failure keeps the error state');
-  const lib = library('claude', [libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'connected' })]);
-  const toggles = toggleConnector({}, 'c1', 'claude', 'helmian-github');
-  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, toggles, conversationId: 'c1', promptsByEntry: { 'helmian-github': state } });
-  assert.ok(brief(model).includes("note:Helmian GitHub's starters could not be listed."), 'the honest note stands for a real failure');
+test('arm-time prompts are gone with the draft rows they fed (bite A2)', async () => {
+  // The fix-D prompt-listing machinery (ensureConnectorPrompts and
+  // its PROMPTS_NOT_HELD outcome) existed only to render prompt
+  // rows under an armed connector. Those rows are deleted (the
+  // no-drafts test above), so the machinery is deleted too — the
+  // server-side prompts route itself is untouched and other
+  // surfaces may still use it.
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.ok(!js.includes('connectorPrompts'), 'no prompts cache remains in the workspace state');
 });
