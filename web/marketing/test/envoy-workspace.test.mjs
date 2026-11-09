@@ -311,6 +311,19 @@ test('panel bite: channels pane rests as a rail, peeks on hover, pins on click',
   assert.match(css, /\.ew-channels\.rail-rest:not\(\.peeking\) > :not\(\.ew-channels-rail-tab\) \{ display:none !important; \}/);
 });
 
+// Hover-push (Troy, 2026-11-09): the peeking channels pane pushes the
+// chat right by its full open width instead of covering it, animated on
+// the panes' own --dur/--ease; at rest the chat carries no offset.
+test('hover-push: the peeking channels pane pushes the chat right, resting state has no offset', async () => {
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  // The offset exists and is keyed to the peeking state only.
+  assert.match(css, /\.ew-channels\.rail-rest\.peeking ~ \.ew-chat \{ margin-left:var\(--ew-channels\); \}/);
+  // The push animates with the pane transition list plus margin-left.
+  assert.match(css, /\.ew > \.ew-chat \{ transition:flex-basis var\(--dur\) var\(--ease\), opacity var\(--dur\) var\(--ease\), transform var\(--dur\) var\(--ease\), margin-left var\(--dur\) var\(--ease\); \}/);
+  // The resting base rule for the chat carries no margin at all.
+  assert.doesNotMatch(css, /^\.ew-chat \{[^}]*margin-left/m);
+});
+
 test('panel bite: sleek scrollbars — the named surfaces carry no bar, and no arrows', async () => {
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
   for (const sel of ['.ew-messages', '.ew-channel-list', '.ew-crew-list', '.ew-picker', '.sidebar']) {
