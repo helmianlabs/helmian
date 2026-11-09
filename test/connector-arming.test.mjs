@@ -17,12 +17,25 @@
 // with src/agent/scribe-door.mjs itself in the dead-module deletion
 // (2026-11-09); the armed fixtures below keep the JWT-shaped fake as
 // their token.
+//
+// The G4 sections (Mirror M3) cover the runner-hosted road end to
+// end on fakes: dispatch resolution (connector-arming-dispatch.mjs)
+// building arming records, the seam those records build
+// (connector-arming.mjs), and attachments.mjs running an armed
+// connector's tools itself — snapshot reconciliation, the enable
+// map, and the posture gate. The remote MCP client is a fake
+// factory; nothing here touches the network. The live gate — a real
+// GitHub turn through a real dispatch — is named in the bite's
+// BUILD-REPORT.md and runs after the push.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { catalogEntryById, LIVE_SEATS } from '../src/cloud/connector-catalog.mjs';
-import { createConnectorLibraryStore, buildConnectorTokenRef } from '../src/cloud/connector-library.mjs';
-import { resolveTurnAttachments } from '../src/agent/attachments.mjs';
+import { createConnectorLibraryStore, buildConnectorTokenRef, planToolSnapshot } from '../src/cloud/connector-library.mjs';
+import { resolveTurnAttachments, postureRequiresApproval } from '../src/agent/attachments.mjs';
+import { buildConnectorArming, sanitizeArmingRecords } from '../src/agent/connector-arming.mjs';
+import { armingPairsForDispatch, resolveArmingRecord, resolveDispatchArming } from '../src/cloud/connector-arming-dispatch.mjs';
 import { chatWithTools, ANTHROPIC_MCP_BETA } from '../src/agent/providers.mjs';
 import { runAgentTurn } from '../src/agent/loop.mjs';
 import { makeProvenanceWorkspace, cleanProvenanceWorkspace } from '../test-support/provenance-workspace.mjs';
@@ -518,4 +531,345 @@ test('loop: an unarmed turn sends no MCP parameter and records no evidence', asy
     restore();
     cleanProvenanceWorkspace(workspace);
   }
+});
+
+// ================================================================
+// G4: dispatch resolution — pairs and arming records.
+// ================================================================
+
+const GH_TOOLS = [
+  { name: 'get_repo', description: 'Read a repository', inputSchema: { type: 'object', properties: { repo: { type: 'string' } } }, annotations: { readOnlyHint: true, destructiveHint: false } },
+  { name: 'create_issue', description: 'Open an issue', inputSchema: { type: 'object', properties: { title: { type: 'string' } } }, annotations: { readOnlyHint: false, destructiveHint: false } },
+  { name: 'delete_repo', description: 'Delete a repository', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: false, destructiveHint: true } },
+  { name: 'mystery_tool', description: 'Undeclared', inputSchema: { type: 'object', properties: {} } },
+];
+const GH_PLAN = planToolSnapshot(GH_TOOLS);
+const GH_ENTRY = { seatId: 'claude', id: 'helmian-github', kind: 'helmian-native', name: 'GitHub', vendorName: 'GitHub', brokerMode: 'helmian', mcpEndpointUrl: GITHUB_MCP_URL, authMode: 'oauth', state: 'available' };
+const GH_CONNECTION = { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', accountIdentity: 'troy-gh', accessTokenRef: 'vault://tenant/t/connector.claude.helmian-github/p-x.access', refreshTokenRef: null, grantedScopes: [], posture: 'read', toolEnableMap: { get_repo: true }, toolSnapshotRef: 5, state: 'connected' };
+const GH_SNAPSHOT = { id: 5, connectionId: 1, takenAt: null, tools: GH_PLAN.tools, snapshotHash: GH_PLAN.snapshotHash };
+const CREDS_OK = { resolveVaultCredential: async () => ({ accepted: true, credential: { accessToken: 'tok-connection' } }) };
+const NO_LIST = async () => { throw new Error('listTools must not be called'); };
+
+function fakeArmingStore({ entry = null, connection = null, snapshot = null } = {}) {
+  const state = { entry, connection, snapshot, freezes: [] };
+  return {
+    state,
+    async getEntry() { return state.entry; },
+    async getConnection() { return state.connection; },
+    async getCurrentSnapshot() { return state.snapshot; },
+    async freezeSnapshot(tenantId, key, tools) {
+      state.freezes.push(tools);
+      const plan = planToolSnapshot(tools);
+      state.snapshot = { id: 9, connectionId: 1, takenAt: null, tools: plan.tools, snapshotHash: plan.snapshotHash };
+      state.connection = { ...state.connection, toolEnableMap: Object.fromEntries(plan.tools.map((t) => [t.name, true])) };
+      return state.snapshot;
+    },
+  };
+}
+
+test('g4 dispatch: pairs are the union of the channel set and the message toggles, filtered to due seats', () => {
+  const pairs = armingPairsForDispatch({
+    armedConnectors: [
+      { seatId: 'claude', entryId: 'helmian-github' },
+      { seatId: 'grok', entryId: 'helmian-github' }, // grok is not due
+      { seatId: 'chatgpt', entryId: 'helmian-github' },
+    ],
+    messageConnectors: [
+      { seatId: 'claude', entryId: 'helmian-github' }, // duplicate of the channel set
+      { seatId: 'chatgpt', entryId: 'some-other-entry' },
+    ],
+    dueProviders: ['claude', 'openai'], // mesh vocabulary: openai is the chatgpt seat
+  });
+  assert.deepEqual(pairs, [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'chatgpt', entryId: 'helmian-github' },
+    { seatId: 'chatgpt', entryId: 'some-other-entry' },
+  ]);
+  // A custom agent due on the claude engine resolves the claude seat's pairs.
+  assert.deepEqual(armingPairsForDispatch({
+    armedConnectors: [{ seatId: 'claude', entryId: 'helmian-github' }],
+    dueProviders: ['coder'],
+    customAgents: [{ handle: 'coder', provider: 'claude' }],
+  }), [{ seatId: 'claude', entryId: 'helmian-github' }]);
+  // Nobody due → nothing resolved.
+  assert.deepEqual(armingPairsForDispatch({ armedConnectors: [{ seatId: 'claude', entryId: 'helmian-github' }], dueProviders: [] }), []);
+});
+
+test('g4 dispatch: a connected pair with a snapshot resolves to a full record, token from the connection', async () => {
+  const store = fakeArmingStore({ entry: GH_ENTRY, connection: GH_CONNECTION, snapshot: GH_SNAPSHOT });
+  const record = await resolveArmingRecord({ store, credentials: CREDS_OK, listTools: NO_LIST, operatorTokens: {}, tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github' });
+  assert.equal(record.state, 'connected');
+  assert.equal(record.accessToken, 'tok-connection');
+  assert.equal(record.tokenSource, 'connection');
+  assert.equal(record.posture, 'read');
+  assert.deepEqual(record.toolEnableMap, { get_repo: true });
+  assert.deepEqual(record.snapshotTools.map((t) => t.name), GH_PLAN.tools.map((t) => t.name));
+  assert.equal(record.snapshotTools[0].inputSchemaHash, GH_PLAN.tools[0].inputSchemaHash);
+});
+
+test('g4 dispatch: no connection and needs-reconnect are honest state records', async () => {
+  const none = await resolveArmingRecord({ store: fakeArmingStore({ entry: GH_ENTRY }), credentials: CREDS_OK, listTools: NO_LIST, operatorTokens: {}, tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github' });
+  assert.equal(none.state, 'not-connected');
+  assert.equal(none.reason, 'not-connected');
+  const stale = await resolveArmingRecord({ store: fakeArmingStore({ entry: GH_ENTRY, connection: { ...GH_CONNECTION, state: 'needs-reconnect' } }), credentials: CREDS_OK, listTools: NO_LIST, operatorTokens: {}, tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github' });
+  assert.equal(stale.state, 'needs-reconnect');
+  assert.equal(stale.reason, 'connection-needs-reconnect');
+});
+
+test('g4 dispatch: first arm takes the freeze backstop, then arms on the frozen set', async () => {
+  const store = fakeArmingStore({ entry: GH_ENTRY, connection: { ...GH_CONNECTION, toolSnapshotRef: null, toolEnableMap: {} }, snapshot: null });
+  let listedWith = null;
+  const record = await resolveArmingRecord({
+    store, credentials: CREDS_OK, operatorTokens: {},
+    listTools: async ({ endpoint, accessToken }) => { listedWith = { endpoint, accessToken }; return { supported: true, tools: GH_TOOLS }; },
+    tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github',
+  });
+  assert.deepEqual(listedWith, { endpoint: GITHUB_MCP_URL, accessToken: 'tok-connection' });
+  assert.equal(store.state.freezes.length, 1);
+  assert.equal(record.state, 'connected');
+  assert.equal(record.snapshotTools.length, GH_TOOLS.length);
+  assert.equal(record.toolEnableMap.get_repo, true); // a first freeze enters the set switched ON
+});
+
+test('g4 dispatch: a failed backstop is a freeze-failed record, never an unfrozen arm', async () => {
+  const store = fakeArmingStore({ entry: GH_ENTRY, connection: { ...GH_CONNECTION, toolSnapshotRef: null }, snapshot: null });
+  const record = await resolveArmingRecord({
+    store, credentials: CREDS_OK, operatorTokens: {},
+    listTools: async () => { throw new Error('server down'); },
+    tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github',
+  });
+  assert.equal(record.state, 'freeze-failed');
+  assert.equal(record.reason, 'freeze-failed');
+  assert.equal(record.accessToken, undefined); // a failed freeze never carries a token
+});
+
+test('g4 dispatch: token order — connection, then operator, then none (state-only)', async () => {
+  const refused = { resolveVaultCredential: async () => ({ accepted: false }) };
+  const base = { entry: GH_ENTRY, connection: GH_CONNECTION, snapshot: GH_SNAPSHOT };
+  const operator = await resolveArmingRecord({ store: fakeArmingStore(base), credentials: refused, listTools: NO_LIST, operatorTokens: { github: 'tok-operator' }, tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github' });
+  assert.equal(operator.accessToken, 'tok-operator');
+  assert.equal(operator.tokenSource, 'operator');
+  const stateOnly = await resolveArmingRecord({ store: fakeArmingStore(base), credentials: refused, listTools: NO_LIST, operatorTokens: {}, tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github' });
+  assert.equal(stateOnly.state, 'connected');
+  assert.equal(stateOnly.accessToken, null);
+  assert.equal(stateOnly.tokenSource, null);
+});
+
+test('g4 dispatch: resolveDispatchArming resolves the whole set through injected roads', async () => {
+  const store = fakeArmingStore({ entry: GH_ENTRY, connection: GH_CONNECTION, snapshot: GH_SNAPSHOT });
+  const records = await resolveDispatchArming({
+    tenantId: 't', personId: 'user:troy',
+    pairs: [{ seatId: 'claude', entryId: 'helmian-github' }],
+    store, credentials: CREDS_OK, listTools: NO_LIST, operatorTokens: {},
+  });
+  assert.equal(records.length, 1);
+  assert.equal(records[0].state, 'connected');
+});
+
+// ================================================================
+// G4: the runner seam the records build.
+// ================================================================
+
+const CONNECTED_RECORD = {
+  seatId: 'claude', entryId: 'helmian-github', state: 'connected',
+  entryName: 'GitHub', endpointUrl: GITHUB_MCP_URL, authMode: 'oauth',
+  accountIdentity: 'troy-gh', posture: 'read',
+  snapshotTools: GH_PLAN.tools, toolEnableMap: {},
+  accessToken: 'tok-connection', tokenSource: 'connection',
+};
+
+test('g4 seam: no records build a null seam; records build one that answers from them', async () => {
+  assert.equal(buildConnectorArming([]), null);
+  assert.equal(buildConnectorArming(null), null);
+  assert.equal(buildConnectorArming([{ seatId: 'claude' }]), null); // malformed records drop to nothing
+  const seam = buildConnectorArming([CONNECTED_RECORD], { approver: async () => 'allow-once' });
+  assert.ok(seam);
+  assert.equal(seam.recordFor({ seatId: 'claude', entryId: 'helmian-github' }).state, 'connected');
+  assert.equal(seam.recordFor({ seatId: 'grok', entryId: 'helmian-github' }), null);
+  assert.deepEqual(await seam.connectionFor({ seatId: 'claude', entryId: 'helmian-github' }), { state: 'connected', refreshTokenRef: null, accountIdentity: 'troy-gh' });
+  assert.deepEqual(await seam.mintAccessToken({ seatId: 'claude', entryId: 'helmian-github' }), { ok: true, accessToken: 'tok-connection' });
+  assert.equal(await seam.approveCall({ tool: 'x', args: {} }), true);
+});
+
+test('g4 seam: approveCall fails closed — deny, unknown words, a throw, and no approver all refuse', async () => {
+  const deny = buildConnectorArming([CONNECTED_RECORD], { approver: async () => 'deny' });
+  assert.equal(await deny.approveCall({ tool: 'x', args: {} }), false);
+  const weird = buildConnectorArming([CONNECTED_RECORD], { approver: async () => 'sure-whatever' });
+  assert.equal(await weird.approveCall({ tool: 'x', args: {} }), false);
+  const boom = buildConnectorArming([CONNECTED_RECORD], { approver: async () => { throw new Error('broker down'); } });
+  assert.equal(await boom.approveCall({ tool: 'x', args: {} }), false);
+  const noApprover = buildConnectorArming([CONNECTED_RECORD]);
+  assert.equal(await noApprover.approveCall({ tool: 'x', args: {} }), false);
+  const session = buildConnectorArming([CONNECTED_RECORD], { approver: async () => 'allow-session' });
+  assert.equal(await session.approveCall({ tool: 'x', args: {} }), true);
+});
+
+test('g4 seam: sanitizeArmingRecords drops malformed records and clamps the fields a turn trusts', () => {
+  const [clean] = sanitizeArmingRecords([{
+    seatId: 'claude', entryId: 'helmian-github', state: 'connected',
+    posture: 'whenever', accessToken: 42,
+    snapshotTools: [{ name: 'ok_tool' }, { name: 7 }, null],
+    toolEnableMap: { a: true, b: 'yes' },
+  }]);
+  assert.equal(clean.posture, 'ask');
+  assert.equal(clean.accessToken, null);
+  assert.deepEqual(clean.snapshotTools, [{ name: 'ok_tool', annotation: 'undeclared' }]);
+  assert.deepEqual(clean.toolEnableMap, { a: true });
+  assert.deepEqual(sanitizeArmingRecords('nope'), []);
+  assert.deepEqual(sanitizeArmingRecords([{ entryId: 'x', state: 'connected' }]), []);
+});
+
+// ================================================================
+// G4: the runner-hosted pipe — tools join the turn, gated.
+// ================================================================
+
+function fakeRemoteClientFactory({ tools = GH_TOOLS, failConnect = false } = {}) {
+  const factory = async ({ url, token }) => {
+    if (failConnect) throw new Error('no route to host');
+    factory.seen.push({ url, token });
+    return {
+      async listTools() { return tools; },
+      async callTool(name, args) { factory.calls.push({ name, args }); return { content: [{ type: 'text', text: `ran ${name}` }] }; },
+      textOf(result) { return (result?.content ?? []).filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('\n'); },
+      async close() {},
+    };
+  };
+  factory.seen = [];
+  factory.calls = [];
+  return factory;
+}
+
+test('g4 pipe: a connected record arms runner-hosted tools — snapshot-gated, enable-map-gated, no Pattern-A server', async () => {
+  const remote = fakeRemoteClientFactory();
+  const record = { ...CONNECTED_RECORD, toolEnableMap: { delete_repo: false } };
+  const resolved = await resolveTurnAttachments({
+    metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: buildConnectorArming([record]), createRemoteMcpClientImpl: remote,
+  });
+  assert.deepEqual(resolved.mcpServers, []); // the runner-hosted road, not a handed-off server
+  assert.equal(resolved.connectorOutcomes[0].armed, true);
+  // delete_repo is in the snapshot but switched off — never offered.
+  assert.deepEqual([...resolved.toolNames].sort(), [
+    'mcp_helmian_github_github_create_issue',
+    'mcp_helmian_github_github_get_repo',
+    'mcp_helmian_github_github_mystery_tool',
+  ]);
+  assert.deepEqual(remote.seen, [{ url: GITHUB_MCP_URL, token: 'tok-connection' }]);
+  assert.match(resolved.contextText, /Helmian runs its tools here/);
+  await resolved.dispose();
+});
+
+test('g4 pipe: posture read — reads run free, writes stop at approval and never reach the server', async () => {
+  const remote = fakeRemoteClientFactory();
+  const seam = buildConnectorArming([{ ...CONNECTED_RECORD, posture: 'read' }]); // no approver wired
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: seam, createRemoteMcpClientImpl: remote });
+  assert.equal(await resolved.extraTools.mcp_helmian_github_github_get_repo.execute({ repo: 'helmian' }), 'ran get_repo');
+  const refused = await resolved.extraTools.mcp_helmian_github_github_create_issue.execute({ title: 'x' });
+  assert.match(refused, /Not run:.*needed approval/);
+  assert.deepEqual(remote.calls.map((c) => c.name), ['get_repo']); // the write never reached the server
+  await resolved.dispose();
+});
+
+test('g4 pipe: posture ask — the approver decides every call, reads included', async () => {
+  const remote = fakeRemoteClientFactory();
+  let verdict = false;
+  const seam = buildConnectorArming([{ ...CONNECTED_RECORD, posture: 'ask' }], { approver: async () => (verdict ? 'allow-once' : 'deny') });
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: seam, createRemoteMcpClientImpl: remote });
+  assert.match(await resolved.extraTools.mcp_helmian_github_github_get_repo.execute({}), /Not run:/);
+  verdict = true;
+  assert.equal(await resolved.extraTools.mcp_helmian_github_github_get_repo.execute({}), 'ran get_repo');
+  await resolved.dispose();
+});
+
+test('g4 pipe: posture low-risk — declared non-destructive writes run free; destructive and undeclared writes ask', async () => {
+  const remote = fakeRemoteClientFactory();
+  const seam = buildConnectorArming([{ ...CONNECTED_RECORD, posture: 'low-risk' }]); // no approver wired
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: seam, createRemoteMcpClientImpl: remote });
+  assert.equal(await resolved.extraTools.mcp_helmian_github_github_create_issue.execute({}), 'ran create_issue');
+  assert.match(await resolved.extraTools.mcp_helmian_github_github_delete_repo.execute({}), /Not run:/);
+  assert.match(await resolved.extraTools.mcp_helmian_github_github_mystery_tool.execute({}), /Not run:/);
+  await resolved.dispose();
+});
+
+test('g4 pipe: posture all — everything runs free', async () => {
+  const remote = fakeRemoteClientFactory();
+  const seam = buildConnectorArming([{ ...CONNECTED_RECORD, posture: 'all' }]);
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: seam, createRemoteMcpClientImpl: remote });
+  assert.equal(await resolved.extraTools.mcp_helmian_github_github_delete_repo.execute({}), 'ran delete_repo');
+  await resolved.dispose();
+});
+
+test('g4 pipe: tools outside the snapshot — and tools whose schema changed — are held for review, never offered', async () => {
+  const changed = { ...GH_TOOLS[0], inputSchema: { type: 'object', properties: { other: { type: 'string' } } } };
+  const extra = { name: 'brand_new_tool', description: 'New', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } };
+  const remote = fakeRemoteClientFactory({ tools: [changed, GH_TOOLS[1], extra] });
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: buildConnectorArming([CONNECTED_RECORD]), createRemoteMcpClientImpl: remote });
+  assert.deepEqual(resolved.toolNames, ['mcp_helmian_github_github_create_issue']);
+  assert.equal(resolved.connectorOutcomes[0].armed, true);
+  assert.match(resolved.contextText, /await review/);
+  assert.match(resolved.contextText, /get_repo/);
+  assert.match(resolved.contextText, /brand_new_tool/);
+  await resolved.dispose();
+});
+
+test('g4 pipe: a state record unarms with dispatch\u2019s reason; a token-less oauth record unarms token-unavailable', async () => {
+  const notConnected = buildConnectorArming([{ seatId: 'claude', entryId: 'helmian-github', state: 'not-connected', reason: 'not-connected', detail: 'it is not connected for this seat', entryName: 'GitHub', endpointUrl: GITHUB_MCP_URL, authMode: 'oauth' }]);
+  const a = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: notConnected, createRemoteMcpClientImpl: fakeRemoteClientFactory() });
+  assert.equal(a.connectorOutcomes[0].armed, false);
+  assert.equal(a.connectorOutcomes[0].reason, 'not-connected');
+  assert.deepEqual(a.toolNames, []);
+  await a.dispose();
+
+  const tokenless = buildConnectorArming([{ ...CONNECTED_RECORD, accessToken: null, tokenSource: null }]);
+  const b = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: tokenless, createRemoteMcpClientImpl: fakeRemoteClientFactory() });
+  assert.equal(b.connectorOutcomes[0].armed, false);
+  assert.equal(b.connectorOutcomes[0].reason, 'token-unavailable');
+  assert.deepEqual(b.toolNames, []);
+  await b.dispose();
+});
+
+test('g4 pipe: an unreachable server unarms connect-failed, honestly', async () => {
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: buildConnectorArming([CONNECTED_RECORD]), createRemoteMcpClientImpl: fakeRemoteClientFactory({ failConnect: true }) });
+  assert.equal(resolved.connectorOutcomes[0].armed, false);
+  assert.equal(resolved.connectorOutcomes[0].reason, 'connect-failed');
+  await resolved.dispose();
+});
+
+test('g4 pipe: records arm the seats and turn kinds Pattern A cannot — the chatgpt seat and a CLI turn', async () => {
+  const chatgpt = await resolveTurnAttachments({
+    metadata: { connectors: [{ seatId: 'chatgpt', entryId: 'helmian-github' }] },
+    providerId: 'openai',
+    connectorArming: buildConnectorArming([{ ...CONNECTED_RECORD, seatId: 'chatgpt' }]),
+    createRemoteMcpClientImpl: fakeRemoteClientFactory(),
+  });
+  assert.equal(chatgpt.connectorOutcomes[0].armed, true);
+  assert.ok(chatgpt.toolNames.length > 0);
+  await chatgpt.dispose();
+
+  const cli = await resolveTurnAttachments({
+    metadata: NATIVE_TOGGLE, providerId: 'anthropic', credentialType: 'cli',
+    connectorArming: buildConnectorArming([CONNECTED_RECORD]), createRemoteMcpClientImpl: fakeRemoteClientFactory(),
+  });
+  assert.equal(cli.connectorOutcomes[0].armed, true);
+  await cli.dispose();
+});
+
+test('g4 posture table: postureRequiresApproval says exactly what DESIGN \u00a73 says', () => {
+  assert.equal(postureRequiresApproval('ask', 'read', false), true);
+  assert.equal(postureRequiresApproval('ask', 'write', false), true);
+  assert.equal(postureRequiresApproval('read', 'read', true), false);
+  assert.equal(postureRequiresApproval('read', 'write', false), true);
+  assert.equal(postureRequiresApproval('low-risk', 'read', true), false);
+  assert.equal(postureRequiresApproval('low-risk', 'write', false), false);
+  assert.equal(postureRequiresApproval('low-risk', 'write', true), true);
+  assert.equal(postureRequiresApproval('low-risk', 'write', undefined), true);
+  assert.equal(postureRequiresApproval('all', 'write', true), false);
+  assert.equal(postureRequiresApproval('bogus', 'read', false), true);
+});
+
+test('g4 wiring pins: dispatch attaches the records to the work item; the bridge builds the seam from them', () => {
+  const meshSrc = readFileSync(new URL('../src/cloud/envoy-mesh.mjs', import.meta.url), 'utf8');
+  assert.ok(meshSrc.includes('connectorConnections: armingRecords'), 'agentWork rides the records as connectorConnections');
+  const bridgeSrc = readFileSync(new URL('../src/agent/bridge.mjs', import.meta.url), 'utf8');
+  assert.ok(bridgeSrc.includes('buildConnectorArming(armingRecords'), 'the bridge builds the seam from the turn request records');
+  assert.ok(!bridgeSrc.includes('const connectorArming = null;'), 'the literal-null seam is gone');
 });

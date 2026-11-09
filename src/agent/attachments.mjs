@@ -18,21 +18,28 @@
 //               them, so the turn is told exactly that, in-context, and
 //               told not to claim it used the connector.
 // - connectors (metadata.connectors, the connector-LIBRARY toggles) →
-//               ARMING, resolved below (connectors bite 4R2). A toggle
-//               names {seatId, entryId} from the person's library; a
-//               toggle for THIS seat whose entry is Helmian-brokered
-//               can be handed to the seat's own provider cloud
-//               (Pattern A) when the injected arming seam produces the
-//               server descriptor — today that means the Claude seat
-//               and the Scribe door, whose access key is minted at
-//               turn time (src/agent/scribe-door.mjs). The armed
-//               servers ride OUT of this module as `mcpServers` for
-//               the loop to hand to the adapter; they are never added
-//               to extraTools and Helmian never executes them. Every
-//               toggle's outcome — armed, or unarmed with the reason —
-//               is recorded in `connectorOutcomes` and stated in the
-//               context text: a connector that did not arm is never
-//               described as connected for the turn.
+//               ARMING, resolved below. A toggle names {seatId,
+//               entryId} from the person's library, and two roads can
+//               arm it. When the injected seam carries the pair's
+//               dispatch-resolved ARMING RECORD (Mirror M3, bite G4 —
+//               dispatch resolved the author's own connection, its
+//               posture, its frozen tool set, and the turn's token
+//               cloud-side), the RUNNER-HOSTED road runs: this module
+//               opens the entry's MCP server itself through the
+//               remote client, reconciles the live tool list against
+//               the frozen snapshot, drops the tools the person
+//               switched off, and registers the survivors as
+//               extraTools whose calls pass the connection's posture
+//               gate (M3 DESIGN §3). When the seam carries no record
+//               for the pair (a turn dispatch did not compose), the
+//               older Pattern-A road below applies unchanged: the
+//               server descriptor rides OUT as `mcpServers` for the
+//               loop to hand to the seat's provider cloud — Claude
+//               seat, API-key turns only — and Helmian never executes
+//               those. Every toggle's outcome — armed, or unarmed
+//               with the reason — is recorded in `connectorOutcomes`
+//               and stated in the context text: a connector that did
+//               not arm is never described as connected for the turn.
 // - skill     → the name rides along. A leading /name is expanded into
 //               the command body before the turn text is composed — by
 //               the agent bridge itself on the direct path, or by the PC
@@ -74,9 +81,11 @@
 
 import { isAbsolute, resolve } from 'node:path';
 import { createMcpClient } from './mcp-client.mjs';
+import { createRemoteMcpClient } from './mcp-remote-client.mjs';
 import { providerHasNativeWebSearch } from './providers.mjs';
 import { classifyFileAttachment, normalizeMessageMetadata, normalizeProvider } from '../cloud/envoy-agents.mjs';
 import { catalogEntryById } from '../cloud/connector-catalog.mjs';
+import { effectiveToolAnnotation, hashToolInputSchema } from '../cloud/connector-library.mjs';
 
 // A text file is inlined whole below this many characters; above it the
 // head is shown and the cut is stated, so the agent never mistakes a
@@ -102,6 +111,37 @@ const SEAT_BY_PROVIDER_ID = Object.freeze({
   gemini: 'gemini',
   mistral: 'mistral',
 });
+
+/** The connector-library seat a turn belongs to, from its adapter id. */
+export function seatIdForProviderId(providerId) {
+  return SEAT_BY_PROVIDER_ID[providerId] ?? normalizeProvider(providerId);
+}
+
+/**
+ * The posture gate (connector-library SPEC / M3 DESIGN §3): given a
+ * connection's posture, a tool's class ('read' | 'write' — the
+ * frozen annotation through effectiveToolAnnotation, so undeclared
+ * is already 'write'), and the tool's declared destructive hint
+ * from the live tools/list, does this call need a human approval
+ * before it runs?
+ *
+ *   ask      → every call asks.
+ *   read     → reads run free; writes ask.
+ *   low-risk → reads and declared non-destructive writes run free;
+ *              any other write asks (an undeclared destructive hint
+ *              is not safety, so it asks).
+ *   all      → nothing asks.
+ * An unknown posture asks about everything — fail closed.
+ */
+export function postureRequiresApproval(posture, toolClass, destructiveHint) {
+  switch (posture) {
+    case 'all': return false;
+    case 'read': return toolClass !== 'read';
+    case 'low-risk': return toolClass !== 'read' && destructiveHint !== false;
+    case 'ask': return true;
+    default: return true;
+  }
+}
 
 export function mcpToolName(pluginName, serverName, toolName) {
   const clean = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'x';
@@ -139,13 +179,18 @@ function resolveArgs(declaration, pluginRoot) {
  *   whether a Pattern-A hand-off exists for this seat. `seatId` is the
  *   library seat id when the caller knows it directly; otherwise it is
  *   derived from `providerId` (envoy-agents.mjs normalizeProvider).
- *   `connectorArming` is the injected Pattern-A seam (the Scribe door
- *   composition in src/agent/scribe-door.mjs, wired by bridge.mjs):
+ *   `connectorArming` is the injected arming seam (built by
+ *   bridge.mjs from dispatch's records — src/agent/connector-arming.mjs):
+ *   recordFor({seatId, entryId}) → the pair's arming record
+ *   ({state, posture, snapshotTools, toolEnableMap, accessToken, …})
+ *   or null, the runner-hosted road's input; approveCall({tool, args})
+ *   → the bridge approver's verdict for a posture-gated call;
  *   connectionFor({seatId, entryId}) → the person's connection for the
  *   entry as this runner knows it ({state, refreshTokenRef}) or null;
  *   mintAccessToken({refreshTokenRef, seatId, entryId}) →
- *   {ok: true, accessToken} | {ok: false, code, reason}. Absent seam =
- *   nothing arms, stated plainly — never a pretend arm.
+ *   {ok: true, accessToken} | {ok: false, code, reason} (the last two
+ *   are the Pattern-A road's faces). Absent seam = nothing arms,
+ *   stated plainly — never a pretend arm.
  *   `helmianSkills` is the dispatch-resolved Helmian-store skills for
  *   this turn (envoy-mesh.mjs via the bridges): entries of
  *   {id, name?, body, seatId} or {id, missing: true, seatId}, seatId
@@ -171,7 +216,7 @@ function resolveArgs(declaration, pluginRoot) {
  *   targeted this seat for this turn, and whether its instructions
  *   actually rode the turn.
  */
-export async function resolveTurnAttachments({ metadata = null, plugins = [], connectorInfo = {}, slashExpansion = null, providerId = null, seatId = null, credentialType = null, connectorArming = null, helmianSkills = null, createMcpClientImpl = createMcpClient } = {}) {
+export async function resolveTurnAttachments({ metadata = null, plugins = [], connectorInfo = {}, slashExpansion = null, providerId = null, seatId = null, credentialType = null, connectorArming = null, helmianSkills = null, createMcpClientImpl = createMcpClient, createRemoteMcpClientImpl = createRemoteMcpClient } = {}) {
   const clean = normalizeMessageMetadata(metadata ?? undefined);
   const lines = [];
   const extraTools = {};
@@ -309,7 +354,7 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
   // off provider ids (anthropic, openai, xai…), the library and its
   // toggles key off seat ids (claude, chatgpt, grok…). normalizeProvider
   // is the fallback for engine names a direct caller might pass.
-  const turnSeat = seatId ?? SEAT_BY_PROVIDER_ID[providerId] ?? normalizeProvider(providerId);
+  const turnSeat = seatId ?? seatIdForProviderId(providerId);
   for (const toggle of clean?.connectors ?? []) {
     if (turnSeat && toggle.seatId !== turnSeat) continue;
     const outcome = { seatId: toggle.seatId, entryId: toggle.entryId, armed: false };
@@ -321,6 +366,102 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
     }
     let entry = null;
     try { entry = catalogEntryById(toggle.seatId, toggle.entryId); } catch { entry = null; }
+    // ── The runner-hosted road (Mirror M3, bite G4) ─────────────────
+    // When the seam carries this pair's arming record, dispatch has
+    // already answered the connection questions cloud-side — the
+    // author's connection, its posture, its frozen tool set, the
+    // turn's token — and the record decides, including its failure
+    // states: a pair dispatch resolved never falls through to the
+    // Pattern-A gates below (a dispatched toggle must never arm
+    // unfrozen, and its honest reason is dispatch's, not a guess
+    // re-derived here). The record also carries the entry's own
+    // facts, so a store-known entry the static catalog does not
+    // carry (a custom entry) arms from the record alone.
+    const armingRecord = typeof connectorArming?.recordFor === 'function'
+      ? connectorArming.recordFor({ seatId: toggle.seatId, entryId: toggle.entryId })
+      : null;
+    if (armingRecord) {
+      const recordName = armingRecord.entryName ?? entry?.name ?? toggle.entryId;
+      if (armingRecord.state !== 'connected') {
+        outcome.reason = armingRecord.reason ?? `connection-${armingRecord.state}`;
+        if (armingRecord.detail) outcome.detail = armingRecord.detail;
+        lines.push(`Connector armed for this message: ${recordName}. It was NOT armed for this turn${armingRecord.detail ? ` — ${armingRecord.detail}` : ''}. Do not claim you used it.`);
+        continue;
+      }
+      const endpoint = armingRecord.endpointUrl ?? entry?.mcpEndpointUrl ?? null;
+      const authMode = armingRecord.authMode ?? entry?.authMode ?? 'oauth';
+      if (!endpoint) {
+        unarm('no-endpoint', `Connector armed for this message: ${recordName}. Helmian holds no MCP endpoint for it, so it was NOT armed for this turn. Do not claim you used it.`);
+        continue;
+      }
+      if (!armingRecord.accessToken && authMode !== 'none') {
+        unarm('token-unavailable', `Connector armed for this message: ${recordName}. No sign-in token could be resolved for this turn, so it was NOT armed for this turn. Do not claim you used it.`);
+        continue;
+      }
+      let remoteClient = null;
+      try {
+        remoteClient = await createRemoteMcpClientImpl({ url: endpoint, token: armingRecord.accessToken ?? null });
+        clients.push(remoteClient);
+        const liveTools = await remoteClient.listTools();
+        // Reconcile the live list against the frozen snapshot
+        // (DESIGN §4.2): the snapshot governs which tools may be
+        // offered — a live tool the snapshot does not name, or
+        // whose schema hash no longer matches, is held for review
+        // and never runs this turn — and the live list supplies
+        // the schemas for the tools that pass. The enable map
+        // gates next: a tool the person switched off is never
+        // offered, under any posture (DESIGN §3, gate 1).
+        const frozen = new Map((armingRecord.snapshotTools ?? []).map((tool) => [tool.name, tool]));
+        const enableMap = armingRecord.toolEnableMap ?? {};
+        const serverSegment = toggle.entryId.replace(/^helmian-/, '');
+        const offered = [];
+        const held = [];
+        for (const tool of Array.isArray(liveTools) ? liveTools : []) {
+          const snap = frozen.get(tool.name);
+          if (!snap) { held.push(tool.name); continue; }
+          if (typeof snap.inputSchemaHash === 'string' && hashToolInputSchema(tool.inputSchema) !== snap.inputSchemaHash) { held.push(tool.name); continue; }
+          if (enableMap[tool.name] === false) continue;
+          const toolClass = effectiveToolAnnotation(snap.annotation);
+          const destructiveHint = tool.annotations?.destructiveHint;
+          const name = mcpToolName(toggle.entryId, serverSegment, tool.name);
+          if (extraTools[name]) continue;
+          extraTools[name] = {
+            description: `${tool.description ?? tool.name} (via the ${recordName} connector)`,
+            parameters: tool.inputSchema ?? { type: 'object', properties: {} },
+            readOnly: toolClass === 'read',
+            execute: async (args) => {
+              // The posture gate (DESIGN §3): a call the posture
+              // does not let run free goes through the bridge's
+              // approver first; no approver wired, a refusal, or a
+              // timeout all land as "not run" — the turn continues
+              // and the model is told, never silently retried.
+              if (postureRequiresApproval(armingRecord.posture, toolClass, destructiveHint)) {
+                const approve = connectorArming?.approveCall;
+                const approved = typeof approve === 'function'
+                  ? await approve({ tool: name, args: args ?? {}, entryId: toggle.entryId, entryName: recordName, toolName: tool.name }).catch(() => false)
+                  : false;
+                if (!approved) {
+                  return `Not run: this ${recordName} call (${tool.name}) needed approval under the connection's "${armingRecord.posture}" setting and was not approved, so it did not run. Say so plainly if asked.`;
+                }
+              }
+              const result = await remoteClient.callTool(tool.name, args ?? {});
+              const text = remoteClient.textOf(result);
+              return result?.isError ? `Error: ${text || 'the MCP server reported an error'}` : (text || JSON.stringify(result ?? {}));
+            },
+          };
+          offered.push(name);
+        }
+        outcome.armed = true;
+        outcome.detail = `${offered.length} tool(s) offered${held.length ? `, ${held.length} held for review` : ''}`;
+        lines.push(`Connector armed for this message: ${recordName} — it is connected for this turn and Helmian runs its tools here${offered.length ? ` (${offered.length} callable tool(s): ${offered.join(', ')})` : ' (no tools are switched on for it)'}. Use them when the request calls for them.`);
+        if (held.length) {
+          lines.push(`Connector ${recordName}: ${held.length} tool(s) it offers now (${held.join(', ')}) are not in this connection's reviewed tool set, or changed since the review, so they are NOT available this turn — they await review in the connector's Tool access panel. Do not claim you used them.`);
+        }
+      } catch (error) {
+        unarm('connect-failed', `Connector armed for this message: ${recordName}. Its server could not be reached for this turn (${error.message}), so it was NOT armed for this turn. Do not claim you used it.`);
+      }
+      continue;
+    }
     if (!entry) {
       unarm('unknown-entry', `Connector armed for this message: ${toggle.entryId}. It is not in this seat's library, so it was NOT armed for this turn. Do not claim you used it.`);
       continue;

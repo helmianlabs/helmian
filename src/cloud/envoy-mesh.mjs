@@ -36,6 +36,7 @@ import { ingestEvaluationFinding } from './envoy-findings.mjs';
 import { readNotebookBlock } from './envoy-notebook.mjs';
 import { createLibrarianStore, deriveChannelName, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { createSkillLibraryStore } from './skill-library.mjs';
+import { armingPairsForDispatch, resolveDispatchArming } from './connector-arming-dispatch.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
 
 // The bot status functions live in bot-status.mjs (import-free, so the
@@ -235,7 +236,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -329,11 +330,11 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // non-array payload is refused outright; malformed pairs
           // are dropped by the sanitizer, never stored. No notice —
           // a connector choice is composer furniture, not a room
-          // event (the channel-avatar precedent). The set is a
-          // preference only: dispatch does not consult it yet — a
-          // message's own metadata.connectors remains the only set
-          // a turn consumes until the arming wiring (Mirror M3)
-          // reads the channel's set at dispatch.
+          // event (the channel-avatar precedent). Dispatch reads
+          // the set at work-item time (agentWork below, Mirror M3
+          // bite G4): this stored set, unioned with the message's
+          // own metadata.connectors, is what gets resolved into
+          // arming records for the seats due.
           if (!Array.isArray(input?.armedConnectors)) throw fail(400, 'ENVOY_ARMED_CONNECTORS_INVALID');
           config.armedConnectors = sanitizeArmedConnectors(input.armedConnectors);
           await writeConfig(client, actor.tenantId, channelId, config);
@@ -516,6 +517,40 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         }
         return skillCache;
       };
+      // Connector arming (connector-arming-dispatch.mjs, Mirror M3
+      // bite G4): the arming facts behind a due message's armed
+      // connectors — the message author's own connection, its
+      // posture, its frozen tool set, and the turn's token —
+      // resolved at dispatch time over the pool (the connector
+      // library and the credential service are cloud-side; the
+      // runner has no road to either) and ridden on the work item
+      // under connectorConnections, the field bin/pc-bridge.mjs
+      // already forwards into the child's turn request. Cached per
+      // poll by (channel, author, pair set). Same fail-soft
+      // discipline as skills: a FAILED resolution (the store or the
+      // credential service threw) is sticky for the poll —
+      // loadArmingRecords returns null and work items carry no
+      // arming, exactly as before this bite — while per-pair domain
+      // outcomes (not connected, needs reconnect, freeze failed)
+      // ride as state records so the turn states the honest reason
+      // instead of the generic one.
+      const armingCache = new Map();
+      let armingReadFailed = false;
+      const loadArmingRecords = async (channelId, personId, pairs) => {
+        if (armingReadFailed || !pairs.length) return null;
+        const cacheKey = `${channelId}|${personId}|${pairs.map((p) => `${p.seatId}:${p.entryId}`).join(',')}`;
+        if (armingCache.has(cacheKey)) return armingCache.get(cacheKey);
+        const log = armingLogImpl ?? ((...args) => console.error(...args));
+        try {
+          const records = await (armingReadImpl ?? ((input) => resolveDispatchArming({ pool, ...input })))({ tenantId: actor.tenantId, personId, pairs });
+          armingCache.set(cacheKey, records);
+          return records;
+        } catch (error) {
+          armingReadFailed = true;
+          log(`[envoy-mesh] connector arming resolution FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — work items carry no connector arming this poll; dispatch is unchanged.`);
+          return null;
+        }
+      };
       const result = await tx(actor, async (client) => {
         // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
         // readiness signal — a registered runner, a presence report, a
@@ -664,6 +699,23 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               const records = await loadSkillRecords(skillToggles.map((t) => t.skillId));
               if (records) skills = resolveDispatchSkills(skillToggles, records, due);
             }
+            // Connector arming rides only on human asks: the
+            // connections a turn may use are the AUTHOR's own, and
+            // an agent-authored debate row names no person whose
+            // connections they would be. The pair set is the
+            // channel's standing armed set unioned with the
+            // message's own toggles, filtered to the seats due here
+            // (connector-arming-dispatch.mjs).
+            let armingRecords;
+            if (message.authorKind === 'human') {
+              const pairs = armingPairsForDispatch({
+                armedConnectors: config.armedConnectors,
+                messageConnectors: message.metadata?.connectors,
+                dueProviders: due,
+                customAgents: config.customAgents ?? [],
+              });
+              if (pairs.length) armingRecords = await loadArmingRecords(String(channel.id), message.authorSubject, pairs);
+            }
             work.push({
               channel: {
                 id: String(channel.id),
@@ -680,6 +732,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               ...(notebook ? { notebook } : {}),
               ...(knowledgeBase ? { knowledgeBase } : {}),
               ...(skills?.length ? { skills } : {}),
+              ...(armingRecords?.length ? { connectorConnections: armingRecords } : {}),
               message,
               action,
               ...(evaluation ? { evaluation } : {}),

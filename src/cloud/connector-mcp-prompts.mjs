@@ -23,6 +23,11 @@
 // are read. A server that does not implement prompts answers
 // method-not-found, which is a SUPPORTED answer, not an error: the
 // caller renders no starter rows for it and says so.
+//
+// tools/list rides the same wire for exactly one caller: the
+// dispatch-time first-arm freeze (connector-arming-dispatch.mjs,
+// DESIGN §4.1(2)), which needs the server's tool descriptors to
+// freeze a snapshot for a connection that has none yet.
 
 const MCP_PROTOCOL_VERSION = '2025-03-26';
 const MCP_CLIENT_INFO = Object.freeze({ name: 'Helmian', version: '1' });
@@ -117,6 +122,21 @@ export function createMcpPromptsClient({ fetchImpl = globalThis.fetch, timeoutMs
       const prompts = out.body?.result?.prompts;
       if (!Array.isArray(prompts)) throw failure(502, 'PROMPTS_LIST_FAILED', 'the connector\u2019s server answered the starters request in a shape Helmian cannot read');
       return { supported: true, prompts };
+    },
+
+    /**
+     * tools/list for one brokered server. Returns
+     * { supported: true, tools: [...] } with the server's raw tool
+     * descriptors (the caller plans them through planToolSnapshot),
+     * or { supported: false, tools: [] } when the server implements
+     * no tools surface.
+     */
+    async listTools({ endpoint, accessToken = null } = {}) {
+      const out = await withSession(endpoint, accessToken, 'tools/list', {});
+      if (out.unsupported) return { supported: false, tools: [] };
+      const tools = out.body?.result?.tools;
+      if (!Array.isArray(tools)) throw failure(502, 'TOOLS_LIST_FAILED', 'the connector\u2019s server answered the tools request in a shape Helmian cannot read');
+      return { supported: true, tools };
     },
 
     /**
