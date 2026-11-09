@@ -9,7 +9,9 @@
 // Auth is the signature, not a session: this route hangs off
 // handleEnvoyAblyRoute (live-admin.mjs is frozen) alongside the other
 // pre-tenant delegates, and it runs before any tenant check. Inserts use
-// the envoy-mesh insert statement verbatim, keyed
+// the envoy-mesh insert statement (including the sql/060 metadata column:
+// the card body is a one-line summary, and the full commit text rides in
+// metadata.github behind it), keyed
 // `github:<delivery id>` under the system:github author, so a retried
 // delivery can never double-post (same contract as bridgeInbound's
 // `discord:<message id>`). Cards are author_kind 'system', so they render
@@ -27,7 +29,7 @@ export const GITHUB_REPO_CHANNEL_MAP_ENV = 'HELMION_GITHUB_REPO_CHANNEL_MAP';
 export const GITHUB_SUBJECT = 'system:github';
 export const GITHUB_WEBHOOK_MAX_BODY_BYTES = 4 * 1024 * 1024; // Vercel function body ceiling is ~4.5 MB
 
-const MSG_COLS = 'id, channel_id, author_subject, author_kind, body, idempotency_key, created_at';
+const MSG_COLS = 'id, channel_id, author_subject, author_kind, body, idempotency_key, created_at, metadata';
 const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const REPO_FULL_NAME = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
@@ -77,6 +79,34 @@ function cleanLine(value, max = 300) {
   return String(value ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+// Card subjects and titles are capped hard: a card is a notice, not the
+// commit itself. The full text rides in the message metadata (see
+// formatGithubEvent), and the compare/PR link is the human road to it.
+export const GITHUB_SUBJECT_MAX = 80;
+
+function shortenLine(value, max = GITHUB_SUBJECT_MAX) {
+  const text = cleanLine(value, 300);
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+// The short repo name for card lines: "helmianlabs/helmian" -> "helmian".
+// The full name stays in the card metadata and in every card link.
+function repoShortName(repo) {
+  const value = String(repo ?? '');
+  const slash = value.indexOf('/');
+  return slash >= 0 ? value.slice(slash + 1) : value;
+}
+
+// Full commit text for the metadata: control characters stripped (line
+// breaks and tabs kept), capped so one card can never bloat the row.
+function fullText(value, max = 2000) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u0008\u000b\u000e-\u001f\u007f]+/g, ' ')
+    .slice(0, max)
+    .trim();
+}
+
 function loginOf(payload) {
   const login = String(payload?.sender?.login ?? '').trim();
   return /^[A-Za-z0-9-]{1,64}$/.test(login) ? login : 'someone';
@@ -95,22 +125,26 @@ export function formatGithubEvent(event, payload) {
   const repo = String(payload?.repository?.full_name ?? '').trim();
   if (!REPO_FULL_NAME.test(repo)) return null;
   const login = loginOf(payload);
+  const shortRepo = repoShortName(repo);
   if (event === 'push') {
     const branch = branchOf(payload?.ref);
     const pusher = cleanLine(payload?.pusher?.name, 64) || login;
-    if (payload?.deleted === true) return { text: `GitHub: ${pusher} deleted ${branch} in ${repo}` };
+    if (payload?.deleted === true) return { text: `GitHub: ${pusher} deleted ${branch} in ${shortRepo}` };
     const commits = Array.isArray(payload?.commits) ? payload.commits : [];
     if (commits.length) {
       const head = commits[commits.length - 1] ?? {};
-      const subject = cleanLine(String(head?.message ?? '').split('\n')[0]) || 'commit';
+      const subject = shortenLine(String(head?.message ?? '').split('\n')[0]) || 'commit';
       const short = String(head?.id ?? '').slice(0, 7);
       const noun = commits.length === 1 ? 'commit' : 'commits';
-      const lines = [`GitHub: ${pusher} pushed ${commits.length} ${noun} to ${repo} (${branch}) — ${subject}${short ? ` (${short})` : ''}`];
-      if (typeof payload?.compare === 'string' && /^https:\/\/github\.com\//.test(payload.compare)) lines.push(payload.compare);
-      return { text: lines.join('\n').slice(0, 4000) };
+      const compare = typeof payload?.compare === 'string' && /^https:\/\/github\.com\//.test(payload.compare) ? payload.compare : null;
+      const more = commits.length > 1 ? ` + ${commits.length - 1} more` : '';
+      const lines = [`GitHub: ${pusher} pushed ${commits.length} ${noun} to ${shortRepo} (${branch}) — ${subject}${short ? ` (${short})` : ''}${more}`];
+      if (compare) lines.push(compare);
+      const metadata = { github: { repo, fullMessage: fullText(head?.message), commitCount: commits.length, compare } };
+      return { text: lines.join('\n').slice(0, 4000), metadata };
     }
-    if (payload?.created === true) return { text: `GitHub: ${pusher} created ${branch} in ${repo}` };
-    return { text: `GitHub: ${pusher} pushed to ${repo} (${branch})` };
+    if (payload?.created === true) return { text: `GitHub: ${pusher} created ${branch} in ${shortRepo}` };
+    return { text: `GitHub: ${pusher} pushed to ${shortRepo} (${branch})` };
   }
   if (event === 'pull_request' || event === 'issues') {
     const isPr = event === 'pull_request';
@@ -122,11 +156,12 @@ export function formatGithubEvent(event, payload) {
     if (!verb) return null;
     const number = Number(payload?.number ?? item?.number);
     if (!Number.isSafeInteger(number) || number < 1) return null;
-    const title = cleanLine(item?.title) || (isPr ? 'pull request' : 'issue');
+    const title = shortenLine(item?.title) || (isPr ? 'pull request' : 'issue');
     const url = typeof item?.html_url === 'string' && /^https:\/\/github\.com\//.test(item.html_url) ? item.html_url : null;
-    const lines = [`GitHub: ${login} ${verb} ${isPr ? 'pull request' : 'issue'} #${number} in ${repo} — ${title}`];
+    const lines = [`GitHub: ${login} ${verb} ${isPr ? 'pull request' : 'issue'} #${number} in ${shortRepo} — ${title}`];
     if (url) lines.push(url);
-    return { text: lines.join('\n').slice(0, 4000) };
+    const metadata = { github: { repo, fullTitle: cleanLine(item?.title, 1000) } };
+    return { text: lines.join('\n').slice(0, 4000), metadata };
   }
   return null;
 }
@@ -173,17 +208,17 @@ export function createGithubWebhookStore({ pool, publishImpl = null } = {}) {
     },
     // The envoy-mesh insert, verbatim: same table, same ON CONFLICT key
     // (tenant, channel, author, idempotency key), same receipt shape.
-    async postEventCard({ channel, deliveryId, text }) {
+    async postEventCard({ channel, deliveryId, text, metadata = null }) {
       const key = `github:${String(deliveryId ?? '').trim()}`;
       let out = null;
       const result = await raw(async (client) => {
         await client.query(`select set_config('helmion.tenant_id', $1, true)`, [channel.tenantId]);
         const r = await client.query(
-          `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key)
-           values ($1,$2,$3,$4,$5,$6)
+          `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, metadata)
+           values ($1,$2,$3,$4,$5,$6,$7)
            on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing
            returning ${MSG_COLS}`,
-          [channel.tenantId, channel.id, GITHUB_SUBJECT, 'system', String(text ?? '').slice(0, 4000), key],
+          [channel.tenantId, channel.id, GITHUB_SUBJECT, 'system', String(text ?? '').slice(0, 4000), key, metadata ? JSON.stringify(metadata) : null],
         );
         if (r.rowCount === 1) { out = r.rows[0]; return { durable: true, replayed: false, message: messageOut(r.rows[0]) }; }
         const again = await client.query(
@@ -267,7 +302,7 @@ export async function handleGithubWebhookRoute({ request, response, requestUrl, 
         reply(200, { valid: true, posted: false, reason });
         return true;
       }
-      const result = await storeImpl.postEventCard({ channel, deliveryId, text: formatted.text });
+      const result = await storeImpl.postEventCard({ channel, deliveryId, text: formatted.text, metadata: formatted.metadata ?? null });
       reply(200, { valid: true, posted: true, replayed: result.replayed === true });
       return true;
     }
@@ -281,7 +316,7 @@ export async function handleGithubWebhookRoute({ request, response, requestUrl, 
     }
     let anyReplayed = false;
     for (const ch of linkedChannels) {
-      const r = await storeImpl.postEventCard({ channel: ch, deliveryId, text: formatted.text });
+      const r = await storeImpl.postEventCard({ channel: ch, deliveryId, text: formatted.text, metadata: formatted.metadata ?? null });
       if (r.replayed === true) anyReplayed = true;
     }
     reply(200, { valid: true, posted: true, replayed: anyReplayed, channels: linkedChannels.length });

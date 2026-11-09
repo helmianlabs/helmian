@@ -69,12 +69,23 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .ew.shelf-dragging * { user-select:none !important; }
 /* Crew shelf sized: the section takes the var height and its list
    scrolls inside it (the 38vh cap below is the DEFAULT state only). */
-.ew-channels.crew-sized .ew-crew { height:var(--ew-crew-h); display:flex; flex-direction:column; }
+.ew-channels.crew-sized .ew-crew { height:var(--ew-crew-h); display:flex; flex-direction:column; overflow:hidden; }
 .ew-channels.crew-sized .ew-crew-head { flex:none; }
 .ew-channels.crew-sized .ew-crew-list { flex:1 1 auto; min-height:0; max-height:none; }
+/* The crew section also carries FIXED content below its list — the
+   ADD TO THIS CHANNEL subhead and the #ew-crew-add pill block (ported
+   into the section by the panes-removal bite). Both are pinned, and
+   the pill block is capped at two pill rows (24px pills + 6px gap +
+   6px bottom padding = 60px) with any further pills scrolling inside
+   the block itself — so at the shelf floor the fixed share always
+   fits (see SHELF_MIN in envoy-workspace.js for the arithmetic) and
+   nothing can spill over the footer below. The section's own
+   overflow:hidden is the belt-and-braces clip behind that. */
+.ew-channels.crew-sized .ew-crew .ew-subhead { flex:none; }
+.ew-channels.crew-sized #ew-crew-add { flex:none; max-height:60px; overflow:auto; }
 /* Approvals shelf sized: the same shape — the approvals list scrolls
    inside the var height instead of pushing the Guard feed down. */
-.ew-guard.appr-sized .ew-approvals { height:var(--ew-appr-h); display:flex; flex-direction:column; }
+.ew-guard.appr-sized .ew-approvals { height:var(--ew-appr-h); display:flex; flex-direction:column; overflow:hidden; }
 .ew-guard.appr-sized .ew-approvals .ew-subhead { flex:none; }
 .ew-guard.appr-sized .ew-approvals-list { flex:1 1 auto; min-height:0; overflow:auto; }
 .ew-guard.appr-sized .ew-approvals-open { flex:none; align-self:flex-start; }
@@ -129,8 +140,8 @@ html[data-theme="light"] .ew-head-pill { border-color:color-mix(in srgb, var(--a
 input, textarea { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:7px 10px; color:var(--text); outline:none; }
 
 /* Channels */
-.ew-channel-list { flex:1 1 auto; overflow:auto; padding:8px 6px; display:flex; flex-direction:column; gap:2px; }
-.ew-channel { display:flex; align-items:center; gap:8px; width:100%; border:0; background:transparent; color:var(--muted); padding:7px 10px; border-radius:7px; cursor:pointer; text-align:left; transition:background .15s, color .15s; }
+.ew-channel-list { flex:1 1 auto; overflow:auto; overflow-x:hidden; padding:8px 6px; display:flex; flex-direction:column; gap:2px; }
+.ew-channel { display:flex; align-items:center; gap:8px; width:100%; min-width:0; border:0; background:transparent; color:var(--muted); padding:7px 10px; border-radius:7px; cursor:pointer; text-align:left; transition:background .15s, color .15s; }
 .ew-channel:hover { background:var(--panel-2); color:var(--text); }
 .ew-channel.active { background:var(--panel-2); color:var(--text); box-shadow:inset 3px 0 0 var(--accent); }
 .ew-channel .hash { color:var(--faint); font-weight:700; }
@@ -143,6 +154,12 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-me-face .ew-avatar { width:30px; height:30px; margin-top:0; font-size:13px; }
 .ew-me-face .name { font-weight:600; font-size:13px; color:var(--text); }
 .ew-me-face .ew-btn { margin-left:auto; }
+/* Channels foot collapsed (rail-bottom bite): the source lines and
+   the action buttons fold away; the identity row above (.ew-me-face —
+   avatar, name, Change face, and the collapse toggle itself) stays
+   as the slim bar, so the foot never loses the member's corner or
+   the control that reopens it. */
+.ew-foot.foot-collapsed .ew-source, .ew-foot.foot-collapsed .ew-foot-actions { display:none; }
 .ew-source { display:flex; gap:6px; align-items:center; }
 .ew-source img { border-radius:50%; }
 /* Brand marks are real glyphs, not color blocks: currentColor mask

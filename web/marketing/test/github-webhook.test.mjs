@@ -35,10 +35,10 @@ function fakeStore(channels = { build: { id: 'chan-1', tenantId: 'tenant-1', slu
       const channel = channels[slug] ?? null;
       return channel ? { channel, reason: null } : { channel: null, reason: 'channel_not_found' };
     },
-    async postEventCard({ channel, deliveryId, text }) {
+    async postEventCard({ channel, deliveryId, text, metadata = null }) {
       const key = `${channel.id}|github:${deliveryId}`;
       if (seen.has(key)) return { durable: true, replayed: true, message: seen.get(key) };
-      const message = { id: String(store.messages.length + 1), channelId: channel.id, authorSubject: 'system:github', authorKind: 'system', body: text, idempotencyKey: `github:${deliveryId}`, createdAt: new Date().toISOString() };
+      const message = { id: String(store.messages.length + 1), channelId: channel.id, authorSubject: 'system:github', authorKind: 'system', body: text, metadata, idempotencyKey: `github:${deliveryId}`, createdAt: new Date().toISOString() };
       seen.set(key, message);
       store.messages.push(message);
       return { durable: true, replayed: false, message };
@@ -140,7 +140,9 @@ test('push posts exactly one card; the same delivery id never posts twice', asyn
   const r1 = await callRoute({ request: first.request, store });
   assert.deepEqual(r1.sent, [[200, { valid: true, posted: true, replayed: false }]]);
   assert.equal(store.messages.length, 1);
-  assert.match(store.messages[0].body, /^GitHub: troy83352 pushed 1 commit to helmianlabs\/helmian \(main\) — Fix the thing \(abcdef1\)/);
+  assert.match(store.messages[0].body, /^GitHub: troy83352 pushed 1 commit to helmian \(main\) — Fix the thing \(abcdef1\)/);
+  assert.equal(store.messages[0].metadata.github.repo, 'helmianlabs/helmian');
+  assert.equal(store.messages[0].metadata.github.fullMessage, 'Fix the thing\n\nLonger body here');
   assert.match(store.messages[0].body, /compare\/aaa\.\.\.bbb/);
   assert.equal(store.messages[0].idempotencyKey, 'github:delivery-42');
   assert.equal(store.messages[0].authorKind, 'system');
@@ -177,7 +179,7 @@ test('pull_request and issues: opened posts, merged reads merged, plain close re
   });
   let r = await callRoute({ request: webhookRequest({ event: 'pull_request', delivery: 'pr-1', payload: pr('opened', false) }).request, store });
   assert.deepEqual(r.sent, [[200, { valid: true, posted: true, replayed: false }]]);
-  assert.match(store.messages[0].body, /opened pull request #7 in helmianlabs\/helmian — Add the webhook receiver/);
+  assert.match(store.messages[0].body, /opened pull request #7 in helmian — Add the webhook receiver/);
 
   r = await callRoute({ request: webhookRequest({ event: 'pull_request', delivery: 'pr-2', payload: pr('closed', true) }).request, store });
   assert.equal(r.sent[0][1].posted, true);
@@ -196,15 +198,17 @@ test('pull_request and issues: opened posts, merged reads merged, plain close re
   };
   r = await callRoute({ request: webhookRequest({ event: 'issues', delivery: 'is-1', payload: issue }).request, store });
   assert.equal(r.sent[0][1].posted, true);
-  assert.match(store.messages[3].body, /opened issue #9 in helmianlabs\/helmian — Cards please/);
+  assert.match(store.messages[3].body, /opened issue #9 in helmian — Cards please/);
 });
 
 test('format: branch delete, multi-commit counts, and hostile text is flattened', () => {
   const del = formatGithubEvent('push', { ...pushPayload, deleted: true, commits: [] });
-  assert.equal(del.text, 'GitHub: troy83352 deleted main in helmianlabs/helmian');
+  assert.equal(del.text, 'GitHub: troy83352 deleted main in helmian');
   const multi = formatGithubEvent('push', { ...pushPayload, commits: [{ id: 'aaaaaaa1', message: 'one' }, { id: 'bbbbbbb2', message: 'two\nlines' }] });
   assert.match(multi.text, /pushed 2 commits to/);
-  assert.match(multi.text, /— two \(bbbbbbb\)/);
+  assert.match(multi.text, /— two \(bbbbbbb\) \+ 1 more/);
+  assert.equal(multi.metadata.github.commitCount, 2);
+  assert.equal(multi.metadata.github.fullMessage, 'two\nlines');
   const hostile = formatGithubEvent('issues', {
     action: 'opened', sender: { login: 'eve' }, repository: { full_name: 'helmianlabs/helmian' },
     issue: { number: 3, title: 'x\n### injected\r\nheading', html_url: 'https://github.com/helmianlabs/helmian/issues/3' },
@@ -213,6 +217,75 @@ test('format: branch delete, multi-commit counts, and hostile text is flattened'
   assert.match(hostile.text.split('\n')[0], /— x ### injected heading$/, 'the injected break collapses into the title line as literal text');
   assert.equal(formatGithubEvent('push', { repository: { full_name: 'not a repo' } }), null);
   assert.equal(formatGithubEvent('star', pushPayload), null);
+});
+
+test('format: a long commit subject truncates to one short line; the full text rides in metadata', () => {
+  const longSubject = 'Burst 3: Kokoro voice wiring + per-seat voices, scrollbar visibility ramps, Light pill glow, sliding shelves, panes removal (Agent chat + Agents), footer truth all three lines, connector seed-on-first-read + GitHub channel-link join, header workspace name';
+  const out = formatGithubEvent('push', {
+    ...pushPayload,
+    commits: [{ id: '1588a101daa0ac705b8ed04c88177e060aa53ddb', message: `${longSubject}\n\nBody paragraph that must not reach the card.` }],
+    compare: 'https://github.com/helmianlabs/helmian/compare/1d43e6000c42...1588a101daa0',
+  });
+  const [line, url] = out.text.split('\n');
+  assert.equal(url, 'https://github.com/helmianlabs/helmian/compare/1d43e6000c42...1588a101daa0', 'the compare link survives as its own line');
+  assert.ok(line.length <= 160, `card line stays short (got ${line.length})`);
+  const subject = line.split(' — ')[1].replace(/ \(1588a10\)$/, '');
+  assert.equal(subject.length, 80, 'the subject segment is capped at 80 chars');
+  assert.ok(subject.endsWith('…'), 'a truncated subject ends in an ellipsis');
+  assert.ok(!out.text.includes('Body paragraph'), 'the commit body never reaches the card');
+  assert.equal(out.metadata.github.fullMessage, `${longSubject}\n\nBody paragraph that must not reach the card.`);
+  assert.equal(out.metadata.github.repo, 'helmianlabs/helmian');
+  assert.equal(out.metadata.github.commitCount, 1);
+});
+
+test('format: subject length boundary — 80 chars pass untouched, 81 truncate', () => {
+  const at = formatGithubEvent('push', { ...pushPayload, commits: [{ id: 'abcdef1234567890', message: 'x'.repeat(80) }] });
+  assert.ok(at.text.includes(`— ${'x'.repeat(80)} (abcdef1)`), 'an exactly-80 subject is not ellipsized');
+  const over = formatGithubEvent('push', { ...pushPayload, commits: [{ id: 'abcdef1234567890', message: 'y'.repeat(81) }] });
+  assert.ok(over.text.includes(`— ${'y'.repeat(79)}… (abcdef1)`), 'an 81-char subject becomes 79 chars + ellipsis');
+});
+
+test('format: a multi-commit push summarises the rest instead of listing them', () => {
+  const out = formatGithubEvent('push', {
+    ...pushPayload,
+    commits: [
+      { id: '1111111aaaa', message: 'first' },
+      { id: '2222222bbbb', message: 'second' },
+      { id: '3333333cccc', message: 'third and newest' },
+    ],
+  });
+  assert.match(out.text, /pushed 3 commits to helmian \(main\) — third and newest \(3333333\) \+ 2 more/);
+  assert.ok(!out.text.includes('first') && !out.text.includes('second'), 'earlier commit subjects are not listed');
+  assert.equal(out.text.split('\n').length, 2, 'still one message: summary line + compare link');
+  assert.equal(out.metadata.github.commitCount, 3);
+  assert.equal(out.metadata.github.fullMessage, 'third and newest');
+});
+
+test('format: a long pull request title truncates the same way, full title in metadata', () => {
+  const title = 'Refactor the entire envoy workspace rendering pipeline so the shelves, the crew rail, and the guard feed all resize independently without overlap';
+  const out = formatGithubEvent('pull_request', {
+    action: 'opened', number: 12, sender: { login: 'troy83352' }, repository: { full_name: 'helmianlabs/helmian' },
+    pull_request: { number: 12, title, html_url: 'https://github.com/helmianlabs/helmian/pull/12', merged: false },
+  });
+  const [line, url] = out.text.split('\n');
+  assert.equal(url, 'https://github.com/helmianlabs/helmian/pull/12');
+  assert.ok(line.endsWith('…'), 'the card title is ellipsized');
+  assert.equal(out.metadata.github.fullTitle, title);
+});
+
+test('route: a long-subject push stores the compact card, not the wall', async () => {
+  const store = fakeStore();
+  const payload = {
+    ...pushPayload,
+    commits: [{ id: '1588a101daa0', message: `${'Verbose subject '.repeat(20).trim()}\n\nand a long body` }],
+  };
+  const { request } = webhookRequest({ event: 'push', delivery: 'long-1', payload });
+  const { sent } = await callRoute({ request, store });
+  assert.deepEqual(sent, [[200, { valid: true, posted: true, replayed: false }]]);
+  assert.equal(store.messages.length, 1);
+  const [line] = store.messages[0].body.split('\n');
+  assert.ok(line.length <= 160, `stored card line stays short (got ${line.length})`);
+  assert.ok(store.messages[0].metadata.github.fullMessage.startsWith('Verbose subject'), 'the full text is stored in metadata');
 });
 
 test('repo channel map parsing: tolerant of bad config, strict about shapes', () => {

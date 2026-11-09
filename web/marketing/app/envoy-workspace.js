@@ -643,6 +643,37 @@ async function saveSeatFace(provider, emoji) {
   }
 }
 
+// ---------- channels foot collapse ----------
+// The foot of the channels pane folds to its identity row (Troy,
+// 2026-11-08: "put a collapse on the very bottom where it's got
+// change face and your Helmian and all that — they each need to be
+// able to collapse also just like the other ones"). What folds: the
+// source lines (Helmian Envoy / Discord / Slack / GitHub) and the
+// action buttons (Custom Agent / Sync Profile / Phone QR). What
+// stays, as the slim bar: the identity row itself — avatar, name,
+// the Change face control — plus this toggle, so the collapsed foot
+// is still the member's corner and reopens from the same spot. The
+// state persists in the shelves' own store (the `ls` helper, key
+// 'footCollapsed'); unset reads as expanded — today's look, byte for
+// byte. The crew shelf's bottom separator is the foot's sibling, not
+// its child, and shelfCeilingNow measures the foot's rendered height
+// live, so a folded foot simply gives the crew shelf more ceiling.
+export function footCollapsedFrom(stored) { return stored === true; }
+function footCollapsed() { return footCollapsedFrom(ls.get('footCollapsed', false)); }
+function applyFootCollapse() {
+  const foot = document.querySelector('#ew-channels .ew-foot');
+  if (!foot) return;
+  const collapsed = footCollapsed();
+  foot.classList.toggle('foot-collapsed', collapsed);
+  for (const b of foot.querySelectorAll('.ew-foot-toggle')) {
+    b.setAttribute('aria-expanded', String(!collapsed));
+    b.setAttribute('aria-label', collapsed ? 'Expand footer' : 'Collapse footer');
+    b.title = collapsed ? 'Expand footer' : 'Collapse footer';
+    b.textContent = collapsed ? '▴' : '▾';
+  }
+}
+function toggleFootCollapse() { ls.set('footCollapsed', !footCollapsed()); applyFootCollapse(); }
+
 // ---------- the member's own face ----------
 // The desk's identity corner: the member's name and face at the foot
 // of the channels pane, one click from their face control. The face
@@ -672,7 +703,9 @@ function renderMeFace() {
     face ? h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(face)) : h('div', { class: 'ew-avatar' }, name.slice(0, 1).toUpperCase()),
     h('span', { class: 'name' }, name),
     h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: openMyFaceModal }, face ? 'Change face' : 'Pick a face'),
+    h('button', { type: 'button', class: 'ew-icon sm ew-foot-toggle', 'aria-expanded': 'true', 'aria-controls': 'ew-channels-foot', 'aria-label': 'Collapse footer', title: 'Collapse footer', onclick: toggleFootCollapse }, '▾'),
   );
+  applyFootCollapse();
 }
 
 function openMyFaceModal() {
@@ -1039,7 +1072,21 @@ function wireSplitters() {
 // A shelf's height is a user var (--ew-crew-h / --ew-appr-h) applied
 // only while the pane carries its *-sized class; stored heights live in
 // ls 'heights', the shelf sibling of the width splitters' 'widths'.
-const SHELF_MIN = { crew: 112, approvals: 104 };
+// The smallest honest shelf heights (floor-fix, 2026-11-08). Crew
+// arithmetic, border-box (the app.css * rule): section padding 14 +
+// border 1 + crew head ~23 + the ADD TO THIS CHANNEL subhead ~31 +
+// the add block capped at 60 (two 24px pill rows, envoy.css) + one
+// 38px crew row = 167 — the floor sits just above the sum. The
+// original 112 predated the panes-removal port that moved the subhead
+// and pill block inside this section: at 112 the fixed content alone
+// overflowed the box (the live-gate breakage — rows squeezed to zero,
+// pills spilling over the footer). Approvals: subhead ~31 + the
+// Open-approvals link ~34 + section padding/border 9 ≈ 74, under its
+// floor with the list clipping inside. Stored heights below a floor
+// are ignored on restore (applyHeights), so a height persisted under
+// the old crew floor returns the section to its natural height
+// instead of rendering broken.
+const SHELF_MIN = { crew: 168, approvals: 104 };
 // The room the flexible sibling always keeps, whatever the drag asks.
 const SHELF_FLEX_MIN = 120;
 const SHELF_DEFS = {
@@ -1805,6 +1852,51 @@ function insertMention(name) {
   if (!box.value.includes(tag.trim())) box.value = `${tag}${box.value}`.replace(/\s+$/, ' ');
   box.focus(); box.setSelectionRange(box.value.length, box.value.length); grow();
   if (narrow()) closeSheets();
+}
+
+// ---------- composer mention buttons (mention-buttons bite, 2026-11-08) ----------
+// Two quiet buttons in the composer row for a voice-first owner who
+// should never have to hunt a keyboard for "@": "@all" targets the
+// whole crew through the exact crew-rail path (setCrewTarget('all') —
+// strips any leading single-seat tag, then insertMention('all') writes
+// the leading `@all ` the send path's mentions() parses), and "@"
+// inserts a bare "@" at the caret for the name to follow. There is NO
+// mention autocomplete in the room today (the only composer menu is
+// the "/" slash menu), so the "@" button deliberately just inserts —
+// no picker is invented here. mentionAtInsert is the pure caret math
+// behind it, unit-tested.
+export function mentionAtInsert(value, start, end, insert = '@') {
+  const v = String(value ?? '');
+  const s = Math.max(0, Math.min(typeof start === 'number' ? start : v.length, v.length));
+  const e = Math.max(s, Math.min(typeof end === 'number' ? end : s, v.length));
+  return { value: v.slice(0, s) + insert + v.slice(e), caret: s + insert.length };
+}
+function insertAtSignAtCaret() {
+  const box = $('maestro-input');
+  if (!box) return;
+  const next = mentionAtInsert(box.value, box.selectionStart, box.selectionEnd, '@');
+  box.value = next.value;
+  box.setSelectionRange(next.caret, next.caret);
+  // The box's own 'input' listener grows it and re-syncs crew targeting.
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+  box.focus();
+}
+
+// The spoken-mention tag table derived from THIS module's seat
+// registry (AGENTS + NAMES + ALIAS, plus custom-agent handles) — the
+// same shape as SPOKEN_MENTION_TAGS in web/shared/voice-dictation.mjs,
+// which carries the built-in table for the dictation insert path in
+// app.js (app.js cannot import this module's registry: it lazy-loads
+// envoy-workspace for mountWorkspace only, and inlines the voice
+// module instead). Exported so tests can pin the two tables together
+// on the core seats, and so a future caller with the live registry
+// (custom handles included) can build the exact table.
+export function spokenMentionTags(customAgents = []) {
+  const tags = { all: 'all', everyone: 'all', here: 'all' };
+  for (const p of AGENTS) if (NAMES[p]) { tags[p] = NAMES[p]; tags[NAMES[p].toLowerCase()] = NAMES[p]; }
+  for (const [word, p] of Object.entries(ALIAS)) if (NAMES[p]) tags[word] = NAMES[p];
+  for (const ca of customAgents ?? []) if (ca?.handle) tags[String(ca.handle).toLowerCase()] = String(ca.handle);
+  return tags;
 }
 
 // ---------- composer "+" picker: agents, connectors, plugins, upload, web search ----------
@@ -3033,6 +3125,8 @@ function wire() {
   box.addEventListener('keydown', (e) => { slashKeydown('channel', e); });
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !narrow()) { e.preventDefault(); send(); } });
   $('maestro-plus').addEventListener('click', () => togglePicker('channel'));
+  $('maestro-mention-all')?.addEventListener('click', () => setCrewTarget('all'));
+  $('maestro-mention')?.addEventListener('click', insertAtSignAtCaret);
   $('ew-debate-toggle')?.addEventListener('click', openDebateModal);
   $('ew-debate-stop')?.addEventListener('click', stopDebateNow);
   $('ew-phone-qr')?.addEventListener('click', openPhoneCloneModal);
