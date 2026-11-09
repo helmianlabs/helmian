@@ -11,9 +11,10 @@
 //   VOICE_AUTO_SUBMIT_MS — the utterance submits itself (onSubmit with
 //   an empty remainder: the composer as-is). "send it" still works in
 //   voice mode and submits immediately; it is never required. While a
-//   reply is being read aloud the mic's results are dropped whole
-//   (echo guard) and a pending auto-submit holds until the reply
-//   drains, so the two sides take turns.
+//   reply is actually playing the mic's results are dropped whole
+//   (echo guard) and a pending auto-submit holds until the playback
+//   ends, so the two sides take turns. A reply that is only queued or
+//   still being generated is not playing: the mic stays open for it.
 //
 // - "send it": a final transcript whose trimmed text ends with "send it"
 //   (case-insensitive, trailing punctuation ignored) strips those two words
@@ -43,7 +44,12 @@
 // in the background, and Kokoro takes over when it lands. A load that
 // never settles at all — a hung import, fetch, or GPU session cannot be
 // caught, only abandoned — is abandoned past KOKORO_LOAD_ABANDON_MS and
-// retried fresh. The room never goes silent. The browser's
+// retried fresh. The room never goes silent. The same law bounds
+// each generate: one still running past KOKORO_GENERATE_MS is
+// treated as a generate failure — the backup voice speaks the chunk
+// and the queue moves on — so a wedged generate can neither silence
+// a reply nor, by holding the reply in flight forever, hold the
+// microphone with it. The browser's
 // speechSynthesis is the BACKUP voice only: it speaks when Kokoro truly
 // cannot load, is still loading past the bound, or in environments
 // without Web Audio, and whenever it speaks the engine status says it is
@@ -104,45 +110,21 @@ export function voiceForSeat(seat) {
   return SEAT_VOICE_POOL[hash % SEAT_VOICE_POOL.length];
 }
 
-// Adapter-first device choice for the Kokoro load. The presence of
-// navigator.gpu is NOT proof WebGPU can run: a browser can expose the
-// API yet return a null adapter (no usable GPU, a blocked driver, a
-// headless shell), and a from_pretrained WebGPU attempt in that state
-// fails with "no available backend found" — and poisons the follow-on
-// WASM attempt, which then fails instantly with the same WebGPU error
-// (both proven live in the real room browser, 2026-11-08). So the
-// adapter is probed BEFORE any from_pretrained call: adapter in hand
-// -> WebGPU first, with the WASM catch-fallback kept for a genuine
-// WebGPU load failure; no adapter, a throwing probe, a probe that
-// hangs past the bound, or no API at all -> straight to WASM, WebGPU
-// never attempted. preferWasm (set when a load is abandoned as stuck)
-// skips the probe and WebGPU entirely.
-const KOKORO_ADAPTER_PROBE_MS = 10000;
-
-async function kokoroAdapterInHand(probeMs) {
-  const gpu = typeof navigator !== 'undefined' ? navigator.gpu : undefined;
-  if (!gpu || typeof gpu.requestAdapter !== 'function') return false;
-  let probe;
-  try {
-    probe = Promise.resolve(gpu.requestAdapter()).catch(() => null);
-  } catch { return false; }
-  let timer = null;
-  const bound = new Promise((resolve) => { timer = setTimeout(() => resolve(null), probeMs); });
-  const adapter = await Promise.race([probe, bound]);
-  clearTimeout(timer);
-  return adapter != null;
-}
-
-export async function loadKokoroEngine(mod, { preferWasm = false, probeMs = KOKORO_ADAPTER_PROBE_MS } = {}) {
-  const opts = { dtype: 'q8' };
-  if (!preferWasm && (await kokoroAdapterInHand(probeMs))) {
-    try {
-      return await mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'webgpu' });
-    } catch (err) {
-      console.warn('[voice] WebGPU failed, falling back to WASM:', err?.message ?? err);
-    }
-  }
-  return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { ...opts, device: 'wasm' });
+// WASM-only device choice for the Kokoro load. WebGPU is never
+// used, with or without an adapter in hand: on the vendored runtime
+// versions (onnxruntime-web 1.22 + transformers.js 3.8.1) the q8
+// model on WebGPU loads without a murmur and then silently computes
+// garbage — right length, right engine label, unintelligible tonal
+// mush where the words should be (published measurements on this
+// model + runtime; heard in Troy's own tab, 2026-11-08). The
+// underlying vocoder bug was also measured at fp32, so no dtype swap
+// rescues the GPU road — and every clean proof of this pipeline ran
+// q8 on WASM. So there is no device decision left to make: no
+// adapter probe, no WebGPU attempt, just the WASM load. (The loader
+// used to probe the adapter and try WebGPU first; the probe went
+// away with the road it served.)
+export async function loadKokoroEngine(mod) {
+  return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: 'q8', device: 'wasm' });
 }
 
 export function createVoiceController({
@@ -254,19 +236,35 @@ export function createVoiceController({
       listening = false;
       recognition = null;
       const hidden = typeof document !== 'undefined' && document.hidden;
-      if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a reply is speaking
+      if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a reply is in flight
       else if (!voiceMode) handlers.onState?.('idle');
     };
     recognition.start();
   }
 
-  // Whether a reply is currently being read aloud (either engine:
-  // queued, generating, or playing). startTurn() cancels speech, so
-  // the loop's automatic restart must not fire while a reply speaks —
-  // it would cut the reply off, and the mic would transcribe the
-  // speaker. restartTurn holds the next listening turn until speech
-  // drains, then starts it.
+  // Whether sound is actually coming out of the speakers right now
+  // (either engine: a Kokoro buffer source playing, or a backup
+  // utterance speaking). This — and only this — is what the mic must
+  // not hear: the echo guard drops recognition results while it is
+  // true, and a pending auto-submit holds until it clears. A reply
+  // that is merely queued or still generating is NOT speech yet and
+  // must not close the mic (mic-hostage fix): while an answer is
+  // being prepared, the user's words are accepted normally.
   function speechActive() {
+    if (activeSource) return true;
+    if (synthSpeaking) return true;
+    try { return !!(synthesis?.speaking); } catch { return false; }
+  }
+
+  // Whether a reply is in flight on either engine — playing,
+  // generating, waiting behind the model load, or queued. The mic
+  // loop's restart keys on this rather than speechActive: starting a
+  // turn cancels speech (startTurn), so a restart fired while a reply
+  // is being prepared would kill the reply before it ever played.
+  // The hold can no longer hold the mic hostage: the load wait and
+  // every generate are bounded, so an in-flight reply always drains
+  // or fails forward within its bounds, and the restart follows.
+  function speechInFlight() {
     if (kokoroPlaying || activeSource || kokoroQueue.length > 0) return true;
     if (synthSpeaking || synthQueue.length > 0) return true;
     try { return !!(synthesis?.speaking || synthesis?.pending); } catch { return false; }
@@ -275,7 +273,7 @@ export function createVoiceController({
   function restartTurn() {
     if (!voiceMode) return;
     if (typeof document !== 'undefined' && document.hidden) return;
-    if (speechActive()) {
+    if (speechInFlight()) {
       if (!restartTimer) {
         restartTimer = setTimeout(() => { restartTimer = null; restartTurn(); }, 400);
       }
@@ -290,8 +288,9 @@ export function createVoiceController({
   // onSubmit with an empty remainder submits the composer as-is, and
   // every wiring's own empty-composer guard keeps a late or duplicate
   // fire harmless. Firing never happens from a hidden tab, and holds
-  // while a reply is being read aloud (turn-taking: the send goes out
-  // the moment the reply drains, on the restart loop's poll rhythm).
+  // while a reply is actually playing (turn-taking: the send goes out
+  // once the playback ends, on the restart loop's poll rhythm). A
+  // reply still being generated does not hold the send.
   function fireAutoSubmit() {
     autoSubmitTimer = null;
     if (!voiceMode || voiceKind !== 'voice') { autoSubmitPending = false; return; }
@@ -468,11 +467,18 @@ export function createVoiceController({
   const KOKORO_SPEAK_WAIT_MS = 15000;
   const KOKORO_LOAD_ABANDON_MS = 60000;
   const KOKORO_WAIT_POLL_MS = 250;
+  // One generate gets the same budget family as the wait: a generate
+  // still running KOKORO_GENERATE_MS after the call is treated as a
+  // generate failure — the backup voice speaks the chunk and the queue
+  // moves on. A generate is a promise that may never settle (a wedged
+  // worker behind a cold incognito model); unbounded, it held
+  // kokoroPlaying — and with it the reply queue and the mic — forever
+  // (mic-hostage fix).
+  const KOKORO_GENERATE_MS = 15000;
   let kokoroLoadStartedAt = 0; // when the current load attempt began
   let kokoroLoadGen = 0;       // generation of the current load attempt
   let kokoroLastError = null;  // last load failure, kept for the console proof point
   let kokoroBackupWhileLoading = false; // bounded wait expired: backup speaks until the load lands
-  let kokoroPreferWasm = false; // a load was abandoned as stuck: the next attempt skips WebGPU
   let kokoroRetryTimer = null;
   let playToken = 0;          // cancel() bumps it; late audio is ignored
   let activeSource = null;    // currently playing AudioBufferSourceNode
@@ -513,7 +519,14 @@ export function createVoiceController({
   // originals on its own. (The bare 'kokoro-js' specifier this loader
   // used before resolved only where an import map existed — the app
   // page has none, one of the ways the two copies had diverged.)
-  const KOKORO_LOCAL_URL = '/kokoro-js/kokoro-js@1.2.1.mjs';
+  // KOKORO_GRAPH_VERSION stamps the vendored graph: bump it whenever
+  // anything under /kokoro-js/ changes. It rides the import as a query,
+  // so a browser holding a cached answer for the bare path — including
+  // a cached 404, which is what left a tab importing a missing runtime
+  // all evening on 2026-11-08 — asks for a new URL instead of reusing
+  // the dead one.
+  const KOKORO_GRAPH_VERSION = '2026-11-09.1';
+  const KOKORO_LOCAL_URL = `/kokoro-js/kokoro-js@1.2.1.mjs?v=${KOKORO_GRAPH_VERSION}`;
   const KOKORO_CDN_URL = 'https://esm.sh/kokoro-js@1.2.1';
   const KOKORO_MODEL_PATH = '/kokoro-model/';
 
@@ -536,11 +549,9 @@ export function createVoiceController({
 
   function defaultKokoroLoader() {
     // The model downloads once, on first use, and is cached by the
-    // browser afterwards. The device is chosen adapter-first by
-    // loadKokoroEngine: WebGPU is attempted only with an adapter in
-    // hand, otherwise the load goes straight to WASM. kokoroPreferWasm
-    // — set when a load is abandoned as stuck — skips WebGPU entirely.
-    return importKokoro().then((mod) => loadKokoroEngine(mod, { preferWasm: kokoroPreferWasm }));
+    // browser afterwards. loadKokoroEngine always loads on WASM —
+    // the WebGPU road is not taken (see its note for why).
+    return importKokoro().then((mod) => loadKokoroEngine(mod));
   }
 
   // One load, shared: warmup and any number of queued speaks all await
@@ -666,6 +677,28 @@ export function createVoiceController({
     if (entries.length) synthEngine.enqueue(entries, { interrupt: false });
   }
 
+  // engine.generate with a hard bound, in the load wait's own idiom:
+  // a deadline on Date.now, polled on KOKORO_WAIT_POLL_MS. Past the
+  // deadline the race resolves null and the caller treats the chunk
+  // exactly like a generate failure. The underlying generate promise
+  // is left to settle or hang on its own: its late result is never
+  // used, and a late rejection stays handled by the race.
+  async function kokoroGenerateBounded(engine, item) {
+    let settled = false;
+    const gen = Promise.resolve(engine.generate(item.text, { voice: item.voice ?? KOKORO_VOICE }))
+      .then((out) => { settled = true; return out; }, (err) => { settled = true; throw err; });
+    const deadline = Date.now() + KOKORO_GENERATE_MS;
+    const bound = (async () => {
+      while (!settled && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, KOKORO_WAIT_POLL_MS));
+      }
+      return null;
+    })();
+    const out = await Promise.race([gen, bound]);
+    if (out === null) throw new Error(`Kokoro generate passed the ${KOKORO_GENERATE_MS}ms bound`);
+    return out;
+  }
+
   async function pumpKokoro() {
     if (kokoroPlaying || kokoroQueue.length === 0) return;
     const item = kokoroQueue.shift();
@@ -685,11 +718,9 @@ export function createVoiceController({
         // voice speaks this reply — and, via kokoroBackupWhileLoading,
         // the replies behind it — while the load continues in the
         // background; Kokoro takes over when it lands, and the retry
-        // timer starts a fresh attempt once the stuck load crosses the
-        // abandon bound (skipping WebGPU, the stage a hang cannot be
-        // caught in). The room never goes silent.
+        // timer starts a fresh attempt once the stuck load crosses
+        // the abandon bound. The room never goes silent.
         kokoroBackupWhileLoading = true;
-        kokoroPreferWasm = true;
         scheduleKokoroRetry();
         kokoroFallback(item, 'loading');
       }
@@ -697,8 +728,9 @@ export function createVoiceController({
     }
     let out;
     try {
-      out = await engine.generate(item.text, { voice: item.voice ?? KOKORO_VOICE });
+      out = await kokoroGenerateBounded(engine, item);
     } catch (err) {
+      if (item.token !== playToken) { kokoroPlaying = false; pumpKokoro(); return; } // cancelled mid-generate
       kokoroPlaying = false;
       kokoroFailedAt = Date.now();
       console.warn('[voice] Kokoro generate failed, falling back:', err?.message ?? err);

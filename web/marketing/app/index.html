@@ -40,7 +40,7 @@
         <button class="nav-item" type="button" data-view="home" data-tip="Home"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> <span class="label">Home</span></button>
         <button class="nav-item" type="button" data-view="workspace" data-tip="Projects"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg> <span class="label">Projects</span></button>
         <button class="nav-item" type="button" data-view="approvals" data-tip="Approvals"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg> <span class="label">Approvals</span><span id="approvals-badge" class="badge" hidden></span></button>
-        <button class="nav-item" type="button" data-view="upcoming" data-tip="Upcoming"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> <span class="label">Upcoming</span><span id="upcoming-badge" class="badge" hidden></span></button>
+        <button class="nav-item" type="button" data-view="chats" data-tip="Chats"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> <span class="label">Chats</span></button>
       </nav>
       <details class="side-group accordion advanced-nav" id="advanced-nav">
         <summary class="side-head"><span>ADVANCED</span><span class="chev">▾</span></summary>
@@ -72,7 +72,8 @@
 
 
     <section class="side-group side-sessions">
-      <div class="side-head"><span>SESSIONS</span><button id="sessions-clear" class="link-btn" type="button" hidden title="Close sessions older than 7 days">Clear old</button></div>
+      <div class="side-head"><span>CHATS</span><span class="side-head-actions"><button id="new-chat" class="link-btn" type="button" title="Start a new chat">+ New chat</button><button id="sessions-clear" class="link-btn" type="button" hidden title="Close chats older than 7 days">Clear old</button></span></div>
+      <div class="side-subhead">Recents</div>
       <ul id="sessions" class="sessions"></ul>
       <button id="sessions-more" class="link-btn sessions-more" type="button" hidden></button>
     </section>
@@ -145,6 +146,7 @@
     <section id="view-desktop" class="view desktop" data-view-panel="desktop" hidden>
       <div class="ew" id="ew">
         <aside class="ew-pane ew-channels" id="ew-channels" data-pane="channels" aria-label="Channels">
+          <button class="ew-channels-rail-tab" id="ew-channels-rail-tab" type="button" aria-label="Open channels" title="Channels — hover to look, click to pin open">☰<span>Channels</span></button>
           <header class="ew-head">
             <strong>Channels</strong>
             <span class="ew-spacer"></span>
@@ -160,7 +162,7 @@
             <div class="ew-field">Look<div id="ew-new-avatar"></div></div>
             <div class="ew-row"><button type="button" class="ew-btn ghost sm" id="ew-new-channel-cancel">Cancel</button><button type="submit" class="ew-btn primary sm">Create</button></div>
           </form>
-          <button id="ew-add-channel" class="ew-btn ghost full" type="button">+ New channel</button>
+          <button id="ew-add-channel" class="ew-icon ew-add-channel" type="button" aria-label="New channel" title="New channel">+</button>
           <section class="ew-crew" id="ew-crew" aria-label="Crew in this channel">
             <div class="ew-crew-head"><span class="ew-crew-title" id="ew-crew-title">CREW</span></div>
             <div class="ew-crew-list" id="ew-crew-list"></div>
@@ -685,5 +687,12 @@
   <div class="slide-panel-body" id="chat-panel-body"></div>
 </aside>
 <button id="chat-panel-toggle" class="panel-toggle" type="button" hidden>💬 Chat</button>
+<!-- Update nudge: app.js shows this when a new version is ready (a deploy
+     landed, or a new service worker took over). It never reloads on its
+     own and never takes focus — the human taps Reload. -->
+<div id="update-nudge" class="update-nudge" role="status" hidden>
+  <span>A new version is ready</span>
+  <button id="update-reload" class="btn primary sm" type="button">Reload</button>
+</div>
 </body>
 </html>

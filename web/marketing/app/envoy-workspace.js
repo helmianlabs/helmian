@@ -946,12 +946,48 @@ function syncSplitterAria(name) {
 const paneOpen = (name) => { const p = $(`ew-${name}`); return narrow() ? p.classList.contains('sheet-open') : !p.classList.contains('collapsed'); };
 function closeSheets() { for (const p of document.querySelectorAll('.ew-pane.sheet-open')) p.classList.remove('sheet-open'); $('ew-scrim').classList.remove('open'); for (const b of document.querySelectorAll('[data-toggle]')) b.setAttribute('aria-pressed', 'false'); const mc = $('ew-mnav-chat'); if (mc) mc.classList.add('on'); }
 
+// ---------- channels rail rest (panel bite, 2026-11-08) ----------
+// Troy's final word: the channels pane folds ITSELF to a slim rail and
+// hovering the rail opens the whole pane over the chat — "you can
+// scroll, you can do all that... that's how it should be" — everywhere,
+// not just in a narrow window. The rest state replaces hide-to-zero
+// for this pane only: open.channels now records "pinned open", and
+// anything else rests as the rail. A click pins both ways: the rail
+// tab (or the chat head's Channels button) pins it open in the layout,
+// the pane head's ‹ folds it back to the rail. Narrow screens keep the
+// sheet behaviour and never rest.
+function setChannelsRest(rest, { user = false } = {}) {
+  const pane = $('ew-channels'); if (!pane) return;
+  if (narrow()) rest = false;
+  pane.classList.toggle('rail-rest', rest);
+  if (rest) {
+    pane.classList.remove('collapsed');
+    $('ew').classList.remove('no-channels');
+  } else {
+    pane.classList.remove('peeking');
+  }
+  $('ew').classList.toggle('channels-rest', rest);
+  if (user) ls.set('open.channels', !rest);
+}
+function wireChannelsRail() {
+  const pane = $('ew-channels'); if (!pane || pane.dataset.railWired) return;
+  pane.dataset.railWired = '1';
+  pane.addEventListener('mouseenter', () => { if (pane.classList.contains('rail-rest')) pane.classList.add('peeking'); });
+  pane.addEventListener('mouseleave', () => pane.classList.remove('peeking'));
+  pane.addEventListener('focusin', () => { if (pane.classList.contains('rail-rest')) pane.classList.add('peeking'); });
+  pane.addEventListener('focusout', (e) => { if (!pane.contains(e.relatedTarget)) pane.classList.remove('peeking'); });
+  const tab = $('ew-channels-rail-tab');
+  if (tab) tab.addEventListener('click', () => { setChannelsRest(false); setPane('channels', true, { user: true }); });
+}
+
 function applyLayout() {
   const root = document.documentElement;
   for (const [k, v] of Object.entries(ls.get('widths', {}))) if (v > 120 && v < 1400) root.style.setProperty(`--ew-${k}`, `${v}px`);
   applyHeights();
   if (narrow()) { for (const p of ['channels', 'guard', 'bench']) { $(`ew-${p}`).classList.remove('collapsed'); } closeSheets(); return; }
-  setPane('channels', ls.get('open.channels', true));
+  // Channels rests as the rail unless the user pinned it open (panel bite).
+  if (ls.get('open.channels', false)) setPane('channels', true);
+  else setChannelsRest(true);
   setPane('guard', ls.get('open.guard', true));
   setPane('bench', ls.get('open.bench', window.innerWidth >= 1680));
 }
@@ -2456,15 +2492,24 @@ async function loadMessages() {
 // ---------- spoken replies (voice bite 2d) ----------
 // While voice chat is on, messages from anyone else are read aloud
 // through the shared voice controller (ctx.voiceSpeak, wired in
-// app.js; it speaks only in voice mode, and its view gate keeps the
+// app.js; it speaks only in voice chat, and its view gate keeps the
 // session console as the only speaker while that view is up). One
 // seen-set covers both streams this module renders — the open
 // channel and the agent-CLI room — so a message is spoken by
 // whichever surface sees it first, never twice. A stream's first
-// load only primes the set: history is never read aloud, only
-// messages that arrive while the member is in the room. Pending
-// rows are local echoes of the member's own send and never speak.
+// load only primes the set: history is never read aloud by the
+// scanner, only messages that arrive while the member is in the
+// room. Pending rows are local echoes of the member's own send and
+// never speak.
+//
+// The seen-set records every message the scanner has looked at —
+// including replies that arrived while voice chat was off, whose
+// speak call the controller declined. voicedIds is the narrower
+// truth: the messages the speak path actually took. It exists for
+// the voice-on catch-up below, which owes the member the newest
+// seat reply that landed before voice chat was switched on.
 const spokenIds = new Set();
+const voicedIds = new Set();
 const spokenPrimed = new Set();
 function speakNewMessages(streamId, messages) {
   if (!streamId || typeof ws.ctx?.voiceSpeak !== 'function') return;
@@ -2481,9 +2526,71 @@ function speakNewMessages(streamId, messages) {
     // The seat key rides along so the controller can speak in that
     // seat's own Kokoro voice (per-seat voice map in the controller).
     // The message id rides too, so the speaking proof can light the
-    // speaker icon on THIS message while it is being spoken.
-    ws.ctx.voiceSpeak(m.body, who.provider ?? null, m.id);
+    // speaker icon on THIS message while it is being spoken. A speak
+    // the controller takes (any return but false) marks the message
+    // voiced; a declined one stays eligible for the catch-up.
+    if (ws.ctx.voiceSpeak(m.body, who.provider ?? null, m.id) !== false) voicedIds.add(m.id);
   }
+}
+// ---------- voice-on catch-up (catch-up bite) ----------
+// The scanner above only speaks messages that arrive while voice
+// chat is on: a reply that landed earlier was seen, declined, and
+// never revisited — so the owner's real move (ask everybody, then
+// switch voice chat on) was met with silence. The catch-up closes
+// that gap: at the moment voice chat is switched on in this room
+// (app.js calls speakCatchUp from the room's voice toggle), the
+// newest completed seat reply in the open channel that has not
+// been voiced is spoken through the same speak path — its seat
+// voice, its speaker icon — exactly one message per switch-on,
+// never a backlog replay.
+//
+// catchUpPick is the pure decision, exported for tests: the newest
+// message in stream order that is a seat/agent message (the same
+// agent test whoOf makes: an agent provider, an agent: subject, or
+// a PC-bridge row), complete (not a pending local echo, with a
+// speakable body), not a system row, and not the member's own.
+// runCatchUp applies the already-voiced rule on top: if that
+// newest reply was voiced, no catch-up fires at all — the room
+// never reaches back to an older reply in its place. A speak the
+// controller declines (voice chat already off again, the console
+// view gate) does not mark the message voiced, so a later
+// switch-on can still offer it; a speak the controller takes marks
+// it voiced before any later poll can offer it twice, and toggling
+// voice chat off cancels a queued catch-up through the
+// controller's own cancel path.
+export function catchUpPick(messages, me) {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const m = list[i];
+    if (!m?.id || m._pending) continue;
+    if (typeof m.body !== 'string' || !m.body.trim()) continue;
+    if (m.authorKind === 'system') continue;
+    if (m.authorKind === 'human' && me && m.authorSubject === me) continue;
+    const isSeat = Boolean(m.agentProvider)
+      || (typeof m.authorSubject === 'string' && (m.authorSubject.startsWith('agent:') || m.authorSubject.endsWith(':bridge')));
+    if (!isSeat) continue;
+    const provider = m.agentProvider || (typeof m.authorSubject === 'string' && m.authorSubject.startsWith('agent:') ? m.authorSubject.slice(6) : null);
+    return { id: m.id, body: m.body, provider };
+  }
+  return null;
+}
+export function runCatchUp({ messages, voiced, me, speak }) {
+  if (typeof speak !== 'function' || !voiced) return null;
+  const pick = catchUpPick(messages, me);
+  if (!pick || voiced.has(pick.id)) return null;
+  if (speak(pick.body, pick.provider, pick.id) === false) return null;
+  voiced.add(pick.id);
+  return pick;
+}
+export function speakCatchUp() {
+  if (!ws.channelId || typeof ws.ctx?.voiceSpeak !== 'function') return;
+  if (!spokenPrimed.has(ws.channelId)) return;
+  runCatchUp({
+    messages: ws.messages,
+    voiced: voicedIds,
+    me: ws.ctx.state.actor?.subject,
+    speak: (body, provider, id) => ws.ctx.voiceSpeak(body, provider, id),
+  });
 }
 // ---------- speaking proof (speaker-proof bite) ----------
 // Troy's ask (2026-11-08): a little speaker icon on a seat's message
@@ -3276,8 +3383,9 @@ function wire() {
   ws.wired = true;
   wireSplitters();
   wireShelves();
-  for (const b of document.querySelectorAll('#ew [data-collapse]')) b.addEventListener('click', () => { const n = b.dataset.collapse; if (narrow()) { closeSheets(); return; } setPane(n, false, { user: true }); });
-  for (const b of document.querySelectorAll('#ew [data-open]')) b.addEventListener('click', () => setPane(b.dataset.open, true));
+  for (const b of document.querySelectorAll('#ew [data-collapse]')) b.addEventListener('click', () => { const n = b.dataset.collapse; if (narrow()) { closeSheets(); return; } if (n === 'channels') { setChannelsRest(true, { user: true }); return; } setPane(n, false, { user: true }); });
+  for (const b of document.querySelectorAll('#ew [data-open]')) b.addEventListener('click', () => { if (b.dataset.open === 'channels') setChannelsRest(false); setPane(b.dataset.open, true); });
+  wireChannelsRail();
   for (const b of document.querySelectorAll('#ew [data-toggle]')) b.addEventListener('click', () => {
     const n = b.dataset.toggle; const open = !paneOpen(n);
     if (narrow()) closeSheets();
