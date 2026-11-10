@@ -10,18 +10,26 @@
 //       authMode "header" → returns the vault reference the person's
 //                           key must be stored under (the record will
 //                           hold the reference, never the key).
-//       authMode "oauth"  → the entry answers with its consent
-//                           boundary — the provider's authorization
-//                           endpoint and resource metadata — because
-//                           Helmian holds no OAuth client registration
-//                           for it yet; starting the OAuth road from
-//                           inside Helmian (PKCE S256 + a remembered
-//                           pending row) is M3's connect leg. The
-//                           callback below is landed: it resolves
-//                           its OAuth client from the pending row's
-//                           provider through the registry in
-//                           connector-oauth-pending.mjs (§6) — there
-//                           is no default client.
+//       authMode "oauth"  → the entry's sign-in kind decides
+//                           (connector-oauth-dcr.mjs): a FIXED
+//                           registry provider with a configured
+//                           client (GitHub, M3 §6.3) and a DCR entry
+//                           whose server lets Helmian register
+//                           itself both START the road — a pending
+//                           handshake is saved (PKCE S256) and the
+//                           answer carries the authorize URL (plus,
+//                           on the DCR road, the approval briefing
+//                           the composer renders). An OAuth entry
+//                           with no live road — GitHub unconfigured,
+//                           no endpoint, a server that takes no
+//                           self-registered clients — keeps the
+//                           consent-boundary answer: the provider's
+//                           authorization endpoint and resource
+//                           metadata, and nothing connected. The
+//                           callback below resolves its OAuth
+//                           client from the pending ROW (the fixed
+//                           registry first, then the row's own DCR
+//                           fields) — there is no default client.
 //     Vendor-brokered entries are refused plainly: they are mirrors,
 //     managed in the vendor's own garden (§1.5).
 //   POST /api/admin/connector-library/connect/header
@@ -106,7 +114,16 @@ import {
   createConnectorOAuthClient,
   createConnectorOAuthPendingStore,
   hashOAuthState,
+  newOAuthState,
+  newPkceVerifier,
+  pkceChallenge,
 } from './connector-oauth-pending.mjs';
+import {
+  ConnectorOAuthDcrError,
+  connectorOAuthKindForEntry,
+  resolvePendingOAuthClient,
+  startDcrConnect,
+} from './connector-oauth-dcr.mjs';
 import { createToolConnectionsStore } from './tool-connections.mjs';
 import {
   mcpLocalToolConnectionKey,
@@ -160,6 +177,16 @@ function refuseCredentialValues(input, { allow = [] } = {}) {
 }
 
 const providerIdFor = (seatId, entryId) => `connector.${seatId}.${entryId}`;
+
+// The fixed road's connect scopes, per provider (m3-github
+// DESIGN.md §1.2/§6.2): the GitHub entry asks for `repo` and
+// `read:org` — the smallest classic scopes covering the repository,
+// issue, and pull-request work the catalog entry promises. The DCR
+// road needs no such table: its scopes come from the server's own
+// published metadata at registration time.
+const FIXED_CONNECT_SCOPES = Object.freeze({
+  github: Object.freeze(['repo', 'read:org']),
+});
 
 // The catalog definition is the authority for a seeded entry's auth
 // road — never the stored row alone. Rows seeded under an older
@@ -256,13 +283,25 @@ export function createConnectorLibraryWriteHandler({
     return probeCustomGate({ toolConnections: tc, tenantId, entry });
   };
   const resolveCredentials = () => injectedCredentials !== undefined ? injectedCredentials : createCredentialConnectClient();
-  // The callback's OAuth client comes from the provider registry,
-  // keyed by the pending row's provider — there is no default client
-  // (m3-github/DESIGN.md §6.2). Null means the provider is unknown
-  // or not configured, and the callback fails honestly.
+  // OAuth clients come from the provider registry — there is no
+  // default client (m3-github/DESIGN.md §6.2). Null means the
+  // provider is unknown or not configured. The connect start
+  // resolves its fixed-road client here, by provider; the callback
+  // resolves from the pending row itself (below).
   const resolveOAuthClient = (provider) => injectedOAuthClientFor
     ? injectedOAuthClientFor(provider)
     : createConnectorOAuthClient(provider, { fetchImpl });
+  // The CALLBACK's client, resolved from the pending row after the
+  // row is taken: the fixed registry answers first — a GitHub row
+  // resolves to exactly the client resolveOAuthClient builds — and
+  // a row carrying DCR fields (the token endpoint, and any secret
+  // the server issued, from sql/081) resolves to the exchange
+  // client built from the row alone; no discovery runs at callback
+  // time. The injected seam, when a harness provides one, still
+  // rules by the row's provider.
+  const resolveCallbackOAuthClient = (pending) => injectedOAuthClientFor
+    ? injectedOAuthClientFor(pending?.provider)
+    : resolvePendingOAuthClient(pending, { fetchImpl });
   const resolvePrompts = () => injectedPrompts ?? createMcpPromptsClient({ fetchImpl });
 
   return async function connectorLibraryWrite({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson }) {
@@ -293,12 +332,13 @@ export function createConnectorLibraryWriteHandler({
         const pending = pendingStore ? await pendingStore.take(tenantId, hashOAuthState(state)) : null;
         if (!pending) return fail('This sign-in link has expired or was never started here. Start the connect again from the Manage surface.');
         if (pending.personId !== personId) return fail('This sign-in was started by a different person in the workspace, so it cannot land on your account.');
-        // The client is the pending row's provider's, from the
-        // registry — never a default. A provider with no registered
-        // (or no configured) client gets the same honest answer as
-        // an expired link: Helmian cannot finish what it holds no
-        // client for.
-        const oauthClient = resolveOAuthClient(pending.provider);
+        // The client is resolved from the pending row itself —
+        // never a default: the fixed registry for a fixed-provider
+        // row, the row's own DCR fields for a self-registered one.
+        // A row no client answers for gets the same honest answer
+        // as an expired link: Helmian cannot finish what it holds
+        // no client for.
+        const oauthClient = resolveCallbackOAuthClient(pending);
         if (!oauthClient) return fail('This sign-in link has expired or was never started here. Start the connect again from the Manage surface.');
         const providerName = oauthClient.displayName || pending.provider;
         const credentials = resolveCredentials();
@@ -549,7 +589,78 @@ export function createConnectorLibraryWriteHandler({
           });
           return true;
         }
-        // authMode oauth
+        // authMode oauth — the sign-in roads. The entry's kind
+        // (connector-oauth-dcr.mjs, ruled on the catalog's auth
+        // mode — the `authMode` local — never the stored row's
+        // stale label) decides:
+        //   fixed — a registry provider (GitHub) with a configured
+        //     client starts the real road (M3 §6.3): state + PKCE
+        //     minted here, the handshake saved, the authorize URL
+        //     answered. No configured client → the consent boundary
+        //     below, word for word.
+        //   dcr — the server lets Helmian register itself:
+        //     startDcrConnect runs discovery → registration → the
+        //     pending save, and the answer carries the authorize
+        //     URL plus the approval briefing the composer renders.
+        //     A server that takes no self-registered clients
+        //     (dcr-unsupported) falls through to the consent
+        //     boundary; every other named failure answers with its
+        //     own code and its plain message.
+        // Anything else (no endpoint, not an OAuth entry at all)
+        // keeps the consent-boundary answer.
+        const oauthKind = connectorOAuthKindForEntry({ ...entry, authMode });
+        const callbackUrl = `https://helmian.cloud${CONNECTOR_OAUTH_CALLBACK_PATH}`;
+        if (oauthKind?.kind === 'dcr') {
+          let started = null;
+          try {
+            started = await startDcrConnect({
+              pendingStore: resolvePending(), tenantId, personId, seatId, entry,
+              provider: oauthKind.provider, redirectUri: callbackUrl, fetchImpl,
+            });
+          } catch (error) {
+            if (!(error instanceof ConnectorOAuthDcrError)) throw error;
+            if (error.code !== 'dcr-unsupported') {
+              throw failure(error.code === 'pending-store-unavailable' ? 503 : 502, error.message, { code: error.code });
+            }
+          }
+          if (started) {
+            sendJson(200, {
+              status: 'authorize', seatId, entryId, provider: oauthKind.provider,
+              authorizeUrl: started.authorizeUrl, briefing: started.briefing,
+            });
+            return true;
+          }
+        }
+        if (oauthKind?.kind === 'fixed') {
+          const client = resolveOAuthClient(oauthKind.provider);
+          if (client) {
+            const pendingStore = resolvePending();
+            const state = newOAuthState();
+            const codeVerifier = newPkceVerifier();
+            const scopes = FIXED_CONNECT_SCOPES[oauthKind.provider] ?? [];
+            const saved = pendingStore ? await pendingStore.save(tenantId, {
+              stateHash: hashOAuthState(state),
+              personId, seatId, entryId,
+              provider: oauthKind.provider,
+              // The row names the client the handshake runs under:
+              // for the fixed road that is the registry's env-held
+              // app id — the same value the client was built from
+              // (the exchange posts the factory's own pair; the
+              // callback never reads this field for a fixed row).
+              clientId: String(process.env.GITHUB_OAUTH_CLIENT_ID ?? '').trim(),
+              codeVerifier, redirectUri: callbackUrl, scopes,
+            }) : null;
+            if (!saved) {
+              sendJson(503, { error: 'the OAuth road is not switched on yet, so the sign-in cannot be started', code: 'pending-store-unavailable' });
+              return true;
+            }
+            const authorizeUrl = await client.authorizeUrl({
+              redirectUri: callbackUrl, state, challenge: pkceChallenge(codeVerifier), scopes,
+            });
+            sendJson(200, { status: 'authorize', seatId, entryId, provider: oauthKind.provider, authorizeUrl });
+            return true;
+          }
+        }
         sendJson(200, await consentBoundary(entry, fetchImpl));
         return true;
       }

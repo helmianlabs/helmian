@@ -14,7 +14,10 @@
 //     itself goes to the credential service under that reference;
 //   - per-kind connect truth: vendor → plain refusal; none → lands
 //     at once; header → needs-credential + reference; OAuth → the
-//     consent boundary, nothing connected;
+//     authorize start when a client answers for the entry (the
+//     fixed registry, or the self-registering DCR road), the
+//     consent boundary when none does — nothing connected either
+//     way until the callback lands it;
 //   - the callback lands the OAuth connection: code exchanged, the
 //     pair stored as oauth_bundle under BOTH references, connection
 //     recorded — and only for the person who started it;
@@ -27,7 +30,7 @@ import assert from 'node:assert/strict';
 
 import { createConnectorLibraryWriteHandler } from '../src/cloud/connector-library-write-route.mjs';
 import { buildConnectorTokenRef } from '../src/cloud/connector-library.mjs';
-import { createConnectorOAuthClient, hashOAuthState } from '../src/cloud/connector-oauth-pending.mjs';
+import { createConnectorOAuthClient, hashOAuthState, pkceChallenge } from '../src/cloud/connector-oauth-pending.mjs';
 
 class TenantAuthorizationError extends Error {}
 
@@ -118,7 +121,10 @@ function harness({ actor = OWNER, store, pending, credentials, oauthClient, oaut
     store: s,
     pendingStore: pending ?? fakePending(),
     credentialClient: credentials === undefined ? fakeCredentials() : credentials,
-    oauthClientFor: oauthClientFor ?? ((provider) => (provider === 'github' ? client : null)),
+    // oauthClientFor: undefined → the default fake-registry seam;
+    // null → NO seam at all, so the handler's own registry and
+    // pending-row resolution rule (the DCR wiring tests below).
+    oauthClientFor: oauthClientFor === undefined ? ((provider) => (provider === 'github' ? client : null)) : oauthClientFor,
     fetchImpl: fetchImpl ?? (async () => { throw new Error('no network in tests'); }),
   });
   const sent = [];
@@ -223,19 +229,64 @@ test('connect/header: a credential-service refusal connects nothing', async () =
   assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
 });
 
-test('connect: GitHub OAuth reaches its consent boundary and connects nothing', async () => {
+test('connect: GitHub OAuth starts the handshake and answers the authorize URL — nothing is connected yet', async () => {
+  // Re-pinned by the DCR wiring bite: this test used to pin the
+  // consent-boundary answer for GitHub, from when connect could not
+  // start a handshake at all. The start half is wired now (M3
+  // §6.3): with a registered client resolvable, connect mints state
+  // + PKCE, saves the pending handshake, and answers the authorize
+  // URL. The boundary answer survives for the no-client case in the
+  // next test.
+  const store = fakeStore({ 'claude/helmian-github': ENTRY({ id: 'helmian-github', authMode: 'oauth', mcpEndpointUrl: 'https://api.githubcopilot.com/mcp/' }) });
+  const pending = fakePending();
+  const h = harness({ store, pending });
+  const priorClientId = process.env.GITHUB_OAUTH_CLIENT_ID;
+  process.env.GITHUB_OAUTH_CLIENT_ID = 'cid-test';
+  let out;
+  try {
+    out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-github' } });
+  } finally {
+    if (priorClientId === undefined) delete process.env.GITHUB_OAUTH_CLIENT_ID;
+    else process.env.GITHUB_OAUTH_CLIENT_ID = priorClientId;
+  }
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'authorize');
+  assert.equal(out.json.provider, 'github');
+  const state = new URL(out.json.authorizeUrl).searchParams.get('state');
+  assert.ok(state, 'the authorize URL carries the state the handshake remembers');
+  const saves = pending.calls.filter(([n]) => n === 'save');
+  assert.equal(saves.length, 1, 'exactly one handshake is saved');
+  const [, saved] = saves[0];
+  assert.equal(saved.provider, 'github');
+  assert.equal(saved.clientId, 'cid-test', 'the row names the env client id the handshake runs under');
+  assert.equal(saved.personId, 'user:troy');
+  assert.equal(saved.seatId, 'claude');
+  assert.equal(saved.entryId, 'helmian-github');
+  assert.deepEqual(saved.scopes, ['repo', 'read:org']);
+  assert.equal(saved.redirectUri, 'https://helmian.cloud/api/admin/connector-library/oauth/callback');
+  assert.equal(saved.stateHash, hashOAuthState(state), 'the row is keyed by the hash of the state in the authorize URL');
+  const [, authorizeInput] = h.oauthClient.calls.find(([n]) => n === 'authorizeUrl');
+  assert.equal(authorizeInput.challenge, pkceChallenge(saved.codeVerifier), 'the authorize URL carries the S256 challenge of the saved verifier');
+  assert.deepEqual(authorizeInput.scopes, ['repo', 'read:org']);
+  assert.equal(authorizeInput.redirectUri, saved.redirectUri);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0, 'starting a handshake connects nothing — the callback lands it');
+});
+
+test('connect: GitHub OAuth with no registered client keeps the consent-boundary answer', async () => {
   const store = fakeStore({ 'claude/helmian-github': ENTRY({ id: 'helmian-github', authMode: 'oauth', mcpEndpointUrl: 'https://api.githubcopilot.com/mcp/' }) });
   const fetchImpl = async (url) => {
     if (String(url).includes('oauth-protected-resource')) return { ok: true, json: async () => ({ authorization_servers: ['https://github.com'] }) };
     if (String(url).includes('oauth-authorization-server')) return { ok: true, json: async () => ({ authorization_endpoint: 'https://github.com/login/oauth/authorize' }) };
     throw new Error('unexpected fetch');
   };
-  const h = harness({ store, fetchImpl });
+  const pending = fakePending();
+  const h = harness({ store, fetchImpl, pending, oauthClientFor: () => null });
   const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-github' } });
   assert.equal(out.status, 200);
   assert.equal(out.json.status, 'consent-boundary');
   assert.equal(out.json.provider, 'github');
   assert.equal(out.json.authorizationEndpoint, 'https://github.com/login/oauth/authorize');
+  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 0, 'no client, no handshake');
   assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
 });
 
@@ -398,18 +449,22 @@ test('connect/complete: only the exact minted reference lands, and only once a c
   assert.equal((await refused.run(`${P}/connect/complete`, { body: { seatId: 'grok', entryId: 'custom-keys', accessTokenRef: ref } })).status, 400);
 });
 
-test('connect: a DRIFTED native row (stored authMode none, catalog oauth) takes the OAuth road and records nothing', async () => {
+test('connect: a DRIFTED native row (stored authMode none, catalog oauth) takes the OAuth road and records no connection', async () => {
   // The 2026-11-09 live bug: live rows seeded under the old catalog
   // still said 'none', and connect dispatched on the stored label —
   // one click recorded a "No sign-in" connection no consent produced.
   // The catalog is the authority: the OAuth road must answer anyway.
+  // (The DCR wiring bite re-pins the handshake count: the OAuth road
+  // now STARTS — one pending save, the authorize answer — because
+  // the kind resolution runs on the same catalog authority. The
+  // load-bearing pin is unchanged: no CONNECTION without consent.)
   const store = fakeStore({ 'claude/helmian-github': ENTRY({ authMode: 'none' }) });
   const pending = fakePending();
   const h = harness({ store, pending });
   const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-github' } });
   assert.equal(out.status, 200);
-  assert.equal(out.json.status, 'consent-boundary');
-  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 0, 'no handshake starts inside Helmian — starting one is M3 work');
+  assert.equal(out.json.status, 'authorize');
+  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 1, 'the OAuth road starts its handshake even for a drifted row');
   assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0, 'no connection may be recorded without consent');
 });
 
@@ -418,7 +473,7 @@ test('connect: a native row stored as header still takes the OAuth road, and the
   const h = harness({ store });
   const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'helmian-github' } });
   assert.equal(out.status, 200);
-  assert.equal(out.json.status, 'consent-boundary');
+  assert.equal(out.json.status, 'authorize');
   const landed = await h.run(`${P}/connect/header`, { body: { seatId: 'claude', entryId: 'helmian-github', apiKey: 'sk-x' } });
   assert.equal(landed.status, 400);
   assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
@@ -506,4 +561,259 @@ test('registry: the GitHub client uses the fixed endpoints, posts the secret ser
   assert.equal(await client.fetchIdentity({ accessToken: 'gho_x' }), 'troy-shoemaker');
   const [, userOpts] = seen.find(([u]) => u === 'https://api.github.com/user');
   assert.equal(userOpts.headers.authorization, 'Bearer gho_x');
+});
+
+// ---------------------------------------------------------- the wiring
+// The DCR wiring bite: the connect action's OAuth branch resolves
+// the entry's sign-in kind and STARTS the road — the fixed start
+// above, and the self-registering road here — and the callback
+// resolves its client from the pending ROW (the fixed registry
+// first, then the row's DCR fields) instead of by provider alone.
+// The no-seam tests (oauthClientFor: null) run the handler's own
+// resolvers against fake fetches; no live service is ever called.
+
+const CALLBACK_URL = 'https://helmian.cloud/api/admin/connector-library/oauth/callback';
+const NOTION_ENTRY = (over = {}) => ENTRY({
+  id: 'registry-notion', kind: 'catalog', authMode: 'oauth',
+  mcpEndpointUrl: 'https://mcp.notion.com/mcp', ...over,
+});
+
+// A Notion-shaped DCR server behind a fake fetch (the DCR suite's
+// stub shape, URL-keyed): the protected-resource document names the
+// /mcp resource, the authorization-server document carries the
+// endpoints, /register issues a public client, /token records the
+// exchange form. Options drop the registration endpoint (the
+// dcr-unsupported shape) or make the resource document name a
+// different resource (the mismatch refusal).
+function fakeDcrServer({ registration = true, resourceName = 'https://mcp.notion.com/mcp' } = {}) {
+  const seen = { registrations: [], tokenForms: [] };
+  const fetchImpl = async (url, opts = {}) => {
+    const u = String(url);
+    const json = (body, ok = true) => ({ ok, json: async () => body });
+    if (u === 'https://mcp.notion.com/.well-known/oauth-protected-resource/mcp' || u === 'https://mcp.notion.com/.well-known/oauth-protected-resource') {
+      return json({
+        resource: resourceName,
+        authorization_servers: ['https://mcp.notion.com'],
+        scopes_supported: ['default'],
+        bearer_methods_supported: ['header'],
+        resource_name: 'Notion MCP (Beta)',
+      });
+    }
+    if (u === 'https://mcp.notion.com/.well-known/oauth-authorization-server') {
+      return json({
+        issuer: 'https://mcp.notion.com',
+        authorization_endpoint: 'https://mcp.notion.com/authorize',
+        token_endpoint: 'https://mcp.notion.com/token',
+        ...(registration ? { registration_endpoint: 'https://mcp.notion.com/register' } : {}),
+        scopes_supported: ['default'],
+        token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
+        code_challenge_methods_supported: ['S256'],
+        grant_types_supported: ['authorization_code', 'refresh_token'],
+      });
+    }
+    if (u === 'https://mcp.notion.com/register' && opts.method === 'POST') {
+      seen.registrations.push(JSON.parse(opts.body));
+      return json({ client_id: 'notion-client-1', token_endpoint_auth_method: 'none' });
+    }
+    if (u === 'https://mcp.notion.com/token' && opts.method === 'POST') {
+      const form = new URLSearchParams(opts.body);
+      seen.tokenForms.push(form);
+      if (form.get('client_secret') && form.get('client_secret') !== 'notion-secret-1') {
+        return json({ error: 'invalid_client' }, false);
+      }
+      return json({ access_token: 'notion-at-1', token_type: 'Bearer', scope: 'default', expires_in: 3600 });
+    }
+    throw new Error(`unexpected fetch ${u}`);
+  };
+  return { fetchImpl, seen };
+}
+
+async function withGithubEnv(fn) {
+  const priorId = process.env.GITHUB_OAUTH_CLIENT_ID;
+  const priorSecret = process.env.GITHUB_OAUTH_CLIENT_SECRET;
+  process.env.GITHUB_OAUTH_CLIENT_ID = 'cid-1';
+  process.env.GITHUB_OAUTH_CLIENT_SECRET = 'sec-1';
+  try { return await fn(); } finally {
+    if (priorId === undefined) delete process.env.GITHUB_OAUTH_CLIENT_ID;
+    else process.env.GITHUB_OAUTH_CLIENT_ID = priorId;
+    if (priorSecret === undefined) delete process.env.GITHUB_OAUTH_CLIENT_SECRET;
+    else process.env.GITHUB_OAUTH_CLIENT_SECRET = priorSecret;
+  }
+}
+
+test('connect: a DCR entry starts the self-registering road — discovery, registration, a pending row carrying the DCR facts, and the briefing', async () => {
+  const store = fakeStore({ 'claude/registry-notion': NOTION_ENTRY() });
+  const pending = fakePending();
+  const dcr = fakeDcrServer();
+  const h = harness({ store, pending, fetchImpl: dcr.fetchImpl });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'registry-notion' } });
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'authorize');
+  assert.equal(out.json.provider, 'notion');
+  const au = new URL(out.json.authorizeUrl);
+  assert.equal(`${au.origin}${au.pathname}`, 'https://mcp.notion.com/authorize');
+  assert.equal(au.searchParams.get('response_type'), 'code');
+  assert.equal(au.searchParams.get('client_id'), 'notion-client-1');
+  assert.equal(au.searchParams.get('redirect_uri'), CALLBACK_URL);
+  assert.equal(au.searchParams.get('scope'), 'default');
+  assert.equal(au.searchParams.get('resource'), 'https://mcp.notion.com/mcp');
+  assert.equal(au.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(dcr.seen.registrations.length, 1, 'Helmian registered itself exactly once');
+  assert.equal(dcr.seen.registrations[0].token_endpoint_auth_method, 'none', 'a public client — no secret exists on this road');
+  assert.deepEqual(dcr.seen.registrations[0].redirect_uris, [CALLBACK_URL]);
+  const saves = pending.calls.filter(([n]) => n === 'save');
+  assert.equal(saves.length, 1);
+  const [, saved] = saves[0];
+  assert.equal(saved.provider, 'notion');
+  assert.equal(saved.clientId, 'notion-client-1');
+  assert.equal(saved.tokenEndpoint, 'https://mcp.notion.com/token', 'the row carries the token endpoint for the callback');
+  assert.equal(saved.tokenEndpointAuthMethod, 'none');
+  assert.equal(saved.clientSecret, null);
+  assert.deepEqual(saved.scopes, ['default']);
+  assert.equal(saved.redirectUri, CALLBACK_URL);
+  assert.equal(saved.stateHash, hashOAuthState(au.searchParams.get('state')));
+  assert.equal(au.searchParams.get('code_challenge'), pkceChallenge(saved.codeVerifier), 'the authorize URL carries the S256 challenge of the saved verifier');
+  assert.equal(out.json.briefing.serviceName, 'Notion MCP (Beta)', 'the briefing names the service from its own resource document');
+  assert.equal(out.json.briefing.authorizationHost, 'mcp.notion.com');
+  assert.equal(out.json.briefing.scopes[0].name, 'default');
+  assert.ok(out.json.briefing.scopes[0].words.length > 0, 'each scope carries its plain words');
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0, 'starting the road connects nothing — the callback lands it');
+});
+
+test('connect: a server that takes no self-registered clients falls through to the consent boundary', async () => {
+  const store = fakeStore({ 'claude/registry-notion': NOTION_ENTRY() });
+  const pending = fakePending();
+  const dcr = fakeDcrServer({ registration: false });
+  const h = harness({ store, pending, fetchImpl: dcr.fetchImpl });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'registry-notion' } });
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'consent-boundary');
+  assert.equal(out.json.authorizationEndpoint, 'https://mcp.notion.com/authorize');
+  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 0);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
+});
+
+test('connect: a DCR server whose metadata refuses the road answers with its named code — nothing saved, nothing connected', async () => {
+  const store = fakeStore({ 'claude/registry-notion': NOTION_ENTRY() });
+  const pending = fakePending();
+  const dcr = fakeDcrServer({ resourceName: 'https://mcp.notion.com' });
+  const h = harness({ store, pending, fetchImpl: dcr.fetchImpl });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'registry-notion' } });
+  assert.equal(out.status, 502);
+  assert.equal(out.json.code, 'resource-mismatch');
+  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 0);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
+});
+
+test('connect: an OAuth entry carrying no endpoint has no road to start — the consent boundary answers honestly', async () => {
+  const store = fakeStore({ 'claude/registry-endless': NOTION_ENTRY({ id: 'registry-endless', mcpEndpointUrl: null }) });
+  const pending = fakePending();
+  const h = harness({ store, pending });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'registry-endless' } });
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'consent-boundary');
+  assert.equal(out.json.authorizationEndpoint, null);
+  assert.equal(pending.calls.filter(([n]) => n === 'save').length, 0);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
+});
+
+test('callback: a DCR pending row resolves its client from the row — the exchange hits the row token endpoint with the verifier and no secret', async () => {
+  const pending = fakePending({
+    takeRow: {
+      personId: 'user:troy', seatId: 'claude', entryId: 'registry-notion', provider: 'notion',
+      clientId: 'notion-client-1', codeVerifier: 'ver-9', redirectUri: CALLBACK_URL, scopes: ['default'],
+      clientSecret: null, tokenEndpoint: 'https://mcp.notion.com/token', tokenEndpointAuthMethod: 'none',
+    },
+  });
+  const credentials = fakeCredentials();
+  const store = fakeStore({ 'claude/registry-notion': NOTION_ENTRY() });
+  const dcr = fakeDcrServer();
+  const h = harness({ pending, credentials, store, oauthClientFor: null, fetchImpl: dcr.fetchImpl });
+  const out = await h.run(`${P}/oauth/callback?code=code-9&state=state-9`, { method: 'GET' });
+  assert.equal(out.status, 200);
+  assert.match(out.raw, /Notion is connected/);
+  assert.equal(dcr.seen.tokenForms.length, 1, 'the exchange went to the token endpoint the row carries');
+  const form = dcr.seen.tokenForms[0];
+  assert.equal(form.get('grant_type'), 'authorization_code');
+  assert.equal(form.get('code'), 'code-9');
+  assert.equal(form.get('client_id'), 'notion-client-1');
+  assert.equal(form.get('code_verifier'), 'ver-9');
+  assert.equal(form.get('client_secret'), null, 'a public client presents no secret — the verifier is the proof');
+  const [, bundle] = credentials.calls.find(([n]) => n === 'storeCredential');
+  assert.equal(bundle.credentialKind, 'oauth_bundle');
+  assert.equal(bundle.accessToken, 'notion-at-1');
+  const [, input] = store.calls.find(([n]) => n === 'createConnection');
+  assert.equal(input.entryId, 'registry-notion');
+  assert.equal(input.accountIdentity, 'Notion account');
+  assert.ok(!JSON.stringify(input).includes('notion-at-1'), 'tokens never touch the library record');
+});
+
+test('callback: a DCR pending row carrying an issued secret presents it the registered way (client_secret_post)', async () => {
+  const pending = fakePending({
+    takeRow: {
+      personId: 'user:troy', seatId: 'claude', entryId: 'registry-notion', provider: 'notion',
+      clientId: 'notion-client-1', codeVerifier: 'ver-9', redirectUri: CALLBACK_URL, scopes: ['default'],
+      clientSecret: 'notion-secret-1', tokenEndpoint: 'https://mcp.notion.com/token', tokenEndpointAuthMethod: 'client_secret_post',
+    },
+  });
+  const store = fakeStore({ 'claude/registry-notion': NOTION_ENTRY() });
+  const dcr = fakeDcrServer();
+  const h = harness({ pending, store, oauthClientFor: null, fetchImpl: dcr.fetchImpl });
+  const out = await h.run(`${P}/oauth/callback?code=code-9&state=state-9`, { method: 'GET' });
+  assert.equal(out.status, 200);
+  assert.match(out.raw, /Notion is connected/);
+  assert.equal(dcr.seen.tokenForms.length, 1);
+  assert.equal(dcr.seen.tokenForms[0].get('client_secret'), 'notion-secret-1', 'the issued secret rode the form, per the registered method');
+});
+
+test('callback: a GitHub pending row resolves the fixed registry client with no seam — the exchange posts the env secret and the login lands (regression)', async () => {
+  const pending = fakePending({
+    takeRow: {
+      personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github',
+      clientId: 'cid-1', codeVerifier: 'verifier-1', redirectUri: CALLBACK_URL, scopes: ['repo', 'read:org'],
+      clientSecret: null, tokenEndpoint: null, tokenEndpointAuthMethod: null,
+    },
+  });
+  const credentials = fakeCredentials();
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
+  const seen = [];
+  const fetchImpl = async (url, opts = {}) => {
+    seen.push([String(url), opts]);
+    if (String(url) === 'https://github.com/login/oauth/access_token') {
+      return { ok: true, json: async () => ({ access_token: 'gho_x', token_type: 'bearer', scope: 'repo,read:org' }) };
+    }
+    if (String(url) === 'https://api.github.com/user') {
+      return { ok: true, json: async () => ({ login: 'troy-shoemaker' }) };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const h = harness({ pending, credentials, store, oauthClientFor: null, fetchImpl });
+  const out = await withGithubEnv(() => h.run(`${P}/oauth/callback?code=code-9&state=state-9`, { method: 'GET' }));
+  assert.equal(out.status, 200);
+  assert.match(out.raw, /GitHub is connected/);
+  const [, exchangeOpts] = seen.find(([u]) => u.includes('access_token'));
+  const form = new URLSearchParams(exchangeOpts.body);
+  assert.equal(form.get('client_id'), 'cid-1');
+  assert.equal(form.get('client_secret'), 'sec-1', 'the fixed client posted its env secret server-side, exactly as before the wiring');
+  assert.equal(form.get('code_verifier'), 'verifier-1');
+  const [, input] = store.calls.find(([n]) => n === 'createConnection');
+  assert.equal(input.accountIdentity, 'troy-shoemaker', 'the recorded identity is still the login the fixed client fetches');
+});
+
+test('callback: a pending row no client answers for fails honestly — nothing stored, nothing connected', async () => {
+  const pending = fakePending({
+    takeRow: {
+      personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'door',
+      clientId: 'c', codeVerifier: 'v', redirectUri: CALLBACK_URL, scopes: [],
+      clientSecret: null, tokenEndpoint: null, tokenEndpointAuthMethod: null,
+    },
+  });
+  const credentials = fakeCredentials();
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
+  const h = harness({ pending, credentials, store, oauthClientFor: null });
+  const out = await h.run(`${P}/oauth/callback?code=c&state=s`, { method: 'GET' });
+  assert.equal(out.status, 200);
+  assert.match(out.raw, /That sign-in did not land/);
+  assert.equal(credentials.calls.filter(([n]) => n === 'storeCredential').length, 0);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
 });
