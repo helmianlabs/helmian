@@ -33,7 +33,7 @@ import { classifySeatAsk } from './envoy-actions.mjs';
 import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
-import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings } from './site-guard.mjs';
+import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings, createSiteGuardRateLimiter, siteGuardSenderKey, siteGuardRateRefusalText, siteGuardRateStopRecord, ingestSiteGuardRateFinding } from './site-guard.mjs';
 import { readNotebookBlock } from './envoy-notebook.mjs';
 import { createLibrarianStore, deriveChannelName, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { createSkillLibraryStore } from './skill-library.mjs';
@@ -237,7 +237,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -248,6 +248,12 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     catch (error) { try { await client.query('rollback'); } catch {} throw error; }
     finally { client.release(); }
   };
+  // Helmian Site Guard (site-guard.mjs, bite A2): the intake rate
+  // limiter — one per mesh instance, sharing the mesh's clock. Its
+  // store is the in-process map inside the limiter itself; the
+  // stated limits (per process, forgotten on restart) are written
+  // where it is built, in site-guard.mjs.
+  const siteGuardRate = siteGuardRateImpl ?? createSiteGuardRateLimiter({ now });
 
   return Object.freeze({
     async getConfig(actor, channelId) {
@@ -422,6 +428,12 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // cannot throw. Collection is in-transaction only; the write
       // itself runs post-commit on the pool, like bite 3's.
       const siteGuardJobs = [];
+      // Helmian Site Guard (site-guard.mjs, bite A2): every rate
+      // TRIP from this poll — the flag crossing and the stop
+      // crossing, one job each, never one per message — is collected
+      // here and witnessed into the same feed in the same
+      // post-commit block, through the same never-throw discipline.
+      const siteGuardRateJobs = [];
       // Librarian (envoy-librarian.mjs): every dispatched human ask
       // this poll hands out — allowed or refused — is collected here
       // and filed into the shared notebook after the transaction
@@ -711,6 +723,47 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             // Guard's refusal, written in its name with the stop
             // record in its metadata, marking the message answered
             // for that seat exactly as a spine refusal does.
+            // Helmian Site Guard (site-guard.mjs, bite A2): the
+            // intake rate limit. Every due message is observed
+            // once, per tenant and per sender, BEFORE the content
+            // screen: volume is the cheaper signal, and a sender
+            // already over the stop line does not reach the screen
+            // at all. A spine-refused ask never arrives here (it
+            // continued above), so refused asks do not count toward
+            // a sender's rate — the limit judges delivered intake,
+            // the same set the screen judges. The flag crossing is
+            // witnessed after commit and the turn proceeds exactly
+            // as before; the stop line is the rate stop: no work
+            // item is handed out, and each due seat's reply is the
+            // Site Guard's rate refusal, written in its name with
+            // the stop record in its metadata, marking the message
+            // answered for that seat exactly as the intake stop
+            // does. Any later message from the same sender is
+            // stopped the same way while its count stands over the
+            // line, and dispatched again once the window cools.
+            const rateVerdict = siteGuardRate.observe({
+              tenantId: actor.tenantId,
+              senderKey: siteGuardSenderKey({ authorSubject: message.authorSubject, authorKind: message.authorKind }),
+            });
+            if (rateVerdict.tripped) {
+              siteGuardRateJobs.push({ verdict: rateVerdict, tenantId: actor.tenantId, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind });
+            }
+            if (rateVerdict.stopped) {
+              const text = siteGuardRateRefusalText(rateVerdict);
+              for (const p of due) {
+                const { row: refusal, replayed } = await insertMessage(client, {
+                  tenantId: actor.tenantId,
+                  channelId: String(channel.id),
+                  subject: agentSubject(p, config.customAgents ?? []),
+                  kind: 'agent',
+                  body: text,
+                  key: `reply:${message.id}`,
+                  metadata: { guard: siteGuardRateStopRecord(rateVerdict) },
+                });
+                if (refusal && !replayed) refusalRows.push(refusal);
+              }
+              continue;
+            }
             const screening = screenIntakeContent(message.body);
             if (screening.classes.length) {
               siteGuardJobs.push({ screening, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind });
@@ -814,9 +867,10 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // cannot throw, so a findings-write failure is logged loudly and
       // changes nothing about the work handed out or the refusals
       // posted above. The Helmian Site Guard's screens from this poll
-      // (bite A1) are witnessed in the same block, through the same
-      // kind of wrapper, into the same feed.
-      if (findingJobs.length || siteGuardJobs.length) {
+      // (bite A1) and its rate trips (bite A2) are witnessed in the
+      // same block, through the same kind of wrapper, into the same
+      // feed.
+      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length) {
         const findings = guardStoreImpl ?? createGuardStore(pool);
         const evaluatedAt = new Date(now()).toISOString();
         for (const job of findingJobs) {
@@ -824,6 +878,9 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         }
         for (const job of siteGuardJobs) {
           await ingestSiteGuardFindings(findings, actor, job.screening, { ...job, at: evaluatedAt }, siteGuardLogImpl ? { log: siteGuardLogImpl } : {});
+        }
+        for (const job of siteGuardRateJobs) {
+          await ingestSiteGuardRateFinding(findings, actor, job.verdict, job, siteGuardLogImpl ? { log: siteGuardLogImpl } : {});
         }
       }
       // Librarian: file this poll's dispatched asks into the shared
