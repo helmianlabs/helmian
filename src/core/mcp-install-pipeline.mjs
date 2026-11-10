@@ -31,6 +31,7 @@ import {
   recordDecision,
   saveBaseline,
 } from './mcp-install-ledger.mjs';
+import { buildInstallLibraryReport } from './mcp-library-report.mjs';
 import { buildApprovalBriefing } from './mcp-approval.mjs';
 
 export const MANIFEST_FILENAME = 'helmion-candidate.json';
@@ -117,6 +118,7 @@ export async function runInstallPipeline({
     finalDecision: null,
     installedPath: null,
     configSnippet: null,
+    libraryReport: null,
   };
 
   const log = (decision, detail) => recordDecision({
@@ -226,12 +228,20 @@ export async function runInstallPipeline({
   report.configSnippet = configSnippet(name, installedPath);
   report.stages.baseline = baseline;
   report.finalDecision = 'installed';
+  // The ledger join (pipeline map G2): the installed server also
+  // produces its library-entry report — the facts the connector
+  // library's install-report road records on the other side of the
+  // two-machine line. Built only here, where finalDecision is
+  // 'installed': a server that was never installed has no report,
+  // exactly as it has no baseline.
+  report.libraryReport = buildInstallLibraryReport(report);
 
   await log('installed', {
     installedPath,
     fingerprint: fingerprint.fingerprint,
     permissionsHash: fingerprint.permissionsHash,
     approvalChallenge: approval.challenge,
+    libraryEntryId: report.libraryReport?.entryId ?? null,
     note: 'Global MCP config was NOT modified. The config snippet must be added by the human.',
   });
 

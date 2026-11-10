@@ -57,6 +57,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, relative, sep, extname } from 'node:path';
+// The tool-list half of the ledger join (pipeline map G2): the
+// arming-baseline drift check below must produce THE SAME hash the
+// connector library froze with, so it plans tool lists through the
+// library's own functions rather than a second implementation. This
+// is the first core→cloud import in the repo; connector-library.mjs
+// is side-effect-free at module level (its store is a factory over a
+// caller-supplied pool), and one shared hash function is the entire
+// point of the join — two implementations would drift from each
+// other in exactly the way this file exists to catch.
+import { planToolSnapshot, diffToolSnapshots } from '../cloud/connector-library.mjs';
+import { parseArmingBaselineExport, ARMING_BASELINE_FORMAT, ARMING_BASELINE_VERSION } from '../cloud/connector-arming-baseline.mjs';
 
 export const LEDGER_DECISIONS = Object.freeze([
   'discovered', 'flagged', 'sandboxed', 'approved', 'rejected', 'installed', 'drift-detected', 'blocked',
@@ -324,4 +335,67 @@ export async function readLedger({ ledgerDir }) {
   return text.split('\n').filter(Boolean).map((line) => {
     try { return JSON.parse(line); } catch { return null; }
   }).filter(Boolean);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE LEDGER JOIN — tool-list drift against a connector-library
+// ARMING BASELINE (pipeline map §3, gap G2, direction 2).
+//
+// The pipeline's own drift check above compares CODE fingerprints:
+// what was approved vs what is on disk now. A connector armed in the
+// plus menu has no local code — its governed fact is the frozen tool
+// list (connector_snapshots, first freeze = the arming baseline,
+// exported by the library's admin read as a `helmian-arming-baseline`
+// document). This is the local consumption of that export: a live
+// tools/list result — from a tools file, a probe, wherever the
+// caller honestly got one — is planned through the library's own
+// planToolSnapshot, so the hash compared is the hash the library
+// froze with, and the diff that names the drift is the library's own
+// diffToolSnapshots. One drift story, both tellings.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Load and validate an arming-baseline export file from disk. */
+export async function loadArmingBaselineExport(path) {
+  const text = await readFile(path, 'utf8');
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`arming baseline export at ${path} is not valid JSON (${error.message})`);
+  }
+  // Throws on a wrong format/version or a missing baseline.
+  parseArmingBaselineExport(doc);
+  return doc;
+}
+
+/**
+ * Compare a live tools/list result against an arming baseline
+ * export (the parsed document, or its baseline part). The verdict
+ * names the drift the same way the library's own re-arm reconcile
+ * does: added / removed / changed tools, by name, over the same
+ * snapshotHash.
+ */
+export function checkToolListAgainstArmingBaseline({ baseline, tools }) {
+  const parsed = parseArmingBaselineExport(
+    baseline && typeof baseline === 'object' && 'baseline' in baseline
+      ? baseline
+      : { format: ARMING_BASELINE_FORMAT, version: ARMING_BASELINE_VERSION, baseline },
+  );
+  const plan = planToolSnapshot(tools);
+  const diff = diffToolSnapshots(parsed.baselineTools, plan.tools);
+  const drifted = plan.snapshotHash !== parsed.baselineHash;
+  return {
+    status: drifted ? 'drift-detected' : 'unchanged',
+    drifted,
+    baselineHash: parsed.baselineHash,
+    currentHash: plan.snapshotHash,
+    baselineTakenAt: parsed.baselineTakenAt,
+    diff,
+    message: drifted
+      ? `The tool list differs from the arming baseline frozen at ${parsed.baselineTakenAt ?? 'an unrecorded time'}: `
+        + `${diff.added.length} added (${diff.added.join(', ') || 'none'}), `
+        + `${diff.removed.length} removed (${diff.removed.join(', ') || 'none'}), `
+        + `${diff.changed.length} changed (${diff.changed.join(', ') || 'none'}).`
+      : 'The tool list matches the arming baseline exactly.',
+  };
 }
