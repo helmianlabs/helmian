@@ -89,6 +89,12 @@ public partial class TeamChatPanel : UserControl
         {
             var link = await Client(EnvoyCloudChatClient.OriginFromEnvironment()).LinkAsync(LinkCodeBox.Text);
             _store.Save(link);
+            // The link is also the PC bridge's pairing: mirror the token
+            // into the bridge's file and start the bridge, so this
+            // computer connects (presence, profile sync, answers) from
+            // the one action the person actually took.
+            BridgeLinkFile.Save(link);
+            BridgeHost.EnsureStarted();
             _link = link;
             LinkCodeBox.Clear();
             ShowLinked(true);
@@ -397,6 +403,11 @@ public partial class TeamChatPanel : UserControl
     {
         _poll.Stop();
         _store.Clear();
+        // Every road that ends the link ends the bridge with it: stop the
+        // child and drop its token file, whatever brought us here
+        // (log out, manual unlink, or the cloud refusing the token).
+        BridgeHost.Stop();
+        BridgeLinkFile.Clear();
         _link = null; _channelId = null; _channelConfig = null;
         _lines.Clear();
         _customPills.Clear();

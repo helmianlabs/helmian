@@ -12,11 +12,16 @@
 // the /app "link desktop" button, exchanges it for a device token, and
 // stores the token in %APPDATA%/Helmian/pc-bridge-token.json (this PC only).
 // Headless (runner): set HELMION_BRIDGE_PAIRING_CODE instead of answering
-// the prompt; it is consumed once on exchange.
+// the prompt; it is consumed once on exchange. Supervised (the desktop app
+// or the bridge service, neither of which can answer a prompt): a component
+// that holds a fresh code writes it to pc-bridge-pairing-code.txt in the
+// same folder instead; the bridge reads it, exchanges it, and deletes it —
+// on success, and on a definitive refusal, so a dead code never loops a
+// supervisor's restart backoff forever.
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createInterface as createPromptInterface } from 'node:readline/promises';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -41,6 +46,7 @@ function defaultDeps() {
     pollMs: POLL_MS,
     bridgeDir: BRIDGE_DIR,
     tokenPath: join(BRIDGE_DIR, 'pc-bridge-token.json'),
+    pairingCodePath: join(BRIDGE_DIR, 'pc-bridge-pairing-code.txt'),
     cursorPath: join(BRIDGE_DIR, 'pc-bridge-cursor.json'),
     channelSlugs: process.env.HELMION_BRIDGE_CHANNEL_SLUGS || '*', // '*' = all channels, or comma-separated slugs
     provider: process.env.HELMION_BRIDGE_PROVIDER || 'claude',
@@ -102,15 +108,42 @@ async function loadToken(deps) {
   return null;
 }
 
+// The pairing-code file's contents, normalized like every other code
+// source, or null when no file (or no code in it) exists.
+async function readPairingCodeFile(deps) {
+  try {
+    const code = String(await readFile(deps.pairingCodePath, 'utf8')).trim().toUpperCase();
+    return code || null;
+  } catch { return null; }
+}
+
+// A code the cloud refused on its merits (expired, already used, malformed)
+// can never pair on a retry; a transport failure can. Only the first kind
+// spends the pairing-code file.
+function isDefinitiveCodeRefusal(err) {
+  return /DESKTOP_CODE_(EXPIRED|INVALID)/.test(String(err?.message ?? err));
+}
+
+async function clearPairingCodeFile(deps) {
+  try { await rm(deps.pairingCodePath, { force: true }); } catch { /* already gone */ }
+}
+
 async function pairWithCode(deps) {
   await mkdir(deps.bridgeDir, { recursive: true });
   let code;
+  let fromFile = false;
   if (deps.promptCode) {
     code = String(await deps.promptCode() ?? '').trim().toUpperCase();
   } else if (process.env.HELMION_BRIDGE_PAIRING_CODE) {
     // Headless provisioning (runner): one-shot code via env, consumed on
     // exchange; the persisted device token takes over afterwards.
     code = String(process.env.HELMION_BRIDGE_PAIRING_CODE).trim().toUpperCase();
+  } else if ((code = await readPairingCodeFile(deps)) !== null) {
+    // Supervised provisioning (the desktop app or the bridge service):
+    // the code arrived as a file because nothing here can answer a
+    // prompt. It is spent below — deleted on success or refusal — so it
+    // is never replayed by a restart.
+    fromFile = true;
   } else {
     const rl = createPromptInterface({ input: process.stdin, output: process.stdout });
     code = (await rl.question('Pairing code (tap the link button in /app Settings): ')).trim().toUpperCase();
@@ -120,11 +153,23 @@ async function pairWithCode(deps) {
     deps.logError('no pairing code provided. Get one from /app Settings, then run again.');
     return null;
   }
-  const exchanged = await api(deps, '/api/admin/desktop/link/exchange', { method: 'POST', body: { code } });
+  let exchanged;
+  try {
+    exchanged = await api(deps, '/api/admin/desktop/link/exchange', { method: 'POST', body: { code } });
+  } catch (err) {
+    if (fromFile && isDefinitiveCodeRefusal(err)) {
+      await clearPairingCodeFile(deps);
+      deps.logError('pairing failed: the code in the pairing file expired or was already used, so the file was removed. Link again from the Helmian app.');
+      return null;
+    }
+    throw err;
+  }
   if (!exchanged?.token) {
+    if (fromFile) await clearPairingCodeFile(deps);
     deps.logError('pairing failed: code expired or already used. Generate a fresh one and try again.');
     return null;
   }
+  if (fromFile) await clearPairingCodeFile(deps);
   const saved = { token: exchanged.token, tenantId: exchanged.tenantId };
   await writeFile(deps.tokenPath, JSON.stringify(saved, null, 2));
   deps.log('paired. Token saved to this PC only:', deps.tokenPath);
@@ -525,13 +570,7 @@ export async function runBridge(overrides = {}) {
       await sendAndWait(child, { cmd: 'reset' }, 'ready');
       const prepared = await expandAgentWorkBody(String(item.message?.body ?? ''));
       const message = prepared.body === String(item.message?.body ?? '') ? item.message : { ...item.message, body: prepared.body };
-      // The channel's custom-agent records ride the work item (envoy-mesh
-      // agentWork) and MUST reach the prompt composition: without them a
-      // custom agent is composed under the provider table — named for
-      // its engine/provider instead of its configured workspace
-      // identity (name, face, job), or as a bare 'Agent' when its handle
-      // is not a provider id at all.
-      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, customAgents: item.customAgents ?? [], notebook: item.notebook ?? null });
+      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, notebook: item.notebook ?? null });
       // The person's connector connections ride the work item when the
       // cloud supplies them ([{seatId, entryId, refreshTokenRef, state}]
       // — vault references only, never values) so the child's arming

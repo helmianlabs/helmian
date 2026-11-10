@@ -94,6 +94,9 @@ public partial class MainWindow
 
     private async Task LogOutAccountAsync()
     {
+        // The bridge stops first: log out ends this computer's connection,
+        // not just the chat pane's sign-in.
+        BridgeHost.Stop();
         var link = _accountLinkStore.Load();
         if (link is not null)
         {

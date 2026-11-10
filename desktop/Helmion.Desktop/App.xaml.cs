@@ -181,6 +181,10 @@ public partial class App : Application
         MainWindow = new MainWindow();
         MainWindow.Show();
         _ = PrestartLocalServiceAsync();
+        // A desktop left linked from an earlier run brings its PC bridge
+        // back with the app — no fresh link needed (BridgeHost no-ops
+        // when this computer is not linked).
+        BridgeHost.EnsureStarted();
     }
 
     private static async Task PrestartLocalServiceAsync()
@@ -214,6 +218,7 @@ public partial class App : Application
 
     protected override async void OnExit(ExitEventArgs e)
     {
+        BridgeHost.Stop();
         try
         {
             await LocalServiceHost.StopAsync();
