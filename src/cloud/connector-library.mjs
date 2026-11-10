@@ -755,8 +755,15 @@ export function createConnectorLibraryStore(pool) {
      * must exist in this seat's library, be available, and be
      * helmian-brokered — vendor-brokered entries take mirror records,
      * never token connections. The triple (person, seat, entry) is
-     * unique; a second create is refused (reconnect is
-     * updateConnectionTokens, not a silent overwrite).
+     * unique: a second create against a LIVE row is refused (the
+     * one-account rule guards a second live account, and a live
+     * row's refresh landing is updateConnectionTokens, not a silent
+     * overwrite). Against the person's OWN disconnected row, create
+     * is the reconnect: the row is revived in place with the fresh
+     * credential the new sign-in stored — same row, same posture,
+     * state connected again (§1.7's round trip). The row the check
+     * reads is matched on the caller's own key, so a revive can only
+     * ever land on the reconnecting person's own record.
      */
     async createConnection(tenantId, subject, input = {}) {
       requireSubject(subject);
@@ -782,7 +789,22 @@ export function createConnectorLibraryStore(pool) {
           }
           const refs = validateTokenRefs(input, entry, tenantId);
           const existing = await readConnection(client, key);
-          if (existing) throw conflict('this person already has a connection for this connector in this seat — v1 is one account per person per connector per seat');
+          if (existing && existing.state !== 'disconnected') throw conflict('this person already has a connection for this connector in this seat — v1 is one account per person per connector per seat');
+          if (existing) {
+            // The reconnect landing: the person's own disconnected
+            // row, revived in place with the fresh credential — the
+            // same update updateConnectionTokens performs (posture
+            // is the person's standing setting, not the credential's,
+            // so it is preserved, not reset).
+            const revived = await client.query(
+              `update helmion.connector_connections
+                 set access_token_ref = $4, refresh_token_ref = $5, account_identity = $6,
+                     granted_scopes = $7::jsonb, state = 'connected', updated_at = clock_timestamp()
+               where ${whereConnection} returning *`,
+              [key.personId, key.seatId, key.entryId, refs.accessTokenRef, refs.refreshTokenRef, accountIdentity, JSON.stringify(grantedScopes)],
+            );
+            return connectionOf(revived.rows[0]);
+          }
           const r = await client.query(
             `insert into helmion.connector_connections
                (tenant_id, person_id, seat_id, entry_id, account_identity,

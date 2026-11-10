@@ -571,6 +571,83 @@ test('disconnect revokes through the vault road hook and clears the references',
   assert.deepEqual(again.revokedRefs, []);
 });
 
+test('reconnect after disconnect revives the person’s own row in place — the round trip lands connected again', async () => {
+  const { store } = makeStore();
+  await store.createEntry(TENANT, SUBJECT, helmianEntry());
+  const first = await store.createConnection(TENANT, SUBJECT, connectInput());
+  // A posture the person chose survives the round trip: disconnect
+  // clears credentials, not the person's Guard setting.
+  await store.setPosture(TENANT, KEY, 'read', SUBJECT);
+  const { connection: down } = await store.disconnectConnection(TENANT, KEY, SUBJECT, { revoke: async () => {} });
+  assert.equal(down.state, 'disconnected');
+  assert.equal(down.accessTokenRef, null);
+  // The reconnect: the same create every connect road ends in (the
+  // OAuth callback included), carrying the fresh sign-in's identity
+  // and scopes.
+  const back = await store.createConnection(TENANT, SUBJECT, connectInput({
+    accountIdentity: 'troy.again@example.com',
+    grantedScopes: ['gmail.read'],
+  }));
+  assert.equal(back.state, 'connected');
+  assert.equal(back.id, first.id); // the same row, revived — never a second record
+  assert.equal(back.accountIdentity, 'troy.again@example.com');
+  assert.deepEqual(back.grantedScopes, ['gmail.read']);
+  assert.equal(back.accessTokenRef, first.accessTokenRef);
+  assert.equal(back.posture, 'read');
+  const mine = await store.listConnections(TENANT, { personId: PERSON, seatId: 'claude' });
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].state, 'connected');
+});
+
+test('a no-sign-in connection reconnects after disconnect — the Weather round trip', async () => {
+  const { store } = makeStore();
+  await store.createEntry(TENANT, SUBJECT, helmianEntry({ id: 'weather', authMode: 'none', mcpEndpointUrl: 'https://weather.example.com/mcp' }));
+  const key = { personId: PERSON, seatId: 'claude', entryId: 'weather' };
+  const first = await store.createConnection(TENANT, SUBJECT, { ...key, accountIdentity: 'No sign-in', grantedScopes: [] });
+  assert.equal(first.state, 'connected');
+  await store.disconnectConnection(TENANT, key, SUBJECT);
+  const back = await store.createConnection(TENANT, SUBJECT, { ...key, accountIdentity: 'No sign-in', grantedScopes: [] });
+  assert.equal(back.state, 'connected');
+  assert.equal(back.id, first.id);
+  assert.equal(back.accessTokenRef, null);
+  assert.equal(back.refreshTokenRef, null);
+});
+
+test('a live duplicate still refuses — needs-reconnect is not a disconnected row', async () => {
+  const { store } = makeStore();
+  await store.createEntry(TENANT, SUBJECT, helmianEntry());
+  await store.createConnection(TENANT, SUBJECT, connectInput());
+  await store.markNeedsReconnect(TENANT, KEY, SUBJECT);
+  await assert.rejects(
+    () => store.createConnection(TENANT, SUBJECT, connectInput()),
+    (e) => e.status === 409 && /already has a connection for this connector in this seat/.test(e.message),
+  );
+});
+
+test('a reconnect never reaches another person’s row', async () => {
+  const { store } = makeStore();
+  await store.createEntry(TENANT, SUBJECT, helmianEntry());
+  const mineFirst = await store.createConnection(TENANT, SUBJECT, connectInput());
+  await store.disconnectConnection(TENANT, KEY, SUBJECT);
+  // Another person connects the same connector in the same seat — their own row.
+  const theirs = await store.createConnection(TENANT, SUBJECT, connectInput({
+    personId: OTHER_PERSON,
+    accountIdentity: 'someone@example.com',
+    accessTokenRef: refFor(TENANT, 'claude', 'gmail', OTHER_PERSON, 'access'),
+    refreshTokenRef: refFor(TENANT, 'claude', 'gmail', OTHER_PERSON, 'refresh'),
+  }));
+  assert.notEqual(theirs.id, mineFirst.id);
+  // My reconnect revives MY row and leaves theirs untouched.
+  const mineBack = await store.createConnection(TENANT, SUBJECT, connectInput());
+  assert.equal(mineBack.id, mineFirst.id);
+  const theirsNow = await store.getConnection(TENANT, { personId: OTHER_PERSON, seatId: 'claude', entryId: 'gmail' });
+  assert.equal(theirsNow.id, theirs.id);
+  assert.equal(theirsNow.state, 'connected');
+  assert.equal(theirsNow.accountIdentity, 'someone@example.com');
+  assert.equal((await store.listConnections(TENANT, { personId: PERSON, seatId: 'claude' })).length, 1);
+  assert.equal((await store.listConnections(TENANT, { personId: OTHER_PERSON, seatId: 'claude' })).length, 1);
+});
+
 // ------------------------------------------------------------------- mirrors
 test('vendor-brokered entries take mirror records — never token connections', async () => {
   const { store } = makeStore();
