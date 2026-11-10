@@ -8,12 +8,14 @@
 // by the workspace from the seat id), its name, and its connected
 // count. Tapping a seat opens Level 2 — that seat's library, read from
 // GET /api/admin/connector-library (the Bite 2 read behind the Bite 3
-// route): connected connectors first, each with a toggle that arms
-// the connector for the CHANNEL until flipped off (the standing set,
-// Amendment 1 §2.3), then the rest of the catalog with its state
-// label. A back affordance returns to Level 1; closing the panel
-// leaves the composer text untouched (the workspace owns that —
-// this model never sees the draft).
+// route): connected connectors first, each carrying the connection
+// switch (the law is stated below), then the rest of the catalog
+// with its state label. The channel's standing armed set
+// (Amendment 1 §2.3) is tracked in the toggle store below and shown
+// as chips above the composer; it is a separate fact from the
+// card's switch. A back affordance returns to Level 1; closing the
+// panel leaves the composer text untouched (the workspace owns
+// that — this model never sees the draft).
 //
 // THE TOGGLE LAWS (§1.6, §3.4, and the Bite 3 gate — the standing
 // set per Amendment 1 §2.3, bite A2):
@@ -49,6 +51,21 @@
 //   check ran and failed — and it can never carry a toggle, which
 //   the read already enforces by capping its state; the model
 //   rules it again here so no read shape can arm an ungated row.
+// - THE CONNECTION SWITCH (owner order, 2026-11-10): the switch on
+//   the library card is the CONNECTION, not the channel's arming.
+//   The owner reads it that way, and he is right about how it
+//   reads: keyed off the armed set it painted OFF beside the words
+//   "Connected as …". So `connectionSwitch` stands on exactly the
+//   rows the Manage surface's Disconnect stands on — a Connected
+//   row on a pipe Helmian holds — plus a row the owner has turned
+//   off for everyone, and `connectionOn` is the connection state
+//   itself: true exactly when the row is connected, whatever the
+//   channel's armed set says. A flip of a connected card runs the
+//   disconnect (the workspace owns that call); the
+//   off-for-everyone card stands OFF with its reason as its state
+//   line, and turning it back on stays the owner's Manage act. The
+//   armed set (`on`) is untouched by any of this — it still feeds
+//   the chips and the wire; it no longer draws a switch.
 // - On the wire the armed set rides as message metadata
 //   (metadata.connectors, built by composer-picker.mjs's
 //   buildMessageRequest): each entry names its seat, and a seat's
@@ -283,6 +300,14 @@ function rowModel(row, state, conversationId) {
     && row.kind !== 'mcp-local'
     && (!gate || gate.passed);
   const reconnect = connectable && row.state === 'needs-reconnect';
+  // The connection switch (owner order, 2026-11-10 — the law is
+  // stated in the header): it stands on the rows Manage's
+  // Disconnect stands on (toggleable is exactly that test) and on
+  // an owner-disabled row, where it stands OFF with its reason on
+  // the card. Its position is the connection state alone
+  // (connectionOn), never the channel's armed set (`on` below).
+  const connectionSwitch = toggleable || (row.brokerMode === 'helmian' && row.state === 'disabled-by-owner');
+  const connectionOn = connectionSwitch && row.state === 'connected';
   return Object.freeze({
     entryId: row.entryId,
     seatId: row.seatId,
@@ -301,6 +326,8 @@ function rowModel(row, state, conversationId) {
     toggleable,
     connectable,
     reconnect,
+    connectionSwitch,
+    connectionOn,
     on: toggleable ? isConnectorOn(state, conversationId, row.seatId, row.entryId) : false,
     mirror,
     // Catalog starter actions (mirror-design §4, bite M2): the read

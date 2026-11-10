@@ -656,6 +656,53 @@ test('plus menu Level 2 — Grok, the owner’s screenshot shape: mirrors carry 
   assert.equal(findRow(model, 'helmian-github').kind, 'toggle', 'the connected brokered GitHub still toggles');
 });
 
+test('plus menu Level 2 — the card’s switch is the connection: on when connected, off only when off for everyone (owner order, 2026-11-10)', () => {
+  // The owner's screenshot, second time: GitHub and Weather read
+  // "Connected as …" with their switches OFF, because the switch
+  // drew the channel's armed set. The switch now draws the
+  // connection itself, and these values are its contract. The
+  // armed set (row.on) keeps its own meaning — the chips and the
+  // wire — and plays no part here.
+  const lib = library('grok', [
+    libRow('grok', 'helmian-github', 'GitHub', { state: 'connected', accountIdentity: 'helmianlabs/helmian' }),
+    libRow('grok', 'registry-weather', 'Weather', { state: 'connected', accountIdentity: 'No sign-in' }),
+    libRow('grok', 'registry-notion', 'Notion', { state: 'not-connected' }),
+    libRow('grok', 'registry-linear', 'Linear', { state: 'needs-reconnect' }),
+    libRow('grok', 'helmian-vercel', 'Vercel', { state: 'disabled-by-owner' }),
+    libRow('grok', 'gmail', 'Gmail', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'troy@example.com', kind: 'oauth-app' }),
+  ]);
+  // An unarmed channel: nothing in the toggle store at all — the
+  // state the owner's screenshot was taken in.
+  const model = plusMenuLevel2Model({ seatId: 'grok', library: lib, conversationId: 'c1' });
+  for (const id of ['helmian-github', 'registry-weather']) {
+    const row = findRow(model, id).row;
+    assert.equal(row.on, false, `${id}: nothing is armed in this channel`);
+    assert.equal(row.connectionSwitch, true, `${id}: a connected Helmian card carries the connection switch`);
+    assert.equal(row.connectionOn, true, `${id}: connected reads ON, armed or not`);
+  }
+  // An armed channel: arming moves row.on and nothing about the
+  // switch — the two facts no longer share a slot.
+  const armed = plusMenuLevel2Model({ seatId: 'grok', library: lib, toggles: toggleConnector({}, 'c1', 'grok', 'helmian-github'), conversationId: 'c1' });
+  assert.equal(findRow(armed, 'helmian-github').row.on, true, 'the armed set still tracks its own fact');
+  assert.equal(findRow(armed, 'helmian-github').row.connectionOn, true, 'and the switch is still simply the connection');
+  // Not connected and needs-reconnect carry no switch — the
+  // Connect action stands there instead (the earlier order).
+  for (const id of ['registry-notion', 'registry-linear']) {
+    assert.equal(findRow(model, id).row.connectionSwitch, false, `${id}: no switch where there is no connection to switch`);
+  }
+  // Off for everyone: the switch stands, OFF, with its reason as
+  // the state line — and the row still composes as a state row,
+  // not a Connect and not a toggle.
+  const off = findRow(model, 'helmian-vercel');
+  assert.equal(off.kind, 'row', 'an owner-disabled row still composes as a state row');
+  assert.equal(off.row.connectionSwitch, true, 'but it carries the connection switch');
+  assert.equal(off.row.connectionOn, false, 'standing OFF');
+  assert.equal(off.row.stateLabel, 'Turned off by your workspace owner', 'with its reason as the state line');
+  // A mirror never carries the switch: its connection lives in
+  // the seat's own product, not in Helmian.
+  assert.equal(findRow(model, 'gmail').row.connectionSwitch, false, 'a vendor mirror carries no connection switch');
+});
+
 test('plus menu face: the switch and its word share one source, and the panel Connect posts Manage’s road (owner report, 2026-11-10)', async () => {
   // The owner's second screenshot: GitHub read "Connected as
   // helmianlabs/helmian" while its switch rendered OFF — the
@@ -663,7 +710,25 @@ test('plus menu face: the switch and its word share one source, and the panel Co
   // switch drew the channel's armed state. Two sources, one slot.
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.ok(!js.includes("row.on ? 'On' : row.stateLabel"), 'the word beside the switch never borrows the connection’s state label');
-  assert.ok(js.includes("row.on ? 'On' : 'Off'"), 'the word beside the switch is the switch’s own state, in the switch’s own words');
+  // The pin below replaces the same morning's earlier one
+  // ("row.on ? 'On' : 'Off'") under the owner's second order of
+  // 2026-11-10: separating the words was not enough — the switch
+  // itself changed source, from the channel's armed set to the
+  // connection. A connected card now stands ON with the word
+  // "On" drawn from the connection state, and the row renderer
+  // no longer reads the armed set (row.on) at all; the flip runs
+  // the disconnect, not an arm.
+  assert.ok(!js.includes("row.on ? 'On' : 'Off'"), 'the word beside the switch no longer comes from the armed set');
+  assert.ok(js.includes("h('span', { class: 'ew-picker-state on' }, 'On')"), 'a connected card stands ON, word "On", from the connection');
+  const rowNode = js.slice(js.indexOf('function libraryRowNode'), js.indexOf('async function startPanelConnect'));
+  assert.ok(!rowNode.includes('toggleConnector'), 'the card’s flip no longer arms or disarms in the channel — the standing set’s store is not the switch any more');
+  assert.ok(!rowNode.includes('persistArmedConnectors'), 'the card’s flip never persists an armed set');
+  assert.ok(rowNode.includes('startPanelDisconnect'), 'the connected card’s flip runs the panel disconnect');
+  assert.ok(rowNode.includes('row.connectionSwitch'), 'the off-for-everyone card renders through the connection-switch branch, switch OFF with its reason line');
+  const flip = js.slice(js.indexOf('async function startPanelDisconnect'), js.indexOf('// The Level 2 model'));
+  assert.ok(flip.includes("'/api/admin/connector-library/disconnect'"), 'the flip posts the same disconnect route Manage’s Disconnect posts');
+  assert.ok(flip.includes('{ seatId: row.seatId, entryId: row.entryId }'), 'with the seat and the entry — the per-agent disconnect, no new road');
+  assert.ok(flip.includes('is disconnected and its stored sign-in was revoked.'), 'the custody words are Manage’s own, shared by both faces');
   assert.ok(js.includes('ew-lib-state'), 'the connection state stands as its own line in the row’s text block');
   assert.ok(js.includes('ew-lib-connect'), 'the Connect control renders as a real button on the row');
   assert.ok(js.includes("'/api/admin/connector-library/connect'"), 'the panel Connect posts the same connect-start the Manage panel uses');
