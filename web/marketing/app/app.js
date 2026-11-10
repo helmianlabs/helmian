@@ -247,6 +247,21 @@ function show(view) {
   const panelView = view === 'chats' ? 'console' : view;
   for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== panelView && !p.closest('#chat-panel');
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
+  if (view === 'integrations') {
+    // The Manage surface's box is persistent DOM holding the previous
+    // mount's rows, and the surface only re-mounts at the END of
+    // loadIntegrations (the loader invoked below) — so without this
+    // clear, the first paint of every Integrations landing is the
+    // remembered seat's list until the mount lands (live walk,
+    // 2026-11-09 ~18:19: arriving from ChatGPT's Manage row showed
+    // Claude's rows first). loadIntegrations carries a second,
+    // marker-conditioned paint for the Manage road; navigation is
+    // where the panel becomes visible, so the unconditional clear
+    // belongs here — the surface re-mounts and re-reads on every
+    // landing, and its old rows are never the right thing to show.
+    const mb = $('#connector-manage');
+    if (mb) mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'));
+  }
   $('#view-title').textContent = stripLeadingEmoji(viewTitles(state.emojiMode)[view]);
   if (view === 'desktop') syncWorkspaceViewTitle();
   // ADVANCED is never forced by navigation: it offers itself once when a

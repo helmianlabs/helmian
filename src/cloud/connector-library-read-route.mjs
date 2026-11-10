@@ -223,10 +223,24 @@ export async function handleConnectorLibraryRoute({
     }
     const library = read ?? productionRead();
     if (isSeats) {
-      // One read per catalog seat; a seat with no entries in this
-      // tenant has no library to pick, so it is not a Level 1 row.
+      // Level 1 is counts only, and the read assembles them in one
+      // pass (readSeatCounts, connector-library-read.mjs): the
+      // listings and the tenant-level joins are made once for the
+      // whole tenant, not once per seat. A seat with no entries in
+      // this tenant has no library to pick, so it is not a row.
       // The first read on an unseeded tenant runs the one seed; its
       // outcome (at most one attempt happens) is surfaced once here.
+      if (typeof library.readSeatCounts === 'function') {
+        const result = await library.readSeatCounts(actor.tenantId, { personId, actor });
+        send(response, 200, JSON.stringify({
+          valid: true,
+          seats: result.seats,
+          ...(result.seed?.attempted ? { seed: result.seed } : {}),
+        }));
+        return true;
+      }
+      // Read objects without the counts read (older wirings, test
+      // fakes) keep the original per-seat assembly.
       const seats = [];
       let seed = null;
       for (const seatId of LIVE_SEATS) {

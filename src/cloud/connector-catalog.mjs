@@ -372,6 +372,43 @@ export function catalogStarterActions(seatId, entryId) {
 // disagrees with a stored entry's brokerMode is a data bug a human
 // must look at, and the stored entry keeps its original mode.
 
+// The delta test for one definition against its stored row: does
+// the refresh have anything to write? The comparison covers exactly
+// the fields createEntry's update writes (name through
+// workspaceProvisioned) plus brokerMode — brokerMode is not written
+// by an update, it is the guard: a stored row whose brokerMode
+// disagrees must still be ATTEMPTED, so createEntry's 409 surfaces
+// the conflict instead of the delta test quietly skipping a data
+// bug. Kind is deliberately NOT compared (except custom, below):
+// an update never rewrites kind either, so a kind drift on a
+// non-custom row is not something a refresh can fix — attempting
+// it every pass would only re-pay a no-op write. A stored CUSTOM
+// row is never "matching": createEntry rules customs by refusal,
+// and that refusal (409 → conflict) is the human-visible outcome.
+function definitionMatchesStored(definition, stored) {
+  if (!stored) return false;
+  if (stored.kind === 'custom' || definition.kind === 'custom') return false;
+  const sameRef = (a, b) => {
+    const x = a ?? null;
+    const y = b ?? null;
+    if (x === null || y === null) return x === y;
+    return x.ref === y.ref && x.manageUrl === y.manageUrl;
+  };
+  return stored.name === definition.name
+    && stored.oneLiner === definition.oneLiner
+    && (stored.iconRef ?? null) === (definition.iconRef ?? null)
+    && stored.vendorName === definition.vendorName
+    && stored.trustLabel === definition.trustLabel
+    && (stored.category ?? null) === (definition.category ?? null)
+    && stored.brokerMode === definition.brokerMode
+    && (stored.mcpEndpointUrl ?? null) === (definition.mcpEndpointUrl ?? null)
+    && sameRef(stored.vendorConnectorRef, definition.vendorConnectorRef)
+    && stored.authMode === definition.authMode
+    && (stored.clientIdentity ?? null) === (definition.clientIdentity ?? null)
+    && (stored.scopesSummary ?? null) === (definition.scopesSummary ?? null)
+    && (stored.workspaceProvisioned === true) === (definition.workspaceProvisioned === true);
+}
+
 export function createCatalogRefresh({ libraryStore, subject } = {}) {
   if (!libraryStore || typeof libraryStore.createEntry !== 'function') {
     throw Object.assign(new Error('createCatalogRefresh needs the connector library store'), { status: 500 });
@@ -382,12 +419,28 @@ export function createCatalogRefresh({ libraryStore, subject } = {}) {
 
   async function refreshSeat(tenantId, seatId) {
     const applied = [];
+    const unchanged = [];
     const conflicts = [];
+    // The refresh is a DELTA, not a sweep (2026-11-09 perf bite):
+    // it lists the seat's stored entries once and writes only the
+    // definitions that are missing or whose writable fields differ.
+    // The old shape called createEntry for every definition — each
+    // call its own transaction — so a catalog addition cost a full
+    // 75-entry rewrite on the read that noticed it (~20s live), 54
+    // of the 75 writes re-writing identical rows. Stores without a
+    // list read (minimal fakes) keep the old write-everything path.
+    const storedById = typeof libraryStore.listEntries === 'function'
+      ? new Map((await libraryStore.listEntries(tenantId, seatId)).map((entry) => [entry.id, entry]))
+      : null;
     for (const definition of catalogEntriesForSeat(seatId)) {
       if (definition.kind === 'custom') {
         // Catalog data never provisions custom entries (§3.3: customs
         // are added by a person, per seat). Defensive — none exist.
         conflicts.push({ seatId, entryId: definition.id, message: 'catalog data may not carry custom entries' });
+        continue;
+      }
+      if (storedById && definitionMatchesStored(definition, storedById.get(definition.id))) {
+        unchanged.push(definition.id);
         continue;
       }
       try {
@@ -401,7 +454,7 @@ export function createCatalogRefresh({ libraryStore, subject } = {}) {
         throw error;
       }
     }
-    return { seatId, applied, conflicts };
+    return { seatId, applied, unchanged, conflicts };
   }
 
   async function refreshAll(tenantId) {
