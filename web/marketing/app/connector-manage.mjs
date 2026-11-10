@@ -37,7 +37,7 @@
 // Pure model first (rowControls), then the DOM renderer — the model
 // is unit-tested like connector-panel.mjs's.
 
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=c967c3b4e6c767e5';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=6da01986518daab8';
 
 export const MANAGE_SEAT_STORAGE_KEY = 'helmian.manageSeat';
 // The Manage road's landing intent (addition, 2026-11-09): taking
