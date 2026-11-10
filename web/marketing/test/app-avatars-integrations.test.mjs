@@ -108,7 +108,9 @@ test('integrations: connected cards carry the plain change button; not-connected
   // Cloudflare's button names both of its pieces.
   assert.deepEqual(on.cloudflare.changeApiKey, { provider: 'cloudflare', fields: ['account_id', 'api_token'], label: 'New account number and API key' });
   assert.equal(on.cloudflare.changeConnect, null);
-  // Runway keeps its existing card exactly — no change road.
+  // Runway is not connected in this fixture, so it carries no change
+  // road here either — the not-connected rule below covers it; its
+  // connected change road is pinned in app-connection-truth (P2).
   assert.equal(on.runway.changeConnect, null);
   assert.equal(on.runway.changeApiKey, null);
   const off = Object.fromEntries(integrationSections({}).find((s) => s.id === 'ai').cards.map((c) => [c.key, c]));

@@ -734,7 +734,14 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .int-tile { width:24px; height:24px; box-sizing:border-box; border-radius:50%; background:var(--ava); border:2px solid #141a22; color:#0d1117; display:grid; place-items:center; font-size:12px; font-weight:800; line-height:1; }
 .int-icon .ew-discord-mark, .int-icon .ew-gh-mark, .int-icon .ew-slack-mark { width:16px; height:16px; }
 .int-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; justify-content:center; }
-.int-line1 { display:flex; align-items:center; gap:8px; min-width:0; }
+/* The name line wraps (P2 fix, 2026-11-09): the name and the state
+   shared one no-wrap row, and at the grid's narrow card width the
+   state ("• Not connected", a flex:none block) won the whole line
+   and the name ellipsised to a single letter ("C…"). Wrapping lets
+   the state drop to its own line when the two cannot share one, so
+   the seat name always renders in full; the ellipsis on .int-name
+   remains only as the last resort for a name longer than the card. */
+.int-line1 { display:flex; align-items:center; gap:8px; min-width:0; flex-wrap:wrap; row-gap:2px; }
 .int-name { font-weight:700; font-size:14px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 /* State is a dot and the model's own words — the pill is retired.
    The dot carries the colour the pill's border used to carry. */

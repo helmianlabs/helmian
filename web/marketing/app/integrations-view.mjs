@@ -1,16 +1,18 @@
 // Integrations page: small cards, plain words. Nothing internal is shown here:
 // no setting names, ids, addresses of services, or keys. The model is pure (tested);
 // renderIntegrations draws it.
-import { integrationsModel, usageModel } from './app-model.mjs?v=46451699583636ae';
-import { avatarFor } from './avatars.mjs?v=46451699583636ae';
+import { integrationsModel, usageModel } from './app-model.mjs?v=532eef9e5fbe752f';
+import { avatarFor } from './avatars.mjs?v=532eef9e5fbe752f';
 
 export const PHONE_URL = 'https://helmian.cloud/app';
-// The five AI providers of the owner's one connect road (2026-11-01):
+// The AI providers of the owner's one connect road (2026-11-01):
 // when not connected their cards carry the ConnectFields component
 // (connect-fields.mjs) — an email field and a password field — instead
-// of any link out or help act. Runway is not one of the five and keeps
-// its existing card exactly.
-const CONNECT_FIELD_PROVIDERS = new Set(['claude', 'openai', 'gemini', 'grok', 'mistral']);
+// of any link out or help act. Runway joins the set (P2 fix,
+// 2026-11-09): the credential-connect route has always accepted
+// runway, so its card was a dead end for no product reason — it now
+// carries the same fields as the other sign-in seats.
+const CONNECT_FIELD_PROVIDERS = new Set(['claude', 'openai', 'gemini', 'grok', 'mistral', 'runway']);
 // The provider-catalog seats (src/cloud/provider-registry.mjs) connect
 // a different way: with a key the person pastes on the card
 // (api-key-fields.mjs), stored under the seat's own name. The field
@@ -28,14 +30,15 @@ const API_KEY_CONNECT_FIELDS = Object.freeze({
 // the same lists the truth model matches on (app-model.mjs
 // PROVIDER_SOURCE_NAMES, connections side). Used only to find the
 // seat's own rows in the raw connections read for the account line
-// below; Runway has no registry row and never matches.
+// below; Runway's row arrived with the P2 fix (2026-11-09), so it
+// matches under its own name like the other sign-in seats.
 const ACCOUNT_ROW_NAMES = Object.freeze({
   claude: ['anthropic', 'claude'],
   openai: ['openai'],
   gemini: ['google', 'gemini'],
   grok: ['xai', 'grok'],
   mistral: ['mistral'],
-  runway: [],
+  runway: ['runway'],
   groq: ['groq'],
   nvidia: ['nvidia'],
   cloudflare: ['cloudflare'],
@@ -57,9 +60,9 @@ export function integrationSections({ presence = null, connectors = {}, provider
   // Rows carrying a last-answered stamp (written by the reply path when
   // an agent posts a reply back): this provider has answered through
   // its road before, so its card reads "Answered" — the registry rows
-  // carry the same state via the truth model; this set covers the
-  // provider with no registry row of its own (Runway; Mistral's row
-  // was added 2026-11-06).
+  // carry the same state via the truth model; this set covers a
+  // provider whose truth row has not answered (Mistral's row was
+  // added 2026-11-06, Runway's with the P2 fix, 2026-11-09).
   const answered = new Set((Array.isArray(presence) ? presence : []).filter((p) => p?.lastAnsweredAt ?? p?.last_answered_at).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; }));
   const truth = new Map(integrationsModel(connectors, providers, { toolConnections, presence, now }).map((i) => [i.key, i]));
   const ai = [
@@ -77,9 +80,10 @@ export function integrationSections({ presence = null, connectors = {}, provider
   ].map(([key, cloudKey, name, blurb]) => {
     const row = truth.get(cloudKey);
     const connected = row?.connected === true;
-    // Runway has no registry row of its own, so it gets the same truth
-    // from the raw feeds: a presence stamp earns "Synced", and
-    // "Not connected" waits for the connections read, like everywhere.
+    // Every seat in this list now has a truth row; the raw-feed
+    // fallback below stays for the day a row does not answer: a
+    // presence stamp earns "Synced", and "Not connected" waits for
+    // the connections read, like everywhere.
     const fallbackText = answered.has(key)
       ? 'Answered'
       : stamped.has(key)
