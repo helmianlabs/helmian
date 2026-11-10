@@ -46,10 +46,24 @@
 // failures (the store or the credential service throwing) propagate
 // to the caller, whose discipline is the skills road's: no arming
 // field on the work item at all, dispatch unchanged.
+//
+// CUSTOM ENTRIES PASS A GATE FIRST (pipeline map G1,
+// connector-custom-gate.mjs): an entry a person added carries no
+// catalog provenance, so before any connection or token is read the
+// pair must show the gate's verified receipt — a null-credential
+// probe recorded in the tool-connections store. No receipt (or a
+// failed one) is a 'not-gated' record; the token road is never
+// walked for an ungated entry. And the backstop above does NOT
+// apply to custom entries: their snapshot must be the one frozen
+// from the gate probe's own list at connect time — freezing
+// whatever the server lists at arm time was the hole's second half.
+// A gated custom entry with no snapshot is a 'freeze-failed' record.
 
 import { createConnectorLibraryStore } from './connector-library.mjs';
 import { createCredentialConnectClient } from './credential-connect.mjs';
 import { createMcpPromptsClient } from './connector-mcp-prompts.mjs';
+import { createToolConnectionsStore } from './tool-connections.mjs';
+import { classifyCustomGate, customGateKey } from './connector-custom-gate.mjs';
 
 // sanitizeArmedConnectors caps the stored set at MAX_MESSAGE_CONNECTORS
 // (envoy-agents.mjs); the resolved set keeps the same ceiling.
@@ -115,7 +129,7 @@ function operatorProviderKeyFor(entry) {
  * Resolve ONE armed pair into its arming record. Domain outcomes
  * are records (see the header); store/credential throws propagate.
  */
-export async function resolveArmingRecord({ store, credentials = null, listTools, operatorTokens = {}, tenantId, personId, seatId, entryId }) {
+export async function resolveArmingRecord({ store, credentials = null, listTools, operatorTokens = {}, toolConnections = null, tenantId, personId, seatId, entryId }) {
   const base = { seatId, entryId };
   const key = { personId, seatId, entryId };
   const entry = await store.getEntry(tenantId, seatId, entryId);
@@ -128,6 +142,20 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
   }
   if (entry.brokerMode !== 'helmian' || !entry.mcpEndpointUrl) {
     return { ...base, ...facts, state: 'vendor-brokered', reason: 'vendor-brokered', detail: `it is brokered by ${entry.vendorName}, not by Helmian` };
+  }
+  // The custom-entry gate (see the header): the verified receipt is
+  // demanded BEFORE the connection or any token is read — an
+  // ungated entry's credential is never resolved for a turn. A
+  // missing gate store fails closed the same way: the gate cannot
+  // be proven, so the entry cannot arm.
+  if (entry.kind === 'custom') {
+    const gateRow = toolConnections && typeof toolConnections.get === 'function'
+      ? await toolConnections.get(tenantId, customGateKey(seatId, entryId))
+      : null;
+    const gate = classifyCustomGate(gateRow);
+    if (!gate.passed) {
+      return { ...base, ...facts, state: 'not-gated', reason: gate.reason, detail: gate.detail };
+    }
   }
   const connection = await store.getConnection(tenantId, key);
   if (!connection) {
@@ -159,9 +187,15 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
   }
 
   // The frozen set the turn may run from — or the first-arm
-  // backstop that takes it (§4.1(2)).
+  // backstop that takes it (§4.1(2)). Custom entries are the one
+  // exception to the backstop: their frozen set must be the gate
+  // probe's list, frozen at connect time — a missing one is a
+  // freeze-failed record, never a fresh list taken at arm time.
   let snapshot = await store.getCurrentSnapshot(tenantId, key);
   let settled = connection;
+  if (!snapshot && entry.kind === 'custom') {
+    return { ...base, ...facts, state: 'freeze-failed', reason: 'freeze-failed', detail: 'it passed its safety check but has no frozen tool list from that check yet, so this turn cannot run its tools' };
+  }
   if (!snapshot) {
     if (!accessToken && entry.authMode !== 'none') {
       return { ...base, ...facts, state: 'freeze-failed', reason: 'freeze-failed', detail: 'it has no frozen tool list yet, and no sign-in could be resolved to take one' };
@@ -200,9 +234,12 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
  * credential-connect client from the environment, the prompts wire
  * client's listTools, and the operator token from the environment.
  */
-export async function resolveDispatchArming({ pool, tenantId, personId, pairs, store = null, credentials = undefined, listTools = null, operatorTokens = null } = {}) {
+export async function resolveDispatchArming({ pool, tenantId, personId, pairs, store = null, credentials = undefined, listTools = null, operatorTokens = null, toolConnections = undefined } = {}) {
   const libraryStore = store ?? createConnectorLibraryStore(pool);
   const credentialClient = credentials !== undefined ? credentials : createCredentialConnectClient();
+  // The custom-entry gate's store: the same pool the library reads
+  // from. Consulted only for custom entries (see resolveArmingRecord).
+  const gateStore = toolConnections !== undefined ? toolConnections : (pool ? createToolConnectionsStore(pool) : null);
   const wire = createMcpPromptsClient({});
   const lister = listTools ?? (({ endpoint, accessToken }) => wire.listTools({ endpoint, accessToken }));
   const operators = operatorTokens ?? { github: String(process.env.GITHUB_TOKEN ?? '').trim() || null };
@@ -213,6 +250,7 @@ export async function resolveDispatchArming({ pool, tenantId, personId, pairs, s
       credentials: credentialClient,
       listTools: lister,
       operatorTokens: operators,
+      toolConnections: gateStore,
       tenantId,
       personId,
       seatId: pair.seatId,
