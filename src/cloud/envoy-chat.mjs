@@ -268,10 +268,26 @@ export function createEnvoyStore(pool) {
       // so the answer lands on the sender's own post-send reload
       // and on every client's next poll, like any stored reply.
       if (!out.receipt.replayed && message.authorKind === 'human') {
+        // Helm's setup guide first (helm-kb.mjs): a setup question
+        // is answered by Maestro from the guide — word for word,
+        // one step at a time — on any desk, with zero seats
+        // connected or a full crew, and an unanswered question on
+        // an empty desk is filed to the guide's miss queue there.
+        // Only a message the guide leaves unanswered falls through
+        // to the empty-desk answer below, so a fresh send gets at
+        // most one Maestro message and the two never fight.
+        let kbAnswer = null;
         try {
-          await postEmptyDeskAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id });
+          kbAnswer = await postHelmKbAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, body: message.body });
         } catch (error) {
-          console.error('[envoy-chat] empty-desk answer failed:', error.message);
+          console.error('[envoy-chat] helm kb answer failed:', error.message);
+        }
+        if (!kbAnswer?.answered) {
+          try {
+            await postEmptyDeskAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id });
+          } catch (error) {
+            console.error('[envoy-chat] empty-desk answer failed:', error.message);
+          }
         }
       }
       return out;
@@ -289,6 +305,7 @@ import { appendAuditEvent } from './audit-event-repository.mjs';
 import { tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { CONFIG_SUBJECT, describeAuthor, normalizeMessageMetadata, parseConfig } from './envoy-agents.mjs';
 import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
+import { postHelmKbAnswerIfNeeded } from './helm-kb.mjs';
 
 // The channels list carries each channel's Discord / Slack link (from
 // its newest config row, the same rows the bridges read) plus the bot

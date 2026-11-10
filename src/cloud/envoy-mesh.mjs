@@ -635,6 +635,13 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             // so a refusal can never route, join a debate, or be
             // re-evaluated as an ask.
             if (message.guard) continue;
+      // A setup question Maestro answered from the guide
+      // (helm-kb.mjs) is never work for a seat: the ask was
+      // answered, word for word, and handing it on would make a
+      // crew member answer setup the product already answered.
+      // The mark is the human message's metadata.helmKb, set by
+      // the answer hook when it posted.
+      if (message.authorKind === 'human' && message.metadata?.helmKb) continue;
             const at = new Date(row.created_at).getTime();
             // Maestro always-on (Troy's ruling, 2026-11-09): desk-style
             // dispatch is how EVERY channel routes now — an unnamed

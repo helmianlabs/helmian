@@ -1,0 +1,1296 @@
+{
+ "about": "Helm's setup knowledge base. Product-owned help content, identical for every workspace. Entry shape adapts the librarian Rule shape (helmion librarian, sql/076): id, layer, priority, when{anyWords, allWords, noneWords} matched with the librarian matcher (whole word or phrase, case-insensitive, plural tolerant). The answer block is the payload: one spoken step, the exact on-screen label, where it sits, and the next entry in the chain. See KB-SPEC.md.",
+ "kb": "helm-setup",
+ "version": 1,
+ "shipped": "Product data for Helm's setup knowledge base, generated from the V1 kb.json by the wiring bite (2026-11-09). Only grounded entries ship. Deltas from V1: what-can-helm-do's web-search clause trimmed (Helm H2 not landed, per COVERAGE.md); empty-desk reworded to polish P1's landed Maestro answer; two speak tails trimmed where the hand-back line (answer.then) already says the same words.",
+ "entries": [
+  {
+   "answer": {
+    "label": "Turn on Maestro",
+    "next": "empty-desk",
+    "speak": "Welcome. Start with one thing. Look for the card that says Meet Maestro, and press the button on it that says Turn on Maestro.",
+    "then": "Tell me when it is done, and I will give you the next step.",
+    "where": "On the Meet Maestro card, the first screen a new workspace shows."
+   },
+   "category": "first-run",
+   "id": "start-what-now",
+   "layer": "content",
+   "priority": 320,
+   "questions": [
+    "what do I do now",
+    "okay what next",
+    "where do I start",
+    "I just signed up, what do I do",
+    "help me get started"
+   ],
+   "source": "Fresh-signup walk 2026-11-09 (~/workspace/helmian-room-build/fresh-walk/REPORT.md): Meet Maestro modal, Turn on Maestro button. Markup: web/marketing/app/index.html #maestro-activation.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "what do i do now",
+     "what do i do",
+     "what next",
+     "okay what next",
+     "where do i start",
+     "just signed up",
+     "get started",
+     "i am new"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": "start-what-now",
+    "speak": "The code is in your email. Open the inbox for the address you signed up with, and find the message from Helmian. Type the code from it into the box on the sign up screen.",
+    "then": "Tell me when you are in, and I will give you the next step.",
+    "where": "The code box on the sign up screen."
+   },
+   "category": "first-run",
+   "id": "signup-email-code",
+   "layer": "content",
+   "priority": 360,
+   "questions": [
+    "where is my code",
+    "the code did not come",
+    "it is asking for a code, what code",
+    "where do I find the verification code"
+   ],
+   "source": "Fresh-signup walk 2026-11-09: sign up verified by an emailed code. Clerk inspection 2026-11-09: Verify at sign-up ON, method Email verification code.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "where is my code",
+     "code did not come",
+     "what code",
+     "verification code",
+     "code in my email"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Turn on Maestro",
+    "next": "empty-desk",
+    "speak": "Maestro carries your words to the AIs you connect, and brings their answers back. Press Turn on Maestro on the Meet Maestro card. That one click also turns on the Executive Guard and the shared memory.",
+    "then": "Tell me when it is on, and I will give you the next step.",
+    "where": "On the Meet Maestro card."
+   },
+   "category": "first-run",
+   "id": "turn-on-maestro",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "what is Maestro",
+    "what does Turn on Maestro do",
+    "who is Maestro"
+   ],
+   "source": "Meet Maestro card copy, web/marketing/app/index.html #maestro-activation (Maestro in the middle; the click turns on the Executive Guard, the librarian, the rule base).",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "what is maestro",
+     "what does turn on maestro do",
+     "who is maestro"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": "connect-first-ai-1",
+    "speak": "That was me answering you, and it means no AI is connected yet, so your messages have nobody to go to. The fix is a short walk to connect one, and I can take you through it.",
+    "then": "Say ready, and I will give you the first step.",
+    "where": null
+   },
+   "category": "first-run",
+   "id": "empty-desk",
+   "layer": "content",
+   "priority": 380,
+   "questions": [
+    "nobody answered me",
+    "why is it silent",
+    "it says no agents on the desk",
+    "I sent a message and nothing happened"
+   ],
+   "source": "Fresh-signup walk finding 1 (first message met silence), as fixed by polish P1 (main 26bac2ec): the workspace now answers in the channel as Maestro with the connect fix; this entry answers the follow-up question about that answer.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "nobody answered",
+     "why is it silent",
+     "no agents on the desk",
+     "nothing happened",
+     "no one answered",
+     "it did not answer"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Agents",
+    "next": "connect-first-ai-2",
+    "speak": "Open the Integrations page, then press the Agents tab at the top of it. You will see the list of AIs, each one on its own card.",
+    "then": "Tell me when you see the list, and I will give you the next step.",
+    "where": "Tab at the top of the Integrations page."
+   },
+   "category": "connect",
+   "id": "connect-first-ai-1",
+   "layer": "content",
+   "priority": 350,
+   "questions": [
+    "how do I connect an AI",
+    "connect my first AI",
+    "how do I add Claude",
+    "how do I connect something"
+   ],
+   "source": "Fresh-signup walk: Integrations page loads with an Agents tab listing the seats. Integrations redesign record: agents live on the Agents tab of the Integrations page.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "connect an ai",
+     "connect my first ai",
+     "how do i connect",
+     "add an ai",
+     "connect claude"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Connect",
+    "next": "connect-first-ai-3",
+    "speak": "Find the card for the AI you already have an account with, and press Connect on that card. Each card asks in its own way, and I will walk you through the form it shows.",
+    "then": "Tell me what the card shows, and I will give you the next step.",
+    "where": "On the AI's own card, on the Agents tab."
+   },
+   "category": "connect",
+   "id": "connect-first-ai-2",
+   "layer": "content",
+   "priority": 330,
+   "questions": [
+    "I see the list, what now",
+    "which card do I press",
+    "I found the card"
+   ],
+   "source": "Fresh-signup walk: every seat card carries a Connect button (Runway excepted, see runway-no-connect); Claude's Connect expands its own form.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "which card",
+     "i see the list",
+     "found the card"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "When the card stops saying Not connected, you are done. Go back to your channel and send that AI a message by name, like this: Claude, say hello. Tell me what it answers.",
+    "then": null,
+    "where": "Your channel, in the message box."
+   },
+   "category": "connect",
+   "id": "connect-first-ai-3",
+   "layer": "content",
+   "note": "The card's exact wording after a successful connect was never exercised in the walk (no real AI credentials were entered). The spoken step leans on the disappearance of 'Not connected', the one state change the walk proves. Grounding road: the first guided connect at the wiring bite's live pass.",
+   "priority": 310,
+   "questions": [
+    "it connected, what now",
+    "how do I talk to it",
+    "how do I know it is connected"
+   ],
+   "source": "Fresh-signup walk: cards read 'Not connected' before connecting. Helm design section 3: a named seat answers when the message names it.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "it connected",
+     "connected now",
+     "how do i talk to it",
+     "is it connected"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": "connect-first-ai-3",
+    "speak": "That form wants the email and password for your own Claude account. Fill both in and send the form. Your sign in stays inside Helmian, on this page.",
+    "then": "Tell me when the form is sent, and I will give you the next step.",
+    "where": "Inside the Claude card, on the Agents tab."
+   },
+   "category": "connect",
+   "id": "connect-claude-form",
+   "layer": "content",
+   "note": "The form's submit button label was not recorded in the walk, so the spoken step says 'send the form' and names no button. Grounding road: read the served card markup at the wiring bite.",
+   "priority": 360,
+   "questions": [
+    "it wants an email and password",
+    "Claude is asking for my password, is that right",
+    "what do I put in this form"
+   ],
+   "source": "Fresh-signup walk: Claude's Connect expands an inline Email and Password form (walk stopped there; no credentials entered).",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "wants an email and password",
+     "email and password form",
+     "claude form",
+     "asking for my password"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Connect",
+    "next": "connect-first-ai-3",
+    "speak": "Some AIs connect with a key instead of a password. The key comes from that AI's own website, in its settings. Copy it there, paste it into the card here, and press Connect.",
+    "then": "Tell me when it is pasted in, and I will give you the next step.",
+    "where": "On the AI's own card, on the Agents tab."
+   },
+   "category": "connect",
+   "id": "connect-key-shape",
+   "layer": "content",
+   "note": "Grounded at the generic shape only. Each AI's own key page (where in its settings the key lives) is per-vendor and not yet walked; per-seat key entries wait on those walks.",
+   "priority": 350,
+   "questions": [
+    "it wants a key, where do I get it",
+    "what is an API key",
+    "it says connect with a key"
+   ],
+   "source": "Integrations record: seat cards offer 'Connect with a key'. Helm design section 4.2: API-key seats connect by the person's own key, pasted into the Integrations page.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "wants a key",
+     "where do i get the key",
+     "api key",
+     "connect with a key",
+     "paste a key"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "You are right. The Runway card has no Connect button yet, so there is nothing to press. Pick any other AI for now. Runway gets its button in a later fix.",
+    "then": null,
+    "where": "The Runway card, on the Agents tab."
+   },
+   "category": "connect",
+   "id": "runway-no-connect",
+   "layer": "content",
+   "priority": 370,
+   "questions": [
+    "Runway has no button",
+    "I cannot connect Runway",
+    "why does Runway have no Connect button"
+   ],
+   "retireWhen": "P2 (surface warts bite) gives the Runway card its Connect road. Retire this entry when that lands and replace it with Runway's connect chain.",
+   "source": "Fresh-signup walk finding 5: Runway is the one seat card with no Connect button.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "runway has no button",
+     "cannot connect runway",
+     "no connect button",
+     "runway card"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Connectors",
+    "next": null,
+    "speak": "The Agents tab is the AIs themselves, the ones you talk to. The Connectors tab is the services those AIs can use, like GitHub or Notion. Connect the AI first. Connectors come after.",
+    "then": null,
+    "where": "Tab at the top of the Integrations page, beside Agents."
+   },
+   "category": "connectors",
+   "id": "agents-vs-connectors",
+   "layer": "content",
+   "priority": 360,
+   "questions": [
+    "what is the difference between agents and connectors",
+    "do I want the Agents tab or the Connectors tab",
+    "what is a connector"
+   ],
+   "source": "Fresh-signup walk: Integrations inventory (Agents tab lists the 11 seats; Connectors tab lists the services). Connectors inventory and road plan, 2026-11-09.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "difference between agents and connectors",
+     "agents tab or connectors tab",
+     "what is a connector",
+     "agents or connectors"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Connectors",
+    "next": null,
+    "speak": "Some rows live on the AI's own side. Connecting Gmail or Slack inside Claude's own product does not connect them here. Only the rows on this Connectors tab connect to Helmian.",
+    "then": null,
+    "where": "Tab at the top of the Integrations page."
+   },
+   "category": "connectors",
+   "id": "connector-mirror-warning",
+   "layer": "content",
+   "priority": 370,
+   "questions": [
+    "I connected Gmail inside Claude and it does not show here",
+    "why is Slack not connected here",
+    "I already connected it in the other app"
+   ],
+   "source": "Fresh-signup walk: the Connectors tab groups Canva, Gmail, Google Calendar, Google Drive, Idiolect, and Slack under 'On Claude's own side', with the on-screen note that connecting them there does not connect them here.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "connected gmail in claude",
+     "does not show here",
+     "connected it in claude",
+     "slack not connected here",
+     "connected on the other side"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "The Connectors tab has a form for your own service. It asks for the service address. Fill that in, and Helmian will try the connection from there.",
+    "then": null,
+    "where": "The custom form, on the Connectors tab."
+   },
+   "category": "connectors",
+   "id": "connector-custom",
+   "layer": "content",
+   "note": "Only the form's existence and its address ask are walk-proven. Any later field in that form is un walked; per-field entries wait on a custom-connector walk.",
+   "priority": 330,
+   "questions": [
+    "can I add my own service",
+    "what is the custom form for",
+    "add a custom connector"
+   ],
+   "source": "Fresh-signup walk: a custom MCP form is present on the Connectors tab.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "add my own service",
+     "custom connector",
+     "my own mcp",
+     "add a service"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Install",
+    "next": null,
+    "speak": "A plugin is a small add-on tool your AIs can use, like Weather. Plugins live on the Plugins tab, on the Integrations page. Press Install on the one you want.",
+    "then": null,
+    "where": "On the plugin's row, on the Plugins tab."
+   },
+   "category": "plugins",
+   "id": "plugins-what",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "what is a plugin",
+    "what are plugins for",
+    "how do I install a plugin"
+   ],
+   "source": "Fresh-signup walk: weather plugin installed from the Plugins tab and persisted. Connectors inventory: the Weather and GitHub Review plugin installs are proven (plugin proofs, a different surface from connectors).",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "what is a plugin",
+     "plugins tab",
+     "what are plugins",
+     "install a plugin"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Uninstall",
+    "next": null,
+    "speak": "That is a known fault on our side, not yours. Reload the page. The list catches up, and your plugin shows as installed, with Uninstall beside it.",
+    "then": null,
+    "where": "On the plugin's row, after a reload."
+   },
+   "category": "troubleshooting",
+   "id": "plugins-contradiction",
+   "layer": "content",
+   "priority": 380,
+   "questions": [
+    "it says installed and not installed at the same time",
+    "my plugin is not showing",
+    "it says no plugins are installed but I installed one"
+   ],
+   "retireWhen": "P2 fixes the plugin state refresh. Retire this entry when the contradiction no longer reproduces.",
+   "source": "Fresh-signup walk finding 2: install line said 'weather is installed' while the list still said 'No plugins are installed'; a reload resolved it (installed, Uninstall shown).",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "says installed and not installed",
+     "plugin is not showing",
+     "installed but not installed",
+     "no plugins are installed"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": "skills-attach",
+    "speak": "A skill is a saved set of instructions you can attach to a message, so an AI follows them for that job. Type a slash in the message box, and pick from the Skills group.",
+    "then": "Say attach, and I will walk you through attaching one.",
+    "where": "The slash menu, in the message box."
+   },
+   "category": "skills",
+   "id": "skills-what",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "what is a skill",
+    "how do skills work",
+    "what are skills for"
+   ],
+   "source": "Skills build S1 to S3 (~/workspace/helmian-room-build/skills-s3/BUILD-REPORT.md): the slash menu carries a Skills group; skills live in the workspace store (sql/075). Slash skills are live per the lane record, 2026-11-09.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "what is a skill",
+     "how do skills work",
+     "what are skills"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Every agent",
+    "next": null,
+    "speak": "Type a slash in the message box. Pick your skill from the Skills group. Then pick who it runs on: every agent, or one named agent. Send your message as usual.",
+    "then": null,
+    "where": "The scope step, right after picking the skill."
+   },
+   "category": "skills",
+   "id": "skills-attach",
+   "layer": "content",
+   "priority": 330,
+   "questions": [
+    "how do I use a skill",
+    "how do I attach a skill",
+    "attach a skill to my message"
+   ],
+   "source": "Skills build S3: the scope step offers 'Every agent' plus the channel's seats; a message can narrow a skill's scope, never widen it; up to 3 skills attach to one message.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "use a skill",
+     "attach a skill",
+     "add a skill to my message"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "New skill",
+    "next": null,
+    "speak": "A new workspace starts with an empty skill list. That is normal, not a fault. The slash menu has a New skill row, and that is where your first one gets made.",
+    "then": null,
+    "where": "A row in the slash menu, under the Skills group."
+   },
+   "category": "skills",
+   "id": "skills-none-yet",
+   "layer": "content",
+   "priority": 350,
+   "questions": [
+    "I have no skills",
+    "the skills list is empty, is that broken",
+    "where are the skills"
+   ],
+   "source": "Connectors and skills inventory 2026-11-09 (K4): a new user gets an empty Helmian skill list by design, no seed. Skills build S3: the slash menu shows a New skill row once the list has loaded.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "no skills",
+     "skills list is empty",
+     "i have no skills",
+     "where are the skills"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Approvals",
+    "next": "guard-approvals-where",
+    "speak": "When an AI wants to do something that cannot be taken back, the Executive Guard stops it and waits for you. The request sits in Approvals. Read it, then allow it or deny it.",
+    "then": "Say where, and I will tell you where the panel sits.",
+    "where": "The Approvals panel, in your workspace."
+   },
+   "category": "guard",
+   "id": "guard-approvals-what",
+   "layer": "content",
+   "note": "The behaviour is grounded; the panel's exact allow and deny button labels were not read in the walk. The wiring bite reads them off the served panel and corrects this entry if they differ.",
+   "priority": 370,
+   "questions": [
+    "what is an approval",
+    "why did it stop and ask me",
+    "it is asking me to approve something"
+   ],
+   "source": "Meet Maestro card copy: 'anything risky pauses for your say so'. Pricing page: approvals before anything sensitive runs. Demo script claims pool: allow or deny, blocked actions never billed.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "what is an approval",
+     "why did it stop",
+     "asking me to approve",
+     "it stopped and asked"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Approvals",
+    "next": null,
+    "speak": "Open the Approvals panel in your workspace. If it says Nothing waiting for you, there is nothing you need to decide. New requests land there the moment an AI is stopped.",
+    "then": null,
+    "where": "The Approvals panel, in your workspace."
+   },
+   "category": "guard",
+   "id": "guard-approvals-where",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "where are my approvals",
+    "where do I find approvals",
+    "it says nothing waiting, is that right"
+   ],
+   "source": "Approvals re-walk 2026-11-09 after the guard-403 fix (~/workspace/helmian-room-build/guard-403/REPORT.md): the panel reads 'Nothing waiting for you' when the queue is empty.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "where are my approvals",
+     "where is approvals",
+     "nothing waiting",
+     "find approvals"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "Three products share the name. Helmian Guard is the browser extension. The Executive Guard runs the approvals inside this workspace. Helmian Site Guard protects a website and its own AI.",
+    "then": null,
+    "where": null
+   },
+   "category": "guard",
+   "id": "guard-three-products",
+   "layer": "content",
+   "priority": 360,
+   "questions": [
+    "what is the difference between the Guards",
+    "which Guard is which",
+    "is the extension the same as the approvals"
+   ],
+   "source": "Polish P3 (push 0b3c446f): the family line added at the top of helmian.cloud/guard, served and re-read live. Fresh-signup walk finding 7: the two-Guards confusion was unaddressed for a new user before P3.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "difference between the guards",
+     "which guard is which",
+     "how many guards",
+     "guard or site guard"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Download package",
+    "next": "guard-extension-install-2",
+    "speak": "Helmian Guard is a browser extension, separate from this workspace. On the Guard page at helmian.cloud, press Download package on the card for your browser, and unzip the file.",
+    "then": "Tell me when it is unzipped, and I will give you the next step.",
+    "where": "On the card for your browser, on the Guard page."
+   },
+   "category": "guard",
+   "id": "guard-extension-install-1",
+   "layer": "content",
+   "priority": 350,
+   "questions": [
+    "how do I install the Guard extension",
+    "install Helmian Guard",
+    "where do I get the extension"
+   ],
+   "source": "helmian.cloud/guard (live): packages v0.2.4 served from the page, one Chromium package and one Firefox package; no store listing yet, installation is the manual load the page describes.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "install the guard extension",
+     "install helmian guard",
+     "get the extension",
+     "guard extension"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Load unpacked",
+    "next": "guard-extension-install-3",
+    "speak": "In Chrome, go to the address chrome colon slash slash extensions. Turn on Developer mode, at the top right of that page. Then press Load unpacked.",
+    "then": "Tell me when you have pressed it, and I will give you the next step.",
+    "where": "On the extensions page, after Developer mode is on."
+   },
+   "category": "guard",
+   "id": "guard-extension-install-2",
+   "layer": "content",
+   "priority": 330,
+   "questions": [
+    "it is unzipped, what now",
+    "where is developer mode",
+    "open the extensions page"
+   ],
+   "source": "helmian.cloud/guard install steps 2: open chrome://extensions, turn on Developer mode (top right), click Load unpacked.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "unzipped it",
+     "extensions page",
+     "developer mode"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "Pick the folder you unzipped, and the Guard is on. It watches Claude, ChatGPT, Gemini, and Grok in your browser, and it needs no account.",
+    "then": null,
+    "where": "The folder picker, after Load unpacked."
+   },
+   "category": "guard",
+   "id": "guard-extension-install-3",
+   "layer": "content",
+   "priority": 320,
+   "questions": [
+    "which folder do I pick",
+    "I pressed Load unpacked, what now"
+   ],
+   "source": "helmian.cloud/guard install step 3: select the unzipped folder; Guard is active immediately on claude.ai, ChatGPT, Gemini, and Grok; no account, no network calls.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "pick the folder",
+     "select the folder",
+     "load unpacked done"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Load Temporary Add-on",
+    "next": null,
+    "speak": "Firefox loads it for one session only. Unzip the Firefox package. Open about colon debugging, choose This Firefox, press Load Temporary Add-on, and pick the file named manifest dot json.",
+    "then": null,
+    "where": "On the about:debugging page, under This Firefox."
+   },
+   "category": "guard",
+   "id": "guard-extension-firefox",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "how do I install it in Firefox",
+    "does the Guard work on Firefox",
+    "Firefox load"
+   ],
+   "source": "helmian.cloud/guard, Firefox step: download and unzip the Firefox package, about:debugging, This Firefox, Load Temporary Add-on, pick manifest.json; it stays loaded until Firefox restarts (AMO signing not done yet).",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "firefox extension",
+     "guard on firefox",
+     "install in firefox"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "Helmian Site Guard protects a website's own AI, on that website. It is set up with us, site by site. It is not something you switch on inside this workspace.",
+    "then": null,
+    "where": null
+   },
+   "category": "guard",
+   "id": "site-guard-what",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "what is Site Guard",
+    "can it protect my website",
+    "what does Site Guard do"
+   ],
+   "source": "helmian.cloud/site-guard (live): Site Guard is installed with us today, site by site; there is no self-serve switch. Polish P3 family line on /guard.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "what is site guard",
+     "protect my website",
+     "site guard"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "Every new account starts with 14 days of full Solo, and no card is needed. When it ends, the workspace steps down to Taste, the free tier. Nothing is deleted.",
+    "then": null,
+    "where": null
+   },
+   "category": "pricing",
+   "id": "pricing-trial",
+   "layer": "content",
+   "priority": 350,
+   "questions": [
+    "how long is the trial",
+    "do I need a card for the trial",
+    "when does the trial end"
+   ],
+   "source": "Polish P3 (push 0b3c446f), pricing.html as corrected and re-read live: 'Every new account starts with 14 days of full Solo, no card. When it ends the workspace steps down to Taste, never deleted.'",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "how long is the trial",
+     "trial end",
+     "need a card",
+     "free trial",
+     "how long do i get"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "Today, nothing in the app shows that date. That is a gap on our side. Your 14 days run from the day you signed up, and the step down to Taste is not a deletion.",
+    "then": null,
+    "where": null
+   },
+   "category": "pricing",
+   "id": "pricing-trial-end-where",
+   "layer": "content",
+   "priority": 360,
+   "questions": [
+    "where does it say when my trial ends",
+    "what date does my trial end",
+    "can I see my trial end"
+   ],
+   "retireWhen": "A trial-end surface ships in the app. Replace this entry with the step that reads the date off that surface.",
+   "source": "Polish P3 entitlement read: signup writes no trial start or end anywhere (no trialEnds field exists in src/ or sql/); the false pricing clause was removed for exactly this reason. Fresh-signup walk finding 4.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "where does it say when my trial ends",
+     "when does my trial end exactly",
+     "trial end date",
+     "see my trial"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Agents",
+    "next": null,
+    "speak": "The Agents tab offers eleven AIs. The five main ones are Claude, ChatGPT, Grok, Gemini, and Mistral. The wider bench adds Runway, Groq, NVIDIA, Cloudflare, OpenRouter, and Muse.",
+    "then": null,
+    "where": "Tab at the top of the Integrations page."
+   },
+   "category": "pricing",
+   "id": "pricing-solo-seats",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "how many AIs do I get",
+    "what seats are in Solo",
+    "which AIs can I connect"
+   ],
+   "source": "Polish P3 corrected Solo seats line on pricing.html (the five core seats plus the wider bench the Agents tab offers, all eleven named). Polish P3 entitlement read: no per-tier seat gating exists in the code; the copy describes the bench, it does not gate it.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "how many ais do i get",
+     "seats in solo",
+     "which ais are included",
+     "how many seats"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "Solo is 29 dollars a month, and the founding price is locked for the first hundred paying customers. Taste is free. You keep paying for your own AI accounts. Helmian never charges for tokens.",
+    "then": null,
+    "where": null
+   },
+   "category": "pricing",
+   "id": "pricing-cost",
+   "layer": "content",
+   "note": "Troy's settled number for Helmian is $29.99 and the page takes that number when checkout is wired (lane record, 2026-11-09). This entry answers from the live page ($29) until the page changes; the wiring bite re-reads the page at ship time.",
+   "priority": 340,
+   "questions": [
+    "how much does it cost",
+    "what does Solo cost",
+    "how much is Helmian"
+   ],
+   "source": "helmian.cloud/pricing (live): Solo $29/mo Founding, locked for life for the first 100 paying customers; Taste $0; 'Bring your own AI' rule: Helmian charges for the layer, never for tokens.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "how much does it cost",
+     "what does solo cost",
+     "price of helmian",
+     "how much is it"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Voice chat",
+    "next": "voice-stop",
+    "speak": "Press the Voice chat button in the message box. It is the round button that says Voice chat. Say your question out loud. My answer is spoken back, and it also lands as text.",
+    "then": "Say stop, and I will tell you how to turn the voice off.",
+    "where": "The round button in the message box toolbar."
+   },
+   "category": "voice",
+   "id": "voice-how",
+   "layer": "content",
+   "priority": 360,
+   "questions": [
+    "how do I talk to you",
+    "how do I use my voice",
+    "where is the voice button",
+    "can I talk instead of typing"
+   ],
+   "source": "App markup, web/marketing/app/index.html: the composer voice button (class voice-orb, aria-label 'Voice chat', visible label 'Voice chat', title 'talk, and replies are spoken aloud'). Helm design section 3.7: voice rides the two-way voice mode like any seat's replies.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "how do i talk to you",
+     "use my voice",
+     "voice button",
+     "talk instead of type",
+     "voice chat"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Voice chat",
+    "next": null,
+    "speak": "Press the Voice chat button again. That stops the talking. Your messages still land as text, and nothing is lost.",
+    "then": null,
+    "where": "The round button in the message box toolbar."
+   },
+   "category": "voice",
+   "id": "voice-stop",
+   "layer": "content",
+   "priority": 350,
+   "questions": [
+    "how do I stop the voice",
+    "stop talking",
+    "turn the voice off",
+    "be quiet"
+   ],
+   "source": "App markup, web/marketing/app/index.html: the voice button's own title reads 'Tap again to stop.' Speaker-proof record: cancelling speech clears the speaking light.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "stop the voice",
+     "be quiet",
+     "stop talking",
+     "turn the voice off",
+     "stop speaking"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "A small speaker mark sits on a message while it is being spoken. It lights and pulses only during the sound, never before. If it is not lit, that message is not playing.",
+    "then": null,
+    "where": "On the message itself, in the channel."
+   },
+   "category": "voice",
+   "id": "voice-speaker-icon",
+   "layer": "content",
+   "note": "Confirm the merged icon is on the live build at the wiring bite's live pass; if it is not, hold this entry.",
+   "priority": 340,
+   "questions": [
+    "what is the speaker icon",
+    "how do I know it is speaking",
+    "what is the little speaker on the message"
+   ],
+   "source": "Speaker-proof bite (~/workspace/helmian-room-build/speaker-proof-bite/SPEAKER-PROOF-REPORT.md) and its merge record: the signal is playback itself, lit at sound start and cleared at sound end, on the spoken message's row. Troy's standing order, 2026-11-09: a speaker icon beside each seat's messages, lighting while that seat's voice is actually speaking.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "speaker icon",
+     "speaker mark",
+     "how do i know it is speaking",
+     "little speaker"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Voice chat",
+    "next": null,
+    "speak": "Your browser did not give Helmian the microphone. Nothing was recorded. Allow the microphone for this site in your browser, then press Voice chat and try again.",
+    "then": null,
+    "where": "The round button in the message box toolbar."
+   },
+   "category": "troubleshooting",
+   "id": "voice-mic-denied",
+   "layer": "content",
+   "priority": 370,
+   "questions": [
+    "it cannot hear me",
+    "my microphone is not working",
+    "it says microphone permission was not granted"
+   ],
+   "source": "App voice controller error text, web/marketing/app/app.js: 'not-allowed' reads 'Microphone permission was not granted. Nothing was recorded.'; 'audio-capture' reads 'No microphone found.'",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "cannot hear me",
+     "microphone not working",
+     "microphone permission",
+     "no microphone",
+     "it cannot hear"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "That check is the sign up protection. It failed on a test machine of ours too, then passed. Close the page, open it again, and try once more. On a home connection it usually goes through.",
+    "then": null,
+    "where": "The sign up screen."
+   },
+   "category": "troubleshooting",
+   "id": "trouble-human-check",
+   "layer": "content",
+   "priority": 380,
+   "questions": [
+    "it says verify you are human and it keeps failing",
+    "I cannot get past the human check",
+    "the verification did not complete"
+   ],
+   "retireWhen": "The Clerk production-instance switch (plan in ~/workspace/helmian-room-build/clerk-prod/) may change this check. Re-walk sign up after that switch and reword.",
+   "source": "Fresh-signup walk finding 9: the check failed five times on the walk's datacenter browser and the form state was lost; the next attempts passed with no check. Clerk inspection 2026-11-09: legacy Bot sign-up protection (Cloudflare Turnstile) is ON, no level setting.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "verify you are human",
+     "human check",
+     "check keeps failing",
+     "cannot get past the check",
+     "verification did not complete"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Connect",
+    "next": null,
+    "speak": "The names are clipped on our side, not yours. It is a display fault, and it is on the fix list. The Connect button on the card still works as normal.",
+    "then": null,
+    "where": "On the AI's own card, on the Agents tab."
+   },
+   "category": "troubleshooting",
+   "id": "trouble-card-names",
+   "layer": "content",
+   "priority": 370,
+   "questions": [
+    "the names are cut off on the cards",
+    "the card only shows one letter",
+    "why are the names clipped"
+   ],
+   "retireWhen": "P2 (surface warts bite) fixes the card truncation. Retire this entry when the full names render.",
+   "source": "Fresh-signup walk finding 3: Agents tab cards clip names to one letter ('C - Not connected'); titles elsewhere clipped too ('Workspace st...').",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "names are cut off",
+     "card only shows one letter",
+     "names clipped",
+     "one letter"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "The Integrations page can take about ten seconds the first time it opens. That is slow, and it is known. Give it those seconds. If it stays blank past that, reload the page once.",
+    "then": null,
+    "where": "The Integrations page."
+   },
+   "category": "troubleshooting",
+   "id": "trouble-slow-integrations",
+   "layer": "content",
+   "priority": 360,
+   "questions": [
+    "the Integrations page is slow",
+    "it is stuck on loading integrations",
+    "the page is blank"
+   ],
+   "retireWhen": "Re-time the cold open on a settled build; reword with the new number, or retire when the wait is gone.",
+   "source": "Fresh-signup walk finding 6: about 10 seconds on 'Loading integrations...' for a fresh account (the known cold-open item, reproduced).",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "integrations is slow",
+     "stuck loading",
+     "loading integrations",
+     "page is blank"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "Those two notes are known rough edges. The sidebar can sit on Connecting, and the Discord tab can sit on checking. Neither one blocks your AIs. Your workspace still works.",
+    "then": null,
+    "where": "The sidebar, and the Discord tab."
+   },
+   "category": "troubleshooting",
+   "id": "trouble-ambient-connecting",
+   "layer": "content",
+   "priority": 360,
+   "questions": [
+    "it says connecting forever in the sidebar",
+    "the Discord tab says checking, is it broken",
+    "cloud service connecting will not finish"
+   ],
+   "retireWhen": "P2 (surface warts bite) covers the ambient states. Retire when they resolve to a finished state.",
+   "source": "Fresh-signup walk finding 8: Discord tab stuck on 'checking every 30s'; sidebar 'Cloud service - Connecting...' persisting; welcome pane slow at first.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "says connecting forever",
+     "cloud service connecting",
+     "discord says checking",
+     "checking every 30 seconds"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": "Open app",
+    "next": null,
+    "speak": "The public pages carry an Open app link, at the top. Press Open app, and it takes you into your workspace. Get started is for people who have no account yet.",
+    "then": null,
+    "where": "At the top of the pricing, home, and Guard pages."
+   },
+   "category": "troubleshooting",
+   "id": "trouble-signed-in-pages",
+   "layer": "content",
+   "priority": 350,
+   "questions": [
+    "the pricing page does not know me",
+    "it says get started but I already have an account",
+    "how do I get back into my workspace"
+   ],
+   "source": "Fresh-signup walk finding 7 (public pages showed no signed-in state), fixed by Polish P3 (push 0b3c446f): a standing 'Open app' nav link added to pricing.html, index.html, and guard.html, verified in the served bytes.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "page does not know me",
+     "says get started but i have an account",
+     "already signed in",
+     "open app"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "I am Helm. I am Helmian's own helper, and I answer even when no AI is connected. Maestro is different. Maestro carries your words to your AIs, and brings their answers back.",
+    "then": null,
+    "where": null
+   },
+   "category": "concepts",
+   "id": "maestro-vs-helm",
+   "layer": "content",
+   "priority": 360,
+   "questions": [
+    "who are you",
+    "are you Maestro",
+    "who am I talking to right now"
+   ],
+   "source": "Helm design section 3.6: Maestro routes and remembers; Helm answers. Section 3.5: Helm sits in every channel by default, not on the desk, which is Maestro's.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "who are you",
+     "are you maestro",
+     "who am i talking to",
+     "are you an ai"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": "start-what-now",
+    "speak": "I can walk you through setup, one step at a time, and explain how each part of Helmian works. When you connect your own AIs, they take over the heavy work.",
+    "then": "Say setup, and I will start the walk.",
+    "where": null
+   },
+   "category": "concepts",
+   "id": "what-can-helm-do",
+   "layer": "content",
+   "note": "The setup walk ships with this KB. The web search clause from V1 was trimmed by the wiring bite (2026-11-09) because Helm H2 (the search piece) has not passed its gate; restore that clause the day H2 lands.",
+   "priority": 330,
+   "questions": [
+    "what can you do",
+    "what can Helm do",
+    "help"
+   ],
+   "source": "Helm design sections 2 and 3: Helm is the answerer of last resort in every channel, with a two-tool search piece (search_web, read_page) and cited answers.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "what can you do",
+     "what can helm do",
+     "help me",
+     "your abilities"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
+    "label": null,
+    "next": null,
+    "speak": "Your workspace named itself Trial workspace, because you are in the 14 day trial. Nobody asked you to name it. That is how every new account starts.",
+    "then": null,
+    "where": null
+   },
+   "category": "concepts",
+   "id": "workspace-name",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "why is it called Trial workspace",
+    "who named my workspace",
+    "what is my workspace called"
+   ],
+   "source": "Fresh-signup walk: the workspace was auto-named 'Trial workspace'; no name step was ever presented. Polish P3 entitlement read: signup creates a tenant with only that name.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "called trial workspace",
+     "why is it called trial",
+     "name my workspace",
+     "workspace name"
+    ],
+    "noneWords": []
+   }
+  }
+ ]
+}
