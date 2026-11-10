@@ -666,6 +666,61 @@ test('g4 dispatch: resolveDispatchArming resolves the whole set through injected
   assert.equal(records[0].state, 'connected');
 });
 
+// The vault's requireActor, word for word (credential-vault.mjs):
+// a resolve missing any of the five actor fields is refused before
+// any lookup. The dispatch's resolve carried none of them — the
+// same omission that broke the write route's stores — so against
+// this stub the base dispatch throws the refusal out of
+// resolveArmingRecord (an infra failure, by the header's law) and
+// the pair never arms. These tests fail on that base and pass once
+// the resolve carries the dispatch's system-actor context.
+function enforcingCredentials(calls) {
+  return {
+    resolveVaultCredential: async (input) => {
+      calls.push(input);
+      if (!input.tenantId || !input.actorSubject || !input.actorRole || !input.sessionId || !input.requestId) {
+        throw new TypeError('credential vault actor context is required');
+      }
+      return { accepted: true, credential: { accessToken: 'tok-connection' } };
+    },
+  };
+}
+
+test('g4 dispatch: the token resolve carries the full actor context the vault demands', async () => {
+  const calls = [];
+  const store = fakeArmingStore({ entry: GH_ENTRY, connection: GH_CONNECTION, snapshot: GH_SNAPSHOT });
+  const record = await resolveArmingRecord({ store, credentials: enforcingCredentials(calls), listTools: NO_LIST, operatorTokens: {}, tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github' });
+  assert.equal(record.state, 'connected');
+  assert.equal(record.accessToken, 'tok-connection');
+  assert.equal(record.tokenSource, 'connection');
+  assert.equal(calls.length, 1);
+  // The actor is the dispatch's own system actor — truthfully not
+  // the person, whose click this is not — on the real tenant.
+  assert.equal(calls[0].tenantId, 't');
+  assert.equal(calls[0].actorSubject, 'helmion:connector-arming');
+  assert.equal(calls[0].actorRole, 'device');
+  assert.ok(calls[0].sessionId, 'sessionId present');
+  assert.ok(calls[0].requestId, 'requestId present');
+  assert.equal(calls[0].reasonClass, 'provider_call');
+});
+
+test('g4 dispatch: one dispatch run is one system-actor session, one request per resolve', async () => {
+  const calls = [];
+  const store = fakeArmingStore({ entry: GH_ENTRY, connection: GH_CONNECTION, snapshot: GH_SNAPSHOT });
+  const records = await resolveDispatchArming({
+    tenantId: 't', personId: 'user:troy',
+    pairs: [{ seatId: 'claude', entryId: 'helmian-github' }, { seatId: 'chatgpt', entryId: 'helmian-github' }],
+    store, credentials: enforcingCredentials(calls), listTools: NO_LIST, operatorTokens: {},
+  });
+  assert.equal(records.length, 2);
+  assert.ok(records.every((r) => r.state === 'connected' && r.tokenSource === 'connection'));
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].actorSubject, 'helmion:connector-arming');
+  assert.equal(calls[1].actorSubject, 'helmion:connector-arming');
+  assert.equal(calls[0].sessionId, calls[1].sessionId, 'one session across the run');
+  assert.notEqual(calls[0].requestId, calls[1].requestId, 'one request id per resolve');
+});
+
 // ================================================================
 // G4: the runner seam the records build.
 // ================================================================
