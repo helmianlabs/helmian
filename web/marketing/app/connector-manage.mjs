@@ -26,12 +26,18 @@
 //     button); a row's working controls live in its expanded state.
 //   Skills — the seat's skills, from the EXISTING skills read.
 //   Plugins — the workspace's plugins, from the EXISTING plugins
-//     read. (No new semantics on either tab in this bite.)
+//     read: the installed rows (a Helmian-shelf install carries
+//     its Uninstall; a bridge plugin is the bridge's to remove),
+//     and under them the Plugin catalog the read's shelf field
+//     feeds — every bundle Helmian carries, with Install (or
+//     Installed + Uninstall) wired to the EXISTING plugin routes
+//     (plugin-catalog bite, 2026-11-09: before the read carried
+//     the shelf, the tab could name nothing to install).
 //
 // Pure model first (rowControls), then the DOM renderer — the model
 // is unit-tested like connector-panel.mjs's.
 
-import { LIBRARY_SEATS } from './connector-panel.mjs';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=82bb407dddbc098d';
 
 export const MANAGE_SEAT_STORAGE_KEY = 'helmian.manageSeat';
 // The Manage road's landing intent (addition, 2026-11-09): taking
@@ -223,17 +229,74 @@ export function pluginsUnavailableLine(count) {
   return n ? `${n} plugin${n === 1 ? '' : 's'} could not be loaded.` : null;
 }
 
+export const PLUGIN_CATALOG_TITLE = 'Plugin catalog';
+export const NO_SHELF_LINE = 'The plugin catalog is empty.';
+
+// What a catalog row brings, in the bundle's own names — its
+// declared entries and skills, as declarations. No state words:
+// a shelf row claims nothing about connections (the installed
+// row's brings line, computed server-side, carries those).
+function catalogBringsLine(entries, skills) {
+  const parts = [];
+  for (const e of entries) parts.push(`the ${e.name} tools`);
+  if (skills.length) {
+    const names = skills.map((s) => s.name).join(', ');
+    parts.push(`the ${names} skill${skills.length === 1 ? '' : 's'}`);
+  }
+  return parts.length ? `Brings ${parts.join(', plus ')}.` : null;
+}
+
 // The plugins read's shape, normalized for the face (fix B). The
-// route answers { plugins, unavailable } — `unavailable` carries
-// every plugin that failed to load. The face must say so: the empty
-// line stands only when the read is truly empty (no plugins AND
-// none unavailable); a list with failures behind it names the count
-// instead of reading as "none installed".
+// route answers { plugins, unavailable, shelf } — `unavailable`
+// carries every plugin that failed to load. The face must say so:
+// the empty line stands only when the read is truly empty (no
+// plugins AND none unavailable); a list with failures behind it
+// names the count instead of reading as "none installed".
+// `shelf` is the catalog: every bundle Helmian carries, normalized
+// here and joined against the plugins rows — a shelf row is
+// installed exactly when a plugins row with source
+// 'helmian-plugin' carries the same name (case-insensitive: the
+// install record's name is the manifest's, lowercased server-side).
+// A bridge row of the same name is NOT an install of the bundle —
+// the bridge's list is the bridge's own truth.
 export function pluginsListModel(body) {
   const plugins = Array.isArray(body?.plugins) ? body.plugins : (Array.isArray(body?.items) ? body.items : []);
   const unavailableCount = Array.isArray(body?.unavailable) ? body.unavailable.length : 0;
+  const installedNames = new Set(
+    plugins
+      .filter((p) => p && typeof p === 'object' && p.source === 'helmian-plugin' && typeof p.name === 'string')
+      .map((p) => p.name.trim().toLowerCase()),
+  );
+  const rawShelf = Array.isArray(body?.shelf) ? body.shelf : [];
+  const catalog = rawShelf
+    .filter((s) => s && typeof s === 'object' && typeof s.name === 'string' && s.name.trim())
+    .map((s) => {
+      const entries = (Array.isArray(s.entries) ? s.entries : [])
+        .filter((e) => e && typeof e === 'object')
+        .map((e) => Object.freeze({
+          entryId: String(e.entryId ?? ''),
+          name: String(e.name ?? e.entryId ?? ''),
+        }));
+      const skills = (Array.isArray(s.skills) ? s.skills : [])
+        .filter((sk) => sk && typeof sk === 'object')
+        .map((sk) => Object.freeze({
+          id: String(sk.id ?? ''),
+          name: String(sk.name ?? sk.id ?? ''),
+          description: typeof sk.description === 'string' ? sk.description : '',
+        }));
+      return Object.freeze({
+        name: s.name,
+        version: typeof s.version === 'string' ? s.version : null,
+        description: typeof s.description === 'string' ? s.description : '',
+        entries: Object.freeze(entries),
+        skills: Object.freeze(skills),
+        brings: catalogBringsLine(entries, skills),
+        installed: installedNames.has(s.name.trim().toLowerCase()),
+      });
+    });
   return Object.freeze({
     plugins: Object.freeze(plugins),
+    catalog: Object.freeze(catalog),
     unavailableCount,
     unavailableLine: pluginsUnavailableLine(unavailableCount),
     emptyLine: !plugins.length && !unavailableCount ? NO_PLUGINS_LINE : null,
@@ -612,6 +675,47 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
     return frag;
   }
 
+  // The Plugin catalog section (plugin-catalog bite, 2026-11-09):
+  // every bundle on the shelf, from the read's shelf field — the
+  // install road that lives on THIS tab, not behind the composer
+  // panel's race. Buttons ride the surface's call() helper to the
+  // EXISTING plugin routes with the route's own body shape, and a
+  // landed write refreshes the read so the row moves lists.
+  function pluginCatalogSection(model) {
+    const wrap = el('section', 'cm-catalog');
+    wrap.append(el('h4', 'cm-add-head', PLUGIN_CATALOG_TITLE));
+    if (!model.catalog.length) {
+      wrap.append(el('p', 'muted sm', NO_SHELF_LINE));
+      return wrap;
+    }
+    for (const row of model.catalog) {
+      const card = el('article', 'cm-row');
+      const main = el('div', 'cm-row-main');
+      main.append(el('div', 'cm-row-name', row.name));
+      if (row.description) main.append(el('div', 'cm-row-line muted sm', row.description));
+      if (row.brings) main.append(el('div', 'cm-row-line muted sm', row.brings));
+      card.append(main);
+      const side = el('div', 'cm-row-side');
+      if (row.installed) {
+        side.append(el('span', 'muted sm', 'Installed'));
+        side.append(actionButton('Uninstall', async () => {
+          await call('/api/admin/plugins/uninstall', { name: row.name });
+          say(`${row.name} was uninstalled.`);
+          await refresh();
+        }));
+      } else {
+        side.append(actionButton('Install', async () => {
+          await call('/api/admin/plugins/install', { name: row.name });
+          say(`${row.name} is installed.`);
+          await refresh();
+        }));
+      }
+      card.append(side);
+      wrap.append(card);
+    }
+    return wrap;
+  }
+
   async function pluginsTab() {
     const frag = el('div', 'cm-list');
     try {
@@ -623,10 +727,26 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
         const main = el('div', 'cm-row-main');
         main.append(el('div', 'cm-row-name', p.name ?? p.id ?? 'Plugin'));
         if (p.description) main.append(el('div', 'cm-row-line muted sm', p.description));
+        if (p.brings) main.append(el('div', 'cm-row-line muted sm', p.brings));
         card.append(main);
+        // Uninstall belongs only to Helmian-shelf installs: the
+        // route's authority is the cloud install record, and it
+        // would honestly 404 for a bridge plugin — the bridge's
+        // plugins are the bridge's to remove, so they get no
+        // button here.
+        if (p.source === 'helmian-plugin' && p.name) {
+          const side = el('div', 'cm-row-side');
+          side.append(actionButton('Uninstall', async () => {
+            await call('/api/admin/plugins/uninstall', { name: p.name });
+            say(`${p.name} was uninstalled.`);
+            await refresh();
+          }));
+          card.append(side);
+        }
         frag.append(card);
       }
       if (model.unavailableLine) frag.append(el('p', 'muted sm', model.unavailableLine));
+      frag.append(pluginCatalogSection(model));
     } catch (error) { frag.append(el('p', 'muted sm', error?.message || 'Plugins did not load.')); }
     return frag;
   }

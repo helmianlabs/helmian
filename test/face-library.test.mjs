@@ -78,13 +78,21 @@ test('face asset URLs point at the staged library road', () => {
   assert.equal(libraryFaceClipUrl('nope'), null);
 });
 
-test('the reaction set is the glossy reaction pack: 75 pieces, flip-charge among them', () => {
-  assert.equal(LIBRARY_REACTIONS.length, 75);
-  assert.equal(new Set(LIBRARY_REACTIONS.map((r) => r.name)).size, 75, 'names are unique');
+test('the reaction set is the glossy reaction pack: 79 pieces, flip-charge among them', () => {
+  // 75 pieces from batches 1 + 2, plus batch 3 (faces-batch-2):
+  // concerned, listening, qwen-thinking, working — four state pieces
+  // the earlier batches had no piece for.
+  assert.equal(LIBRARY_REACTIONS.length, 79);
+  assert.equal(new Set(LIBRARY_REACTIONS.map((r) => r.name)).size, 79, 'names are unique');
   // The library's middle finger — the Guard-refusal signature piece.
   const flip = libraryReaction('flip-charge');
   assert.ok(flip, 'flip-charge exists');
   assert.match(flip.use, /Guard refuses/);
+  // batch 3 (faces-batch-2): the state pieces batches 1 + 2 lacked
+  for (const name of ['concerned', 'listening', 'qwen-thinking', 'working']) {
+    assert.ok(libraryReaction(name), `${name} exists`);
+    assert.equal(libraryReactionForSlug(`lib-${name}`)?.name, name);
+  }
   for (const r of LIBRARY_REACTIONS) assert.ok(r.label && r.use, `${r.name} carries its manifest label and use`);
 });
 
@@ -113,7 +121,7 @@ test('every asset the vocabulary names is staged at its URL path, non-empty, und
     paths.push(`assets/library/faces/${f.slug}-128.png`, `assets/library/faces/${f.slug}-256.png`, `assets/library/faces/${f.slug}-idle.webm`);
   }
   for (const r of LIBRARY_REACTIONS) paths.push(`assets/library/reactions/${r.name}-128.png`);
-  assert.equal(paths.length, 14 * 3 + 75);
+  assert.equal(paths.length, 14 * 3 + 79);
   for (const rel of paths) {
     const full = `${APP_DIR}${rel}`;
     assert.ok(existsSync(full), `missing staged asset ${rel}`);
@@ -155,7 +163,9 @@ test('the pure toggle fold treats a library slug like any other slug', () => {
 
 test('wiring: the Change-face modal serves the library grid and keeps its save path', () => {
   const js = read('../web/marketing/app/envoy-workspace.js');
-  assert.ok(js.includes("from './face-library.mjs'"), 'envoy-workspace imports the library vocabulary');
+  // The import specifier carries the shell stamp (?v=…, 2026-11-09
+  // speed fix); the wiring law is the import itself.
+  assert.match(js, /from '\.\/face-library\.mjs(\?v=[0-9a-f]{16})?'/, 'envoy-workspace imports the library vocabulary');
   assert.ok(js.includes('function libraryFaceGrid('), 'the library face grid exists');
   assert.ok(js.includes("libraryFaceGrid('Pick a Maestro Library face'"), 'the member modal opens with the library grid');
   assert.ok(js.includes("h('p', { class: 'muted sm ew-lib-sec' }, 'Maestro Library')"), 'the library section is headed in the modal');
@@ -182,10 +192,18 @@ test('wiring: the reaction picker gains a Maestro Library section on the same to
 
 test('wiring: the Settings avatar picker leads with the library and app.js watches the module', () => {
   const app = read('../web/marketing/app/app.js');
-  assert.ok(app.includes("from './face-library.mjs'"), 'app.js imports the library vocabulary');
+  // The import specifier carries the shell stamp (?v=…, 2026-11-09
+  // speed fix); the wiring law is the import itself.
+  assert.match(app, /from '\.\/face-library\.mjs(\?v=[0-9a-f]{16})?'/, 'app.js imports the library vocabulary');
   assert.ok(app.includes("'avatar-option avatar-option-lib'"), 'library faces render as picker options');
   assert.ok(app.includes('selectedAvatar = token'), 'a library pick stores the token in the same field');
-  assert.ok(app.includes("'/app/face-library.mjs'"), 'DEPLOY_WATCH covers the new module');
+  // The watch law, restated for the stamp (2026-11-09): DEPLOY_WATCH
+  // no longer lists files — stamped files' ETags can never move.
+  // It watches the document alone, and the document names the shell
+  // stamp this module feeds, so a change to the module still moves
+  // the watch (the 2026-11-05 lesson, carried by the stamp now).
+  assert.ok(app.includes("const DEPLOY_WATCH = ['/app'];"), 'DEPLOY_WATCH watches the document, which names the shell stamp');
+  assert.match(app, /from '\.\/face-library\.mjs\?v=[0-9a-f]{16}'/, 'the module rides the shell stamp, so its changes move the document watch');
 });
 
 test('the reaction store accepts a library slug and still refuses unknown ones', () => {

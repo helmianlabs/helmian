@@ -86,3 +86,37 @@ test('the worker never touches API calls', async () => {
   assert.equal(ev.responded, null, 'no respondWith for /api/');
   assert.equal(called, 0, 'no network call made by the worker');
 });
+
+test('stamped shell fetch is cache-first: a stored stamped copy is served with no network call at all', async () => {
+  // The companion case (2026-11-09, the shell stamp): a ?v= URL is a
+  // content address — the same URL can never name different bytes —
+  // so the worker answers from its cache and the origin is never
+  // asked. The unstamped pin above is untouched: it is the
+  // stale-shell guard, and it still rules every unstamped path.
+  const stamped = `${ORIGIN}/app/envoy-workspace.js?v=0123456789abcdef`;
+  const cached = { ok: true, fromCache: true };
+  let calls = 0;
+  const { listeners, cacheStore } = await loadWorker(async () => { calls += 1; return { ok: true, clone() { return this; } }; });
+  cacheStore.set(stamped, cached);
+  const ev = fetchEvent(stamped);
+  listeners.fetch(ev);
+  const res = await ev.responded;
+  assert.equal(res, cached, 'the stored stamped copy is the answer');
+  assert.equal(calls, 0, 'no network call — no revalidation round trip for a content address');
+});
+
+test('stamped shell fetch on a cache miss fetches WITHOUT the no-cache revalidation and stores the answer', async () => {
+  const stamped = `${ORIGIN}/app/app.js?v=0123456789abcdef`;
+  const calls = [];
+  const netRes = { ok: true, clone() { return this; } };
+  const { listeners, cacheStore } = await loadWorker(async (input, init) => { calls.push({ input, init }); return netRes; });
+  const ev = fetchEvent(stamped);
+  listeners.fetch(ev);
+  const res = await ev.responded;
+  assert.equal(res, netRes, 'the network answer is what the page gets');
+  assert.equal(calls.length, 1, 'exactly one network call');
+  assert.notEqual(calls[0].init?.cache, 'no-cache',
+    "a stamped fetch must not carry cache: 'no-cache' — the URL's own immutable Cache-Control is the policy now");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(cacheStore.get(stamped), netRes, 'the answer is stored under its exact stamped URL');
+});

@@ -316,7 +316,7 @@ test('the channel composer carries the picker: plus button, panel, chips, wiring
     assert.ok(!html.includes(`id="${id}"`), `index.html no longer has #${id}`);
   }
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
-  assert.match(js, /from '\.\/composer-picker\.mjs'/);
+  assert.match(js, /from '\.\/composer-picker\.mjs(\?v=[0-9a-f]{16})?'/);
   assert.match(js, /\$\('maestro-plus'\)\.addEventListener\('click', \(\) => togglePicker\('channel'\)\)/);
   assert.match(js, /buildMessageRequest\(\{ channelId: ws\.channelId, body, idempotencyKey: key, attachments: ws\.attach\.channel, webSearch: ws\.webSearch\.channel, connectors: sendableConnectors, skills: ws\.skillAttach\.channel, projectKey: ws\.projects\.activeKey \?\? ws\.ctx\?\.state\?\.activeProjectKey \?\? null \}\)/, 'channel send builds its request through the picker model, web-search toggle, the standing connector set (filtered to still-connected pairs, bite A2), armed Helmian skills and the active project included');
   assert.match(js, /menuForSeat\(seatId\)/, 'the channel picker renders the shipped per-seat menu definitions (bite 3R-b)');
@@ -336,7 +336,7 @@ test('the GitHub picker shows the route\u2019s plain words, not the bare code', 
 
 test('the picker model reuses the Integrations registry instead of inventing one', async () => {
   const src = await readFile(new URL('../app/composer-picker.mjs', import.meta.url), 'utf8');
-  assert.match(src, /import \{ bestToolConnectionStatus, integrationsModel \} from '\.\/app-model\.mjs'/, 'connection truth comes from the same model the Integrations page renders');
+  assert.match(src, /import \{ bestToolConnectionStatus, integrationsModel \} from '\.\/app-model\.mjs(\?v=[0-9a-f]{16})?'/, 'connection truth comes from the same model the Integrations page renders');
 });
 
 test('a third attach list (the session console’s) is independent of the other composers’ lists', () => {
@@ -364,7 +364,7 @@ test('the session console carries the picker too: plus button, panel, chips, its
   assert.match(plus[1], /\+/, 'console composer button shows the plus');
   assert.doesNotMatch(plus[1], /Add/, 'console composer button is a bare plus — no Add label');
   const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
-  assert.match(js, /from '\.\/composer-picker\.mjs'/, 'app.js imports the shared picker model — no forked picker logic');
+  assert.match(js, /from '\.\/composer-picker\.mjs(\?v=[0-9a-f]{16})?'/, 'app.js imports the shared picker model — no forked picker logic');
   assert.match(js, /\$\('#console-plus'\)\.onclick = \(\) => toggleConsolePicker\(\)/, 'the console plus toggles the console picker');
   assert.match(js, /api\('\/api\/admin\/cora\/connectors'\)/, 'the console picker reads the same connectors registry as Integrations');
   assert.match(js, /api\('\/api\/admin\/provider-connections'\)/, 'the console picker reads the same provider connections');

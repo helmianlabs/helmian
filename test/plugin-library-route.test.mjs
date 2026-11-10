@@ -169,6 +169,35 @@ function riggedTwoSkillBundle() {
   };
 }
 
+// The read's shelf field, pinned in full: both shipped bundles in
+// the bundle's own names and words (plugin-catalog bite, 2026-11-09).
+// Installed state never rides these rows — it joins from the
+// plugins rows by name.
+const SHELF_ROWS = [
+  {
+    name: 'weather',
+    version: '1.0.0',
+    description: 'US weather from the National Weather Service: forecasts, alerts, and current conditions, answered the plain way.',
+    entries: [{ entryId: 'registry-weather', name: 'Weather' }],
+    skills: [{
+      id: 'reading-a-forecast',
+      name: 'reading-a-forecast',
+      description: 'Turn National Weather Service tool output into a plain forecast answer: alerts first, then today, then the week.',
+    }],
+  },
+  {
+    name: 'github-review',
+    version: '1.0.0',
+    description: 'Pull request reviews over the workspace’s GitHub connection: the diff read first, the tests the PR names checked, and what was not checked named.',
+    entries: [{ entryId: 'helmian-github', name: 'GitHub' }],
+    skills: [{
+      id: 'reviewing-a-pull-request',
+      name: 'reviewing-a-pull-request',
+      description: 'Review a pull request from its diff: read what changed, check the tests the PR names, summarize in plain words, and name what was not checked.',
+    }],
+  },
+];
+
 // ------------------------------------------------------------ install + read
 
 test('install registers the skill through the skills write path and records the install', async () => {
@@ -224,7 +253,23 @@ test('a workspace with neither cloud nor bridge plugins reads the honest empty l
   const h = harness();
   await h.run(PLUGINS_PATH);
   assert.equal(h.sent[0].status, 200);
-  assert.deepEqual(h.sent[0].body, { valid: true, plugins: [], unavailable: [] });
+  assert.deepEqual(h.sent[0].body, { valid: true, plugins: [], unavailable: [], shelf: SHELF_ROWS });
+});
+
+test('the read carries the shelf in full shape — and installing never bakes state into it', async () => {
+  const h = harness();
+  await h.run(PLUGINS_PATH);
+  assert.equal(h.sent[0].status, 200);
+  assert.deepEqual(h.sent[0].body.shelf, SHELF_ROWS, 'every shelf bundle: name, version, description, entries and skills in the bundle’s own words');
+  // Install weather, then read again: the shelf rows are byte-for-
+  // byte the same declarations; the install truth rides the
+  // plugins rows, never the shelf.
+  await h.run(PLUGIN_INSTALL_PATH, { method: 'POST', body: { name: 'weather' } });
+  assert.equal(h.sent[1].status, 200);
+  await h.run(PLUGINS_PATH);
+  assert.equal(h.sent[2].status, 200);
+  assert.deepEqual(h.sent[2].body.shelf, SHELF_ROWS);
+  assert.deepEqual(h.sent[2].body.plugins.map((p) => [p.name, p.source]), [['weather', 'helmian-plugin']]);
 });
 
 test('reinstalling the same version is the standing install, unchanged', async () => {

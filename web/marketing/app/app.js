@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER } from './app-model.mjs';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER } from './app-model.mjs?v=82bb407dddbc098d';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=82bb407dddbc098d';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=82bb407dddbc098d';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=82bb407dddbc098d';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2290,9 +2290,9 @@ async function loadIntegrations() {
       if (mb) mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'));
     }
   } catch {}
-  integrationsMod ??= await import('./integrations-view.mjs');
-  connectFieldsMod ??= await import('./connect-fields.mjs');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs');
+  integrationsMod ??= await import('./integrations-view.mjs?v=82bb407dddbc098d');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=82bb407dddbc098d');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=82bb407dddbc098d');
   const [c, p, pr, u, o, tc] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview'), api('/api/admin/tool-connections')]);
   const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
@@ -2308,7 +2308,7 @@ async function loadIntegrations() {
   // the connector library routes.
   const manageBox = $('#connector-manage');
   if (manageBox) {
-    connectorManageMod ??= await import('./connector-manage.mjs');
+    connectorManageMod ??= await import('./connector-manage.mjs?v=82bb407dddbc098d');
     await connectorManageMod.mountConnectorManage(manageBox, { api, el, role: state.actor?.role ?? '' }).catch(() => {});
   }
   // Freshly rendered sections start visible; re-apply the remembered
@@ -2469,7 +2469,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=82bb407dddbc098d')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3310,7 +3310,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js');
+  workspaceModule ??= await import('./envoy-workspace.js?v=82bb407dddbc098d');
   await loadFeedData().catch(() => {});
   await workspaceModule.mountWorkspace({
     api, post, toast, state,
@@ -3855,7 +3855,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs');
+    const mod = await import('./maestro-activation.mjs?v=82bb407dddbc098d');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }
@@ -3925,13 +3925,17 @@ boot();
 // new worker taking over (controllerchange), or an update found while
 // the app is open (updatefound). Whichever speaks first shows the
 // notice; the latch keeps the other from showing it again.
-// The watch set is EVERY first-party file the desk loads — shell, desk
-// module, its imports, the shell's dynamic imports, and both stylesheets.
-// envoy-workspace.js was missing from this set until 2026-11-05, so a
-// deploy that changed only the desk itself (most fixes) never reached
-// an open desk: Troy had to hard-refresh to see new work. A file that
-// disappears in a deploy reads as 'gone', which also counts as a change.
-const DEPLOY_WATCH = ['/app', '/app/app.js', '/app/envoy-workspace.js', '/app/account-menu.mjs', '/app/app-model.mjs', '/app/avatars.mjs', '/app/composer-picker.mjs', '/app/connector-panel.mjs', '/app/connector-menu.mjs', '/app/slash-menu.mjs', '/app/connect-fields.mjs', '/app/emoji-map.mjs', '/app/face-library.mjs', '/app/integrations-view.mjs', '/app/api-key-fields.mjs', '/app/maestro-activation.mjs', '/app/connector-manage.mjs', '/app/vendor/qrcode.mjs', '/app/app.css', '/app/envoy.css'];
+// The watch set is the document alone (2026-11-09, the shell stamp).
+// The desk's files are served under content-stamped URLs (?v=…, see
+// scripts/shell-stamp.mjs) with immutable caching, so watching the
+// files themselves would watch addresses whose bytes never change.
+// The document is never stamped: it stays revalidating, and it names
+// the current stamp — any change to any shell file rewrites the
+// stamp the document carries, so the document's ETag moves on every
+// shell deploy, desk-only ones included (the 2026-11-05 lesson, kept:
+// envoy-workspace.js feeds the stamp, so a desk-only fix still moves
+// the document). One HEAD per check instead of twenty.
+const DEPLOY_WATCH = ['/app'];
 (() => {
   let nudgedFor = null; // the update the notice is already up for — one showing per update
   const showUpdateNudge = (key) => {

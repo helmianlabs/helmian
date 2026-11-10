@@ -1,15 +1,15 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs';
-import { menuForSeat, walkMenuItems } from './connector-menu.mjs';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs';
-import { createConnectFields } from './connect-fields.mjs';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=82bb407dddbc098d';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=82bb407dddbc098d';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=82bb407dddbc098d';
+import { menuForSeat, walkMenuItems } from './connector-menu.mjs?v=82bb407dddbc098d';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=82bb407dddbc098d';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=82bb407dddbc098d';
+import { createConnectFields } from './connect-fields.mjs?v=82bb407dddbc098d';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=82bb407dddbc098d';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=82bb407dddbc098d';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -838,7 +838,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryFetchedAt: {}, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2223,18 +2223,34 @@ function conversationIdFor(which) {
   return `channel:${ws.channelId ?? 'none'}`;
 }
 async function loadLibraryFacts() {
-  if (ws.libraryFacts) return ws.libraryFacts;
+  if (ws.libraryFacts && Date.now() - ws.libraryFactsFetchedAt < LIBRARY_STALE_MS) return ws.libraryFacts;
   if (ws.libraryLoading) return ws.libraryLoading;
   ws.libraryLoading = (async () => {
-    const facts = { seats: [], libraries: {}, names: {}, error: false };
+    // A refresh keeps the per-seat libraries and names the session
+    // already holds — those carry their own staleness clocks (fix D);
+    // only the seat list and its counts are re-read here.
+    const prior = ws.libraryFacts;
+    const facts = { seats: [], libraries: prior?.libraries ?? {}, names: prior?.names ?? {}, error: false };
     try {
       const body = await ws.ctx.api('/api/admin/connector-library/seats');
       facts.seats = Array.isArray(body?.seats) ? body.seats : [];
     } catch { facts.error = true; }
+    // A failed refresh keeps the last good facts rather than blanking
+    // the menu; the fetch clock still advances, so a down read is not
+    // retried on every open inside the window.
+    if (facts.error && prior) {
+      ws.libraryFactsFetchedAt = Date.now();
+      return prior;
+    }
     ws.libraryFacts = facts;
+    ws.libraryFactsFetchedAt = Date.now();
     return facts;
   })();
-  return ws.libraryLoading;
+  try {
+    return await ws.libraryLoading;
+  } finally {
+    ws.libraryLoading = null;
+  }
 }
 // A cached seat library is served for a short window only (fix D).
 // The store can change under an open page — a connector connected
@@ -2267,6 +2283,31 @@ export async function loadSeatLibrary(seatId, now = Date.now()) {
   ws.libraryFetchedAt[seatId] = now;
   return library;
 }
+// The mount preload (speed fix, 2026-11-09): the plus menu used to
+// start its reads on first open and paint "Loading libraries…" while
+// they ran. mountWorkspace fires this once per session instead — the
+// same loaders, the same caches, started early: the seats facts, the
+// plugins list and the skills list land while the workspace settles,
+// then each seat's library prefetches in the background, one seat at
+// a time, so the preload never becomes the per-open fan-out the
+// read-perf fix removed. Opening the menu afterwards paints from
+// memory with the library's own joined states; the loaders'
+// staleness windows still govern every later refresh, and a cold
+// first open (the preload has not landed yet) keeps the loading line
+// exactly as before. Nothing here is awaited by the mount.
+export function preloadLibrarySession() {
+  if (!ws.ctx?.api || ws.libraryPreloadStarted) return;
+  ws.libraryPreloadStarted = true;
+  void loadBridgePlugins().catch(() => {});
+  void loadSkills().catch(() => {});
+  void (async () => {
+    const facts = await loadLibraryFacts().catch(() => null);
+    if (!facts || facts.error) return;
+    for (const seat of facts.seats) {
+      await loadSeatLibrary(seat.seatId).catch(() => {});
+    }
+  })();
+}
 // The test seam for the session caches above: installs the read
 // context and clears every cached copy, so tests drive the real
 // loaders end to end against a fake read.
@@ -2275,6 +2316,10 @@ export function resetLibrarySession(ctx) {
   ws.libraryFacts = null;
   ws.libraryLoading = null;
   ws.libraryFetchedAt = {};
+  ws.libraryFactsFetchedAt = 0;
+  ws.libraryPreloadStarted = false;
+  ws.skills = { list: null, loaded: false, loading: null };
+  ws.plugins = { list: null, unavailable: [], loaded: false, loading: null };
 }
 // A seat's face on the crew tile: the library-pack still by seat slug
 // (the pack's slugs ARE the library seat ids), falling back to the
@@ -2491,6 +2536,12 @@ function renderPlusMenuLevel1(which) {
   if (!facts) {
     void loadLibraryFacts().then(() => { if (ws.pickerFor === which) renderPicker(which); });
     return [h('p', { class: 'ew-note' }, 'Loading libraries...')];
+  }
+  // Past the staleness window the cached list paints while a refresh
+  // runs behind it — the paint-then-refresh shape Level 2 already
+  // uses for a seat's own library (fix D's window, now both levels).
+  if (Date.now() - ws.libraryFactsFetchedAt >= LIBRARY_STALE_MS) {
+    void loadLibraryFacts().then(() => { if (ws.pickerFor === which) renderPicker(which); });
   }
   const model = level1Model(facts.seats);
   const rows = model.rows.map((seat) => h('button', { type: 'button', class: 'ew-picker-row ew-lib-seat', title: `See ${seat.name}'s menu`, onclick: () => {
@@ -4118,7 +4169,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=82bb407dddbc098d');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -4395,6 +4446,10 @@ export async function mountWorkspace(ctx) {
   ws.ctx.renderFeed?.();
   await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
   await Promise.allSettled([loadPresence(), loadAgentState(), loadConfig(), loadMessages(), loadFaces(), loadProfile()]);
+  // Warm the plus menu's library caches while the workspace settles,
+  // so a first open paints from memory instead of "Loading
+  // libraries…" (the mount preload — see preloadLibrarySession).
+  void preloadLibrarySession();
   clearInterval(ws.timer); clearTimeout(ws.timer); clearInterval(ws.slowTimer);
   const visible = () => document.visibilityState === 'visible' && document.getElementById('shell')?.dataset.view === 'desktop';
   // Message poll: calm at rest, fast while the runner activity feed

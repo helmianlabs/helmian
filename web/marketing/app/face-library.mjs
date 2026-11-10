@@ -1,6 +1,8 @@
 // face-library.mjs — The Maestro Library (approved by Troy 2026-11-07):
 // Helmian's own avatar + reaction art — 139 pieces across the glossy,
-// realistic and anime packs (library manifest, manifest.csv). This
+// realistic and anime packs (library manifest, manifest.csv), plus
+// batch 3: four glossy reactions (listening, working, concerned,
+// qwen-thinking) staged in faces-batch-2 — 143 pieces in all. This
 // module is the desk's vocabulary for the pack the manifest names the
 // quality bar — GLOSSY — the same role emoji-map.mjs plays for the
 // shipped emoji set: which pieces exist and where their assets live, in
@@ -57,7 +59,7 @@ export const LIBRARY_FACES = Object.freeze([
 ]);
 
 // The glossy reaction pieces (manifest kind 'reaction', pack
-// 'glossy', batches 1 + 2), alphabetical by manifest name. `label` is
+// 'glossy', batches 1 + 2 + 3), alphabetical by manifest name. `label` is
 // the short caption the picker grid and the chip aria-label speak;
 // `use` is the manifest's own line. flip-charge is the library's
 // middle finger — the Guard-refusal signature (see the report).
@@ -75,6 +77,7 @@ export const LIBRARY_REACTIONS = Object.freeze([
   { name: "claude-deep-thinking", label: "Claude Deep Thinking", use: "Deep thinking — a seat is in a long ponder" },
   { name: "claude-proud", label: "Claude Proud", use: "Proud — a job done well" },
   { name: "coffee", label: "Coffee", use: "A break / refuelling" },
+  { name: "concerned", label: "Concerned", use: "Concerned — something needs a second look" },
   { name: "cool", label: "Cool", use: "All good, calm" },
   { name: "cross-badge", label: "Cross badge", use: "Denied / a check failed" },
   { name: "crown", label: "Crown", use: "Top performer" },
@@ -107,6 +110,7 @@ export const LIBRARY_REACTIONS = Object.freeze([
   { name: "key", label: "Key", use: "A credential / access moment" },
   { name: "laugh-rock", label: "Laugh rock", use: "A funny moment in the room" },
   { name: "laugh-tears", label: "Laugh tears", use: "A funny moment in the room" },
+  { name: "listening", label: "Listening", use: "Listening — a seat is taking in the human's words" },
   { name: "maestro-compass", label: "Maestro Compass", use: "Map / compass — finding the way, a lookup in progress" },
   { name: "maestro-reading", label: "Maestro Reading", use: "Maestro is reading — the library is being consulted" },
   { name: "maestro-waiting", label: "Maestro Waiting", use: "Waiting on the human — hand raised, a decision is needed" },
@@ -120,6 +124,7 @@ export const LIBRARY_REACTIONS = Object.freeze([
   { name: "party", label: "Party", use: "Celebration" },
   { name: "pin", label: "Pin", use: "Pinned / a place" },
   { name: "praise", label: "Praise", use: "Well done, hands up" },
+  { name: "qwen-thinking", label: "Qwen Thinking", use: "Thinking — a seat is in a long ponder" },
   { name: "robot", label: "Robot", use: "Automation running" },
   { name: "rocket", label: "Rocket", use: "Shipped / launched" },
   { name: "salute", label: "Salute", use: "Acknowledged — on it" },
@@ -136,6 +141,7 @@ export const LIBRARY_REACTIONS = Object.freeze([
   { name: "trophy", label: "Trophy", use: "A milestone was reached" },
   { name: "warning", label: "Warning", use: "A caution flag" },
   { name: "wave", label: "Wave", use: "Hello — a seat joins the room" },
+  { name: "working", label: "Working", use: "Working — a seat is busy on the job" },
   { name: "x-shield", label: "X shield", use: "The Guard refused (shield form, alt to the flip)" },
 ]);
 

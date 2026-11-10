@@ -337,5 +337,8 @@ test('purity: no DOM, no fetch, exactly one import (the panel roster)', () => {
   assert.ok(!/\bwindow\b/.test(source), 'window');
   assert.ok(!/\blocalStorage\b/.test(source), 'localStorage');
   const imports = source.split('\n').filter((line) => line.startsWith('import '));
-  assert.deepEqual(imports, ["import { LIBRARY_SEATS } from './connector-panel.mjs';"]);
+  // The specifier carries the shell stamp (?v=…, 2026-11-09 speed
+  // fix); the purity law is the import's identity, not its stamp —
+  // strip the stamp before the comparison.
+  assert.deepEqual(imports.map((line) => line.replace(/\?v=[0-9a-f]{16}/, '')), ["import { LIBRARY_SEATS } from './connector-panel.mjs';"]);
 });

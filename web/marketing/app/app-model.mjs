@@ -97,18 +97,37 @@ export function approvalsModel(body = {}, role = null) {
 // page in front of the function). This classifier keeps the states apart:
 // the words say "Guard is unreachable" only when the route itself said so,
 // and no state ever renders a raw parser error.
+//
+// One more answer family exists on this path, and it is Helmian's own:
+// when the Guard route itself did not answer — the request was refused or
+// lost by the admin layers around it (the live-admin fallthrough's route-
+// not-found, the Vercel entry's route-not-found, an internal error, the
+// origin gate) — those layers answer in the house envelope every other
+// admin route uses, { valid: false, code }, not in the Guard route's
+// { error } envelope. That is the server reporting a problem of its own,
+// in a shape this page CAN read: it gets its own state (server-error),
+// checked before the bare-status branches, because a 403 in the house
+// envelope is an origin refusal, not the Guard route's approver verdict,
+// and a 404/500 in it is not a foreign page. The approver states below
+// (503/403/401) belong to the Guard route's own answers only, which carry
+// { error } or the success envelopes — never { valid: false }.
 export const GUARD_QUEUE_NO_ANSWER = 'Approvals are unavailable: Helmian’s server did not answer at all, so the Guard’s state is unknown. Nothing will run until it answers.';
 const GUARD_QUEUE_UNREADABLE = 'Approvals are unavailable: Helmian’s server answered in a shape this page cannot read, so the Guard’s state is unknown. Nothing will run until this reads cleanly.';
+const GUARD_QUEUE_SERVER_ERROR = 'Approvals are unavailable: Helmian’s server reported a problem of its own before the Guard could be asked, so the Guard’s state is unknown. Nothing will run until this reads cleanly.';
 export function guardQueueReadModel(status, text) {
   let body = null;
   try { body = JSON.parse(String(text ?? '')); } catch { body = null; }
-  if (body === null || typeof body !== 'object') return { state: 'unreadable', message: GUARD_QUEUE_UNREADABLE };
+  // Either route's real envelope is a JSON object ({ approvals } /
+  // { queue, counts }); a non-JSON body, a scalar, or a bare array is
+  // none of them — it never reads as a healthy (possibly empty) queue.
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return { state: 'unreadable', message: GUARD_QUEUE_UNREADABLE };
   if (status === 200) return { state: 'ok', body };
+  if (body.error === 'GUARD_BAD_RESPONSE') return { state: 'guard-bad-response', message: 'Guard answered, but the answer could not be read. Nothing will run until it answers cleanly.' };
+  if (body.error === 'GUARD_UNAVAILABLE' || body.error === 'GUARD_TIMEOUT') return { state: 'guard-unreachable', message: 'Guard is unreachable. Nothing will run until it answers.' };
+  if (body.valid === false && typeof body.code === 'string') return { state: 'server-error', message: GUARD_QUEUE_SERVER_ERROR };
   if (status === 503) return { state: 'not-configured', message: 'PC approvals are not switched on for this workspace yet. Once your PC is linked, Guard asks you here before anything runs on it.' };
   if (status === 403) return { state: 'forbidden', message: 'PC actions are approved by the PC owner’s account. Sign in with that account to Allow or Deny them.' };
   if (status === 401) return { state: 'unauthenticated', message: 'Sign in again to see PC actions waiting for you.' };
-  if (body.error === 'GUARD_BAD_RESPONSE') return { state: 'guard-bad-response', message: 'Guard answered, but the answer could not be read. Nothing will run until it answers cleanly.' };
-  if (body.error === 'GUARD_UNAVAILABLE' || body.error === 'GUARD_TIMEOUT') return { state: 'guard-unreachable', message: 'Guard is unreachable. Nothing will run until it answers.' };
   return { state: 'unreadable', message: GUARD_QUEUE_UNREADABLE };
 }
 

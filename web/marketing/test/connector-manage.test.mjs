@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
-import { rowControls, seatName, toolAccessRows, pluginsListModel, pluginsUnavailableLine, MIRROR_NOTE, mirrorGroupTitle, planConnectorRows, openKeyFor, MANAGE_SEAT_STORAGE_KEY, MANAGE_TAB_STORAGE_KEY, MANAGE_SEAT_MEMORY_KEY, NO_SNAPSHOT_LINE, NO_PLUGINS_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
+import { rowControls, seatName, toolAccessRows, pluginsListModel, pluginsUnavailableLine, renderConnectorManage, MIRROR_NOTE, mirrorGroupTitle, planConnectorRows, openKeyFor, MANAGE_SEAT_STORAGE_KEY, MANAGE_TAB_STORAGE_KEY, MANAGE_SEAT_MEMORY_KEY, NO_SNAPSHOT_LINE, NO_PLUGINS_LINE, PLUGIN_CATALOG_TITLE, NO_SHELF_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
 
 const manage = await readFile(new URL('../app/connector-manage.mjs', import.meta.url), 'utf8');
 const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
@@ -88,9 +88,15 @@ test('seat names come from the library seat list', () => {
 
 test('wiring: the surface mounts in the Integrations view and app.js loads it', () => {
   assert.match(html, /id="connector-manage"/);
-  assert.match(appJs, /import\('\.\/connector-manage\.mjs'\)/);
+  // The import specifier carries the shell stamp (?v=…, 2026-11-09
+  // speed fix); the wiring law is the import itself.
+  assert.match(appJs, /import\('\.\/connector-manage\.mjs(\?v=[0-9a-f]{16})?'\)/);
   assert.match(appJs, /mountConnectorManage\(manageBox/);
-  assert.ok(appJs.includes("'/app/connector-manage.mjs'"), 'the deploy watch list carries the new module');
+  // The watch law, restated for the stamp (2026-11-09): DEPLOY_WATCH
+  // no longer lists files — it watches the document alone, and the
+  // document names the shell stamp this module feeds, so a change to
+  // the module still moves the one watched ETag.
+  assert.match(appJs, /DEPLOY_WATCH = \['\/app'\]/, 'the deploy watch watches the document alone');
 });
 
 test('wiring: the surface reads the existing reads and writes through the M1 routes', () => {
@@ -364,4 +370,174 @@ test('wiring: mount and seat-change renders paint the header with the loading li
   const rowsAt = refreshBody.indexOf('await loadRows()', seatsAt);
   assert.ok(seatsAt >= 0 && paintAt > seatsAt, 'once the seats are known, header + loading paint');
   assert.ok(rowsAt > paintAt, 'before the rows read — the remembered seat’s list can never be a mount’s first render');
+});
+
+// ------------------------------------------------------- plugin catalog
+// (plugin-catalog bite, 2026-11-09): the Plugins tab's catalog half —
+// the shelf the plugins read now carries, joined against the
+// installed rows, with Install/Uninstall on the tab itself.
+
+const SHELF_PAYLOAD = [
+  {
+    name: 'weather', version: '1.0.0',
+    description: 'US weather from the National Weather Service: forecasts, alerts, and current conditions, answered the plain way.',
+    entries: [{ entryId: 'registry-weather', name: 'Weather' }],
+    skills: [{ id: 'reading-a-forecast', name: 'reading-a-forecast', description: 'Turn National Weather Service tool output into a plain forecast answer: alerts first, then today, then the week.' }],
+  },
+  {
+    name: 'github-review', version: '1.0.0',
+    description: 'Pull request reviews over the workspace’s GitHub connection: the diff read first, the tests the PR names checked, and what was not checked named.',
+    entries: [{ entryId: 'helmian-github', name: 'GitHub' }],
+    skills: [{ id: 'reviewing-a-pull-request', name: 'reviewing-a-pull-request', description: 'Review a pull request from its diff: read what changed, check the tests the PR names, summarize in plain words, and name what was not checked.' }],
+  },
+];
+
+test('pluginsListModel: the shelf normalizes into the catalog and joins installed state by name', () => {
+  const joined = pluginsListModel({
+    plugins: [{ name: 'weather', source: 'helmian-plugin' }],
+    unavailable: [],
+    shelf: SHELF_PAYLOAD,
+  });
+  assert.equal(joined.catalog.length, 2);
+  const weather = joined.catalog[0];
+  assert.equal(weather.name, 'weather');
+  assert.equal(weather.version, '1.0.0');
+  assert.equal(weather.installed, true, 'a helmian-plugin row of the same name is the bundle’s install');
+  assert.deepEqual(weather.entries, [{ entryId: 'registry-weather', name: 'Weather' }]);
+  assert.deepEqual(weather.skills.map((s) => [s.id, s.name]), [['reading-a-forecast', 'reading-a-forecast']]);
+  assert.equal(weather.brings, 'Brings the Weather tools, plus the reading-a-forecast skill.', 'the brings line names the bundle’s own entries and skills, with no state words');
+  assert.equal(joined.catalog[1].installed, false);
+  // A bridge row of the same name is NOT the bundle's install, and
+  // neither is a row with no source at all.
+  assert.equal(pluginsListModel({ plugins: [{ name: 'weather', source: 'bridge' }], shelf: SHELF_PAYLOAD }).catalog[0].installed, false);
+  assert.equal(pluginsListModel({ plugins: [{ name: 'weather' }], shelf: SHELF_PAYLOAD }).catalog[0].installed, false);
+  // A read without the shelf field (an older deployment) plans an
+  // empty catalog, not a crash.
+  assert.deepEqual(pluginsListModel({ plugins: [] }).catalog, []);
+  assert.deepEqual(pluginsListModel(null).catalog, []);
+});
+
+// ---- minimal DOM for the tab render (only what the surface touches)
+class FakeEl {
+  constructor(tag) {
+    this.tagName = tag.toUpperCase();
+    this.children = [];
+    this.className = '';
+    this._text = '';
+    this.hidden = false;
+    this.disabled = false;
+    this.type = '';
+    this.value = '';
+    this._listeners = {};
+    const classes = new Set();
+    this.classList = {
+      toggle: (cls, force) => { if (force) classes.add(cls); else classes.delete(cls); },
+      contains: (cls) => classes.has(cls),
+    };
+  }
+  set textContent(v) { this._text = String(v ?? ''); this.children = []; }
+  get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); }
+  append(...kids) { this.children.push(...kids); }
+  replaceChildren(...kids) { this.children = [...kids]; }
+  setAttribute() {}
+  addEventListener(type, fn) { (this._listeners[type] ??= []).push(fn); }
+  async click() { for (const fn of this._listeners.click ?? []) await fn(); }
+}
+const fakeEl = (tag, cls, text) => { const n = new FakeEl(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+function* walkEls(node) { yield node; for (const c of node.children) yield* walkEls(c); }
+const findEls = (root, pred) => [...walkEls(root)].filter(pred);
+const buttonsNamed = (root, label) => findEls(root, (n) => n.tagName === 'BUTTON' && n.textContent === label);
+
+// A fake server behind the surface's api(): the seats read, the
+// plugins read (built from a mutable install set, the way the real
+// route joins records), and the two plugin write routes, recorded.
+function pluginsSurface({ shelf = SHELF_PAYLOAD, bridgeRows = [], pluginsError = null } = {}) {
+  const calls = [];
+  const installed = new Map();
+  const api = async (path, opts) => {
+    if (path === '/api/admin/connector-library/seats') return { seats: [{ seatId: 'claude' }] };
+    if (path === '/api/admin/plugins' && !opts) {
+      if (pluginsError) throw pluginsError;
+      return { valid: true, plugins: [...installed.values(), ...bridgeRows], unavailable: [], shelf };
+    }
+    if (path === '/api/admin/plugins/install' || path === '/api/admin/plugins/uninstall') {
+      const body = JSON.parse(opts?.body ?? '{}');
+      calls.push({ path, method: opts?.method, body });
+      if (path.endsWith('/install')) {
+        installed.set(body.name, { name: body.name, version: '1.0.0', source: 'helmian-plugin', description: 'The installed row.', brings: 'Brings the Weather tools — not connected yet.' });
+      } else installed.delete(body.name);
+      return { valid: true };
+    }
+    throw new Error(`unexpected api call: ${path}`);
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'claude' });
+  return {
+    box, calls,
+    async openPlugins() { surface.state.tab = 'plugins'; await surface.refresh(); },
+  };
+}
+
+test('plugins tab: the catalog renders from the read’s shelf, and Install fires the exact request, then the row flips', async () => {
+  const h = pluginsSurface();
+  await h.openPlugins();
+  let text = h.box.textContent;
+  assert.ok(text.includes(PLUGIN_CATALOG_TITLE), 'the catalog section renders on the tab');
+  assert.ok(text.includes('weather'));
+  assert.ok(text.includes('US weather from the National Weather Service'), 'the bundle’s own description renders');
+  assert.ok(text.includes('Brings the Weather tools, plus the reading-a-forecast skill.'), 'the brings line renders from the shelf row');
+  assert.ok(text.includes(NO_PLUGINS_LINE), 'the installed list keeps its honest empty line above the catalog');
+  assert.equal(buttonsNamed(h.box, 'Install').length, 2, 'both shelf bundles offer Install');
+  assert.equal(buttonsNamed(h.box, 'Uninstall').length, 0);
+
+  await buttonsNamed(h.box, 'Install')[0].click();
+  assert.deepEqual(h.calls, [{ path: '/api/admin/plugins/install', method: 'POST', body: { name: 'weather' } }],
+    'Install posts exactly { name } to the existing install route — nothing invented');
+
+  // The landed write refreshed the read: weather stands in the
+  // installed list, its catalog row flipped to Installed, and the
+  // remaining Install is github-review's.
+  text = h.box.textContent;
+  assert.ok(!text.includes(NO_PLUGINS_LINE), 'the installed list is no longer empty');
+  assert.ok(text.includes('Installed'), 'the catalog row shows its installed state');
+  assert.equal(buttonsNamed(h.box, 'Install').length, 1);
+  assert.ok(buttonsNamed(h.box, 'Uninstall').length >= 1, 'the flipped row offers Uninstall');
+
+  const uninstalls = buttonsNamed(h.box, 'Uninstall');
+  await uninstalls[uninstalls.length - 1].click();
+  assert.deepEqual(h.calls[1], { path: '/api/admin/plugins/uninstall', method: 'POST', body: { name: 'weather' } },
+    'Uninstall posts exactly { name } to the existing uninstall route');
+  assert.equal(buttonsNamed(h.box, 'Install').length, 2, 'after the refresh the row flipped back to Install');
+});
+
+test('plugins tab: a bridge plugin gets NO cloud uninstall button', async () => {
+  const h = pluginsSurface({ bridgeRows: [{ name: 'bridge-one', version: '2.0.0', brings: 'Brings bridge tools.' }] });
+  await h.openPlugins();
+  assert.ok(h.box.textContent.includes('bridge-one'), 'the bridge row renders in the installed list');
+  assert.equal(buttonsNamed(h.box, 'Uninstall').length, 0, 'the bridge’s plugins are the bridge’s to remove — no cloud Uninstall anywhere');
+  assert.equal(buttonsNamed(h.box, 'Install').length, 2, 'the catalog still offers both bundles');
+});
+
+test('plugins tab: a failed plugins read shows the honest error and no catalog buttons', async () => {
+  const h = pluginsSurface({ pluginsError: new Error('Plugins did not load.') });
+  await h.openPlugins();
+  assert.ok(h.box.textContent.includes('Plugins did not load.'), 'the read’s failure words stand on the tab');
+  assert.equal(buttonsNamed(h.box, 'Install').length, 0);
+  assert.equal(buttonsNamed(h.box, 'Uninstall').length, 0);
+});
+
+test('plugins tab: an empty shelf says so instead of leaving a blank tab', async () => {
+  const h = pluginsSurface({ shelf: [] });
+  await h.openPlugins();
+  assert.ok(h.box.textContent.includes(PLUGIN_CATALOG_TITLE));
+  assert.ok(h.box.textContent.includes(NO_SHELF_LINE), 'the catalog section names its own emptiness');
+  assert.equal(buttonsNamed(h.box, 'Install').length, 0);
+});
+
+test('wiring: the Plugins tab’s catalog rides the existing plugin routes in their exact shape', () => {
+  assert.ok(manage.includes("call('/api/admin/plugins/install', { name: row.name })"), 'catalog Install goes through call() with exactly { name }');
+  assert.ok(manage.includes("call('/api/admin/plugins/uninstall', { name: row.name })"), 'catalog Uninstall, same shape');
+  assert.ok(manage.includes("call('/api/admin/plugins/uninstall', { name: p.name })"), 'the installed row’s Uninstall, same shape');
+  assert.match(manage, /frag\.append\(pluginCatalogSection\(model\)\)/, 'the tab appends the catalog under the installed list');
+  assert.match(manage, /p\.source === 'helmian-plugin'/, 'the installed row’s Uninstall is gated on the cloud source');
 });
