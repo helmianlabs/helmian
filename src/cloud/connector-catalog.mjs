@@ -32,6 +32,8 @@
 //   - iconRef uses the 'icon:<slug>' asset-reference scheme; the marks
 //     themselves are surface asset work (Bites 3/5), not data.
 
+import { REGISTRY_PICKS_AS_OF, registryPicksForSeat } from './mcp-registry-curation.mjs';
+
 // The seats live in the room today (the room's own seat ids).
 export const LIVE_SEATS = Object.freeze([
   'claude', 'chatgpt', 'grok', 'gemini', 'mistral', 'groq', 'nvidia',
@@ -277,14 +279,61 @@ function helmianNativeEntries(seatId) {
   ];
 }
 
+// ------------------------------------- Source 3 — MCP Registry imports
+// Curated picks from the OFFICIAL MCP Registry, ruled in
+// mcp-registry-curation.mjs (the picks, their placement law, and the
+// live-record check live there; the endpoint/version facts were
+// pulled from the live registry on REGISTRY_PICKS_AS_OF). The
+// registry is the AGGREGATOR road of research §5: Helmian polls and
+// curates, then serves its own persisted copy — this data — never
+// the raw feed, and never at read time.
+//
+// Every import is a Helmian-brokered listing: the registry record
+// names a public MCP endpoint Helmian can reach and handshake
+// directly, so by the §3.1 rule it ships 'helmian' and Helmian's
+// own Connect flow applies — connecting still goes through the
+// normal connect roads (and the safety gate where a road is
+// custom-shaped); stocking the shelf marks nothing connected.
+// Trust: 'community', always (the curation law — registry metadata
+// being CC0 says nothing about the server it points at, and no
+// label is upgraded here). Ids are prefixed ('registry-…') so an
+// import can never collide with a same-named mirror or native
+// inside one seat's library — they are different pipes, the §3.2
+// rule the natives already follow. The pick's registry name and
+// the version the curation check last saw ride on the definition
+// as provenance (catalog data only, like the starter actions —
+// the store keeps its own fixed entry shape).
+function registryEntriesForSeat(seatId) {
+  return registryPicksForSeat(seatId).map((pick) => ({
+    ...catalogEntry(seatId, {
+      id: pick.entryId,
+      name: pick.name,
+      oneLiner: pick.oneLiner,
+      icon: pick.icon,
+      vendorName: pick.vendorName,
+      trustLabel: 'community',
+      category: pick.category,
+      pipe: {
+        mode: 'helmian',
+        endpoint: pick.endpoint,
+        authMode: pick.authMode,
+        ...(pick.scopesSummary ? { scopesSummary: pick.scopesSummary } : {}),
+      },
+    }),
+    registryName: pick.registryName,
+    registryVersion: pick.registryVersion,
+    registryAsOf: REGISTRY_PICKS_AS_OF,
+  }));
+}
+
 // ------------------------------------------------------------------ catalog
 
-/** Source 1 + Source 2 definitions for one seat's library. */
+/** Source 1 + Source 3 + Source 2 definitions for one seat's library. */
 export function catalogEntriesForSeat(seatId) {
   if (!LIVE_SEATS.includes(seatId)) {
     throw Object.assign(new Error(`unknown seat "${seatId}" — the catalog seeds the seats live in the room`), { status: 400 });
   }
-  return [...(SOURCE1_BY_SEAT[seatId] ?? []), ...helmianNativeEntries(seatId)];
+  return [...(SOURCE1_BY_SEAT[seatId] ?? []), ...registryEntriesForSeat(seatId), ...helmianNativeEntries(seatId)];
 }
 
 /** The whole day-one catalog: every live seat's definitions. */

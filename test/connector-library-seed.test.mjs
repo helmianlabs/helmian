@@ -150,7 +150,7 @@ test('1+2+8 — first read on an empty tenant seeds and returns rows; second rea
   assert.deepEqual(first.seed.conflicts, []);
   assert.equal(first.rows.length, catalogEntriesForSeat('claude').length, 'the seeded catalog reads back');
   assert.ok(first.rows.every((r) => r.name && r.oneLiner && r.state), 'rows are real library rows');
-  assert.equal(store.entryCount(tenant), 54, 'the whole catalog landed (all seats), not just the read seat — 54 since the Scribe cut removed the native Scribe entry from all 14 seats (was 68)');
+  assert.equal(store.entryCount(tenant), 75, 'the whole catalog landed (all seats), not just the read seat — 75 since Source 3 (the MCP Registry imports) stocked 21 more across the seats; 54 after the Scribe cut removed the native Scribe entry from all 14 seats (was 68)');
 
   const createCallsAfterSeed = store.stats.createEntryCalls;
   const second = await read.readSeatLibrary(tenant, { personId: PERSON, seatId: 'claude' });
@@ -173,7 +173,7 @@ test('9 — default wiring seeds through the real refresh machinery on the read�
   const view = await read.readSeatLibrary(tenant, { personId: PERSON, seatId: 'grok' });
   assert.equal(view.seed.seeded, true);
   assert.equal(view.rows.length, catalogEntriesForSeat('grok').length);
-  assert.equal(store.entryCount(tenant), 54);
+  assert.equal(store.entryCount(tenant), 75); // 54 + the 21 Source 3 registry imports
 });
 
 test('3 — a catalog entry deleted from a populated seat is restored by that seat’s next read (resurrection-on-read, the accepted trade-off); a custom entry is untouched', async () => {

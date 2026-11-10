@@ -78,7 +78,12 @@ function project(items) {
 }
 
 const NATIVES = 'helmian-github';
-const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES}`, 'manage:Manage connectors:integrations'];
+// Source 3 (MCP Registry imports): the weather pick rides every
+// seat's live group beside the native; the service picks ride only
+// their seats (mirrored in connector-menu.mjs's REGISTRY_SHELF and
+// the per-seat live groups).
+const SHELF = 'registry-weather';
+const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES},${SHELF}`, 'manage:Manage connectors:integrations'];
 
 const EXPECTED = {
   claude: [
@@ -89,7 +94,7 @@ const EXPECTED = {
     'submenu:Skills',
     'live:-:feed:helmian-skills',
     'submenu:Connectors',
-    `live:-:${NATIVES}`,
+    `live:-:${NATIVES},${SHELF},registry-atlassian,registry-notion,registry-linear,registry-stripe`,
     'mirror:-:Claude:mirror:gmail,google-calendar,google-drive,github,slack,notion,linear,stripe,atlassian,canva,idiolect',
     'action:Tool access:tool-access',
     'submenu:Plugins',
@@ -100,14 +105,14 @@ const EXPECTED = {
   chatgpt: [
     'attach:Add photos & files',
     'submenu:More',
-    `live:-:${NATIVES}`,
+    `live:-:${NATIVES},${SHELF},registry-notion`,
     'mirror:-:ChatGPT:mirror:gmail,google-calendar,google-drive,slack,notion,github,canva,dropbox',
     'manage:Manage connectors:integrations',
   ],
   grok: [
     'attach:Files',
     'submenu:Connectors',
-    `live:-:github,${NATIVES}`,
+    `live:-:github,${NATIVES},${SHELF},registry-notion,registry-linear`,
     'mirror:-:Grok:state:gmail,google-calendar,google-drive,onedrive,outlook,microsoft-teams,sharepoint,salesforce,box,canva,gamma,linear,meltwater,notion,sp-global,vercel',
     'manage:Manage connectors:integrations',
   ],
@@ -115,20 +120,20 @@ const EXPECTED = {
     'attach:Add photos & files',
     'submenu:Connected Apps',
     'mirror:-:Gemini:state:gmail,google-drive,google-calendar',
-    `live:Connectors:${NATIVES}`,
+    `live:Connectors:${NATIVES},${SHELF}`,
     'manage:Manage connectors:integrations',
   ],
   mistral: [
     'attach:Add files',
     'submenu:Tools',
-    `live:-:${NATIVES}`,
+    `live:-:${NATIVES},${SHELF}`,
     'mirror:-:Mistral:mirror:',
     'manage:Manage connectors:integrations',
   ],
-  groq: ['attach:Add files', `live:Connectors:${NATIVES}:note:Beta — Groq remote MCP`, 'manage:Manage connectors:integrations'],
+  groq: ['attach:Add files', `live:Connectors:${NATIVES},${SHELF}:note:Beta — Groq remote MCP`, 'manage:Manage connectors:integrations'],
   nvidia: PLAIN_LIST,
-  openrouter: ['attach:Add files', `live:Connectors:${NATIVES}:requiresToolCapableModel`, 'manage:Manage connectors:integrations'],
-  cloudflare: ['attach:Add files', `live:Connectors:cloudflare-docs,${NATIVES}`, 'manage:Manage connectors:integrations'],
+  openrouter: ['attach:Add files', `live:Connectors:${NATIVES},${SHELF}:requiresToolCapableModel`, 'manage:Manage connectors:integrations'],
+  cloudflare: ['attach:Add files', `live:Connectors:cloudflare-docs,${NATIVES},${SHELF}`, 'manage:Manage connectors:integrations'],
   qwen: PLAIN_LIST,
   muse: PLAIN_LIST,
   maestro: PLAIN_LIST,
