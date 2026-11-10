@@ -37,7 +37,7 @@
 // Pure model first (rowControls), then the DOM renderer — the model
 // is unit-tested like connector-panel.mjs's.
 
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=82bb407dddbc098d';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=c945d648586ce552';
 
 export const MANAGE_SEAT_STORAGE_KEY = 'helmian.manageSeat';
 // The Manage road's landing intent (addition, 2026-11-09): taking
@@ -360,9 +360,28 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
   }
 
   async function loadRows() {
-    if (!state.seat) { state.rows = []; return; }
-    const body = await api(`/api/admin/connector-library?seat=${encodeURIComponent(state.seat)}`);
+    const seat = state.seat;
+    if (!seat) { state.rows = []; return; }
+    const body = await api(`/api/admin/connector-library?seat=${encodeURIComponent(seat)}`);
+    // A read that lands after the seat moved on is stale by
+    // construction — a newer read owns the rows now. The parallel
+    // mount below can have two rows reads in flight on the stale-
+    // marker edge; this guard is what keeps the loser's late answer
+    // from painting over the settled seat's list.
+    if (state.seat !== seat) return;
     state.rows = Array.isArray(body?.rows) ? body.rows : [];
+  }
+
+  // The rows read, started early and carried as a flight (speed
+  // fix 1, 2026-11-09): refresh() fires it BESIDE the seats read —
+  // the two are independent and each costs ~1 s on its own, so
+  // awaiting them one after the other doubled the wait on every
+  // mount. The flight never rejects: it settles to { ok } or
+  // { error } and refresh() decides what the failure means.
+  function startRowsFlight() {
+    const seat = state.seat;
+    const settled = loadRows().then(() => ({ ok: true }), (error) => ({ ok: false, error }));
+    return { seat, settled };
   }
 
   function header() {
@@ -766,6 +785,18 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       state.open.clear();
       root.replaceChildren(note, header(), loadingLine());
     }
+    // Parallel reads (speed fix 1, 2026-11-09): on the Connectors
+    // tab the rows read fires NOW, beside the seats read — the
+    // seat is already known client-side (the landing marker or the
+    // remembered seat) before either answer lands, so neither read
+    // waits on the other. On a seat switch the seats read is the
+    // cached list inside loadSeats (a no-op), so the switch fires
+    // exactly this one read; a post-action refresh likewise. If
+    // the seats read settles a DIFFERENT seat (a stale marker
+    // names a seat that no longer stands), the branch below
+    // re-reads for the settled seat, and the early flight's late
+    // answer is discarded by loadRows' own seat guard.
+    const rowsFlight = state.tab === 'connectors' && state.seat ? startRowsFlight() : null;
     try {
       await loadSeats();
       // Mount and seat-change renders (dedupe finish, 2026-11-09
@@ -777,7 +808,13 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       if (!state.loaded || seatChanged) root.replaceChildren(note, header(), loadingLine());
       const head = header();
       let body = null;
-      if (state.tab === 'connectors') { await loadRows(); body = await connectorsTab(); }
+      if (state.tab === 'connectors') {
+        if (rowsFlight && rowsFlight.seat === state.seat) {
+          const landed = await rowsFlight.settled;
+          if (!landed.ok) throw landed.error;
+        } else await loadRows();
+        body = await connectorsTab();
+      }
       else if (state.tab === 'skills') body = await skillsTab();
       else body = await pluginsTab();
       state.loaded = true;

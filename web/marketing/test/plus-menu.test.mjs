@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { LIBRARY_STALE_MS, loadSeatLibrary, plusMenuLevel2Model, preloadLibrarySession, resetLibrarySession } from '../app/envoy-workspace.js';
 import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, toggleConnector } from '../app/connector-panel.mjs';
-import { MENU_SEAT_IDS, collectCatalogEntryIds, menuForSeat } from '../app/connector-menu.mjs';
+import { MENU_SEAT_IDS, collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat } from '../app/connector-menu.mjs';
 
 // Bite 3R-b — the "+" MENU FACE (Troy, 2026-11-08): the old bite-3
 // panel opened full-width across the composer; Troy's order is a
@@ -167,6 +167,52 @@ test('plus menu Level 2 — the toggle list offers ONLY connected Helmian-broker
   const connectors2 = model2.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors');
   assert.ok(!connectors2.rows.some((r) => r.kind === 'toggle'), 'a needs-reconnect connector is not offered as a switch');
   assert.ok(connectors2.rows.some((r) => r.kind === 'note' && r.text === 'No connectors are connected for Claude yet.'));
+});
+
+test('plus menu dedupe: the brokered GitHub stands in Claude’s panel and the mirror namesake drops', () => {
+  // The 2026-11-09 live walk's shape, in the read's own words:
+  // Helmian's GitHub (connected) and Claude's own GitHub (not
+  // connected) both named "GitHub" in one Connectors list.
+  const lib = library('claude', [
+    libRow('claude', 'helmian-github', 'GitHub', { state: 'connected', oneLiner: 'Work with the repositories this workspace already reaches' }),
+    libRow('claude', 'github', 'GitHub', { brokerMode: 'vendor', kind: 'oauth-app', oneLiner: 'Review pull requests, issues, and repository activity' }),
+    libRow('claude', 'gmail', 'Gmail', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'troy@example.com', kind: 'oauth-app' }),
+  ]);
+  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, conversationId: 'c1' });
+  const githubs = flat(model).filter((r) => r.row?.name === 'GitHub');
+  assert.equal(githubs.length, 1, 'one GitHub row in the panel, not two');
+  assert.equal(githubs[0].row.entryId, 'helmian-github', 'the survivor is Helmian’s brokered row');
+  assert.equal(githubs[0].kind, 'toggle', 'standing as the connected switch');
+  assert.equal(githubs[0].row.oneLiner, 'Work with the repositories this workspace already reaches', 'the survivor keeps its own words');
+  // With Helmian's GitHub NOT connected, no brokered row stands in
+  // the list to win — the seat's own mirror is the name's only row.
+  const cold = library('claude', [
+    libRow('claude', 'helmian-github', 'GitHub', { state: 'available', oneLiner: 'Work with the repositories this workspace already reaches' }),
+    libRow('claude', 'github', 'GitHub', { brokerMode: 'vendor', kind: 'oauth-app', oneLiner: 'Review pull requests, issues, and repository activity' }),
+  ]);
+  const coldModel = plusMenuLevel2Model({ seatId: 'claude', library: cold, conversationId: 'c1' });
+  const coldGithubs = flat(coldModel).filter((r) => r.row?.name === 'GitHub');
+  assert.equal(coldGithubs.length, 1, 'still one GitHub row');
+  assert.equal(coldGithubs[0].row.entryId, 'github', 'the mirror stands when its brokered namesake is not in the list');
+});
+
+test('dedupePanelConnectorRows: tiers, order, and hands-off for non-connector rows', () => {
+  const toggle = (entryId, name, over = {}) => ({ kind: 'toggle', row: { entryId, name, brokerMode: 'helmian', state: 'connected', ...over } });
+  const mirror = (entryId, name, over = {}) => ({ kind: 'mirror', row: { entryId, name, brokerMode: 'vendor', state: 'not-connected', ...over } });
+  const rows = [
+    { kind: 'label', label: 'Connectors' },
+    toggle('helmian-github', 'GitHub'),
+    mirror('github', 'GitHub'),
+    mirror('v-slack-1', 'Slack'),
+    mirror('v-slack-2', 'Slack', { state: 'connected' }),
+    { kind: 'note', text: 'On for the whole account — name it in a message to use it.' },
+  ];
+  const out = dedupePanelConnectorRows(rows);
+  assert.deepEqual(out.map((r) => r.row?.entryId ?? r.kind), ['label', 'helmian-github', 'v-slack-2', 'note'],
+    'brokered beats mirror, a connected mirror beats a not-connected one, and labels and notes pass through in place');
+  const untouched = [toggle('a', 'A'), mirror('b', 'B')];
+  assert.equal(dedupePanelConnectorRows(untouched), untouched, 'a list with no duplicate names comes back as itself');
+  assert.deepEqual(dedupePanelConnectorRows(null), [], 'a missing list plans an empty one, not a crash');
 });
 
 test('standing armed set: the config bridges round-trip (bite A2)', () => {
