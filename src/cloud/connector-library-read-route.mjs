@@ -14,6 +14,22 @@
 //     fields (connector-library-read.mjs). The caller's person id is
 //     never returned.
 //
+//   GET /api/admin/connector-library/tool-access (per-entry snapshot read —
+//   see productionToolAccess below)
+//   GET /api/admin/connector-library/arming-baseline?seat=<seatId>&entry=<entryId>
+//     → { valid: true, seatId, entryId, export }
+//     The ledger join's export (pipeline map G2, direction 2): the
+//     caller's own connection's arming baseline — its FIRST frozen
+//     snapshot — beside its current snapshot, with the drift verdict
+//     between them, as a `helmian-arming-baseline` document
+//     (connector-arming-baseline.mjs) a person can carry to the
+//     machine whose install pipeline consumes it
+//     (mcp-install-ledger.mjs checkToolListAgainstArmingBaseline).
+//     `export` is null with a named `reason` when there is nothing
+//     to export yet (no entry, no connection, no freeze) — the read
+//     never fabricates a baseline. Tools and hashes only: no token
+//     reference, no credential, rides this read.
+//
 // Both reads are scoped exactly like the sibling admin reads
 // (tool-connections-read.mjs): member auth via activeTenantActor, the
 // tenant from the actor's membership, the person from the actor's
@@ -39,6 +55,7 @@
 // guess, never a crash.
 import { Pool } from 'pg';
 import { createConnectorLibraryStore, effectiveToolAnnotation } from './connector-library.mjs';
+import { buildArmingBaselineExport } from './connector-arming-baseline.mjs';
 import { createToolConnectionsStore } from './tool-connections.mjs';
 import { createSeatLibraryRead } from './connector-library-read.mjs';
 import { LIVE_SEATS } from './connector-catalog.mjs';
@@ -48,6 +65,7 @@ import { createGithubFileRead, CONNECTOR_GITHUB_FILE_PATH } from './connector-gi
 export const CONNECTOR_LIBRARY_PATH = '/api/admin/connector-library';
 export const CONNECTOR_LIBRARY_SEATS_PATH = '/api/admin/connector-library/seats';
 export const CONNECTOR_LIBRARY_TOOL_ACCESS_PATH = '/api/admin/connector-library/tool-access';
+export const CONNECTOR_LIBRARY_ARMING_BASELINE_PATH = '/api/admin/connector-library/arming-baseline';
 
 // Authority selectors are never accepted on these reads: the tenant is
 // the actor's membership and the person is the actor's subject. A
@@ -109,6 +127,25 @@ async function productionToolAccess(tenantId, { personId, seatId, entryId }) {
   };
 }
 
+// The arming-baseline export (pipeline map G2): the caller's OWN
+// connection's first frozen snapshot — its baseline, recorded at
+// connect or first arm — beside its current snapshot. Field by
+// field from the entry and snapshot records (through
+// buildArmingBaselineExport): tools and hashes only, the same
+// no-token-references discipline as the Tool access read above.
+async function productionArmingBaseline(tenantId, { personId, seatId, entryId }) {
+  const store = createConnectorLibraryStore(getPool());
+  const entry = await store.getEntry(tenantId, seatId, entryId);
+  if (!entry) return { export: null, reason: 'entry-not-found' };
+  const key = { personId, seatId, entryId };
+  const connection = await store.getConnection(tenantId, key);
+  if (!connection) return { export: null, reason: 'not-connected' };
+  const baselineSnapshot = await store.getFirstSnapshot(tenantId, key);
+  if (!baselineSnapshot) return { export: null, reason: 'no-frozen-snapshot' };
+  const currentSnapshot = await store.getCurrentSnapshot(tenantId, key);
+  return { export: buildArmingBaselineExport({ entry, baselineSnapshot, currentSnapshot }) };
+}
+
 function productionGithubFile() {
   // No token provider is wired (FIX-A, Step 0): the operator
   // GITHUB_TOKEN that web/marketing/api/download-count.js reads
@@ -136,13 +173,15 @@ export async function handleConnectorLibraryRoute({
   TenantAuthorizationError,
   read = null,
   toolAccess = null,
+  armingBaseline = null,
   githubFile = null,
 } = {}) {
   const isSeats = requestUrl?.pathname === CONNECTOR_LIBRARY_SEATS_PATH;
   const isLibrary = requestUrl?.pathname === CONNECTOR_LIBRARY_PATH;
   const isToolAccess = requestUrl?.pathname === CONNECTOR_LIBRARY_TOOL_ACCESS_PATH;
+  const isArmingBaseline = requestUrl?.pathname === CONNECTOR_LIBRARY_ARMING_BASELINE_PATH;
   const isGithubFile = requestUrl?.pathname === CONNECTOR_GITHUB_FILE_PATH;
-  if (!isSeats && !isLibrary && !isToolAccess && !isGithubFile) return false;
+  if (!isSeats && !isLibrary && !isToolAccess && !isArmingBaseline && !isGithubFile) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
   try {
     if (AUTHORITY_SELECTORS.some((key) => requestUrl.searchParams.has(key))) {
@@ -161,6 +200,16 @@ export async function handleConnectorLibraryRoute({
         throw Object.assign(new Error('seat and entry are required'), { status: 400, code: 'CONNECTOR_LIBRARY_TOOL_ACCESS_INVALID' });
       }
       const result = await (toolAccess ?? productionToolAccess)(actor.tenantId, { personId, seatId, entryId });
+      send(response, 200, JSON.stringify({ valid: true, seatId, entryId, ...result }));
+      return true;
+    }
+    if (isArmingBaseline) {
+      const seatId = String(requestUrl.searchParams.get('seat') ?? '').trim();
+      const entryId = String(requestUrl.searchParams.get('entry') ?? '').trim();
+      if (!seatId || !entryId) {
+        throw Object.assign(new Error('seat and entry are required'), { status: 400, code: 'CONNECTOR_LIBRARY_ARMING_BASELINE_INVALID' });
+      }
+      const result = await (armingBaseline ?? productionArmingBaseline)(actor.tenantId, { personId, seatId, entryId });
       send(response, 200, JSON.stringify({ valid: true, seatId, entryId, ...result }));
       return true;
     }

@@ -1326,6 +1326,33 @@ async function mcpInstall() {
     const result = await checkForDrift({ ledgerDir, serverName, root: candidateRoot, declared });
     process.stdout.write(asJson ? `${JSON.stringify(result, null, 2)}\n` : `${result.status.toUpperCase()}: ${result.message}\n`);
     if (result.status === 'drift-detected') process.exitCode = 2;
+    // The ledger join (pipeline map G2): a connector-library arming
+    // baseline export can ride along — a tools/list result file is
+    // checked against the frozen baseline with the library's own
+    // hash, so the drift story is one story on both sides of the
+    // two-machine line. Both flags or neither: half a check would
+    // report half a verdict.
+    const armingBaselinePath = option('--arming-baseline', null);
+    const toolsFile = option('--tools-file', null);
+    if (armingBaselinePath || toolsFile) {
+      if (!armingBaselinePath || !toolsFile) {
+        throw new Error('mcp-install drift --arming-baseline and --tools-file must be given together');
+      }
+      const { loadArmingBaselineExport, checkToolListAgainstArmingBaseline } = await import('../src/core/mcp-install-ledger.mjs');
+      const baseline = await loadArmingBaselineExport(resolve(armingBaselinePath));
+      let tools;
+      try {
+        tools = JSON.parse(await readFile(resolve(toolsFile), 'utf8'));
+      } catch (error) {
+        throw new Error(`--tools-file must be a JSON tools/list result array (${error.message})`);
+      }
+      if (!Array.isArray(tools)) throw new Error('--tools-file must be a JSON tools/list result array');
+      const toolDrift = checkToolListAgainstArmingBaseline({ baseline, tools });
+      process.stdout.write(asJson
+        ? `${JSON.stringify(toolDrift, null, 2)}\n`
+        : `TOOL LIST ${toolDrift.status.toUpperCase()}: ${toolDrift.message}\n`);
+      if (toolDrift.status === 'drift-detected') process.exitCode = 2;
+    }
     return;
   }
 
@@ -1546,6 +1573,8 @@ MCP server install security (never install third-party code unreviewed):
   helmion mcp-install sandbox <path>                 # stage 3: run with no credentials
   helmion mcp-install review <path>                  # all 5 stages, asks you to approve
   helmion mcp-install drift <path> --name <server>   # stage 5: changed since you approved it?
+  helmion mcp-install drift <path> --arming-baseline <export.json> --tools-file <tools.json>
+                                                     # also: does this tools/list still match the connector library's frozen arming baseline?
     review REQUIRES an interactive terminal. Piped or redirected stdin is
     refused and nothing is installed. There is no --yes and no auto-approve.
     Installing never edits your MCP config — it prints the snippet for you.

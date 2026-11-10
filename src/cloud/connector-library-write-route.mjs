@@ -52,6 +52,14 @@
 //     Per-tool on/off against the connection's frozen snapshot.
 //   POST /api/admin/connector-library/entry-state    {seatId, entryId, state}   owner/admin
 //   POST /api/admin/connector-library/entries        add a custom entry         owner/admin
+//   POST /api/admin/connector-library/entries/install-report                    owner/admin
+//     The ledger join's receiving end (pipeline map G2): a finished
+//     MCP install pipeline on a person's machine reports the server
+//     it installed (mcp-library-report.mjs), and this action records
+//     the intent in the tool-connections store — kind 'mcp-stdio',
+//     server_ref the installed path, state 'registered', NEVER
+//     'verified' (no tools/list has reached that server from here;
+//     see the action itself for the library-entry wall it names).
 //   POST /api/admin/connector-library/entries/remove {seatId, entryId}          owner/admin
 //
 // CUSTOM ENTRIES PASS THE GATE (pipeline map G1,
@@ -96,6 +104,10 @@ import {
   hashOAuthState,
 } from './connector-oauth-pending.mjs';
 import { createToolConnectionsStore } from './tool-connections.mjs';
+import {
+  mcpLocalToolConnectionKey,
+  validateInstallLibraryReport,
+} from '../core/mcp-library-report.mjs';
 import {
   classifyCustomGate,
   getCustomGateRow,
@@ -735,6 +747,70 @@ export function createConnectorLibraryWriteHandler({
           }
         }
         sendJson(201, { status: 'created', entry, gate });
+        return true;
+      }
+
+      if (action === 'entries/install-report') {
+        // THE LEDGER JOIN, direction 1 (pipeline map G2): a finished
+        // install pipeline on a person's machine reports the server
+        // it installed, and the report is recorded HERE — through
+        // the same tool-connections receipt path the custom-entry
+        // gate used (register writes intent; the row's subject and
+        // timestamps are the provenance, its server_ref the
+        // installed path).
+        //
+        // What this action deliberately does NOT do, and says so in
+        // its answer: create the connector-library ENTRY. sql/074's
+        // connector_entries cannot hold an 'mcp-local' entry today —
+        // the kind CHECK names only catalog/helmian-native/custom,
+        // the broker-shape CHECK requires a helmian entry to carry
+        // an HTTPS endpoint URL (a local stdio server has none), and
+        // no column holds an installed path or a config snippet.
+        // Forcing the report into a 'custom' row with a fabricated
+        // URL would be a false record; the honest landing is the
+        // intent row below plus the named missing road (a migration
+        // that adds the kind and a local-facts shape). Nor is any
+        // probe receipt written: recordProbeReceipt demands a
+        // tools/list the cloud has never run against this server —
+        // the registration stands at 'registered', never 'verified',
+        // until a road exists that can list a local server's tools
+        // (the runner on that machine is the only thing that can).
+        refuseCredentialValues(body);
+        ownerAct();
+        if (!LIVE_SEATS.includes(seatId)) throw failure(400, 'seatId is not a seat that holds a connector library');
+        const installReport = validateInstallLibraryReport(body.installReport);
+        const tc = resolveToolConnections();
+        if (!tc) {
+          sendJson(503, {
+            error: 'the install report could not be recorded — the tool-connections store is not reachable from this handler, so nothing was written',
+            code: 'INSTALL_REPORT_NOT_RECORDED',
+          });
+          return true;
+        }
+        const row = await tc.register(tenantId, personId, {
+          ...mcpLocalToolConnectionKey(seatId, installReport.serverName),
+          kind: 'mcp-stdio',
+          serverRef: installReport.installedPath,
+          credentialReference: null,
+          accountLabel: installReport.name,
+        });
+        sendJson(201, {
+          status: 'install-recorded',
+          entryId: installReport.entryId,
+          toolConnection: row,
+          libraryEntry: null,
+          entryNotCreated: {
+            blockedBy: 'helmion.connector_entries (sql/074) cannot hold this entry yet',
+            reason: 'the kind check names only catalog, helmian-native, and custom; a helmian-brokered entry must carry an HTTPS endpoint URL, which a stdio server installed on a person\u2019s machine does not have; and no column holds an installed path or config snippet',
+            missingRoad: 'a migration: add kind \'mcp-local\' and a local-facts shape (installed path + config snippet) in place of the endpoint requirement for that kind',
+          },
+          baseline: {
+            fingerprint: installReport.baseline?.fingerprint ?? null,
+            recordedInLibrary: false,
+            home: 'the install ledger baseline on the machine that ran the pipeline, carried here in the report',
+            note: 'the tool-connections store has no fingerprint column, and no probe receipt is written: no tools/list has reached this server from the cloud, so the registration is intent (state registered), never verified',
+          },
+        });
         return true;
       }
 

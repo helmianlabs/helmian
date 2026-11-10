@@ -950,6 +950,31 @@ export function createConnectorLibraryStore(pool) {
       } catch (error) { throw storeUnavailable(error); }
     },
 
+    /**
+     * The connection's FIRST frozen snapshot — its arming baseline
+     * (connector-arming-baseline.mjs): snapshot rows are immutable
+     * history (a freeze inserts, never updates), so the earliest row
+     * is the set every later freeze is compared against. Scoped by
+     * the connection key, like getCurrentSnapshot.
+     */
+    async getFirstSnapshot(tenantId, key) {
+      const params = connectionKeyParams(key);
+      try {
+        return await withTenant(tenantId, async (client) => {
+          const existing = await readConnection(client, params);
+          if (!existing) return null;
+          const snap = await client.query(
+            `select * from helmion.connector_snapshots where connection_id = $1 order by id asc limit 1`,
+            [existing.id],
+          );
+          return snapshotOf(snap.rows[0]);
+        });
+      } catch (error) {
+        if (isMissingTable(error)) return null;
+        throw error;
+      }
+    },
+
     /** The snapshot a connection is currently running, or null. Scoped by the connection key. */
     async getCurrentSnapshot(tenantId, key) {
       const params = connectionKeyParams(key);
