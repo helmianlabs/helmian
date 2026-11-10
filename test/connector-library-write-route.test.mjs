@@ -31,6 +31,8 @@ import assert from 'node:assert/strict';
 import { createConnectorLibraryWriteHandler, declaredOAuthScopes } from '../src/cloud/connector-library-write-route.mjs';
 import { buildConnectorTokenRef } from '../src/cloud/connector-library.mjs';
 import { createConnectorOAuthClient, hashOAuthState, pkceChallenge } from '../src/cloud/connector-oauth-pending.mjs';
+import { createCredentialService } from '../src/cloud/credential-service.mjs';
+import { createCredentialServiceClient } from '../src/cloud/credential-service-client.mjs';
 
 class TenantAuthorizationError extends Error {}
 
@@ -1004,4 +1006,144 @@ test('R1: declaredOAuthScopes reads the catalog definition — Atlassian declare
   assert.equal(declaredOAuthScopes({ seatId: 'claude', id: 'registry-notion', kind: 'catalog' }), null);
   assert.equal(declaredOAuthScopes({ seatId: 'claude', id: 'registry-atlassian', kind: 'custom' }), null);
   assert.equal(declaredOAuthScopes(null), null);
+});
+
+// ---------------------------------------------------------------
+// The actor-context composition (the Notion failure, 2026-11-10).
+//
+// Production wires this route's credential calls through the raw
+// credential-service client (createCredentialConnectClient) into
+// the deployed credential service, whose vault refuses any call
+// that arrives without the full actor context — the two refusals
+// in the service's audit log at 13:32:31Z and 13:33:09Z are a real
+// person's two Notion connects dying at the keeping step. The
+// fakes above accept anything, so they cannot see that refusal;
+// these tests compose the route the way production does — handler
+// -> real client -> real service handler (createCredentialService)
+// -> a vault that enforces credential-vault.mjs's requireActor and
+// validateReference word for word — and drive the connect roads
+// through it. On the pre-fix route every one of them fails the way
+// Notion failed; on the fixed route they land.
+
+const SERVICE_TOKEN = 'svc-token-for-tests';
+const ACTOR_WITH_CONTEXT = { subject: 'user:troy', tenantId: 'tenant-a', role: 'owner', sessionId: 'sess-callback-1', requestId: 'req-callback-1' };
+
+function actorDemandingVault() {
+  const records = new Map();
+  const seen = [];
+  const requireActor = (input = {}) => {
+    if (!input.tenantId || !input.actorSubject || !input.actorRole || !input.sessionId || !input.requestId) throw new TypeError('credential vault actor context is required');
+  };
+  const validateReference = (input = {}) => {
+    const reference = String(input.credentialReference ?? '');
+    const providerOk = /^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(String(input.providerId ?? ''));
+    if (!input.tenantId || !providerOk || !reference.startsWith(`vault://tenant/${String(input.tenantId).toLowerCase()}/`)) throw new TypeError('credential vault reference is invalid');
+  };
+  return {
+    records, seen,
+    async storeCredential(input = {}) {
+      requireActor(input);
+      validateReference(input);
+      seen.push(['storeCredential', input]);
+      records.set(input.credentialReference, input);
+      return { status: 'stored_in_credential_vault', accepted: true, credentialReference: input.credentialReference, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+    },
+    async resolveCredential(input = {}) {
+      requireActor(input);
+      validateReference(input);
+      if (!input.reasonClass) throw new TypeError('credential resolve reason class is required');
+      seen.push(['resolveCredential', input]);
+      const record = records.get(input.credentialReference);
+      if (!record) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+      return { status: 'credential_resolved', accepted: true, credential: record.apiKey ?? record.accessToken, credentialKind: record.credentialKind, secretMaterial: 'adapter_only', providerInvocation: 'not_performed' };
+    },
+    async revokeCredential(input = {}) {
+      requireActor(input);
+      validateReference(input);
+      seen.push(['revokeCredential', input]);
+      if (!records.delete(input.credentialReference)) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+      return { status: 'credential_revoked', accepted: true, credentialReference: input.credentialReference, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+    },
+    async shredTenant() { throw new Error('shred is not exercised here'); },
+  };
+}
+
+function serviceBackedCredentials(vault) {
+  const service = createCredentialService({ vault, serviceToken: SERVICE_TOKEN });
+  const fetchImpl = async (url, init = {}) => {
+    const { pathname } = new URL(url);
+    const res = await service.handle({ method: init.method ?? 'POST', path: pathname, headers: init.headers ?? {}, body: init.body ?? '' });
+    return { status: res.status, json: async () => res.body };
+  };
+  return createCredentialServiceClient({ baseUrl: 'http://credential-service.test', serviceToken: SERVICE_TOKEN, fetchImpl });
+}
+
+function assertActorContext(input, label) {
+  assert.equal(input.tenantId, 'tenant-a', `${label}: tenantId rides the call`);
+  assert.equal(input.actorSubject, 'user:troy', `${label}: actorSubject is the person connecting`);
+  assert.equal(input.actorRole, 'owner', `${label}: actorRole rides the call`);
+  assert.equal(input.sessionId, 'sess-callback-1', `${label}: sessionId is the actor's own, not a minted substitute`);
+  assert.equal(input.requestId, 'req-callback-1', `${label}: requestId is the actor's own`);
+}
+
+test('callback through the real credential service: the pair is kept and the connection lands', async () => {
+  const vault = actorDemandingVault();
+  const pending = fakePending({
+    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['repo', 'read:org'] },
+  });
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
+  const h = harness({ actor: ACTOR_WITH_CONTEXT, pending, credentials: serviceBackedCredentials(vault), store });
+  const out = await h.run(`${P}/oauth/callback?code=code-9&state=state-9`, { method: 'GET' });
+  assert.equal(out.status, 200);
+  assert.match(out.raw, /GitHub is connected/);
+  const stores = vault.seen.filter(([n]) => n === 'storeCredential');
+  assert.equal(stores.length, 2, 'the access and refresh bundles are both kept');
+  for (const [, input] of stores) assertActorContext(input, 'callback store');
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 1, 'the connection record lands');
+});
+
+test('connect/header through the real credential service: the key is kept under the minted reference', async () => {
+  const vault = actorDemandingVault();
+  const store = fakeStore({ 'grok/custom-keys': ENTRY({ seatId: 'grok', id: 'custom-keys', kind: 'custom', authMode: 'header', mcpEndpointUrl: 'https://example.com/mcp' }) });
+  const h = harness({ actor: ACTOR_WITH_CONTEXT, store, credentials: serviceBackedCredentials(vault) });
+  const out = await h.run(`${P}/connect/header`, { body: { seatId: 'grok', entryId: 'custom-keys', apiKey: 'sk-secret-value' } });
+  assert.equal(out.status, 201);
+  assert.equal(out.json.status, 'connected');
+  const stores = vault.seen.filter(([n]) => n === 'storeCredential');
+  assert.equal(stores.length, 1);
+  assertActorContext(stores[0][1], 'connect/header store');
+  assert.equal(stores[0][1].credentialKind, 'api_key');
+});
+
+test('connect/complete through the real credential service: a stored key resolves and the connection lands', async () => {
+  const vault = actorDemandingVault();
+  const ref = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'grok', entryId: 'custom-keys', personId: 'user:troy', tokenKind: 'access' });
+  vault.records.set(ref, { credentialKind: 'api_key', apiKey: 'sk-secret-value' });
+  const store = fakeStore({ 'grok/custom-keys': ENTRY({ seatId: 'grok', id: 'custom-keys', kind: 'custom', authMode: 'header', mcpEndpointUrl: 'https://example.com/mcp' }) });
+  const h = harness({ actor: ACTOR_WITH_CONTEXT, store, credentials: serviceBackedCredentials(vault) });
+  const out = await h.run(`${P}/connect/complete`, { body: { seatId: 'grok', entryId: 'custom-keys', accessTokenRef: ref } });
+  assert.equal(out.status, 201);
+  assert.equal(out.json.status, 'connected');
+  const resolves = vault.seen.filter(([n]) => n === 'resolveCredential');
+  assert.equal(resolves.length, 1);
+  assertActorContext(resolves[0][1], 'connect/complete resolve');
+  assert.equal(resolves[0][1].reasonClass, 'provider_call');
+});
+
+test('disconnect through the real credential service: the revoke carries the actor context and the provider id', async () => {
+  const vault = actorDemandingVault();
+  const ref = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'grok', entryId: 'custom-keys', personId: 'user:troy', tokenKind: 'access' });
+  vault.records.set(ref, { credentialKind: 'api_key', apiKey: 'sk-secret-value' });
+  const store = fakeStore({ 'grok/custom-keys': ENTRY({ seatId: 'grok', id: 'custom-keys', kind: 'custom', authMode: 'header', mcpEndpointUrl: 'https://example.com/mcp' }) });
+  store.connections.set('user:troy/grok/custom-keys', { personId: 'user:troy', seatId: 'grok', entryId: 'custom-keys', accessTokenRef: ref, refreshTokenRef: null, state: 'connected' });
+  const h = harness({ actor: ACTOR_WITH_CONTEXT, store, credentials: serviceBackedCredentials(vault) });
+  const out = await h.run(`${P}/disconnect`, { body: { seatId: 'grok', entryId: 'custom-keys' } });
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'disconnected');
+  assert.equal(out.json.custodyRevoked, true);
+  const revokes = vault.seen.filter(([n]) => n === 'revokeCredential');
+  assert.equal(revokes.length, 1);
+  assertActorContext(revokes[0][1], 'disconnect revoke');
+  assert.equal(revokes[0][1].providerId, 'connector.grok.custom-keys', 'the vault cannot validate a reference without its provider');
+  assert.equal(vault.records.has(ref), false, 'the credential is gone from the vault');
 });

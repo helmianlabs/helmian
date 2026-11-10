@@ -98,6 +98,8 @@
 // connection only. Workspace acts (entry-state, add/remove custom)
 // are owner/admin. Auditors never write (skill-route precedent).
 
+import { randomUUID } from 'node:crypto';
+
 import pg from 'pg';
 
 import {
@@ -369,6 +371,24 @@ export function createConnectorLibraryWriteHandler({
       const role = String(actor?.role ?? '').toLowerCase();
       if (!tenantId || !personId) throw failure(403, 'workspace membership is required');
       if (role === 'auditor') throw failure(403, 'auditors read the connector library; they do not change it');
+      // The credential vault's actor contract (credential-vault.mjs
+      // requireActor): every store / resolve / revoke must carry the
+      // full actor context as top-level fields — tenantId plus these
+      // four — or the service refuses the call outright
+      // (actor_context_required). The credential-connect route has
+      // always sent them; this route's calls did not, so every OAuth
+      // callback store was refused at the keeping step and no library
+      // connection could ever land (the Notion failure, 2026-11-10).
+      // sessionId / requestId ride the verified actor when the
+      // session layer minted them (live-admin does); the randomUUID
+      // fallback is the audit-event-repository convention for actor
+      // shapes that carry none.
+      const actorContext = {
+        actorSubject: personId,
+        actorRole: role,
+        sessionId: actor?.sessionId ?? randomUUID(),
+        requestId: actor?.requestId ?? randomUUID(),
+      };
 
       // ------------------------------------------------------ callback
       if (isCallback) {
@@ -412,7 +432,7 @@ export function createConnectorLibraryWriteHandler({
         // vault's bundle record holds both tokens) so resolving
         // either reference yields the bundle the turn road needs.
         const bundle = {
-          tenantId, providerId, credentialKind: 'oauth_bundle',
+          tenantId, ...actorContext, providerId, credentialKind: 'oauth_bundle',
           accessToken: tokens.accessToken, refreshToken: tokens.refreshToken,
           tokenType: tokens.tokenType, scope: tokens.scope, expiresIn: tokens.expiresIn,
         };
@@ -502,7 +522,7 @@ export function createConnectorLibraryWriteHandler({
         const credentials = resolveCredentials();
         if (!credentials) throw failure(503, 'Helmian\u2019s credential storage is not switched on, so the sign-in cannot be read', { code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' });
         const resolved = await credentials.resolveVaultCredential({
-          tenantId, providerId: providerIdFor(seatId, entryId), credentialReference: connection.accessTokenRef, reasonClass: 'provider_call',
+          tenantId, ...actorContext, providerId: providerIdFor(seatId, entryId), credentialReference: connection.accessTokenRef, reasonClass: 'provider_call',
         });
         if (!resolved?.accepted) throw failure(502, 'the stored sign-in could not be read, so the starters could not be listed', { code: 'CREDENTIAL_NOT_RESOLVABLE' });
         const cred = resolved.credential;
@@ -738,7 +758,7 @@ export function createConnectorLibraryWriteHandler({
         if (!credentials) { sendJson(503, { error: 'Helmian\u2019s credential storage is not switched on, so the key cannot be kept yet', code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' }); return true; }
         const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
         const stored = await credentials.storeCredential({
-          tenantId, providerId: providerIdFor(seatId, entryId), credentialReference: accessTokenRef,
+          tenantId, ...actorContext, providerId: providerIdFor(seatId, entryId), credentialReference: accessTokenRef,
           credentialKind: 'api_key', apiKey,
         });
         if (!stored?.accepted) { sendJson(502, { error: 'the credential service would not keep the key, so nothing was connected', code: 'CREDENTIAL_STORE_REFUSED' }); return true; }
@@ -784,7 +804,7 @@ export function createConnectorLibraryWriteHandler({
         }
         const credentials = resolveCredentials();
         if (!credentials) { sendJson(503, { error: 'Helmian\u2019s credential storage is not switched on, so the stored credential cannot be checked', code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' }); return true; }
-        const resolved = await credentials.resolveVaultCredential({ tenantId, providerId: providerIdFor(seatId, entryId), credentialReference: accessTokenRef, reasonClass: 'provider_call' });
+        const resolved = await credentials.resolveVaultCredential({ tenantId, ...actorContext, providerId: providerIdFor(seatId, entryId), credentialReference: accessTokenRef, reasonClass: 'provider_call' });
         if (!resolved?.accepted) { sendJson(400, { error: 'no credential is stored under that reference yet — store it first, then complete the connect', code: 'CREDENTIAL_NOT_STORED' }); return true; }
         const connection = await store.createConnection(tenantId, personId, {
           ...key,
@@ -805,7 +825,7 @@ export function createConnectorLibraryWriteHandler({
         const credentials = resolveCredentials();
         const revoke = credentials
           ? async (ref) => {
-            const out = await credentials.revokeVaultCredential({ tenantId, credentialReference: ref });
+            const out = await credentials.revokeVaultCredential({ tenantId, ...actorContext, providerId: providerIdFor(seatId, entryId), credentialReference: ref });
             if (out && out.accepted === false) throw failure(502, 'the credential service would not revoke a stored credential, so the disconnect was not recorded');
           }
           : undefined;
