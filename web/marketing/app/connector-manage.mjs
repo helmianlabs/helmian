@@ -37,7 +37,7 @@
 // Pure model first (rowControls), then the DOM renderer — the model
 // is unit-tested like connector-panel.mjs's.
 
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=b7ff997e6ae6de1d';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=c967c3b4e6c767e5';
 
 export const MANAGE_SEAT_STORAGE_KEY = 'helmian.manageSeat';
 // The Manage road's landing intent (addition, 2026-11-09): taking
@@ -487,8 +487,17 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       side.append(actionButton(ctl.reconnect ? 'Reconnect' : 'Connect', async (btn) => {
         const out = await call('/api/admin/connector-library/connect', { seatId: state.seat, entryId: row.entryId });
         if (out?.status === 'connected') { say(`${row.name} is connected.`); await refresh(); return; }
-        if (out?.status === 'consent' && out.authorizeUrl) {
-          say(`${row.name} opens its sign-in page — approve it there and the connection lands back here.`);
+        if (out?.status === 'authorize' && out.authorizeUrl) {
+          // The connect-start answered with the service's own
+          // sign-in door (every OAuth road): hand the person the
+          // door. The start also composed an approval briefing —
+          // the service's name for what approving grants — which is
+          // the words to say; the plain sentence stands when a road
+          // returns no briefing. (The branch this replaces waited
+          // for a 'consent' status no road ever returns, so the
+          // authorize answer fell through to the bare status line —
+          // "Atlassian: authorize." — and the door was never shown.)
+          say(out.briefing?.summary || `${row.name} opens its sign-in page — approve it there and the connection lands back here.`);
           window.location.assign(out.authorizeUrl);
           return;
         }

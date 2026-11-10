@@ -89,7 +89,7 @@
 // plugins) or deleted (the vendor skills mirror, Mistral's agents;
 // M7 re-points Mistral's at Helmian's custom agents). A feed-bound
 // group names no connector, so it can never invent one.
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=b7ff997e6ae6de1d';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=c967c3b4e6c767e5';
 
 export const MENU_ITEM_TYPES = Object.freeze([
   'attach', 'capability', 'action', 'projects', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',
@@ -369,7 +369,7 @@ export function collectCatalogEntryIds(items) {
 // through untouched. A mirror whose brokered namesake never made
 // the list (not connected, so the live group offered no switch)
 // stands as the name's only row, exactly as it does today.
-const PANEL_CONNECTOR_KINDS = new Set(['toggle', 'mirror', 'row']);
+const PANEL_CONNECTOR_KINDS = new Set(['toggle', 'mirror', 'row', 'connect']);
 const panelConnectorNameKey = (entry) => String(entry?.row?.name ?? entry?.row?.entryId ?? '').trim().toLowerCase();
 
 export function dedupePanelConnectorRows(rows) {
