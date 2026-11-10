@@ -57,7 +57,15 @@ function parseRpcBody(text, contentType) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-export function createMcpPromptsClient({ fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
+// The per-call budget is 30s, the same budget the runner's remote
+// MCP client allows (src/agent/mcp-client.mjs DEFAULT_TIMEOUT_MS):
+// the R0 Weather live proof (2026-11-10) watched a cold community
+// server take longer than the old 10s to answer its first
+// `initialize`, and dispatch's first-arm freeze — which rides this
+// client — failed that arm as 'freeze-failed' on a healthy server.
+// A hanging server still fails; it just fails on the same clock the
+// rest of the MCP machinery already uses.
+export function createMcpPromptsClient({ fetchImpl = globalThis.fetch, timeoutMs = 30000 } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('createMcpPromptsClient needs a fetch implementation');
 
   async function rpc(endpoint, accessToken, method, params, { sessionId = null, notification = false } = {}) {
