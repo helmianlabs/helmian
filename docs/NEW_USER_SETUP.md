@@ -102,13 +102,50 @@ credential read and every mutating PC action. That is intended.
 2. Press **Link Discord** or **Link Slack** and follow the prompts.
 3. Messages then mirror both ways. Details: `docs/TEAM_CONNECTORS.md`.
 
-## 5. Shared memory (Scribe connector)
+## 5. Shared memory — nothing to connect
 
-1. In Claude (or another app that supports custom connectors), add a custom
-   connector with URL **https://connect.helmian.cloud/mcp**.
-2. Sign in when it opens the Scribe page and type **your own passphrase**
-   there. Never paste it into a chat.
-3. Allow the tools it asks for.
+Shared memory is built into Helmian. There is no connector to add, no
+passphrase, and nothing to install:
+
+- Your workspace has its own shared notebook in Helmian's database
+  (Neon Postgres). Every seat in the workspace reads and writes the
+  same notebook.
+- **The Librarian** keeps it. When a seat works something out — a
+  fix, a mistake, the solution that worked — the Librarian files it,
+  and the seats recall it automatically when they answer. What one
+  AI picks up, the others can use.
+- Under the hood it is a Neon Postgres endpoint with Helmian's own
+  MCP door over the same store — all inside Helmian. The memory
+  belongs to the workspace, never to a person, a facility, or
+  whichever browser you happened to use.
+
+## 6. Voice — talk instead of typing
+
+Press the **Voice** button in a channel and talk. Replies are spoken
+aloud, each seat in its own voice, and the conversation is two-way:
+stop talking and your message goes.
+
+The voices are made by Kokoro, a speech model that runs in your own
+browser tab — no audio is sent to a voice service to make a seat
+talk. If the local model cannot load, the browser's built-in speech
+covers as a labelled backup.
+
+## 7. Plugins — bundles from the catalog
+
+A plugin bundles a connector and its skill together in one install:
+
+1. Open **Integrations** and go to the **Plugins** tab.
+2. The catalog lists what the workspace can install. Today it holds
+   **Weather** (National Weather Service forecasts, alerts, and
+   current conditions, with the reading-a-forecast skill) and
+   **GitHub Review** (pull-request reviews over the workspace's
+   GitHub connection, with the reviewing-a-pull-request skill).
+3. Press **Install** on a bundle. Its skill lands on the seat's
+   shelf. Uninstall from the same tab whenever you like.
+
+Installing a plugin is not a connection — the connector it names
+still connects the ordinary way, once, on the Integrations page
+(section 3).
 
 ## Operator settings for one-time pairing codes
 
@@ -118,5 +155,6 @@ credential read and every mutating PC action. That is intended.
 | Vercel (helmian.cloud) | `HELMIAN_PAIR_CODE_ISSUER_TOKEN` | same value |
 | Vercel (helmian.cloud) | `HELMIAN_HANDS_URL` | `https://hands.5-78-222-178.sslip.io` |
 
-Also needed: a `spoke-v1.0.3` release with `Helmian-Spoke-Setup-1.0.3-win-x64.exe`
-(the download button falls back to the newest spoke `.zip`, then the releases page).
+Also needed: a `spoke-v1.0.10` release with `Helmian-Spoke-Setup-1.0.10-win-x64.exe`
+(the version the repo's spoke installer script, `spoke-installer/HelmianSpoke.iss`,
+carries; the download button falls back to the newest spoke `.zip`, then the releases page).

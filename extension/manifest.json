@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Helmion Guard",
+  "name": "Helmian Guard",
   "version": "0.2.4",
   "description": "Catches destructive commands and unsourced claims in AI chat replies, and keeps a durable local log of every flag.",
   "permissions": [
@@ -36,7 +36,7 @@
     }
   ],
   "action": {
-    "default_title": "Helmion Guard",
+    "default_title": "Helmian Guard",
     "default_popup": "popup/popup.html"
   }
 }

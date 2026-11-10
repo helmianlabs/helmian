@@ -171,6 +171,25 @@ first.
   with severity-ranked findings and per-finding actions.
 - **Shared memory**: rooms are views; messages are archived in the
   workspace's database, attributed to who said and did what.
+- **The Librarian**: the workspace's memory keeper. It files every
+  fix, every mistake, and the solution that worked into the shared
+  memory, and the seats recall it automatically when they answer —
+  what one seat learns, the whole desk can use.
+- **Voice**: press the Voice button in a channel and talk — replies
+  are spoken aloud, each seat in its own voice. The voices are made
+  by Kokoro, a speech model that runs in your own browser tab; no
+  audio is sent to a voice service to make a seat talk. If the local
+  model cannot load, the browser's built-in speech covers as a
+  labelled backup.
+- **Plugins**: bundles that bring a connector and its skill together
+  in one install, from the catalog on the Integrations page's Plugins
+  tab. Today's shelf holds Weather (National Weather Service
+  forecasts, alerts, and current conditions, with the
+  reading-a-forecast skill) and GitHub Review (pull-request reviews
+  over the workspace's GitHub connection, with the
+  reviewing-a-pull-request skill). Installing a plugin is not a
+  connection — the connector it names still connects the ordinary
+  way, once, on the Integrations page.
 - **Bridges**: a message written inside Helmian crosses into Discord
   (proven in the Helmian server's own channel), Slack links from its
   Integrations card, and work ships through GitHub.
@@ -265,6 +284,16 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   (files, commands, localhost) through the guarded door.
 - **Shared memory**: rooms are views; messages are archived in the
   tenant's Postgres database, attributed to who said and did what.
+- **The Librarian**: live on the desk — a seat's solved problem was
+  filed into the shared memory and recalled in the channel in the
+  live exercise (2026-11-09).
+- **Voice**: Kokoro runs in the tab and the seats speak in their own
+  voices; the owner's ear test passed 2026-11-09.
+- **Plugins**: the catalog is live on the Integrations page's Plugins
+  tab — Weather and GitHub Review install, uninstall, and reinstall,
+  and the installed skill lands on the seat's shelf (walked live
+  2026-11-09). The Weather row still reads Not connected afterwards:
+  an install never creates a connection.
 - **Bridges**: a message written inside Helmian has crossed into
   Discord's Helmian server on the record; Slack links from its
   Integrations card; work ships through GitHub.
