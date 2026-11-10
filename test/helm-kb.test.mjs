@@ -34,14 +34,19 @@ const kbOwner = { tenantId: KB_TENANT, subject: 'user_owner', role: 'owner', ses
 
 // ---------- the shipped data ----------
 
-test('the shipped guide carries only grounded entries, and the unverified six stay out', () => {
+test('the shipped guide carries only grounded entries, and the unverified five stay out', () => {
   const entries = helmKbEntries();
-  assert.equal(entries.length, 42);
-  assert.equal(new Set(entries.map((e) => e.id)).size, 42, 'entry ids are unique');
+  assert.equal(entries.length, 43);
+  assert.equal(new Set(entries.map((e) => e.id)).size, 43, 'entry ids are unique');
   for (const entry of entries) assert.equal(entry.status, 'grounded', `${entry.id} ships grounded or not at all`);
-  for (const held of ['connector-github', 'connector-notion', 'connector-vercel', 'connector-stripe', 'connector-weather', 'devices-spoke']) {
+  for (const held of ['connector-github', 'connector-notion', 'connector-vercel', 'connector-stripe', 'devices-spoke']) {
     assert.equal(helmKbEntryById(held), null, `${held} is unverified and does not ship`);
   }
+  // connector-weather left the held list the day its named proof
+  // landed: connectors road R0 ran the live endpoint call on an
+  // armed turn (R0-WEATHER-REPORT.md, 2026-11-10), the exact gate
+  // COVERAGE.md named for it. It ships grounded or not at all.
+  assert.equal(helmKbEntryById('connector-weather')?.status, 'grounded', 'connector-weather ships grounded on the R0 proof');
 });
 
 test('the shipped guide keeps the answer rules: one breath, exact words, chains resolve', () => {
@@ -71,6 +76,32 @@ test('a grounded question returns its entry, and the spoken body is the entry wo
   assert.equal(matchHelmKbEntry('how do I connect GitHub').id, 'connect-first-ai-1');
   assert.equal(matchHelmKbEntry('please refactor the billing module'), null);
   assert.equal(matchHelmKbEntry('purple monkey dishwasher'), null);
+});
+
+test('the Weather connector question — the live miss of 2026-11-10 — returns its entry', () => {
+  // Owner walk, twice (04:41 #Team, 05:26 Maestro channel): this
+  // exact question matched nothing, so the ask fell to the seats
+  // unmarked and ungrounded, and they invented answers. The entry
+  // existed as a held draft; R0's live proof grounded it.
+  for (const q of [
+    'How does the Weather connector work?',
+    'What is the Weather connector?',
+    'How do I use the Weather connector?',
+    'What does the Weather connector do?',
+    'Tell me about the Weather connector',
+    'how does weather work',
+    'does Weather need an account?',
+  ]) {
+    assert.equal(matchHelmKbEntry(q)?.id, 'connector-weather', `${JSON.stringify(q)} reaches the Weather entry`);
+  }
+  // The connect-shaped Weather ask still takes the connect chain:
+  // connecting comes before any one connector's facts.
+  assert.equal(matchHelmKbEntry('how do I connect the weather connector').id, 'connect-first-ai-1');
+  // A plain weather ask is crew work, never the guide's: the entry
+  // must not capture a forecast request and answer it with setup.
+  assert.equal(matchHelmKbEntry("what's the weather in Boise?"), null);
+  assert.equal(matchHelmKbEntry('What is the weather like today?'), null);
+  assert.equal(matchHelmKbEntry('Claude, what is the forecast for tomorrow?'), null);
 });
 
 test('advance words and question shapes are exact, not vibes', () => {
@@ -247,6 +278,22 @@ test('connected workspace: the guide still answers — it never waits for a seat
   assert.equal(answers.length, 1);
   assert.equal(answers[0].body, helmKbAnswerBody(helmKbEntryById('pricing-cost')));
   assert.equal(misses.length, 0);
+});
+
+test('connected workspace: the Weather connector question is Maestro\u2019s, word for word, and no seat is handed it', async () => {
+  // The exact live failure shape (owner workspace, 2026-11-10): a
+  // full crew connected, the guide silent, the seats answering a
+  // product question from their own training. On a hit the guide
+  // answers on any desk and the human message carries the mark.
+  const { pool, messages, misses } = helmKbFakePool({ connections: [{ provider_id: 'claude', credential_reference: 'vault://seat-credential' }] });
+  const store = createEnvoyStore(pool);
+  const out = await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'How does the Weather connector work?', idempotencyKey: 'send-1' });
+  const answers = maestroMessages(messages);
+  assert.equal(answers.length, 1, 'Maestro answers, even with a crew connected');
+  assert.equal(answers[0].body, helmKbAnswerBody(helmKbEntryById('connector-weather')), 'the entry word for word');
+  const human = messages.find((m) => m.id === Number(out.receipt.message.id));
+  assert.deepEqual(human.metadata?.helmKb, { entry: 'connector-weather', answeredBy: 'maestro' }, 'the ask is marked, so the mesh never hands it to a seat');
+  assert.equal(misses.length, 0, 'an answered question files no miss');
 });
 
 test('a miss on an empty desk is filed to the unsorted queue, and the empty-desk answer still lands', async () => {
