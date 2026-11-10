@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
-import { rowControls, seatName, toolAccessRows, pluginsListModel, pluginsUnavailableLine, MIRROR_NOTE, mirrorGroupTitle, planConnectorRows, MANAGE_SEAT_STORAGE_KEY, MANAGE_TAB_STORAGE_KEY, MANAGE_SEAT_MEMORY_KEY, NO_SNAPSHOT_LINE, NO_PLUGINS_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
+import { rowControls, seatName, toolAccessRows, pluginsListModel, pluginsUnavailableLine, MIRROR_NOTE, mirrorGroupTitle, planConnectorRows, openKeyFor, MANAGE_SEAT_STORAGE_KEY, MANAGE_TAB_STORAGE_KEY, MANAGE_SEAT_MEMORY_KEY, NO_SNAPSHOT_LINE, NO_PLUGINS_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
 
 const manage = await readFile(new URL('../app/connector-manage.mjs', import.meta.url), 'utf8');
 const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
@@ -245,4 +245,94 @@ test('wiring: a seat switch paints the header and loading line before the new se
   assert.match(manage, /state\.renderedSeat !== state\.seat/, 'refresh notices when the seat changed under it');
   assert.match(manage, /root\.replaceChildren\(note, header\(\), loadingLine\(\)\)/, 'the interim paint replaces the previous seat\u2019s cards at switch time, not when the read returns');
   assert.match(manage, /state\.renderedSeat = state\.seat/, 'the rendered seat is recorded after a successful render');
+});
+
+test('planConnectorRows: two primary-shaped entries with one name collapse to the connected one (Grok-shaped)', () => {
+  // The 2026-11-09 ~18:00 live walk: Grok's primary list showed TWO
+  // GitHub rows — both primary-shaped, so the mirror-only dedupe let
+  // both stand. One row per name across ALL entries now.
+  const connected = { entryId: 'helmian-github', name: 'GitHub', brokerMode: 'helmian', state: 'connected', oneLiner: 'Work with the repositories this workspace already reaches' };
+  const notConnected = { entryId: 'github', name: 'GitHub', brokerMode: 'helmian', state: 'not-connected', oneLiner: 'Review pull requests, issues, and repository activity' };
+  const slack = { entryId: 'slack', name: 'Slack', brokerMode: 'helmian', state: 'not-connected' };
+  const plan = planConnectorRows([notConnected, slack, connected], 'Grok');
+  assert.deepEqual(plan.primary.map((r) => r.entryId), ['helmian-github', 'slack'], 'the connected GitHub stands; the not-connected duplicate renders nowhere');
+  assert.deepEqual(plan.mirrors, [], 'a suppressed duplicate does not drop into the mirror group — it is the same connector, not a different one');
+  const flipped = planConnectorRows([connected, notConnected], 'Grok');
+  assert.deepEqual(flipped.primary, [connected], 'read order does not change the survivor');
+});
+
+test('planConnectorRows: one name, one row — Claude-shaped state preference, and state words come from the survivor', () => {
+  // Claude-shaped with the states split: brokered connected over a
+  // not-connected mirror (the simplify pin covered both connected).
+  const brokered = { entryId: 'github', name: 'GitHub', brokerMode: 'helmian', state: 'connected' };
+  const mirror = { entryId: 'vendor-github', name: 'GitHub', brokerMode: 'vendor', state: 'not-connected' };
+  const plan = planConnectorRows([mirror, brokered], 'Claude');
+  assert.deepEqual(plan.primary, [brokered]);
+  assert.deepEqual(plan.mirrors, []);
+  // A not-connected brokered entry still stands over a connected
+  // mirror: the brokered row is the seat's actionable row for the
+  // name, and it renders with its OWN state — the suppressed
+  // mirror's connected state never lends itself to it.
+  const cold = planConnectorRows([
+    { entryId: 'vendor-github', name: 'GitHub', brokerMode: 'vendor', state: 'connected' },
+    { entryId: 'github', name: 'GitHub', brokerMode: 'helmian', state: 'not-connected' },
+  ], 'Claude');
+  assert.equal(cold.primary.length, 1, 'one row for the name');
+  assert.equal(cold.primary[0].entryId, 'github', 'the brokered entry is the survivor');
+  assert.equal(cold.primary[0].state, 'not-connected', 'state words come from the surviving row');
+  assert.deepEqual(cold.mirrors, [], 'the connected mirror is the same connector — suppressed, not grouped');
+});
+
+test('planConnectorRows: mirror-only duplicate names collapse to one group row', () => {
+  const plan = planConnectorRows([
+    { entryId: 'v-slack-1', name: 'Slack', brokerMode: 'vendor', state: 'not-connected' },
+    { entryId: 'v-slack-2', name: 'Slack', brokerMode: 'vendor', state: 'connected' },
+  ], 'Grok');
+  assert.deepEqual(plan.primary, []);
+  assert.deepEqual(plan.mirrors.map((r) => r.entryId), ['v-slack-2'], 'the connected mirror is the name’s one row in the group');
+  assert.equal(plan.mirrorNote, MIRROR_NOTE, 'the group still says its note once');
+});
+
+test('openKeyFor: expansion keys are per (seat, entry) — the same entry id on two seats is two keys', () => {
+  assert.equal(openKeyFor('claude', 'github'), openKeyFor('claude', 'github'));
+  assert.notEqual(openKeyFor('claude', 'github'), openKeyFor('grok', 'github'), 'an entry opened on Claude can never render open on Grok');
+  assert.notEqual(openKeyFor('claude', 'github'), openKeyFor('claude', 'slack'));
+});
+
+test('wiring: expansion state is seat-scoped and resets on a seat change', () => {
+  assert.match(manage, /openKeyFor\(state\.seat, row\.entryId\)/, 'the row’s key is built from the CURRENT seat and the row’s entry');
+  assert.match(manage, /state\.open\.has\(openKey\)/, 'the row reads its expansion by that seat-scoped key');
+  const refreshStart = manage.indexOf('async function refresh()');
+  assert.ok(refreshStart >= 0);
+  const refreshBody = manage.slice(refreshStart, refreshStart + 2200);
+  const clearAt = refreshBody.indexOf('state.open.clear()');
+  assert.ok(clearAt >= 0, 'refresh clears the open set');
+  assert.ok(clearAt < refreshBody.indexOf('root.replaceChildren(note, header(), loadingLine())'), 'the clear lands with the seat-change interim paint, before the incoming seat renders');
+  assert.match(refreshBody, /seatChanged/, 'the reset rides the seat-change detection, not every refresh — a same-seat refresh keeps its open rows');
+});
+
+test('wiring: a Manage-road landing paints the Manage box’s loading line before the integrations reads', () => {
+  // The mount happens at the END of loadIntegrations; without this
+  // paint the box showed the remembered seat's rows for a beat.
+  const loadStart = appJs.indexOf('async function loadIntegrations');
+  assert.ok(loadStart >= 0);
+  const paintAt = appJs.indexOf("mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'))", loadStart);
+  assert.ok(paintAt > loadStart, 'the landing paint exists in loadIntegrations');
+  assert.ok(paintAt < appJs.indexOf('Promise.allSettled', loadStart), 'it lands before the integrations reads start');
+  assert.ok(paintAt < appJs.indexOf('mountConnectorManage(manageBox', loadStart), 'and before the surface mounts at the end of the function');
+  const peekBlock = appJs.slice(loadStart, paintAt);
+  assert.match(peekBlock, /sessionStorage\.getItem\('helmian\.manageSeat'\)/, 'the paint is conditioned on the fresh seat marker');
+  assert.ok(!peekBlock.includes("removeItem('helmian.manageSeat')"), 'the marker is only peeked — mountConnectorManage still consumes it');
+});
+
+test('wiring: mount and seat-change renders paint the header with the loading line before the rows read', () => {
+  const refreshStart = manage.indexOf('async function refresh()');
+  assert.ok(refreshStart >= 0);
+  const refreshBody = manage.slice(refreshStart, refreshStart + 2600);
+  assert.match(refreshBody, /if \(!state\.loaded \|\| seatChanged\)/, 'the early header paint is scoped to mounts and seat changes, not every refresh');
+  const seatsAt = refreshBody.indexOf('await loadSeats()');
+  const paintAt = refreshBody.indexOf('root.replaceChildren(note, header(), loadingLine())', seatsAt);
+  const rowsAt = refreshBody.indexOf('await loadRows()', seatsAt);
+  assert.ok(seatsAt >= 0 && paintAt > seatsAt, 'once the seats are known, header + loading paint');
+  assert.ok(rowsAt > paintAt, 'before the rows read — the remembered seat’s list can never be a mount’s first render');
 });
