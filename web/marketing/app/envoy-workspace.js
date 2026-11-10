@@ -2628,13 +2628,19 @@ function screenshotRowNode(which, row) {
 }
 
 // Land on the Manage surface at the panel seat's tab (mirror M1):
-// the marker is read once by the surface as it mounts. Shared by the
+// the marker is read once by the surface as it mounts. The tab
+// marker rides beside it (addition, 2026-11-09): this road always
+// lands on the Integrations view's Connectors tab — app.js's
+// loadIntegrations consumes the marker and selects that tab, so
+// the surface is never left hidden behind the remembered tab.
+// Shared by the
 // manage footer row and the Tool access action row (bite M2) — the
 // Tool access face lives on that surface, under the seat.
 function openManageForSeat(which) {
   try {
     if (ws.libraryPanel.seatId) sessionStorage.setItem('helmian.manageSeat', ws.libraryPanel.seatId);
     else sessionStorage.removeItem('helmian.manageSeat');
+    sessionStorage.setItem('helmian.manageTab', 'connectors');
   } catch {}
   closePicker();
   document.querySelector('.nav-item[data-view="integrations"]')?.click();

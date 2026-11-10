@@ -13,9 +13,15 @@
 //     frozen tool snapshot with per-tool switches, wired to the
 //     tool-access read + tool-enable write), and the add-custom
 //     form. Mirror (vendor-brokered)
-//     rows stay view-only with one plain line: they are managed in
-//     the vendor's own garden; connecting them there does not
-//     connect them here.
+//     rows never stand as their own cards in the primary list: a
+//     mirror whose name a Helmian-brokered entry on the same seat
+//     already carries is hidden behind that entry (the brokered row
+//     is the one row for the name), and the mirrors left over group
+//     under one "On <seat>'s own side" section whose head says the
+//     mirror note ONCE — they are managed in the vendor's own
+//     garden; connecting them there connects nothing here.
+//     Resting rows are compact (name, one line, state, one Manage
+//     button); a row's working controls live in its expanded state.
 //   Skills — the seat's skills, from the EXISTING skills read.
 //   Plugins — the workspace's plugins, from the EXISTING plugins
 //     read. (No new semantics on either tab in this bite.)
@@ -26,6 +32,17 @@
 import { LIBRARY_SEATS } from './connector-panel.mjs';
 
 export const MANAGE_SEAT_STORAGE_KEY = 'helmian.manageSeat';
+// The Manage road's landing intent (addition, 2026-11-09): taking
+// Manage from a seat's menu names the tab it must land on — the
+// one-shot sessionStorage marker envoy-workspace leaves beside the
+// seat marker, consumed by app.js's loadIntegrations, which selects
+// (and thereby persists) the tab. Without it the landing re-applied
+// the remembered tab and the Manage surface sat hidden behind
+// Agents. And the seat itself is remembered the way the tab choice
+// is (localStorage), so the preselected seat survives re-mounts and
+// navigation, not only the first landing.
+export const MANAGE_TAB_STORAGE_KEY = 'helmian.manageTab';
+export const MANAGE_SEAT_MEMORY_KEY = 'helmian.manageSeatMemory';
 export const CONNECTOR_POSTURES = Object.freeze(['ask', 'read', 'low-risk', 'all']);
 export const POSTURE_LINES = Object.freeze({
   ask: 'Ask me before every use',
@@ -33,7 +50,13 @@ export const POSTURE_LINES = Object.freeze({
   'low-risk': 'Low-risk work is fine; ask before anything bigger',
   all: 'Use it without asking',
 });
-export const MIRROR_LINE = 'This connector lives in the vendor\u2019s own product — Helmian only mirrors what that account reports. It is managed there, and connecting it there does not connect it here.';
+// The mirror note, said once per seat — at the head of the mirror
+// group, never per card (Troy, 2026-11-09: the same paragraph under
+// every card was the sprawl he rejected).
+export const MIRROR_NOTE = 'These live in the seat\u2019s own product — Helmian shows what that account reports, and connecting them there does not connect them here.';
+export function mirrorGroupTitle(seatDisplayName) {
+  return `On ${seatDisplayName}’s own side`;
+}
 export const TOOL_ANNOTATION_LABELS = Object.freeze({
   read: 'Reads',
   write: 'Changes things',
@@ -51,7 +74,7 @@ export function seatName(seatId) {
 export function rowControls(row, { role = '' } = {}) {
   const owner = ['owner', 'admin'].includes(String(role).toLowerCase());
   if (!row || typeof row !== 'object') return { mode: 'none' };
-  if (row.brokerMode === 'vendor') return { mode: 'mirror', note: MIRROR_LINE };
+  if (row.brokerMode === 'vendor') return { mode: 'mirror' };
   if (row.state === 'disabled-by-owner') return { mode: 'disabled', canEnable: owner };
   if (row.state === 'connected') {
     return {
@@ -82,6 +105,43 @@ const STATE_TEXT = Object.freeze({
   'needs-reconnect': 'Needs reconnect',
   'disabled-by-owner': 'Turned off by the workspace owner',
 });
+
+// The Connectors tab's row plan (Troy, 2026-11-09 ~17:36): ONE
+// primary row per connector name per seat. A vendor mirror whose
+// name a Helmian-brokered entry on the same seat already carries
+// does not appear at all — the brokered entry is the row for that
+// name (the live page showed two GitHub cards for one seat: the
+// brokered connection and its vendor mirror). Mirrors left over
+// group under one section whose head carries the mirror note once
+// (mirrorNote is a single string for the seat, however many mirror
+// rows stand under it). Names compare trimmed and case-insensitively;
+// row order otherwise follows the read.
+function connectorNameKey(row) {
+  return String(row?.name ?? row?.entryId ?? '').trim().toLowerCase();
+}
+
+export function planConnectorRows(rows, seatDisplayName = '') {
+  const list = Array.isArray(rows) ? rows : [];
+  const brokeredNames = new Set(
+    list.filter((r) => r && typeof r === 'object' && r.brokerMode !== 'vendor').map(connectorNameKey).filter(Boolean),
+  );
+  const primary = [];
+  const mirrors = [];
+  for (const row of list) {
+    if (!row || typeof row !== 'object') continue;
+    if (row.brokerMode === 'vendor') {
+      if (!brokeredNames.has(connectorNameKey(row))) mirrors.push(row);
+    } else {
+      primary.push(row);
+    }
+  }
+  return Object.freeze({
+    primary: Object.freeze(primary),
+    mirrors: Object.freeze(mirrors),
+    mirrorTitle: mirrors.length ? mirrorGroupTitle(seatDisplayName) : null,
+    mirrorNote: mirrors.length ? MIRROR_NOTE : null,
+  });
+}
 
 // The Tool access read's shape, normalized for the face (bite M2).
 // The route answers { connected, posture, tools: [{ name,
@@ -142,7 +202,7 @@ export function pluginsListModel(body) {
 // The renderer. `api` is app.js's api() (throws on non-2xx with the
 // server's error message where present), `el` its element helper.
 export function renderConnectorManage(box, { api, el, role = '', initialSeat = null } = {}) {
-  const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false, toolAccess: new Map() };
+  const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false, renderedSeat: null, toolAccess: new Map(), open: new Set() };
   box.replaceChildren();
   const root = el('div', 'cm-root');
   const note = el('p', 'cm-note muted sm');
@@ -176,6 +236,9 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
     if (!state.seat || !state.seats.some((s) => s.seatId === state.seat)) {
       state.seat = state.seats[0]?.seatId ?? null;
     }
+    // The settled seat is written down (localStorage, the way the
+    // Integrations tab choice is) so it survives re-mounts.
+    try { if (state.seat) localStorage.setItem(MANAGE_SEAT_MEMORY_KEY, state.seat); } catch {}
   }
 
   async function loadRows() {
@@ -205,21 +268,38 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
     return wrap;
   }
 
+  // A primary row (simplify pass, 2026-11-09): the resting row is
+  // compact like the Agents tab cards — name, one descriptor line,
+  // state words, ONE button (Manage, which toggles the row's
+  // expanded state shut again, the R2 pattern). Everything that
+  // works — the account line, the posture picker, Disconnect, Turn
+  // off for everyone, Remove, the Tool access expander — lives in
+  // the expanded state, not sprawled across the resting card.
   function connectorRow(row) {
     const ctl = rowControls(row, { role });
-    const card = el('article', 'cm-row');
+    if (ctl.mode === 'mirror') return mirrorRow(row);
+    const open = state.open.has(row.entryId);
+    const card = el('article', 'cm-row cm-connector');
+    const head = el('div', 'cm-row-head');
     const main = el('div', 'cm-row-main');
     main.append(el('div', 'cm-row-name', row.name ?? row.entryId));
     if (row.oneLiner) main.append(el('div', 'cm-row-line muted sm', row.oneLiner));
+    head.append(main);
+    head.append(el('span', `cm-state ${row.state}`, STATE_TEXT[row.state] ?? row.state));
+    const toggle = el('button', 'btn sm ghost', 'Manage');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.addEventListener('click', () => {
+      if (open) state.open.delete(row.entryId); else state.open.add(row.entryId);
+      refresh();
+    });
+    head.append(toggle);
+    card.append(head);
+    if (!open) return card;
+    const body = el('div', 'cm-row-open');
     const meta = [row.vendorLabel, row.trustLabel ? `${row.trustLabel} connector` : null].filter(Boolean).join(' · ');
-    if (meta) main.append(el('div', 'cm-row-meta muted sm', meta));
-    card.append(main);
+    if (meta) body.append(el('div', 'cm-row-meta muted sm', meta));
     const side = el('div', 'cm-row-side');
-    side.append(el('span', `cm-state ${row.state}`, STATE_TEXT[row.state] ?? row.state));
-    if (ctl.mode === 'mirror') {
-      card.append(el('p', 'cm-mirror-note muted sm', ctl.note));
-      return card;
-    }
     if (ctl.mode === 'disabled') {
       side.append(el('span', 'muted sm', 'Nobody in this workspace can connect it while it is off.'));
       if (ctl.canEnable) side.append(actionButton('Turn back on', async () => {
@@ -265,7 +345,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
           return;
         }
         if (out?.status === 'needs-credential') {
-          showKeyForm(card, row, out);
+          showKeyForm(body, row, out);
           btn.disabled = true;
           return;
         }
@@ -286,9 +366,33 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
         await refresh();
       }, 'ghost'));
     }
-    card.append(side);
+    body.append(side);
+    card.append(body);
     if (ctl.canToolAccess) card.append(toolAccessSection(row));
     return card;
+  }
+
+  // A mirror row inside the group: compact and view-only — name,
+  // one line, state words. No controls, and NO note: the group's
+  // head says the note once for the whole seat.
+  function mirrorRow(row) {
+    const card = el('article', 'cm-row cm-mirror-row');
+    const main = el('div', 'cm-row-main');
+    main.append(el('div', 'cm-row-name', row.name ?? row.entryId));
+    if (row.oneLiner) main.append(el('div', 'cm-row-line muted sm', row.oneLiner));
+    card.append(main);
+    card.append(el('span', `cm-state ${row.state}`, STATE_TEXT[row.state] ?? row.state));
+    return card;
+  }
+
+  // The mirror group: one section per seat, the note once at its
+  // head, the leftover mirror rows compact under it.
+  function mirrorGroup(plan) {
+    const wrap = el('section', 'cm-mirror-group');
+    wrap.append(el('h4', 'cm-mirror-title', plan.mirrorTitle));
+    wrap.append(el('p', 'cm-mirror-note muted sm', plan.mirrorNote));
+    for (const row of plan.mirrors) wrap.append(mirrorRow(row));
+    return wrap;
   }
 
   // The Tool access expander (bite M2): the connection's posture in
@@ -372,7 +476,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
     return b;
   }
 
-  function showKeyForm(card, row, connectOut) {
+  function showKeyForm(box, row, connectOut) {
     const form = el('div', 'cm-key-form');
     form.append(el('p', 'sm', `${row.name} takes an API key or header token. Paste it here — it goes straight into Helmian\u2019s credential storage, and this list keeps only a reference to it.`));
     const input = el('input', 'cm-key-input');
@@ -392,7 +496,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       await refresh();
     });
     form.append(input, label, go);
-    card.append(form);
+    box.append(form);
   }
 
   function addCustomForm() {
@@ -422,8 +526,10 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
   async function connectorsTab() {
     const frag = el('div', 'cm-list');
     if (!state.seats.length) frag.append(el('p', 'muted sm', 'No seat in this workspace holds a connector library yet.'));
-    for (const row of state.rows) frag.append(connectorRow(row));
+    const plan = planConnectorRows(state.rows, seatName(state.seat));
+    for (const row of plan.primary) frag.append(connectorRow(row));
     if (!state.rows.length && state.seats.length) frag.append(el('p', 'muted sm', 'This seat\u2019s library is empty.'));
+    if (plan.mirrors.length) frag.append(mirrorGroup(plan));
     if (['owner', 'admin'].includes(String(role).toLowerCase()) && state.seat) frag.append(addCustomForm());
     return frag;
   }
@@ -467,6 +573,13 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
 
   async function refresh() {
     if (!state.loaded) root.replaceChildren(note, loadingLine());
+    else if (state.renderedSeat && state.seat && state.renderedSeat !== state.seat) {
+      // Seat switch (addition, 2026-11-09): the previous seat's cards
+      // must not sit on screen while the new seat's read is in flight
+      // (the live walk measured a ~2s stale list). Paint the header
+      // and the loading line NOW, before the awaits below.
+      root.replaceChildren(note, header(), loadingLine());
+    }
     try {
       await loadSeats();
       const head = header();
@@ -475,6 +588,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       else if (state.tab === 'skills') body = await skillsTab();
       else body = await pluginsTab();
       state.loaded = true;
+      state.renderedSeat = state.seat;
       root.replaceChildren(note, head);
       if (body) root.append(body);
     } catch (error) {
@@ -490,12 +604,16 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
 
 // app.js entry point: builds the surface into the box and loads it.
 // The seat marker the composer panel's Manage row leaves behind
-// (sessionStorage) picks the opening tab's seat, once.
+// (sessionStorage) picks the opening tab's seat, once; with no fresh
+// marker, the remembered seat (localStorage, written by the surface
+// itself whenever a seat settles) picks it instead, so the seat
+// survives navigation and re-mounts the way the tab choice does.
 export async function mountConnectorManage(box, { api, el, role = '' } = {}) {
   let initialSeat = null;
   try {
     initialSeat = sessionStorage.getItem(MANAGE_SEAT_STORAGE_KEY);
     if (initialSeat) sessionStorage.removeItem(MANAGE_SEAT_STORAGE_KEY);
+    if (!initialSeat) initialSeat = localStorage.getItem(MANAGE_SEAT_MEMORY_KEY);
   } catch { initialSeat = null; }
   const surface = renderConnectorManage(box, { api, el, role, initialSeat });
   await surface.refresh();
