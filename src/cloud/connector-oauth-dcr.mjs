@@ -16,6 +16,12 @@
 // the secret is born inside the pending handshake, lives ONLY on
 // the server-side pending row (sql/081), and dies with it.
 //
+// The CIMD leg (below, 2026-11-10) is the same road with the
+// registration step replaced by a published identity: a server
+// that gates DCR to approved redirect URIs (Vercel is the first)
+// accepts a client whose client_id is the HTTPS URL of its own
+// metadata document instead.
+//
 // This module is the road, provider-neutral on purpose: nothing
 // here names a service. The first live-shaped check (2026-11-10)
 // read the metadata of the catalog's registry-notion entry
@@ -38,8 +44,70 @@ import {
 } from './connector-oauth-pending.mjs';
 
 export const CONNECTOR_OAUTH_DCR_KIND = 'dcr';
+export const CONNECTOR_OAUTH_CIMD_KIND = 'cimd';
 export const CONNECTOR_OAUTH_CALLBACK_URL = 'https://helmian.cloud/api/admin/connector-library/oauth/callback';
 const DEFAULT_CLIENT_NAME = 'Helmian';
+
+// ------------------------------------------------------------- CIMD
+// Client ID Metadata Documents (draft-ietf-oauth-client-id-
+// metadata-document; the MCP authorization spec's preferred client
+// identification): instead of registering, the client publishes a
+// small JSON document on its own domain and uses that document's
+// HTTPS URL as its client_id. The authorization server fetches the
+// document at authorize time and reads the client's name, redirect
+// URIs, grants, and token auth method out of it. The document's own
+// client_id field MUST equal the URL it is served from; its token
+// endpoint auth method must carry no shared secret (a public
+// document cannot keep one), so this road is 'none' + PKCE, exactly
+// like the public-client DCR shape.
+//
+// Helmian's document is served as a static file on helmian.cloud —
+// the same production road that serves the site's other public
+// documents (llms.txt, robots.txt): web/marketing/oauth/
+// client-metadata.json in the marketing site Vercel hosts. The URL
+// below is the ONE canonical client_id; the catalog entry carries
+// it as data (cimdClientId), this module's builder produces the
+// document's exact content, and the tests pin all three together so
+// they can never drift apart silently.
+export const HELMIAN_CLIENT_METADATA_URL = 'https://helmian.cloud/oauth/client-metadata.json';
+export const HELMIAN_CLIENT_METADATA_PATH = '/oauth/client-metadata.json';
+
+// The metadata document Helmian publishes about itself as an OAuth
+// client. Field set grounded in the CIMD draft (the RFC 7591 client
+// metadata registry, profiled): client_id (== the serving URL),
+// client_name, redirect_uris (the production callback the OAuth
+// road already uses, HTTPS as Vercel's CIMD note requires),
+// grant_types + response_types matching the road, the public-client
+// auth method, and the declared scope ask as catalog data the
+// caller passes in (Vercel: 'openid' only). No logo_uri: Vercel
+// requires a PNG/JPEG under 100 KB for one, and Helmian publishes
+// none that meets that bar today — the field is optional, so it is
+// omitted rather than pointed at an unverified asset.
+export function buildClientMetadataDocument({
+  clientId = HELMIAN_CLIENT_METADATA_URL,
+  redirectUri = CONNECTOR_OAUTH_CALLBACK_URL,
+  clientName = DEFAULT_CLIENT_NAME,
+  scopes = [],
+} = {}) {
+  return {
+    client_id: clientId,
+    client_name: clientName,
+    client_uri: 'https://helmian.cloud',
+    redirect_uris: [redirectUri],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    ...(scopes.length ? { scope: scopes.join(' ') } : {}),
+  };
+}
+
+// The CIMD client id a catalog entry declares, or null when the
+// entry does not run the CIMD road. Catalog data, like oauthScopes:
+// the entry definition carries it, never the stored row.
+export function cimdClientIdForEntry(entry) {
+  const value = entry?.cimdClientId;
+  return typeof value === 'string' && value.startsWith('https://') ? value : null;
+}
 
 export class ConnectorOAuthDcrError extends Error {
   constructor(code, message) {
@@ -160,6 +228,10 @@ export async function discoverAuthorizationServer(resourceUrl, { fetchImpl = fet
     scopesSupported: Array.isArray(asMeta.scopes_supported) ? asMeta.scopes_supported.map(String) : [],
     tokenAuthMethods: Array.isArray(asMeta.token_endpoint_auth_methods_supported)
       ? asMeta.token_endpoint_auth_methods_supported.map(String) : [],
+    // The CIMD advertisement (RFC 8414 extension, CIMD draft §6):
+    // true only when the server says so in those words; anything
+    // else means the CIMD road is not offered here.
+    clientIdMetadataDocumentSupported: asMeta.client_id_metadata_document_supported === true,
   };
 }
 
@@ -357,12 +429,12 @@ export function plainScopeWords(scope) {
   return SCOPE_WORDS[scope] ?? `the "${scope}" permission this service asks for`;
 }
 
-export function buildApprovalBriefing({ metadata, registration, entry }) {
+export function buildApprovalBriefing({ metadata, registration, entry, kind = CONNECTOR_OAUTH_DCR_KIND }) {
   const scopes = (registration?.scopes?.length ? registration.scopes : metadata.resourceScopes).map((name) => ({
     name, words: plainScopeWords(name),
   }));
   return {
-    kind: CONNECTOR_OAUTH_DCR_KIND,
+    kind,
     entryId: entry?.id ?? null,
     seatId: entry?.seatId ?? null,
     serviceName: metadata.resourceName ?? entry?.name ?? 'This service',
@@ -424,12 +496,75 @@ export async function startDcrConnect({
   };
 }
 
+// --------------------------------------------------- connect start (CIMD)
+// Run the start of a CIMD connect end to end: discovery → the
+// server must advertise CIMD (client_id_metadata_document_
+// supported) → NO registration call at all: the client_id IS
+// Helmian's published metadata document URL, which the server
+// fetches and validates itself at authorize time → state + PKCE →
+// the pending row (carrying the token endpoint and the 'none' auth
+// method, so the callback's exchange client resolves from the row
+// alone, exactly like a DCR row — the exchange posts the URL as
+// client_id with the PKCE verifier as its only proof) → the
+// authorize URL the person's browser is sent to.
+export async function startCimdConnect({
+  pendingStore, tenantId, personId, seatId, entry, provider,
+  redirectUri = CONNECTOR_OAUTH_CALLBACK_URL, fetchImpl = fetch, clientName = DEFAULT_CLIENT_NAME,
+  scopes = null,
+}) {
+  if (!pendingStore) fail('pending-store-unavailable', 'the OAuth road is not switched on yet, so the sign-in cannot be started');
+  const resourceUrl = entry?.mcpEndpointUrl ?? entry?.endpoint ?? null;
+  if (!resourceUrl) fail('invalid-resource', 'this connector carries no server endpoint to sign in to');
+  const clientId = cimdClientIdForEntry(entry);
+  if (!clientId) fail('invalid-resource', 'this connector declares no client metadata document to identify Helmian by');
+  const metadata = await discoverAuthorizationServer(resourceUrl, { fetchImpl });
+  if (!metadata.clientIdMetadataDocumentSupported) {
+    fail('cimd-unsupported',
+      'this service does not accept a client metadata document — it needs a different sign-in road, so nothing was connected');
+  }
+  const declaredScopes = scopes ?? entry?.oauthScopes ?? null;
+  const registration = {
+    clientId,
+    clientSecret: null,
+    tokenEndpointAuthMethod: 'none',
+    scopes: dcrScopesForRegistration(metadata, declaredScopes),
+  };
+  const state = newOAuthState();
+  const codeVerifier = newPkceVerifier();
+  const authorizeUrl = buildDcrAuthorizationUrl(metadata, {
+    clientId, redirectUri, state,
+    challenge: pkceChallenge(codeVerifier), scopes: registration.scopes,
+  });
+  const saved = await pendingStore.save(tenantId, {
+    stateHash: hashOAuthState(state),
+    personId, seatId, entryId: entry.id,
+    provider: provider ?? entry.id,
+    clientId,
+    codeVerifier, redirectUri,
+    scopes: registration.scopes,
+    clientSecret: null,
+    tokenEndpoint: metadata.tokenEndpoint,
+    tokenEndpointAuthMethod: 'none',
+  });
+  if (!saved) fail('pending-store-unavailable', 'the OAuth road is not switched on yet, so the sign-in cannot be started');
+  return {
+    authorizeUrl,
+    briefing: buildApprovalBriefing({ metadata, registration, entry, kind: CONNECTOR_OAUTH_CIMD_KIND }),
+    metadata,
+    registration: { clientId, tokenEndpointAuthMethod: 'none', scopes: registration.scopes },
+  };
+}
+
 // The provider key a DCR entry's pending rows carry: the entry's
-// own service key ('registry-notion' → 'notion'; a bare id stands
-// as itself). Display and reporting key on it; the road never does.
+// own service key — its catalog prefix is Helmian's filing system,
+// not the service's name ('registry-notion' → 'notion'; the
+// brokered 'helmian-vercel' → 'vercel'; a bare id stands as
+// itself). Display and reporting key on it; the road never does.
 export function dcrProviderKeyForEntry(entry) {
   const id = String(entry?.id ?? '');
-  return id.startsWith('registry-') ? id.slice('registry-'.length) : id;
+  if (id.startsWith('registry-')) return id.slice('registry-'.length);
+  if (id.startsWith('helmian-')) return id.slice('helmian-'.length);
+  return id;
 }
 
 // The entries whose OAuth road is a fixed-map provider: an app
@@ -455,18 +590,25 @@ export function fixedProviderForEntry(entry) {
   return FIXED_PROVIDER_BY_ENTRY_ID[String(entry?.id ?? '')] ?? null;
 }
 
-// Which sign-in kind an entry's OAuth road is: a fixed-map provider
+// Which sign-in kind an entry's OAuth road is: CIMD when the entry
+// declares a client metadata document (the identification outranks
+// registration — the MCP spec's own priority order: a declared
+// client identity, then CIMD, then DCR), a fixed-map provider
 // (decided the way the write route's consent boundary already
-// decides it) or the discovery-driven DCR kind for any other OAuth
+// decides it), or the discovery-driven DCR kind for any other OAuth
 // entry carrying a server endpoint. Null when the entry is not an
 // OAuth entry at all.
 export function connectorOAuthKindForEntry(entry, { env = process.env } = {}) {
   if (!entry || entry.authMode !== 'oauth') return null;
+  const resourceUrl = entry.mcpEndpointUrl ?? entry.endpoint ?? null;
+  const cimdClientId = cimdClientIdForEntry(entry);
+  if (cimdClientId && resourceUrl) {
+    return { kind: CONNECTOR_OAUTH_CIMD_KIND, provider: dcrProviderKeyForEntry(entry), resourceUrl, clientId: cimdClientId };
+  }
   const fixedProvider = fixedProviderForEntry(entry);
   if (fixedProvider) {
     return { kind: 'fixed', provider: fixedProvider, configured: Boolean(createConnectorOAuthClient(fixedProvider, { fetchImpl: async () => { throw new Error('no fetch at kind resolution'); }, env })) };
   }
-  const resourceUrl = entry.mcpEndpointUrl ?? entry.endpoint ?? null;
   if (!resourceUrl) return null;
   return { kind: CONNECTOR_OAUTH_DCR_KIND, provider: dcrProviderKeyForEntry(entry), resourceUrl };
 }

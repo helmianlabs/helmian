@@ -353,16 +353,61 @@ function registryEntriesForSeat(seatId) {
 //     ("Use Vercel", vercel.com/docs/agent-resources/vercel-mcp,
 //     last updated 2026-09-15) publish the endpoint
 //     https://mcp.vercel.com as a remote MCP server (Streamable
-//     HTTP) whose sign-in is OAuth under the MCP Authorization spec —
-//     and the same endpoint accepts a Vercel access token in the
-//     Authorization header, the token a person creates in their own
-//     account settings (vercel.com/account/tokens). Helmian brokers
-//     the TOKEN road today, so the entry ships authMode 'header':
-//     connecting asks for that token, Helmian's credential service
-//     holds it, and the library record keeps the reference only.
-//     The OAuth road is deliberately NOT claimed — Helmian holds no
-//     client registration for it yet; when it lands it changes this
-//     entry's authMode, never its identity.
+//     HTTP) whose sign-in is OAuth under the MCP Authorization spec.
+//     The endpoint also accepts a Vercel access token in the
+//     Authorization header, and the entry originally shipped that
+//     token road (authMode 'header': connecting asked the person to
+//     paste a token from their account settings). Troy's product
+//     call (2026-11-10) retired it: Connect must open the provider's
+//     own sign-in door, never a paste-a-token form. Vercel's server
+//     publishes a complete OAuth road — its authorization-server
+//     metadata (issuer https://vercel.com, read live 2026-11-10)
+//     names an authorize endpoint, a token endpoint (public client,
+//     PKCE S256), and a registration endpoint, so Helmian registers
+//     itself at connect time on the DCR road, the same machinery
+//     the registry DCR entries already run. The entry therefore
+//     ships authMode 'oauth', and declares the one scope Vercel's
+//     own protected-resource document publishes for this server
+//     ('openid' — the sign-in itself; what the connection can
+//     reach is bounded by the person's own Vercel account).
+//     The header road is REPLACED, not kept beside it: an entry
+//     carries exactly one authMode (the catalog/store shape), and
+//     the write route's connect/header action refuses any entry
+//     whose catalog mode is not 'header' — the generic header road
+//     itself stays for entries that declare it (custom entries).
+//     A connection landed earlier through a pasted token is not
+//     read by the OAuth road; reconnecting through Vercel's sign-in
+//     replaces it. The change is this entry's authMode and declared
+//     scopes only — never its identity.
+//     LIVE-PROOF FINDING (2026-11-10, vercel-oauth bite REPORT):
+//     Vercel's registration endpoint currently refuses Helmian's
+//     callback — POST /api/login/oauth/register with the
+//     helmian.cloud callback answers 400 invalid_redirect_uri,
+//     "The provided redirect URIs are not approved for use by this
+//     authorization server." Diagnostics the same day: the same
+//     registration with a loopback redirect is approved (201), and
+//     any other hosted or custom-scheme redirect is refused the
+//     same way — Vercel approves DCR registrations for local
+//     clients, and hosted clients connect, in Vercel's own docs
+//     words, by Client ID Metadata Documents (CIMD) or after
+//     Vercel's client review.
+//     CIMD IDENTIFICATION (2026-11-10, vercel-cimd bite): the
+//     entry now declares that identification — cimdClientId above
+//     is the HTTPS URL of Helmian's client metadata document,
+//     served as a static file on helmian.cloud by the marketing
+//     site's Vercel hosting (the road that already serves the
+//     site's public documents), naming Helmian, the same
+//     production callback, authorization-code + refresh grants,
+//     response type 'code', and the public-client auth method
+//     'none' (builder + three-way pin: connector-oauth-dcr.mjs
+//     and test/connector-vercel.test.mjs). Vercel's authorization
+//     server metadata advertises client_id_metadata_document_
+//     supported: true (live read, 2026-11-10), so the connect
+//     start runs the CIMD kind: no registration call — the
+//     authorize URL carries the document URL as client_id, and
+//     the callback's exchange presents it the same way. The
+//     entry's declared road stays 'oauth' throughout: that is
+//     the truthful road, now with its hosted-client door built.
 //   - The id is prefixed ('helmian-') by the §3.2 law: on Grok the
 //     Source 1 Vercel mirror (id 'vercel') stays as data, untouched,
 //     and a brokered entry never takes a mirror's id inside one
@@ -389,11 +434,19 @@ const BROKERED_SERVERS = Object.freeze([
       vendorName: 'Vercel',
       trustLabel: 'verified',
       category: 'development',
+      oauthScopes: Object.freeze(['openid']),
+      // The CIMD identification (see the Source 4 note): Helmian's
+      // client_id at Vercel is the HTTPS URL of its published
+      // client metadata document — the static file at this path on
+      // helmian.cloud (web/marketing/oauth/client-metadata.json),
+      // whose content connector-oauth-dcr.mjs's builder produces
+      // and the tests pin together.
+      cimdClientId: 'https://helmian.cloud/oauth/client-metadata.json',
       pipe: {
         mode: 'helmian',
         endpoint: 'https://mcp.vercel.com',
-        authMode: 'header',
-        scopesSummary: 'Connecting takes a Vercel access token: create one in your own Vercel account settings, under Tokens. The token carries the same access as your Vercel account, so keep it like a password.',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Vercel\u2019s own sign-in page: you sign in with your Vercel account and approve the connection there \u2014 nothing to paste, no token to create. What the connection can reach is the access your own Vercel account already has.',
       },
     }),
   }),
@@ -489,7 +542,20 @@ const BROKERED_SERVERS = Object.freeze([
 function brokeredServerEntriesForSeat(seatId) {
   return BROKERED_SERVERS
     .filter((server) => server.seats.includes(seatId))
-    .map((server) => ({ ...catalogEntry(seatId, server.def), vendorPublished: true }));
+    .map((server) => ({
+      ...catalogEntry(seatId, server.def),
+      vendorPublished: true,
+      // A brokered definition that declares the scopes it asks for
+      // carries them as catalog data, the Source 3 discipline above
+      // (the connect road reads them from this definition, never
+      // from the stored row — see declaredOAuthScopes' law in the
+      // write route).
+      ...(server.def.oauthScopes ? { oauthScopes: server.def.oauthScopes } : {}),
+      // Same discipline for a declared CIMD client id: catalog
+      // data on the built entry, read by the connect road from
+      // this definition, never from the stored row.
+      ...(server.def.cimdClientId ? { cimdClientId: server.def.cimdClientId } : {}),
+    }));
 }
 
 // ------------------------------------------------------------------ catalog
