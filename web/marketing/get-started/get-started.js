@@ -7,7 +7,7 @@ const PRODUCTS = {
   helmian_guard: { name: 'Helmian Guard', items: ['guard'] },
   helmian_bundle: { name: 'Helmian + Guard', items: ['exe', 'guard'] },
 };
-const GUARD = { name: 'helmian-guard-0.2.3.zip', url: '/downloads/helmian-guard-0.2.3.zip' };
+const GUARD = { name: 'helmian-guard-chromium-0.2.4.zip', url: '/downloads/helmian-guard-chromium-0.2.4.zip' };
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
 const key = PRODUCTS[params.get('product')] ? params.get('product') : 'helmian_individual';

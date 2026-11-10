@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import checkoutHandler from '../api/billing/checkout.js';
-import { createDownloadHandler, } from '../api/billing/download.js';
-import { createCheckoutSession, createEntitlementWebhookHandler, verifyStripeSignature } from '../api/billing/stripe-contract.js';
-import { createArtifactResolver, createEntitlementStore, createRuntimeEntitlementStore } from '../api/billing/entitlement-store.js';
+import checkoutHandler from '../server/billing/checkout.js';
+import { createDownloadHandler, } from '../server/billing/download.js';
+import { createCheckoutSession, createEntitlementWebhookHandler, verifyStripeSignature } from '../server/billing/stripe-contract.js';
+import { createArtifactResolver, createEntitlementStore, createRuntimeEntitlementStore } from '../server/billing/entitlement-store.js';
 import { createHmac } from 'node:crypto';
 
 const page = await readFile(new URL('../guard.html', import.meta.url), 'utf8');
@@ -23,17 +23,30 @@ test('Guard page exposes reviewed package slots and honest checkout handoff', ()
   assert.match(config, /helmian_guard/u);
 });
 
-test('checkout remains inert without Stripe configuration', async () => {
+test('Guard page download cards point at the served packages with honest status', () => {
+  assert.match(page, /href="\/downloads\/helmian-guard-chromium-0\.2\.4\.zip"/u);
+  assert.match(page, /href="\/downloads\/helmian-guard-firefox-0\.2\.4\.zip"/u);
+  assert.match(page, /v0\.2\.4 · Package ready/u);
+  assert.match(page, /Unsigned package — temporary load only/u);
+  assert.match(page, /AMO signing is not done yet/u);
+  assert.doesNotMatch(page, /Artifact pending review/u);
+  assert.doesNotMatch(page, /aria-disabled="true" title="AMO-signed/u);
+  assert.match(config, /helmian-guard-chromium-0\.2\.4\.zip/u);
+  assert.match(config, /helmian-guard-firefox-0\.2\.4\.zip/u);
+});
+
+test('checkout hands off to free sign-up while paid checkout is off', async () => {
+  delete process.env.HELMIAN_PAID_CHECKOUT;
   const get = response();
-  checkoutHandler({ method: 'GET' }, get);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(get.statusCode, 503);
-  assert.equal(JSON.parse(get.body).code, 'PRODUCT_NOT_CONFIGURED');
+  await checkoutHandler({ method: 'GET', url: '/api/billing/checkout?product=helmian_guard' }, get);
+  assert.equal(get.statusCode, 303);
+  assert.equal(get.headers.location, '/get-started?product=helmian_guard');
+  assert.equal(get.headers['cache-control'], 'no-store');
   const post = response();
   await checkoutHandler({ method: 'POST', body: { product: 'helmian_guard' } }, post);
-  assert.equal(post.statusCode, 503);
-  assert.equal(JSON.parse(post.body).code, 'PRODUCT_NOT_CONFIGURED');
-  assert.equal(post.headers['cache-control'], 'no-store');
+  assert.equal(post.statusCode, 200);
+  assert.equal(JSON.parse(post.body).free, true);
+  assert.equal(JSON.parse(post.body).checkoutUrl, '/get-started?product=helmian_guard');
 });
 
 test('Stripe product default price maps to one-time checkout without exposing secret', async () => {
@@ -95,6 +108,32 @@ test('artifact resolver rejects absent or non-HTTPS package targets', async () =
   assert.equal(await resolver({ product: 'helmian_guard' }), null);
   const approved = createArtifactResolver({ HELMION_ARTIFACT_HELMIAN_GUARD_URL: 'https://private.invalid/file.zip' });
   assert.equal((await approved({ product: 'helmian_guard' })).url, 'https://private.invalid/file.zip');
+});
+
+test('artifact resolver prefers the per-target Guard URL and falls back to the single URL', async () => {
+  const both = createArtifactResolver({ HELMION_ARTIFACT_HELMIAN_GUARD_URL: 'https://private.invalid/guard.zip', HELMION_ARTIFACT_HELMIAN_GUARD_CHROMIUM_URL: 'https://private.invalid/guard-chromium.zip', HELMION_ARTIFACT_HELMIAN_GUARD_FIREFOX_URL: 'https://private.invalid/guard-firefox.zip' });
+  assert.equal((await both({ product: 'helmian_guard', target: 'chromium' })).url, 'https://private.invalid/guard-chromium.zip');
+  assert.equal((await both({ product: 'helmian_guard', target: 'firefox' })).url, 'https://private.invalid/guard-firefox.zip');
+  assert.equal((await both({ product: 'helmian_guard' })).url, 'https://private.invalid/guard.zip');
+  const single = createArtifactResolver({ HELMION_ARTIFACT_HELMIAN_GUARD_URL: 'https://private.invalid/guard.zip' });
+  assert.equal((await single({ product: 'helmian_guard', target: 'firefox' })).url, 'https://private.invalid/guard.zip');
+  const targetOnly = createArtifactResolver({ HELMION_ARTIFACT_HELMIAN_GUARD_FIREFOX_URL: 'https://private.invalid/guard-firefox.zip' });
+  assert.equal((await targetOnly({ product: 'helmian_guard', target: 'firefox' })).url, 'https://private.invalid/guard-firefox.zip');
+  assert.equal(await targetOnly({ product: 'helmian_guard', target: 'chromium' }), null);
+  const insecure = createArtifactResolver({ HELMION_ARTIFACT_HELMIAN_GUARD_CHROMIUM_URL: 'http://public.invalid/guard-chromium.zip' });
+  assert.equal(await insecure({ product: 'helmian_guard', target: 'chromium' }), null);
+});
+
+test('download gate passes the browser target to the artifact resolver and rejects unknown targets', async () => {
+  const seen = [];
+  const handler = createDownloadHandler({ env: { STRIPE_PRODUCT_HELMIAN_GUARD: 'prod_guard' }, resolveCustomer: async () => 'cus_1', entitlementStore: { hasEntitlement: async () => true }, resolveArtifact: async (input) => { seen.push(input); return { url: 'https://private.invalid/file' }; } });
+  const redirected = response(); await handler({ method: 'GET', url: '/api/billing/download?product=helmian_guard&target=firefox' }, redirected);
+  assert.equal(redirected.statusCode, 302);
+  assert.equal(seen[0].target, 'firefox');
+  assert.equal(seen[0].product, 'helmian_guard');
+  const bad = response(); await handler({ method: 'GET', url: '/api/billing/download?product=helmian_guard&target=safari' }, bad);
+  assert.equal(bad.statusCode, 400);
+  assert.equal(JSON.parse(bad.body).code, 'TARGET_INVALID');
 });
 
 test('download gate fails closed when auth, entitlement, or artifact stores throw', async () => {
