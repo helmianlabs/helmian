@@ -1,4 +1,4 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel } from './app-model.mjs';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER } from './app-model.mjs';
 import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs';
 import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs';
 import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs';
@@ -2140,21 +2140,20 @@ async function loadPcApprovals() {
   let body;
   try {
     const res = await fetch('/api/admin/guard/pc-approvals', { credentials: 'same-origin' });
-    // Never a blank page: say why there is nothing to approve here. Guard's
-    // owner-only rule is unchanged; this only explains it.
-    if (res.status === 503 || res.status === 403 || res.status === 401) {
+    // Classify before parsing: the answer is read as text and the model
+    // decides what state it is. A non-JSON answer (a platform error page in
+    // front of the route) is its own state — it never proved the Guard is
+    // down, and its raw parser error is never shown. Guard's owner-only
+    // rule is unchanged; these words only explain each state.
+    const read = guardQueueReadModel(res.status, await res.text());
+    if (read.state !== 'ok') {
       panel.hidden = false;
-      $('#pc-approvals-status').textContent = res.status === 503
-        ? 'PC approvals are not switched on for this workspace yet. Once your PC is linked, Guard asks you here before anything runs on it.'
-        : (res.status === 403
-          ? 'PC actions are approved by the PC owner\u2019s account. Sign in with that account to Allow or Deny them.'
-          : 'Sign in again to see PC actions waiting for you.');
+      $('#pc-approvals-status').textContent = read.message;
       $('#pc-approvals').replaceChildren();
       return;
     }
-    body = await res.json();
-    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-  } catch (error) { panel.hidden = false; $('#pc-approvals-status').textContent = `Guard is unreachable (${error.message}). Nothing will run until it answers.`; $('#pc-approvals').replaceChildren(); return; }
+    body = read.body;
+  } catch { panel.hidden = false; $('#pc-approvals-status').textContent = GUARD_QUEUE_NO_ANSWER; $('#pc-approvals').replaceChildren(); return; }
   panel.hidden = false;
   const items = Array.isArray(body.approvals) ? body.approvals : [];
   $('#pc-approvals-status').textContent = items.length ? 'An AI asked to run these on your PC. Nothing runs until you approve.' : 'No PC actions waiting.';
@@ -2185,22 +2184,27 @@ function setUpcomingBadge(total) {
 }
 async function fetchUpcoming() {
   const res = await fetch('/api/admin/guard/pc-upcoming', { credentials: 'same-origin' });
-  if (res.status === 503 || res.status === 403 || res.status === 401) return null;
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-  return body;
+  // Same classification as the Approvals panel (guardQueueReadModel): a
+  // non-JSON answer is a state of its own, never a raw parser error and
+  // never proof the Guard is down.
+  const read = guardQueueReadModel(res.status, await res.text());
+  if (read.state === 'ok') return { body: read.body };
+  if (read.state === 'not-configured' || read.state === 'forbidden' || read.state === 'unauthenticated') return { unavailable: true };
+  return { error: read.message };
 }
 async function refreshUpcomingBadge() {
-  try { const body = await fetchUpcoming(); setUpcomingBadge(body ? (body.counts?.total || 0) : 0); }
+  try { const r = await fetchUpcoming(); setUpcomingBadge(r.body ? (r.body.counts?.total || 0) : 0); }
   catch { /* the badge is best-effort; the Upcoming view itself reports Guard problems */ }
 }
 async function loadUpcoming() {
   const box = $('#upcoming'); const status = $('#upcoming-status'); const expired = $('#upcoming-expired');
   if (!box) return;
-  let body;
-  try { body = await fetchUpcoming(); }
-  catch (error) { status.textContent = `Guard is unreachable (${error.message}). Nothing will run until it answers.`; box.replaceChildren(); expired.hidden = true; return; }
-  if (!body) { status.textContent = 'PC approvals are not set up for your account. Only the PC owner sees this queue.'; box.replaceChildren(); expired.hidden = true; setUpcomingBadge(0); return; }
+  let r;
+  try { r = await fetchUpcoming(); }
+  catch { status.textContent = GUARD_QUEUE_NO_ANSWER; box.replaceChildren(); expired.hidden = true; return; }
+  if (r.error) { status.textContent = r.error; box.replaceChildren(); expired.hidden = true; return; }
+  if (r.unavailable) { status.textContent = 'PC approvals are not set up for your account. Only the PC owner sees this queue.'; box.replaceChildren(); expired.hidden = true; setUpcomingBadge(0); return; }
+  const body = r.body;
   const queue = Array.isArray(body.queue) ? body.queue : [];
   const nowMs = Date.now();
   const activeQueue = queue.filter((a) => !a.expiresAt || Date.parse(a.expiresAt) > nowMs);
