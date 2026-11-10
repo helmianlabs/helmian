@@ -104,6 +104,16 @@ const CLAUDE_CATALOG = Object.freeze([
   claudeCatalog({ id: 'stripe', name: 'Stripe', oneLiner: 'Look up payments, customers, and invoices', vendorName: 'Stripe', trustLabel: 'verified', category: 'data' }),
   claudeCatalog({ id: 'atlassian', name: 'Atlassian', oneLiner: 'Search Jira issues and Confluence pages', vendorName: 'Atlassian', trustLabel: 'verified', category: 'productivity' }),
   claudeCatalog({ id: 'canva', name: 'Canva', oneLiner: 'Find designs and work from your Canva library', vendorName: 'Canva', trustLabel: 'community', category: 'design' }),
+  // Figma is a MIRROR ONLY (Bite R2): Figma's own gate admits only
+  // clients listed in the Figma MCP Catalog — new clients are
+  // paused and there is no self-serve registration (Figma's own
+  // forum answer from the Figma team, PLAN B6) — so no brokered
+  // Figma entry exists until Figma opens that door. The row is
+  // stocked so the library shows the service honestly as the
+  // vendor's own pipe, the way every Source 1 mirror works. The
+  // trust label is the conservative 'community': the vendor's
+  // published label for this entry was not in the research.
+  claudeCatalog({ id: 'figma', name: 'Figma', oneLiner: 'Find and open your Figma designs and files', vendorName: 'Figma', trustLabel: 'community', category: 'design' }),
   // Idiolect is in Troy's own Claude connectors set (his 2026-11-09
   // screenshots, mirror-design §2.1) and is the one directory entry
   // whose published menu actions the record holds verbatim: the three
@@ -141,6 +151,8 @@ const CHATGPT_CATALOG = Object.freeze([
   chatgptCatalog({ id: 'notion', name: 'Notion', oneLiner: 'Search pages, summarise notes, and draft new pages', vendorName: 'Notion', trustLabel: 'verified', category: 'documents' }),
   chatgptCatalog({ id: 'github', name: 'GitHub', oneLiner: 'Review pull requests, issues, and repository activity', vendorName: 'GitHub', trustLabel: 'verified', category: 'development' }),
   chatgptCatalog({ id: 'canva', name: 'Canva', oneLiner: 'Find designs and work from your Canva library', vendorName: 'Canva', trustLabel: 'community', category: 'design' }),
+  // Figma mirror only — see the note on the Claude catalog's row.
+  chatgptCatalog({ id: 'figma', name: 'Figma', oneLiner: 'Find and open your Figma designs and files', vendorName: 'Figma', trustLabel: 'community', category: 'design' }),
   chatgptCatalog({ id: 'dropbox', name: 'Dropbox', oneLiner: 'Search and open files stored in Dropbox', vendorName: 'Dropbox', trustLabel: 'community', category: 'documents' }),
 ]);
 
@@ -382,6 +394,93 @@ const BROKERED_SERVERS = Object.freeze([
         endpoint: 'https://mcp.vercel.com',
         authMode: 'header',
         scopesSummary: 'Connecting takes a Vercel access token: create one in your own Vercel account settings, under Tokens. The token carries the same access as your Vercel account, so keep it like a password.',
+      },
+    }),
+  }),
+  // ------------------------------------------ Bite R2 (2026-11-10)
+  // The team-work family: Slack, Asana, HubSpot. Each vendor
+  // publishes its own remote MCP server, and each sign-in road is
+  // OAuth with a PRE-REGISTERED client — none of the three lets a
+  // client register itself (live discovery reads, 2026-11-10: all
+  // three metadata sets name NO registration endpoint). Helmian's
+  // side of each road is the fixed registry (connector-oauth-
+  // pending.mjs): an app registered in the provider's own console,
+  // its client ID and secret held as project env, authorization
+  // code + PKCE S256. Until that env pair is placed, a connect
+  // start answers the honest consent boundary — Helmian holds no
+  // registration yet — and connects nothing.
+  //   - Slack: the person's own Slack account is what connects
+  //     (the server runs on user tokens). Only an internal app or
+  //     a Slack Marketplace app may use the server, the app must
+  //     have MCP turned on, and a workspace admin may have to
+  //     approve it (PLAN B7). The brokered row stands beside the
+  //     Claude/ChatGPT Slack mirrors, which stay as data — the
+  //     brokered row represents the name, the mirror law's usual
+  //     shape (the Vercel pair above).
+  //   - Asana: the registration is an "MCP app" in Asana's
+  //     developer console. Asana defines no permission split for
+  //     MCP apps (its own guide: use `default` or omit the scope —
+  //     including a scope parameter ERRORS), so the connect asks
+  //     for none; the grant is the person's own Asana access. MCP
+  //     tokens work only against the MCP server, last an hour, and
+  //     refresh; each connection sees ONE Asana workspace.
+  //   - HubSpot: the registration is an "MCP connector" created in
+  //     HubSpot itself (Development → MCP Connectors). HubSpot
+  //     defines no scopes on the connector — its consent page
+  //     derives them from the server's tools and the person's own
+  //     permissions — so the connect asks for none either. PKCE is
+  //     mandatory on this road (HubSpot's own integration guide).
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-slack',
+      name: 'Slack',
+      oneLiner: 'Search messages, summarise channels, and draft replies',
+      icon: 'slack',
+      vendorName: 'Slack',
+      trustLabel: 'verified',
+      category: 'communication',
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://mcp.slack.com/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Signing in connects your own Slack account: this agent searches and reads what you can see in Slack, under your name. It never posts as you. A workspace admin may need to approve Helmian\u2019s Slack app first.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-asana',
+      name: 'Asana',
+      oneLiner: 'Look up projects and tasks, check status, and file new work',
+      icon: 'asana',
+      vendorName: 'Asana',
+      trustLabel: 'verified',
+      category: 'productivity',
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://mcp.asana.com/v2/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Signing in grants the access your own Asana account already has — Asana does not split an MCP connection into separate permissions. Each connection sees one Asana workspace.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-hubspot',
+      name: 'HubSpot',
+      oneLiner: 'Search contacts, companies, and deals, and keep CRM records up to date',
+      icon: 'hubspot',
+      vendorName: 'HubSpot',
+      trustLabel: 'verified',
+      category: 'sales',
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://mcp.hubspot.com',
+        authMode: 'oauth',
+        scopesSummary: 'HubSpot sets the permissions on its own consent page, from the tools its server offers and the access your HubSpot account already holds. Helmian does not pick them.',
       },
     }),
   }),

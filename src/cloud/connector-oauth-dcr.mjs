@@ -432,15 +432,39 @@ export function dcrProviderKeyForEntry(entry) {
   return id.startsWith('registry-') ? id.slice('registry-'.length) : id;
 }
 
+// The entries whose OAuth road is a fixed-map provider: an app
+// pre-registered in the provider's own console, never a dynamic
+// registration. Entry id → registry provider key. GitHub was the
+// first member (its mirror id and its brokered id both name it);
+// Bite R2 adds the team-work family's brokered entries — Slack,
+// Asana, HubSpot — whose servers publish NO registration endpoint
+// (live metadata reads, 2026-11-10), so the DCR road cannot serve
+// them by construction. An entry not named here with an OAuth road
+// and a server endpoint takes the discovery-driven DCR kind.
+const FIXED_PROVIDER_BY_ENTRY_ID = Object.freeze({
+  github: 'github',
+  'helmian-github': 'github',
+  'helmian-slack': 'slack',
+  'helmian-asana': 'asana',
+  'helmian-hubspot': 'hubspot',
+});
+
+// The fixed provider a catalog entry's OAuth road runs under, or
+// null when the entry is not a fixed-provider entry.
+export function fixedProviderForEntry(entry) {
+  return FIXED_PROVIDER_BY_ENTRY_ID[String(entry?.id ?? '')] ?? null;
+}
+
 // Which sign-in kind an entry's OAuth road is: a fixed-map provider
-// (today: GitHub — decided the way the write route's consent
-// boundary already decides it) or the discovery-driven DCR kind for
-// any other OAuth entry carrying a server endpoint. Null when the
-// entry is not an OAuth entry at all.
+// (decided the way the write route's consent boundary already
+// decides it) or the discovery-driven DCR kind for any other OAuth
+// entry carrying a server endpoint. Null when the entry is not an
+// OAuth entry at all.
 export function connectorOAuthKindForEntry(entry, { env = process.env } = {}) {
   if (!entry || entry.authMode !== 'oauth') return null;
-  if (entry.id === 'github' || entry.id === 'helmian-github') {
-    return { kind: 'fixed', provider: 'github', configured: Boolean(createConnectorOAuthClient('github', { fetchImpl: async () => { throw new Error('no fetch at kind resolution'); }, env })) };
+  const fixedProvider = fixedProviderForEntry(entry);
+  if (fixedProvider) {
+    return { kind: 'fixed', provider: fixedProvider, configured: Boolean(createConnectorOAuthClient(fixedProvider, { fetchImpl: async () => { throw new Error('no fetch at kind resolution'); }, env })) };
   }
   const resourceUrl = entry.mcpEndpointUrl ?? entry.endpoint ?? null;
   if (!resourceUrl) return null;

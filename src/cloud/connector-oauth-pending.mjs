@@ -36,6 +36,14 @@
 // unset, GitHub is absent from the registry: not configured, said
 // plainly. The human consent at the provider stays the human's step;
 // this module only carries Helmian's side of the road.
+//
+// Bite R2 (2026-11-10) adds the team-work family to the same
+// registry — Slack, Asana, HubSpot — each an app pre-registered in
+// the provider's own console (none of the three offers dynamic
+// client registration; live metadata reads in the R2 report), each
+// pair held as project env the same way (SLACK_OAUTH_*,
+// ASANA_OAUTH_*, HUBSPOT_OAUTH_*), each absent from the registry —
+// not configured, said plainly — until its pair is placed.
 
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -169,6 +177,11 @@ function createGithubOAuthClient({ fetchImpl, env }) {
   return {
     provider: 'github',
     displayName: 'GitHub',
+    // The client ID this client was built from — the write route
+    // names it on the pending row (the exchange never reads it;
+    // the factory's own pair rules). Exposed so the route needs no
+    // provider-specific env read of its own.
+    clientId,
     async authorizeUrl({ redirectUri, state, challenge, scopes = [] }) {
       const url = new URL(GITHUB_AUTHORIZE_URL);
       url.searchParams.set('response_type', 'code');
@@ -225,8 +238,225 @@ function createGithubOAuthClient({ fetchImpl, env }) {
   };
 }
 
+// ------------------------------------------ the team-work family
+// (Bite R2). Each road's endpoints are the ones the provider's own
+// metadata names (live reads, 2026-11-10): Slack's authorization
+// server document points at its user-token authorize endpoint and
+// its Web API token method; Asana's at its standard OAuth pair;
+// HubSpot's MCP server is its own authorization server and names an
+// MCP-specific authorize path and token endpoint. Exchanges are
+// client_secret_post form posts, the method each server publishes.
+
+// The standard OAuth JSON exchange, shared by the roads whose
+// token endpoint answers plain OAuth JSON: refusal is a non-2xx
+// status or a missing access token.
+async function exchangeAuthorizationCodeForm({ fetchImpl, tokenUrl, clientId, clientSecret, code, codeVerifier, redirectUri, providerName }) {
+  const form = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: String(code),
+    redirect_uri: redirectUri,
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  if (codeVerifier) form.set('code_verifier', codeVerifier);
+  const fetched = await fetchImpl(tokenUrl, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  const body = await fetched.json().catch(() => null);
+  if (!fetched?.ok || !body?.access_token) {
+    throw Object.assign(new Error(body?.error_description || body?.error || `${providerName} refused the code exchange`), { status: 502 });
+  }
+  return {
+    accessToken: String(body.access_token),
+    refreshToken: body.refresh_token ? String(body.refresh_token) : null,
+    tokenType: body.token_type ? String(body.token_type) : 'Bearer',
+    scope: body.scope ? String(body.scope) : null,
+    expiresIn: Number.isFinite(Number(body.expires_in)) ? Number(body.expires_in) : null,
+  };
+}
+
+// Slack: the pre-registered app (MCP turned on; internal or
+// Marketplace-published — Slack's own rule), user-token scopes.
+const SLACK_AUTHORIZE_URL = 'https://slack.com/oauth/v2_user/authorize';
+const SLACK_TOKEN_URL = 'https://slack.com/api/oauth.v2.user.access';
+const SLACK_AUTH_TEST_URL = 'https://slack.com/api/auth.test';
+
+function createSlackOAuthClient({ fetchImpl, env }) {
+  const clientId = String(env?.SLACK_OAUTH_CLIENT_ID ?? '').trim();
+  const clientSecret = String(env?.SLACK_OAUTH_CLIENT_SECRET ?? '').trim();
+  if (!clientId || !clientSecret) return null;
+  return {
+    provider: 'slack',
+    displayName: 'Slack',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge, scopes }) {
+      // On the user-token authorize endpoint the `scope` parameter
+      // names the USER scopes — the list the write route's declared
+      // ask carries.
+      const url = new URL(SLACK_AUTHORIZE_URL);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      if (Array.isArray(scopes) && scopes.length) url.searchParams.set('scope', scopes.join(' '));
+      url.searchParams.set('state', state);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      const form = new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: String(code),
+        redirect_uri: redirectUri,
+        client_id: clientId,
+        client_secret: clientSecret,
+      });
+      if (codeVerifier) form.set('code_verifier', codeVerifier);
+      const fetched = await fetchImpl(SLACK_TOKEN_URL, {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+      const body = await fetched.json().catch(() => null);
+      // Slack's Web API shape answers even a refusal with HTTP 200:
+      // ok:false and an error name, with no token — that is a
+      // refusal, never a success with an empty token.
+      if (!fetched?.ok || body?.ok === false || !body?.access_token) {
+        throw Object.assign(new Error(body?.error || 'Slack refused the code exchange'), { status: 502 });
+      }
+      return {
+        accessToken: String(body.access_token),
+        // Present only when the app has token rotation turned on;
+        // Slack user tokens otherwise do not expire.
+        refreshToken: body.refresh_token ? String(body.refresh_token) : null,
+        tokenType: body.token_type ? String(body.token_type) : 'Bearer',
+        scope: body.scope ? String(body.scope) : null,
+        expiresIn: Number.isFinite(Number(body.expires_in)) ? Number(body.expires_in) : null,
+      };
+    },
+    async fetchIdentity({ accessToken }) {
+      // Slack's auth.test: answers who the token belongs to. Same
+      // never-throw rule as GitHub's: a failed identity read leaves
+      // the label to the provider name.
+      try {
+        const fetched = await fetchImpl(SLACK_AUTH_TEST_URL, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}` },
+        });
+        if (!fetched?.ok) return null;
+        const body = await fetched.json().catch(() => null);
+        return body?.ok === true && body?.user ? String(body.user) : null;
+      } catch { return null; }
+    },
+  };
+}
+
+// Asana: the pre-registered "MCP app" from Asana's developer
+// console. Asana defines no permission split for MCP apps — its own
+// guide says to use the `default` scope or omit the parameter, and
+// that including a scope parameter produces an error — so this road
+// sends NO scope parameter at all, whatever the caller passes.
+const ASANA_AUTHORIZE_URL = 'https://app.asana.com/-/oauth_authorize';
+const ASANA_TOKEN_URL = 'https://app.asana.com/-/oauth_token';
+const ASANA_RESOURCE = 'https://mcp.asana.com/v2';
+
+function createAsanaOAuthClient({ fetchImpl, env }) {
+  const clientId = String(env?.ASANA_OAUTH_CLIENT_ID ?? '').trim();
+  const clientSecret = String(env?.ASANA_OAUTH_CLIENT_SECRET ?? '').trim();
+  if (!clientId || !clientSecret) return null;
+  return {
+    provider: 'asana',
+    displayName: 'Asana',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge }) {
+      const url = new URL(ASANA_AUTHORIZE_URL);
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      url.searchParams.set('response_type', 'code');
+      // The resource indicator Asana's own guide requires: the MCP
+      // server the token is for. Tokens minted here work ONLY
+      // against that server, never Asana's standard API.
+      url.searchParams.set('resource', ASANA_RESOURCE);
+      url.searchParams.set('state', state);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      return exchangeAuthorizationCodeForm({
+        fetchImpl, tokenUrl: ASANA_TOKEN_URL, clientId, clientSecret,
+        code, codeVerifier, redirectUri, providerName: 'Asana',
+      });
+    },
+    // No fetchIdentity: an MCP token cannot call Asana's standard
+    // API (Asana's own note), so there is no honest identity read
+    // on this road — the callback records the provider label.
+  };
+}
+
+// HubSpot: the pre-registered "MCP connector" created in HubSpot
+// itself (Development → MCP Connectors), which shows its client ID
+// and secret on the connector's own details page. HubSpot defines
+// no scopes on the connector — its consent page derives them from
+// the server's tools and the person's own permissions — so this
+// road sends no scope parameter either. PKCE is mandatory on
+// HubSpot's road (its own integration guide).
+const HUBSPOT_AUTHORIZE_URL = 'https://mcp.hubspot.com/oauth/authorize/user';
+const HUBSPOT_TOKEN_URL = 'https://mcp.hubspot.com/oauth/v3/token';
+const hubspotTokenInfoUrl = (accessToken) => `https://api.hubapi.com/oauth/v1/access-tokens/${encodeURIComponent(accessToken)}`;
+
+function createHubSpotOAuthClient({ fetchImpl, env }) {
+  const clientId = String(env?.HUBSPOT_OAUTH_CLIENT_ID ?? '').trim();
+  const clientSecret = String(env?.HUBSPOT_OAUTH_CLIENT_SECRET ?? '').trim();
+  if (!clientId || !clientSecret) return null;
+  return {
+    provider: 'hubspot',
+    displayName: 'HubSpot',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge }) {
+      const url = new URL(HUBSPOT_AUTHORIZE_URL);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      url.searchParams.set('state', state);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      return exchangeAuthorizationCodeForm({
+        fetchImpl, tokenUrl: HUBSPOT_TOKEN_URL, clientId, clientSecret,
+        code, codeVerifier, redirectUri, providerName: 'HubSpot',
+      });
+    },
+    async fetchIdentity({ accessToken }) {
+      // HubSpot's token-info read: whose token this is. Fail-soft,
+      // the registry's standing rule.
+      try {
+        const fetched = await fetchImpl(hubspotTokenInfoUrl(accessToken), {
+          headers: { accept: 'application/json' },
+        });
+        if (!fetched?.ok) return null;
+        const body = await fetched.json().catch(() => null);
+        return body?.user ? String(body.user) : null;
+      } catch { return null; }
+    },
+  };
+}
+
 const CONNECTOR_OAUTH_PROVIDERS = Object.freeze({
   github: createGithubOAuthClient,
+  slack: createSlackOAuthClient,
+  asana: createAsanaOAuthClient,
+  hubspot: createHubSpotOAuthClient,
 });
 
 // Resolve the OAuth client for a provider — always the pending

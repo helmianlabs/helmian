@@ -93,13 +93,17 @@ function fakePending({ saveResult = true, takeRow = null } = {}) {
 }
 
 // The fake registry provider: a GitHub-shaped client, resolved by
-// the harness's oauthClientFor for provider 'github' only.
+// the harness's oauthClientFor for provider 'github' only. It
+// carries its clientId the way every real registry client does
+// since Bite R2 (the factories expose the id they were built from;
+// the write route names it on the pending row).
 function fakeOAuthClient({ identity = 'troy-shoemaker', identityFails = false, exchangeFails = false } = {}) {
   const calls = [];
   return {
     calls,
     provider: 'github',
     displayName: 'GitHub',
+    clientId: 'cid-test',
     async authorizeUrl(input) { calls.push(['authorizeUrl', input]); return `https://github.com/login/oauth/authorize?state=${input.state}`; },
     async exchangeCode(input) {
       calls.push(['exchangeCode', input]);
@@ -258,7 +262,7 @@ test('connect: GitHub OAuth starts the handshake and answers the authorize URL â
   assert.equal(saves.length, 1, 'exactly one handshake is saved');
   const [, saved] = saves[0];
   assert.equal(saved.provider, 'github');
-  assert.equal(saved.clientId, 'cid-test', 'the row names the env client id the handshake runs under');
+  assert.equal(saved.clientId, 'cid-test', 'the row names the client id the handshake runs under');
   assert.equal(saved.personId, 'user:troy');
   assert.equal(saved.seatId, 'claude');
   assert.equal(saved.entryId, 'helmian-github');

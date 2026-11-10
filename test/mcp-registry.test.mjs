@@ -291,7 +291,12 @@ test('catalog: the picks stock the seats the placement law names, as community H
   // Source 4 (the vendor-published Vercel server, Helmian-brokered)
   // adds 1 entry on each of claude, chatgpt, grok: 78 in all. The
   // Source 4 entry itself is pinned in connector-vercel.test.mjs.
-  assert.equal(CONNECTOR_CATALOG.length, 78);
+  // Bite R2 adds the team-work family to Source 4 — Slack, Asana,
+  // HubSpot, one brokered entry on each of claude, chatgpt, grok
+  // (+9) — and the Figma mirror row on claude and chatgpt (+2):
+  // 89 in all. The R2 entries are pinned in
+  // connector-r2-team-work.test.mjs.
+  assert.equal(CONNECTOR_CATALOG.length, 89);
   for (const seatId of LIVE_SEATS) {
     const defs = catalogEntriesForSeat(seatId);
     for (const pick of registryPicksForSeat(seatId)) {
