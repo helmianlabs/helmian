@@ -414,6 +414,38 @@
   },
   {
    "answer": {
+    "label": "Connect",
+    "next": null,
+    "speak": "Weather brings US forecasts and alerts from the National Weather Service. On the Connectors tab, press Connect on its row: no account, no sign in, it connects at once. Then ask a connected AI for the forecast.",
+    "then": null,
+    "where": "The Weather row, on the Connectors tab."
+   },
+   "category": "connectors",
+   "id": "connector-weather",
+   "layer": "content",
+   "priority": 340,
+   "questions": [
+    "how does the Weather connector work",
+    "what is the Weather connector",
+    "how do I connect Weather",
+    "does Weather need an account"
+   ],
+   "source": "Connectors road R0 live proof, 2026-11-10 (~/workspace/helmian-room-build/connectors-25/R0-WEATHER-REPORT.md): the Weather catalog row (registry-weather, authMode none) connected with no sign in, armed on a seat, and a live call returned the National Weather Service forecast for Twin Falls, Idaho. The row's own description reads: US weather forecasts and alerts from the National Weather Service. Owner walk 2026-11-10: the row shows Not connected until Connect is pressed. This entry was held unverified at V2 for exactly that proof (helm-knowledge/COVERAGE.md); R0 is it.",
+   "status": "grounded",
+   "when": {
+    "allWords": [],
+    "anyWords": [
+     "weather connector",
+     "connect weather",
+     "weather service",
+     "how does weather work",
+     "weather need an account"
+    ],
+    "noneWords": []
+   }
+  },
+  {
+   "answer": {
     "label": "Install",
     "next": null,
     "speak": "A plugin is a small add-on tool your AIs can use, like Weather. Plugins live on the Plugins tab, on the Integrations page. Press Install on the one you want.",
