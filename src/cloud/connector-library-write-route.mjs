@@ -262,6 +262,26 @@ export function declaredOAuthScopes(entry) {
   return Array.isArray(declared) && declared.length ? [...declared] : null;
 }
 
+// The CIMD client id a connect identifies Helmian by, under the
+// same law: the catalog definition is the authority. A declared
+// CIMD identity is catalog data only — the store's fixed entry
+// shape does not carry it — so a kind resolution ruled on the
+// stored row alone cannot see it: Vercel's connect took the
+// registration road its server refuses for hosted callbacks and
+// the start answered 502, while the same handler fed a
+// catalog-shaped entry answered the authorize hand-off (live
+// walks and the stored-row proof, 2026-11-10). An entry the
+// catalog does not define (or that declares nothing) gets null.
+// Custom entries are a person's own: no catalog declaration
+// exists for them, and their stored row declares none either.
+export function declaredCimdClientId(entry) {
+  if (!entry || entry.kind === 'custom') return null;
+  let definition = null;
+  try { definition = catalogEntryById(entry.seatId, entry.id); } catch { definition = null; }
+  const declared = definition?.cimdClientId ?? null;
+  return typeof declared === 'string' && declared.startsWith('https://') ? declared : null;
+}
+
 // The consent-boundary answer for OAuth entries Helmian holds no
 // client registration for: the provider's resource metadata (RFC
 // 9728) names its authorization server, whose metadata names the
@@ -667,9 +687,17 @@ export function createConnectorLibraryWriteHandler({
           return true;
         }
         // authMode oauth — the sign-in roads. The entry's kind
-        // (connector-oauth-dcr.mjs, ruled on the catalog's auth
-        // mode — the `authMode` local — never the stored row's
-        // stale label) decides:
+        // (connector-oauth-dcr.mjs) is ruled on the
+        // catalog-resolved entry — the `oauthEntry` local: the
+        // catalog's auth mode and declared OAuth identity (its
+        // scopes ask and its CIMD client id) laid over the stored
+        // row, never the stored row alone. The declared identity
+        // is catalog data the row's fixed shape cannot carry, so
+        // a resolution ruled on the row alone sends a CIMD entry
+        // down the registration road (the Vercel 502,
+        // 2026-11-10). The starts receive the same resolved
+        // entry — startCimdConnect reads the client id off it.
+        // The kind decides:
         //   fixed — a registry provider (GitHub) with a configured
         //     client starts the real road (M3 §6.3): state + PKCE
         //     minted here, the handshake saved, the authorize URL
@@ -691,16 +719,23 @@ export function createConnectorLibraryWriteHandler({
         //     the consent boundary the same way.
         // Anything else (no endpoint, not an OAuth entry at all)
         // keeps the consent-boundary answer.
-        const oauthKind = connectorOAuthKindForEntry({ ...entry, authMode });
+        const connectScopes = declaredOAuthScopes(entry);
+        const cimdClientId = declaredCimdClientId(entry);
+        const oauthEntry = {
+          ...entry, authMode,
+          ...(cimdClientId ? { cimdClientId } : {}),
+          ...(connectScopes ? { oauthScopes: connectScopes } : {}),
+        };
+        const oauthKind = connectorOAuthKindForEntry(oauthEntry);
         const callbackUrl = `https://helmian.cloud${CONNECTOR_OAUTH_CALLBACK_PATH}`;
         if (oauthKind?.kind === 'dcr' || oauthKind?.kind === 'cimd') {
           let started = null;
           try {
             const startConnect = oauthKind.kind === 'cimd' ? startCimdConnect : startDcrConnect;
             started = await startConnect({
-              pendingStore: resolvePending(), tenantId, personId, seatId, entry,
+              pendingStore: resolvePending(), tenantId, personId, seatId, entry: oauthEntry,
               provider: oauthKind.provider, redirectUri: callbackUrl, fetchImpl,
-              scopes: declaredOAuthScopes(entry),
+              scopes: connectScopes,
             });
           } catch (error) {
             if (!(error instanceof ConnectorOAuthDcrError)) throw error;

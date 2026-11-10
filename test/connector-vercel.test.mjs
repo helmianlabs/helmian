@@ -55,7 +55,17 @@
 //       anyone connects the pair is 'not-connected';
 //   (6) a server that does not advertise CIMD refuses the start
 //       by name (cimd-unsupported) — the road never falls back to
-//       registration behind the entry's back.
+//       registration behind the entry's back;
+//   (7) the stored-row road: production's handler never sees a
+//       catalog-shaped entry — it reads the entry from the store,
+//       whose fixed shape cannot carry the declared CIMD identity
+//       (or the declared scopes). The kind resolution must rule
+//       on the catalog anyway: composed over the REAL library
+//       store and the REAL pending store, the connect from the
+//       stored row runs the CIMD road (this composition, fed the
+//       stored row, is what production's 502 was made of — the
+//       registration road answers it when the resolution rules
+//       on the row alone).
 //
 // Fakes for the stores, the pending store, and the credential
 // service; the write handler, the OAuth road, and dispatch are the
@@ -74,7 +84,7 @@ import {
   catalogEntryById,
   createCatalogRefresh,
 } from '../src/cloud/connector-catalog.mjs';
-import { buildConnectorTokenRef, planToolSnapshot } from '../src/cloud/connector-library.mjs';
+import { buildConnectorTokenRef, createConnectorLibraryStore, planToolSnapshot } from '../src/cloud/connector-library.mjs';
 import {
   createConnectorLibraryWriteHandler,
   declaredOAuthScopes,
@@ -87,7 +97,7 @@ import {
   dcrProviderKeyForEntry,
   startCimdConnect,
 } from '../src/cloud/connector-oauth-dcr.mjs';
-import { hashOAuthState, pkceChallenge } from '../src/cloud/connector-oauth-pending.mjs';
+import { createConnectorOAuthPendingStore, hashOAuthState, pkceChallenge } from '../src/cloud/connector-oauth-pending.mjs';
 import { resolveArmingRecord } from '../src/cloud/connector-arming-dispatch.mjs';
 
 class TenantAuthorizationError extends Error {}
@@ -574,4 +584,153 @@ test('road: before anyone connects, dispatch rules the pair not-connected — ne
   assert.equal(record.state, 'not-connected');
   assert.equal(record.reason, 'not-connected');
   assert.equal(resolutions, 0);
+});
+
+// --------------------------------------- the stored-row road (7)
+// Production's connect handler reads the entry from the store —
+// never the catalog object the road tests above seed with. The
+// store's fixed entry shape (entryOf) cannot carry the declared
+// CIMD identity or the declared scopes: both are catalog data
+// only. These tests compose the start the production way — the
+// REAL library store and the REAL pending store over one shared
+// in-memory pool (the connector-library tests' simulation style)
+// — so the entry the handler rules on is a stored row read back
+// through getEntry, and the pending row the start writes is the
+// real pending store's own insert, read back through its take().
+
+function fakePoolForRealStores() {
+  const entries = new Map();
+  const pending = new Map();
+  const queries = [];
+  let tenant = null;
+  const now = () => new Date();
+  return {
+    queries, entries, pending,
+    async connect() {
+      return {
+        async query(text, vals = []) {
+          queries.push({ text: String(text).replace(/\s+/g, ' ').trim(), vals });
+          if (text.includes("set_config('helmion.tenant_id'")) { tenant = vals[0]; return { rows: [], rowCount: 0 }; }
+          if (['begin', 'commit', 'rollback'].includes(text.trim())) return { rows: [], rowCount: 0 };
+          if (text.includes('insert into helmion.connector_entries')) {
+            const [seatId, id, kind, name, oneLiner, iconRef, vendorName, trustLabel, category,
+              brokerMode, endpoint, vendorRefJson, authMode, clientIdentity, scopesSummary,
+              addedBy, workspaceProvisioned, installedPath, configSnippetJson, baselineFingerprint] = vals;
+            const row = {
+              tenant_id: tenant, seat_id: seatId, id, kind, name, one_liner: oneLiner,
+              icon_ref: iconRef, vendor_name: vendorName, trust_label: trustLabel, category,
+              broker_mode: brokerMode, mcp_endpoint_url: endpoint,
+              vendor_connector_ref: vendorRefJson ? JSON.parse(vendorRefJson) : null,
+              auth_mode: authMode, client_identity: clientIdentity, scopes_summary: scopesSummary,
+              added_by: addedBy, added_at: now(), workspace_provisioned: workspaceProvisioned,
+              installed_path: installedPath ?? null,
+              config_snippet: configSnippetJson ? JSON.parse(configSnippetJson) : null,
+              baseline_fingerprint: baselineFingerprint ?? null,
+              state: 'available', created_at: now(), updated_at: now(),
+            };
+            entries.set(`${tenant}|${seatId}|${id}`, row);
+            return { rows: [{ ...row }], rowCount: 1 };
+          }
+          if (text.includes('from helmion.connector_entries')) {
+            const row = entries.get(`${tenant}|${vals[0]}|${vals[1]}`);
+            return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+          }
+          if (text.includes('insert into helmion.connector_oauth_pending')) {
+            const [stateHash, personId, seatId, entryId, provider, clientId, codeVerifier,
+              redirectUri, scopes, ttlMs, clientSecret, tokenEndpoint, tokenEndpointAuthMethod] = vals;
+            pending.set(`${tenant}|${stateHash}`, {
+              tenant_id: tenant, state_hash: stateHash, person_id: personId, seat_id: seatId,
+              entry_id: entryId, provider, client_id: clientId, code_verifier: codeVerifier,
+              redirect_uri: redirectUri, scopes,
+              client_secret: clientSecret ?? null, token_endpoint: tokenEndpoint ?? null,
+              token_endpoint_auth_method: tokenEndpointAuthMethod ?? null,
+              expires_at: new Date(Date.now() + Number(ttlMs)),
+            });
+            return { rows: [], rowCount: 1 };
+          }
+          if (text.includes('delete from helmion.connector_oauth_pending')) {
+            const key = `${tenant}|${vals[0]}`;
+            const row = pending.get(key);
+            if (!row || row.expires_at <= now()) { pending.delete(key); return { rows: [], rowCount: 0 }; }
+            pending.delete(key);
+            return { rows: [{ ...row }], rowCount: 1 };
+          }
+          throw new Error(`fake pool: unhandled query: ${text}`);
+        },
+        release() {},
+      };
+    },
+  };
+}
+
+test('stored-row road: the connect from the entry the store returns runs the CIMD road — no registration, the pending row written by the real pending store', async () => {
+  const pool = fakePoolForRealStores();
+  const libraryStore = createConnectorLibraryStore(pool);
+  const pendingStore = createConnectorOAuthPendingStore(pool);
+
+  // Seed the tenant's library the production way — the catalog
+  // entry written through the store — then read the row back.
+  // The read-back IS the production shape, and the pin is that
+  // the declared OAuth identity is NOT on it: the store's fixed
+  // shape cannot carry it, which is the whole defect's ground.
+  await libraryStore.createEntry(TENANT, 'system', catalogEntryById('claude', ENTRY_ID));
+  const stored = await libraryStore.getEntry(TENANT, 'claude', ENTRY_ID);
+  assert.ok(stored, 'the seeded row reads back');
+  assert.equal(stored.state, 'available');
+  assert.equal(stored.brokerMode, 'helmian');
+  assert.equal(stored.mcpEndpointUrl, ENDPOINT);
+  assert.equal(stored.authMode, 'oauth');
+  assert.ok(!('cimdClientId' in stored), 'the stored row carries no CIMD identity — entryOf’s shape has no such field');
+  assert.ok(!('oauthScopes' in stored), 'the stored row carries no declared scopes either — both are catalog data only');
+
+  const vercel = fakeVercelServer();
+  const h = writeHarness({ store: libraryStore, credentials: fakeCredentials(), pending: pendingStore, fetchImpl: vercel.fetchImpl });
+  const start = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: ENTRY_ID } });
+
+  assert.equal(start.status, 200, 'the start from the stored row answers — ruled on the row alone it took the registration road (and, live, Vercel’s refusal made it a 502)');
+  assert.equal(start.json.status, 'authorize');
+  assert.equal(start.json.provider, 'vercel');
+  const au = new URL(start.json.authorizeUrl);
+  assert.equal(`${au.origin}${au.pathname}`, 'https://vercel.com/oauth/authorize');
+  assert.equal(au.searchParams.get('client_id'), METADATA_URL, 'the catalog’s declared CIMD identity rules the start even though the stored row cannot carry it');
+  assert.equal(au.searchParams.get('scope'), 'openid');
+  assert.equal(start.json.briefing.kind, 'cimd', 'the kind the resolution ruled is CIMD — from the catalog, not the row');
+  assert.equal(vercel.seen.registrations.length, 0, 'zero registration calls: the stored row no longer routes Vercel to the endpoint its server refuses');
+
+  // The pending row was written by the REAL pending store's own
+  // insert (the sql/081 shape: token endpoint + auth method, no
+  // secret) and reads back through its own take().
+  assert.equal(pool.pending.size, 1, 'exactly one pending row stands in the table');
+  const taken = await pendingStore.take(TENANT, hashOAuthState(au.searchParams.get('state')));
+  assert.ok(taken, 'the row the real store wrote is the row its take() returns');
+  assert.equal(taken.provider, 'vercel');
+  assert.equal(taken.clientId, METADATA_URL);
+  assert.equal(taken.tokenEndpoint, 'https://vercel.com/api/login/oauth/token');
+  assert.equal(taken.tokenEndpointAuthMethod, 'none');
+  assert.equal(taken.clientSecret, null);
+  assert.deepEqual(taken.scopes, ['openid']);
+  assert.equal(taken.redirectUri, CALLBACK_URL);
+  assert.equal(au.searchParams.get('code_challenge'), pkceChallenge(taken.codeVerifier));
+});
+
+test('stored-row road: declaredCimdClientId rules by the catalog — the stored shape, custom entries, and undeclared entries', async () => {
+  const { declaredCimdClientId } = await import('../src/cloud/connector-library-write-route.mjs');
+  // A stored-shape entry (what getEntry returns) declares nothing
+  // itself; the catalog declaration for its id is the answer.
+  for (const seatId of ['claude', 'chatgpt', 'grok']) {
+    assert.equal(
+      declaredCimdClientId({ seatId, id: ENTRY_ID, kind: 'catalog' }),
+      METADATA_URL,
+      `${seatId}: the catalog's declared identity answers for the stored row`,
+    );
+  }
+  // A custom entry is the person's own: the resolver never lends
+  // it a catalog road, even under a colliding id.
+  assert.equal(declaredCimdClientId({ seatId: 'claude', id: ENTRY_ID, kind: 'custom', cimdClientId: METADATA_URL }), null);
+  // A catalog entry with no CIMD declaration gets null — the
+  // resolver invents nothing (Slack's road is the fixed registry).
+  assert.equal(declaredCimdClientId({ seatId: 'claude', id: 'helmian-slack', kind: 'catalog' }), null);
+  // An entry the catalog does not define, and no entry at all.
+  assert.equal(declaredCimdClientId({ seatId: 'claude', id: 'no-such-entry', kind: 'catalog' }), null);
+  assert.equal(declaredCimdClientId(null), null);
 });
