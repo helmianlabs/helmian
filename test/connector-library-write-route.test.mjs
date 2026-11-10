@@ -1,7 +1,8 @@
 // Connector library WRITE routes (mirror M1, DESIGN §5): the
 // manage surface's server half, exercised with a fake store that
 // honours the real store's contract, a fake credential service, a
-// fake pending store, and a fake OAuth door.
+// fake pending store, and a fake OAuth provider client served
+// through the registry seam (oauthClientFor).
 //
 // What is proven here:
 //   - gating: membership required; auditors never write; workspace
@@ -26,7 +27,7 @@ import assert from 'node:assert/strict';
 
 import { createConnectorLibraryWriteHandler } from '../src/cloud/connector-library-write-route.mjs';
 import { buildConnectorTokenRef } from '../src/cloud/connector-library.mjs';
-import { hashOAuthState } from '../src/cloud/connector-oauth-pending.mjs';
+import { createConnectorOAuthClient, hashOAuthState } from '../src/cloud/connector-oauth-pending.mjs';
 
 class TenantAuthorizationError extends Error {}
 
@@ -88,28 +89,41 @@ function fakePending({ saveResult = true, takeRow = null } = {}) {
   };
 }
 
-function fakeDoor() {
+// The fake registry provider: a GitHub-shaped client, resolved by
+// the harness's oauthClientFor for provider 'github' only.
+function fakeOAuthClient({ identity = 'troy-shoemaker', identityFails = false, exchangeFails = false } = {}) {
   const calls = [];
   return {
     calls,
-    async registerClient(input) { calls.push(['registerClient', input]); return { clientId: 'client-123' }; },
-    async authorizeUrl(input) { calls.push(['authorizeUrl', input]); return `https://connect.helmian.cloud/authorize?state=${input.state}&client_id=${input.clientId}`; },
-    async exchangeCode(input) { calls.push(['exchangeCode', input]); return { accessToken: 'at-1', refreshToken: 'rt-1', tokenType: 'Bearer', scope: 'memory.read memory.write', expiresIn: 3600 }; },
+    provider: 'github',
+    displayName: 'GitHub',
+    async authorizeUrl(input) { calls.push(['authorizeUrl', input]); return `https://github.com/login/oauth/authorize?state=${input.state}`; },
+    async exchangeCode(input) {
+      calls.push(['exchangeCode', input]);
+      if (exchangeFails) throw Object.assign(new Error('bad_verification_code'), { status: 502 });
+      return { accessToken: 'at-1', refreshToken: 'rt-1', tokenType: 'Bearer', scope: 'repo read:org', expiresIn: null };
+    },
+    async fetchIdentity(input) {
+      calls.push(['fetchIdentity', input]);
+      if (identityFails) throw new Error('github unreachable');
+      return identity;
+    },
   };
 }
 
-function harness({ actor = OWNER, store, pending, credentials, door, fetchImpl } = {}) {
+function harness({ actor = OWNER, store, pending, credentials, oauthClient, oauthClientFor, fetchImpl } = {}) {
   const s = store ?? fakeStore({ 'claude/helmian-github': ENTRY() });
+  const client = oauthClient ?? fakeOAuthClient();
   const handler = createConnectorLibraryWriteHandler({
     store: s,
     pendingStore: pending ?? fakePending(),
     credentialClient: credentials === undefined ? fakeCredentials() : credentials,
-    doorOAuth: door ?? fakeDoor(),
+    oauthClientFor: oauthClientFor ?? ((provider) => (provider === 'github' ? client : null)),
     fetchImpl: fetchImpl ?? (async () => { throw new Error('no network in tests'); }),
   });
   const sent = [];
   return {
-    store: s, sent,
+    store: s, sent, oauthClient: client,
     async run(path, { method = 'POST', body = {}, actorError = null } = {}) {
       const requestUrl = new URL(path, 'https://helmian.cloud');
       const handled = await handler({
@@ -225,17 +239,16 @@ test('connect: GitHub OAuth reaches its consent boundary and connects nothing', 
   assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
 });
 
-test('callback: the door code lands the connection — pair stored under both references, record holds references only', async () => {
+test('callback: the provider code lands the connection — pair stored under both references, record holds references only, identity is the GitHub login', async () => {
   const pending = fakePending({
-    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['memory.read'] },
+    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['repo', 'read:org'] },
   });
   const credentials = fakeCredentials();
   const store = fakeStore({ 'claude/helmian-github': ENTRY() });
-  const door = fakeDoor();
-  const h = harness({ pending, credentials, store, door });
+  const h = harness({ pending, credentials, store });
   const out = await h.run(`${P}/oauth/callback?code=code-9&state=state-9`, { method: 'GET' });
   assert.equal(out.status, 200);
-  assert.match(out.raw, /Scribe is connected/);
+  assert.match(out.raw, /GitHub is connected/);
   const accessRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-github', personId: 'user:troy', tokenKind: 'access' });
   const refreshRef = buildConnectorTokenRef({ tenantId: 'tenant-a', seatId: 'claude', entryId: 'helmian-github', personId: 'user:troy', tokenKind: 'refresh' });
   const storedRefs = credentials.calls.filter(([n]) => n === 'storeCredential').map(([, i]) => i.credentialReference).sort();
@@ -247,7 +260,48 @@ test('callback: the door code lands the connection — pair stored under both re
   const [, input] = store.calls.find(([n]) => n === 'createConnection');
   assert.equal(input.accessTokenRef, accessRef);
   assert.equal(input.refreshTokenRef, refreshRef);
+  assert.equal(input.accountIdentity, 'troy-shoemaker', 'the recorded identity is the login the client fetched at callback time');
   assert.ok(!JSON.stringify(input).includes('at-1'), 'tokens never touch the library record');
+});
+
+test('callback: an identity fetch that fails still lands the connection under the provider label', async () => {
+  const pending = fakePending({
+    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['repo'] },
+  });
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
+  const h = harness({ pending, store, oauthClient: fakeOAuthClient({ identityFails: true }) });
+  const out = await h.run(`${P}/oauth/callback?code=code-9&state=state-9`, { method: 'GET' });
+  assert.equal(out.status, 200);
+  assert.match(out.raw, /GitHub is connected/);
+  const [, input] = store.calls.find(([n]) => n === 'createConnection');
+  assert.equal(input.accountIdentity, 'GitHub account');
+});
+
+test('callback: a provider with no registered client lands nothing — there is no default client', async () => {
+  const pending = fakePending({
+    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'door', clientId: 'c', codeVerifier: 'v', redirectUri: 'r', scopes: [] },
+  });
+  const credentials = fakeCredentials();
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
+  const h = harness({ pending, credentials, store });
+  const out = await h.run(`${P}/oauth/callback?code=c&state=s`, { method: 'GET' });
+  assert.match(out.raw, /did not land/);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
+  assert.equal(credentials.calls.filter(([n]) => n === 'storeCredential').length, 0);
+});
+
+test('callback: a refused code exchange names the provider on the failure page and lands nothing', async () => {
+  const pending = fakePending({
+    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['repo'] },
+  });
+  const credentials = fakeCredentials();
+  const store = fakeStore({ 'claude/helmian-github': ENTRY() });
+  const h = harness({ pending, credentials, store, oauthClient: fakeOAuthClient({ exchangeFails: true }) });
+  const out = await h.run(`${P}/oauth/callback?code=stale&state=state-9`, { method: 'GET' });
+  assert.match(out.raw, /did not land/);
+  assert.match(out.raw, /The GitHub sign-in answered with an error/);
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
+  assert.equal(credentials.calls.filter(([n]) => n === 'storeCredential').length, 0);
 });
 
 test('callback: a handshake started by someone else, or an expired one, lands nothing', async () => {
@@ -394,4 +448,62 @@ test('an unknown write action is a 404, answered by the route', async () => {
   const out = await h.run(`${P}/frobnicate`, { body: {} });
   assert.equal(out.handled, true);
   assert.equal(out.status, 404);
+});
+
+// ---------------------------------------------------------- registry
+// The provider registry (m3-github/DESIGN.md §6.2): resolution is by
+// the pending row's provider, GitHub is the first member, and an
+// unconfigured GitHub is absent — honestly, not defaulted.
+
+test('registry: an unknown provider resolves to no client', () => {
+  assert.equal(createConnectorOAuthClient('door', { fetchImpl: async () => { throw new Error('no network'); }, env: {} }), null);
+  assert.equal(createConnectorOAuthClient('', { fetchImpl: async () => { throw new Error('no network'); }, env: {} }), null);
+  assert.equal(createConnectorOAuthClient(undefined, { fetchImpl: async () => { throw new Error('no network'); }, env: {} }), null);
+});
+
+test('registry: GitHub without its environment pair is not configured — absent from the registry', () => {
+  const noFetch = async () => { throw new Error('no network'); };
+  assert.equal(createConnectorOAuthClient('github', { fetchImpl: noFetch, env: {} }), null);
+  assert.equal(createConnectorOAuthClient('github', { fetchImpl: noFetch, env: { GITHUB_OAUTH_CLIENT_ID: 'cid' } }), null);
+  assert.equal(createConnectorOAuthClient('github', { fetchImpl: noFetch, env: { GITHUB_OAUTH_CLIENT_SECRET: 'sec' } }), null);
+});
+
+test('registry: the GitHub client uses the fixed endpoints, posts the secret server-side, and reads the login', async () => {
+  const seen = [];
+  const fetchImpl = async (url, opts = {}) => {
+    seen.push([String(url), opts]);
+    if (String(url).startsWith('https://github.com/login/oauth/access_token')) {
+      return { ok: true, json: async () => ({ access_token: 'gho_x', token_type: 'bearer', scope: 'repo,read:org' }) };
+    }
+    if (String(url) === 'https://api.github.com/user') {
+      return { ok: true, json: async () => ({ login: 'troy-shoemaker' }) };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const client = createConnectorOAuthClient('github', {
+    fetchImpl,
+    env: { GITHUB_OAUTH_CLIENT_ID: 'cid-1', GITHUB_OAUTH_CLIENT_SECRET: 'sec-1' },
+  });
+  assert.ok(client);
+  assert.equal(client.registerClient, undefined, 'a fixed OAuth App has no registration step');
+  const authorize = await client.authorizeUrl({
+    redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback',
+    state: 'st', challenge: 'ch', scopes: ['repo', 'read:org'],
+  });
+  const au = new URL(authorize);
+  assert.equal(`${au.origin}${au.pathname}`, 'https://github.com/login/oauth/authorize');
+  assert.equal(au.searchParams.get('client_id'), 'cid-1');
+  assert.equal(au.searchParams.get('code_challenge'), 'ch');
+  assert.equal(au.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(au.searchParams.get('scope'), 'repo read:org');
+  const tokens = await client.exchangeCode({ code: 'code-1', codeVerifier: 'ver-1', redirectUri: 'https://helmian.cloud/cb' });
+  assert.equal(tokens.accessToken, 'gho_x');
+  const [, exchangeOpts] = seen.find(([u]) => u.includes('access_token'));
+  const form = new URLSearchParams(exchangeOpts.body);
+  assert.equal(form.get('client_id'), 'cid-1');
+  assert.equal(form.get('client_secret'), 'sec-1');
+  assert.equal(form.get('code_verifier'), 'ver-1');
+  assert.equal(await client.fetchIdentity({ accessToken: 'gho_x' }), 'troy-shoemaker');
+  const [, userOpts] = seen.find(([u]) => u === 'https://api.github.com/user');
+  assert.equal(userOpts.headers.authorization, 'Bearer gho_x');
 });
