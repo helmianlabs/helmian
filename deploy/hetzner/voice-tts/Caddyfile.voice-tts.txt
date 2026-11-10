@@ -1,0 +1,28 @@
+# Helmian served TTS (lag bite 1, 2026-11-10): append to /etc/caddy/Caddyfile
+# on the Hetzner box, then `systemctl reload caddy`. Same shape as the
+# Executive Guard feed receiver vhost: TLS terminates at Caddy, the
+# service itself listens on 127.0.0.1 only, and credential headers are
+# deleted from the access log by config.
+voice.5-78-222-178.sslip.io {
+	request_body {
+		max_size 16KB
+	}
+
+	reverse_proxy 127.0.0.1:8795
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/voice-tts.log
+		format filter {
+			wrap json
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+		}
+	}
+}

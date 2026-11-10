@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=6991fd71304920aa';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=6991fd71304920aa';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=6991fd71304920aa';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=6991fd71304920aa';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=ce65665042b4b26c';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=ce65665042b4b26c';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=ce65665042b4b26c';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=ce65665042b4b26c';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -497,6 +497,23 @@ function voiceForSeat(seat) {
   return SEAT_VOICE_POOL[hash % SEAT_VOICE_POOL.length];
 }
 const KOKORO_SAMPLE_RATE = 24000;
+// ---- Served TTS (lag bite 1, 2026-11-10) ----
+// Server-side synthesis is the primary voice road: reply chunks are
+// synthesized on the Helmian server box (deploy/hetzner/voice-tts/),
+// and the tab only fetches and plays the finished audio, through the
+// ONE served playback queue below. The in-tab Kokoro engine and the
+// speechSynthesis backup stay as the fallback road only — they speak
+// when the served road is unavailable or fails (and the served road
+// is unavailable until deploy sets SERVED_TTS_TOKEN to the token the
+// service runs with; an empty token disables it, so an undeployed
+// build behaves exactly like the pre-bite tab). Synthesis on the
+// tab's own CPU was the freeze: a q8 WASM generate for one chunk can
+// occupy the tab for seconds (see KOKORO_GENERATE_MS), and ten
+// replies landing in one poll turned that into the Chrome
+// "page unresponsive" dialog.
+const SERVED_TTS_URL = 'https://voice.5-78-222-178.sslip.io';
+const SERVED_TTS_TOKEN = '69cd453fe41dc09b084128a679b8b437b12eb4bb590c1bc7a8afc689faf6b218';
+const SERVED_TTS_TIMEOUT_MS = 30000;
 // WASM-only device choice for the Kokoro load. WebGPU is never
 // used, with or without an adapter in hand: on the vendored runtime
 // versions (onnxruntime-web 1.22 + transformers.js 3.8.1) the q8
@@ -514,7 +531,7 @@ async function loadKokoroEngine(mod) {
   return mod.KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: 'q8', device: 'wasm' });
 }
 
-function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition, synthesis = globalThis.speechSynthesis, Utterance = globalThis.SpeechSynthesisUtterance, kokoroLoader = null, makeAudioContext = null } = {}) {
+function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition, synthesis = globalThis.speechSynthesis, Utterance = globalThis.SpeechSynthesisUtterance, kokoroLoader = null, makeAudioContext = null, servedTts = null } = {}) {
   const supported = typeof Recognition === 'function';
   const canSpeak = typeof synthesis?.speak === 'function' && typeof Utterance === 'function';
   let recognition = null;
@@ -634,6 +651,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // or fails forward within its bounds, and the restart follows.
   function speechInFlight() {
     if (kokoroPlaying || activeSource || kokoroQueue.length > 0) return true;
+    if (servedPlaying || servedQueue.length > 0) return true;
     if (synthSpeaking || synthQueue.length > 0) return true;
     try { return !!(synthesis?.speaking || synthesis?.pending); } catch { return false; }
   }
@@ -1009,6 +1027,10 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // failure retry window so a dead network is not hammered. Returns
   // true when a load is in flight or the model is already warm.
   function warmup() {
+    // Served road first (lag bite 1): while served synthesis is
+    // available there is nothing to warm in the tab — in particular
+    // the ~300MB in-tab model download never starts.
+    if (!servedBroken && servedAvailable()) return false;
     if (kokoro) return true;
     if (!canSpeak || !canTryKokoro()) return false;
     // ensureKokoro itself decides whether the in-flight load is still
@@ -1149,12 +1171,128 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     }
   }
 
-  const tts = {
-    speak(text, seat, ref) {
-      const clean = stripSpeechMarkup(text);
-      if (!clean) return false;
-      const chunks = chunkForSpeech(clean);
-      if (!chunks.length) return false;
+  // ---- Served engine (lag bite 1): the ONE playback queue ----
+  // Every reply spoken on the served road appends its chunks here, in
+  // the order the replies arrived (message order), and pumpServed
+  // plays them strictly head to tail: a new reply NEVER interrupts a
+  // reply already playing or queued. That is a deliberate change from
+  // the legacy engines below (a new reply replaces anything in
+  // progress): with ten seats answering one prompt, interrupt-on-each
+  // meant only the last reply was ever heard whole, while each
+  // interrupted reply still burned a full in-tab generate. Explicit
+  // stops still clear everything: voice-off, cancelSpeech(), and a
+  // new dictation turn (startTurn) all call tts.cancel().
+  // Fetch-ahead: a chunk's synthesis request starts when the chunk
+  // reaches the head of the queue (at enqueue for the first chunk,
+  // and for the next chunk the moment the current one starts
+  // playing), so the server synthesizes chunk N+1 on ITS CPU while
+  // chunk N plays in the tab. At most one fetch is ever outstanding
+  // beyond the playing chunk.
+  const servedQueue = []; // [{ text, voice, seat, ref, token, audioPromise }]
+  let servedPlaying = false;
+  let servedToken = 0; // cancel() bumps it; late fetches are ignored
+  let servedBroken = false; // latched on the first served failure: the rest of the session uses the legacy road, so a dead service is not retried per reply
+  function servedAvailable() {
+    if (typeof servedTts === 'function') return true;
+    return Boolean(SERVED_TTS_URL && SERVED_TTS_TOKEN && typeof globalThis.fetch === 'function');
+  }
+  async function defaultServedTts(text, { voice } = {}) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), SERVED_TTS_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${SERVED_TTS_URL}/tts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${SERVED_TTS_TOKEN}` },
+        body: JSON.stringify({ text, voice }),
+        signal: ctl.signal,
+      });
+      if (!res.ok) throw new Error(`served voice answered ${res.status}`);
+      const buf = await res.arrayBuffer();
+      // decodeAudioData is native and off the synthesis path: the tab
+      // pays a WAV decode (milliseconds), never the WASM inference.
+      const decoded = await ensureAudioCtx().decodeAudioData(buf);
+      return { audio: decoded.getChannelData(0), sampling_rate: decoded.sampleRate };
+    } finally { clearTimeout(timer); }
+  }
+  function servedFetch(item) {
+    if (!item.audioPromise) {
+      const fn = servedTts ?? defaultServedTts;
+      item.audioPromise = Promise.resolve().then(() => fn(item.text, { voice: item.voice, seat: item.seat, ref: item.ref }));
+      item.audioPromise.catch(() => {}); // pumpServed owns the failure; never leave it unhandled
+    }
+    return item.audioPromise;
+  }
+  // A served failure hands the failed chunk and everything still
+  // queued to the legacy engines IN ORDER (the kokoroFallback pattern,
+  // reversed): chunks already carry their per-seat voice, so the
+  // in-tab Kokoro queue takes them whole when it can run, and the
+  // backup voice takes them when it cannot.
+  function servedFallback(failedItem) {
+    const items = [];
+    if (failedItem) items.push(failedItem);
+    for (const item of servedQueue.splice(0)) items.push(item);
+    if (!items.length) return;
+    if (kokoro || kokoroPromise || canTryKokoro()) {
+      for (const item of items) kokoroQueue.push({ text: item.text, token: playToken, voice: item.voice, seat: item.seat ?? null, ref: item.ref ?? null });
+      void pumpKokoro();
+      return;
+    }
+    if (kokoroState === 'failed') setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
+    else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
+    synthEngine.enqueue(items.map((item) => ({ text: item.text, seat: item.seat, ref: item.ref })), { interrupt: false });
+  }
+  async function pumpServed() {
+    if (servedPlaying || servedQueue.length === 0) return;
+    const item = servedQueue.shift();
+    servedPlaying = true;
+    if (servedQueue[0]) servedFetch(servedQueue[0]); // synthesize the next chunk while this one plays
+    let out;
+    try {
+      out = await servedFetch(item);
+    } catch (err) {
+      if (item.token !== servedToken) { servedPlaying = false; pumpServed(); return; } // cancelled while fetching
+      servedPlaying = false;
+      servedBroken = true;
+      console.warn('[voice] Served voice failed, falling back to the in-tab engines:', err?.message ?? err);
+      servedFallback(item);
+      return;
+    }
+    if (item.token !== servedToken) { servedPlaying = false; pumpServed(); return; } // cancelled while fetching
+    let src;
+    try {
+      const pcm = out?.audio ?? out?.data;
+      if (!pcm || !pcm.length) throw new Error('Served voice returned no audio');
+      src = playPcm(pcm, out?.sampling_rate ?? KOKORO_SAMPLE_RATE);
+    } catch (err) {
+      servedPlaying = false;
+      servedBroken = true;
+      console.warn('[voice] Served playback failed, falling back to the in-tab engines:', err?.message ?? err);
+      servedFallback(item);
+      return;
+    }
+    activeSource = src;
+    setVoiceStatus('Server voice', 'kokoro');
+    src.onended = () => {
+      servedPlaying = false;
+      if (activeSource === src) activeSource = null;
+      clearSpeaking(src);
+      pumpServed();
+    };
+    try { src.start(); noteSpeaking(item.seat, 'served', item.ref, src); }
+    catch { servedPlaying = false; if (activeSource === src) activeSource = null; pumpServed(); }
+  }
+  function servedCancel() {
+    servedToken += 1; // orphan any in-flight fetch: its audio is never played
+    servedQueue.length = 0;
+    servedPlaying = false;
+    // The playing buffer source is the shared activeSource; kokoroCancel
+    // stops it (tts.cancel calls both).
+  }
+
+  // The legacy in-tab road (Kokoro in the tab, speechSynthesis backup),
+  // unchanged from the pre-bite controller: it is now the FALLBACK,
+  // reached when the served road is unavailable or has failed.
+  function speakLegacyChunks(chunks, seat, ref) {
       // A new reply replaces anything in progress, on either engine.
       synthEngine.cancel();
       kokoroCancel();
@@ -1185,8 +1323,29 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       if (kokoroState === 'failed') setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
       else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
       return synthEngine.speakChunks(chunks, { seat, ref });
+  }
+
+  const tts = {
+    speak(text, seat, ref) {
+      const clean = stripSpeechMarkup(text);
+      if (!clean) return false;
+      const chunks = chunkForSpeech(clean);
+      if (!chunks.length) return false;
+      // Served road (lag bite 1): synthesis happens on the server, the
+      // tab only plays — chunks APPEND to the one served queue in
+      // arrival (message) order and nothing here cancels a reply
+      // already playing or queued on that road.
+      if (!servedBroken && servedAvailable()) {
+        const voice = voiceForSeat(seat);
+        for (const c of chunks) servedQueue.push({ text: c, voice, seat: seat ?? null, ref: ref ?? null, token: servedToken, audioPromise: null });
+        if (servedQueue[0]) servedFetch(servedQueue[0]); // first synthesis starts now, on the server's CPU
+        void pumpServed();
+        return true;
+      }
+      return speakLegacyChunks(chunks, seat, ref);
     },
     cancel() {
+      servedCancel();
       synthEngine.cancel();
       kokoroCancel();
     },
@@ -1199,7 +1358,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   function cancelSpeech() {
     tts.cancel();
   }
-  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, get engineState() { return kokoroState; }, get speakingNow() { return speakingNow; }, setSpeakingListener, setVoiceMode, speak, cancelSpeech, warmup };
+  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, get engineState() { return kokoroState; }, get servedBroken() { return servedBroken; }, get speakingNow() { return speakingNow; }, setSpeakingListener, setVoiceMode, speak, cancelSpeech, warmup };
 }
 // Spoken mentions (mention-buttons bite, 2026-11-08) — inline copy of
 // mapSpokenMentions + SPOKEN_MENTION_TAGS in web/shared/voice-dictation.mjs
@@ -2276,7 +2435,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=6991fd71304920aa'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=ce65665042b4b26c'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2290,9 +2449,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=6991fd71304920aa');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=6991fd71304920aa');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=6991fd71304920aa');
+  integrationsMod ??= await import('./integrations-view.mjs?v=ce65665042b4b26c');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=ce65665042b4b26c');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=ce65665042b4b26c');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2489,7 +2648,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=6991fd71304920aa')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=ce65665042b4b26c')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3365,7 +3524,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=6991fd71304920aa');
+  workspaceModule ??= await import('./envoy-workspace.js?v=ce65665042b4b26c');
   await loadFeedData().catch(() => {});
   await workspaceModule.mountWorkspace({
     api, post, toast, state,
@@ -3915,7 +4074,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=6991fd71304920aa');
+    const mod = await import('./maestro-activation.mjs?v=ce65665042b4b26c');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }
