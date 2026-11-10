@@ -12,7 +12,8 @@
 // the Agents page reads it with.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { integrationsModel, agentsModel } from '../app/app-model.mjs';
+import { readFile } from 'node:fs/promises';
+import { integrationsModel, agentsModel, settleWithStateRetry } from '../app/app-model.mjs';
 import { integrationSections } from '../app/integrations-view.mjs';
 import { CREDENTIAL_CONNECT_PATH, connectFieldsModel, connectPayload, createConnectFields, submitConnectFields } from '../app/connect-fields.mjs';
 
@@ -261,4 +262,68 @@ test('a registry-less provider (Mistral) reads Answered off its stamp; presence 
     .flatMap((s) => s.cards).find((c) => c.key === 'mistral');
   assert.equal(silent.statusText, 'Synced · Not connected', 'a stamp with no answer behind it stays a stamp');
   assert.equal(silent.status, 'off');
+});
+
+// ------------------------------------------------------- landing
+// read retry (2026-11-10): the owner walk's Agents tab flipped
+// every card to "Not checked" + Connect after ONE landing whose
+// state-bearing reads (provider connections, runner presence)
+// failed transiently — the model truthfully derives "unchecked"
+// from missing reads, so the landing must not derive from a
+// failed read it never retried. settleWithStateRetry is the
+// landing's reader: state readers get one retry on rejection,
+// the rest settle once, honestly.
+
+const noSleep = () => Promise.resolve();
+
+test('landing reads: a state read that fails once then answers settles fulfilled with the second answer', async () => {
+  let providersCalls = 0; let presenceCalls = 0; let connectorsCalls = 0;
+  const settled = await settleWithStateRetry({
+    connectors: async () => { connectorsCalls += 1; return { list: [] }; },
+    providers: async () => { providersCalls += 1; if (providersCalls === 1) throw new Error('transient'); return { connections: [{ provider: 'claude' }] }; },
+    presence: async () => { presenceCalls += 1; return { presence: [] }; },
+  }, { stateKeys: ['providers', 'presence'], sleep: noSleep });
+  assert.equal(settled.providers.status, 'fulfilled');
+  assert.deepEqual(settled.providers.value, { connections: [{ provider: 'claude' }] });
+  assert.equal(providersCalls, 2, 'the failed state read was retried exactly once');
+  assert.equal(presenceCalls, 1, 'a state read that answered is not re-asked');
+  assert.equal(connectorsCalls, 1, 'a non-state read is not retried');
+});
+
+test('landing reads: a state read that keeps failing settles rejected after exactly one retry', async () => {
+  let providersCalls = 0; let sleeps = 0;
+  const settled = await settleWithStateRetry({
+    providers: async () => { providersCalls += 1; throw new Error('still down'); },
+    overview: async () => { throw new Error('overview down'); },
+  }, { stateKeys: ['providers'], sleep: async () => { sleeps += 1; } });
+  assert.equal(settled.providers.status, 'rejected');
+  assert.equal(providersCalls, 2, 'one first attempt plus one retry, then the landing takes the honest degraded paint');
+  assert.equal(settled.overview.status, 'rejected');
+  assert.equal(sleeps, 1, 'the retry waited once');
+});
+
+test('landing reads: when every read answers first time, nothing is re-asked and nothing waits', async () => {
+  let calls = 0; let sleeps = 0;
+  const reader = async () => { calls += 1; return {}; };
+  const settled = await settleWithStateRetry(
+    { providers: reader, presence: reader, connectors: reader },
+    { stateKeys: ['providers', 'presence'], sleep: async () => { sleeps += 1; } },
+  );
+  assert.equal(calls, 3);
+  assert.equal(sleeps, 0);
+  assert.ok(Object.values(settled).every((s) => s.status === 'fulfilled'));
+});
+
+test('wiring: loadIntegrations reads through the retrying settler and a superseded pass never paints', async () => {
+  const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  const loadAt = appJs.indexOf('async function loadIntegrations()');
+  assert.ok(loadAt > 0);
+  const loadBody = appJs.slice(loadAt, appJs.indexOf('function integrationCard', loadAt));
+  assert.match(loadBody, /settleWithStateRetry\(\{/, 'the landing reads run through settleWithStateRetry');
+  assert.match(loadBody, /stateKeys: \['providers', 'presence'\]/, 'the retried readers are the two the card states derive from');
+  assert.ok(!loadBody.includes('Promise.allSettled([api('), 'the one-shot allSettled batch is gone');
+  assert.match(loadBody, /const myLoad = \+\+integrationsLoadSeq;/, 'the pass numbers itself at entry');
+  const guardAt = loadBody.indexOf('if (myLoad !== integrationsLoadSeq) return p.value;');
+  const paintAt = loadBody.indexOf('integrationSections(');
+  assert.ok(guardAt > 0 && paintAt > guardAt, 'the superseded-pass guard stands before the sections paint (and the Manage mount below it)');
 });

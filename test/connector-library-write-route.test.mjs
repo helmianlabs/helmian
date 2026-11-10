@@ -28,7 +28,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createConnectorLibraryWriteHandler } from '../src/cloud/connector-library-write-route.mjs';
+import { createConnectorLibraryWriteHandler, declaredOAuthScopes } from '../src/cloud/connector-library-write-route.mjs';
 import { buildConnectorTokenRef } from '../src/cloud/connector-library.mjs';
 import { createConnectorOAuthClient, hashOAuthState, pkceChallenge } from '../src/cloud/connector-oauth-pending.mjs';
 
@@ -816,4 +816,188 @@ test('callback: a pending row no client answers for fails honestly — nothing s
   assert.match(out.raw, /That sign-in did not land/);
   assert.equal(credentials.calls.filter(([n]) => n === 'storeCredential').length, 0);
   assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0);
+});
+
+// ------------------------------------------------------------- R1
+// The DCR family finished (PLAN.md Bite R1): Atlassian and Linear
+// were catalog-only rows on brokered entries until their live
+// metadata reads (2026-11-10) proved both publish a registration
+// endpoint and offer a public client — they ride the DCR road
+// unchanged. The fake servers below are shaped from those live
+// reads: Atlassian's issuer carries a path segment and its
+// resource document publishes 40 scopes; Linear's issuer is its
+// MCP origin. Atlassian's entry DECLARES its ask in the catalog
+// (the products and verbs its own words promise), so its connect
+// must register and request exactly that subset — never the
+// server's delete-and-manage whole. Linear declares nothing, so
+// its connect keeps the server's own set, as the road has always
+// run.
+
+const ATL_ISSUER = 'https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3';
+// The 40 scopes Atlassian's resource document published on the
+// 2026-11-10 live read (R1 harness record).
+const ATL_PUBLISHED_SCOPES = [
+  'read:me', 'read:account', 'offline_access', 'email',
+  'read:jira:agent-interface', 'write:jira:agent-interface', 'search:jira:agent-interface',
+  'delete:jira:agent-interface', 'manage:jira:agent-interface',
+  'read:confluence:agent-interface', 'write:confluence:agent-interface', 'search:confluence:agent-interface',
+  'search:rovo:agent-interface', 'search:code:agent-interface',
+  'read:jsm:agent-interface', 'write:jsm:agent-interface',
+  'read:all:twg', 'write:all:twg',
+  'read:goals:agent-interface', 'write:goals:agent-interface',
+  'read:projects:agent-interface', 'write:projects:agent-interface',
+  'read:bitbucket:agent-interface', 'write:bitbucket:agent-interface',
+  'read:loom:agent-interface', 'write:loom:agent-interface',
+  'read:talent:agent-interface', 'write:talent:agent-interface',
+  'read:jira-align:agent-interface', 'write:jira-align:agent-interface',
+  'read:teams:agent-interface', 'write:teams:agent-interface',
+  'read:artifacts:agent-interface', 'write:artifacts:agent-interface',
+  'read:capacity-planning:agent-interface', 'write:capacity-planning:agent-interface',
+  'read:focus:agent-interface', 'write:focus:agent-interface',
+  'read:assets:agent-interface', 'write:assets:agent-interface',
+];
+const ATL_DECLARED_SCOPES = [
+  'read:me', 'read:account', 'email', 'offline_access',
+  'read:jira:agent-interface', 'write:jira:agent-interface', 'search:jira:agent-interface',
+  'read:confluence:agent-interface', 'write:confluence:agent-interface', 'search:confluence:agent-interface',
+  'search:rovo:agent-interface',
+  'read:loom:agent-interface', 'write:loom:agent-interface',
+];
+
+function fakeAtlassianServer() {
+  const seen = { registrations: [] };
+  const fetchImpl = async (url, opts = {}) => {
+    const u = String(url);
+    const json = (body, ok = true) => ({ ok, json: async () => body });
+    if (u === 'https://mcp.atlassian.com/.well-known/oauth-protected-resource/v2/mcp') {
+      return json({
+        resource: 'https://mcp.atlassian.com/v2/mcp',
+        authorization_servers: [ATL_ISSUER],
+        scopes_supported: ATL_PUBLISHED_SCOPES,
+        bearer_methods_supported: ['header'],
+      });
+    }
+    if (u === `https://auth.atlassian.com/.well-known/oauth-authorization-server/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3`) {
+      return json({
+        issuer: ATL_ISSUER,
+        authorization_endpoint: 'https://auth.atlassian.com/authorize',
+        token_endpoint: 'https://auth.atlassian.com/oauth/token',
+        registration_endpoint: `${ATL_ISSUER}/dcr/register`,
+        scopes_supported: [],
+        token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic', 'private_key_jwt'],
+        code_challenge_methods_supported: ['S256'],
+        grant_types_supported: ['authorization_code', 'refresh_token'],
+      });
+    }
+    if (u === `${ATL_ISSUER}/dcr/register` && opts.method === 'POST') {
+      seen.registrations.push(JSON.parse(opts.body));
+      return json({ client_id: 'atl-client-1', token_endpoint_auth_method: 'none' });
+    }
+    throw new Error(`unexpected fetch ${u}`);
+  };
+  return { fetchImpl, seen };
+}
+
+function fakeLinearServer() {
+  const seen = { registrations: [] };
+  const fetchImpl = async (url, opts = {}) => {
+    const u = String(url);
+    const json = (body, ok = true) => ({ ok, json: async () => body });
+    if (u === 'https://mcp.linear.app/.well-known/oauth-protected-resource/mcp') {
+      return json({
+        resource: 'https://mcp.linear.app/mcp',
+        authorization_servers: ['https://mcp.linear.app'],
+        scopes_supported: ['read', 'write'],
+        bearer_methods_supported: ['header'],
+      });
+    }
+    if (u === 'https://mcp.linear.app/.well-known/oauth-authorization-server') {
+      return json({
+        issuer: 'https://mcp.linear.app',
+        authorization_endpoint: 'https://mcp.linear.app/authorize',
+        token_endpoint: 'https://mcp.linear.app/token',
+        registration_endpoint: 'https://mcp.linear.app/register',
+        scopes_supported: ['read', 'write', 'openid', 'email'],
+        token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
+        code_challenge_methods_supported: ['S256'],
+        grant_types_supported: ['authorization_code', 'refresh_token'],
+      });
+    }
+    if (u === 'https://mcp.linear.app/register' && opts.method === 'POST') {
+      seen.registrations.push(JSON.parse(opts.body));
+      return json({ client_id: 'linear-client-1', token_endpoint_auth_method: 'none' });
+    }
+    throw new Error(`unexpected fetch ${u}`);
+  };
+  return { fetchImpl, seen };
+}
+
+test('R1 connect: Atlassian starts the DCR road and asks only for the scopes its catalog entry declares', async () => {
+  const store = fakeStore({
+    'claude/registry-atlassian': ENTRY({
+      id: 'registry-atlassian', kind: 'catalog', authMode: 'oauth',
+      mcpEndpointUrl: 'https://mcp.atlassian.com/v2/mcp',
+    }),
+  });
+  const pending = fakePending();
+  const atl = fakeAtlassianServer();
+  const h = harness({ store, pending, fetchImpl: atl.fetchImpl });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'registry-atlassian' } });
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'authorize');
+  assert.equal(out.json.provider, 'atlassian');
+  const au = new URL(out.json.authorizeUrl);
+  assert.equal(`${au.origin}${au.pathname}`, 'https://auth.atlassian.com/authorize');
+  assert.equal(au.searchParams.get('client_id'), 'atl-client-1');
+  assert.equal(au.searchParams.get('scope'), ATL_DECLARED_SCOPES.join(' '), 'consent asks for the declared ask, not the published whole');
+  assert.equal(atl.seen.registrations.length, 1);
+  assert.equal(atl.seen.registrations[0].scope, ATL_DECLARED_SCOPES.join(' '), 'registration carries the same narrowed set');
+  assert.equal(atl.seen.registrations[0].token_endpoint_auth_method, 'none');
+  const saves = pending.calls.filter(([n]) => n === 'save');
+  assert.equal(saves.length, 1);
+  const [, saved] = saves[0];
+  assert.equal(saved.provider, 'atlassian');
+  assert.equal(saved.tokenEndpoint, 'https://auth.atlassian.com/oauth/token');
+  assert.deepEqual(saved.scopes, ATL_DECLARED_SCOPES, 'the pending row — and so the briefing and the callback — carry the narrowed set');
+  assert.deepEqual(out.json.briefing.scopes.map((s) => s.name), ATL_DECLARED_SCOPES);
+  for (const scope of [...saved.scopes]) {
+    assert.ok(!scope.includes('delete') && !scope.includes('manage'), `no destructive scope is asked for: ${scope}`);
+  }
+  assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0, 'starting the road connects nothing');
+});
+
+test('R1 connect: Linear starts the DCR road on the server’s own scopes — no declaration, no narrowing', async () => {
+  const store = fakeStore({
+    'claude/registry-linear': ENTRY({
+      id: 'registry-linear', kind: 'catalog', authMode: 'oauth',
+      mcpEndpointUrl: 'https://mcp.linear.app/mcp',
+    }),
+  });
+  const pending = fakePending();
+  const lin = fakeLinearServer();
+  const h = harness({ store, pending, fetchImpl: lin.fetchImpl });
+  const out = await h.run(`${P}/connect`, { body: { seatId: 'claude', entryId: 'registry-linear' } });
+  assert.equal(out.status, 200);
+  assert.equal(out.json.status, 'authorize');
+  assert.equal(out.json.provider, 'linear');
+  const au = new URL(out.json.authorizeUrl);
+  assert.equal(`${au.origin}${au.pathname}`, 'https://mcp.linear.app/authorize');
+  assert.equal(au.searchParams.get('scope'), 'read write');
+  assert.equal(lin.seen.registrations.length, 1);
+  assert.equal(lin.seen.registrations[0].scope, 'read write');
+  const saves = pending.calls.filter(([n]) => n === 'save');
+  assert.equal(saves.length, 1);
+  assert.deepEqual(saves[0][1].scopes, ['read', 'write']);
+  assert.equal(saves[0][1].tokenEndpoint, 'https://mcp.linear.app/token');
+});
+
+test('R1: declaredOAuthScopes reads the catalog definition — Atlassian declares, Linear and Notion do not, custom never does', () => {
+  assert.deepEqual(
+    declaredOAuthScopes({ seatId: 'claude', id: 'registry-atlassian', kind: 'catalog' }),
+    ATL_DECLARED_SCOPES,
+  );
+  assert.equal(declaredOAuthScopes({ seatId: 'claude', id: 'registry-linear', kind: 'catalog' }), null);
+  assert.equal(declaredOAuthScopes({ seatId: 'claude', id: 'registry-notion', kind: 'catalog' }), null);
+  assert.equal(declaredOAuthScopes({ seatId: 'claude', id: 'registry-atlassian', kind: 'custom' }), null);
+  assert.equal(declaredOAuthScopes(null), null);
 });

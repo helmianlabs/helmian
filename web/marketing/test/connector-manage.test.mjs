@@ -721,3 +721,48 @@ test('refresh order: switching tabs, the earlier tab’s late pass never repaint
   assert.ok(box.textContent.includes('reading-a-forecast'), 'the late plugins pass did not repaint over the skills tab');
   assert.ok(!box.textContent.includes(PLUGIN_CATALOG_TITLE), 'no plugins catalog over the skills tab');
 });
+
+// ------------------------------------------------------- first-load
+// retry (2026-11-10): the owner walk's Connectors tab sat on a red
+// CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED line after ONE failed
+// library load — the surface painted the failure as terminal and
+// nothing re-read until a full view re-entry. A first load that
+// has never landed now retries a bounded number of times before
+// the failure is allowed to paint.
+
+test('first-load retry: a seats read that fails twice then answers loads the surface, and no error ever paints', async () => {
+  let seatsCalls = 0;
+  const api = async (path) => {
+    if (path === '/api/admin/connector-library/seats') {
+      seatsCalls += 1;
+      if (seatsCalls < 3) throw Object.assign(new Error('CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED'), { status: 403 });
+      return { seats: [{ seatId: 'claude' }] };
+    }
+    if (path.startsWith('/api/admin/connector-library?seat=')) return { rows: [manageRow('helmian-github', 'GitHub')] };
+    throw new Error(`unexpected api call: ${path}`);
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'claude', loadRetryDelays: [0, 0] });
+  await surface.refresh();
+  assert.equal(seatsCalls, 3, 'the failed first load was retried twice before anything painted');
+  assert.equal(surface.state.loaded, true);
+  assert.ok(box.textContent.includes('GitHub'), 'the recovered load renders its rows');
+  assert.ok(!box.textContent.includes('CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED'), 'the transient error never painted');
+  assert.ok(!box.textContent.includes('did not load'), 'the terminal line never painted');
+});
+
+test('first-load retry: a read that keeps failing paints the terminal error only after the retries are spent', async () => {
+  let seatsCalls = 0;
+  const api = async (path) => {
+    if (path === '/api/admin/connector-library/seats') { seatsCalls += 1; throw Object.assign(new Error('CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED'), { status: 403 }); }
+    if (path.startsWith('/api/admin/connector-library?seat=')) return { rows: [] };
+    throw new Error(`unexpected api call: ${path}`);
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'claude', loadRetryDelays: [0, 0] });
+  await surface.refresh();
+  assert.equal(seatsCalls, 3, 'one first attempt plus two bounded retries, then it stops');
+  assert.equal(surface.state.loaded, false);
+  assert.ok(box.textContent.includes('The connector library did not load'), 'the terminal line paints once the retries are spent');
+  assert.ok(box.textContent.includes('CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED'), 'and the server\u2019s error words are the ones reported');
+});

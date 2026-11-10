@@ -183,7 +183,13 @@ const providerIdFor = (seatId, entryId) => `connector.${seatId}.${entryId}`;
 // `read:org` — the smallest classic scopes covering the repository,
 // issue, and pull-request work the catalog entry promises. The DCR
 // road needs no such table: its scopes come from the server's own
-// published metadata at registration time.
+// published metadata at registration time — UNLESS the catalog
+// entry declares its own ask (a pick whose words promise less
+// than its server publishes; Atlassian's is the first), in which
+// case the declared ask, narrowed to what the server offers, is
+// what registration and consent request (declaredOAuthScopes
+// below, ruled by the same catalog-authority law as
+// effectiveAuthMode).
 const FIXED_CONNECT_SCOPES = Object.freeze({
   github: Object.freeze(['repo', 'read:org']),
 });
@@ -207,6 +213,22 @@ export function effectiveAuthMode(entry) {
   let definition = null;
   try { definition = catalogEntryById(entry.seatId, entry.id); } catch { definition = null; }
   return definition?.authMode ?? entry.authMode;
+}
+
+// The scopes a DCR connect asks for, under the same law: the
+// catalog definition is the authority. Declared scopes are catalog
+// data only — the store's fixed entry shape does not carry them —
+// so a stored row can never supply or widen the ask; an entry the
+// catalog does not define (or that declares nothing) gets null,
+// and the DCR road falls back to the server's published set.
+// Custom entries are a person's own: no catalog ask exists for
+// them, and their stored row declares none either.
+export function declaredOAuthScopes(entry) {
+  if (!entry || entry.kind === 'custom') return null;
+  let definition = null;
+  try { definition = catalogEntryById(entry.seatId, entry.id); } catch { definition = null; }
+  const declared = definition?.oauthScopes ?? null;
+  return Array.isArray(declared) && declared.length ? [...declared] : null;
 }
 
 // The consent-boundary answer for OAuth entries Helmian holds no
@@ -616,6 +638,7 @@ export function createConnectorLibraryWriteHandler({
             started = await startDcrConnect({
               pendingStore: resolvePending(), tenantId, personId, seatId, entry,
               provider: oauthKind.provider, redirectUri: callbackUrl, fetchImpl,
+              scopes: declaredOAuthScopes(entry),
             });
           } catch (error) {
             if (!(error instanceof ConnectorOAuthDcrError)) throw error;
