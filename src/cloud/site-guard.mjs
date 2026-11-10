@@ -37,11 +37,13 @@
 //
 // The posture is the claim lane's: flag and surface. A screen that
 // fires records a Guard finding (guard-findings.mjs, the feed the
-// Guard panel reads) and the turn proceeds untouched. The ONE stop
-// is the explicit destructive class — the Site Guard intake stop:
-// the mesh hands out no work item for the message, and each due
-// seat's reply is the Site Guard's refusal, in the same terminal
-// shape as a Guard spine refusal. Nothing else stops a turn.
+// Guard panel reads) and the turn proceeds untouched. The stops are
+// two, both explicit: the destructive class — the Site Guard intake
+// stop — and sustained volume over the rate limiter's stop line
+// (bite A2, below). Either way the mesh hands out no work item for
+// the message, and each due seat's reply is the Site Guard's
+// refusal, in the same terminal shape as a Guard spine refusal.
+// Nothing else stops a turn.
 //
 // Findings carry the Site Guard's own 'site-guard' source: sql/083
 // widens sql/047's CHECK to admit it, guard-findings.mjs's enum
@@ -63,6 +65,22 @@
 // turn it witnesses would be a second gate. A failed write is logged
 // loudly instead — an unrecorded flag is a hole in the feed, and the
 // log is where that hole is announced.
+//
+// Bite A2 adds the second Site Guard sense: intake VOLUME. The
+// screen above judges one message at a time; the rate limiter below
+// counts due messages per tenant and per sender over a sliding
+// window, at the same choke point, before the screen runs. Crossing
+// the flag line is witnessed like any other flag and the turn
+// proceeds; a sender whose count stands over the stop line is
+// stopped — the rate stop, in the same terminal shape as the intake
+// stop — until its window cools. The store is deliberately small:
+// an in-process map inside this module instance (the mesh holds
+// one), holding message timestamps only — never content. Its
+// limits are stated where it is built (createSiteGuardRateLimiter):
+// counts live and die with the process, and a deployment running
+// several mesh processes enforces the window per process. No
+// database table backs it; the findings feed is its only record,
+// exactly as the screen's findings are the screen's record.
 
 import { detectDestructiveOperation } from '../core/governance.mjs';
 import { validateArtifactScriptContent } from '../cora/artifact-script-content-validation.mjs';
@@ -216,4 +234,226 @@ export async function ingestSiteGuardFindings(store, actor, screening, context, 
     }
   }
   return landed;
+}
+
+// ---------------------------------------------------------------------
+// Bite A2 — intake rate limits, surfaced as Guard findings.
+//
+// The thresholds, as named constants. The window is one minute: the
+// mesh's own cadence (a runner poll hands out due work, a seat
+// answers, the next poll follows) lives in seconds, so a minute is
+// long enough to hold a whole burst and short enough that a cooled
+// sender is back quickly. The flag line, 30 messages in that
+// minute, is a sustained one message every two seconds from ONE
+// sender across the whole workspace — past anything a person types
+// and past a healthy seat's answer cadence (each answer costs a
+// model turn), so crossing it means a loop or a flood, and the only
+// cost of being wrong is a warning row in the feed: the turn
+// proceeds. The stop line, 90 in the minute, is three times that —
+// no legitimate burst from one sender identity reaches it — and
+// stopping is per sender, so one looping seat or one flooded bridge
+// identity cannot silence the workspace's other senders.
+export const SITE_GUARD_RATE_KIND = 'helmian-site-guard-rate-limit';
+export const SITE_GUARD_RATE_CLASS = 'intake-rate-limit';
+export const SITE_GUARD_RATE_WINDOW_MS = 60_000;
+export const SITE_GUARD_RATE_FLAG_THRESHOLD = 30;
+export const SITE_GUARD_RATE_STOP_THRESHOLD = 90;
+// The tracked-sender ceiling for the in-process store. At the cap,
+// senders whose windows have fully expired are evicted first, then
+// the least recently active — a flood of fresh identities cannot
+// grow the map without bound.
+export const SITE_GUARD_RATE_MAX_TRACKED_SENDERS = 10_000;
+
+/**
+ * The sender identity a due message counts under: its author's
+ * subject (a person's Clerk subject, a seat's agent subject, a
+ * bridged sender's mapped subject), falling back to the author
+ * kind when no subject rides the message. Bounded and
+ * whitespace-free so it can ride a Map key and a finding
+ * fingerprint unchanged. An identity only — never content.
+ */
+export function siteGuardSenderKey({ authorSubject = null, authorKind = null } = {}) {
+  const subject = String(authorSubject ?? '').trim();
+  const raw = subject || `kind:${String(authorKind ?? '').trim() || 'unknown'}`;
+  return raw.replace(/\s+/g, '_').slice(0, 128);
+}
+
+/**
+ * The rate store: one sliding window of message timestamps per
+ * (tenant, sender), held in a Map inside the returned object. The
+ * mesh builds ONE limiter per mesh instance and it lives exactly as
+ * long as that instance — the limits, stated plainly:
+ *   - In-process only. A restart forgets every count; a sender
+ *     mid-flood starts the new process with a clean window.
+ *   - Per instance. Where several mesh processes serve one
+ *     deployment, each enforces its own window, so the effective
+ *     ceiling is the threshold times the instance count. Closing
+ *     that gap means a shared store — a later bite, if the
+ *     deployment ever runs more than one mesh process.
+ *   - Timestamps only. A window holds at most the sender's own
+ *     timestamps inside the minute (a stopped sender's count cannot
+ *     exceed the stop threshold by more than the messages a single
+ *     poll hands out before the stop lands), and the sender map is
+ *     capped (SITE_GUARD_RATE_MAX_TRACKED_SENDERS).
+ * `observe` records ONE due message and returns a frozen verdict:
+ *   { count, level, tripped, stopped, windowStart, at, ... }
+ * `tripped` names the threshold THIS message crossed ('flag' or
+ * 'stop') and is null otherwise — a crossing is reported exactly
+ * once per window per line, so the mesh writes one finding per
+ * trip and never one per message. `stopped` is the standing
+ * posture: true while the count stands at or over the stop line.
+ * Both lines re-arm when the count falls back under them as the
+ * window slides, so a sender who floods again after cooling trips
+ * again — a new trip, a new finding.
+ */
+export function createSiteGuardRateLimiter({ now = () => Date.now() } = {}) {
+  const windows = new Map();
+  function observe({ tenantId, senderKey, at } = {}) {
+    const t = Number.isFinite(at) ? at : now();
+    const key = `${String(tenantId)}|${String(senderKey)}`;
+    let entry = windows.get(key);
+    if (!entry) {
+      if (windows.size >= SITE_GUARD_RATE_MAX_TRACKED_SENDERS) {
+        for (const [k, e] of windows) {
+          if (!e.stamps.length || t - e.stamps[e.stamps.length - 1] > SITE_GUARD_RATE_WINDOW_MS) windows.delete(k);
+        }
+        if (windows.size >= SITE_GUARD_RATE_MAX_TRACKED_SENDERS) {
+          windows.delete(windows.keys().next().value);
+        }
+      }
+      entry = { stamps: [], reportedFlag: false, reportedStop: false };
+      windows.set(key, entry);
+    }
+    const cutoff = t - SITE_GUARD_RATE_WINDOW_MS;
+    while (entry.stamps.length && entry.stamps[0] <= cutoff) entry.stamps.shift();
+    entry.stamps.push(t);
+    const count = entry.stamps.length;
+    // Lines re-arm from the standing count, so a window that cooled
+    // below a line reports its next crossing as a fresh trip.
+    if (count < SITE_GUARD_RATE_STOP_THRESHOLD) entry.reportedStop = false;
+    if (count < SITE_GUARD_RATE_FLAG_THRESHOLD) entry.reportedFlag = false;
+    let tripped = null;
+    if (count >= SITE_GUARD_RATE_STOP_THRESHOLD && !entry.reportedStop) {
+      entry.reportedStop = true;
+      entry.reportedFlag = true;
+      tripped = 'stop';
+    } else if (count >= SITE_GUARD_RATE_FLAG_THRESHOLD && !entry.reportedFlag) {
+      entry.reportedFlag = true;
+      tripped = 'flag';
+    }
+    const stopped = count >= SITE_GUARD_RATE_STOP_THRESHOLD;
+    return Object.freeze({
+      senderKey: String(senderKey),
+      count,
+      windowMs: SITE_GUARD_RATE_WINDOW_MS,
+      flagThreshold: SITE_GUARD_RATE_FLAG_THRESHOLD,
+      stopThreshold: SITE_GUARD_RATE_STOP_THRESHOLD,
+      level: stopped ? 'stop' : count >= SITE_GUARD_RATE_FLAG_THRESHOLD ? 'flag' : 'none',
+      tripped,
+      stopped,
+      windowStart: new Date(entry.stamps[0]).toISOString(),
+      at: new Date(t).toISOString(),
+    });
+  }
+  return Object.freeze({ observe });
+}
+
+/**
+ * Shape one rate TRIP into the findings store's ingest input —
+ * null for any observation that crossed nothing, so the mesh can
+ * hand every verdict here and only trips land. The fingerprint is
+ * the class, the tenant, and the sender, so the store keeps ONE
+ * standing row per flooding sender: a later trip re-sights that row
+ * (bumping its sighting count and refreshing its detail to the
+ * latest trip, the store's own dedupe) instead of piling up a row
+ * per message or per window. Severity follows the house
+ * convention: the flag is a warning; the stop — a turn refused —
+ * is critical. Detail is metadata only: counts, thresholds, the
+ * window, ids, the sender identity. No message text is ever an
+ * input to this function, so none can ride the finding.
+ */
+export function siteGuardFindingForRateLimit(verdict, { tenantId, channelId, channelSlug = null, messageId, authorKind = null } = {}) {
+  if (!verdict?.tripped) return null;
+  const stop = verdict.tripped === 'stop';
+  const where = channelSlug ? ` in #${channelSlug}` : '';
+  const seconds = Math.round(verdict.windowMs / 1000);
+  return Object.freeze({
+    fingerprint: `${SITE_GUARD_FINGERPRINT_PREFIX}:${SITE_GUARD_RATE_CLASS}:${String(tenantId)}:${verdict.senderKey}`,
+    source: SITE_GUARD_FINDING_SOURCE,
+    severity: stop ? 'critical' : 'warning',
+    title: stop
+      ? `${SITE_GUARD_NAME} stopped a sender${where} — intake rate limit (${verdict.count} messages in ${seconds}s)`
+      : `${SITE_GUARD_NAME} flagged a sender${where} — intake rate limit (${verdict.count} messages in ${seconds}s)`,
+    detail: Object.freeze({
+      kind: SITE_GUARD_RATE_KIND,
+      class: SITE_GUARD_RATE_CLASS,
+      level: verdict.tripped,
+      stopped: stop,
+      count: verdict.count,
+      windowMs: verdict.windowMs,
+      windowStart: verdict.windowStart,
+      flagThreshold: verdict.flagThreshold,
+      stopThreshold: verdict.stopThreshold,
+      senderKey: verdict.senderKey,
+      ...(authorKind ? { authorKind: String(authorKind) } : {}),
+      channelId: String(channelId),
+      ...(channelSlug ? { channelSlug: String(channelSlug) } : {}),
+      messageId: String(messageId),
+      trippedAt: verdict.at,
+    }),
+    pageRef: null,
+  });
+}
+
+/**
+ * The stop record a rate refusal message carries in its metadata —
+ * the same shape contract as the intake stop's record (kind,
+ * verdict, stoppedBy, classes, hits), with the rate kind saying
+ * whose record it is and the hit naming the count that stopped the
+ * message, never the message.
+ */
+export function siteGuardRateStopRecord(verdict) {
+  const seconds = Math.round(verdict.windowMs / 1000);
+  return Object.freeze({
+    kind: SITE_GUARD_RATE_KIND,
+    verdict: 'refuse',
+    stoppedBy: 'helmian-site-guard',
+    classes: Object.freeze([SITE_GUARD_RATE_CLASS]),
+    hits: Object.freeze([`intake rate limit: ${verdict.count} messages in ${seconds} seconds from one sender (stop threshold ${verdict.stopThreshold})`]),
+  });
+}
+
+/**
+ * The refusal as the seat's reply text when the rate stop fires:
+ * what stopped the message and the count that did it, in plain
+ * words, in the Site Guard's name.
+ */
+export function siteGuardRateRefusalText(verdict) {
+  const seconds = Math.round(verdict.windowMs / 1000);
+  return `${SITE_GUARD_NAME} stopped this message before it reached a seat. `
+    + `What matched: an intake rate limit — ${verdict.count} messages in ${seconds} seconds from one sender. Nothing was run and nothing was changed.`;
+}
+
+/**
+ * Ingest one rate trip's finding through the findings store, as the
+ * acting tenant identity. Returns 1 when the finding landed, 0 for
+ * a non-trip or a failed write. NEVER throws — same discipline as
+ * the screen's wrapper: the dispatch outcome was decided before
+ * this runs, and a findings failure is logged loudly, never
+ * allowed to change it.
+ */
+export async function ingestSiteGuardRateFinding(store, actor, verdict, context, { log = (...args) => console.error(...args) } = {}) {
+  const input = siteGuardFindingForRateLimit(verdict, context);
+  if (!input) return 0;
+  try {
+    await store.ingestFinding({ tenantId: actor.tenantId, subject: actor.subject }, input);
+    return 1;
+  } catch (error) {
+    log(
+      `[site-guard] Guard findings write FAILED (source ${SITE_GUARD_FINDING_SOURCE}, `
+      + `class ${SITE_GUARD_RATE_CLASS}, level ${input.detail.level}, channel ${input.detail.channelId}, message ${input.detail.messageId}): `
+      + `${error?.message ?? error} — the rate outcome stands unchanged; the findings feed has a gap for this trip.`,
+    );
+    return 0;
+  }
 }
