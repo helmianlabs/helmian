@@ -16,6 +16,16 @@
 // turns that into one honest "the OAuth road is not switched on yet"
 // answer and every other library write keeps working.
 //
+// DCR ROWS (sql/081): a handshake started on the self-registering
+// road (connector-oauth-dcr.mjs) also carries the token endpoint
+// and — only when the authorization server issued one — the client
+// secret, so the callback can finish the exchange from the row
+// alone. Those columns ride the insert ONLY on rows that carry
+// them: a fixed-provider row's insert stays byte-identical to the
+// sql/078 shape and keeps working before sql/081 lands, and a DCR
+// row saved before sql/081 fails soft the same way (the missing
+// column answers null, never a throw).
+//
 // THE REGISTRY: there is no default OAuth client. The callback
 // resolves its client from the pending row's `provider` through
 // createConnectorOAuthClient(); a provider with no registered client
@@ -41,6 +51,10 @@ export const pkceChallenge = (verifier) => base64url(createHash('sha256').update
 const isMissingTable = (error) => error?.code === '42P01' || error?.code === '3D000'
   || /connector_oauth_pending/.test(String(error?.message ?? '')) && /does not exist/.test(String(error?.message ?? ''));
 
+// sql/081's columns, absent until that migration lands.
+const isMissingDcrColumn = (error) => error?.code === '42703'
+  && /(client_secret|token_endpoint|token_endpoint_auth_method)/.test(String(error?.message ?? ''));
+
 export function createConnectorOAuthPendingStore(pool) {
   const withTenant = async (tenantId, fn) => {
     const client = await pool.connect();
@@ -62,20 +76,29 @@ export function createConnectorOAuthPendingStore(pool) {
     // Returns true when the handshake was remembered, null when the
     // road is not switched on (table missing) — never throws for that.
     async save(tenantId, pending) {
+      // The DCR fields (sql/081) join the insert only when the
+      // handshake carries them — see the header note.
+      const carriesDcr = pending.tokenEndpoint != null || pending.clientSecret != null || pending.tokenEndpointAuthMethod != null;
+      const insertSql = carriesDcr
+        ? `insert into helmion.connector_oauth_pending
+             (tenant_id, state_hash, person_id, seat_id, entry_id, provider, client_id, code_verifier, redirect_uri, scopes, client_secret, token_endpoint, token_endpoint_auth_method, expires_at)
+           values (current_setting('helmion.tenant_id', true), $1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $11, $12, $13, clock_timestamp() + ($10 || ' milliseconds')::interval)
+           on conflict (tenant_id, state_hash) do nothing`
+        : `insert into helmion.connector_oauth_pending
+             (tenant_id, state_hash, person_id, seat_id, entry_id, provider, client_id, code_verifier, redirect_uri, scopes, expires_at)
+           values (current_setting('helmion.tenant_id', true), $1, $2, $3, $4, $5, $6, $7, $8, $9::text[], clock_timestamp() + ($10 || ' milliseconds')::interval)
+           on conflict (tenant_id, state_hash) do nothing`;
+      const params = [pending.stateHash, pending.personId, pending.seatId, pending.entryId, pending.provider,
+        pending.clientId, pending.codeVerifier, pending.redirectUri, pending.scopes ?? [], String(CONNECTOR_OAUTH_PENDING_TTL_MS)];
+      if (carriesDcr) params.push(pending.clientSecret ?? null, pending.tokenEndpoint ?? null, pending.tokenEndpointAuthMethod ?? null);
       try {
         return await withTenant(tenantId, async (client) => {
-          await client.query(
-            `insert into helmion.connector_oauth_pending
-               (tenant_id, state_hash, person_id, seat_id, entry_id, provider, client_id, code_verifier, redirect_uri, scopes, expires_at)
-             values (current_setting('helmion.tenant_id', true), $1, $2, $3, $4, $5, $6, $7, $8, $9::text[], clock_timestamp() + ($10 || ' milliseconds')::interval)
-             on conflict (tenant_id, state_hash) do nothing`,
-            [pending.stateHash, pending.personId, pending.seatId, pending.entryId, pending.provider,
-             pending.clientId, pending.codeVerifier, pending.redirectUri, pending.scopes ?? [], String(CONNECTOR_OAUTH_PENDING_TTL_MS)],
-          );
+          await client.query(insertSql, params);
           return true;
         });
       } catch (error) {
         if (isMissingTable(error)) return null;
+        if (carriesDcr && isMissingDcrColumn(error)) return null;
         throw error;
       }
     },
@@ -94,6 +117,12 @@ export function createConnectorOAuthPendingStore(pool) {
             personId: row.person_id, seatId: row.seat_id, entryId: row.entry_id, provider: row.provider,
             clientId: row.client_id, codeVerifier: row.code_verifier, redirectUri: row.redirect_uri,
             scopes: Array.isArray(row.scopes) ? row.scopes : [],
+            // sql/081's DCR fields: null on fixed-provider rows and
+            // on rows read before the migration lands (the delete's
+            // returning * simply has no such keys then).
+            clientSecret: row.client_secret ?? null,
+            tokenEndpoint: row.token_endpoint ?? null,
+            tokenEndpointAuthMethod: row.token_endpoint_auth_method ?? null,
           };
         });
       } catch (error) {
@@ -111,6 +140,15 @@ export function createConnectorOAuthPendingStore(pool) {
 // — registerClient exists only for providers whose road registers a
 // client per handshake; GitHub's does not. fetchImpl and env are
 // injectable for tests.
+//
+// TWO KINDS live under this registry now: the FIXED kind below
+// (a provider whose OAuth app Helmian pre-registered — GitHub) and
+// the DCR kind in connector-oauth-dcr.mjs (a provider resolved by
+// discovery from the entry's own endpoint, registering a fresh
+// client per handshake). The fixed factory's contract is unchanged:
+// it answers for fixed providers only, and a pending row carrying
+// DCR fields is the DCR module's to resolve
+// (resolvePendingOAuthClient there).
 
 const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 const GITHUB_TOKEN_URL = 'https://github.com/login/oauth/access_token';
