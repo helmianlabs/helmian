@@ -59,7 +59,7 @@ export const FEATURE_CUTOFF = new Date('2026-11-09T00:00:00.000Z');
 // Plain words, the four pillars named as the real systems they
 // are. Posted under the envoy notice subject, idempotency-keyed
 // per tenant, so it lands exactly once.
-export const ACTIVATION_NOTICE_BODY = 'Maestro is on. The Executive Guard, the librarian, and the rule base are working in this workspace, and Maestro routes every message here. Name an AI to talk to it, or name nobody and Maestro will route it.';
+export const ACTIVATION_NOTICE_BODY = 'Maestro is on. The Executive Guard, the librarian, and the rule base are working in this workspace, and Maestro routes every message here. Name an AI to talk to it, or name nobody and Maestro will route it. If no AI is connected yet, Maestro answers here himself and points you to the Agents tab.';
 
 const UNDEFINED_COLUMN = '42703';
 

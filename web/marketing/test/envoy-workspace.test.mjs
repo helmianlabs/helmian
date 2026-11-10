@@ -1242,3 +1242,37 @@ test('slash-skills S3: the workspace wires the skills group, scope step, chips a
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   assert.match(html, /class="ew-picker ew-slash-menu" id="ew-slash-menu"/, 'the skills group and scope step live in the one existing menu element');
 });
+
+// ---------- the first-run hand-off card (polish P1, 2026-11-09) ----------
+// After "Turn on Maestro", the empty workspace points at the one
+// next step: connect an AI. The card model is present exactly while
+// no provider is connected and its button target is the Agents tab.
+test('first-run hand-off: card present with zero seats, absent after one connects', async () => {
+  const { firstRunHandoff } = await import('../app/envoy-workspace.js');
+  const zeroSeats = { state: 'asleep', reason: 'no-provider', connectedProviders: [], hasRunner: false, gated: true, line: 'x' };
+  const card = firstRunHandoff(zeroSeats);
+  assert.ok(card, 'a fresh workspace with no AI connected shows the card');
+  assert.equal(card.label, 'Connect your first AI');
+  assert.equal(firstRunHandoff({ ...zeroSeats, connectedProviders: ['claude'] }), null, 'gone the moment the first seat connects');
+  assert.equal(firstRunHandoff({ state: 'asleep', reason: 'no-runner', connectedProviders: ['claude'], hasRunner: false, gated: true }), null, 'PC-asleep is the banner’s case, not the card’s');
+  assert.equal(firstRunHandoff({ state: 'awake', connectedProviders: ['claude'], hasRunner: true }), null);
+  assert.equal(firstRunHandoff(null), null, 'no state read yet — nothing shown on a guess');
+  assert.equal(firstRunHandoff({}), null);
+});
+
+test('first-run hand-off: the card target is the Agents tab of Integrations', async () => {
+  const { firstRunHandoff } = await import('../app/envoy-workspace.js');
+  const card = firstRunHandoff({ state: 'asleep', connectedProviders: [] });
+  assert.equal(card.view, 'integrations');
+  assert.equal(card.tab, 'agents');
+});
+
+test('first-run hand-off: the shell carries the card element and the Agents-tab road', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="ew-first-run"/, 'the chat pane carries the first-run card element beside the agent-state banner');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.match(js, /renderFirstRunCard\(\)/, 'the workspace renders the card from the agent-state load');
+  const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
+  assert.match(appJs, /function openAgentsTab\(\) \{ selectIntegrationsTab\('agents'\)/, 'the shell road selects the Agents tab before opening Integrations');
+  assert.match(appJs, /openAgentsTab,/, 'the road is handed to the workspace through its context');
+});

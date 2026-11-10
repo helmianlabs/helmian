@@ -84,6 +84,80 @@ async function profileEmojis(client, subjects) {
   } catch { return new Map(); }
 }
 
+// ---------- the empty-desk answer (polish P1, 2026-11-09) ----------
+// The fresh-signup walk's headline finding: a first message in a
+// workspace with no AI connected got a dispatch line and then
+// silence — the mesh withholds the work (no provider credential to
+// hand it to) and nothing told the person. The state module names
+// that honestly in its banner; this is the same honesty inside the
+// channel, as a reply: when a human send lands in a tenant with
+// ZERO connected providers (tenant-agent-state's connectedProviders
+// — runner presence reports and stored connections), Maestro
+// answers the message himself with the one fix: connect an AI from
+// the Agents tab. The answer is a stored agent message under
+// 'agent:maestro', so it renders as Maestro, persists like any
+// reply, and is filtered out of every routing result by the same
+// 'maestro' exclusions that guard the desk. It is NOT gated on the
+// state module's `gated` flag: a brand-new workspace has no
+// readiness signals at all and is exactly the case that must be
+// answered, while a hand-wired tenant whose runners resolve
+// credentials locally reports connected providers and never sees
+// it. Two restraint rules: a replayed send (idempotent retry)
+// answers nothing new, and the answer never answers itself — when
+// the channel's previous word is already this answer, the next
+// send waits for a connection instead of stacking copies.
+export const EMPTY_DESK_SUBJECT = 'agent:maestro';
+export const EMPTY_DESK_ANSWER_BODY = 'Maestro here — no AI is connected to this workspace yet, so nobody can answer your message. Open the Agents tab and press Connect on the AI you already have, and your messages will be answered here.';
+export const EMPTY_DESK_KEY_PREFIX = 'maestro-empty-desk:';
+
+/** The pure decision: answer this send, or stay quiet. */
+export function emptyDeskAnswerDecision({ connectedProviders, previousSubject, previousKey } = {}) {
+  if (!Array.isArray(connectedProviders) || connectedProviders.length > 0) return false;
+  if (previousSubject === EMPTY_DESK_SUBJECT && String(previousKey ?? '').startsWith(EMPTY_DESK_KEY_PREFIX)) return false;
+  return true;
+}
+
+/**
+ * Post the empty-desk answer for one durable human message, in its
+ * own tenant transaction (the maestro-activation notice pattern:
+ * best-effort, separate from the send's durability). `stateOn` is
+ * injectable for tests. Returns { answered } — a thrown error is
+ * the caller's to log; this helper never swallows one silently.
+ */
+export async function postEmptyDeskAnswerIfNeeded({ pool, tenantId, channelId, messageId, stateOn = tenantAgentStateOn } = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query(`select set_config('helmion.tenant_id', $1, true)`, [String(tenantId)]);
+    const state = await stateOn(client, tenantId);
+    const prev = await client.query(
+      `select author_subject, idempotency_key from helmion.envoy_messages
+        where tenant_id=$1 and channel_id=$2 and author_subject <> $3 and id <> $4
+        order by id desc limit 1`,
+      [String(tenantId), String(channelId), CONFIG_SUBJECT, messageId],
+    );
+    const previous = prev.rows[0] ?? null;
+    const answer = emptyDeskAnswerDecision({
+      connectedProviders: state?.connectedProviders,
+      previousSubject: previous?.author_subject ?? null,
+      previousKey: previous?.idempotency_key ?? null,
+    });
+    if (!answer) { await client.query('commit'); return { answered: false }; }
+    const inserted = await client.query(
+      `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key)
+       values ($1,$2,$3,'agent',$4,$5)
+       on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing
+       returning id`,
+      [String(tenantId), String(channelId), EMPTY_DESK_SUBJECT, EMPTY_DESK_ANSWER_BODY, `${EMPTY_DESK_KEY_PREFIX}${messageId}`],
+    );
+    await client.query('commit');
+    return { answered: inserted.rowCount === 1, messageId: inserted.rows[0] ? String(inserted.rows[0].id) : null };
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally { client.release(); }
+}
+
 export function createEnvoyStore(pool) {
   return Object.freeze({
     async listChannels(actor) {
@@ -186,6 +260,20 @@ export function createEnvoyStore(pool) {
         channelId: out.receipt.message.channelId,
         message: out.receipt.message,
       });
+      // The empty-desk answer (polish P1): a fresh human send in a
+      // workspace with no AI connected gets Maestro's answer in the
+      // channel instead of silence. Best-effort, after the send is
+      // durable and in its own transaction: a failure is logged and
+      // never fails the send. The desk has no realtime subscriber,
+      // so the answer lands on the sender's own post-send reload
+      // and on every client's next poll, like any stored reply.
+      if (!out.receipt.replayed && message.authorKind === 'human') {
+        try {
+          await postEmptyDeskAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id });
+        } catch (error) {
+          console.error('[envoy-chat] empty-desk answer failed:', error.message);
+        }
+      }
       return out;
     },
     async appendConnectorMessage(binding) {
@@ -198,6 +286,7 @@ export function createEnvoyStore(pool) {
 }
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
 import { appendAuditEvent } from './audit-event-repository.mjs';
+import { tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { CONFIG_SUBJECT, describeAuthor, normalizeMessageMetadata, parseConfig } from './envoy-agents.mjs';
 import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
 
