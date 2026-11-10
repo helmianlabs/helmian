@@ -363,7 +363,8 @@ test('write route: with no registration placed, each family start answers the co
       assert.equal(out.json.status, 'consent-boundary', `${fam.provider}: registration-missing, said honestly`);
       assert.equal(out.json.provider, fam.provider, `${fam.provider}: the boundary names its own provider`);
       assert.equal(out.json.authorizationEndpoint, 'https://issuer.example/authorize');
-      assert.match(out.json.note, /no OAuth client registration/);
+      assert.match(out.json.note, /app registration in .* own console has not been placed yet/);
+      assert.match(out.json.note, /cannot be connected inside Helmian yet/);
       assert.equal(store.calls.filter(([n]) => n === 'createConnection').length, 0, `${fam.provider}: nothing connected`);
     }
   });
