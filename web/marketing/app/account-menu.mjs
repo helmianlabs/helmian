@@ -30,7 +30,7 @@
 //   panel says so before the button is pressed.
 // - Keyboard shortcuts lists only bindings the app handles today;
 //   each row names the surface where the binding lives.
-import { workspaceName } from './app-model.mjs?v=b7ff997e6ae6de1d';
+import { workspaceName } from './app-model.mjs?v=c967c3b4e6c767e5';
 
 // The shipped sign-out road (see header). The menu's Log out anchor in
 // index.html carries this exact href; the unit test pins the two

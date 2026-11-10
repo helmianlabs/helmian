@@ -268,6 +268,21 @@ function rowModel(row, state, conversationId) {
   // can be armed for the channel. Mirror rows never carry a toggle —
   // and neither does a custom row whose gate has not passed.
   const toggleable = row.state === 'connected' && row.brokerMode === 'helmian' && (!gate || gate.passed);
+  // The connect law (owner order, 2026-11-10): the connect road
+  // exists — the same library write route the Connectors tab's Manage
+  // panel calls — so a not-connected row on a pipe Helmian holds
+  // carries a Connect action in this panel. Mirror rows never carry
+  // one (the write route refuses vendor entries; the connection lives
+  // in the seat's own product), a local-only entry has no
+  // connect-start, an owner-disabled row waits for the owner's Manage
+  // switch, and a custom row whose gate has not passed is not
+  // connectable yet. A row whose saved connection needs its sign-in
+  // redone reads Reconnect.
+  const connectable = row.brokerMode === 'helmian'
+    && (row.state === 'not-connected' || row.state === 'needs-reconnect')
+    && row.kind !== 'mcp-local'
+    && (!gate || gate.passed);
+  const reconnect = connectable && row.state === 'needs-reconnect';
   return Object.freeze({
     entryId: row.entryId,
     seatId: row.seatId,
@@ -284,6 +299,8 @@ function rowModel(row, state, conversationId) {
     kind: row.kind,
     gate,
     toggleable,
+    connectable,
+    reconnect,
     on: toggleable ? isConnectorOn(state, conversationId, row.seatId, row.entryId) : false,
     mirror,
     // Catalog starter actions (mirror-design §4, bite M2): the read

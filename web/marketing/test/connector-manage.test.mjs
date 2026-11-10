@@ -766,3 +766,88 @@ test('first-load retry: a read that keeps failing paints the terminal error only
   assert.ok(box.textContent.includes('The connector library did not load'), 'the terminal line paints once the retries are spent');
   assert.ok(box.textContent.includes('CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED'), 'and the server\u2019s error words are the ones reported');
 });
+
+// ------------------------------------------- connect hand-off (2026-11-10)
+// The Manage panel's Connect button and the connect-start's answers.
+// The start returns status 'authorize' with an authorizeUrl (and an
+// approval briefing) for every OAuth road. The surface waited for a
+// 'consent' status no road ever returns, so the authorize answer
+// fell through to the bare status line — "Atlassian: authorize." —
+// and the sign-in door was never shown (the owner's live walk,
+// 2026-11-10: Connect pressed twice, no navigation, row unchanged).
+// These tests drive the real surface against a scripted start.
+
+const AUTHORIZE_URL = 'https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=test-client';
+
+function connectSurface({ rows, connectOut }) {
+  const posts = [];
+  const api = async (path, opts) => {
+    if (opts?.method === 'POST') {
+      posts.push({ path, body: JSON.parse(opts.body) });
+      if (path === '/api/admin/connector-library/connect') return connectOut;
+      throw new Error(`unexpected post: ${path}`);
+    }
+    if (path === '/api/admin/connector-library/seats') return { seats: [{ seatId: 'claude' }] };
+    if (path.startsWith('/api/admin/connector-library?seat=')) return { rows };
+    throw new Error(`unexpected api call: ${path}`);
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'claude' });
+  return { box, surface, posts };
+}
+
+async function pressConnect(box, surface) {
+  await surface.refresh();
+  const manage = buttonsNamed(box, 'Manage')[0];
+  assert.ok(manage, 'the row offers Manage');
+  await manage.click();
+  await flushMicrotasks();
+  const connect = buttonsNamed(box, 'Connect')[0];
+  assert.ok(connect, 'the opened row offers Connect');
+  await connect.click();
+  await flushMicrotasks();
+}
+
+test('connect hand-off: an authorize answer hands the person the sign-in door (Atlassian shape)', async () => {
+  const assigned = [];
+  globalThis.window = { location: { assign: (url) => assigned.push(url) } };
+  try {
+    const rows = [manageRow('registry-atlassian', 'Atlassian', { state: 'not-connected' })];
+    const { box, surface, posts } = connectSurface({
+      rows,
+      connectOut: { status: 'authorize', authorizeUrl: AUTHORIZE_URL, briefing: { summary: 'Atlassian opens its sign-in page — approving lets Helmian reach your Jira and Confluence.' } },
+    });
+    await pressConnect(box, surface);
+    assert.deepEqual(posts, [{ path: '/api/admin/connector-library/connect', body: { seatId: 'claude', entryId: 'registry-atlassian' } }], 'Connect posts the connect-start for exactly this seat and entry');
+    assert.deepEqual(assigned, [AUTHORIZE_URL], 'the browser is handed the authorize door');
+    assert.ok(box.textContent.includes('Atlassian opens its sign-in page'), 'the briefing’s words are what the person reads');
+    assert.ok(!box.textContent.includes('Atlassian: authorize.'), 'never the bare status line that stranded the owner');
+  } finally { delete globalThis.window; }
+});
+
+test('connect hand-off: a no-sign-in answer lands connected on the spot (Weather shape)', async () => {
+  const assigned = [];
+  globalThis.window = { location: { assign: (url) => assigned.push(url) } };
+  try {
+    const rows = [manageRow('registry-weather', 'Weather', { state: 'not-connected' })];
+    const { box, surface } = connectSurface({ rows, connectOut: { status: 'connected' } });
+    await pressConnect(box, surface);
+    assert.ok(box.textContent.includes('Weather is connected.'), 'the person is told it landed');
+    assert.deepEqual(assigned, [], 'no door is opened for a connector with no sign-in');
+  } finally { delete globalThis.window; }
+});
+
+test('connect hand-off: a consent boundary says its words and opens nothing', async () => {
+  const assigned = [];
+  globalThis.window = { location: { assign: (url) => assigned.push(url) } };
+  try {
+    const rows = [manageRow('registry-linear', 'Linear', { state: 'not-connected' })];
+    const { box, surface } = connectSurface({
+      rows,
+      connectOut: { status: 'consent-boundary', note: 'Linear’s sign-in cannot be completed inside Helmian yet.' },
+    });
+    await pressConnect(box, surface);
+    assert.ok(box.textContent.includes('Linear’s sign-in cannot be completed inside Helmian yet.'), 'the boundary’s own words are shown');
+    assert.deepEqual(assigned, [], 'no navigation is faked past a boundary');
+  } finally { delete globalThis.window; }
+});

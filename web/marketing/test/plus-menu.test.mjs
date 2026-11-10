@@ -38,8 +38,8 @@ const library = (seatId, rows) => ({
 const flat = (model) => model.rows.flatMap(function walk(r) {
   return r.kind === 'submenu' ? [{ kind: 'submenu', label: r.label }, ...r.rows.flatMap(walk)] : [r];
 });
-const brief = (model) => flat(model).map((r) => r.kind === 'toggle' || r.kind === 'mirror' || r.kind === 'row'
-  ? `${r.kind}:${r.row.entryId}${r.kind === 'toggle' ? (r.row.on ? '=on' : '=off') : ''}`
+const brief = (model) => flat(model).map((r) => r.kind === 'toggle' || r.kind === 'mirror' || r.kind === 'row' || r.kind === 'connect'
+  ? `${r.kind}:${r.row.entryId}${r.kind === 'toggle' ? (r.row.on ? '=on' : '=off') : ''}${r.kind === 'connect' && r.row.reconnect ? '=reconnect' : ''}`
   : r.kind === 'note' ? `note:${r.text}`
     : r.kind === 'manage' ? `manage:${r.label}:${r.target}:${r.url ?? 'none'}`
       : r.kind === 'action' ? `action:${r.label}:${r.action}`
@@ -147,26 +147,43 @@ test('plus menu Level 2 — Claude (bite A2): connector rows seed NO drafts — 
   assert.ok(!js.includes('/api/admin/connector-library/prompts'), 'the menu no longer calls the prompts list road');
 });
 
-test('plus menu Level 2 — the toggle list offers ONLY connected Helmian-brokered rows (bite A2)', () => {
-  // The seat's native entry present in the read but NOT connected:
-  // the list is one honest note, never a switch that cannot work.
+test('plus menu Level 2 — the Connectors list offers a Connect action for not-connected Helmian rows (owner order, 2026-11-10)', () => {
+  // Supersedes bite A2's connected-only toggle list. The owner's
+  // order: every not-connected connector gets a working Connect
+  // button right on this panel, wired to the same library
+  // connect-start the Connectors tab's Manage panel uses. A toggle
+  // is still offered ONLY for a connected row — never a switch that
+  // cannot work — and the empty note stands only over a list with
+  // nothing in it at all.
   const notConnected = library('claude', [
-    libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'available' }),
+    libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'not-connected' }),
     libRow('claude', 'gmail', 'Gmail', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'troy@example.com', kind: 'oauth-app' }),
   ]);
   const model = plusMenuLevel2Model({ seatId: 'claude', library: notConnected, conversationId: 'c1' });
   const connectors = model.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors');
   assert.ok(connectors, 'the Connectors submenu still composes');
   assert.ok(!connectors.rows.some((r) => r.kind === 'toggle'), 'no toggle is offered for a connector that is not connected');
-  assert.ok(connectors.rows.some((r) => r.kind === 'note' && r.text === 'No connectors are connected for Claude yet.'), 'the empty list says so in one note');
-  // Needs-reconnect is not connected: same honest note, no switch.
+  const connect = connectors.rows.find((r) => r.kind === 'connect');
+  assert.ok(connect, 'a Connect action is offered for the not-connected Helmian row');
+  assert.equal(connect.row.entryId, 'helmian-github');
+  assert.equal(connect.row.connectable, true);
+  assert.equal(connect.row.reconnect, false);
+  assert.ok(!connectors.rows.some((r) => r.kind === 'note' && r.text === 'No connectors are connected for Claude yet.'), 'the empty note does not stand over a row that offers Connect');
+  // Needs-reconnect is not connected: no switch — the connect
+  // action again, marked as the reconnect it is.
   const needsReconnect = library('claude', [
     libRow('claude', 'helmian-github', 'Helmian GitHub', { state: 'needs-reconnect' }),
   ]);
   const model2 = plusMenuLevel2Model({ seatId: 'claude', library: needsReconnect, conversationId: 'c1' });
   const connectors2 = model2.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors');
   assert.ok(!connectors2.rows.some((r) => r.kind === 'toggle'), 'a needs-reconnect connector is not offered as a switch');
-  assert.ok(connectors2.rows.some((r) => r.kind === 'note' && r.text === 'No connectors are connected for Claude yet.'));
+  const reconnect = connectors2.rows.find((r) => r.kind === 'connect');
+  assert.ok(reconnect, 'a needs-reconnect connector offers the connect action');
+  assert.equal(reconnect.row.reconnect, true, 'and the row marks it a reconnect');
+  // A library with nothing in it still says so in one note.
+  const empty = plusMenuLevel2Model({ seatId: 'claude', library: library('claude', []), conversationId: 'c1' });
+  const connectors3 = empty.rows.find((r) => r.kind === 'submenu' && r.label === 'Connectors');
+  assert.ok(connectors3.rows.some((r) => r.kind === 'note' && r.text === 'No connectors are connected for Claude yet.'), 'the empty list says so in one note');
 });
 
 test('plus menu dedupe: the brokered GitHub stands in Claude’s panel and the mirror namesake drops', () => {
@@ -184,16 +201,22 @@ test('plus menu dedupe: the brokered GitHub stands in Claude’s panel and the m
   assert.equal(githubs[0].row.entryId, 'helmian-github', 'the survivor is Helmian’s brokered row');
   assert.equal(githubs[0].kind, 'toggle', 'standing as the connected switch');
   assert.equal(githubs[0].row.oneLiner, 'Work with the repositories this workspace already reaches', 'the survivor keeps its own words');
-  // With Helmian's GitHub NOT connected, no brokered row stands in
-  // the list to win — the seat's own mirror is the name's only row.
+  // With Helmian's GitHub NOT connected, the brokered row stands
+  // in the list carrying its Connect action (owner order,
+  // 2026-11-10) — so the mirror namesake drops, the same
+  // one-name-one-row outcome the Connectors tab already rules.
+  // (The earlier cold case expected the mirror to stand because a
+  // not-connected brokered row was not offered in the list at all;
+  // that was bite A2's law, superseded by the owner's order.)
   const cold = library('claude', [
-    libRow('claude', 'helmian-github', 'GitHub', { state: 'available', oneLiner: 'Work with the repositories this workspace already reaches' }),
+    libRow('claude', 'helmian-github', 'GitHub', { state: 'not-connected', oneLiner: 'Work with the repositories this workspace already reaches' }),
     libRow('claude', 'github', 'GitHub', { brokerMode: 'vendor', kind: 'oauth-app', oneLiner: 'Review pull requests, issues, and repository activity' }),
   ]);
   const coldModel = plusMenuLevel2Model({ seatId: 'claude', library: cold, conversationId: 'c1' });
   const coldGithubs = flat(coldModel).filter((r) => r.row?.name === 'GitHub');
   assert.equal(coldGithubs.length, 1, 'still one GitHub row');
-  assert.equal(coldGithubs[0].row.entryId, 'github', 'the mirror stands when its brokered namesake is not in the list');
+  assert.equal(coldGithubs[0].row.entryId, 'helmian-github', 'the brokered row stands for the name');
+  assert.equal(coldGithubs[0].kind, 'connect', 'standing as the Connect action the panel now offers');
 });
 
 test('dedupePanelConnectorRows: tiers, order, and hands-off for non-connector rows', () => {
@@ -568,4 +591,82 @@ test('mount preload (speed fix): the menu libraries are warm before first open �
   // re-fire any of it (the caches and their staleness windows rule).
   preloadLibrarySession();
   assert.equal(calls.length, warmed, 'a second preload call fires nothing');
+});
+
+test('plus menu Level 2 — the panel carries the seat’s WHOLE library: rows no menu binds still render (owner order, 2026-11-10)', () => {
+  // The menu definitions bind the shipped catalog. A person's own
+  // entries — and any row a catalog gains before a menu binds it —
+  // are in the library read but bound nowhere, and before this fix
+  // they never rendered: the panel showed a subset and called it
+  // the library. Now unbound Helmian-brokered rows join the
+  // Connectors list and unbound vendor rows join the mirror group,
+  // each exactly once.
+  const lib = library('claude', [
+    libRow('claude', 'helmian-github', 'GitHub', { state: 'connected' }),
+    libRow('claude', 'registry-atlassian', 'Atlassian', { state: 'disabled-by-owner' }),
+    libRow('claude', 'my-own-server', 'My Server', { state: 'not-connected', kind: 'custom' }),
+    libRow('claude', 'local-tool', 'Local Tool', { state: 'not-connected', kind: 'mcp-local' }),
+    libRow('claude', 'unbound-mirror', 'Unbound Mirror', { state: 'not-connected', brokerMode: 'vendor', kind: 'oauth-app' }),
+  ]);
+  const model = plusMenuLevel2Model({ seatId: 'claude', library: lib, conversationId: 'c1' });
+  const mine = findRow(model, 'my-own-server');
+  assert.ok(mine, 'an unbound row renders');
+  assert.equal(mine.kind, 'connect', 'an unbound not-connected Helmian row stands with its Connect action');
+  const local = findRow(model, 'local-tool');
+  assert.equal(local.kind, 'row', 'a local-only entry stands as an honest state row');
+  assert.equal(local.row.connectable, false, 'with no Connect action — it has no connect-start to offer');
+  const mirror = findRow(model, 'unbound-mirror');
+  assert.equal(mirror.kind, 'mirror', 'an unbound vendor row stands with the mirrors');
+  const atlassian = findRow(model, 'registry-atlassian');
+  assert.equal(atlassian.kind, 'row', 'an owner-disabled row stands as a state row, not a Connect button');
+  assert.equal(atlassian.row.connectable, false, 're-enabling it is the owner’s Manage act, not a panel Connect');
+  for (const id of ['my-own-server', 'local-tool', 'unbound-mirror', 'registry-atlassian']) {
+    assert.equal(flat(model).filter((r) => r.row?.entryId === id).length, 1, `${id} renders exactly once`);
+  }
+});
+
+test('plus menu Level 2 — Grok, the owner’s screenshot shape: mirrors carry no Connect, brokered rows carry theirs (2026-11-10)', () => {
+  // The owner's own screen: Grok's Connectors panel listed Gmail,
+  // SharePoint and the rest as "Not connected" with no action
+  // anywhere. Those rows are Grok-side mirrors — the library write
+  // route refuses vendor entries, so no Helmian-side Connect exists
+  // for them; they stand as mirrors (their row opens Helmian's own
+  // library at this seat — see the face pin below). The brokered
+  // rows DO get the button, and a brokered row stands for its name.
+  const lib = library('grok', [
+    libRow('grok', 'helmian-github', 'GitHub', { state: 'connected' }),
+    libRow('grok', 'github', 'GitHub', { state: 'connected', brokerMode: 'vendor', accountIdentity: 'helmianlabs', kind: 'oauth-app' }),
+    libRow('grok', 'gmail', 'Gmail', { brokerMode: 'vendor', kind: 'oauth-app' }),
+    libRow('grok', 'sharepoint', 'SharePoint', { brokerMode: 'vendor', kind: 'oauth-app' }),
+    libRow('grok', 'registry-notion', 'Notion', { state: 'not-connected' }),
+    libRow('grok', 'notion', 'Notion', { brokerMode: 'vendor', kind: 'oauth-app' }),
+    libRow('grok', 'registry-weather', 'Weather', { state: 'not-connected' }),
+  ]);
+  const model = plusMenuLevel2Model({ seatId: 'grok', library: lib, conversationId: 'c1' });
+  for (const id of ['gmail', 'sharepoint']) {
+    const row = findRow(model, id);
+    assert.equal(row.kind, 'mirror', `${id} stands as a mirror`);
+    assert.equal(row.row.connectable, false, `${id} carries no Connect action — none exists on Helmian’s side for a vendor entry`);
+  }
+  const notion = findRow(model, 'registry-notion');
+  assert.equal(notion.kind, 'connect', 'the brokered Notion stands with its Connect action');
+  assert.equal(flat(model).filter((r) => r.row?.name === 'Notion').length, 1, 'and the vendor namesake drops — one Notion row in the panel');
+  assert.equal(findRow(model, 'registry-weather').kind, 'connect', 'Weather offers Connect from this panel — the road the Connectors tab proved end to end');
+  assert.equal(findRow(model, 'github'), undefined, 'the vendor GitHub bound in the live group is still not offered there');
+  assert.equal(findRow(model, 'helmian-github').kind, 'toggle', 'the connected brokered GitHub still toggles');
+});
+
+test('plus menu face: the switch and its word share one source, and the panel Connect posts Manage’s road (owner report, 2026-11-10)', async () => {
+  // The owner's second screenshot: GitHub read "Connected as
+  // helmianlabs/helmian" while its switch rendered OFF — the
+  // trailing word borrowed the connection's state label while the
+  // switch drew the channel's armed state. Two sources, one slot.
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.ok(!js.includes("row.on ? 'On' : row.stateLabel"), 'the word beside the switch never borrows the connection’s state label');
+  assert.ok(js.includes("row.on ? 'On' : 'Off'"), 'the word beside the switch is the switch’s own state, in the switch’s own words');
+  assert.ok(js.includes('ew-lib-state'), 'the connection state stands as its own line in the row’s text block');
+  assert.ok(js.includes('ew-lib-connect'), 'the Connect control renders as a real button on the row');
+  assert.ok(js.includes("'/api/admin/connector-library/connect'"), 'the panel Connect posts the same connect-start the Manage panel uses');
+  assert.ok(js.includes("out?.status === 'authorize'"), 'the panel hands the person the authorize door the start returns');
+  assert.ok(js.includes('not in Helmian — open Helmian'), 'a mirror row states plainly that its connection is not Helmian’s to make, and its one action opens Helmian’s library at this seat');
 });

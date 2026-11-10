@@ -311,6 +311,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-lib-switch::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:var(--muted); transition:left .15s, background .15s; }
 .ew-picker-row.on .ew-lib-switch { background:var(--accent); border-color:var(--accent); }
 .ew-picker-row.on .ew-lib-switch::after { left:16px; background:#fff; }
+/* The panel Connect button (owner order, 2026-11-10): a real button
+   on the not-connected row, sized to the row, never a bare label. */
+.ew-lib-connect { flex:none; margin-left:auto; padding:4px 10px; border-radius:8px; border:1px solid var(--accent); background:var(--accent); color:#fff; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+.ew-lib-connect:hover { filter:brightness(1.1); }
 .ew-slash-menu { gap:6px; }
 .ew-slash-row .ew-slash-name { font-weight:700; white-space:nowrap; }
 .ew-slash-row .ew-picker-kind { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

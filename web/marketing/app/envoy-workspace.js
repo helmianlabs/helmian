@@ -1,15 +1,15 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=b7ff997e6ae6de1d';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=b7ff997e6ae6de1d';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=b7ff997e6ae6de1d';
-import { dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=b7ff997e6ae6de1d';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=b7ff997e6ae6de1d';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=b7ff997e6ae6de1d';
-import { createConnectFields } from './connect-fields.mjs?v=b7ff997e6ae6de1d';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=b7ff997e6ae6de1d';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=b7ff997e6ae6de1d';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c967c3b4e6c767e5';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c967c3b4e6c767e5';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c967c3b4e6c767e5';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c967c3b4e6c767e5';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c967c3b4e6c767e5';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c967c3b4e6c767e5';
+import { createConnectFields } from './connect-fields.mjs?v=c967c3b4e6c767e5';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c967c3b4e6c767e5';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c967c3b4e6c767e5';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -2368,6 +2368,15 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     h('span', { class: 'ew-lib-line' }, row.oneLiner),
     h('span', { class: 'ew-lib-line' }, vendorLine));
   if (row.toggleable) {
+    // The state line stands in the text block as its own line, and
+    // the word beside the switch comes from the switch's own source
+    // (row.on — armed in THIS channel) and nothing else (owner
+    // report, 2026-11-10: the switch rendered OFF beside the words
+    // "Connected as …" because the trailing word borrowed the
+    // connection's state label while the switch drew the channel's
+    // armed state — two sources in one slot, and the row read as a
+    // lie).
+    text.append(h('span', { class: 'ew-lib-line ew-lib-state' }, row.stateLabel));
     return h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on in this channel — tap to turn it off` : `Turn ${row.name} on in this channel`, onclick: () => {
       ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId);
       // The flip persists to the channel's config before anything
@@ -2377,20 +2386,72 @@ function libraryRowNode(which, row, { shape = null } = {}) {
       renderAttachChips(which); renderPicker(which);
     } }, libraryIconTile(row), text,
       h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
-      h('span', { class: `ew-picker-state ${row.on ? 'on' : 'off'}` }, row.on ? 'On' : row.stateLabel));
+      h('span', { class: `ew-picker-state ${row.on ? 'on' : 'off'}` }, row.on ? 'On' : 'Off'));
+  }
+  if (row.connectable) {
+    // The Connect button the owner ordered on this panel
+    // (2026-11-10): it starts the same library connect the
+    // Connectors tab's Manage panel runs — see startPanelConnect.
+    return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
+      h('span', { class: 'ew-picker-state off' }, row.stateLabel),
+      h('button', { type: 'button', class: 'ew-lib-connect', title: `Connect ${row.name} for ${seatName(row.seatId)}`, onclick: () => { void startPanelConnect(which, row); } }, row.reconnect ? 'Reconnect' : 'Connect'));
   }
   if (row.mirror) {
-    // A mirror row is never a button Helmian can't honour (§1.5): it
-    // shows the state the vendor side last reported — state only.
-    // Managing the connection happens in Helmian's Integrations
-    // view, never through a link out to the vendor (Troy's ruling,
-    // 2026-11-08), so the row carries no anchor even though the read
-    // still names the vendor's manager in its state line above.
-    return h('div', { class: `ew-picker-row ew-lib-row mirror${shape === 'state' ? ' state' : ''}` }, libraryIconTile(row), text,
-      h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel));
+    // A mirror row is never a button Helmian can't honour (§1.5):
+    // the connection lives in the seat's own product, so the button
+    // this row CAN honour opens Helmian's own connector library at
+    // this seat — where the same-name Helmian-brokered entry, when
+    // the library holds one, carries the real Connect — and never a
+    // link out to the vendor (Troy's ruling, 2026-11-08). The row
+    // states that plainly in its title and its trailing word; the
+    // state it shows is the state the vendor side last reported.
+    return h('button', { type: 'button', class: `ew-picker-row ew-lib-row mirror${shape === 'state' ? ' state' : ''}`, title: `${row.name} is managed in ${row.mirror.managedIn}, not in Helmian — open Helmian's connector library for ${seatName(row.seatId)}`, onclick: () => openManageForSeat(which) }, libraryIconTile(row), text,
+      h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel),
+      h('span', { class: 'ew-picker-state off' }, 'Open'));
   }
   return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
     h('span', { class: 'ew-picker-state off' }, row.stateLabel));
+}
+
+// The panel's Connect button (owner order, 2026-11-10): the SAME
+// library connect-start the Connectors tab's Manage panel calls —
+// one road, two faces. The answers are handled exactly as Manage
+// handles them: a no-sign-in connector lands connected on the spot
+// (the panel re-reads the seat's library and repaints); an OAuth
+// connector answers with the service's own sign-in door and the
+// person is handed that door; a sign-in Helmian cannot broker yet
+// says so in the route's own words; a key connector's form lives on
+// the Manage surface, so the panel says so and opens it there.
+async function startPanelConnect(which, row) {
+  let out;
+  try {
+    out = await ws.ctx.post('/api/admin/connector-library/connect', { seatId: row.seatId, entryId: row.entryId });
+  } catch (e) {
+    ws.ctx.toast(e?.body?.error || `Could not start ${row.name}. Try again.`);
+    return;
+  }
+  if (out?.status === 'connected') {
+    ws.ctx.toast(`${row.name} is connected.`, 'ok');
+    ws.libraryFetchedAt[row.seatId] = 0;
+    await loadSeatLibrary(row.seatId).catch(() => {});
+    renderPicker(which);
+    return;
+  }
+  if (out?.status === 'authorize' && out.authorizeUrl) {
+    ws.ctx.toast(out.briefing?.summary || `${row.name} opens its sign-in page — approve it there and the connection lands back here.`);
+    window.location.assign(out.authorizeUrl);
+    return;
+  }
+  if (out?.status === 'consent-boundary') {
+    ws.ctx.toast(out.note || 'This sign-in cannot be completed inside Helmian yet.');
+    return;
+  }
+  if (out?.status === 'needs-credential') {
+    ws.ctx.toast(`${row.name} needs its key — its form is in Helmian's connector library.`);
+    openManageForSeat(which);
+    return;
+  }
+  ws.ctx.toast(`${row.name}: ${out?.status ?? 'connect started'}.`);
 }
 
 // The Level 2 model: one seat's menu definition composed with that
@@ -2405,7 +2466,7 @@ function libraryRowNode(which, row, { shape = null } = {}) {
 //   { kind: 'action', label, action }              (github-file / tool-access)
 //   { kind: 'label', label }                       (a group heading)
 //   { kind: 'note', text }
-//   { kind: 'toggle' | 'mirror' | 'row', row, rowShape }
+//   { kind: 'toggle' | 'mirror' | 'row' | 'connect', row, rowShape }
 //   { kind: 'skill', skillId, name, description, on, disabled }
 //   { kind: 'plugin', name, brings, toolCount, on }
 //   { kind: 'project', key, name, active }
@@ -2413,10 +2474,16 @@ function libraryRowNode(which, row, { shape = null } = {}) {
 //   { kind: 'manage', label, target }
 // A connector group binds its rows from the read by entry id, in the
 // definition's own order. A live-toggle group — the Connectors list —
-// renders ONLY its Connected, Helmian-brokered rows, as switches in
-// the channel's standing set (Amendment 1 §2.3, bite A2): a row that
-// is not connected, or that Helmian does not hold the pipe for, is
-// not offered, and a group with nothing connected says so in one
+// carries the seat's WHOLE Helmian-brokered library (owner order,
+// 2026-11-10, superseding bite A2's connected-only list): Connected
+// rows render as switches in the channel's standing set (Amendment 1
+// §2.3), not-connected rows carry a working Connect action, rows that
+// can be neither today (owner-disabled, an unpassed safety gate, a
+// local-only entry) stand as honest state rows, and library rows no
+// menu binds — a person's own entries — join this list so nothing
+// the library holds is missing from the panel. Vendor mirrors are
+// never offered here; an unbound mirror joins the seat's mirror
+// group instead. A live group with nothing to show says so in one
 // note. Connector rows seed no drafts: the catalog starter actions
 // and the arm-time MCP prompt rows the M2 face rendered under a
 // connector are gone with the per-message arming they served. A
@@ -2451,6 +2518,16 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
     const rows = item.entryIds.map((id) => byId.get(id)).filter(Boolean);
     return rows.length ? rows : null;
   };
+  // The full-library sweeps (owner order, 2026-11-10): the panel
+  // carries every row the seat's library read holds, not only the
+  // rows a menu binds. Helmian-brokered rows no menu binds (a
+  // person's own entries, a local-only entry) join the seat's
+  // Connectors list; vendor rows no menu binds join its mirror
+  // group. Each sweep is spent by the first group of its kind, in
+  // walk order, so a row still renders exactly once.
+  const boundIds = new Set(collectCatalogEntryIds(definition));
+  let helmianSweep = [...byId.values()].filter((r) => r.brokerMode === 'helmian' && !boundIds.has(r.entryId));
+  let vendorSweep = [...byId.values()].filter((r) => r.brokerMode === 'vendor' && !boundIds.has(r.entryId));
   const feedRows = (item) => {
     const out = [];
     if (item.label) out.push({ kind: 'label', label: item.label });
@@ -2499,19 +2576,35 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
     if (!Array.isArray(item.entryIds) && item.feed) return [...out, ...feedRows(item).filter((r) => r.kind !== 'label')];
     if (!library) { out.push({ kind: 'note', text: `Loading ${seatName(seatId)}'s library...` }); return out; }
     if (library.error) { out.push({ kind: 'note', text: 'This library could not be loaded.' }); return out; }
-    const rows = boundRows(item);
-    if (!rows) { out.push({ kind: 'note', text: 'Nothing here yet.' }); return out; }
     if (item.type === 'live-toggle-group') {
-      // The standing toggle list (Amendment 1 §2.3): only the rows
-      // this seat can truly arm today — Connected, on a pipe
-      // Helmian holds (row.toggleable is exactly that test). Every
-      // other bound row is not offered: not a switch that cannot
-      // work, not a state row filling the list.
-      const toggles = rows.filter((r) => r.toggleable);
-      if (!toggles.length) { out.push({ kind: 'note', text: `No connectors are connected for ${seatName(seatId)} yet.` }); return out; }
+      // The Connectors list (owner order, 2026-11-10): the seat's
+      // whole Helmian-brokered library — bound rows in the menu's
+      // order, then the unbound sweep. Connected rows are switches
+      // (row.toggleable is exactly that test); not-connected rows
+      // carry the Connect action (row.connectable); the rest stand
+      // as state rows with their true labels. A vendor mirror bound
+      // here is not offered: mirrors are the mirror groups' rows.
+      let rows = boundRows(item) ?? [];
+      if (helmianSweep.length) { rows = [...rows, ...helmianSweep]; helmianSweep = []; }
+      const mine = rows.filter((r) => r.brokerMode === 'helmian');
+      const toggles = mine.filter((r) => r.toggleable);
+      const connects = mine.filter((r) => !r.toggleable && r.connectable);
+      const resting = mine.filter((r) => !r.toggleable && !r.connectable);
+      if (!toggles.length && !connects.length && !resting.length) {
+        out.push({ kind: 'note', text: `No connectors are connected for ${seatName(seatId)} yet.` });
+        return out;
+      }
       for (const row of toggles) out.push({ kind: 'toggle', row, rowShape });
+      for (const row of connects) out.push({ kind: 'connect', row, rowShape });
+      for (const row of resting) out.push({ kind: 'row', row, rowShape });
       return out;
     }
+    let rows = boundRows(item);
+    if (item.type === 'mirror-group' && vendorSweep.length) {
+      rows = [...(rows ?? []), ...vendorSweep];
+      vendorSweep = [];
+    }
+    if (!rows || !rows.length) { out.push({ kind: 'note', text: 'Nothing here yet.' }); return out; }
     for (const row of rows) {
       out.push({ kind: row.toggleable ? 'toggle' : row.mirror ? 'mirror' : 'row', row, rowShape });
     }
@@ -2544,7 +2637,7 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
         // vendor mirrors stand in ONE list — the composed rows go
         // through the panel dedupe before they render.
         const rows = dedupePanelConnectorRows((item.items ?? []).flatMap(itemRows));
-        const hasConnectorRows = rows.some((r) => r.kind === 'toggle' || r.kind === 'mirror' || r.kind === 'row');
+        const hasConnectorRows = rows.some((r) => r.kind === 'toggle' || r.kind === 'mirror' || r.kind === 'row' || r.kind === 'connect');
         return [{ kind: 'submenu', label: item.label, rows, ...(hasConnectorRows && reconnectCount > 0 ? { badge: reconnectCount } : {}) }];
       }
       case 'manage-link': return [{ kind: 'manage', label: item.label, target: item.target }];
@@ -2869,7 +2962,7 @@ function plusMenuRowNode(which, row, index) {
     }
     case 'label': return h('div', { class: 'ew-subhead' }, row.label);
     case 'note': return h('p', { class: 'ew-note' }, row.text);
-    case 'toggle': case 'mirror': case 'row': return libraryRowNode(which, row.row, { shape: row.rowShape });
+    case 'toggle': case 'mirror': case 'row': case 'connect': return libraryRowNode(which, row.row, { shape: row.rowShape });
     case 'submenu': {
       const open = ws.libraryPanel.sub === index;
       const head = h('button', { type: 'button', class: 'ew-picker-row', 'aria-expanded': String(open), onclick: () => {
@@ -4198,7 +4291,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=b7ff997e6ae6de1d');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c967c3b4e6c767e5');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
