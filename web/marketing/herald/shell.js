@@ -35,6 +35,27 @@ const clerkReturnProps = { forceRedirectUrl: '/herald', signUpForceRedirectUrl: 
 let activeDrawer = null;
 let toastTimer = null;
 let clerk = null;
+let signInMounted = false;
+// Clerk's listener fires on every resource change — including each step
+// of a sign-in attempt — and applyAccountState runs on every one of those
+// events. Mounting again there replaces the live component mid-attempt
+// and discards what the user typed (proven: a second mountSignIn wipes
+// the identifier field), so the component mounts exactly once per dialog
+// opening and unmounts when the dialog closes.
+function mountSignInOnce() {
+  if (!clerk || signInMounted) return;
+  const mount = $('#clerkMount');
+  // Clerk appends its card next to whatever is already in the mount node,
+  // so clear the "Account sign-in is loading…" placeholder first — left in
+  // place it stands above the working form for the whole session.
+  mount.replaceChildren();
+  clerk.mountSignIn(mount, clerkReturnProps);
+  signInMounted = true;
+}
+accountDialog.addEventListener('close', () => {
+  signInMounted = false;
+  if (clerk) clerk.unmountSignIn?.($('#clerkMount'));
+});
 let remoteApi = createAccountRemoteControlApi();
 let remoteTransport = null;
 let selectedControl = null;
@@ -236,7 +257,7 @@ function runAction(action, source) {
     if (clerk?.isSignedIn) void clerk.signOut().then(resetRemoteUi);
     else {
       accountDialog.showModal();
-      if (clerk) clerk.mountSignIn($('#clerkMount'), clerkReturnProps);
+      mountSignInOnce();
     }
   } else if (action === 'close-account') {
     accountDialog.close();
@@ -444,7 +465,7 @@ async function applyAccountState(config) {
     const teamPlaceholder = $('#teamPlaceholder');
     if (teamPlaceholder) teamPlaceholder.hidden = false;
     if (qrEnrollmentCode && !accountDialog.open) accountDialog.showModal();
-    if (accountDialog.open) clerk.mountSignIn($('#clerkMount'), clerkReturnProps);
+    if (accountDialog.open) mountSignInOnce();
     return;
   }
   const nextAccountId = clerk.user?.id ?? null;
