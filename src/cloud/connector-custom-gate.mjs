@@ -56,6 +56,21 @@
 // 60-char slug); the service id is the entry id verbatim when it
 // fits, and a hashed form when it does not — deterministic, so every
 // reader computes the same key from the entry alone.
+//
+// THE GATE IS PER (SEAT, ENTRY) — the finding SYNC S2a stands on.
+// The gate row's unique key is (tenant, scope_kind, scope_id,
+// service_id) in sql/061, and customGateKey puts the SEAT in
+// scope_id (scope_kind is the literal 'workspace' for every custom
+// gate row — the name does not make the row workspace-wide). So one
+// custom entry has one gate row PER SEAT, each written only by a
+// probe run for that seat: the verified state does NOT travel with
+// the entry when the entry itself is projected across seats (S2a).
+// A seat that has never run the gate for an entry holds no row for
+// it ('missing' / not-gated); a connect through that seat registers
+// and probes its own row (the write route's ensureCustomGate), and
+// only then does that seat's gate read passed. Nothing in S2a
+// re-keys, copies, or backfills gate rows — the projection follows
+// the store's own keying, exactly as it finds it.
 
 import { createHash } from 'node:crypto';
 

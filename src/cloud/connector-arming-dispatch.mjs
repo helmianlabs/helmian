@@ -38,7 +38,20 @@
 // credential service); the operator token where one exists for the
 // provider (today: GITHUB_TOKEN for GitHub); none — the record
 // rides state-only on the token side (accessToken null) and the
-// runner decides honestly from the entry's auth mode.
+// runner decides honestly from the entry's auth mode. Between the
+// connection and the operator, a refused connection resolve on a
+// bundle carrying a refresh token gets one refresh exchange
+// through the provider's own factory client (PLAN B5 — see the
+// refresh-on-resolve section below).
+//
+// THE CONNECTION IS THE WORKSPACE SET'S (SYNC S1): the store's
+// getConnection answers the set's row for (person, entry) — set up
+// on whichever seat, armed here for the seat this turn runs on.
+// The row's seatId is its provenance, and the credential resolve
+// below presents the provenance seat's provider id, because the
+// vault keys its records by (tenant, provider_id, reference): the
+// reference is tenant-scoped, but the stored bundle lives under
+// the provider id of the seat that connected it.
 //
 // A connection with no frozen snapshot gets one at first arm —
 // the §4.1(2) backstop: list the server's tools with the resolved
@@ -78,11 +91,13 @@
 // tools there.
 
 import { randomUUID } from 'node:crypto';
-import { createConnectorLibraryStore } from './connector-library.mjs';
+import { buildConnectorTokenRef, createConnectorLibraryStore } from './connector-library.mjs';
 import { createCredentialConnectClient } from './credential-connect.mjs';
 import { createMcpPromptsClient } from './connector-mcp-prompts.mjs';
 import { createToolConnectionsStore } from './tool-connections.mjs';
 import { classifyCustomGate, customGateKey } from './connector-custom-gate.mjs';
+import { createConnectorOAuthClient } from './connector-oauth-pending.mjs';
+import { fixedProviderForEntry } from './connector-oauth-dcr.mjs';
 
 // sanitizeArmedConnectors caps the stored set at MAX_MESSAGE_CONNECTORS
 // (envoy-agents.mjs); the resolved set keeps the same ceiling.
@@ -144,6 +159,73 @@ function operatorProviderKeyFor(entry) {
   return entry?.id === 'helmian-github' || entry?.id === 'github' ? 'github' : null;
 }
 
+// ---------------------------------------------------------- refresh-on-resolve
+// (PLAN B5, 2026-11-10). Some providers expire the access token
+// while the grant lives on (Asana's MCP tokens live about an
+// hour): the vault refuses the expired bundle, and without this
+// leg the turn unarmed as token-unavailable on every later turn
+// while the connection still read 'connected'. The leg, in the
+// token block below:
+//
+//   - It fires ONLY when the connection's bundle carries a
+//     refresh token — the connection record's refreshTokenRef,
+//     which the callback mints only when the provider issued one.
+//     No refresh reference, no leg: Slack with token rotation off
+//     (refreshTokenRef null) behaves byte-for-byte as before.
+//   - The exchange is the provider factory's own shape: the
+//     provider is the entry's declared fixed provider
+//     (fixedProviderForEntry — the catalog/factory fact, never a
+//     stored row's say-so), the client comes from
+//     createConnectorOAuthClient, and only a client exposing
+//     refreshTokens can refresh. The token endpoint and the
+//     client pair live in that factory and nowhere else. A DCR or
+//     CIMD entry has no factory client at arm time (its client
+//     was registered per handshake and lives on the pending row,
+//     which is gone), so it takes no leg here.
+//   - The refresh token itself is retrieved by resolving the
+//     connection's refreshTokenRef through the credential
+//     service with reasonClass 'oauth_refresh' — the vault's own
+//     vocabulary for exactly this resolve — under the same
+//     arming actor context as the access resolve. Only the
+//     refresh token is taken from that answer, never an access
+//     token riding with it.
+//   - ONE exchange per resolve. On success the new bundle is
+//     re-stored through the credential service under the
+//     connection's references (the callback's shape: one
+//     oauth_bundle per reference) with the arming actor context,
+//     and landed through the store's updateConnectionTokens —
+//     then this turn proceeds on the fresh token. The leg runs
+//     BEFORE the re-store is attempted only in the sense that a
+//     credential client that cannot store takes no leg at all:
+//     spending a (possibly rotating) refresh token whose result
+//     could not be kept would strand the connection.
+//   - Failure honesty: a provider ANSWER refusing the grant
+//     (the factory marks it refreshRefused — a revoked grant)
+//     marks the connection needs-reconnect through the store and
+//     the pair resolves to that record. An UNREACHABLE endpoint,
+//     a refused re-store, or a refresh resolve that yields no
+//     refresh token is NOT a refusal: the turn falls through to
+//     today's behaviour (operator token, then state-only) and
+//     the connection's state is left exactly as it was.
+
+function refreshTokenFromResolved(resolved) {
+  if (!resolved?.accepted) return null;
+  if (typeof resolved.refreshToken === 'string' && resolved.refreshToken) return resolved.refreshToken;
+  const credential = resolved.credential;
+  if (credential && typeof credential === 'object') {
+    if (typeof credential.refreshToken === 'string' && credential.refreshToken) return credential.refreshToken;
+    if (typeof credential.refresh_token === 'string' && credential.refresh_token) return credential.refresh_token;
+  }
+  return null;
+}
+
+function refreshClientForEntry(entry, oauthClientFor) {
+  const provider = fixedProviderForEntry(entry);
+  if (!provider) return null;
+  const client = oauthClientFor ? oauthClientFor(provider) : createConnectorOAuthClient(provider);
+  return client && typeof client.refreshTokens === 'function' ? client : null;
+}
+
 // The actor the token resolve below runs as. The vault demands a
 // full actor context on every call (credential-vault.mjs's
 // requireActor: tenantId, actorSubject, actorRole, sessionId,
@@ -174,10 +256,14 @@ export function armingActorContext({ tenantId, sessionId = randomUUID(), request
  * Resolve ONE armed pair into its arming record. Domain outcomes
  * are records (see the header); store/credential throws propagate.
  */
-export async function resolveArmingRecord({ store, credentials = null, listTools, operatorTokens = {}, toolConnections = null, tenantId, personId, seatId, entryId, actorContext = null }) {
+export async function resolveArmingRecord({ store, credentials = null, listTools, operatorTokens = {}, toolConnections = null, tenantId, personId, seatId, entryId, actorContext = null, oauthClientFor = null }) {
   const base = { seatId, entryId };
   const key = { personId, seatId, entryId };
-  const entry = await store.getEntry(tenantId, seatId, entryId);
+  // Person-scoped (SYNC S2a): a custom entry the person owns
+  // resolves on any seat (the store projects it); another person's
+  // custom entry is an unknown entry here, exactly as a seat that
+  // does not stock an entry has always been.
+  const entry = await store.getEntry(tenantId, seatId, entryId, { personId });
   if (!entry) {
     return { ...base, state: 'unknown-entry', reason: 'unknown-entry', detail: 'it is not in this seat\u2019s library' };
   }
@@ -233,18 +319,110 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
 
   // The turn's token, in the design's order (§1.1/§2.2): the
   // person's own connection, then the operator's token for the
-  // provider, then none.
+  // provider, then none. Between the connection and the operator
+  // sits the refresh leg (see the refresh-on-resolve header):
+  // a refused connection resolve on a bundle that carries a
+  // refresh token gets ONE refresh exchange before the fallbacks.
   let accessToken = null;
   let tokenSource = null;
+  let refreshedConnection = null;
   if (entry.authMode !== 'none' && connection.accessTokenRef && credentials) {
+    const baseActor = actorContext ?? armingActorContext({ tenantId });
+    // The workspace SET (SYNC S1): the connection record is the
+    // set's row, and its seatId is the PROVENANCE seat — the seat
+    // the connection was set up on. The credential vault keys its
+    // rows (tenant, provider_id, credential_reference) and binds
+    // the provider id into each record's encryption, and the
+    // provider id for a connector credential is
+    // `connector.<seat>.<entry>` for the seat that STORED it. So
+    // the resolve must present the provenance seat's provider id,
+    // not this turn's seat's: the reference itself is tenant-
+    // scoped (vault://tenant/<tenant>/… names no seat or person),
+    // and with the provenance provider id it resolves identically
+    // on every seat. Presenting the turn's seat would look up a
+    // vault row that was never written and arm nothing.
+    const provenanceSeat = connection.seatId ?? seatId;
+    const providerId = `connector.${provenanceSeat}.${entryId}`;
     const resolved = await credentials.resolveVaultCredential({
-      ...(actorContext ?? armingActorContext({ tenantId })),
-      providerId: `connector.${seatId}.${entryId}`,
+      ...baseActor,
+      providerId,
       credentialReference: connection.accessTokenRef,
       reasonClass: 'provider_call',
     });
     const value = resolved?.accepted ? tokenFromCredential(resolved.credential) : null;
     if (value) { accessToken = value; tokenSource = 'connection'; }
+    if (!accessToken && connection.refreshTokenRef && typeof credentials.storeCredential === 'function') {
+      const refreshClient = refreshClientForEntry(entry, oauthClientFor);
+      if (refreshClient) {
+        // The refresh token: from this resolve's own bundle when
+        // it carried one, else from the refresh reference under
+        // the oauth_refresh reason class.
+        let refreshToken = refreshTokenFromResolved(resolved);
+        if (!refreshToken) {
+          const refreshResolved = await credentials.resolveVaultCredential({
+            ...baseActor, requestId: randomUUID(),
+            providerId,
+            credentialReference: connection.refreshTokenRef,
+            reasonClass: 'oauth_refresh',
+          });
+          refreshToken = refreshTokenFromResolved(refreshResolved);
+        }
+        if (refreshToken) {
+          let tokens = null;
+          let providerRefused = false;
+          try {
+            tokens = await refreshClient.refreshTokens({ refreshToken });
+          } catch (error) {
+            providerRefused = error?.refreshRefused === true;
+          }
+          if (!tokens?.accessToken && providerRefused) {
+            // The grant itself is dead (revoked): say so on the
+            // connection, honestly and permanently, instead of
+            // unarming silently on every later turn.
+            if (typeof store.markNeedsReconnect === 'function') {
+              await store.markNeedsReconnect(tenantId, key, baseActor.actorSubject);
+            }
+            return {
+              ...base, ...facts, state: 'needs-reconnect', reason: 'connection-needs-reconnect',
+              detail: 'its sign-in could not be renewed — the provider refused the renewal, so it needs reconnecting',
+            };
+          }
+          if (tokens?.accessToken) {
+            const nextRefreshToken = tokens.refreshToken ?? refreshToken;
+            // The renewed pair is minted under the PROVENANCE
+            // seat's reference family (see the provider id note
+            // above): the set's references stay one family, so the
+            // next resolve — on any seat — finds them under the
+            // same provider id the connection has always used.
+            const nextAccessRef = buildConnectorTokenRef({ tenantId, seatId: provenanceSeat, entryId, personId, tokenKind: 'access' });
+            const nextRefreshRef = buildConnectorTokenRef({ tenantId, seatId: provenanceSeat, entryId, personId, tokenKind: 'refresh' });
+            const bundle = {
+              ...baseActor, providerId, credentialKind: 'oauth_bundle',
+              accessToken: tokens.accessToken, refreshToken: nextRefreshToken,
+              tokenType: tokens.tokenType ?? 'Bearer', scope: tokens.scope ?? null, expiresIn: tokens.expiresIn ?? null,
+            };
+            const storedAccess = await credentials.storeCredential({ ...bundle, credentialReference: nextAccessRef });
+            let storedRefresh = null;
+            if (storedAccess?.accepted) {
+              storedRefresh = await credentials.storeCredential({ ...bundle, credentialReference: nextRefreshRef });
+            }
+            if (storedAccess?.accepted && storedRefresh?.accepted) {
+              if (typeof store.updateConnectionTokens === 'function') {
+                refreshedConnection = await store.updateConnectionTokens(tenantId, key, {
+                  accessTokenRef: nextAccessRef,
+                  refreshTokenRef: nextRefreshRef,
+                  ...(tokens.scope ? { grantedScopes: tokens.scope.split(/\s+/).filter(Boolean) } : {}),
+                }, baseActor.actorSubject);
+              } else {
+                refreshedConnection = { ...connection, accessTokenRef: nextAccessRef, refreshTokenRef: nextRefreshRef };
+              }
+              accessToken = tokens.accessToken;
+              tokenSource = 'connection';
+            }
+          }
+        }
+      }
+    }
   }
   if (!accessToken && entry.authMode !== 'none') {
     const providerKey = operatorProviderKeyFor(entry);
@@ -258,7 +436,7 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
   // probe's list, frozen at connect time — a missing one is a
   // freeze-failed record, never a fresh list taken at arm time.
   let snapshot = await store.getCurrentSnapshot(tenantId, key);
-  let settled = connection;
+  let settled = refreshedConnection ?? connection;
   if (!snapshot && entry.kind === 'custom') {
     return { ...base, ...facts, state: 'freeze-failed', reason: 'freeze-failed', detail: 'it passed its safety check but has no frozen tool list from that check yet, so this turn cannot run its tools' };
   }
@@ -300,7 +478,7 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
  * credential-connect client from the environment, the prompts wire
  * client's listTools, and the operator token from the environment.
  */
-export async function resolveDispatchArming({ pool, tenantId, personId, pairs, store = null, credentials = undefined, listTools = null, operatorTokens = null, toolConnections = undefined } = {}) {
+export async function resolveDispatchArming({ pool, tenantId, personId, pairs, store = null, credentials = undefined, listTools = null, operatorTokens = null, toolConnections = undefined, oauthClientFor = undefined } = {}) {
   const libraryStore = store ?? createConnectorLibraryStore(pool);
   const credentialClient = credentials !== undefined ? credentials : createCredentialConnectClient();
   // The custom-entry gate's store: the same pool the library reads
@@ -325,6 +503,7 @@ export async function resolveDispatchArming({ pool, tenantId, personId, pairs, s
       seatId: pair.seatId,
       entryId: pair.entryId,
       actorContext: armingActorContext({ tenantId, sessionId }),
+      ...(oauthClientFor !== undefined ? { oauthClientFor } : {}),
     }));
   }
   return records;

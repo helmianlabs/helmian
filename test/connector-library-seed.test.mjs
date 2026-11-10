@@ -150,7 +150,7 @@ test('1+2+8 — first read on an empty tenant seeds and returns rows; second rea
   assert.deepEqual(first.seed.conflicts, []);
   assert.equal(first.rows.length, catalogEntriesForSeat('claude').length, 'the seeded catalog reads back');
   assert.ok(first.rows.every((r) => r.name && r.oneLiner && r.state), 'rows are real library rows');
-  assert.equal(store.entryCount(tenant), 89, 'the whole catalog landed (all seats), not just the read seat — 89 since Bite R2 added the team-work family to Source 4 (Slack, Asana, HubSpot brokered on each of claude, chatgpt, grok) and the Figma mirror on claude and chatgpt; 78 since Source 4 (the vendor-published Vercel server, Helmian-brokered) added 1 entry on each of claude, chatgpt, grok; 75 since Source 3 (the MCP Registry imports) stocked 21 more across the seats; 54 after the Scribe cut removed the native Scribe entry from all 14 seats (was 68)');
+  assert.equal(store.entryCount(tenant), 116, 'the whole catalog landed (all seats), not just the read seat — 116 since the fixed-tail bite added Canva and Dropbox brokered on each of claude, chatgpt, grok; 110 since the DCR long-tail bite added Meltwater, S&P Global, Idiolect and Gamma brokered on each of claude, chatgpt, grok; 98 since the Google family bite added Gmail, Google Calendar and Google Drive brokered on each of claude, chatgpt, grok; 89 since Bite R2 added the team-work family to Source 4 (Slack, Asana, HubSpot brokered on each of claude, chatgpt, grok) and the Figma mirror on claude and chatgpt; 78 since Source 4 (the vendor-published Vercel server, Helmian-brokered) added 1 entry on each of claude, chatgpt, grok; 75 since Source 3 (the MCP Registry imports) stocked 21 more across the seats; 54 after the Scribe cut removed the native Scribe entry from all 14 seats (was 68)');
 
   const createCallsAfterSeed = store.stats.createEntryCalls;
   const second = await read.readSeatLibrary(tenant, { personId: PERSON, seatId: 'claude' });
@@ -173,7 +173,7 @@ test('9 — default wiring seeds through the real refresh machinery on the read�
   const view = await read.readSeatLibrary(tenant, { personId: PERSON, seatId: 'grok' });
   assert.equal(view.seed.seeded, true);
   assert.equal(view.rows.length, catalogEntriesForSeat('grok').length);
-  assert.equal(store.entryCount(tenant), 89); // 54 + the 21 Source 3 registry imports + the 3 Source 4 brokered Vercel entries + Bite R2's 9 brokered team-work entries and 2 Figma mirrors
+  assert.equal(store.entryCount(tenant), 116); // 54 + the 21 Source 3 registry imports + the 3 Source 4 brokered Vercel entries + Bite R2's 9 brokered team-work entries and 2 Figma mirrors + the Google family bite's 9 brokered entries + the DCR long-tail bite's 12 brokered entries + the fixed-tail bite's 6 brokered entries
 });
 
 test('3 — a catalog entry deleted from a populated seat is restored by that seat’s next read (resurrection-on-read, the accepted trade-off); a custom entry is untouched', async () => {

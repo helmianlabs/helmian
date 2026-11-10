@@ -535,3 +535,133 @@ test('§3.4 through the read: one seat’s state never leaks into another seat�
   const strangerGrok = await read.readSeatLibrary(TENANT, { personId: OTHER_PERSON, seatId: 'grok', now: NOW });
   assert.equal(strangerGrok.rows.find((r) => r.entryId === 'github').state, 'not-connected');
 });
+
+// ------------------------------------------------- auth mode on the row
+// The server-truth pair bite (panel-key-form finding): the library
+// read carried NO auth mode, so the panel could learn that an entry
+// takes a key only from a connect attempt's needs-credential answer —
+// a header entry connected in an EARLIER session showed no Replace
+// control in a fresh one. The row now carries authMode, taken from
+// the entry DEFINITION (the catalog definition when the catalog
+// defines the entry — the write route's effectiveAuthMode law; the
+// entry's own stored mode for custom entries, which the catalog does
+// not define), never from the connection record. These tests run the
+// real read over a stub store whose entry shapes mimic the real
+// store's entryOf output; a no-op seedCatalog keeps the seed/heal
+// refresh (which writes entries only) out of the assertions.
+function stubRead(entries, { connections = [], mirrors = [] } = {}) {
+  const libraryStore = {
+    async listEntries(tenantId, seatId) { return entries.filter((e) => e.seatId === seatId); },
+    async listConnections(tenantId, { seatId }) { return connections.filter((c) => c.seatId === seatId); },
+    async listMirrors(tenantId, { seatId }) { return mirrors.filter((m) => m.seatId === seatId); },
+  };
+  return createSeatLibraryRead({ libraryStore, seedCatalog: async () => ({ seats: [] }) });
+}
+
+const storedFromCatalog = (seatId, entryId, over = {}) => ({
+  ...catalogEntriesForSeat(seatId).find((d) => d.id === entryId),
+  state: 'available',
+  ...over,
+});
+
+test('auth mode on the read row: a header entry connected in an earlier session still reads header in a fresh read', async () => {
+  // A custom entry is the header road's live shape today: the
+  // catalog defines no header entry, so a person's own entry carries
+  // its mode on its stored record — and that record IS its
+  // definition (effectiveAuthMode's custom rule).
+  const entry = {
+    seatId: 'claude', id: 'custom-keybox', kind: 'custom', name: 'Keybox',
+    oneLiner: 'A service that takes an API key', iconRef: 'icon:custom',
+    vendorName: 'Custom', trustLabel: 'custom', category: null,
+    brokerMode: 'helmian', mcpEndpointUrl: 'https://keybox.example.com/mcp',
+    authMode: 'header', state: 'available',
+  };
+  const connection = {
+    personId: PERSON, seatId: 'claude', entryId: 'custom-keybox',
+    accountIdentity: 'Work key', state: 'connected', posture: 'ask', lastUsedAt: null,
+    accessTokenRef: refFor('claude', 'custom-keybox'), refreshTokenRef: null,
+  };
+  const read = stubRead([entry], { connections: [connection] });
+  const view = await read.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'claude', now: NOW });
+  const row = view.rows.find((r) => r.entryId === 'custom-keybox');
+  assert.equal(row.state, 'connected', 'the earlier session’s connection is this read’s state');
+  assert.equal(row.authMode, 'header', 'the fresh read itself says the entry takes a key — no connect attempt needed');
+});
+
+test('auth mode on the read row comes from the catalog definition, not the stored row: a stale stored label never reroutes the row', async () => {
+  // The exact stale-label shape the write route's law exists for: a
+  // row seeded under an older catalog still says 'none' while the
+  // catalog definition says 'oauth'. The row must carry the
+  // definition's mode.
+  const stale = storedFromCatalog('claude', 'helmian-vercel', { authMode: 'none' });
+  const read = stubRead([stale]);
+  const view = await read.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'claude', now: NOW });
+  const row = view.rows.find((r) => r.entryId === 'helmian-vercel');
+  assert.equal(row.authMode, 'oauth', 'the catalog definition governs the row, not the stale stored label');
+});
+
+test('auth mode on the read row: a none entry reads none, and a vendor mirror reads oauth — the definition treats mirrors uniformly', async () => {
+  // What the definition source does with mirrors (stated, not
+  // assumed): catalogEntry assigns EVERY entry an authMode — a
+  // vendor pipe's entries carry 'oauth' (connector-catalog.mjs:
+  // authMode is the pipe's own mode for a helmian pipe, 'oauth' for
+  // a vendor pipe). There is no mirror carve-out in the definition,
+  // so mirror rows gain the field uniformly, with the mirror's own
+  // definition value; nothing else about the mirror row changes.
+  const docs = storedFromCatalog('cloudflare', 'cloudflare-docs');
+  const cfRead = stubRead([docs]);
+  const cf = await cfRead.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'cloudflare', now: NOW });
+  assert.equal(cf.rows.find((r) => r.entryId === 'cloudflare-docs').authMode, 'none');
+
+  const gmail = storedFromCatalog('claude', 'gmail');
+  const mirror = {
+    personId: PERSON, seatId: 'claude', entryId: 'gmail',
+    reportedState: 'connected', reportedAccountIdentity: 'troy@example.com',
+    reportedAt: '2026-11-08T15:00:00.000Z',
+  };
+  const claudeRead = stubRead([gmail], { mirrors: [mirror] });
+  const claude = await claudeRead.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'claude', now: NOW });
+  const row = claude.rows.find((r) => r.entryId === 'gmail');
+  assert.equal(row.brokerMode, 'vendor');
+  assert.equal(row.authMode, 'oauth', 'a mirror row carries its definition’s mode like every other row');
+  assert.equal(row.state, 'connected', 'the mirror join is unchanged');
+  assert.equal(row.accountIdentity, 'troy@example.com');
+  assert.equal(row.stateDetail.managedBy, 'vendor');
+});
+
+test('no credential material or reference ever appears in any read row', async () => {
+  const headerEntry = {
+    seatId: 'claude', id: 'custom-keybox', kind: 'custom', name: 'Keybox',
+    oneLiner: 'A service that takes an API key', iconRef: 'icon:custom',
+    vendorName: 'Custom', trustLabel: 'custom', category: null,
+    brokerMode: 'helmian', mcpEndpointUrl: 'https://keybox.example.com/mcp',
+    authMode: 'header', state: 'available',
+  };
+  const vercel = storedFromCatalog('claude', 'helmian-vercel');
+  const headerRef = refFor('claude', 'custom-keybox');
+  const accessRef = refFor('claude', 'helmian-vercel');
+  const refreshRef = refFor('claude', 'helmian-vercel', PERSON, 'refresh');
+  const connections = [
+    { personId: PERSON, seatId: 'claude', entryId: 'custom-keybox', accountIdentity: 'Work key', state: 'connected', posture: 'ask', lastUsedAt: null, accessTokenRef: headerRef, refreshTokenRef: null },
+    { personId: PERSON, seatId: 'claude', entryId: 'helmian-vercel', accountIdentity: 'troy@vercel', state: 'connected', posture: 'ask', lastUsedAt: null, accessTokenRef: accessRef, refreshTokenRef: refreshRef },
+  ];
+  const read = stubRead([headerEntry, vercel], { connections });
+  const view = await read.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'claude', now: NOW });
+  assert.equal(view.rows.length, 2);
+  const keysOf = (value, acc = []) => {
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) { acc.push(k); keysOf(v, acc); }
+    }
+    return acc;
+  };
+  for (const row of view.rows) {
+    const serialized = JSON.stringify(row);
+    for (const ref of [headerRef, accessRef, refreshRef]) {
+      assert.ok(!serialized.includes(ref), `${row.entryId}: no vault reference rides the row`);
+    }
+    assert.ok(!('accessTokenRef' in row) && !('refreshTokenRef' in row), `${row.entryId}: the row holds no reference fields`);
+    for (const key of keysOf(row)) {
+      assert.ok(!/token|credential|secret|vault/i.test(key), `${row.entryId}: no credential-shaped field "${key}" anywhere in the row`);
+    }
+  }
+});

@@ -537,6 +537,341 @@ const BROKERED_SERVERS = Object.freeze([
       },
     }),
   }),
+  // ------------------------------------------ Google family (2026-11-10)
+  // Gmail, Google Calendar, Google Drive. Google publishes one
+  // remote MCP server per Workspace product (whole-list research,
+  // google-microsoft.md §1), and the sign-in road is fixed
+  // registration ONLY: Google's authorization-server metadata
+  // (live read, 2026-11-10) names NO registration endpoint and no
+  // CIMD support, so the DCR/CIMD roads cannot serve these entries
+  // by construction. ONE Google Cloud OAuth client covers all
+  // three products — the consent is per-product scopes on the one
+  // client — so all three entries run under the ONE fixed provider
+  // 'google' (connector-oauth-pending.mjs), its pair held as
+  // project env (GOOGLE_OAUTH_CLIENT_ID /
+  // GOOGLE_OAUTH_CLIENT_SECRET). Until that pair is placed, a
+  // connect start answers the honest consent boundary naming
+  // Google, and connects nothing.
+  //   - Placement follows Source 4's geography — the seats the
+  //     existing brokered family (Vercel, Slack, Asana, HubSpot)
+  //     is stocked on: claude, chatgpt, grok. The Google mirrors
+  //     also live on gemini (Google brokers Gemini's Workspace
+  //     apps itself), but no brokered entry is stocked there; the
+  //     brokered placement follows the Source 4 family, not the
+  //     mirrors' spread. The mirrors stay as data beside these
+  //     rows on claude/chatgpt/grok (and alone on gemini) — the
+  //     brokered row represents the name where both exist.
+  //   - Each entry declares its OWN product scopes (oauthScopes
+  //     below): the scopes Google's own Workspace MCP setup page
+  //     names for that product. The connect road reads them from
+  //     this definition via declaredOAuthScopes — never from the
+  //     stored row — and the Google factory adds
+  //     access_type=offline + prompt=consent, without which
+  //     Google issues no refresh token and the person re-signs-in
+  //     about every hour.
+  //   - Gmail's copy is draft-and-read, truthfully: Google's
+  //     published Gmail tool list has NO send tool, so the words
+  //     promise drafts and reads and never sending. Calendar's
+  //     declared scopes are read-only (Google's setup page) and
+  //     whether the server exposes write tools is UNVERIFIED in
+  //     the research, so its words promise no event creation.
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-gmail',
+      name: 'Gmail',
+      oneLiner: 'Search your inbox, read threads, and draft replies',
+      icon: 'gmail',
+      vendorName: 'Google',
+      trustLabel: 'verified',
+      category: 'productivity',
+      oauthScopes: Object.freeze([
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.compose',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://gmailmcp.googleapis.com/mcp/v1',
+        authMode: 'oauth',
+        scopesSummary: 'Signing in connects your own Google account: this agent can search and read your mail and prepare drafts in Gmail. It cannot send mail from here \u2014 Google\u2019s Gmail server offers drafts and reads only, so you send from Gmail yourself.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-google-calendar',
+      name: 'Google Calendar',
+      oneLiner: 'See your calendars, check availability, and read your events',
+      icon: 'google-calendar',
+      vendorName: 'Google',
+      trustLabel: 'verified',
+      category: 'productivity',
+      oauthScopes: Object.freeze([
+        'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+        'https://www.googleapis.com/auth/calendar.events.freebusy',
+        'https://www.googleapis.com/auth/calendar.events.readonly',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://calendarmcp.googleapis.com/mcp/v1',
+        authMode: 'oauth',
+        scopesSummary: 'Signing in connects your own Google account: this agent can see your calendar list, check free and busy times, and read your events.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-google-drive',
+      name: 'Google Drive',
+      oneLiner: 'Search, open, and read your documents and files',
+      icon: 'google-drive',
+      vendorName: 'Google',
+      trustLabel: 'verified',
+      category: 'documents',
+      oauthScopes: Object.freeze([
+        'https://www.googleapis.com/auth/drive.readonly',
+        'https://www.googleapis.com/auth/drive.file',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://drivemcp.googleapis.com/mcp/v1',
+        authMode: 'oauth',
+        scopesSummary: 'Signing in connects your own Google account: this agent can search and read the files in your Drive, and work with the files it opens or creates there.',
+      },
+    }),
+  }),
+  // --------------------------------- DCR long tail (2026-11-10)
+  // Meltwater, S&P Global, Idiolect, Gamma. Each vendor publishes
+  // its own remote MCP server whose authorization server offers
+  // DYNAMIC CLIENT REGISTRATION (live discovery reads, 2026-11-10:
+  // every authorization-server document below names a registration
+  // endpoint and PKCE S256), so Helmian registers itself at
+  // connect time on the DCR road — no pre-registered app, no env
+  // pair, no fixed provider. None of the four is named in
+  // FIXED_PROVIDER_BY_ENTRY_ID and none declares a CIMD client id,
+  // so kind resolution rules each one 'dcr' under its own service
+  // key. Placement follows Source 4's geography — claude,
+  // chatgpt, grok. The mirrors stay as data beside these rows:
+  // Gamma, Meltwater and S&P Global on Grok, Idiolect on Claude;
+  // the brokered row represents the name where both exist. Trust
+  // labels follow the mirrors' own labels for each name —
+  // 'community' for all four; no label is upgraded here.
+  //   - Declared scopes are each authorization server's own
+  //     published scopes_supported, read live 2026-11-10, and
+  //     nothing else. The DCR road narrows a declared ask to what
+  //     the server's resource document offers at registration
+  //     (Meltwater's resource document offers tools:read and
+  //     tools:call, so that pair is Meltwater's registration ask).
+  //   - Idiolect declares NO scopes: neither its protected-
+  //     resource document nor its ScaleKit issuer's authorization-
+  //     server metadata publishes any scopes_supported (live read,
+  //     2026-11-10), and no provider-hosted setup documentation
+  //     naming scopes was located — so the entry declares none
+  //     and its words promise no more than the mirror's own
+  //     one-liner (writing-style tools). Its issuer publishes BOTH
+  //     a registration endpoint and CIMD support; the live-proof
+  //     start (this bite's REPORT) registered on the DCR road, so
+  //     the entry declares no cimdClientId — DCR is the road that
+  //     works, and a declared CIMD identity would outrank it.
+  //   - S&P Global's real gate is the person's own account: the
+  //     Kensho LLM-Ready API answers under the signing-in person's
+  //     provisioned, entitled S&P Global/Kensho account. That is
+  //     consent-side truth, carried in the entry's scopesSummary —
+  //     not a registration blocker: registration itself is open.
+  //   - Gamma stands behind TWO provider-side gates, both met
+  //     live in this bite's proof (REPORT's live-proof table):
+  //     its protected-resource document names the origin
+  //     (https://mcp.gamma.app) as its resource rather than the
+  //     /mcp endpoint its own docs publish, so Helmian's
+  //     discovery — which refuses a metadata document naming a
+  //     different resource — stops the start before registration
+  //     is ever attempted; and Gamma's registration endpoint
+  //     itself refuses the production callback until Gamma's
+  //     team allowlists it through the Request MCP Access form
+  //     (REGISTRATION-PACK §11; the direct probe in the REPORT
+  //     carries Gamma's exact words). The entry ships on the DCR
+  //     road regardless: the start surfaces the refusal honestly
+  //     and connects nothing, and no fake boundary state stands
+  //     in for either gate.
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-meltwater',
+      name: 'Meltwater',
+      oneLiner: 'Track media coverage and brand mentions',
+      icon: 'meltwater',
+      vendorName: 'Meltwater',
+      trustLabel: 'community',
+      category: 'data',
+      oauthScopes: Object.freeze(['openid', 'profile', 'email', 'tools:read', 'tools:call']),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://api.meltwater.com/v2/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Meltwater\u2019s own sign-in page: you sign in with your Meltwater account and approve the connection there \u2014 nothing to paste. This agent can then use Meltwater\u2019s tools to read media coverage and brand mentions, under the access your own Meltwater account already has.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-sp-global',
+      name: 'S&P Global',
+      oneLiner: 'Look up company and market data',
+      icon: 'sp-global',
+      vendorName: 'S&P Global',
+      trustLabel: 'community',
+      category: 'data',
+      oauthScopes: Object.freeze(['kensho:app:kfinance', 'offline_access']),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://kfinance.kensho.com/integrations/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens S&P Global\u2019s own sign-in page for the Kensho LLM-Ready API: you sign in with your own S&P Global account and approve the connection there \u2014 nothing to paste. The connection works with your own S&P Global/Kensho account access and entitlements: it can look up only the company and market data your account is provisioned and entitled to see.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-idiolect',
+      name: 'Idiolect',
+      oneLiner: 'Write in your own style \u2014 emails, posts, and a writing profile',
+      icon: 'idiolect',
+      vendorName: 'Idiolect',
+      trustLabel: 'community',
+      category: 'productivity',
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://idiolect.app/api/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Idiolect\u2019s own sign-in page: you sign in with your Idiolect account and approve the connection there \u2014 nothing to paste. This agent can then use Idiolect\u2019s writing-style tools \u2014 writing emails and posts in your style and working with your writing profile \u2014 under your own account.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-gamma',
+      name: 'Gamma',
+      oneLiner: 'Generate, read, and edit presentations and documents in Gamma',
+      icon: 'gamma',
+      vendorName: 'Gamma',
+      trustLabel: 'community',
+      category: 'documents',
+      oauthScopes: Object.freeze(['generate', 'gamma:read']),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://mcp.gamma.app/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Gamma\u2019s own sign-in page: you sign in with your Gamma account and approve the connection there \u2014 nothing to paste. This agent can then generate, read, and edit presentations and documents in Gamma. Generations and edits use your own Gamma plan\u2019s credits \u2014 Helmian does not provide them.',
+      },
+    }),
+  }),
+  // --------------------------------- Fixed tail (2026-11-10)
+  // Canva, Dropbox. Each vendor publishes its own remote MCP
+  // server, and neither road lets Helmian register itself for
+  // MCP use: Canva's developer-endpoint road runs on a fixed
+  // Developer Portal app (its documents: "create an app in the
+  // Developer Portal and turn on Canva MCP. You get a client ID
+  // and client secret straight away"; CIMD is offered only
+  // through a waitlist application), and Dropbox's own Help
+  // Center limits MCP dynamic registration to a trusted set of
+  // named clients Helmian is not in — every other client brings
+  // a Dropbox App Console app's credentials. Both entries
+  // therefore run under the fixed registry
+  // (connector-oauth-pending.mjs): one provider each ('canva',
+  // 'dropbox'), its pair held as project env (CANVA_OAUTH_*,
+  // DROPBOX_OAUTH_* — Dropbox's pair is its App key / App
+  // secret). Until a pair is placed, a connect start answers
+  // the honest consent boundary naming that provider, and
+  // connects nothing.
+  //   - Placement follows Source 4's geography — claude,
+  //     chatgpt, grok. The mirrors stay as data beside these
+  //     rows (Canva on all three seats; Dropbox on chatgpt —
+  //     its only mirror); the brokered row represents the name
+  //     where both exist. Trust labels follow the mirrors' own
+  //     labels for each name — 'community' for both; no label
+  //     is upgraded here.
+  //   - Each entry declares its OWN ask (oauthScopes below),
+  //     read by the connect road from this definition via
+  //     declaredOAuthScopes — never from the stored row.
+  //     Canva's set is exactly the scopes_supported list in
+  //     the developer server's own protected-resource document
+  //     (https://api.canva.com/.well-known/oauth-protected-
+  //     resource/connect/v1/mcp, live read 2026-11-10).
+  //     Dropbox's set is exactly the scopes_supported list in
+  //     its MCP server's own protected-resource document
+  //     (https://mcp.dropbox.com/.well-known/oauth-protected-
+  //     resource/mcp, live read 2026-11-10) — the MCP set,
+  //     which is the Dropbox Help Center's App Console
+  //     permissions list for this server plus
+  //     files.metadata.write, the metadata-write scope its
+  //     create/organise tools run on.
+  //   - Canva's factory adds nothing to the authorize URL
+  //     beyond PKCE: its token exchange is Basic-auth + PKCE
+  //     and its authorization server issues a refresh token
+  //     with the code (Canva's Connect authentication page),
+  //     so refresh-on-resolve covers Canva from day one.
+  //     Dropbox's factory shapes token_access_type=offline —
+  //     without it Dropbox issues NO refresh token on this
+  //     road. Dropbox's MCP server is in beta (Dropbox's own
+  //     Help Center page), which the entry's words say.
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-canva',
+      name: 'Canva',
+      oneLiner: 'Find, read, and create designs in your Canva library',
+      icon: 'canva',
+      vendorName: 'Canva',
+      trustLabel: 'community',
+      category: 'design',
+      oauthScopes: Object.freeze([
+        'profile:read',
+        'design:meta:read', 'design:content:read', 'design:content:write',
+        'folder:read', 'folder:write',
+        'brandtemplate:meta:read', 'brandtemplate:content:read', 'brandtemplate:content:write',
+        'comment:read', 'comment:write',
+        'asset:read', 'asset:write',
+        'brandkit:read',
+        'help:answers:read', 'help:answers:write',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://api.canva.com/connect/v1/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Canva\u2019s own sign-in page: you sign in with your Canva account and approve the connection there \u2014 nothing to paste. This agent can then search and read your designs, create and edit designs, work with your folders and assets, read your brand templates and brand kits, and read and add comments \u2014 under the access your own Canva account already has.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-dropbox',
+      name: 'Dropbox',
+      oneLiner: 'Search, open, and organise files stored in Dropbox',
+      icon: 'dropbox',
+      vendorName: 'Dropbox',
+      trustLabel: 'community',
+      category: 'documents',
+      oauthScopes: Object.freeze([
+        'account_info.read',
+        'file_requests.read', 'file_requests.write',
+        'files.content.read', 'files.content.write',
+        'files.metadata.read', 'files.metadata.write',
+        'sharing.read', 'sharing.write',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://mcp.dropbox.com/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Dropbox\u2019s own sign-in page: you sign in with your Dropbox account and approve the connection there \u2014 nothing to paste. This agent can then search, browse, and read your files and their details, create and update files and folders \u2014 Dropbox\u2019s published scope set for its MCP server includes writing file content, which its create and organise tools need \u2014 manage sharing and shared links, and work with file requests, under the access your own Dropbox account already has. Dropbox\u2019s MCP server is in beta.',
+      },
+    }),
+  }),
 ]);
 
 function brokeredServerEntriesForSeat(seatId) {

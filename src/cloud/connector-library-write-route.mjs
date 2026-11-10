@@ -43,7 +43,7 @@
 //     consumed, the code is exchanged, the token pair is stored in
 //     the credential service under the connection's vault references,
 //     and the connection is recorded. Answers a small HTML page that
-//     carries the person back to the Manage surface.
+//     carries the person back to Helmian.
 //   POST /api/admin/connector-library/disconnect
 //     The store's disconnect with its revoke hook wired to the
 //     credential service: stored credentials are revoked BEFORE the
@@ -97,6 +97,30 @@
 // acts (connect, disconnect, posture) act on the caller's own
 // connection only. Workspace acts (entry-state, add/remove custom)
 // are owner/admin. Auditors never write (skill-route precedent).
+//
+// THE WORKSPACE SET (SYNC S1): "the caller's own connection" is the
+// workspace SET's row for the entry (connector-library.mjs) — a
+// connect completed on any seat becomes the set's row, a posture /
+// tool-enable write from any seat lands on it, and a disconnect
+// from any seat disconnects it for every seat. The seat in a write
+// body names the library the action was taken from; the store
+// resolves the set's row behind it. Credential resolves/revokes
+// address the vault record by the reference's own provider segment
+// (providerIdForRef), because the set's credential was stored under
+// the seat it was set up on.
+//
+// CUSTOM ENTRIES JOIN THE SET (SYNC S2a): the personal roads fetch
+// the entry person-scoped, so a custom entry the caller owns
+// resolves from any seat (the store projects it; another person's
+// custom does not resolve at all). The GATE still keys per
+// (seat, entry): ensureCustomGate runs against the entry AS READ
+// ON THE ARRIVING SEAT (its view seat is the arriving seat), so a
+// connect through a new seat registers and probes that seat's own
+// gate row — the gate state never travels. The CREDENTIAL, by
+// contrast, is minted under the seat the connection row lands on
+// (credentialSeatFor): a custom entry's provenance seat, so the
+// reference, the provider id, and the connection row's seat agree,
+// and S1's resolves find the record on every seat.
 
 import { randomUUID } from 'node:crypto';
 
@@ -182,6 +206,38 @@ function refuseCredentialValues(input, { allow = [] } = {}) {
 
 const providerIdFor = (seatId, entryId) => `connector.${seatId}.${entryId}`;
 
+// The provider id a stored credential actually lives under (SYNC
+// S1, the workspace connector SET): a connection's vault references
+// are minted by buildConnectorTokenRef as
+// vault://tenant/<tenant>/connector.<seat>.<entry>/… — the middle
+// segment IS the provider id the credential service stored the
+// record under (its rows are keyed (tenant, provider_id,
+// reference)), and <seat> is the seat the connection was SET UP
+// on, which is not necessarily the seat a later action arrives on.
+// Resolving or revoking with the arriving seat's provider id
+// would address a vault row that was never written, so wherever a
+// reference is in hand, its own segment names the provider.
+const providerIdForRef = (ref, seatId, entryId) => {
+  const match = /^vault:\/\/tenant\/[^/]+\/([^/]+)\//.exec(String(ref ?? ''));
+  return match ? match[1] : providerIdFor(seatId, entryId);
+};
+
+// The seat a connection's credentials are minted under (SYNC S2a):
+// for a stocked entry it is the seat the connect arrived on — the
+// seat the connection row is recorded under. For a CUSTOM entry
+// the connection row lands on the entry's PROVENANCE seat (the
+// store records it there, because the connection's foreign key
+// names the entry's one physical row), so the references are
+// minted under that seat too: S1's invariant — the set row's seat,
+// its references' seat segment, and the vault provider id all name
+// the one seat the connection was recorded under — then holds for
+// custom entries exactly as for stocked ones, and a resolve
+// presenting the connection's seat finds the vault record that
+// exists. Entries from stores that carry no provenance (test
+// fakes shaped before S2a) fall back to the arriving seat, which
+// is their physical seat by construction.
+const credentialSeatFor = (entry, seatId) => (entry?.kind === 'custom' ? (entry.provenanceSeatId ?? seatId) : seatId);
+
 // The fixed road's connect scopes, per provider (m3-github
 // DESIGN.md §1.2/§6.2): the GitHub entry asks for `repo` and
 // `read:org` — the smallest classic scopes covering the repository,
@@ -212,6 +268,21 @@ const providerIdFor = (seatId, entryId) => `connector.${seatId}.${entryId}`;
 //     an MCP connector — its consent page derives them from the
 //     server's tools and the person's own permissions — so the
 //     HubSpot factory sends no scope parameter either.
+//   - google: NO entry in this table, deliberately. One provider
+//     ('google') serves three entries whose asks DIFFER per
+//     product (Gmail's pair, Calendar's three, Drive's pair — the
+//     scopes Google's own Workspace MCP setup page names), so a
+//     per-provider table cannot carry them. Each Google entry
+//     declares its own ask as catalog data (oauthScopes), and the
+//     fixed start below reads it through declaredOAuthScopes —
+//     the catalog definition, never the stored row.
+//   - canva / dropbox: NO entries in this table, deliberately —
+//     the same law as google's, one entry per provider: each
+//     entry declares its own ask as catalog data (oauthScopes —
+//     the scopes its server's own protected-resource document
+//     publishes for MCP), and the fixed start below reads it
+//     through declaredOAuthScopes. A per-provider table would
+//     only duplicate the catalog's declaration.
 const FIXED_CONNECT_SCOPES = Object.freeze({
   github: Object.freeze(['repo', 'read:org']),
   slack: Object.freeze([
@@ -423,11 +494,11 @@ export function createConnectorLibraryWriteHandler({
         const code = requestUrl.searchParams.get('code');
         const state = requestUrl.searchParams.get('state');
         const providerError = requestUrl.searchParams.get('error');
-        if (providerError) return fail('The sign-in answered with an error, so nothing was connected. Start the connect again from the Manage surface.');
-        if (!code || !state) return fail('The sign-in sent back no code, so nothing was connected. Start the connect again from the Manage surface.');
+        if (providerError) return fail('The sign-in answered with an error, so nothing was connected. Start the connect again from Helmian.');
+        if (!code || !state) return fail('The sign-in sent back no code, so nothing was connected. Start the connect again from Helmian.');
         const pendingStore = resolvePending();
         const pending = pendingStore ? await pendingStore.take(tenantId, hashOAuthState(state)) : null;
-        if (!pending) return fail('This sign-in link has expired or was never started here. Start the connect again from the Manage surface.');
+        if (!pending) return fail('This sign-in link has expired or was never started here. Start the connect again from Helmian.');
         if (pending.personId !== personId) return fail('This sign-in was started by a different person in the workspace, so it cannot land on your account.');
         // The client is resolved from the pending row itself —
         // never a default: the fixed registry for a fixed-provider
@@ -436,7 +507,7 @@ export function createConnectorLibraryWriteHandler({
         // as an expired link: Helmian cannot finish what it holds
         // no client for.
         const oauthClient = resolveCallbackOAuthClient(pending);
-        if (!oauthClient) return fail('This sign-in link has expired or was never started here. Start the connect again from the Manage surface.');
+        if (!oauthClient) return fail('This sign-in link has expired or was never started here. Start the connect again from Helmian.');
         const providerName = oauthClient.displayName || pending.provider;
         const credentials = resolveCredentials();
         if (!credentials) return fail('Helmian\u2019s credential storage is not switched on, so the sign-in could not be kept. Nothing was connected.');
@@ -448,7 +519,7 @@ export function createConnectorLibraryWriteHandler({
             clientId: pending.clientId, code, codeVerifier: pending.codeVerifier, redirectUri: pending.redirectUri,
           });
         } catch {
-          return fail(`The ${providerName} sign-in answered with an error, so nothing was connected. Start the connect again from the Manage surface.`);
+          return fail(`The ${providerName} sign-in answered with an error, so nothing was connected. Start the connect again from Helmian.`);
         }
         const providerId = providerIdFor(pending.seatId, pending.entryId);
         const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId: pending.seatId, entryId: pending.entryId, personId, tokenKind: 'access' });
@@ -495,7 +566,7 @@ export function createConnectorLibraryWriteHandler({
         // entry with no frozen snapshot rather than backstop-
         // freezing one at arm time.
         try {
-          const landedEntry = await store.getEntry(tenantId, pending.seatId, pending.entryId);
+          const landedEntry = await store.getEntry(tenantId, pending.seatId, pending.entryId, { personId });
           if (landedEntry?.kind === 'custom' && resolveToolConnections()) {
             const probe = await runGateProbe({ tenantId, entry: landedEntry });
             if (probe?.state === 'verified' && Array.isArray(probe.tools)) {
@@ -503,7 +574,7 @@ export function createConnectorLibraryWriteHandler({
             }
           }
         } catch { /* the dispatch guard carries the unfrozen case honestly */ }
-        send(response, 200, callbackPage(`${providerName} is connected`, `${providerName} is now connected inside Helmian for this seat. Taking you back to the Manage surface.`), 'text/html; charset=utf-8');
+        send(response, 200, callbackPage(`${providerName} is connected`, `${providerName} is now connected inside Helmian for this seat. Taking you back to Helmian.`), 'text/html; charset=utf-8');
         return true;
       }
 
@@ -549,7 +620,10 @@ export function createConnectorLibraryWriteHandler({
         const credentials = resolveCredentials();
         if (!credentials) throw failure(503, 'Helmian\u2019s credential storage is not switched on, so the sign-in cannot be read', { code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' });
         const resolved = await credentials.resolveVaultCredential({
-          tenantId, ...actorContext, providerId: providerIdFor(seatId, entryId), credentialReference: connection.accessTokenRef, reasonClass: 'provider_call',
+          // The set's row may have been set up on another seat:
+          // the credential lives under the reference's own
+          // provider segment (providerIdForRef), not this seat's.
+          tenantId, ...actorContext, providerId: providerIdForRef(connection.accessTokenRef, seatId, entryId), credentialReference: connection.accessTokenRef, reasonClass: 'provider_call',
         });
         if (!resolved?.accepted) throw failure(502, 'the stored sign-in could not be read, so the starters could not be listed', { code: 'CREDENTIAL_NOT_RESOLVABLE' });
         const cred = resolved.credential;
@@ -631,7 +705,7 @@ export function createConnectorLibraryWriteHandler({
 
       if (action === 'connect') {
         refuseCredentialValues(body);
-        const entry = await store.getEntry(tenantId, seatId, entryId);
+        const entry = await store.getEntry(tenantId, seatId, entryId, { personId });
         if (!entry) throw failure(404, 'connector entry not found in this seat\u2019s library');
         if (entry.state !== 'available') throw failure(409, 'this connector is turned off by the workspace owner');
         if (entry.brokerMode !== 'helmian') {
@@ -654,6 +728,11 @@ export function createConnectorLibraryWriteHandler({
           return true;
         }
         const authMode = effectiveAuthMode(entry);
+        // The seat this connect's credentials are minted under
+        // (credentialSeatFor): the arriving seat for a stocked
+        // entry; a custom entry's provenance seat, where its
+        // connection row will land.
+        const credentialSeatId = credentialSeatFor(entry, seatId);
         // The custom gate stands before every auth road: no
         // credential is asked for, stored, or landed on an entry
         // whose null-credential check has not passed.
@@ -675,11 +754,11 @@ export function createConnectorLibraryWriteHandler({
           return true;
         }
         if (authMode === 'header') {
-          const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
+          const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId: credentialSeatId, entryId, personId, tokenKind: 'access' });
           sendJson(200, {
             status: 'needs-credential',
             seatId, entryId,
-            providerId: providerIdFor(seatId, entryId),
+            providerId: providerIdFor(credentialSeatId, entryId),
             accessTokenRef,
             completeAction: 'connect/header',
             note: 'Store the key through the connect/header action — it goes straight into the credential service under this reference, and the library record keeps the reference only.',
@@ -733,7 +812,7 @@ export function createConnectorLibraryWriteHandler({
           try {
             const startConnect = oauthKind.kind === 'cimd' ? startCimdConnect : startDcrConnect;
             started = await startConnect({
-              pendingStore: resolvePending(), tenantId, personId, seatId, entry: oauthEntry,
+              pendingStore: resolvePending(), tenantId, personId, seatId: credentialSeatId, entry: oauthEntry,
               provider: oauthKind.provider, redirectUri: callbackUrl, fetchImpl,
               scopes: connectScopes,
             });
@@ -757,10 +836,16 @@ export function createConnectorLibraryWriteHandler({
             const pendingStore = resolvePending();
             const state = newOAuthState();
             const codeVerifier = newPkceVerifier();
-            const scopes = FIXED_CONNECT_SCOPES[oauthKind.provider] ?? [];
+            // The ask: the entry's own catalog-declared scopes when
+            // it declares any (the Google family — one provider,
+            // three different per-product asks), else the
+            // per-provider table above. No fixed entry before the
+            // Google family declared catalog scopes, so every
+            // existing road's ask is unchanged.
+            const scopes = connectScopes ?? FIXED_CONNECT_SCOPES[oauthKind.provider] ?? [];
             const saved = pendingStore ? await pendingStore.save(tenantId, {
               stateHash: hashOAuthState(state),
-              personId, seatId, entryId,
+              personId, seatId: credentialSeatId, entryId,
               provider: oauthKind.provider,
               // The row names the client the handshake runs under:
               // for the fixed road that is the registry client's own
@@ -790,7 +875,7 @@ export function createConnectorLibraryWriteHandler({
         refuseCredentialValues(body, { allow: ['apiKey'] });
         const apiKey = typeof body.apiKey === 'string' ? body.apiKey : '';
         if (!apiKey) throw failure(400, 'the key itself is required on this one action — it is stored in the credential service and never written to the library record');
-        const entry = await store.getEntry(tenantId, seatId, entryId);
+        const entry = await store.getEntry(tenantId, seatId, entryId, { personId });
         if (!entry) throw failure(404, 'connector entry not found in this seat\u2019s library');
         if (entry.brokerMode !== 'helmian') throw failure(400, 'this entry is vendor-brokered — Helmian holds no credential for it');
         if (entry.kind === 'mcp-local') throw failure(400, 'this entry is a local install on a person\u2019s own machine — Helmian holds no credential for it; the install pipeline\u2019s report is its record', { code: 'MCP_LOCAL_NOT_CONNECTABLE' });
@@ -805,9 +890,10 @@ export function createConnectorLibraryWriteHandler({
         }
         const credentials = resolveCredentials();
         if (!credentials) { sendJson(503, { error: 'Helmian\u2019s credential storage is not switched on, so the key cannot be kept yet', code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' }); return true; }
-        const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
+        const credentialSeatId = credentialSeatFor(entry, seatId);
+        const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId: credentialSeatId, entryId, personId, tokenKind: 'access' });
         const stored = await credentials.storeCredential({
-          tenantId, ...actorContext, providerId: providerIdFor(seatId, entryId), credentialReference: accessTokenRef,
+          tenantId, ...actorContext, providerId: providerIdFor(credentialSeatId, entryId), credentialReference: accessTokenRef,
           credentialKind: 'api_key', apiKey,
         });
         if (!stored?.accepted) { sendJson(502, { error: 'the credential service would not keep the key, so nothing was connected', code: 'CREDENTIAL_STORE_REFUSED' }); return true; }
@@ -831,7 +917,7 @@ export function createConnectorLibraryWriteHandler({
         // twice: the reference must be exactly the one this surface
         // mints for the caller, and the credential must resolve.
         refuseCredentialValues(body);
-        const completeEntry = await store.getEntry(tenantId, seatId, entryId);
+        const completeEntry = await store.getEntry(tenantId, seatId, entryId, { personId });
         if (!completeEntry) throw failure(404, 'connector entry not found in this seat\u2019s library');
         if (completeEntry.kind === 'mcp-local') throw failure(400, 'this entry is a local install on a person\u2019s own machine — Helmian holds no credential for it; the install pipeline\u2019s report is its record', { code: 'MCP_LOCAL_NOT_CONNECTABLE' });
         if (effectiveAuthMode(completeEntry) === 'oauth') {
@@ -846,14 +932,15 @@ export function createConnectorLibraryWriteHandler({
           if (gateEnsured.enforced && !gateEnsured.passed) return refuseUngated(gateEnsured);
         }
         const accessTokenRef = String(body.accessTokenRef ?? '');
-        const expected = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
+        const credentialSeatId = credentialSeatFor(completeEntry, seatId);
+        const expected = buildConnectorTokenRef({ tenantId, seatId: credentialSeatId, entryId, personId, tokenKind: 'access' });
         if (accessTokenRef !== expected) {
           validateVaultTokenRef(accessTokenRef, tenantId, 'accessTokenRef');
           throw failure(400, 'accessTokenRef is not the reference this surface mints for you on this connector');
         }
         const credentials = resolveCredentials();
         if (!credentials) { sendJson(503, { error: 'Helmian\u2019s credential storage is not switched on, so the stored credential cannot be checked', code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' }); return true; }
-        const resolved = await credentials.resolveVaultCredential({ tenantId, ...actorContext, providerId: providerIdFor(seatId, entryId), credentialReference: accessTokenRef, reasonClass: 'provider_call' });
+        const resolved = await credentials.resolveVaultCredential({ tenantId, ...actorContext, providerId: providerIdFor(credentialSeatId, entryId), credentialReference: accessTokenRef, reasonClass: 'provider_call' });
         if (!resolved?.accepted) { sendJson(400, { error: 'no credential is stored under that reference yet — store it first, then complete the connect', code: 'CREDENTIAL_NOT_STORED' }); return true; }
         const connection = await store.createConnection(tenantId, personId, {
           ...key,
@@ -874,7 +961,11 @@ export function createConnectorLibraryWriteHandler({
         const credentials = resolveCredentials();
         const revoke = credentials
           ? async (ref) => {
-            const out = await credentials.revokeVaultCredential({ tenantId, ...actorContext, providerId: providerIdFor(seatId, entryId), credentialReference: ref });
+            // A disconnect from any seat revokes the SET row's
+            // credentials: each reference names its own provider
+            // segment — the seat the connection was set up on —
+            // which is where the vault record actually lives.
+            const out = await credentials.revokeVaultCredential({ tenantId, ...actorContext, providerId: providerIdForRef(ref, seatId, entryId), credentialReference: ref });
             if (out && out.accepted === false) throw failure(502, 'the credential service would not revoke a stored credential, so the disconnect was not recorded');
           }
           : undefined;
@@ -899,7 +990,7 @@ export function createConnectorLibraryWriteHandler({
         // half — one prompt rendered into composer draft text. The
         // token rides only on the call to the server itself.
         refuseCredentialValues(body);
-        const entry = await store.getEntry(tenantId, seatId, entryId);
+        const entry = await store.getEntry(tenantId, seatId, entryId, { personId });
         if (!entry) throw failure(404, 'connector entry not found in this seat\u2019s library');
         const { accessToken } = await brokeredToken(entry);
         const client = resolvePrompts();

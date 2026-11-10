@@ -295,8 +295,19 @@ test('catalog: the picks stock the seats the placement law names, as community H
   // HubSpot, one brokered entry on each of claude, chatgpt, grok
   // (+9) — and the Figma mirror row on claude and chatgpt (+2):
   // 89 in all. The R2 entries are pinned in
-  // connector-r2-team-work.test.mjs.
-  assert.equal(CONNECTOR_CATALOG.length, 89);
+  // connector-r2-team-work.test.mjs. The Google family bite adds
+  // Gmail, Google Calendar and Google Drive to Source 4, one
+  // brokered entry on each of claude, chatgpt, grok (+9): 98 in
+  // all. Those entries are pinned in
+  // connector-google-broker.test.mjs. The DCR long-tail bite adds
+  // Meltwater, S&P Global, Idiolect and Gamma to Source 4, one
+  // brokered entry on each of claude, chatgpt, grok (+12): 110 in
+  // all. Those entries are pinned in
+  // connector-dcr-longtail.test.mjs. The fixed-tail bite adds
+  // Canva and Dropbox to Source 4, one brokered entry on each of
+  // claude, chatgpt, grok (+6): 116 in all. Those entries are
+  // pinned in connector-fixed-tail.test.mjs.
+  assert.equal(CONNECTOR_CATALOG.length, 116);
   for (const seatId of LIVE_SEATS) {
     const defs = catalogEntriesForSeat(seatId);
     for (const pick of registryPicksForSeat(seatId)) {
