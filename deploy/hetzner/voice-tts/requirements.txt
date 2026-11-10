@@ -1,0 +1,4 @@
+kokoro-onnx>=0.4.9
+onnxruntime>=1.20
+soundfile>=0.12
+numpy>=1.26

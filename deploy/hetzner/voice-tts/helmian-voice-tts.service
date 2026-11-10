@@ -1,0 +1,17 @@
+[Unit]
+Description=Helmian served TTS (Kokoro on this box, for helmian.cloud voice chat)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/helmian-voice-tts
+EnvironmentFile=/opt/helmian-voice-tts/voice-tts.env
+ExecStart=/opt/helmian-voice-tts/venv/bin/python /opt/helmian-voice-tts/voice-tts-server.py
+Restart=on-failure
+RestartSec=3
+# The service binds 127.0.0.1 only; Caddy is the public door.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

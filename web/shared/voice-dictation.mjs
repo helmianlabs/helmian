@@ -71,6 +71,23 @@ export const KOKORO_VOICE = 'af_heart';
 export const VOICE_AUTO_SUBMIT_MS = 1500;
 export const KOKORO_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 const KOKORO_SAMPLE_RATE = 24000;
+// ---- Served TTS (lag bite 1, 2026-11-10) ----
+// Server-side synthesis is the primary voice road: reply chunks are
+// synthesized on the Helmian server box (deploy/hetzner/voice-tts/),
+// and the tab only fetches and plays the finished audio, through the
+// ONE served playback queue below. The in-tab Kokoro engine and the
+// speechSynthesis backup stay as the fallback road only — they speak
+// when the served road is unavailable or fails (and the served road
+// is unavailable until deploy sets SERVED_TTS_TOKEN to the token the
+// service runs with; an empty token disables it, so an undeployed
+// build behaves exactly like the pre-bite tab). Synthesis on the
+// tab's own CPU was the freeze: a q8 WASM generate for one chunk can
+// occupy the tab for seconds (see KOKORO_GENERATE_MS), and ten
+// replies landing in one poll turned that into the Chrome
+// "page unresponsive" dialog.
+export const SERVED_TTS_URL = 'https://voice.5-78-222-178.sslip.io';
+export const SERVED_TTS_TOKEN = '69cd453fe41dc09b084128a679b8b437b12eb4bb590c1bc7a8afc689faf6b218';
+export const SERVED_TTS_TIMEOUT_MS = 30000;
 
 // Per-seat voices. Every id below is a voice the bundled model actually
 // ships (onnx-community/Kokoro-82M-v1.0-ONNX, voices/<id>.bin — verified
@@ -136,6 +153,10 @@ export function createVoiceController({
   // makeAudioContext() resolves to an AudioContext-like.
   kokoroLoader = null,
   makeAudioContext = null,
+  // Served-TTS injection for tests: servedTts(text, { voice, seat, ref })
+  // resolves to a generate-like ({ audio, sampling_rate }). Null in
+  // production, where defaultServedTts fetches from SERVED_TTS_URL.
+  servedTts = null,
 } = {}) {
   const supported = typeof Recognition === 'function';
   const canSpeak = typeof synthesis?.speak === 'function' && typeof Utterance === 'function';
@@ -266,6 +287,7 @@ export function createVoiceController({
   // or fails forward within its bounds, and the restart follows.
   function speechInFlight() {
     if (kokoroPlaying || activeSource || kokoroQueue.length > 0) return true;
+    if (servedPlaying || servedQueue.length > 0) return true;
     if (synthSpeaking || synthQueue.length > 0) return true;
     try { return !!(synthesis?.speaking || synthesis?.pending); } catch { return false; }
   }
@@ -635,6 +657,10 @@ export function createVoiceController({
   // failure retry window so a dead network is not hammered. Returns
   // true when a load is in flight or the model is already warm.
   function warmup() {
+    // Served road first (lag bite 1): while served synthesis is
+    // available there is nothing to warm in the tab — in particular
+    // the ~300MB in-tab model download never starts.
+    if (!servedBroken && servedAvailable()) return false;
     if (kokoro) return true;
     if (!canSpeak || !canTryKokoro()) return false;
     // ensureKokoro itself decides whether the in-flight load is still
@@ -773,12 +799,128 @@ export function createVoiceController({
     }
   }
 
-  const tts = {
-    speak(text, seat, ref) {
-      const clean = stripSpeechMarkup(text);
-      if (!clean) return false;
-      const chunks = chunkForSpeech(clean);
-      if (!chunks.length) return false;
+  // ---- Served engine (lag bite 1): the ONE playback queue ----
+  // Every reply spoken on the served road appends its chunks here, in
+  // the order the replies arrived (message order), and pumpServed
+  // plays them strictly head to tail: a new reply NEVER interrupts a
+  // reply already playing or queued. That is a deliberate change from
+  // the legacy engines below (a new reply replaces anything in
+  // progress): with ten seats answering one prompt, interrupt-on-each
+  // meant only the last reply was ever heard whole, while each
+  // interrupted reply still burned a full in-tab generate. Explicit
+  // stops still clear everything: voice-off, cancelSpeech(), and a
+  // new dictation turn (startTurn) all call tts.cancel().
+  // Fetch-ahead: a chunk's synthesis request starts when the chunk
+  // reaches the head of the queue (at enqueue for the first chunk,
+  // and for the next chunk the moment the current one starts
+  // playing), so the server synthesizes chunk N+1 on ITS CPU while
+  // chunk N plays in the tab. At most one fetch is ever outstanding
+  // beyond the playing chunk.
+  const servedQueue = []; // [{ text, voice, seat, ref, token, audioPromise }]
+  let servedPlaying = false;
+  let servedToken = 0; // cancel() bumps it; late fetches are ignored
+  let servedBroken = false; // latched on the first served failure: the rest of the session uses the legacy road, so a dead service is not retried per reply
+  function servedAvailable() {
+    if (typeof servedTts === 'function') return true;
+    return Boolean(SERVED_TTS_URL && SERVED_TTS_TOKEN && typeof globalThis.fetch === 'function');
+  }
+  async function defaultServedTts(text, { voice } = {}) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), SERVED_TTS_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${SERVED_TTS_URL}/tts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${SERVED_TTS_TOKEN}` },
+        body: JSON.stringify({ text, voice }),
+        signal: ctl.signal,
+      });
+      if (!res.ok) throw new Error(`served voice answered ${res.status}`);
+      const buf = await res.arrayBuffer();
+      // decodeAudioData is native and off the synthesis path: the tab
+      // pays a WAV decode (milliseconds), never the WASM inference.
+      const decoded = await ensureAudioCtx().decodeAudioData(buf);
+      return { audio: decoded.getChannelData(0), sampling_rate: decoded.sampleRate };
+    } finally { clearTimeout(timer); }
+  }
+  function servedFetch(item) {
+    if (!item.audioPromise) {
+      const fn = servedTts ?? defaultServedTts;
+      item.audioPromise = Promise.resolve().then(() => fn(item.text, { voice: item.voice, seat: item.seat, ref: item.ref }));
+      item.audioPromise.catch(() => {}); // pumpServed owns the failure; never leave it unhandled
+    }
+    return item.audioPromise;
+  }
+  // A served failure hands the failed chunk and everything still
+  // queued to the legacy engines IN ORDER (the kokoroFallback pattern,
+  // reversed): chunks already carry their per-seat voice, so the
+  // in-tab Kokoro queue takes them whole when it can run, and the
+  // backup voice takes them when it cannot.
+  function servedFallback(failedItem) {
+    const items = [];
+    if (failedItem) items.push(failedItem);
+    for (const item of servedQueue.splice(0)) items.push(item);
+    if (!items.length) return;
+    if (kokoro || kokoroPromise || canTryKokoro()) {
+      for (const item of items) kokoroQueue.push({ text: item.text, token: playToken, voice: item.voice, seat: item.seat ?? null, ref: item.ref ?? null });
+      void pumpKokoro();
+      return;
+    }
+    if (kokoroState === 'failed') setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
+    else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
+    synthEngine.enqueue(items.map((item) => ({ text: item.text, seat: item.seat, ref: item.ref })), { interrupt: false });
+  }
+  async function pumpServed() {
+    if (servedPlaying || servedQueue.length === 0) return;
+    const item = servedQueue.shift();
+    servedPlaying = true;
+    if (servedQueue[0]) servedFetch(servedQueue[0]); // synthesize the next chunk while this one plays
+    let out;
+    try {
+      out = await servedFetch(item);
+    } catch (err) {
+      if (item.token !== servedToken) { servedPlaying = false; pumpServed(); return; } // cancelled while fetching
+      servedPlaying = false;
+      servedBroken = true;
+      console.warn('[voice] Served voice failed, falling back to the in-tab engines:', err?.message ?? err);
+      servedFallback(item);
+      return;
+    }
+    if (item.token !== servedToken) { servedPlaying = false; pumpServed(); return; } // cancelled while fetching
+    let src;
+    try {
+      const pcm = out?.audio ?? out?.data;
+      if (!pcm || !pcm.length) throw new Error('Served voice returned no audio');
+      src = playPcm(pcm, out?.sampling_rate ?? KOKORO_SAMPLE_RATE);
+    } catch (err) {
+      servedPlaying = false;
+      servedBroken = true;
+      console.warn('[voice] Served playback failed, falling back to the in-tab engines:', err?.message ?? err);
+      servedFallback(item);
+      return;
+    }
+    activeSource = src;
+    setVoiceStatus('Server voice', 'kokoro');
+    src.onended = () => {
+      servedPlaying = false;
+      if (activeSource === src) activeSource = null;
+      clearSpeaking(src);
+      pumpServed();
+    };
+    try { src.start(); noteSpeaking(item.seat, 'served', item.ref, src); }
+    catch { servedPlaying = false; if (activeSource === src) activeSource = null; pumpServed(); }
+  }
+  function servedCancel() {
+    servedToken += 1; // orphan any in-flight fetch: its audio is never played
+    servedQueue.length = 0;
+    servedPlaying = false;
+    // The playing buffer source is the shared activeSource; kokoroCancel
+    // stops it (tts.cancel calls both).
+  }
+
+  // The legacy in-tab road (Kokoro in the tab, speechSynthesis backup),
+  // unchanged from the pre-bite controller: it is now the FALLBACK,
+  // reached when the served road is unavailable or has failed.
+  function speakLegacyChunks(chunks, seat, ref) {
       // A new reply replaces anything in progress, on either engine.
       synthEngine.cancel();
       kokoroCancel();
@@ -809,8 +951,29 @@ export function createVoiceController({
       if (kokoroState === 'failed') setVoiceStatus('Backup voice — Kokoro could not load', 'fallback');
       else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
       return synthEngine.speakChunks(chunks, { seat, ref });
+  }
+
+  const tts = {
+    speak(text, seat, ref) {
+      const clean = stripSpeechMarkup(text);
+      if (!clean) return false;
+      const chunks = chunkForSpeech(clean);
+      if (!chunks.length) return false;
+      // Served road (lag bite 1): synthesis happens on the server, the
+      // tab only plays — chunks APPEND to the one served queue in
+      // arrival (message) order and nothing here cancels a reply
+      // already playing or queued on that road.
+      if (!servedBroken && servedAvailable()) {
+        const voice = voiceForSeat(seat);
+        for (const c of chunks) servedQueue.push({ text: c, voice, seat: seat ?? null, ref: ref ?? null, token: servedToken, audioPromise: null });
+        if (servedQueue[0]) servedFetch(servedQueue[0]); // first synthesis starts now, on the server's CPU
+        void pumpServed();
+        return true;
+      }
+      return speakLegacyChunks(chunks, seat, ref);
     },
     cancel() {
+      servedCancel();
       synthEngine.cancel();
       kokoroCancel();
     },
@@ -832,6 +995,7 @@ export function createVoiceController({
     get mode() { return voiceKind; },
     get listening() { return listening; },
     get engineState() { return kokoroState; },
+    get servedBroken() { return servedBroken; },
     get speakingNow() { return speakingNow; },
     setSpeakingListener,
     setVoiceMode,
