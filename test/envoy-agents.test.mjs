@@ -142,6 +142,27 @@ test('no prompt is ever composed for Maestro', () => {
   );
 });
 
+test('identity precedence: a custom agent whose handle collides with a provider id keeps its configured identity', () => {
+  // The 🦀 Qwen shape from the reactions defect: the custom agent's
+  // handle 'qwen' collides with the built-in Qwen seat id. The channel
+  // record is the agent's workspace identity (name + face) and must win
+  // over the provider table on EVERY derivation — attribution, the
+  // agent's own role line, and the roster its peers are shown.
+  const crab = { id: 'qwen', handle: 'qwen', name: 'Qwen', emoji: '🦀', provider: 'ollama', authMode: 'password_session', jobTitle: '', jobPrompt: '' };
+  // Attribution: the configured face name, with the engine reported.
+  assert.equal(describeAuthor('agent:qwen', 'agent', [crab]).name, '🦀 Qwen');
+  assert.equal(describeAuthor('agent:qwen', 'agent', [crab]).engine, 'ollama');
+  // With no channel record the provider fallback still applies.
+  assert.equal(describeAuthor('agent:qwen', 'agent').name, 'Qwen');
+  // Self-composition: the agent is told its configured identity.
+  const self = agentPrompt({ provider: 'qwen', channelTitle: 'team', members: ['claude', 'qwen'], customAgents: [crab], message: { authorName: 'Troy', body: 'status?' } });
+  assert.match(self, /You are 🦀 Qwen \(@qwen\)/);
+  // Peer-composition: other agents meet the configured identity, not
+  // the bare provider name the handle collides with.
+  const peer = agentPrompt({ provider: 'claude', channelTitle: 'team', members: ['claude', 'qwen'], customAgents: [crab], message: { authorName: 'Troy', body: 'status?' } });
+  assert.match(peer, /Other agents here: 🦀 Qwen \(@qwen\)\./);
+});
+
 test('bridge-authored posts are named for the bridge, never Maestro', () => {
   assert.deepEqual(describeAuthor('user_abc:bridge', 'agent'), { name: 'PC bridge', source: 'helmian', provider: null });
 });

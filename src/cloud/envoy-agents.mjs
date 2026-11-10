@@ -426,10 +426,18 @@ export function describeAuthor(subject, kind, customAgents = []) {
   const s = String(subject ?? '');
   if (s.startsWith('agent:')) {
     const raw = s.slice(6);
-    const p = normalizeProvider(raw);
-    if (p) return { name: AGENT_NAMES[p] ?? 'Agent', source: 'helmian', provider: p };
+    // The channel's configured identity wins: a custom agent record for
+    // this handle IS the agent's workspace identity (its name and face),
+    // even when the handle collides with a built-in provider id. The
+    // provider table is the fallback for seats with no custom record,
+    // never an override of a configured one — agentPrompt and
+    // publicConfig already resolve in this order; this derivation was
+    // the one that did not, so a custom agent whose handle matched a
+    // provider id was shown (and reacted) under the provider's name.
     const custom = Array.isArray(customAgents) ? customAgents.find((a) => (a.handle || a.id) === raw.toLowerCase()) : null;
     if (custom) return { name: `${custom.emoji} ${custom.name}`, source: 'helmian', provider: custom.handle, engine: custom.provider };
+    const p = normalizeProvider(raw);
+    if (p) return { name: AGENT_NAMES[p] ?? 'Agent', source: 'helmian', provider: p };
     return { name: raw || 'Agent', source: 'helmian', provider: raw || null };
   }
   if (s.startsWith('discord:')) {
@@ -481,10 +489,14 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
   const custom = customMap.get(p);
   const me = custom ? `${custom.emoji} ${custom.name} (@${custom.handle})` : (AGENT_NAMES[p] ?? 'Agent');
   const others = (members ?? []).map((x) => {
-    const std = normalizeProvider(x);
-    if (std && std !== p && std !== 'maestro') return AGENT_NAMES[std];
+    // Same precedence as the self line above and describeAuthor: a
+    // custom agent is introduced to its peers by its configured
+    // identity (face, name, handle), never by the provider its handle
+    // happens to collide with.
     const c = customMap.get(String(x).toLowerCase());
     if (c && c.handle !== p) return `${c.emoji} ${c.name} (@${c.handle})`;
+    const std = normalizeProvider(x);
+    if (std && std !== p && std !== 'maestro') return AGENT_NAMES[std];
     return null;
   }).filter(Boolean);
   const where = source === 'discord' ? `the #${channelTitle} channel (mirrored with Discord)` : source === 'slack' ? `the #${channelTitle} channel (mirrored with Slack)` : `the #${channelTitle} channel in Helmian Envoy`;
