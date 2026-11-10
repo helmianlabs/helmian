@@ -271,10 +271,13 @@ test('catalog data: every seat’s definitions are well-formed, unique per seat,
 
 test('brokerMode follows §3.1: vendor-brokered ecosystems mirror; only reachable MCP pipes are helmian', () => {
   const byId = (seat, id) => catalogEntriesForSeat(seat).find((d) => d.id === id);
-  // Anthropic and OpenAI broker from their clouds → every mirror is vendor.
+  // Anthropic and OpenAI broker from their clouds → every Source 1
+  // mirror is vendor. Source 3 registry imports (def.registryName)
+  // are a different source with their own §3.1 ruling — a reachable
+  // public pipe is 'helmian' — and are pinned in mcp-registry.test.
   for (const seat of ['claude', 'chatgpt', 'gemini']) {
     for (const def of catalogEntriesForSeat(seat)) {
-      if (def.kind === 'catalog') assert.equal(def.brokerMode, 'vendor', `${seat}/${def.id}`);
+      if (def.kind === 'catalog' && !def.registryName) assert.equal(def.brokerMode, 'vendor', `${seat}/${def.id}`);
     }
   }
   // xAI built-ins + catalog are brokered by xAI — except GitHub, whose
@@ -287,9 +290,13 @@ test('brokerMode follows §3.1: vendor-brokered ecosystems mirror; only reachabl
   assert.equal(byId('cloudflare', 'cloudflare-docs').brokerMode, 'helmian');
   // Natives are Helmian's own pipes.
   assert.equal(byId('owner', 'helmian-github').brokerMode, 'helmian');
-  // Seats with no documented vendor library seed Source 2 only.
+  // Seats with no documented vendor library seed Source 2 plus the
+  // seat-agnostic Source 3 shelf (today: the weather pick) — no
+  // Source 1 mirror is ever invented for them.
   for (const seat of ['mistral', 'groq', 'nvidia', 'openrouter', 'qwen', 'muse', 'maestro', 'helm', 'owner']) {
-    assert.equal(catalogEntriesForSeat(seat).length, 1, `${seat}: natives only`);
+    const defs = catalogEntriesForSeat(seat);
+    assert.ok(defs.every((d) => d.kind === 'helmian-native' || d.registryName), `${seat}: natives + registry shelf only`);
+    assert.equal(defs.filter((d) => d.kind === 'helmian-native').length, 1, `${seat}: exactly the one native`);
   }
 });
 

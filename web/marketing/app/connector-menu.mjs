@@ -121,11 +121,17 @@ const manageLink = ({ label, target }) => ({ type: 'manage-link', label, target 
 // (connector-catalog.mjs Source 2) — the Helmian-brokered core of
 // every seat's live toggle group.
 const NATIVES = ['helmian-github'];
+// The seat-agnostic Source 3 shelf (connector-catalog.mjs, from
+// src/cloud/mcp-registry-curation.mjs — the official MCP Registry
+// imports): offered on EVERY seat and Helmian-brokered like the
+// natives, so it rides the same live toggle groups. Today: the
+// weather pick (a US National Weather Service data server).
+const REGISTRY_SHELF = ['registry-weather'];
 const manageInHelmian = () => manageLink({ label: 'Manage connectors', target: 'integrations' });
 // The plain Helmian list (REPORT §3.6–§3.10 + §3.11): seats with no
 // vendor furniture get attach, the live toggles, and the manager —
 // in Helmian's own words, with no invented vendor furniture.
-const helmianList = ({ entryIds = NATIVES, note = null, requiresToolCapableModel = false } = {}) => [
+const helmianList = ({ entryIds = [...NATIVES, ...REGISTRY_SHELF], note = null, requiresToolCapableModel = false } = {}) => [
   attach('Add files'),
   liveGroup({ label: 'Connectors', entryIds, ...(note ? { note } : {}), requiresToolCapableModel }),
   manageInHelmian(),
@@ -161,7 +167,10 @@ export const MENU_DEFINITIONS = deepFreeze({
       liveGroup({ feed: 'helmian-skills' }),
     ]),
     submenu('Connectors', [
-      liveGroup({ entryIds: [...NATIVES] }),
+      // Source 3 service picks for this seat ride beside their
+      // vendor mirrors below (different ids, different pipes):
+      // Helmian's own brokered road to the same service.
+      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-atlassian', 'registry-notion', 'registry-linear', 'registry-stripe'] }),
       mirrorGroup({
         managedIn: 'Claude',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva', 'idiolect'],
@@ -195,7 +204,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   chatgpt: [
     attach('Add photos & files'),
     submenu('More', [
-      liveGroup({ entryIds: [...NATIVES] }),
+      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-notion'] }),
       mirrorGroup({
         managedIn: 'ChatGPT',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'slack', 'notion', 'github', 'canva', 'dropbox'],
@@ -213,7 +222,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   grok: [
     attach('Files'),
     submenu('Connectors', [
-      liveGroup({ entryIds: ['github', ...NATIVES] }),
+      liveGroup({ entryIds: ['github', ...NATIVES, ...REGISTRY_SHELF, 'registry-notion', 'registry-linear'] }),
       mirrorGroup({
         managedIn: 'Grok', rowShape: 'state',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'onedrive', 'outlook', 'microsoft-teams', 'sharepoint', 'salesforce', 'box', 'canva', 'gamma', 'linear', 'meltwater', 'notion', 'sp-global', 'vercel'],
@@ -237,7 +246,7 @@ export const MENU_DEFINITIONS = deepFreeze({
         entryIds: ['gmail', 'google-drive', 'google-calendar'],
       }),
     ]),
-    liveGroup({ label: 'Connectors', entryIds: [...NATIVES] }),
+    liveGroup({ label: 'Connectors', entryIds: [...NATIVES, ...REGISTRY_SHELF] }),
     manageInHelmian(),
   ],
 
@@ -252,7 +261,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   mistral: [
     attach('Add files'),
     submenu('Tools', [
-      liveGroup({ entryIds: [...NATIVES] }),
+      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF] }),
       mirrorGroup({ managedIn: 'Mistral', entryIds: [] }),
     ]),
     // The Agents mirror group (feed 'vendor-agents') was deleted in
@@ -288,7 +297,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   // ------------------------------------------------------ Cloudflare
   // REPORT §3.10: plain list; Cloudflare's hosted MCP servers are
   // ordinary Helmian-brokered catalog entries (cloudflare-docs).
-  cloudflare: helmianList({ entryIds: ['cloudflare-docs', ...NATIVES] }),
+  cloudflare: helmianList({ entryIds: ['cloudflare-docs', ...NATIVES, ...REGISTRY_SHELF] }),
 
   // ------------------------------------------------------------ Qwen
   // REPORT §3.7: PIPE seat; plain list, live toggles only. Model
