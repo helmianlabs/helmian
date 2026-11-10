@@ -118,7 +118,7 @@
 //   store and clamps the target to the record's own scope — a message
 //   can narrow a skill, never widen it (DESIGN §2.1/§3.2). Carried
 //   only when at least one skill is armed, the same absence rule.
-import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs?v=46451699583636ae';
+import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs?v=532eef9e5fbe752f';
 
 // Truthful attachment states (see the header): what attaching an entry
 // actually does on the turn, never just what the registry holds.
@@ -260,13 +260,16 @@ const CONNECTORS_NOTE = 'Attaching a connector hands the agent a note that the s
 
 // PROVIDER_REGISTRY keys that are NOT services: the team chat mirrors
 // (Slack, Discord — mirrors, not connectors; they never appear in the
-// picker) and the AI providers (Claude, ChatGPT, Grok, Gemini, and the
-// provider-catalog seats Groq, NVIDIA, Cloudflare, OpenRouter — they
-// are agents, never connector rows). What remains in the registry is
-// a service (GitHub today). Further services arrive only through the
-// tool-connections data itself — see pickerModel.
+// picker) and the AI providers (Claude, ChatGPT, Grok, Gemini, Mistral,
+// Runway, and the provider-catalog seats Groq, NVIDIA, Cloudflare,
+// OpenRouter — they are agents, never connector rows). What remains
+// in the registry is a service (GitHub today). Further services
+// arrive only through the tool-connections data itself — see
+// pickerModel. Runway joined the registry with the P2 fix
+// (2026-11-09) and is named here in the same pass, so its new truth
+// row never surfaces it as a connector.
 const MIRROR_KEYS = new Set(['slack', 'discord']);
-const AGENT_REGISTRY_KEYS = new Set(['anthropic', 'openai', 'xai', 'google', 'mistral', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
+const AGENT_REGISTRY_KEYS = new Set(['anthropic', 'openai', 'xai', 'google', 'mistral', 'runway', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
 
 export function pickerModel({ connectors = {}, providers = {}, plugins = {}, toolConnections = null, presence = null, now = Date.now(), agent = null } = {}) {
   const rows = integrationsModel(connectors, providers, { toolConnections, presence, now });

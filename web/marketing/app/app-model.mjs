@@ -25,6 +25,16 @@ export const PROVIDER_REGISTRY = Object.freeze([
   // owner reported "stays open, never connects" (2026-11-06). The
   // row below is her truth lookup, nothing more.
   { key: 'mistral', name: 'Mistral Le Chat', kind: 'AI provider' },
+  // Runway's row (P2 fix, 2026-11-09): the same missing-row defect
+  // as Mistral's, one seat over. The credential-connect route has
+  // always accepted runway (it is in the route's provider set, and
+  // the Agents page reads its saved connections under its own name),
+  // but with no registry row here the truth model could never read
+  // a saved Runway connection, so the Integrations card could never
+  // read Connected and offered no connect road at all — the dead
+  // card the fresh-signup walk found. The row is the truth lookup,
+  // nothing more.
+  { key: 'runway', name: 'Runway', kind: 'AI provider' },
   // The provider-catalog seats (src/cloud/provider-registry.mjs):
   // API-key providers whose connections are saved under their own seat
   // names. Their free terms ride the server registry row; this row is
@@ -269,6 +279,7 @@ const PROVIDER_SOURCE_NAMES = Object.freeze({
   xai: Object.freeze({ connections: ['xai', 'grok'], presence: ['xai', 'grok'] }),
   google: Object.freeze({ connections: ['google', 'gemini'], presence: ['gemini', 'google'] }),
   mistral: Object.freeze({ connections: ['mistral'], presence: ['mistral'] }),
+  runway: Object.freeze({ connections: ['runway'], presence: ['runway'] }),
   groq: Object.freeze({ connections: ['groq'], presence: ['groq'] }),
   nvidia: Object.freeze({ connections: ['nvidia'], presence: ['nvidia'] }),
   cloudflare: Object.freeze({ connections: ['cloudflare'], presence: ['cloudflare'] }),

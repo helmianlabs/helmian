@@ -369,7 +369,7 @@ test('wiring: the rows read fires beside the seats read — and the header still
   const refreshStart = manage.indexOf('async function refresh()');
   assert.ok(refreshStart >= 0);
   const refreshBody = manage.slice(refreshStart, refreshStart + 3400);
-  assert.match(refreshBody, /if \(!state\.loaded \|\| seatChanged\)/, 'the early header paint is scoped to mounts and seat changes, not every refresh');
+  assert.match(refreshBody, /if \(\(!state\.loaded \|\| seatChanged\) && myRefresh === refreshSeq\)/, 'the early header paint is scoped to mounts and seat changes, not every refresh — and since the P2 fix, to the newest pass only');
   const flightAt = refreshBody.indexOf('startRowsFlight()');
   const seatsAt = refreshBody.indexOf('await loadSeats()');
   assert.ok(flightAt >= 0 && seatsAt > flightAt, 'the rows read is started before the seats read is awaited — the two fly together');
@@ -661,4 +661,63 @@ test('wiring: the Plugins tab’s catalog rides the existing plugin routes in th
   assert.ok(manage.includes("call('/api/admin/plugins/uninstall', { name: p.name })"), 'the installed row’s Uninstall, same shape');
   assert.match(manage, /frag\.append\(pluginCatalogSection\(model\)\)/, 'the tab appends the catalog under the installed list');
   assert.match(manage, /p\.source === 'helmian-plugin'/, 'the installed row’s Uninstall is gated on the cloud source');
+});
+
+// ------------------------------------------------------- refresh order
+// (P2 fix, 2026-11-09): refresh() passes paint in START order, never
+// in finish order. The fresh-signup walk installed a plugin and
+// watched "…is installed." land over "No plugins are installed." —
+// an earlier pass whose read was issued before the install POST
+// finished AFTER the post-install pass and repainted its stale
+// read. These tests drive two overlapping passes against deferred
+// reads and resolve them out of order: the late stale pass must
+// never paint.
+
+test('refresh order: a stale plugins pass finishing last never repaints over the post-install refresh (P2)', async () => {
+  const pluginReads = [];
+  const api = (path, opts) => {
+    if (path === '/api/admin/connector-library/seats') return Promise.resolve({ seats: [{ seatId: 'claude' }] });
+    if (path === '/api/admin/plugins' && !opts) { const d = deferred(); pluginReads.push(d); return d.promise; }
+    return Promise.reject(new Error(`unexpected api call: ${path}`));
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'claude' });
+  surface.state.tab = 'plugins';
+  const stale = surface.refresh();
+  const fresh = surface.refresh();
+  await flushMicrotasks();
+  assert.equal(pluginReads.length, 2, 'both passes issued their plugins read');
+  pluginReads[1].resolve({ valid: true, plugins: [{ name: 'weather', version: '1.0.0', source: 'helmian-plugin', description: 'The installed row.' }], unavailable: [], shelf: SHELF_PAYLOAD });
+  await fresh;
+  assert.ok(box.textContent.includes('weather'), 'the newer pass painted the installed plugin');
+  pluginReads[0].resolve({ valid: true, plugins: [], unavailable: [], shelf: SHELF_PAYLOAD });
+  await stale;
+  await flushMicrotasks();
+  assert.ok(!box.textContent.includes(NO_PLUGINS_LINE), 'the stale pass never repainted the empty list over the installed one');
+  assert.ok(box.textContent.includes('weather'), 'the installed plugin still stands');
+  assert.ok(buttonsNamed(box, 'Uninstall').length >= 1, 'and its Uninstall action with it');
+});
+
+test('refresh order: switching tabs, the earlier tab’s late pass never repaints over the new tab (P2)', async () => {
+  const pluginReads = [];
+  const api = (path, opts) => {
+    if (path === '/api/admin/connector-library/seats') return Promise.resolve({ seats: [{ seatId: 'claude' }] });
+    if (path === '/api/admin/plugins' && !opts) { const d = deferred(); pluginReads.push(d); return d.promise; }
+    if (path === '/api/admin/skills') return Promise.resolve({ skills: [{ name: 'reading-a-forecast', description: 'Turns forecasts plain.' }] });
+    return Promise.reject(new Error(`unexpected api call: ${path}`));
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'claude' });
+  surface.state.tab = 'plugins';
+  const stale = surface.refresh();
+  await flushMicrotasks();
+  assert.equal(pluginReads.length, 1, 'the plugins pass is in flight');
+  surface.state.tab = 'skills';
+  await surface.refresh();
+  assert.ok(box.textContent.includes('reading-a-forecast'), 'the skills tab painted');
+  pluginReads[0].resolve({ valid: true, plugins: [], unavailable: [], shelf: SHELF_PAYLOAD });
+  await stale;
+  await flushMicrotasks();
+  assert.ok(box.textContent.includes('reading-a-forecast'), 'the late plugins pass did not repaint over the skills tab');
+  assert.ok(!box.textContent.includes(PLUGIN_CATALOG_TITLE), 'no plugins catalog over the skills tab');
 });

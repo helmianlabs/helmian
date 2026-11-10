@@ -37,7 +37,7 @@
 // Pure model first (rowControls), then the DOM renderer — the model
 // is unit-tested like connector-panel.mjs's.
 
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=46451699583636ae';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=532eef9e5fbe752f';
 
 export const MANAGE_SEAT_STORAGE_KEY = 'helmian.manageSeat';
 // The Manage road's landing intent (addition, 2026-11-09): taking
@@ -308,6 +308,16 @@ export function pluginsListModel(body) {
 // server's error message where present), `el` its element helper.
 export function renderConnectorManage(box, { api, el, role = '', initialSeat = null } = {}) {
   const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false, renderedSeat: null, toolAccess: new Map(), open: new Set(), seatsLoaded: false, seatsStale: false };
+  // Refresh order guard (P2 fix, 2026-11-09): refresh() passes are
+  // numbered as they START, and a pass paints only while it is
+  // still the newest. Without this, a pass whose reads were issued
+  // before a write landed (the mount pass, a tab click) could
+  // finish AFTER the post-write pass and repaint its stale read
+  // over the fresh one — the fresh-signup walk saw exactly that on
+  // the Plugins tab: "…is installed." over "No plugins are
+  // installed.", cured only by a reload. The stale pass's reads
+  // still run; only its paint (and its failure paint) is dropped.
+  let refreshSeq = 0;
   box.replaceChildren();
   const root = el('div', 'cm-root');
   const note = el('p', 'cm-note muted sm');
@@ -771,6 +781,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
   }
 
   async function refresh() {
+    const myRefresh = ++refreshSeq;
     const seatChanged = Boolean(state.loaded && state.renderedSeat && state.seat && state.renderedSeat !== state.seat);
     if (!state.loaded) root.replaceChildren(note, loadingLine());
     else if (seatChanged) {
@@ -805,7 +816,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       // list render is always the current seat's own — on the
       // menu→Manage landing the previous seat's list showed for a
       // beat because the mount path never painted early.
-      if (!state.loaded || seatChanged) root.replaceChildren(note, header(), loadingLine());
+      if ((!state.loaded || seatChanged) && myRefresh === refreshSeq) root.replaceChildren(note, header(), loadingLine());
       const head = header();
       let body = null;
       if (state.tab === 'connectors') {
@@ -817,11 +828,17 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       }
       else if (state.tab === 'skills') body = await skillsTab();
       else body = await pluginsTab();
+      // A newer refresh started while this pass read: its reads
+      // are the fresher ones, so this pass never paints (P2 fix).
+      if (myRefresh !== refreshSeq) return;
       state.loaded = true;
       state.renderedSeat = state.seat;
       root.replaceChildren(note, head);
       if (body) root.append(body);
     } catch (error) {
+      // A superseded pass fails quietly: the newer pass owns the
+      // surface and will paint (or report) its own outcome.
+      if (myRefresh !== refreshSeq) return;
       if (!state.loaded) {
         root.replaceChildren(note, el('p', 'cm-loading muted sm', 'The connector library did not load — leave this view and come back to try again.'));
       }

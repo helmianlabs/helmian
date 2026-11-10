@@ -89,22 +89,22 @@ test('a provider that has answered reads Answered — model rows and cards alike
 });
 
 // ---- Bite 4: the one connect road lands on the AI cards ----
-// Every not-connected AI card (the five: claude, openai, gemini, grok,
-// mistral) carries the shared ConnectFields instead of the old roads:
+// Every not-connected AI card (the sign-in seats: claude, openai,
+// gemini, grok, mistral — and runway since the P2 fix, 2026-11-09)
+// carries the shared ConnectFields instead of the old roads:
 // no /api/provider-oauth/<p>/start link actions, no claude-help /
-// keys-help acts. Runway is not one of the five and carries no connect
-// fields; Bite 12 removed its keys-help action along with the
-// keys-help text it pointed at, so its card carries no action either.
+// keys-help acts. Runway's card was the one dead end the
+// fresh-signup walk found: the credential-connect route has always
+// accepted runway, so it now carries the same fields; Bite 12's
+// removal of its keys-help action stands.
 
-test('bite 4: the five AI cards carry connect fields when not connected, and lose the old roads', () => {
+test('bite 4: the sign-in AI cards carry connect fields when not connected, and lose the old roads', () => {
   const cards = Object.fromEntries(integrationSections({ presence: [], providers: { connections: [] }, connectors: {} })
     .flatMap((s) => s.cards).map((c) => [c.key, c]));
-  for (const key of ['claude', 'openai', 'gemini', 'grok', 'mistral']) {
+  for (const key of ['claude', 'openai', 'gemini', 'grok', 'mistral', 'runway']) {
     assert.deepEqual(cards[key].connect, { provider: key }, key);
     assert.equal(cards[key].action, null, `${key}: no link action and no help act remains`);
   }
-  assert.equal(cards.runway.connect, null, 'runway is not one of the five');
-  assert.equal(cards.runway.action, null, 'runway lost its keys-help action in the Bite 12 removal pass');
 });
 
 test('bite 4: a connected AI card shows no fields and keeps Manage', () => {
@@ -124,6 +124,22 @@ test('change road: Mistral has a truth row — a saved connection reads Connecte
   assert.equal(row.statusText, 'Connected');
   const none = integrationsModel({}, { connections: [] }, { presence: [] }).find((r) => r.key === 'mistral');
   assert.equal(none.connected, false, 'no saved row → not connected, same rule as every seat');
+});
+
+test('change road: Runway has a truth row — a saved connection reads Connected (P2 fix, 2026-11-09)', () => {
+  const providers = { connections: [{ providerId: 'runway', lifecycle: 'pending', authMode: 'password_session', updatedAt: SYNCED_AT }] };
+  const row = integrationsModel({}, providers, { presence: [] }).find((r) => r.key === 'runway');
+  assert.ok(row, 'the truth model carries a runway row');
+  assert.equal(row.connected, true);
+  assert.equal(row.statusText, 'Connected');
+  const none = integrationsModel({}, { connections: [] }, { presence: [] }).find((r) => r.key === 'runway');
+  assert.equal(none.connected, false, 'no saved row → not connected, same rule as every seat');
+  const cards = Object.fromEntries(integrationSections({ presence: [], providers, connectors: {} })
+    .flatMap((s) => s.cards).map((c) => [c.key, c]));
+  assert.equal(cards.runway.statusText, 'Connected', 'the card reads Connected from the same row');
+  assert.equal(cards.runway.connect, null, 'a connected card shows no first-connect fields');
+  assert.deepEqual(cards.runway.changeConnect, { provider: 'runway', label: 'New username and password' }, 'and offers the change road like every sign-in seat');
+  assert.equal(cards.runway.action.label, 'Manage');
 });
 
 test('change road: change mode renders the fields for a connected provider (owner order, 2026-11-06)', () => {
