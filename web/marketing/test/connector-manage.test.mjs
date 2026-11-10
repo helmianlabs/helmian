@@ -6,18 +6,54 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
-import { rowControls, seatName, toolAccessRows, pluginsListModel, pluginsUnavailableLine, MIRROR_LINE, MANAGE_SEAT_STORAGE_KEY, NO_SNAPSHOT_LINE, NO_PLUGINS_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
+import { rowControls, seatName, toolAccessRows, pluginsListModel, pluginsUnavailableLine, MIRROR_NOTE, mirrorGroupTitle, planConnectorRows, MANAGE_SEAT_STORAGE_KEY, MANAGE_TAB_STORAGE_KEY, MANAGE_SEAT_MEMORY_KEY, NO_SNAPSHOT_LINE, NO_PLUGINS_LINE, TOOL_ANNOTATION_LABELS } from '../app/connector-manage.mjs';
 
 const manage = await readFile(new URL('../app/connector-manage.mjs', import.meta.url), 'utf8');
 const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const workspace = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
 
-test('rowControls: mirror rows are view-only with the one plain line', () => {
+test('rowControls: mirror rows are view-only and carry NO per-row note (simplify pass)', () => {
   const ctl = rowControls({ brokerMode: 'vendor', state: 'connected' }, { role: 'owner' });
   assert.equal(ctl.mode, 'mirror');
-  assert.equal(ctl.note, MIRROR_LINE);
-  assert.match(MIRROR_LINE, /connecting it there does not connect it here/);
+  assert.equal(ctl.note, undefined, 'the mirror note is the group\u2019s, said once per seat — never a per-row field');
+});
+
+test('planConnectorRows: duplicate names collapse to the brokered row; leftover mirrors group with the note once', () => {
+  const brokeredGithub = { entryId: 'github', name: 'GitHub', brokerMode: 'helmian', state: 'connected' };
+  const mirrorGithub = { entryId: 'vendor-github', name: 'GitHub', brokerMode: 'vendor', state: 'connected' };
+  const atlassian = { entryId: 'vendor-atlassian', name: 'Atlassian', brokerMode: 'vendor', state: 'not-connected' };
+  const gmail = { entryId: 'vendor-gmail', name: 'Gmail', brokerMode: 'vendor', state: 'not-connected' };
+  const plan = planConnectorRows([brokeredGithub, atlassian, mirrorGithub, gmail], 'Claude');
+  assert.deepEqual(plan.primary, [brokeredGithub], 'one primary row for the name GitHub: the brokered entry');
+  assert.deepEqual(plan.mirrors, [atlassian, gmail], 'the GitHub mirror is gone; mirrors with no brokered namesake remain, in read order');
+  assert.equal(plan.mirrorTitle, 'On Claude\u2019s own side');
+  assert.equal(plan.mirrorTitle, mirrorGroupTitle('Claude'));
+  assert.equal(plan.mirrorNote, MIRROR_NOTE, 'one note string for the whole seat, however many mirror rows stand under it');
+  assert.match(MIRROR_NOTE, /connecting them there does not connect them here/);
+  // Name matching is trimmed and case-insensitive, and read order does not matter.
+  const flipped = planConnectorRows([
+    { entryId: 'm1', name: ' github ', brokerMode: 'vendor', state: 'connected' },
+    { entryId: 'b1', name: 'GitHub', brokerMode: 'helmian', state: 'connected' },
+  ], 'Claude');
+  assert.deepEqual(flipped.primary.map((r) => r.entryId), ['b1']);
+  assert.deepEqual(flipped.mirrors, []);
+  assert.equal(flipped.mirrorNote, null, 'no leftover mirrors, no group, no note');
+  // A seat with no mirrors at all plans no group.
+  const plain = planConnectorRows([brokeredGithub], 'Claude');
+  assert.deepEqual(plain.mirrors, []);
+  assert.equal(plain.mirrorTitle, null);
+  assert.equal(plain.mirrorNote, null);
+  assert.deepEqual(planConnectorRows(null).primary, [], 'a missing read plans empty, not a crash');
+});
+
+test('wiring: the disclaimer sentence renders at most once per seat — the group head, never a card', () => {
+  assert.ok(!manage.includes('This connector lives in the vendor'), 'the old per-card paragraph is gone from the module');
+  assert.equal(manage.split('does not connect them here').length - 1, 1, 'the note\u2019s words exist exactly once in the module: inside MIRROR_NOTE');
+  assert.match(manage, /wrap\.append\(el\('p', 'cm-mirror-note muted sm', plan\.mirrorNote\)\)/, 'the one render of the note is the mirror group\u2019s head');
+  assert.ok(!manage.includes('ctl.note'), 'no row renders a note of its own');
+  assert.match(manage, /const plan = planConnectorRows\(state\.rows, seatName\(state\.seat\)\)/, 'the tab renders the plan, not the raw read');
+  assert.match(manage, /if \(plan\.mirrors\.length\) frag\.append\(mirrorGroup\(plan\)\)/, 'the group renders only when leftover mirrors exist');
 });
 
 test('rowControls: a connected Helmian row carries posture, disconnect; owner acts are role-gated', () => {
@@ -180,4 +216,33 @@ test('wiring: the composer Manage row leaves the seat marker for this surface', 
   assert.equal(MANAGE_SEAT_STORAGE_KEY, 'helmian.manageSeat');
   assert.match(workspace, /sessionStorage\.setItem\('helmian\.manageSeat', ws\.libraryPanel\.seatId\)/);
   assert.match(manage, /sessionStorage\.getItem\(MANAGE_SEAT_STORAGE_KEY\)/);
+});
+
+test('wiring: the Manage road opens Integrations on the Connectors tab, not the remembered one', () => {
+  // Menu side: openManageForSeat names the landing tab beside the seat marker.
+  assert.equal(MANAGE_TAB_STORAGE_KEY, 'helmian.manageTab');
+  const fnStart = workspace.indexOf('function openManageForSeat');
+  assert.ok(fnStart >= 0);
+  assert.match(workspace.slice(fnStart, fnStart + 600), /sessionStorage\.setItem\('helmian\.manageTab', 'connectors'\)/);
+  // Landing side: loadIntegrations consumes the one-shot marker and
+  // selects the named tab (selectIntegrationsTab persists the pick).
+  const loadStart = appJs.indexOf('async function loadIntegrations');
+  assert.ok(loadStart >= 0);
+  const loadSlice = appJs.slice(loadStart, loadStart + 6000);
+  assert.match(loadSlice, /sessionStorage\.getItem\('helmian\.manageTab'\)/);
+  assert.match(loadSlice, /wantedTab = 'connectors'/);
+  assert.match(loadSlice, /selectIntegrationsTab\(wantedTab\)/);
+});
+
+test('wiring: the selected seat is remembered the way the tab choice is', () => {
+  assert.equal(typeof MANAGE_SEAT_MEMORY_KEY, 'string');
+  assert.ok(MANAGE_SEAT_MEMORY_KEY.length > 0);
+  assert.match(manage, /localStorage\.setItem\(MANAGE_SEAT_MEMORY_KEY, state\.seat\)/, 'the surface writes the settled seat down');
+  assert.match(manage, /localStorage\.getItem\(MANAGE_SEAT_MEMORY_KEY\)/, 'mount falls back to the remembered seat when no fresh marker was left');
+});
+
+test('wiring: a seat switch paints the header and loading line before the new seat\u2019s read lands', () => {
+  assert.match(manage, /state\.renderedSeat !== state\.seat/, 'refresh notices when the seat changed under it');
+  assert.match(manage, /root\.replaceChildren\(note, header\(\), loadingLine\(\)\)/, 'the interim paint replaces the previous seat\u2019s cards at switch time, not when the read returns');
+  assert.match(manage, /state\.renderedSeat = state\.seat/, 'the rendered seat is recorded after a successful render');
 });

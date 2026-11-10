@@ -971,7 +971,15 @@ html { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
 .cm-state { font-size: .8rem; border: 1px solid var(--line, #1F2937); border-radius: 999px; padding: 3px 10px; color: var(--muted, #94A3B8); }
 .cm-state.connected { color: var(--good, #10B981); border-color: var(--good, #10B981); }
 .cm-state.needs-reconnect { color: var(--warn, #F59E0B); border-color: var(--warn, #F59E0B); }
-.cm-mirror-note { flex-basis: 100%; margin: 0; }
+.cm-mirror-note { margin: 0; }
+.cm-connector { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0; padding: 10px 14px; }
+.cm-row-head { display: flex; gap: 10px 14px; align-items: center; width: 100%; }
+.cm-row-head .cm-row-main { min-width: 0; }
+.cm-row-open { width: 100%; border-top: 1px solid var(--line, #1F2937); margin-top: 10px; padding-top: 10px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-start; justify-content: space-between; }
+.cm-mirror-group { display: flex; flex-direction: column; gap: 8px; }
+.cm-mirror-title { margin: 4px 0 0; font-size: .95rem; }
+.cm-mirror-row { align-items: center; padding: 10px 14px; }
+.cm-mirror-row .cm-row-main { min-width: 0; }
 .cm-posture { display: flex; gap: 8px; align-items: center; }
 .cm-posture-select, .cm-add-input { background: var(--bg, #0B1120); color: var(--text, #F8FAFC); border: 1px solid var(--line, #1F2937); border-radius: 6px; padding: 6px 8px; font: inherit; font-size: .85rem; }
 .cm-key-form { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-top: 1px solid var(--line, #1F2937); padding-top: 10px; }

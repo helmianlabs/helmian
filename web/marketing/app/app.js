@@ -2278,7 +2278,18 @@ async function loadIntegrations() {
   }
   // Freshly rendered sections start visible; re-apply the remembered
   // Integrations tab so a re-render never dumps every section back out.
-  selectIntegrationsTab(store.get('integrationsTab', 'agents'));
+  // A Manage-road landing (the composer panel's Manage row) names its
+  // tab in a one-shot marker ('helmian.manageTab', connector-manage's
+  // MANAGE_TAB_STORAGE_KEY): it opens on Connectors, and selecting it
+  // here persists the choice like any other tab pick.
+  let wantedTab = store.get('integrationsTab', 'agents');
+  try {
+    if (sessionStorage.getItem('helmian.manageTab') === 'connectors') {
+      wantedTab = 'connectors';
+      sessionStorage.removeItem('helmian.manageTab');
+    }
+  } catch {}
+  selectIntegrationsTab(wantedTab);
   return p.value;
 }
 function integrationCard(card) {
