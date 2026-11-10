@@ -104,8 +104,16 @@ function productionRead() {
 // map. Token references never ride this read: the answer is built
 // field by field from the connection record, and the reference
 // columns are not among the fields.
-async function productionToolAccess(tenantId, { personId, seatId, entryId }) {
-  const store = createConnectorLibraryStore(getPool());
+//
+// Under the workspace SET (SYNC S1) "the caller's own connection"
+// is the set's row for the entry: the store's getConnection /
+// getCurrentSnapshot resolve it whichever seat set it up, so this
+// read answers the same posture, snapshot, and tool map on every
+// seat whose library carries the entry. Exported with an
+// injectable store so the read itself — not a copy of it — is
+// what the set's tests exercise; production builds the store from
+// the route's pool exactly as before.
+export async function productionToolAccess(tenantId, { personId, seatId, entryId }, store = createConnectorLibraryStore(getPool())) {
   const connection = await store.getConnection(tenantId, { personId, seatId, entryId });
   if (!connection || connection.state === 'disconnected') {
     return { connected: false, posture: null, tools: [], snapshotTakenAt: null, snapshotHash: null };

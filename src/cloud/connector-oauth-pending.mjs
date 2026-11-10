@@ -44,6 +44,28 @@
 // pair held as project env the same way (SLACK_OAUTH_*,
 // ASANA_OAUTH_*, HUBSPOT_OAUTH_*), each absent from the registry —
 // not configured, said plainly — until its pair is placed.
+//
+// The Google family bite (2026-11-10) adds ONE more member for
+// three catalog entries: 'google', the single Google Cloud OAuth
+// client covering Gmail, Google Calendar, and Google Drive
+// (GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET). Google's
+// authorization-server metadata names no registration endpoint
+// and no CIMD support (live read, 2026-11-10), so the fixed road
+// is the only road; the per-product scopes ride the catalog
+// entries' own declarations, never a per-provider table.
+//
+// The fixed-tail bite (2026-11-10) adds two more members, one
+// catalog entry each: 'canva' (CANVA_OAUTH_CLIENT_ID /
+// CANVA_OAUTH_CLIENT_SECRET — a Canva Developer Portal app with
+// Canva MCP turned on) and 'dropbox' (DROPBOX_OAUTH_CLIENT_ID /
+// DROPBOX_OAUTH_CLIENT_SECRET — a Dropbox App Console app's App
+// key / App secret). Neither road lets Helmian register itself
+// for MCP use (Canva: fixed Developer Portal app, CIMD only via
+// a waitlist application; Dropbox: MCP dynamic registration is
+// limited to a trusted set of named clients — live reads,
+// 2026-11-10, in the bite report), so the fixed road is the
+// road for both; each entry's scopes ride its own catalog
+// declaration, never a per-provider table.
 
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -221,6 +243,12 @@ function createGithubOAuthClient({ fetchImpl, env }) {
         expiresIn: Number.isFinite(Number(body.expires_in)) ? Number(body.expires_in) : null,
       };
     },
+    async refreshTokens({ refreshToken }) {
+      return exchangeRefreshTokenForm({
+        fetchImpl, tokenUrl: GITHUB_TOKEN_URL, clientId, clientSecret,
+        refreshToken, providerName: 'GitHub',
+      });
+    },
     // The person's GitHub login, fetched once at callback time so
     // the recorded accountIdentity is a fact, not a label. Fail-soft:
     // any miss answers null and the callback records the provider
@@ -267,6 +295,84 @@ async function exchangeAuthorizationCodeForm({ fetchImpl, tokenUrl, clientId, cl
   const body = await fetched.json().catch(() => null);
   if (!fetched?.ok || !body?.access_token) {
     throw Object.assign(new Error(body?.error_description || body?.error || `${providerName} refused the code exchange`), { status: 502 });
+  }
+  return {
+    accessToken: String(body.access_token),
+    refreshToken: body.refresh_token ? String(body.refresh_token) : null,
+    tokenType: body.token_type ? String(body.token_type) : 'Bearer',
+    scope: body.scope ? String(body.scope) : null,
+    expiresIn: Number.isFinite(Number(body.expires_in)) ? Number(body.expires_in) : null,
+  };
+}
+
+// The refresh exchange, sibling of the code exchange above
+// (PLAN B5, 2026-11-10): a grant_type=refresh_token POST to the
+// SAME token endpoint, with the factory's own client pair — the
+// endpoints and credentials live here and nowhere else, so the
+// arming dispatch's refresh leg asks this factory for a client
+// instead of hardcoding a second copy of either. The return is
+// the exchange bundle's exact shape. A provider ANSWER that
+// refuses the grant (an OAuth error body, e.g. a revoked
+// refresh token's invalid_grant) is marked refreshRefused so the
+// caller can tell a dead grant from an unreachable endpoint:
+// only the former may mark a connection needs-reconnect. A
+// network failure throws out of fetchImpl unmarked, and an
+// answer with no OAuth error and no token is unmarked too.
+async function exchangeRefreshTokenForm({ fetchImpl, tokenUrl, clientId, clientSecret, refreshToken, providerName }) {
+  const form = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: String(refreshToken),
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  const fetched = await fetchImpl(tokenUrl, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  });
+  const body = await fetched.json().catch(() => null);
+  if (!fetched?.ok || !body?.access_token) {
+    throw Object.assign(
+      new Error(body?.error_description || body?.error || `${providerName} refused the refresh exchange`),
+      { status: 502, refreshRefused: Boolean(body?.error) },
+    );
+  }
+  return {
+    accessToken: String(body.access_token),
+    refreshToken: body.refresh_token ? String(body.refresh_token) : null,
+    tokenType: body.token_type ? String(body.token_type) : 'Bearer',
+    scope: body.scope ? String(body.scope) : null,
+    expiresIn: Number.isFinite(Number(body.expires_in)) ? Number(body.expires_in) : null,
+  };
+}
+
+// The Basic-auth token exchange, sibling of the two helpers
+// above (fixed-tail bite, 2026-11-10): the client pair rides the
+// Authorization header as HTTP Basic (RFC 6749 §2.3.1) and never
+// rides the form — the shape Canva's Connect authentication
+// page recommends for its token endpoint ("Requests to the
+// endpoint must be authenticated, and we recommend using the
+// basic access authentication method"). One helper serves both
+// grants so the code exchange and the refresh exchange can
+// never drift apart in endpoint, credentials, or shape; a
+// refresh refusal is marked refreshRefused exactly like the
+// client_secret_post sibling's.
+async function exchangeTokenFormBasic({ fetchImpl, tokenUrl, clientId, clientSecret, form, providerName, isRefresh = false }) {
+  const fetched = await fetchImpl(tokenUrl, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/x-www-form-urlencoded',
+      authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`, 'utf8').toString('base64')}`,
+    },
+    body: form.toString(),
+  });
+  const body = await fetched.json().catch(() => null);
+  if (!fetched?.ok || !body?.access_token) {
+    throw Object.assign(
+      new Error(body?.error_description || body?.error || `${providerName} refused the ${isRefresh ? 'refresh' : 'code'} exchange`),
+      { status: 502, ...(isRefresh ? { refreshRefused: Boolean(body?.error) } : {}) },
+    );
   }
   return {
     accessToken: String(body.access_token),
@@ -331,7 +437,11 @@ function createSlackOAuthClient({ fetchImpl, env }) {
       return {
         accessToken: String(body.access_token),
         // Present only when the app has token rotation turned on;
-        // Slack user tokens otherwise do not expire.
+        // Slack user tokens otherwise do not expire. This client
+        // deliberately exposes NO refreshTokens: with rotation off
+        // there is nothing to refresh, so the arming dispatch's
+        // refresh leg (which keys off the factory's own shape)
+        // never fires for Slack.
         refreshToken: body.refresh_token ? String(body.refresh_token) : null,
         tokenType: body.token_type ? String(body.token_type) : 'Bearer',
         scope: body.scope ? String(body.scope) : null,
@@ -394,6 +504,12 @@ function createAsanaOAuthClient({ fetchImpl, env }) {
         code, codeVerifier, redirectUri, providerName: 'Asana',
       });
     },
+    async refreshTokens({ refreshToken }) {
+      return exchangeRefreshTokenForm({
+        fetchImpl, tokenUrl: ASANA_TOKEN_URL, clientId, clientSecret,
+        refreshToken, providerName: 'Asana',
+      });
+    },
     // No fetchIdentity: an MCP token cannot call Asana's standard
     // API (Asana's own note), so there is no honest identity read
     // on this road — the callback records the provider label.
@@ -437,6 +553,12 @@ function createHubSpotOAuthClient({ fetchImpl, env }) {
         code, codeVerifier, redirectUri, providerName: 'HubSpot',
       });
     },
+    async refreshTokens({ refreshToken }) {
+      return exchangeRefreshTokenForm({
+        fetchImpl, tokenUrl: HUBSPOT_TOKEN_URL, clientId, clientSecret,
+        refreshToken, providerName: 'HubSpot',
+      });
+    },
     async fetchIdentity({ accessToken }) {
       // HubSpot's token-info read: whose token this is. Fail-soft,
       // the registry's standing rule.
@@ -452,11 +574,248 @@ function createHubSpotOAuthClient({ fetchImpl, env }) {
   };
 }
 
+// Google: ONE pre-registered Google Cloud OAuth client (Web
+// application, "Use this client for an AI-powered agent") covering
+// all three Workspace MCP servers — Gmail, Calendar, Drive. The
+// endpoints are the ones Google's own authorization-server
+// metadata names (live read, 2026-11-10): authorize at
+// accounts.google.com, token at oauth2.googleapis.com, PKCE S256,
+// grants authorization_code + refresh_token. The exchange is
+// client_secret_post, the method Google's Web-application client
+// runs. Two authorize parameters are this road's law, shaped here
+// in the factory the way Asana's factory shapes its resource
+// indicator: access_type=offline + prompt=consent — without them
+// Google issues NO refresh token and the person re-signs-in about
+// every hour (Google's own Workspace MCP guide). The scopes are
+// NOT shaped here: each catalog entry declares its own product
+// scopes and the write route passes that entry's declared ask in.
+const GOOGLE_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
+
+function createGoogleOAuthClient({ fetchImpl, env }) {
+  const clientId = String(env?.GOOGLE_OAUTH_CLIENT_ID ?? '').trim();
+  const clientSecret = String(env?.GOOGLE_OAUTH_CLIENT_SECRET ?? '').trim();
+  if (!clientId || !clientSecret) return null;
+  return {
+    provider: 'google',
+    displayName: 'Google',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge, scopes }) {
+      const url = new URL(GOOGLE_AUTHORIZE_URL);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      if (Array.isArray(scopes) && scopes.length) url.searchParams.set('scope', scopes.join(' '));
+      url.searchParams.set('state', state);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      // The refresh-token pair (see the factory note): offline
+      // access is what makes Google issue a refresh token at all,
+      // and consent is what makes it re-issue one on a later
+      // connect instead of silently withholding it.
+      url.searchParams.set('access_type', 'offline');
+      url.searchParams.set('prompt', 'consent');
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      return exchangeAuthorizationCodeForm({
+        fetchImpl, tokenUrl: GOOGLE_TOKEN_URL, clientId, clientSecret,
+        code, codeVerifier, redirectUri, providerName: 'Google',
+      });
+    },
+    async refreshTokens({ refreshToken }) {
+      return exchangeRefreshTokenForm({
+        fetchImpl, tokenUrl: GOOGLE_TOKEN_URL, clientId, clientSecret,
+        refreshToken, providerName: 'Google',
+      });
+    },
+    async fetchIdentity({ accessToken }) {
+      // Google's OpenID userinfo read: the person's own Google
+      // account email, fetched once at callback time. It works on
+      // this road because the token is a standard Google OAuth
+      // token (unlike Asana's MCP-only tokens, which cannot reach
+      // an identity endpoint). Fail-soft, the registry's standing
+      // rule: any miss answers null and the callback records the
+      // provider label instead.
+      try {
+        const res = await fetchImpl(GOOGLE_USERINFO_URL, {
+          headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
+        });
+        if (!res?.ok) return null;
+        const body = await res.json().catch(() => null);
+        return body?.email ? String(body.email) : null;
+      } catch { return null; }
+    },
+  };
+}
+
+// Canva: the pre-registered Developer Portal app with Canva MCP
+// turned on (Canva's own MCP quickstart: "create an app in the
+// Developer Portal and turn on Canva MCP. You get a client ID
+// and client secret straight away, and you manage your own
+// redirect URLs"). The endpoints are the ones Canva's
+// authorization-server metadata names for this road (live read,
+// 2026-11-10: issuer https://www.canva.com, authorization
+// endpoint https://www.canva.com/api/oauth/authorize, token
+// endpoint https://api.canva.com/auth/v1/oauth/token, response
+// type code, PKCE S256). Canva's REST API pages name a
+// /rest/v1/oauth/token spelling for the REST surface; the
+// metadata document the MCP server's own protected-resource
+// record points at is the authority for THIS road, so auth/v1
+// is the token endpoint built here. The exchange is Basic-auth
+// + PKCE (Canva's Connect authentication page recommends Basic
+// for the token endpoint; the PKCE verifier rides the form).
+// Canva issues a refresh token with the code and a fresh one
+// with each refresh — "Each refresh token can only be used
+// once" (same page) — so refreshTokens() is exposed and
+// refresh-on-resolve covers Canva from day one. The scopes are
+// NOT shaped here: the entry declares its own ask (the MCP
+// server's protected-resource set) and the write route passes
+// it in.
+const CANVA_AUTHORIZE_URL = 'https://www.canva.com/api/oauth/authorize';
+const CANVA_TOKEN_URL = 'https://api.canva.com/auth/v1/oauth/token';
+
+function createCanvaOAuthClient({ fetchImpl, env }) {
+  const clientId = String(env?.CANVA_OAUTH_CLIENT_ID ?? '').trim();
+  const clientSecret = String(env?.CANVA_OAUTH_CLIENT_SECRET ?? '').trim();
+  if (!clientId || !clientSecret) return null;
+  return {
+    provider: 'canva',
+    displayName: 'Canva',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge, scopes }) {
+      const url = new URL(CANVA_AUTHORIZE_URL);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      if (Array.isArray(scopes) && scopes.length) url.searchParams.set('scope', scopes.join(' '));
+      url.searchParams.set('state', state);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      const form = new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: String(code),
+        redirect_uri: redirectUri,
+      });
+      if (codeVerifier) form.set('code_verifier', codeVerifier);
+      return exchangeTokenFormBasic({
+        fetchImpl, tokenUrl: CANVA_TOKEN_URL, clientId, clientSecret,
+        form, providerName: 'Canva',
+      });
+    },
+    async refreshTokens({ refreshToken }) {
+      const form = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: String(refreshToken),
+      });
+      return exchangeTokenFormBasic({
+        fetchImpl, tokenUrl: CANVA_TOKEN_URL, clientId, clientSecret,
+        form, providerName: 'Canva', isRefresh: true,
+      });
+    },
+    // No fetchIdentity: the token this road mints is for
+    // Canva's MCP server, and Canva publishes no identity read
+    // for MCP tokens — the callback records the provider label
+    // (the Asana precedent).
+  };
+}
+
+// Dropbox: the pre-registered App Console app — Scoped access,
+// Full Dropbox, the MCP permissions enabled on its Permissions
+// tab (Dropbox's own Help Center setup for this server). The
+// env pair is the app's App key / App secret. The endpoints are
+// the ones Dropbox's authorization-server metadata names (live
+// read, 2026-11-10: issuer https://www.dropbox.com — the
+// issuer the MCP server's protected-resource document names —
+// authorization endpoint https://www.dropbox.com/oauth2/
+// authorize, token endpoint https://api.dropboxapi.com/oauth2/
+// token, grants authorization_code + refresh_token, PKCE
+// S256). The exchange is client_secret_post, one of the
+// methods that metadata publishes. One authorize parameter is
+// this road's law, shaped here in the factory the way Google's
+// factory shapes its offline pair: token_access_type=offline —
+// without it Dropbox issues NO refresh token and the person
+// re-signs-in when the short-lived access token expires. The
+// scopes are NOT shaped here: the entry declares its own ask
+// (the MCP server's protected-resource set) and the write
+// route passes it in.
+const DROPBOX_AUTHORIZE_URL = 'https://www.dropbox.com/oauth2/authorize';
+const DROPBOX_TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token';
+const DROPBOX_ACCOUNT_URL = 'https://api.dropboxapi.com/2/users/get_current_account';
+
+function createDropboxOAuthClient({ fetchImpl, env }) {
+  const clientId = String(env?.DROPBOX_OAUTH_CLIENT_ID ?? '').trim();
+  const clientSecret = String(env?.DROPBOX_OAUTH_CLIENT_SECRET ?? '').trim();
+  if (!clientId || !clientSecret) return null;
+  return {
+    provider: 'dropbox',
+    displayName: 'Dropbox',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge, scopes }) {
+      const url = new URL(DROPBOX_AUTHORIZE_URL);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      if (Array.isArray(scopes) && scopes.length) url.searchParams.set('scope', scopes.join(' '));
+      url.searchParams.set('state', state);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      // The refresh-token parameter (see the factory note):
+      // offline access is what makes Dropbox issue a refresh
+      // token at all on this road.
+      url.searchParams.set('token_access_type', 'offline');
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      return exchangeAuthorizationCodeForm({
+        fetchImpl, tokenUrl: DROPBOX_TOKEN_URL, clientId, clientSecret,
+        code, codeVerifier, redirectUri, providerName: 'Dropbox',
+      });
+    },
+    async refreshTokens({ refreshToken }) {
+      return exchangeRefreshTokenForm({
+        fetchImpl, tokenUrl: DROPBOX_TOKEN_URL, clientId, clientSecret,
+        refreshToken, providerName: 'Dropbox',
+      });
+    },
+    async fetchIdentity({ accessToken }) {
+      // Dropbox's current-account read (the account_info.read
+      // scope the entry declares): whose token this is — the
+      // account's email when Dropbox returns one. Fail-soft,
+      // the registry's standing rule.
+      try {
+        const res = await fetchImpl(DROPBOX_ACCOUNT_URL, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: 'null',
+        });
+        if (!res?.ok) return null;
+        const body = await res.json().catch(() => null);
+        const identity = body?.email ?? body?.name?.display_name ?? body?.account_id;
+        return identity ? String(identity) : null;
+      } catch { return null; }
+    },
+  };
+}
+
 const CONNECTOR_OAUTH_PROVIDERS = Object.freeze({
   github: createGithubOAuthClient,
   slack: createSlackOAuthClient,
   asana: createAsanaOAuthClient,
   hubspot: createHubSpotOAuthClient,
+  google: createGoogleOAuthClient,
+  canva: createCanvaOAuthClient,
+  dropbox: createDropboxOAuthClient,
 });
 
 // Resolve the OAuth client for a provider — always the pending

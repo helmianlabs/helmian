@@ -87,8 +87,11 @@ const SHELF = 'registry-weather';
 // own published MCP servers directly, so their entries ride the live
 // groups of the seats they stock — claude, chatgpt, grok. Vercel's
 // was the first; Bite R2 added the team-work family (Slack, Asana,
-// HubSpot) in the same order the catalog lists them.
-const BROKERED = 'helmian-vercel,helmian-slack,helmian-asana,helmian-hubspot';
+// HubSpot), the Google family bite added Gmail, Google Calendar and
+// Google Drive, and the DCR long-tail bite added Meltwater, S&P
+// Global, Idiolect and Gamma — each in the order the catalog lists
+// them.
+const BROKERED = 'helmian-vercel,helmian-slack,helmian-asana,helmian-hubspot,helmian-gmail,helmian-google-calendar,helmian-google-drive,helmian-meltwater,helmian-sp-global,helmian-idiolect,helmian-gamma,helmian-canva,helmian-dropbox';
 const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES},${SHELF}`, 'manage:Manage connectors:integrations'];
 
 const EXPECTED = {

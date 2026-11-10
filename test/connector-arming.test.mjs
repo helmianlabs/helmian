@@ -36,6 +36,7 @@ import { createConnectorLibraryStore, buildConnectorTokenRef, planToolSnapshot }
 import { resolveTurnAttachments, postureRequiresApproval } from '../src/agent/attachments.mjs';
 import { buildConnectorArming, sanitizeArmingRecords } from '../src/agent/connector-arming.mjs';
 import { armingPairsForDispatch, resolveArmingRecord, resolveDispatchArming } from '../src/cloud/connector-arming-dispatch.mjs';
+import { createConnectorOAuthClient } from '../src/cloud/connector-oauth-pending.mjs';
 import { chatWithTools, ANTHROPIC_MCP_BETA } from '../src/agent/providers.mjs';
 import { runAgentTurn } from '../src/agent/loop.mjs';
 import { makeProvenanceWorkspace, cleanProvenanceWorkspace } from '../test-support/provenance-workspace.mjs';
@@ -927,4 +928,333 @@ test('g4 wiring pins: dispatch attaches the records to the work item; the bridge
   const bridgeSrc = readFileSync(new URL('../src/agent/bridge.mjs', import.meta.url), 'utf8');
   assert.ok(bridgeSrc.includes('buildConnectorArming(armingRecords'), 'the bridge builds the seam from the turn request records');
   assert.ok(!bridgeSrc.includes('const connectorArming = null;'), 'the literal-null seam is gone');
+});
+
+// ================================================================
+// B5: refresh-on-resolve — an expired Asana-shaped bundle is
+// refreshed once at arm time; a refused refresh marks the
+// connection needs-reconnect; a bundle with no refresh token
+// (Slack, rotation off) behaves byte-for-byte as before.
+//
+// Production-shaped: the REAL dispatch (resolveArmingRecord)
+// over the REAL library store (createConnectorLibraryStore on an
+// in-memory pool covering entries / connections / snapshots,
+// the connector-library.test.mjs fake-pool pattern), a stub
+// credential service, and the REAL provider factory
+// (createConnectorOAuthClient) behind a stub fetch standing in
+// for the provider's token endpoint.
+//
+// The stub credential service models the vault's two answers
+// faithfully: a provider_call resolve of an expired bundle is
+// refused with the vault's own refusal shape
+// ({ status: 'credential_not_available', accepted: false,
+// secretMaterial: 'not_returned', providerInvocation:
+// 'not_performed' } — credential-vault.mjs's expired-record
+// answer, word for word), and an oauth_refresh resolve — the
+// vault's own reason class for this road — returns the bundle's
+// refresh token, the one field a refresh exchange needs. Stores
+// land in the stub's bundle map so the test can read back what
+// the refresh kept.
+// ================================================================
+
+function refreshLibraryPool() {
+  const entries = new Map();
+  const connections = new Map();
+  const snapshots = new Map();
+  let tenant = null;
+  let connSeq = 0;
+  let snapSeq = 0;
+  const now = () => new Date();
+  const entryKey = (seat, id) => `${tenant}|${seat}|${id}`;
+  const connKey = (p, s, e) => `${tenant}|${p}|${s}|${e}`;
+  return {
+    async connect() {
+      return {
+        async query(text, vals = []) {
+          if (text.includes("set_config('helmion.tenant_id'")) { tenant = vals[0]; return { rows: [], rowCount: 0 }; }
+          if (['begin', 'commit', 'rollback'].includes(text.trim())) return { rows: [], rowCount: 0 };
+          if (text.includes('insert into helmion.connector_entries')) {
+            const [seatId, id, kind, name, oneLiner, iconRef, vendorName, trustLabel, category,
+              brokerMode, endpoint, vendorRefJson, authMode, clientIdentity, scopesSummary,
+              addedBy, workspaceProvisioned] = vals;
+            const row = {
+              tenant_id: tenant, seat_id: seatId, id, kind, name, one_liner: oneLiner,
+              icon_ref: iconRef, vendor_name: vendorName, trust_label: trustLabel, category,
+              broker_mode: brokerMode, mcp_endpoint_url: endpoint,
+              vendor_connector_ref: vendorRefJson ? JSON.parse(vendorRefJson) : null,
+              auth_mode: authMode, client_identity: clientIdentity, scopes_summary: scopesSummary,
+              added_by: addedBy, added_at: now(), workspace_provisioned: workspaceProvisioned,
+              state: 'available', created_at: now(), updated_at: now(),
+            };
+            entries.set(entryKey(seatId, id), row);
+            return { rows: [{ ...row }], rowCount: 1 };
+          }
+          if (text.includes('from helmion.connector_entries')) {
+            const row = entries.get(entryKey(vals[0], vals[1]));
+            return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+          }
+          if (text.includes('insert into helmion.connector_snapshots')) {
+            const row = {
+              id: ++snapSeq, tenant_id: tenant, connection_id: vals[0],
+              taken_at: now(), tools: JSON.parse(vals[1]), snapshot_hash: vals[2],
+            };
+            snapshots.set(row.id, row);
+            return { rows: [{ ...row }], rowCount: 1 };
+          }
+          if (text.includes('from helmion.connector_snapshots')) {
+            const row = snapshots.get(vals[0]);
+            return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+          }
+          if (text.includes('insert into helmion.connector_connections')) {
+            const [personId, seatId, entryId, accountIdentity, accessRef, refreshRef, scopesJson, posture] = vals;
+            const row = {
+              id: ++connSeq, tenant_id: tenant, person_id: personId, seat_id: seatId, entry_id: entryId,
+              account_identity: accountIdentity, access_token_ref: accessRef, refresh_token_ref: refreshRef,
+              granted_scopes: JSON.parse(scopesJson), posture, tool_enable_map: {}, tool_snapshot_ref: null,
+              state: 'connected', last_discovery_at: null, last_used_at: null,
+              created_at: now(), updated_at: now(),
+            };
+            connections.set(connKey(personId, seatId, entryId), row);
+            return { rows: [{ ...row }], rowCount: 1 };
+          }
+          if (text.includes('update helmion.connector_connections')) {
+            const row = connections.get(connKey(vals[0], vals[1], vals[2]));
+            if (!row) return { rows: [], rowCount: 0 };
+            if (text.includes("set state = 'disconnected'")) {
+              row.state = 'disconnected'; row.access_token_ref = null; row.refresh_token_ref = null; row.tool_snapshot_ref = null;
+            } else if (text.includes('set access_token_ref = $4')) {
+              row.access_token_ref = vals[3]; row.refresh_token_ref = vals[4];
+              row.account_identity = vals[5]; row.granted_scopes = JSON.parse(vals[6]); row.state = 'connected';
+            } else if (text.includes('set tool_snapshot_ref = $4')) {
+              row.tool_snapshot_ref = vals[3]; row.last_discovery_at = now(); row.tool_enable_map = JSON.parse(vals[4]);
+            } else if (text.includes("set state = 'needs-reconnect'")) {
+              row.state = 'needs-reconnect';
+            } else {
+              throw new Error(`refresh fake pool: unhandled connection update: ${text.slice(0, 80)}`);
+            }
+            row.updated_at = now();
+            return { rows: [{ ...row }], rowCount: 1 };
+          }
+          if (text.includes('from helmion.connector_connections')) {
+            const row = connections.get(connKey(vals[0], vals[1], vals[2]));
+            return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+          }
+          throw new Error(`refresh fake pool: unhandled query: ${text.slice(0, 80)}`);
+        },
+        release() {},
+      };
+    },
+  };
+}
+
+const B5_TENANT = 'tenant-a';
+const B5_PERSON = 'user:troy';
+
+function stubCredentialService() {
+  const bundles = new Map();
+  const calls = [];
+  return {
+    bundles, calls,
+    async resolveVaultCredential(input) {
+      calls.push(['resolveVaultCredential', input]);
+      const bundle = bundles.get(input.credentialReference);
+      if (!bundle) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+      if (input.reasonClass === 'oauth_refresh') {
+        return bundle.refreshToken
+          ? { status: 'credential_resolved', accepted: true, credential: bundle.accessToken, refreshToken: bundle.refreshToken, tokenType: 'Bearer', secretMaterial: 'adapter_only', providerInvocation: 'not_performed' }
+          : { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+      }
+      if (bundle.expired) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+      return { status: 'credential_resolved', accepted: true, credential: { accessToken: bundle.accessToken, refreshToken: bundle.refreshToken }, refreshToken: bundle.refreshToken, tokenType: 'Bearer', secretMaterial: 'adapter_only', providerInvocation: 'not_performed' };
+    },
+    async storeCredential(input) {
+      calls.push(['storeCredential', input]);
+      bundles.set(input.credentialReference, { accessToken: input.accessToken, refreshToken: input.refreshToken, expired: false });
+      return { status: 'stored_in_credential_vault', accepted: true, credentialReference: input.credentialReference };
+    },
+  };
+}
+
+// The provider's token endpoint behind a stub fetch, with the
+// real factory in front of it. mode: 'ok' | 'refused' | 'down'.
+function stubTokenEndpoint(mode) {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (mode === 'down') throw new TypeError('fetch failed');
+    if (mode === 'refused') {
+      return { ok: false, status: 400, json: async () => ({ error: 'invalid_grant', error_description: 'The refresh token is revoked' }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ access_token: 'tok-fresh', refresh_token: 'ref-rotated', token_type: 'Bearer', expires_in: 3600 }) };
+  };
+  const env = {
+    ASANA_OAUTH_CLIENT_ID: 'asana-client-id', ASANA_OAUTH_CLIENT_SECRET: 'asana-client-secret',
+    SLACK_OAUTH_CLIENT_ID: 'slack-client-id', SLACK_OAUTH_CLIENT_SECRET: 'slack-client-secret',
+  };
+  const oauthClientFor = (provider) => createConnectorOAuthClient(provider, { fetchImpl, env });
+  return { calls, fetchImpl, env, oauthClientFor };
+}
+
+const B5_TOOLS = [
+  { name: 'list_tasks', description: 'List tasks', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
+];
+
+async function seedB5Connection({ entryId, withRefresh }) {
+  const store = createConnectorLibraryStore(refreshLibraryPool());
+  const entry = catalogEntryById('claude', entryId);
+  await store.createEntry(B5_TENANT, B5_PERSON, entry);
+  const accessRef = buildConnectorTokenRef({ tenantId: B5_TENANT, seatId: 'claude', entryId, personId: B5_PERSON, tokenKind: 'access' });
+  const refreshRef = withRefresh
+    ? buildConnectorTokenRef({ tenantId: B5_TENANT, seatId: 'claude', entryId, personId: B5_PERSON, tokenKind: 'refresh' })
+    : null;
+  await store.createConnection(B5_TENANT, B5_PERSON, {
+    personId: B5_PERSON, seatId: 'claude', entryId,
+    accountIdentity: `${entry.name} account`, accessTokenRef: accessRef, refreshTokenRef: refreshRef, grantedScopes: [],
+  });
+  await store.freezeSnapshot(B5_TENANT, { personId: B5_PERSON, seatId: 'claude', entryId }, B5_TOOLS, B5_PERSON);
+  return { store, accessRef, refreshRef };
+}
+
+test('b5 factory: the Asana client exposes a refresh exchange on its own token endpoint; Slack exposes none', async () => {
+  const endpoint = stubTokenEndpoint('ok');
+  const asana = createConnectorOAuthClient('asana', { fetchImpl: endpoint.fetchImpl, env: endpoint.env });
+  assert.equal(typeof asana.refreshTokens, 'function');
+  const tokens = await asana.refreshTokens({ refreshToken: 'ref-old' });
+  assert.deepEqual(tokens, { accessToken: 'tok-fresh', refreshToken: 'ref-rotated', tokenType: 'Bearer', scope: null, expiresIn: 3600 });
+  assert.equal(endpoint.calls.length, 1);
+  assert.equal(endpoint.calls[0].url, 'https://app.asana.com/-/oauth_token');
+  const form = new URLSearchParams(endpoint.calls[0].init.body);
+  assert.equal(form.get('grant_type'), 'refresh_token');
+  assert.equal(form.get('refresh_token'), 'ref-old');
+  assert.equal(form.get('client_id'), 'asana-client-id');
+  assert.equal(form.get('client_secret'), 'asana-client-secret');
+  const slack = createConnectorOAuthClient('slack', { fetchImpl: endpoint.fetchImpl, env: endpoint.env });
+  assert.equal(slack.refreshTokens, undefined, 'Slack factory exposes no refresh — rotation off is its standing shape');
+  const refusedEndpoint = stubTokenEndpoint('refused');
+  const refusedClient = createConnectorOAuthClient('asana', { fetchImpl: refusedEndpoint.fetchImpl, env: refusedEndpoint.env });
+  await assert.rejects(() => refusedClient.refreshTokens({ refreshToken: 'ref-old' }), (error) => error.refreshRefused === true);
+});
+
+test('b5 refresh: an expired Asana bundle refreshes once and the armed turn proceeds on the fresh token', async () => {
+  const { store, accessRef, refreshRef } = await seedB5Connection({ entryId: 'helmian-asana', withRefresh: true });
+  const credentials = stubCredentialService();
+  credentials.bundles.set(accessRef, { accessToken: 'tok-expired', refreshToken: 'ref-old', expired: true });
+  credentials.bundles.set(refreshRef, { accessToken: 'tok-expired', refreshToken: 'ref-old', expired: true });
+  const endpoint = stubTokenEndpoint('ok');
+  const record = await resolveArmingRecord({
+    store, credentials, listTools: NO_LIST, operatorTokens: {}, oauthClientFor: endpoint.oauthClientFor,
+    tenantId: B5_TENANT, personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-asana',
+  });
+  assert.equal(record.state, 'connected');
+  assert.equal(record.accessToken, 'tok-fresh');
+  assert.equal(record.tokenSource, 'connection');
+  assert.equal(record.snapshotTools.length, 1);
+  // ONE exchange, on Asana's own endpoint, carrying the stored refresh token.
+  assert.equal(endpoint.calls.length, 1);
+  assert.equal(endpoint.calls[0].url, 'https://app.asana.com/-/oauth_token');
+  const form = new URLSearchParams(endpoint.calls[0].init.body);
+  assert.equal(form.get('grant_type'), 'refresh_token');
+  assert.equal(form.get('refresh_token'), 'ref-old');
+  // The resolves: the expired access bundle refused under
+  // provider_call, then the refresh reference under oauth_refresh,
+  // both under the arming actor context.
+  const resolves = credentials.calls.filter(([n]) => n === 'resolveVaultCredential').map(([, input]) => input);
+  assert.equal(resolves.length, 2);
+  assert.equal(resolves[0].credentialReference, accessRef);
+  assert.equal(resolves[0].reasonClass, 'provider_call');
+  assert.equal(resolves[1].credentialReference, refreshRef);
+  assert.equal(resolves[1].reasonClass, 'oauth_refresh');
+  assert.equal(resolves[1].actorSubject, 'helmion:connector-arming');
+  assert.equal(resolves[1].actorRole, 'device');
+  // The new bundle was re-stored under both references, with the
+  // arming actor context on every store.
+  const stores = credentials.calls.filter(([n]) => n === 'storeCredential').map(([, input]) => input);
+  assert.equal(stores.length, 2);
+  assert.deepEqual(stores.map((s) => s.credentialReference).sort(), [accessRef, refreshRef].sort());
+  for (const stored of stores) {
+    assert.equal(stored.credentialKind, 'oauth_bundle');
+    assert.equal(stored.accessToken, 'tok-fresh');
+    assert.equal(stored.refreshToken, 'ref-rotated');
+    assert.equal(stored.actorSubject, 'helmion:connector-arming');
+    assert.equal(stored.actorRole, 'device');
+    assert.equal(stored.tenantId, B5_TENANT);
+    assert.ok(stored.sessionId && stored.requestId, 'the store carries the full actor context');
+  }
+  assert.equal(credentials.bundles.get(accessRef).accessToken, 'tok-fresh');
+  // And the landing: the connection still reads connected, holding
+  // the (deterministically re-minted) references.
+  const landed = await store.getConnection(B5_TENANT, { personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-asana' });
+  assert.equal(landed.state, 'connected');
+  assert.equal(landed.accessTokenRef, accessRef);
+  assert.equal(landed.refreshTokenRef, refreshRef);
+});
+
+test('b5 refresh: a refused refresh marks the connection needs-reconnect and the pair resolves to that record', async () => {
+  const { store, accessRef, refreshRef } = await seedB5Connection({ entryId: 'helmian-asana', withRefresh: true });
+  const credentials = stubCredentialService();
+  credentials.bundles.set(accessRef, { accessToken: 'tok-expired', refreshToken: 'ref-old', expired: true });
+  credentials.bundles.set(refreshRef, { accessToken: 'tok-expired', refreshToken: 'ref-old', expired: true });
+  const endpoint = stubTokenEndpoint('refused');
+  const record = await resolveArmingRecord({
+    store, credentials, listTools: NO_LIST, operatorTokens: {}, oauthClientFor: endpoint.oauthClientFor,
+    tenantId: B5_TENANT, personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-asana',
+  });
+  assert.equal(endpoint.calls.length, 1, 'exactly one refresh exchange was attempted');
+  assert.equal(record.state, 'needs-reconnect');
+  assert.equal(record.reason, 'connection-needs-reconnect');
+  assert.equal(record.accessToken, undefined, 'a needs-reconnect record carries no token');
+  assert.equal(credentials.calls.filter(([n]) => n === 'storeCredential').length, 0, 'nothing was re-stored');
+  const landed = await store.getConnection(B5_TENANT, { personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-asana' });
+  assert.equal(landed.state, 'needs-reconnect', 'the connection itself reads needs-reconnect, not still-connected');
+});
+
+test('b5 refresh: an unreachable refresh endpoint unarms as today and the connection state stays truthful', async () => {
+  const { store, accessRef, refreshRef } = await seedB5Connection({ entryId: 'helmian-asana', withRefresh: true });
+  const credentials = stubCredentialService();
+  credentials.bundles.set(accessRef, { accessToken: 'tok-expired', refreshToken: 'ref-old', expired: true });
+  credentials.bundles.set(refreshRef, { accessToken: 'tok-expired', refreshToken: 'ref-old', expired: true });
+  const endpoint = stubTokenEndpoint('down');
+  const record = await resolveArmingRecord({
+    store, credentials, listTools: NO_LIST, operatorTokens: {}, oauthClientFor: endpoint.oauthClientFor,
+    tenantId: B5_TENANT, personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-asana',
+  });
+  assert.equal(endpoint.calls.length, 1, 'the refresh was attempted exactly once');
+  assert.equal(record.state, 'connected');
+  assert.equal(record.accessToken, null);
+  assert.equal(record.tokenSource, null);
+  assert.equal(credentials.calls.filter(([n]) => n === 'storeCredential').length, 0);
+  const landed = await store.getConnection(B5_TENANT, { personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-asana' });
+  assert.equal(landed.state, 'connected', 'an unreachable endpoint never marks needs-reconnect');
+});
+
+test('b5 refresh: a Slack-shaped bundle (no refresh token) behaves byte-for-byte as today', async () => {
+  const { store, accessRef } = await seedB5Connection({ entryId: 'helmian-slack', withRefresh: false });
+  const credentials = stubCredentialService();
+  credentials.bundles.set(accessRef, { accessToken: 'tok-expired', refreshToken: null, expired: true });
+  const endpoint = stubTokenEndpoint('ok');
+  const record = await resolveArmingRecord({
+    store, credentials, listTools: NO_LIST, operatorTokens: {}, oauthClientFor: endpoint.oauthClientFor,
+    tenantId: B5_TENANT, personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-slack',
+  });
+  const plan = planToolSnapshot(B5_TOOLS);
+  assert.deepEqual(record, {
+    seatId: 'claude',
+    entryId: 'helmian-slack',
+    entryName: 'Slack',
+    endpointUrl: 'https://mcp.slack.com/mcp',
+    authMode: 'oauth',
+    state: 'connected',
+    accountIdentity: 'Slack account',
+    posture: 'ask',
+    snapshotTools: plan.tools.map((t) => ({ name: t.name, annotation: t.annotation, inputSchemaHash: t.inputSchemaHash })),
+    toolEnableMap: { list_tasks: true },
+    accessToken: null,
+    tokenSource: null,
+  });
+  assert.equal(endpoint.calls.length, 0, 'no token endpoint was ever called');
+  assert.equal(credentials.calls.filter(([n]) => n === 'storeCredential').length, 0, 'nothing was stored');
+  assert.equal(credentials.calls.filter(([n]) => n === 'resolveVaultCredential').length, 1, 'only the one access resolve ran');
+  const landed = await store.getConnection(B5_TENANT, { personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-slack' });
+  assert.equal(landed.state, 'connected');
+  assert.equal(landed.refreshTokenRef, null);
 });

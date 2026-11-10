@@ -37,12 +37,74 @@
 // and gates second; a record created in between is a new record, not a
 // replacement, and is not gated — the gate's purpose is oversight of
 // replacements, and the audit trail shows every store either way.)
+//
+// THE TWO OAUTH-REFRESH ROADS (vault-refresh bite, follow-on to B5).
+// A record's expires_at describes its ACCESS token: the OAuth callback
+// stores one oauth_bundle per reference (access + refresh) with the
+// access token's expiresIn on both. The refresh token's real lifetime
+// is the provider's, so:
+//  (a) EXPIRY — a resolve with reasonClass 'oauth_refresh' of a record
+//      whose kind is oauth_bundle may return the stored material past
+//      expires_at. Every other reason class, and every other kind,
+//      keeps the expired refusal byte-for-byte, so expired ACCESS
+//      material can never move on a provider_call road — which is why
+//      the fix lives here and not in the callback's store shape
+//      (storing the refresh reference with no expiry would let ANY
+//      reason class resolve that reference past expiry). The audit
+//      event for such a resolve carries the reasonClass, as every
+//      resolve's event does, so the trail shows why expired material
+//      moved.
+//  (b) THE ARMING ACTOR'S RE-STORE — the refresh leg re-stores the
+//      fresh bundle over the existing references under the cloud
+//      dispatch's system actor (helmion:connector-arming, role
+//      'device' — connector-arming-dispatch.mjs). That actor is not
+//      and cannot be a tenant member (the membership role set has no
+//      'device'), and a bare replacement by it is Guard-gated like
+//      any other. The one narrow road past both: a replacement store
+//      by that exact actor lands without the gate when THIS vault
+//      instance itself resolved an oauth_bundle for the same tenant,
+//      provider and session under reasonClass 'oauth_refresh'
+//      moments earlier — provenance the vault records from its own
+//      successful resolves, never from a caller-supplied flag — the
+//      existing record and the new material are both oauth_bundle,
+//      and the provenance still has stores left (it is minted with
+//      exactly two: the leg stores one bundle per reference). The
+//      same qualification is the only road by which that actor's
+//      oauth_refresh resolve passes the membership check. Its audit
+//      events keep the actor's true subject and role; the membership
+//      replacement is the qualification above, stated here, and the
+//      replacement audit event names it ('oauth_refresh_provenance')
+//      in the guardGate field instead of claiming a Guard approval.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
 
 export const CREDENTIAL_KINDS = Object.freeze(['api_key', 'oauth_bundle', 'password', 'session']);
 export const RESOLVE_REASON_CLASSES = Object.freeze(['provider_call', 'browser_sign_in', 'probe', 'oauth_refresh', 'desktop_handshake']);
+
+// The cloud dispatch's arming actor (connector-arming-dispatch.mjs's
+// ARMING_ACTOR_SUBJECT / armingActorContext). The oauth-refresh roads
+// in the header key on this exact subject+role pair.
+export const ARMING_SYSTEM_ACTOR_SUBJECT = 'helmion:connector-arming';
+const ARMING_SYSTEM_ACTOR_ROLE = 'device';
+// Provenance minted by a successful oauth_refresh resolve (road (b)
+// in the header): one window, at most the two stores the refresh leg
+// makes (access reference + refresh reference).
+const REFRESH_PROVENANCE_WINDOW_MS = 5 * 60 * 1000;
+const REFRESH_PROVENANCE_MAX_STORES = 2;
+
+function isArmingSystemActor(context) {
+  return context?.actorSubject === ARMING_SYSTEM_ACTOR_SUBJECT && context?.actorRole === ARMING_SYSTEM_ACTOR_ROLE;
+}
+
+// The tenant transaction's context normalization has no 'device'
+// role, so the arming actor's transactions carry a membership-shaped
+// role for the session config only. Every check, audit event and
+// answer in this module uses the caller's true context; the
+// translation changes nothing for any other actor.
+function transactionContext(context) {
+  return isArmingSystemActor(context) ? { ...context, actorRole: 'member' } : context;
+}
 
 const VAULT_REFERENCE = /^vault:\/\/tenant\/[a-z0-9][a-z0-9._:-]{0,127}\/[a-z0-9._:-]{1,96}(?:\/[a-z0-9._:-]{1,96})?$/u;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
@@ -136,6 +198,26 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
   const master = credentialKeyBytes(masterKey);
   if (!master) throw new TypeError('credential vault master key must be a base64url-encoded 32-byte key');
 
+  // Provenance for road (b): successful oauth_refresh resolves this
+  // instance performed, keyed by tenant + provider + actor + session
+  // (NOT request: the leg resolves under a fresh request id, then
+  // stores under the dispatch run's — the session is the run's own
+  // id, shared by both). Entries expire and are spent by use.
+  const refreshProvenance = new Map();
+  const provenanceKey = ({ tenantId, providerId, actorSubject, sessionId }) => `${tenantId}\0${providerId}\0${actorSubject}\0${sessionId}`;
+  function noteRefreshProvenance(context, input) {
+    refreshProvenance.set(provenanceKey({ tenantId: context.tenantId, providerId: input.providerId, actorSubject: context.actorSubject, sessionId: context.sessionId }), { expiresAtMs: Date.now() + REFRESH_PROVENANCE_WINDOW_MS, storesLeft: REFRESH_PROVENANCE_MAX_STORES });
+  }
+  function takeRefreshProvenance(context, input) {
+    const key = provenanceKey({ tenantId: context.tenantId, providerId: input.providerId, actorSubject: context.actorSubject, sessionId: context.sessionId });
+    const entry = refreshProvenance.get(key);
+    if (!entry) return false;
+    if (entry.expiresAtMs <= Date.now() || entry.storesLeft < 1) { refreshProvenance.delete(key); return false; }
+    entry.storesLeft -= 1;
+    if (entry.storesLeft < 1) refreshProvenance.delete(key);
+    return true;
+  }
+
   async function emitAudit(client, context, event) {
     if (typeof auditSink !== 'function') return 'sink_not_configured';
     await auditSink(client, context, Object.freeze({
@@ -196,21 +278,40 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
       const context = requireActor(input);
       validateReference(input);
       const normalized = normalizePayload(input);
+      const systemArming = isArmingSystemActor(context);
+      const txContext = transactionContext(context);
       // Replacement = an active record already sits at this reference.
       // (withTenantTransaction wraps the callback result, so the peek
-      // rides out under an explicit `found` key.)
-      const peeked = await withTenantTransaction(pool, context, async (client) => {
-        await requireActiveTenantMembership(client, context);
+      // rides out under an explicit `found` key.) The peek reads
+      // lifecycle facts only, never material; for the arming actor
+      // the membership decision is made after the peek, below, where
+      // the replacement's qualification can be judged.
+      const peeked = await withTenantTransaction(pool, txContext, async (client) => {
+        if (!systemArming) await requireActiveTenantMembership(client, txContext);
         return { found: await peek(client, input) };
       });
       const existing = peeked.found;
       const isReplacement = Boolean(existing && !existing.revoked_at);
-      if (isReplacement) {
+      // Road (b): a provenanced refresh replacement skips the gate.
+      // takeRefreshProvenance runs last and only when every other
+      // condition holds, so a refused store never spends provenance.
+      const provenanceReplacement = Boolean(isReplacement && systemArming
+        && normalized.kind === 'oauth_bundle' && existing.credential_kind === 'oauth_bundle'
+        && takeRefreshProvenance(context, input));
+      let gatePassed = false;
+      if (isReplacement && !provenanceReplacement) {
         const refused = await runGate('credential.replace', { ...input, credentialKind: normalized.kind }, context);
         if (refused) return refused;
+        gatePassed = true;
       }
-      return withTenantTransaction(pool, context, async (client) => {
-        await requireActiveTenantMembership(client, context);
+      // For the arming actor, the membership check is replaced only
+      // by the two qualifications above (provenance, or a Guard
+      // approval a human actually gave); every other store by that
+      // actor — a first store included — runs it and is refused, as
+      // a store by any non-member is.
+      const membershipReplaced = systemArming && (provenanceReplacement || gatePassed);
+      return withTenantTransaction(pool, txContext, async (client) => {
+        if (!membershipReplaced) await requireActiveTenantMembership(client, txContext);
         const tk = await tenantKey(client, input.tenantId, { create: true });
         if (tk.shredded) return { status: 'tenant_vault_shredded', accepted: false, secretMaterial: 'not_persisted', providerInvocation: 'not_performed' };
         if (!tk.key) throw new Error('tenant vault key could not be established');
@@ -219,7 +320,7 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
         const encrypted = gcmEncrypt(recordKey, recordAad({ ...input, credentialKind: normalized.kind }), Buffer.from(JSON.stringify(normalized.payload), 'utf8'));
         const result = await client.query(`insert into helmion.provider_credentials (tenant_id, provider_id, credential_reference, credential_kind, record_key_wrapped, record_key_iv, record_key_auth_tag, ciphertext, iv, auth_tag, token_type, scope, expires_at, updated_by_subject) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) on conflict (tenant_id,provider_id,credential_reference) do update set credential_kind=excluded.credential_kind, record_key_wrapped=excluded.record_key_wrapped, record_key_iv=excluded.record_key_iv, record_key_auth_tag=excluded.record_key_auth_tag, ciphertext=excluded.ciphertext, iv=excluded.iv, auth_tag=excluded.auth_tag, token_type=excluded.token_type, scope=excluded.scope, expires_at=excluded.expires_at, updated_by_subject=excluded.updated_by_subject, updated_at=clock_timestamp(), revoked_at=null returning id`, [input.tenantId, input.providerId, input.credentialReference, normalized.kind, wrappedRecordKey.ciphertext, wrappedRecordKey.iv, wrappedRecordKey.authTag, encrypted.ciphertext, encrypted.iv, encrypted.authTag, normalized.tokenType, normalized.scope, normalized.expiresAt, input.actorSubject]);
         if (result.rowCount !== 1) throw new Error('credential vault write was not durable');
-        const audit = await emitAudit(client, context, { action: isReplacement ? 'credential.replaced' : 'credential.stored', providerId: input.providerId, credentialKind: normalized.kind, credentialReference: input.credentialReference, guardGate: isReplacement ? 'approved' : 'not_required' });
+        const audit = await emitAudit(client, context, { action: isReplacement ? 'credential.replaced' : 'credential.stored', providerId: input.providerId, credentialKind: normalized.kind, credentialReference: input.credentialReference, guardGate: provenanceReplacement ? 'oauth_refresh_provenance' : isReplacement ? 'approved' : 'not_required' });
         return { status: isReplacement ? 'credential_replaced_in_vault' : 'stored_in_credential_vault', accepted: true, credentialReference: input.credentialReference, credentialKind: normalized.kind, vaultRecordId: String(result.rows[0].id), audit, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
       });
     },
@@ -229,20 +330,34 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
       validateReference(input);
       const reasonClass = String(input.reasonClass ?? '');
       if (!RESOLVE_REASON_CLASSES.includes(reasonClass)) throw new TypeError('credential resolve reason class is required');
-      const peeked = await withTenantTransaction(pool, context, async (client) => {
-        await requireActiveTenantMembership(client, context);
+      const systemArming = isArmingSystemActor(context);
+      const txContext = transactionContext(context);
+      const refreshReason = reasonClass === 'oauth_refresh';
+      // The peek reads lifecycle facts only, never material. For the
+      // arming actor's oauth_refresh resolve the membership decision
+      // is made after the peek, where the record's kind is known:
+      // that resolve is qualified exactly when the record is an
+      // oauth_bundle (road (b)); anything else runs the membership
+      // check in the resolve transaction and is refused there.
+      const peeked = await withTenantTransaction(pool, txContext, async (client) => {
+        if (!(systemArming && refreshReason)) await requireActiveTenantMembership(client, txContext);
         return { found: await peek(client, input) };
       });
       const head = peeked.found;
       if (!head || head.revoked_at) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
-      if (head.expires_at && new Date(head.expires_at).getTime() <= Date.now()) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+      // Road (a): the expiry refusal stands for every reason class
+      // and kind except an oauth_refresh retrieval of an
+      // oauth_bundle, whose expires_at describes the access token,
+      // not the refresh token being retrieved.
+      const refreshRetrieval = refreshReason && head.credential_kind === 'oauth_bundle';
+      if (head.expires_at && new Date(head.expires_at).getTime() <= Date.now() && !refreshRetrieval) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
       if (head.credential_kind === 'password') {
         const refused = await runGate('credential.password_resolve', { ...input, credentialKind: 'password' }, context);
         if (refused) return refused;
       }
-      return withTenantTransaction(pool, context, async (client) => {
-        await requireActiveTenantMembership(client, context);
-        const result = await client.query('select credential_kind, record_key_wrapped, record_key_iv, record_key_auth_tag, ciphertext, iv, auth_tag, token_type, scope from helmion.provider_credentials where tenant_id=$1 and provider_id=$2 and credential_reference=$3 and revoked_at is null and (expires_at is null or expires_at > clock_timestamp())', [input.tenantId, input.providerId, input.credentialReference]);
+      const resolved = await withTenantTransaction(pool, txContext, async (client) => {
+        if (!(systemArming && refreshRetrieval)) await requireActiveTenantMembership(client, txContext);
+        const result = await client.query(`select credential_kind, record_key_wrapped, record_key_iv, record_key_auth_tag, ciphertext, iv, auth_tag, token_type, scope from helmion.provider_credentials where tenant_id=$1 and provider_id=$2 and credential_reference=$3 and revoked_at is null${refreshRetrieval ? '' : ' and (expires_at is null or expires_at > clock_timestamp())'}`, [input.tenantId, input.providerId, input.credentialReference]);
         if (result.rowCount !== 1) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
         const row = result.rows[0];
         const tk = await tenantKey(client, input.tenantId);
@@ -257,6 +372,12 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
         const audit = await emitAudit(client, context, { action: 'credential.resolved', providerId: input.providerId, credentialKind: row.credential_kind, credentialReference: input.credentialReference, reasonClass, guardGate: row.credential_kind === 'password' ? 'approved' : 'not_required' });
         return { ...shapeResolved(row.credential_kind, payload, row), credentialReference: input.credentialReference, audit };
       });
+      // A committed oauth_refresh resolve of a bundle is the
+      // provenance the refresh leg's re-store is driven by (road
+      // (b)). Noted only after the resolve transaction commits, so
+      // provenance never exists for a resolve that did not land.
+      if (resolved?.accepted && refreshRetrieval) noteRefreshProvenance(context, input);
+      return resolved;
     },
 
     async revokeCredential(input = {}) {

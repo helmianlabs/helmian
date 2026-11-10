@@ -162,7 +162,7 @@ test('catalog: the Vercel entry is a first-class Helmian-brokered entry on the O
     assert.equal(kind.resourceUrl, ENDPOINT);
     assert.equal(kind.clientId, METADATA_URL);
   }
-  assert.equal(CONNECTOR_CATALOG.length, 89, '75 (Sources 1–3) + the Vercel entry on three seats + Bite R2: Slack/Asana/HubSpot on three seats and the Figma mirror on two');
+  assert.equal(CONNECTOR_CATALOG.length, 116, '75 (Sources 1–3) + the Vercel entry on three seats + Bite R2: Slack/Asana/HubSpot on three seats and the Figma mirror on two + the Google family bite: Gmail/Google Calendar/Google Drive on three seats + the DCR long-tail bite: Meltwater/S&P Global/Idiolect/Gamma on three seats + the fixed-tail bite: Canva/Dropbox on three seats');
 });
 
 test('catalog: no seat outside the named three carries the brokered Vercel entry', () => {

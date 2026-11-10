@@ -1147,3 +1147,55 @@ test('disconnect through the real credential service: the revoke carries the act
   assert.equal(revokes[0][1].providerId, 'connector.grok.custom-keys', 'the vault cannot validate a reference without its provider');
   assert.equal(vault.records.has(ref), false, 'the credential is gone from the vault');
 });
+
+// ------------------------------------------------- callback page copy
+// The server-truth pair bite (integrations-cleanup REPORT, structural
+// flag 2): the OAuth callback page told the person the return landed
+// on the Manage surface — a surface removed from the product (the
+// return actually lands on the Integrations view). Every line the
+// callback page can speak is pinned here: the success line says the
+// person is connected and is being taken back to Helmian, and every
+// failure line sends them to start the connect again from Helmian.
+// No line names a surface that does not exist.
+import { readFileSync } from 'node:fs';
+
+test('callback copy: the success page says the person is connected and is being taken back to Helmian — no removed surface is named', async () => {
+  const pending = fakePending({
+    takeRow: { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['repo', 'read:org'] },
+  });
+  const h = harness({ pending, store: fakeStore({ 'claude/helmian-github': ENTRY() }) });
+  const out = await h.run(`${P}/oauth/callback?code=code-9&state=state-9`, { method: 'GET' });
+  assert.equal(out.status, 200);
+  assert.match(out.raw, /GitHub is now connected inside Helmian for this seat\. Taking you back to Helmian\./);
+  assert.ok(!out.raw.includes('Manage surface'), 'the success page names no removed surface');
+  // The return itself is unchanged: the refresh and the link still
+  // land on the Integrations view.
+  assert.ok(out.raw.includes('url=/app/#integrations'), 'the meta refresh still lands on the Integrations view');
+  assert.ok(out.raw.includes('>Back to Helmian</a>'), 'the fallback link is unchanged');
+});
+
+test('callback copy: every failure page sends the person to start the connect again from Helmian — no removed surface is named', async () => {
+  const landed = { personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github', provider: 'github', clientId: 'client-123', codeVerifier: 'verifier-1', redirectUri: 'https://helmian.cloud/api/admin/connector-library/oauth/callback', scopes: ['repo'] };
+  const scenarios = [
+    // The provider answered with an error.
+    { path: `${P}/oauth/callback?error=access_denied`, pending: fakePending() },
+    // The provider sent back no code.
+    { path: `${P}/oauth/callback`, pending: fakePending() },
+    // The pending handshake is gone (expired / never started).
+    { path: `${P}/oauth/callback?code=code-9&state=state-9`, pending: fakePending({ takeRow: null }) },
+    // The token exchange itself answered with an error.
+    { path: `${P}/oauth/callback?code=code-9&state=state-9`, pending: fakePending({ takeRow: landed }), oauthClient: fakeOAuthClient({ exchangeFails: true }) },
+  ];
+  for (const { path, pending, oauthClient } of scenarios) {
+    const h = harness({ pending, store: fakeStore({ 'claude/helmian-github': ENTRY() }), ...(oauthClient ? { oauthClient } : {}) });
+    const out = await h.run(path, { method: 'GET' });
+    assert.equal(out.status, 200, path);
+    assert.match(out.raw, /Start the connect again from Helmian\./, path);
+    assert.ok(!out.raw.includes('Manage surface'), `${path}: the failure page names no removed surface`);
+  }
+});
+
+test('callback copy: the write-route source names the removed Manage surface nowhere — page copy and header comment alike', () => {
+  const source = readFileSync(new URL('../src/cloud/connector-library-write-route.mjs', import.meta.url), 'utf8');
+  assert.ok(!source.includes('Manage surface'), 'no line in the callback’s module sends the person to a surface that no longer exists');
+});

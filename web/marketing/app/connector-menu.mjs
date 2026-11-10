@@ -31,10 +31,14 @@
 //                     picked (mirror-design §4): 'github-file' opens
 //                     the GitHub file source (the picker's picked
 //                     file rides the attach road); 'tool-access'
-//                     opens the seat's account page in Helmian (the
-//                     Manage surface it once landed on was removed
-//                     2026-11-10). An action exists ONLY where
-//                     its carrier is real for that seat.
+//                     expands the seat's Tool access face in the
+//                     panel itself — the per-connection posture
+//                     picker and per-tool switches
+//                     (connector-tool-access.mjs; the Manage surface
+//                     it once landed on was removed 2026-11-10, and
+//                     its panel-native home landed the same day).
+//                     An action exists ONLY where its carrier is
+//                     real for that seat.
 //   projects          the "Add to project" row: the composer's
 //                     active-project picker, bound to the workspace
 //                     project registry (mirror-design §3.1).
@@ -90,7 +94,7 @@
 // plugins) or deleted (the vendor skills mirror, Mistral's agents;
 // M7 re-points Mistral's at Helmian's custom agents). A feed-bound
 // group names no connector, so it can never invent one.
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=7ccd1ca873f34ea5';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=6991fd71304920aa';
 
 export const MENU_ITEM_TYPES = Object.freeze([
   'attach', 'capability', 'action', 'projects', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',
@@ -130,10 +134,13 @@ const NATIVES = ['helmian-github'];
 const REGISTRY_SHELF = ['registry-weather'];
 // The Source 4 vendor-published servers (connector-catalog.mjs): a
 // vendor's own MCP server Helmian brokers directly — Vercel's, plus
-// Bite R2's team-work family (Slack, Asana, HubSpot) — riding the
-// live groups of the seats their catalog entries stock
+// Bite R2's team-work family (Slack, Asana, HubSpot), plus the
+// Google family (Gmail, Google Calendar, Google Drive), plus the
+// DCR long tail (Meltwater, S&P Global, Idiolect, Gamma), plus the
+// fixed tail (Canva, Dropbox) — riding
+// the live groups of the seats their catalog entries stock
 // (claude, chatgpt, grok).
-const BROKERED_SERVERS = ['helmian-vercel', 'helmian-slack', 'helmian-asana', 'helmian-hubspot'];
+const BROKERED_SERVERS = ['helmian-vercel', 'helmian-slack', 'helmian-asana', 'helmian-hubspot', 'helmian-gmail', 'helmian-google-calendar', 'helmian-google-drive', 'helmian-meltwater', 'helmian-sp-global', 'helmian-idiolect', 'helmian-gamma', 'helmian-canva', 'helmian-dropbox'];
 const manageInHelmian = () => manageLink({ label: 'Manage connectors', target: 'integrations' });
 // The plain Helmian list (REPORT §3.6–§3.10 + §3.11): seats with no
 // vendor furniture get attach, the live toggles, and the manager —
@@ -182,11 +189,12 @@ export const MENU_DEFINITIONS = deepFreeze({
         managedIn: 'Claude',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva', 'idiolect', 'figma'],
       }),
-      // Tool access (§3.1): once landed on the seat's Manage
-      // surface, where the per-connection posture + the frozen
-      // snapshot's per-tool list lived (bites M1/M2). That surface
-      // was removed 2026-11-10; the row now opens the seat's
-      // account page (the Agents tab) like the Manage footer.
+      // Tool access (§3.1): the per-connection posture + the
+      // frozen snapshot's per-tool switches (bites M1/M2). They
+      // lived on the seat's Manage surface until it was removed
+      // 2026-11-10; the row now expands their panel-native face
+      // right here in the panel (connector-tool-access.mjs,
+      // rendered by envoy-workspace.js's toolAccessNode).
       action('Tool access', 'tool-access'),
     ]),
     submenu('Plugins', [

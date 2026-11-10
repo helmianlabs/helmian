@@ -5,13 +5,22 @@
 //
 //   - helmian-brokered entries  → the person's connection record
 //     (connector-library.mjs);
-//   - CUSTOM entries additionally join their GATE row from the
-//     tool-connections store (connector-custom-gate.mjs, pipeline
-//     map G1): the null-credential probe receipt that says whether
-//     the entry may connect and arm at all. The gate rides in the
-//     row's stateDetail, and an entry whose gate has not passed
-//     never reads 'connected' here — a connection recorded before
-//     the gate existed does not outrank it.
+//   - CUSTOM entries are the person's own workspace entries (SYNC
+//     S2a): the store projects the person's custom rows into every
+//     seat's list for their owner (one record, its provenance seat
+//     named on the row), so this read lists them on any seat — and
+//     never lists another person's. They additionally join their
+//     GATE row from the tool-connections store
+//     (connector-custom-gate.mjs, pipeline map G1): the
+//     null-credential probe receipt that says whether the entry may
+//     connect and arm at all. The gate rides in the row's
+//     stateDetail, and an entry whose gate has not passed never
+//     reads 'connected' here — a connection recorded before the
+//     gate existed does not outrank it. THE GATE IS KEYED PER
+//     (SEAT, ENTRY) — its scope id is the seat — so the gate state
+//     a row shows is THIS seat's gate row for the entry: a seat
+//     that has never run the gate for it shows 'missing', whatever
+//     another seat's gate row says (see connector-custom-gate.mjs).
 //   - vendor-brokered entries   → the person's mirror record — only
 //     ever what the seat's vendor side last reported (§1.5);
 //   - MCP-LOCAL entries (sql/080) → the entry's own record: the
@@ -50,15 +59,15 @@
 //
 // Row shape: the five §1.2 fields first — iconRef, name, oneLiner,
 // vendorLabel ("Connector by <vendor>") + trustLabel, state — then the
-// supporting fields the surfaces need (ids, kind, brokerMode, category,
-// accountIdentity, and a stateDetail carrying posture / mirror
+// supporting fields the surfaces need (ids, kind, brokerMode, authMode,
+// category, accountIdentity, and a stateDetail carrying posture / mirror
 // provenance / the native surface's own status words). State is
 // exactly one of §1.2's four: 'not-connected', 'connected',
 // 'needs-reconnect', 'disabled-by-owner'.
 
 import { isVerifiedFresh } from './tool-connections.mjs';
 import { customGateDetail, customGateKey } from './connector-custom-gate.mjs';
-import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh, catalogEntriesForSeat, catalogStarterActions } from './connector-catalog.mjs';
+import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh, catalogEntriesForSeat, catalogEntryById, catalogStarterActions } from './connector-catalog.mjs';
 
 // How long a tool-connections probe receipt still counts as Connected
 // — the same window the room's surfaces already use
@@ -382,6 +391,29 @@ export function joinedState(entry, deps) {
 
 const STATE_RANK = Object.freeze({ connected: 0, 'needs-reconnect': 1, 'not-connected': 2, 'disabled-by-owner': 3 });
 
+// The row's auth mode, from the entry DEFINITION — the catalog
+// definition when the catalog defines the entry; the entry's own
+// stored mode for the entries it does not (custom entries are a
+// person's own — their stored mode is their truth — and mcp-local
+// rows likewise). This is the write route's law (effectiveAuthMode
+// in connector-library-write-route.mjs): a stored row seeded under
+// an older catalog can carry a stale mode, so the stored row alone
+// never governs a catalog entry. The panel learns how an entry
+// authenticates from this read itself — a header entry connected
+// in an earlier session otherwise shows no Replace control in a
+// fresh one, because the panel could learn the mode only from a
+// connect attempt's needs-credential answer (the panel-key-form
+// finding). The mode NEVER comes from the connection record:
+// stored credential state says THAT an entry is connected, never
+// HOW it authenticates — and no credential material or reference
+// rides the row (pinned in connector-library-bite2.test.mjs).
+function definitionAuthMode(entry) {
+  if (!entry || entry.kind === 'custom') return entry?.authMode ?? null;
+  let definition = null;
+  try { definition = catalogEntryById(entry.seatId, entry.id); } catch { definition = null; }
+  return definition?.authMode ?? entry.authMode ?? null;
+}
+
 function rowOf(entry, joined) {
   return {
     // The five §1.2 fields, in order.
@@ -396,6 +428,7 @@ function rowOf(entry, joined) {
     seatId: entry.seatId,
     kind: entry.kind,
     brokerMode: entry.brokerMode,
+    authMode: definitionAuthMode(entry),
     category: entry.category ?? null,
     accountIdentity: joined.accountIdentity,
     stateDetail: joined.detail,
@@ -419,6 +452,14 @@ function rowOf(entry, joined) {
     // state. Absent (not empty) when the catalog holds none.
     ...(catalogStarterActions(entry.seatId, entry.id)
       ? { starterActions: catalogStarterActions(entry.seatId, entry.id) }
+      : {}),
+    // A custom entry's workspace marking (SYNC S2a): this row is
+    // the person's own custom entry, one record for the whole
+    // workspace, and provenanceSeatId is the seat it was created
+    // on — the seat its physical row (and its connection's row)
+    // lives on. Present only on custom rows.
+    ...(entry.kind === 'custom'
+      ? { workspaceCustom: true, provenanceSeatId: entry.provenanceSeatId ?? entry.seatId }
       : {}),
   };
 }
@@ -558,13 +599,23 @@ export function createSeatLibraryRead({
      * One person's view of one seat's library: every entry in that
      * seat's library, state joined, sorted connected-first then by
      * name (§1.2's browse rule). Person and seat are both required —
-     * there is no cross-seat or cross-person read (§3.4).
+     * there is no cross-person read (§3.4). The CONNECTION state
+     * joined onto each row is the workspace SET's (SYNC S1): the
+     * store's listConnections answers the set's row for every entry
+     * this seat's library carries, whichever seat set it up — so
+     * the same entry reads connected, with the same account and
+     * posture, on every seat that carries it. The ENTRIES list is
+     * the person's too (SYNC S2a): the store's person-scoped
+     * listEntries projects the person's own custom entries into
+     * this seat's list (and keeps another person's customs out), so
+     * a custom entry appears here with the same entry id on every
+     * seat — one record, not a copy stocked per seat.
      */
     async readSeatLibrary(tenantId, { personId, seatId, now = Date.now(), verifiedMaxAgeMs = CONNECTOR_LIBRARY_FRESH_MS, actor = null } = {}) {
       const person = requireString(personId ?? '', 'personId');
       const seat = requireString(seatId ?? '', 'seatId');
       let [entries, connections, mirrors] = await Promise.all([
-        libraryStore.listEntries(tenantId, seat),
+        libraryStore.listEntries(tenantId, seat, { personId: person }),
         libraryStore.listConnections(tenantId, { personId: person, seatId: seat }),
         libraryStore.listMirrors(tenantId, { personId: person, seatId: seat }),
       ]);
@@ -579,7 +630,7 @@ export function createSeatLibraryRead({
       if (!seed.attempted) seed = await maybeHealCatalog(tenantId, seat, entries);
       if (seed.attempted) {
         [entries, connections, mirrors] = await Promise.all([
-          libraryStore.listEntries(tenantId, seat),
+          libraryStore.listEntries(tenantId, seat, { personId: person }),
           libraryStore.listConnections(tenantId, { personId: person, seatId: seat }),
           libraryStore.listMirrors(tenantId, { personId: person, seatId: seat }),
         ]);
@@ -702,7 +753,7 @@ export function createSeatLibraryRead({
         const connections = [];
         const mirrors = [];
         for (const seatId of LIVE_SEATS) {
-          entries.push(...await libraryStore.listEntries(tenantId, seatId));
+          entries.push(...await libraryStore.listEntries(tenantId, seatId, { personId: person }));
           connections.push(...await libraryStore.listConnections(tenantId, { personId: person, seatId }));
           mirrors.push(...await libraryStore.listMirrors(tenantId, { personId: person, seatId }));
         }
@@ -738,7 +789,42 @@ export function createSeatLibraryRead({
         // The refresh writes entries only; re-list just those.
         entries = summaryReads
           ? await libraryStore.listEntriesForTenant(tenantId)
-          : (await Promise.all(LIVE_SEATS.map((seatId) => libraryStore.listEntries(tenantId, seatId)))).flat();
+          : (await Promise.all(LIVE_SEATS.map((seatId) => libraryStore.listEntries(tenantId, seatId, { personId: person })))).flat();
+      }
+
+      // The person's workspace CUSTOM entries (SYNC S2a): the
+      // listings above are physical (summary rows are per-seat
+      // records; the fallback's per-seat lists are already
+      // projected views). Normalize to the counts' shape: collapse
+      // the person's custom rows to the ENTRY COLLAPSE RULE's
+      // winner per id (connector-library.mjs — most recently
+      // updated, ties to the smallest seat id), then count that one
+      // entry on EVERY live seat, exactly as the row read lists it
+      // on every seat. Another person's customs (an addedBy that
+      // names someone else) count for nobody here — the wall.
+      // Custom rows with no addedBy at all (summary fakes shaped
+      // before the field existed) keep the legacy treatment: they
+      // count on the seat that physically holds them, as before.
+      {
+        const winners = new Map();
+        const rest = [];
+        for (const entry of entries) {
+          if (entry.kind !== 'custom') { rest.push(entry); continue; }
+          if (entry.addedBy === person) {
+            const prev = winners.get(entry.id);
+            if (!prev) { winners.set(entry.id, entry); continue; }
+            const t = new Date(entry.updatedAt ?? 0).getTime();
+            const pt = new Date(prev.updatedAt ?? 0).getTime();
+            if (t > pt || (t === pt && String(entry.seatId) < String(prev.seatId))) winners.set(entry.id, entry);
+            continue;
+          }
+          if (entry.addedBy) continue;
+          rest.push(entry);
+        }
+        entries = rest;
+        for (const winner of winners.values()) {
+          for (const seatId of LIVE_SEATS) entries.push({ ...winner, seatId });
+        }
       }
 
       // The tenant-level joins, once: the tool-connections surfaces
@@ -759,7 +845,25 @@ export function createSeatLibraryRead({
         tenantRepoLinks = await repoLinkSurface.linksFor(actor);
       }
 
-      const connectionBySeatEntry = new Map(connections.map((c) => [`${c.seatId} ${c.entryId}`, c]));
+      // Connections join by ENTRY, not by seat (SYNC S1, the
+      // workspace connector SET): the person's rows for an entry
+      // collapse to one winner — most recently updated, ties to
+      // the higher row id (the SET COLLAPSE RULE, connector-
+      // library.mjs) — and that winner is the connection for every
+      // seat whose library carries the entry, exactly as the row
+      // read's set-based listConnections answers. Rows from stores
+      // that carry no collapse fields (older fakes) keep the first
+      // row seen per entry, which is their only row in practice.
+      // Mirrors stay seat-keyed: mirror rows are untouched by the
+      // set — they hold no connections.
+      const connectionByEntry = new Map();
+      for (const c of connections) {
+        const prev = connectionByEntry.get(c.entryId);
+        if (!prev) { connectionByEntry.set(c.entryId, c); continue; }
+        const t = new Date(c.updatedAt ?? 0).getTime();
+        const pt = new Date(prev.updatedAt ?? 0).getTime();
+        if (t > pt || (t === pt && Number(c.id ?? 0) > Number(prev.id ?? 0))) connectionByEntry.set(c.entryId, c);
+      }
       const mirrorBySeatEntry = new Map(mirrors.map((m) => [`${m.seatId} ${m.entryId}`, m]));
 
       // Gate rows only where they can change a count: a custom
@@ -770,7 +874,7 @@ export function createSeatLibraryRead({
       if (toolConnectionsStore && typeof toolConnectionsStore.get === 'function') {
         for (const entry of entries) {
           if (entry.kind !== 'custom') continue;
-          const connection = connectionBySeatEntry.get(`${entry.seatId} ${entry.id}`);
+          const connection = connectionByEntry.get(entry.id);
           if (!connection || connection.state !== 'connected') continue;
           gateRows.set(`${entry.seatId} ${entry.id}`, await toolConnectionsStore.get(tenantId, customGateKey(entry.seatId, entry.id)));
         }
@@ -784,7 +888,7 @@ export function createSeatLibraryRead({
         for (const entry of seatEntries) {
           const source = NATIVE_STATE_SOURCES[entry.id];
           const joined = joinedState(entry, {
-            connection: connectionBySeatEntry.get(`${seatId} ${entry.id}`) ?? null,
+            connection: connectionByEntry.get(entry.id) ?? null,
             mirror: mirrorBySeatEntry.get(`${seatId} ${entry.id}`) ?? null,
             nativeSurface: source?.stateSource === 'tool-connections'
               ? nativeSurfaces.get(source.serviceId) ?? null

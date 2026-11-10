@@ -574,14 +574,36 @@ export function dcrProviderKeyForEntry(entry) {
 // Bite R2 adds the team-work family's brokered entries — Slack,
 // Asana, HubSpot — whose servers publish NO registration endpoint
 // (live metadata reads, 2026-11-10), so the DCR road cannot serve
-// them by construction. An entry not named here with an OAuth road
-// and a server endpoint takes the discovery-driven DCR kind.
+// them by construction. The Google family bite (2026-11-10) adds
+// the three Workspace entries — Gmail, Google Calendar, Google
+// Drive — all under the ONE provider 'google': Google publishes
+// one OAuth client covering all three servers, and its
+// authorization-server metadata names no registration endpoint
+// and no CIMD support (live read, 2026-11-10), so neither the DCR
+// nor the CIMD road can serve them either. The fixed-tail bite
+// (2026-11-10) adds the last two fixed registrations: Canva —
+// whose developer-endpoint road runs on a fixed Developer
+// Portal app and offers CIMD only through a waitlist
+// application, so neither the DCR nor the CIMD road can serve
+// it today — and Dropbox, whose own Help Center limits MCP
+// dynamic registration to a trusted set of named clients
+// Helmian is not in, so the DCR road cannot serve it either
+// (Dropbox's general authorization-server metadata does publish
+// a registration endpoint; the MCP server's own documentation
+// is what gates it to the trusted set). An entry not named
+// here with an OAuth road and a server endpoint takes the
+// discovery-driven DCR kind.
 const FIXED_PROVIDER_BY_ENTRY_ID = Object.freeze({
   github: 'github',
   'helmian-github': 'github',
   'helmian-slack': 'slack',
   'helmian-asana': 'asana',
   'helmian-hubspot': 'hubspot',
+  'helmian-gmail': 'google',
+  'helmian-google-calendar': 'google',
+  'helmian-google-drive': 'google',
+  'helmian-canva': 'canva',
+  'helmian-dropbox': 'dropbox',
 });
 
 // The fixed provider a catalog entry's OAuth road runs under, or
