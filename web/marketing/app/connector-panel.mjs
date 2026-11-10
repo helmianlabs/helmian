@@ -42,6 +42,13 @@
 //   owner-disabled rows show their state label and nothing else:
 //   Bite 3 builds no connect road, so the panel draws no Connect
 //   button it cannot honour yet.
+// - A CUSTOM row carries its gate (pipeline map G1): until the
+//   entry's null-credential safety check has passed, the row words
+//   that instead of a plain "Not connected" — "Not ready — safety
+//   check has not passed", or "Check failed — not ready" when the
+//   check ran and failed — and it can never carry a toggle, which
+//   the read already enforces by capping its state; the model
+//   rules it again here so no read shape can arm an ungated row.
 // - On the wire the armed set rides as message metadata
 //   (metadata.connectors, built by composer-picker.mjs's
 //   buildMessageRequest): each entry names its seat, and a seat's
@@ -225,6 +232,13 @@ const TRUST_TEXT = Object.freeze({ verified: 'Verified', community: 'Community',
 /** §1.2 field 5, worded for the row. Connected names the account. */
 export function stateLabelFor(row) {
   if (!row) return '';
+  // The custom-entry gate words itself before the generic states:
+  // an ungated row is not merely "not connected", it is not ready —
+  // and a failed check says so (G1).
+  const gate = row.gate ?? row.stateDetail?.gate ?? null;
+  if (row.kind === 'custom' && gate && gate.passed !== true) {
+    return gate.state === 'failed' ? 'Check failed — not ready' : 'Not ready — safety check has not passed';
+  }
   if (row.state === 'connected') return row.accountIdentity ? `Connected as ${row.accountIdentity}` : 'Connected';
   if (row.state === 'needs-reconnect') return 'Needs reconnect';
   if (row.state === 'disabled-by-owner') return 'Turned off by your workspace owner';
@@ -240,9 +254,20 @@ function rowModel(row, state, conversationId) {
   const mirror = row.brokerMode === 'vendor'
     ? Object.freeze({ manageUrl: row.stateDetail?.manageUrl ?? null, managedIn: seatName(row.seatId) })
     : null;
+  // The custom-entry gate (G1), joined by the read into stateDetail:
+  // state ('missing' | 'registered' | 'probing' | 'verified' |
+  // 'failed' | 'revoked') + passed. Absent for every other kind.
+  const gate = row.kind === 'custom' && row.stateDetail?.gate
+    ? Object.freeze({
+      state: row.stateDetail.gate.state ?? null,
+      passed: row.stateDetail.gate.passed === true,
+      lastError: row.stateDetail.gate.lastError ?? null,
+    })
+    : null;
   // The one toggle law: only a Connected row on a pipe Helmian holds
-  // can be armed for the channel. Mirror rows never carry a toggle.
-  const toggleable = row.state === 'connected' && row.brokerMode === 'helmian';
+  // can be armed for the channel. Mirror rows never carry a toggle —
+  // and neither does a custom row whose gate has not passed.
+  const toggleable = row.state === 'connected' && row.brokerMode === 'helmian' && (!gate || gate.passed);
   return Object.freeze({
     entryId: row.entryId,
     seatId: row.seatId,
@@ -253,10 +278,11 @@ function rowModel(row, state, conversationId) {
     trustText: TRUST_TEXT[row.trustLabel] ?? row.trustLabel,
     iconSlug: iconSlugOf(row),
     state: row.state,
-    stateLabel: stateLabelFor(row),
+    stateLabel: stateLabelFor({ ...row, gate }),
     accountIdentity: row.accountIdentity ?? null,
     brokerMode: row.brokerMode,
     kind: row.kind,
+    gate,
     toggleable,
     on: toggleable ? isConnectorOn(state, conversationId, row.seatId, row.entryId) : false,
     mirror,

@@ -54,6 +54,23 @@
 //   POST /api/admin/connector-library/entries        add a custom entry         owner/admin
 //   POST /api/admin/connector-library/entries/remove {seatId, entryId}          owner/admin
 //
+// CUSTOM ENTRIES PASS THE GATE (pipeline map G1,
+// connector-custom-gate.mjs): an entry a person adds has no catalog
+// provenance, so creating one also registers the intent in the
+// tool-connections store (who, when, the URL) and runs the gate
+// probe — a tools/list with NO credential — before the entry is
+// offered as connectable. Every connect road for a custom entry
+// re-checks the gate before any credential is stored or any
+// connection lands, freezes the connection's tool snapshot from the
+// gate probe's own list, and records the connection at the default
+// posture 'ask' whatever the body asked for (loosening is the
+// posture action's deliberate road). The gate is consulted wherever
+// this handler can reach the tool-connections store — in production
+// that is always (the same pool the library store reads from); a
+// handler built with an injected store and no tool-connections
+// store (unit-test harnesses) reports the gate as not run on create
+// and leaves connects on their previous road.
+//
 // Gating follows the library read route: an active workspace member,
 // tenant from the membership, person from the actor's subject — a
 // body naming another tenant or person is refused (400). Personal
@@ -78,6 +95,13 @@ import {
   createConnectorOAuthPendingStore,
   hashOAuthState,
 } from './connector-oauth-pending.mjs';
+import { createToolConnectionsStore } from './tool-connections.mjs';
+import {
+  classifyCustomGate,
+  getCustomGateRow,
+  probeCustomGate,
+  registerCustomGateIntent,
+} from './connector-custom-gate.mjs';
 
 export const CONNECTOR_LIBRARY_WRITE_BASE = '/api/admin/connector-library';
 export const CONNECTOR_OAUTH_CALLBACK_PATH = '/api/admin/connector-library/oauth/callback';
@@ -190,10 +214,31 @@ export function createConnectorLibraryWriteHandler({
   credentialClient: injectedCredentials,
   oauthClientFor: injectedOAuthClientFor,
   promptsClient: injectedPrompts,
+  toolConnections: injectedToolConnections,
+  gateProbe: injectedGateProbe,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const resolveStore = () => injectedStore ?? (getPool() ? createConnectorLibraryStore(getPool()) : null);
   const resolvePending = () => injectedPending ?? (getPool() ? createConnectorOAuthPendingStore(getPool()) : null);
+  // The custom-entry gate's store. Production (no injected library
+  // store) reaches it through the same pool the library reads from;
+  // a handler built around an injected store reaches it only when
+  // one is injected — a unit-test harness never wakes a real pool
+  // by accident (see the header note).
+  const resolveToolConnections = () => {
+    if (injectedToolConnections !== undefined) return injectedToolConnections;
+    if (injectedStore !== undefined) return null;
+    return getPool() ? createToolConnectionsStore(getPool()) : null;
+  };
+  // One gate probe: the injected fake in tests, the real
+  // null-credential probe in production. Null when no gate store is
+  // reachable — the gate cannot run, and callers say so.
+  const runGateProbe = async ({ tenantId, entry }) => {
+    const tc = resolveToolConnections();
+    if (!tc) return null;
+    if (injectedGateProbe) return injectedGateProbe({ tenantId, entry, toolConnections: tc });
+    return probeCustomGate({ toolConnections: tc, tenantId, entry });
+  };
   const resolveCredentials = () => injectedCredentials !== undefined ? injectedCredentials : createCredentialConnectClient();
   // The callback's OAuth client comes from the provider registry,
   // keyed by the pending row's provider — there is no default client
@@ -288,6 +333,23 @@ export function createConnectorLibraryWriteHandler({
           accountIdentity, accessTokenRef, refreshTokenRef, grantedScopes,
         });
         void connection;
+        // A custom entry's baseline freeze rides its gate (G1): the
+        // snapshot frozen here is a fresh gate probe's list — an
+        // uncredentialed look at the server, taken now — never a
+        // list produced with the token that just landed. Best
+        // effort by design: if the freeze cannot be taken, the
+        // connection stands but arming dispatch refuses a custom
+        // entry with no frozen snapshot rather than backstop-
+        // freezing one at arm time.
+        try {
+          const landedEntry = await store.getEntry(tenantId, pending.seatId, pending.entryId);
+          if (landedEntry?.kind === 'custom' && resolveToolConnections()) {
+            const probe = await runGateProbe({ tenantId, entry: landedEntry });
+            if (probe?.state === 'verified' && Array.isArray(probe.tools)) {
+              await store.freezeSnapshot(tenantId, { personId, seatId: pending.seatId, entryId: pending.entryId }, probe.tools, personId);
+            }
+          }
+        } catch { /* the dispatch guard carries the unfrozen case honestly */ }
         send(response, 200, callbackPage(`${providerName} is connected`, `${providerName} is now connected inside Helmian for this seat. Taking you back to the Manage surface.`), 'text/html; charset=utf-8');
         return true;
       }
@@ -345,6 +407,75 @@ export function createConnectorLibraryWriteHandler({
         return { connection, accessToken };
       };
 
+      // ------------------------------------------- the custom gate
+      // The helpers every custom-entry road below shares (G1; see
+      // the file header). ensureCustomGate rules one entry's gate:
+      // { enforced:false } when no gate store is reachable (the
+      // handler cannot consult the gate — production always can);
+      // otherwise the intent is registered if it is missing (an
+      // entry created before the gate existed heals here, at the
+      // commitment point, instead of bricking), a missing or failed
+      // receipt is re-probed once — the connect click is the
+      // approval stage, and a server that was down at create time
+      // gets its fresh chance here — and the probe's own tool list
+      // rides back for the freeze.
+      const ensureCustomGate = async (entry) => {
+        const tc = resolveToolConnections();
+        if (!tc) return { enforced: false, passed: true, gate: null, tools: null };
+        let row = await getCustomGateRow(tc, tenantId, entry.seatId, entry.id);
+        if (!row) {
+          await registerCustomGateIntent(tc, tenantId, personId, entry);
+          row = null;
+        }
+        let gate = classifyCustomGate(row);
+        let tools = null;
+        if (!gate.passed) {
+          const result = await runGateProbe({ tenantId, entry });
+          if (result?.state === 'verified' && Array.isArray(result.tools)) tools = result.tools;
+          gate = classifyCustomGate(result?.row ?? null);
+          if (!gate.passed && gate.state !== 'failed' && gate.state !== 'revoked') {
+            // The probe could not write or return its receipt row
+            // (a test fake, a store hiccup): rule from its answer.
+            gate = result?.state === 'verified'
+              ? { ...gate, state: 'verified', passed: true }
+              : { ...gate, state: 'failed', passed: false, reason: 'gate-check-failed', detail: 'its safety check failed, so it cannot be connected yet', lastError: result?.error ?? gate.lastError };
+          }
+        }
+        return { enforced: true, passed: gate.passed, gate, tools };
+      };
+      const refuseUngated = (ensured) => {
+        sendJson(409, {
+          error: ensured.gate?.state === 'failed'
+            ? 'this custom connector has not passed its safety check — the check failed, so nothing was connected. Fix the server, or remove the entry and add it again.'
+            : 'this custom connector has not passed its safety check yet, so nothing was connected.',
+          code: 'CUSTOM_GATE_NOT_PASSED',
+          gate: ensured.gate ? { state: ensured.gate.state, lastError: ensured.gate.lastError ?? null } : null,
+        });
+        return true;
+      };
+      // Freeze the baseline onto a connection that just landed for
+      // a custom entry: the tool list is the gate probe's own —
+      // passed in from the ensure step, or re-probed fresh here —
+      // never a list taken with the person's credential. A freeze
+      // that cannot be taken is reported, not hidden: the
+      // connection stands, and dispatch refuses the arm honestly.
+      const freezeGateBaseline = async (entry, tools) => {
+        try {
+          let list = Array.isArray(tools) ? tools : null;
+          if (!list) {
+            const result = await runGateProbe({ tenantId, entry });
+            if (result?.state === 'verified' && Array.isArray(result.tools)) list = result.tools;
+          }
+          if (!list) return { frozen: false };
+          const snapshot = await store.freezeSnapshot(tenantId, key, list, personId);
+          return { frozen: true, snapshot };
+        } catch { return { frozen: false }; }
+      };
+      // Gate step 4: a custom entry's connection is recorded at the
+      // default 'ask' — a connect body naming a looser posture is
+      // honoured for catalog/native entries only.
+      const postureSpread = (entry) => (entry.kind === 'custom' ? {} : (body.posture ? { posture: String(body.posture) } : {}));
+
       if (action === 'connect') {
         refuseCredentialValues(body);
         const entry = await store.getEntry(tenantId, seatId, entryId);
@@ -358,10 +489,23 @@ export function createConnectorLibraryWriteHandler({
           return true;
         }
         const authMode = effectiveAuthMode(entry);
+        // The custom gate stands before every auth road: no
+        // credential is asked for, stored, or landed on an entry
+        // whose null-credential check has not passed.
+        let gateEnsured = null;
+        if (entry.kind === 'custom') {
+          gateEnsured = await ensureCustomGate(entry);
+          if (gateEnsured.enforced && !gateEnsured.passed) return refuseUngated(gateEnsured);
+        }
         if (authMode === 'none') {
           const connection = await store.createConnection(tenantId, personId, {
-            ...key, accountIdentity: 'No sign-in', grantedScopes: [], ...(body.posture ? { posture: String(body.posture) } : {}),
+            ...key, accountIdentity: 'No sign-in', grantedScopes: [], ...postureSpread(entry),
           });
+          if (gateEnsured?.enforced) {
+            const frozen = await freezeGateBaseline(entry, gateEnsured.tools);
+            sendJson(201, { status: 'connected', connection, gate: { state: 'verified', frozen: frozen.frozen } });
+            return true;
+          }
           sendJson(201, { status: 'connected', connection });
           return true;
         }
@@ -390,6 +534,14 @@ export function createConnectorLibraryWriteHandler({
         if (!entry) throw failure(404, 'connector entry not found in this seat\u2019s library');
         if (entry.brokerMode !== 'helmian') throw failure(400, 'this entry is vendor-brokered — Helmian holds no credential for it');
         if (effectiveAuthMode(entry) !== 'header') throw failure(400, 'this entry does not take a header key — use its own connect road');
+        // The custom gate stands before the key is stored: a key is
+        // never committed to a server the null-credential check has
+        // not examined.
+        let gateEnsured = null;
+        if (entry.kind === 'custom') {
+          gateEnsured = await ensureCustomGate(entry);
+          if (gateEnsured.enforced && !gateEnsured.passed) return refuseUngated(gateEnsured);
+        }
         const credentials = resolveCredentials();
         if (!credentials) { sendJson(503, { error: 'Helmian\u2019s credential storage is not switched on, so the key cannot be kept yet', code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' }); return true; }
         const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
@@ -401,8 +553,13 @@ export function createConnectorLibraryWriteHandler({
         const connection = await store.createConnection(tenantId, personId, {
           ...key,
           accountIdentity: typeof body.accountLabel === 'string' && body.accountLabel.trim() ? body.accountLabel.trim().slice(0, 512) : 'API key',
-          accessTokenRef, grantedScopes: [], ...(body.posture ? { posture: String(body.posture) } : {}),
+          accessTokenRef, grantedScopes: [], ...postureSpread(entry),
         });
+        if (gateEnsured?.enforced) {
+          const frozen = await freezeGateBaseline(entry, gateEnsured.tools);
+          sendJson(201, { status: 'connected', connection, gate: { state: 'verified', frozen: frozen.frozen } });
+          return true;
+        }
         sendJson(201, { status: 'connected', connection });
         return true;
       }
@@ -418,6 +575,14 @@ export function createConnectorLibraryWriteHandler({
         if (effectiveAuthMode(completeEntry) === 'oauth') {
           throw failure(400, 'this connector signs in with OAuth — its connection lands only through its sign-in callback, never from a stored reference');
         }
+        // The custom gate stands before the stored credential is
+        // resolved or the connection lands (same law as the other
+        // connect roads).
+        let gateEnsured = null;
+        if (completeEntry.kind === 'custom') {
+          gateEnsured = await ensureCustomGate(completeEntry);
+          if (gateEnsured.enforced && !gateEnsured.passed) return refuseUngated(gateEnsured);
+        }
         const accessTokenRef = String(body.accessTokenRef ?? '');
         const expected = buildConnectorTokenRef({ tenantId, seatId, entryId, personId, tokenKind: 'access' });
         if (accessTokenRef !== expected) {
@@ -431,8 +596,13 @@ export function createConnectorLibraryWriteHandler({
         const connection = await store.createConnection(tenantId, personId, {
           ...key,
           accountIdentity: typeof body.accountLabel === 'string' && body.accountLabel.trim() ? body.accountLabel.trim().slice(0, 512) : 'Stored key',
-          accessTokenRef, grantedScopes: [], ...(body.posture ? { posture: String(body.posture) } : {}),
+          accessTokenRef, grantedScopes: [], ...postureSpread(completeEntry),
         });
+        if (gateEnsured?.enforced) {
+          const frozen = await freezeGateBaseline(completeEntry, gateEnsured.tools);
+          sendJson(201, { status: 'connected', connection, gate: { state: 'verified', frozen: frozen.frozen } });
+          return true;
+        }
         sendJson(201, { status: 'connected', connection });
         return true;
       }
@@ -540,7 +710,31 @@ export function createConnectorLibraryWriteHandler({
           category: typeof body.category === 'string' ? body.category.slice(0, 128) : null,
           addedBy: personId,
         });
-        sendJson(201, { status: 'created', entry });
+        // THE GATE (G1): the entry is registered as intent in the
+        // tool-connections store — who added it, when, and the URL
+        // are the provenance record — and probed with NO credential
+        // before it is ever offered as connectable. The entry is
+        // created either way: a failed check leaves it standing but
+        // unconnectable and unarmable, with the failure recorded on
+        // its gate row and named in this answer. A gate that cannot
+        // run at all says so ('not-run' / 'error') rather than
+        // dressing the entry up as checked.
+        let gate = { state: 'not-run' };
+        const tc = resolveToolConnections();
+        if (tc) {
+          try {
+            await registerCustomGateIntent(tc, tenantId, personId, entry);
+            const result = await runGateProbe({ tenantId, entry });
+            gate = {
+              state: result?.state ?? 'failed',
+              ...(Number.isInteger(result?.toolsCount) ? { toolsCount: result.toolsCount } : {}),
+              ...(result?.error ? { error: String(result.error) } : {}),
+            };
+          } catch (error) {
+            gate = { state: 'error', error: String(error?.message ?? error) };
+          }
+        }
+        sendJson(201, { status: 'created', entry, gate });
         return true;
       }
 

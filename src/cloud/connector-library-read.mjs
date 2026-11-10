@@ -5,6 +5,13 @@
 //
 //   - helmian-brokered entries  → the person's connection record
 //     (connector-library.mjs);
+//   - CUSTOM entries additionally join their GATE row from the
+//     tool-connections store (connector-custom-gate.mjs, pipeline
+//     map G1): the null-credential probe receipt that says whether
+//     the entry may connect and arm at all. The gate rides in the
+//     row's stateDetail, and an entry whose gate has not passed
+//     never reads 'connected' here — a connection recorded before
+//     the gate existed does not outrank it.
 //   - vendor-brokered entries   → the person's mirror record — only
 //     ever what the seat's vendor side last reported (§1.5);
 //   - the Helmian-native GitHub entry → joined from the two places
@@ -45,6 +52,7 @@
 // 'needs-reconnect', 'disabled-by-owner'.
 
 import { isVerifiedFresh } from './tool-connections.mjs';
+import { customGateDetail, customGateKey } from './connector-custom-gate.mjs';
 import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh, catalogEntriesForSeat, catalogStarterActions } from './connector-catalog.mjs';
 
 // How long a tool-connections probe receipt still counts as Connected
@@ -273,7 +281,7 @@ function nativeGithubState({ surface, repoLinks }) {
   return { state: 'connected', accountIdentity: first.repo, detail };
 }
 
-function joinedState(entry, { connection, mirror, nativeSurface, repoLinks }) {
+function joinedStateInner(entry, { connection, mirror, nativeSurface, repoLinks }) {
   // The owner's disable wins over every other state (§1.2's fourth
   // state is entry-level, §2.1).
   if (entry.state === 'disabled-by-owner') {
@@ -313,6 +321,29 @@ function joinedState(entry, { connection, mirror, nativeSurface, repoLinks }) {
     accountIdentity: connection.accountIdentity ?? null,
     detail: { posture: connection.posture, lastUsedAt: connection.lastUsedAt ?? null },
   };
+}
+
+// The gate wrapper (G1): for a custom entry whose gate row was
+// read (gateRow present — a row object, or null when the store
+// holds none), a gate that has not passed caps the row at
+// 'not-connected' with the gate as its detail, whatever the
+// connection record says; a passed gate rides in the detail beside
+// the joined state. The owner's disable is ruled first inside the
+// inner join and keeps its own headline here too — the wrapper
+// steps aside for it. Entries the gate does not govern, and reads
+// whose store could not answer the gate (gateRow undefined), take
+// the inner join untouched.
+function joinedState(entry, deps) {
+  const gateRow = deps?.gateRow;
+  if (entry.kind !== 'custom' || gateRow === undefined || entry.state === 'disabled-by-owner') {
+    return joinedStateInner(entry, deps);
+  }
+  const gate = customGateDetail(gateRow);
+  if (!gate.passed) {
+    return { state: 'not-connected', accountIdentity: null, detail: { gate } };
+  }
+  const inner = joinedStateInner(entry, deps);
+  return { ...inner, detail: { ...(inner.detail ?? {}), gate } };
 }
 
 const STATE_RANK = Object.freeze({ connected: 0, 'needs-reconnect': 1, 'not-connected': 2, 'disabled-by-owner': 3 });
@@ -533,6 +564,19 @@ export function createSeatLibraryRead({
         tenantRepoLinks = await repoLinkSurface.linksFor(actor);
       }
 
+      // Join the custom entries' gate rows (G1) — one get per
+      // custom entry, only when the tool-connections store can
+      // answer gets (the production store can; a list-only fake
+      // leaves gateRow undefined and the join silent, the same
+      // discipline as the repo-link join without an actor).
+      const gateRows = new Map();
+      if (toolConnectionsStore && typeof toolConnectionsStore.get === 'function') {
+        for (const entry of entries) {
+          if (entry.kind !== 'custom') continue;
+          gateRows.set(entry.id, await toolConnectionsStore.get(tenantId, customGateKey(entry.seatId, entry.id)));
+        }
+      }
+
       const rows = entries.map((entry) => {
         const source = NATIVE_STATE_SOURCES[entry.id];
         const nativeSurface = source?.stateSource === 'tool-connections'
@@ -543,6 +587,7 @@ export function createSeatLibraryRead({
           mirror: mirrorByEntry.get(entry.id) ?? null,
           nativeSurface,
           repoLinks: tenantRepoLinks,
+          gateRow: gateRows.has(entry.id) ? gateRows.get(entry.id) : undefined,
         }));
       });
       rows.sort((a, b) => (STATE_RANK[a.state] - STATE_RANK[b.state]) || a.name.localeCompare(b.name));

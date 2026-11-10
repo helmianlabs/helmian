@@ -16,6 +16,18 @@
 // via resolveMcpTokenSource; vault references via an injected resolver),
 // handed to the client for this one connection, and never written back —
 // and it is scrubbed out of any error text before that text is recorded.
+//
+// THE NULL-CREDENTIAL MODE (forceNoCredential): a caller proving a
+// server BEFORE any credential may exist — the custom-entry gate
+// (src/cloud/connector-custom-gate.mjs), which is the install
+// pipeline's sandbox stage ("run it with no credentials and watch")
+// carried to remote servers — passes forceNoCredential and the probe
+// connects unauthenticated, whatever the row's reference says. The
+// guarantee is structural: with the flag set the resolution block
+// below never runs, so no stored credential can be resolved, let
+// alone sent. A row whose credential_reference is null already probes
+// unauthenticated (resolveMcpTokenSource's own null contract); the
+// flag extends that to rows that DO carry a reference.
 
 import { createMcpClient, DEFAULT_TIMEOUT_MS } from './mcp-client.mjs';
 import { createRemoteMcpClient, resolveMcpTokenSource } from './mcp-remote-client.mjs';
@@ -51,11 +63,16 @@ export function parseStdioLaunchRef(serverRef) {
  * @param {{store: object, tenantId: string,
  *          key: {scopeKind: string, scopeId: string, serviceId: string},
  *          subject?: string, timeoutMs?: number,
+ *          forceNoCredential?: boolean,
  *          env?: object, readFileImpl?: Function, fetchImpl?: Function,
  *          spawnFn?: Function,
  *          resolveVaultToken?: (ref: string, row: object) => Promise<string>,
  *          resolveStdioLaunch?: (row: object) => Promise<object|null>}} options
- * @returns {Promise<{probed: boolean, state: string, toolsCount?: number, error?: string, row: object|null}>}
+ * @returns {Promise<{probed: boolean, state: string, toolsCount?: number, tools?: object[], error?: string, row: object|null}>}
+ *   On a verified probe, `tools` is the raw tools/list result the
+ *   receipt counts — a caller freezing a snapshot from the probe
+ *   (the custom-entry gate) plans it through planToolSnapshot; the
+ *   receipt itself still stores only the count.
  */
 export async function probeToolConnection({
   store,
@@ -63,6 +80,7 @@ export async function probeToolConnection({
   key,
   subject = TOOL_PROBE_SUBJECT,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  forceNoCredential = false,
   env,
   readFileImpl,
   fetchImpl,
@@ -90,8 +108,11 @@ export async function probeToolConnection({
   };
 
   try {
-    // Resolve the credential fresh, from the reference only.
-    const reference = row.credentialReference ?? null;
+    // Resolve the credential fresh, from the reference only — unless
+    // the caller demands the null-credential probe, in which case no
+    // reference is read at all and the connection is unauthenticated
+    // by construction (see the header).
+    const reference = forceNoCredential ? null : (row.credentialReference ?? null);
     if (reference?.type === 'token-source') {
       const resolved = await resolveMcpTokenSource(reference.source, { env, readFileImpl });
       if (resolved.problem) return await fail(new Error(resolved.problem));
@@ -136,7 +157,7 @@ export async function probeToolConnection({
     const verified = await store.recordProbeReceipt(
       tenantId, key, { method: PROBE_METHOD_TOOLS_LIST, toolsCount: tools.length }, subject,
     );
-    return { probed: true, state: 'verified', toolsCount: tools.length, row: verified };
+    return { probed: true, state: 'verified', toolsCount: tools.length, tools, row: verified };
   } catch (error) {
     return await fail(error);
   } finally {
