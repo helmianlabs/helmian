@@ -41,7 +41,7 @@ test('the page carries the menu, its four panel items, and the panel shell', asy
     assert.ok(html.includes(`data-acct-item="${item}"`), `index.html is missing the ${item} menu item`);
   }
   const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
-  assert.match(js, /from '\.\/account-menu\.mjs'/);
+  assert.match(js, /from '\.\/account-menu\.mjs(\?v=[0-9a-f]{16})?'/);
 });
 
 test('identity model shows name, email, workspace and role when all exist', () => {

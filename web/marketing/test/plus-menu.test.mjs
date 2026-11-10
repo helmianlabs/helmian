@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { LIBRARY_STALE_MS, loadSeatLibrary, plusMenuLevel2Model, resetLibrarySession } from '../app/envoy-workspace.js';
+import { LIBRARY_STALE_MS, loadSeatLibrary, plusMenuLevel2Model, preloadLibrarySession, resetLibrarySession } from '../app/envoy-workspace.js';
 import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, toggleConnector } from '../app/connector-panel.mjs';
 import { MENU_SEAT_IDS, collectCatalogEntryIds, menuForSeat } from '../app/connector-menu.mjs';
 
@@ -478,4 +478,48 @@ test('arm-time prompts are gone with the draft rows they fed (bite A2)', async (
   // surfaces may still use it.
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.ok(!js.includes('connectorPrompts'), 'no prompts cache remains in the workspace state');
+});
+
+test('mount preload (speed fix): the menu libraries are warm before first open — no fetch-on-open on the warm path', async () => {
+  // The real loaders, driven end to end against a counting fake
+  // read. Before the fix the seats read fired only when the menu
+  // first opened (envoy-workspace.js renderPlusMenuLevel1 was the
+  // first caller) and the open painted "Loading libraries…" while it
+  // ran. The preload fires the same loaders at workspace mount.
+  const calls = [];
+  const api = async (path) => {
+    calls.push(path);
+    if (path === '/api/admin/connector-library/seats') return { seats: [{ seatId: 'claude' }, { seatId: 'grok' }] };
+    if (path.startsWith('/api/admin/connector-library?seat=')) {
+      const seatId = path.split('seat=')[1];
+      return { connectedCount: 1, rows: [libRow(seatId, 'gmail', 'Gmail', { state: 'connected' })] };
+    }
+    if (path === '/api/admin/plugins') return { plugins: [], unavailable: [] };
+    if (path === '/api/admin/skills') return { skills: [] };
+    throw new Error(`unexpected read: ${path}`);
+  };
+  resetLibrarySession({ api });
+  preloadLibrarySession();
+  // The preload is background work: let its chain settle (seats
+  // facts, then one library per seat, plus the plugins and skills
+  // reads that fire alongside).
+  for (let i = 0; i < 50 && calls.length < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  assert.ok(calls.includes('/api/admin/connector-library/seats'), 'the seats facts were read at preload time, not at first open');
+  assert.ok(calls.includes('/api/admin/plugins'), 'the plugins list was read at preload time');
+  assert.ok(calls.includes('/api/admin/skills'), 'the skills list was read at preload time');
+  assert.deepEqual(
+    calls.filter((p) => p.startsWith('/api/admin/connector-library?seat=')).sort(),
+    ['/api/admin/connector-library?seat=claude', '/api/admin/connector-library?seat=grok'],
+    'each seat library was prefetched exactly once, in the background',
+  );
+  const warmed = calls.length;
+  // The warm path: opening a seat's menu now reads from the session
+  // cache — the loader the open path calls makes no new read.
+  const library = await loadSeatLibrary('claude', Date.now());
+  assert.deepEqual(library.rows.map((r) => r.entryId), ['gmail'], 'the open serves the preloaded library');
+  assert.equal(calls.length, warmed, 'no fetch-on-open once the preload has landed');
+  // And the preload itself is once-per-session: a remount does not
+  // re-fire any of it (the caches and their staleness windows rule).
+  preloadLibrarySession();
+  assert.equal(calls.length, warmed, 'a second preload call fires nothing');
 });

@@ -140,7 +140,7 @@ test('QR encoder is vendored same-origin (no outside script source)', async () =
   const { default: qrcode } = await import('../app/vendor/qrcode.mjs');
   const q = qrcode(0, 'M'); q.addData(PHONE_URL); q.make(); assert.ok(q.getModuleCount() >= 21);
   const app = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
-  assert.match(app, /import\('\.\/vendor\/qrcode\.mjs'\)/);
+  assert.match(app, /import\('\.\/vendor\/qrcode\.mjs(\?v=[0-9a-f]{16})?'\)/);
 });
 
 import { collapseRepeats, friendlyWorkspace } from '../app/app-model.mjs';

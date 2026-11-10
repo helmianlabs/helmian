@@ -611,12 +611,23 @@ test('seat render: with the live-proof channel shape (Team + agent rooms, no des
 test('app shell cache: vercel.json forces revalidation for /app assets so a deploy is never hidden behind a 4-hour CDN default', async () => {
   const raw = await readFile(new URL('../vercel.json', import.meta.url), 'utf8');
   const config = JSON.parse(raw);
-  const appRule = (config.headers ?? []).find((entry) =>
+  const appRules = (config.headers ?? []).filter((entry) =>
     typeof entry.source === 'string' && entry.source.includes('/app/')
     && (entry.headers ?? []).some((header) => header.key.toLowerCase() === 'cache-control'));
-  assert.ok(appRule, 'vercel.json carries a Cache-Control rule scoped to /app/');
-  const value = appRule.headers.find((header) => header.key.toLowerCase() === 'cache-control').value;
-  assert.ok(/max-age=0|no-cache|no-store/.test(value), `the /app Cache-Control forces revalidation (got: ${value})`);
+  // The split law (2026-11-09, the shell stamp): this pin's original
+  // law — no deploy hidden behind a CDN default — is now carried by
+  // TWO rules. A /app URL without the ?v= stamp (the document above
+  // all) still forces revalidation, so a deploy is never hidden; a
+  // stamped URL is a content address whose bytes cannot change, and
+  // serves immutable.
+  const unstamped = appRules.find((entry) => (entry.missing ?? []).some((c) => c.type === 'query' && c.key === 'v'));
+  assert.ok(unstamped, 'vercel.json carries the unstamped /app Cache-Control rule (missing the v query)');
+  const value = unstamped.headers.find((header) => header.key.toLowerCase() === 'cache-control').value;
+  assert.ok(/max-age=0|no-cache|no-store/.test(value), `the unstamped /app Cache-Control forces revalidation (got: ${value})`);
+  const stamped = appRules.find((entry) => (entry.has ?? []).some((c) => c.type === 'query' && c.key === 'v'));
+  assert.ok(stamped, 'vercel.json carries the stamped /app Cache-Control rule (has the v query)');
+  const stampedValue = stamped.headers.find((header) => header.key.toLowerCase() === 'cache-control').value;
+  assert.equal(stampedValue, 'public, max-age=31536000, immutable', 'stamped /app assets serve immutable — the URL is a content address');
 });
 
 test('tenant onboarding: the asleep banner + element + state fetch are wired', async () => {
@@ -895,7 +906,9 @@ test('bite 5: the create-agent dialog renders no seat-mode select and embeds the
   }
   assert.ok(!js.includes('Runs on your connected subscription, browser seat, or PC bridge key.'), 'the old footer copy is gone');
   assert.ok(js.includes('Runs on the account you connect with your email and password.'), 'the footer states the one road');
-  assert.ok(js.includes("import { createConnectFields } from './connect-fields.mjs';"), 'the dialog imports the shared ConnectFields component');
+  // The specifier carries the shell stamp (?v=…, 2026-11-09 speed
+  // fix); the wiring law is the import itself.
+  assert.match(js, /import \{ createConnectFields \} from '\.\/connect-fields\.mjs(\?v=[0-9a-f]{16})?';/, 'the dialog imports the shared ConnectFields component');
   assert.match(js, /providerSelect\.addEventListener\('change', renderConnectFields\)/, 'provider switches re-render the connect fields');
   assert.match(js, /'6\. Connect the account — email and password'/, 'step 6 is the connect step, in the law\u2019s words');
 });
@@ -1190,7 +1203,11 @@ test('speaking proof: wiring — the speak call carries the message id, renders 
 // ---- app-skill-editor; these needles pin the workspace wiring.
 
 test('slash-skills S3: the workspace wires the skills group, scope step, chips and editor', async () => {
-  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const jsRaw = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  // Import specifiers carry the shell stamp (?v=…, 2026-11-09 speed
+  // fix); the needles below name the bare specifiers, so strip the
+  // stamps before the includes checks — the wiring is what is pinned.
+  const js = jsRaw.replace(/\?v=[0-9a-f]{16}/g, '');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
   for (const needle of [
     "from './skill-editor.mjs'",

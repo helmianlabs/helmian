@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { createPcApprovalsHandler, PC_APPROVALS_PATH, PC_APPROVALS_DECIDE_PATH, PC_UPCOMING_PATH } from '../src/cloud/guard-pc-approvals.mjs';
+import { guardQueueReadModel } from '../web/marketing/app/app-model.mjs';
 
 const ENV = { HELMIAN_GUARD_URL: 'https://guard.test', HELMIAN_GUARD_APPROVER_TOKEN: 'approver-token-0123456789abcdef', HELMIAN_GUARD_APPROVER_SUBJECTS: 'user_troy1234' };
 function req({ method = 'GET', cookie, bearer, body, type = 'application/json' } = {}) {
@@ -174,6 +175,49 @@ test('decide does not fabricate an approval from an unreadable Guard answer', as
   assert.equal(r.out.status, 502);
   assert.equal(r.out.body.error, 'GUARD_BAD_RESPONSE');
   assert.equal(r.out.body.approval, undefined);
+});
+
+test('route -> reader: every real envelope of both read routes classifies into its designed page state, none unreadable', async () => {
+  // The 2026-11-09 live walk sat in the page's 'unreadable' state on the
+  // Approvals surface while the Guard was up. This pin runs the route's
+  // REAL answers (both read paths, every Guard behaviour and auth state
+  // the route can produce) through the page's own classifier: the healthy
+  // envelopes must reach 'ok', each failure envelope its own state, and
+  // nothing the route can emit may land in 'unreadable' — that state is
+  // reserved for answers that never came from this route at all.
+  const classify = async (h, request, path) => {
+    const r = res(); await h(request, r, path);
+    return guardQueueReadModel(r.out.status, JSON.stringify(r.out.body));
+  };
+  // Healthy Guard: empty queue and one pending both read ok on both routes.
+  const healthy = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: guardFetch([]) });
+  for (const path of [PC_APPROVALS_PATH, PC_UPCOMING_PATH]) {
+    const read = await classify(healthy, req({ cookie: 'troy-cookie' }), path);
+    assert.equal(read.state, 'ok', `${path} healthy`);
+  }
+  const emptyFetch = async () => ({ status: 200, json: async () => ({ approvals: [] }) });
+  const empty = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: emptyFetch });
+  for (const path of [PC_APPROVALS_PATH, PC_UPCOMING_PATH]) {
+    const read = await classify(empty, req({ cookie: 'troy-cookie' }), path);
+    assert.equal(read.state, 'ok', `${path} empty queue`);
+    assert.deepEqual(path === PC_APPROVALS_PATH ? read.body.approvals : read.body.queue, []);
+  }
+  // Guard answering unreadable bodies -> guard-bad-response on both routes.
+  const htmlFetch = async () => ({ status: 200, json: async () => { throw new SyntaxError('not json'); } });
+  const html = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: htmlFetch });
+  for (const path of [PC_APPROVALS_PATH, PC_UPCOMING_PATH]) {
+    assert.equal((await classify(html, req({ cookie: 'troy-cookie' }), path)).state, 'guard-bad-response', `${path} html guard`);
+  }
+  // Guard down -> guard-unreachable on both routes.
+  const down = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: async () => { throw new Error('connect refused'); } });
+  for (const path of [PC_APPROVALS_PATH, PC_UPCOMING_PATH]) {
+    assert.equal((await classify(down, req({ cookie: 'troy-cookie' }), path)).state, 'guard-unreachable', `${path} guard down`);
+  }
+  // The route's own auth/config states keep their page states.
+  const unconfigured = createPcApprovalsHandler({ env: {}, identity, verifyBearer });
+  assert.equal((await classify(unconfigured, req({ cookie: 'troy-cookie' }), PC_APPROVALS_PATH)).state, 'not-configured');
+  assert.equal((await classify(healthy, req({}), PC_APPROVALS_PATH)).state, 'unauthenticated');
+  assert.equal((await classify(healthy, req({ cookie: 'bryce-cookie' }), PC_APPROVALS_PATH)).state, 'forbidden');
 });
 
 test('decide validates input and requires JSON', async () => {

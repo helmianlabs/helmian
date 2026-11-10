@@ -72,6 +72,54 @@ test('no-answer words blame the missing server answer, never the Guard, and carr
   assert.match(GUARD_QUEUE_NO_ANSWER, /did not answer at all/);
 });
 
+test('the pc-upcoming route real envelope is ok and carries queue + counts through', () => {
+  // Field-for-field what GET /api/admin/guard/pc-upcoming answers when the
+  // Guard is up (the route's { queue, counts } over publicApproval items):
+  // the second of the two Guard reads must reach state ok with it, exactly
+  // as the pc-approvals envelope does.
+  const routeBody = { queue: [{ approvalId: '02641f0c-7295-4257-a8d5-017874af5e8e', status: 'pending', summary: 'hands make_dir', reason: 'destructive actions need a human approval', tool: 'make_dir', site: 'hands.helmian', deviceId: 'hands-mcp', createdAt: '2026-10-25T18:47:29.000Z', expiresAt: '2026-10-25T19:02:29.000Z', waitingOn: 'you' }], counts: { pending: 1, approved: 0, total: 1, expiredRecent: 0 } };
+  const read = guardQueueReadModel(200, JSON.stringify(routeBody));
+  assert.equal(read.state, 'ok');
+  assert.equal(read.body.queue.length, 1);
+  assert.equal(read.body.counts.total, 1);
+});
+
+test('a bare JSON array at 200 is not ok: it is neither route envelope', () => {
+  // Both routes answer objects ({ approvals } / { queue, counts }). A
+  // top-level array is a shape this page cannot read as a queue, never a
+  // silent empty list.
+  const read = guardQueueReadModel(200, JSON.stringify([{ approvalId: 'a1' }]));
+  assert.equal(read.state, 'unreadable');
+});
+
+test('the server own house envelope is server-error, never unreadable and never an approver state', () => {
+  // When the Guard route itself did not answer, the admin layers around it
+  // answer in the house envelope { valid: false, code } — the fallthrough's
+  // route-not-found, the Vercel entry's route-not-found, an internal
+  // error. That is the server reporting a problem of its own in a shape
+  // this page CAN read: its own state, distinct from a foreign page
+  // (unreadable), from the Guard being down (guard-unreachable), and from
+  // the Guard route's approver verdicts. The 2026-11-09 live walk sat in
+  // 'unreadable' on an answer of this family.
+  for (const [status, code] of [[404, 'CLOUD_ADMIN_ROUTE_NOT_FOUND'], [404, 'ADMIN_ROUTE_NOT_FOUND'], [500, 'CLOUD_ADMIN_INTERNAL_ERROR'], [503, 'ADMIN_BOOT_FAILED']]) {
+    const read = guardQueueReadModel(status, JSON.stringify({ valid: false, code }));
+    assert.equal(read.state, 'server-error', `${status} ${code}`);
+    assert.match(read.message, /server reported a problem of its own/);
+    assert.ok(!read.message.includes('Guard is unreachable'), 'a house-envelope refusal is not proof the Guard is down');
+    assert.ok(!read.message.includes('cannot read'), 'the house envelope is a shape this page can read');
+  }
+});
+
+test('a house-envelope 403 (the origin gate) is server-error, not the approver verdict', () => {
+  // live-admin's origin gate answers 403 { valid:false, code:
+  // 'ADMIN_ORIGIN_REQUIRED' } before the Guard route is reached. Reading
+  // it as 'forbidden' put the PC-owner words on a refusal that had
+  // nothing to do with the approver list.
+  const read = guardQueueReadModel(403, JSON.stringify({ valid: false, code: 'ADMIN_ORIGIN_REQUIRED' }));
+  assert.equal(read.state, 'server-error');
+  assert.ok(!read.message.includes('PC owner'), 'origin refusal must not wear the approver words');
+});
+
 test('app.js renders Guard queue states through the model — the raw-error banner is gone', async () => {
   const src = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
   assert.ok(!src.includes('Guard is unreachable (${error.message})'), 'the raw parser error banner must not come back');

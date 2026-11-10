@@ -1,7 +1,7 @@
 // Plugin library routes (plugin-install bite, 2026-11-09): the
 // cloud plugin shelf's install / uninstall / read API —
 //
-//   GET  /api/admin/plugins            → { valid: true, plugins: [row], unavailable: [..] }
+//   GET  /api/admin/plugins            → { valid: true, plugins: [row], unavailable: [..], shelf: [bundle] }
 //     The workspace's plugins, BOTH truths in one list: the cloud
 //     bundles installed from Helmian's shelf (the install records,
 //     sql/080) and the PC bridge's installed plugins (the read
@@ -13,6 +13,14 @@
 //     declared skills with their presence in the skill library.
 //     A workspace with neither answers the honest empty list —
 //     the plus menu's "No plugins are installed." stands on it.
+//     Beside the rows rides the SHELF itself: every bundle Helmian
+//     carries, in the bundle's own names and words (name, version,
+//     description, its declared entries and skills), so the Manage
+//     surface's Plugins tab can render the catalog a person could
+//     install from — before this field the read carried only what
+//     was already installed, and the tab could name nothing to
+//     install. Installed state never rides a shelf row; the face
+//     joins the two by name against the plugins rows above.
 //   POST /api/admin/plugins/install    { name } → { valid: true, plugin }
 //     Install a shelf bundle: its skills are registered into the
 //     workspace's skill library through the EXISTING skills write
@@ -486,6 +494,20 @@ export async function handlePluginLibraryRoute({
         valid: true,
         plugins: [...cloudRows, ...bridgeRows],
         unavailable: bridge.unavailable ?? [],
+        shelf: deps.shelf.map((bundle) => ({
+          name: bundle.pluginJson.name,
+          version: bundle.pluginJson.version,
+          description: bundle.pluginJson.description,
+          entries: bundleEntryIds(bundle).map((entryId) => ({
+            entryId,
+            name: catalogEntryName(entryId) ?? entryId,
+          })),
+          skills: bundleSkillRefs(bundle).map(({ id, name, description }) => ({
+            id,
+            name,
+            description,
+          })),
+        })),
       });
       return true;
     }

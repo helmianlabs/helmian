@@ -107,6 +107,27 @@
   "headers": [
     {
       "source": "/app/(.*)",
+      "has": [
+        {
+          "type": "query",
+          "key": "v"
+        }
+      ],
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/app/(.*)",
+      "missing": [
+        {
+          "type": "query",
+          "key": "v"
+        }
+      ],
       "headers": [
         {
           "key": "Cache-Control",
