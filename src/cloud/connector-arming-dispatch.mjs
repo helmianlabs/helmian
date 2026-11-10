@@ -16,6 +16,9 @@
 //   { seatId, entryId, state,
 //     reason?, detail?,                      // non-connected records
 //     entryName?, endpointUrl?, authMode?,   // the entry's own facts
+//     localInstall?,                         // mcp-local entries: the
+//                                            // install's facts instead
+//                                            // of an endpoint (sql/080)
 //     accountIdentity?, posture?,            // connected records
 //     snapshotTools?: [{ name, annotation, inputSchemaHash }],
 //     toolEnableMap?, accessToken?, tokenSource? }
@@ -58,6 +61,21 @@
 // from the gate probe's own list at connect time — freezing
 // whatever the server lists at arm time was the hole's second half.
 // A gated custom entry with no snapshot is a 'freeze-failed' record.
+//
+// MCP-LOCAL ENTRIES NEVER ARM FROM HERE (sql/080): an installed
+// stdio server lives on a person's own machine. This dispatch is
+// cloud-side and holds no road to that machine; the entry has no
+// endpoint to list tools from, no connection, and no frozen
+// snapshot a cloud freeze could have taken — and the runner pipe
+// (attachments.mjs) arms connector toggles only through a remote
+// endpoint or the Pattern-A hand-off, never by starting a local
+// server. Arming one would be a silent fiction, so the pair
+// resolves to a 'local-only' record naming exactly that, before
+// the connection or any token is read. The record still carries
+// the entry's local facts (installed path, config snippet,
+// baseline fingerprint) — the facts a runner ON that machine will
+// need when a road exists that can start the server and freeze its
+// tools there.
 
 import { createConnectorLibraryStore } from './connector-library.mjs';
 import { createCredentialConnectClient } from './credential-connect.mjs';
@@ -136,9 +154,30 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
   if (!entry) {
     return { ...base, state: 'unknown-entry', reason: 'unknown-entry', detail: 'it is not in this seat\u2019s library' };
   }
-  const facts = { entryName: entry.name, endpointUrl: entry.mcpEndpointUrl ?? null, authMode: entry.authMode };
+  const facts = {
+    entryName: entry.name, endpointUrl: entry.mcpEndpointUrl ?? null, authMode: entry.authMode,
+    // An mcp-local entry's facts are its local ones (sql/080): no
+    // endpoint exists, so the record carries where the install
+    // lives and how it starts — the facts a runner on that machine
+    // will need, and the reason this record cannot arm from here.
+    ...(entry.kind === 'mcp-local'
+      ? {
+        localInstall: {
+          installedPath: entry.installedPath ?? null,
+          configSnippet: entry.configSnippet ?? null,
+          baselineFingerprint: entry.baselineFingerprint ?? null,
+        },
+      }
+      : {}),
+  };
   if (entry.state !== 'available') {
     return { ...base, ...facts, state: 'entry-disabled', reason: 'entry-disabled', detail: 'the workspace owner has turned it off' };
+  }
+  if (entry.kind === 'mcp-local') {
+    return {
+      ...base, ...facts, state: 'local-only', reason: 'local-only',
+      detail: 'it is a local install on a person\u2019s own machine — no turn away from that machine can reach it, and no tool list has been frozen from that machine, so its tools cannot arm from here',
+    };
   }
   if (entry.brokerMode !== 'helmian' || !entry.mcpEndpointUrl) {
     return { ...base, ...facts, state: 'vendor-brokered', reason: 'vendor-brokered', detail: `it is brokered by ${entry.vendorName}, not by Helmian` };

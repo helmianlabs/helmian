@@ -14,6 +14,11 @@
 //     the gate existed does not outrank it.
 //   - vendor-brokered entries   → the person's mirror record — only
 //     ever what the seat's vendor side last reported (§1.5);
+//   - MCP-LOCAL entries (sql/080) → the entry's own record: the
+//     install pipeline's report is the state — the headline never
+//     reads 'connected' (the cloud holds no connection to a machine's
+//     install), and the local facts ride the row's localInstall
+//     field with the install named in the state detail;
 //   - the Helmian-native GitHub entry → joined from the two places
 //     that truth already lives, through the two narrow adapters below:
 //     the workspace's per-channel repo links (the envoy store's
@@ -281,11 +286,36 @@ function nativeGithubState({ surface, repoLinks }) {
   return { state: 'connected', accountIdentity: first.repo, detail };
 }
 
+// An mcp-local entry's facts for the row (sql/080): where the
+// install lives and the pipeline baseline recorded with the entry.
+// The config snippet itself rides the row's localInstall field
+// (rowOf), not the state detail — the detail names the install, the
+// field carries its start facts.
+function localFactsOf(entry) {
+  return {
+    installedPath: entry.installedPath ?? null,
+    baselineFingerprint: entry.baselineFingerprint ?? null,
+  };
+}
+
 function joinedStateInner(entry, { connection, mirror, nativeSurface, repoLinks }) {
   // The owner's disable wins over every other state (§1.2's fourth
   // state is entry-level, §2.1).
   if (entry.state === 'disabled-by-owner') {
     return { state: 'disabled-by-owner', accountIdentity: null, detail: null };
+  }
+  if (entry.kind === 'mcp-local') {
+    // A local install (sql/080): the entry's record IS the install
+    // pipeline's report — there is no connection for the cloud to
+    // hold, and a connection row (none can be recorded through the
+    // connect roads) must never dress the install up as connected.
+    // The headline is 'not-connected' with the install named as the
+    // detail's source and its facts attached.
+    return {
+      state: 'not-connected',
+      accountIdentity: null,
+      detail: { source: 'mcp-install-pipeline', local: localFactsOf(entry) },
+    };
   }
   const source = NATIVE_STATE_SOURCES[entry.id];
   if (source?.repoLinks === true) {
@@ -369,6 +399,20 @@ function rowOf(entry, joined) {
     category: entry.category ?? null,
     accountIdentity: joined.accountIdentity,
     stateDetail: joined.detail,
+    // An mcp-local entry's local facts (sql/080), additive and
+    // named: the installed path, the config snippet that starts the
+    // server on that machine, and the pipeline baseline recorded
+    // with the entry. Present only on mcp-local rows — the view
+    // owns how they are presented; the data shape is the contract.
+    ...(entry.kind === 'mcp-local'
+      ? {
+        localInstall: {
+          installedPath: entry.installedPath ?? null,
+          configSnippet: entry.configSnippet ?? null,
+          baselineFingerprint: entry.baselineFingerprint ?? null,
+        },
+      }
+      : {}),
     // Catalog starter actions (mirror-design §4, bite M2): the
     // vendor-published quick actions the catalog carries a copy of
     // for this entry, joined from the catalog data — never stored

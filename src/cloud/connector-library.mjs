@@ -41,7 +41,7 @@
 
 import { createHash } from 'node:crypto';
 
-export const CONNECTOR_ENTRY_KINDS = Object.freeze(['catalog', 'helmian-native', 'custom']);
+export const CONNECTOR_ENTRY_KINDS = Object.freeze(['catalog', 'helmian-native', 'custom', 'mcp-local']);
 export const CONNECTOR_TRUST_LABELS = Object.freeze(['verified', 'community', 'custom']);
 export const CONNECTOR_BROKER_MODES = Object.freeze(['helmian', 'vendor']);
 export const CONNECTOR_AUTH_MODES = Object.freeze(['oauth', 'none', 'header']);
@@ -311,6 +311,14 @@ function entryOf(row) {
     brokerMode: row.broker_mode,
     mcpEndpointUrl: row.mcp_endpoint_url ?? null,
     vendorConnectorRef: row.vendor_connector_ref ?? null,
+    // The local facts (sql/080): an mcp-local entry's shape in place
+    // of an endpoint — where the install lives on a person's
+    // machine, how it is started there, and the install pipeline's
+    // baseline fingerprint. Null on every other kind (the schema
+    // requires it), and on rows read from a pre-080 database.
+    installedPath: row.installed_path ?? null,
+    configSnippet: row.config_snippet ?? null,
+    baselineFingerprint: row.baseline_fingerprint ?? null,
     authMode: row.auth_mode,
     clientIdentity: row.client_identity ?? null,
     scopesSummary: row.scopes_summary ?? null,
@@ -394,6 +402,30 @@ function validateVendorConnectorRef(value) {
   return { ref, manageUrl };
 }
 
+const HEX64 = /^[a-f0-9]{64}$/;
+
+/**
+ * An mcp-local entry's config snippet (sql/080): the document the
+ * install pipeline printed — { mcpServers: { <name>: { command,
+ * args } } } — and it must carry THIS entry's server: a snippet
+ * naming another server is a connection fact for a different
+ * install, not decoration. Returns the object unchanged (it lands
+ * in a jsonb column as given).
+ */
+function validateConfigSnippet(value, serverName) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || !value.mcpServers || typeof value.mcpServers !== 'object' || Array.isArray(value.mcpServers)) {
+    throw badRequest('configSnippet must be the snippet object the install pipeline printed ({ mcpServers: { … } })');
+  }
+  const server = value.mcpServers[serverName];
+  if (!server || typeof server !== 'object'
+    || typeof server.command !== 'string' || !server.command
+    || !Array.isArray(server.args) || server.args.some((a) => typeof a !== 'string')) {
+    throw badRequest('configSnippet must carry this server\'s { command, args } entry — the snippet is a connection fact, not decoration');
+  }
+  return value;
+}
+
 function validateEntryInput(input = {}) {
   refuseCredentialValues(input);
   if ('state' in input) {
@@ -411,29 +443,83 @@ function validateEntryInput(input = {}) {
   if (!CONNECTOR_AUTH_MODES.includes(input.authMode)) {
     throw badRequest(`authMode must be one of ${CONNECTOR_AUTH_MODES.join(', ')}`);
   }
+  const isLocal = input.kind === 'mcp-local';
+  if (isLocal && input.authMode !== 'none') {
+    // A local install has no sign-in Helmian holds: the server runs
+    // on the person's own machine under their own hand, and the
+    // install pipeline's approval was its gate. An auth mode here
+    // would promise a connect road that does not exist.
+    throw badRequest('an mcp-local entry\'s authMode is "none" — Helmian holds no sign-in for a server on a person\'s own machine');
+  }
+  const name = requireString(input.name, 'name');
   let trustLabel = input.trustLabel;
   if (input.kind === 'custom') {
     if (trustLabel !== undefined && trustLabel !== 'custom') {
       throw badRequest('custom entries are always trust-labelled "custom" (§2.1)');
     }
     trustLabel = 'custom';
+  } else if (isLocal) {
+    // The label is earned by the install pipeline — code read,
+    // sandbox, human approval — and the baseline fingerprint is its
+    // receipt; nothing weaker may be claimed for it, and no other
+    // label describes how the entry got here.
+    if (trustLabel !== undefined && trustLabel !== 'verified') {
+      throw badRequest('an mcp-local entry is trust-labelled "verified" — the install pipeline\'s audit, sandbox, and human approval are its verification');
+    }
+    trustLabel = 'verified';
   } else if (!CONNECTOR_TRUST_LABELS.includes(trustLabel) || trustLabel === 'custom') {
     throw badRequest('trustLabel must be "verified" or "community" for catalog and helmian-native entries');
   }
   const mcpEndpointUrl = validateEndpointUrl(input.mcpEndpointUrl);
   const vendorConnectorRef = validateVendorConnectorRef(input.vendorConnectorRef);
-  if (input.brokerMode === 'helmian') {
-    if (!mcpEndpointUrl) throw badRequest('a helmian-brokered entry needs its mcpEndpointUrl — Helmian runs the pipe');
-    if (vendorConnectorRef) throw badRequest('a helmian-brokered entry carries no vendorConnectorRef');
+  // The local facts (sql/080): an mcp-local entry's shape INSTEAD of
+  // the endpoint requirement — and every other kind must leave all
+  // three empty. The store holds the same line the schema's
+  // broker-shape constraint holds, so a bad record is refused here
+  // with words, not at the database with a constraint name.
+  let installedPath = null;
+  let configSnippet = null;
+  let baselineFingerprint = null;
+  if (isLocal) {
+    if (input.brokerMode !== 'helmian') {
+      throw badRequest('an mcp-local entry is brokered by Helmian — the install pipeline is Helmian\'s own road onto the machine');
+    }
+    if (mcpEndpointUrl) throw badRequest('an mcp-local entry has no mcpEndpointUrl — the server runs on a person\'s machine, not at an endpoint');
+    if (vendorConnectorRef) throw badRequest('an mcp-local entry carries no vendorConnectorRef');
+    installedPath = requireString(input.installedPath ?? '', 'installedPath', { max: 1024 });
+    if (!(/^\//.test(installedPath) || /^[A-Za-z]:[\\/]/.test(installedPath))) {
+      throw badRequest('installedPath must be an absolute path on the machine that ran the pipeline — a relative path names nothing the record can point at');
+    }
+    configSnippet = validateConfigSnippet(input.configSnippet, name);
+    if (input.baselineFingerprint !== undefined && input.baselineFingerprint !== null) {
+      if (typeof input.baselineFingerprint !== 'string' || !HEX64.test(input.baselineFingerprint)) {
+        throw badRequest('baselineFingerprint must be the install ledger\'s baseline hash (sha256 hex) when given');
+      }
+      baselineFingerprint = input.baselineFingerprint;
+    }
   } else {
-    if (mcpEndpointUrl) throw badRequest('a vendor-brokered entry has no mcpEndpointUrl — Helmian has no pipe for it (§1.5)');
-    if (!vendorConnectorRef) throw badRequest('a vendor-brokered entry needs vendorConnectorRef {ref, manageUrl} — the vendor-side identifier and its management link');
+    if (input.installedPath !== undefined && input.installedPath !== null) {
+      throw badRequest('installedPath belongs to mcp-local entries only — any other entry is reached at its endpoint or its vendor, never at a path on a machine');
+    }
+    if (input.configSnippet !== undefined && input.configSnippet !== null) {
+      throw badRequest('configSnippet belongs to mcp-local entries only');
+    }
+    if (input.baselineFingerprint !== undefined && input.baselineFingerprint !== null) {
+      throw badRequest('baselineFingerprint belongs to mcp-local entries only — it is the install pipeline\'s baseline, and no other road produces one');
+    }
+    if (input.brokerMode === 'helmian') {
+      if (!mcpEndpointUrl) throw badRequest('a helmian-brokered entry needs its mcpEndpointUrl — Helmian runs the pipe');
+      if (vendorConnectorRef) throw badRequest('a helmian-brokered entry carries no vendorConnectorRef');
+    } else {
+      if (mcpEndpointUrl) throw badRequest('a vendor-brokered entry has no mcpEndpointUrl — Helmian has no pipe for it (§1.5)');
+      if (!vendorConnectorRef) throw badRequest('a vendor-brokered entry needs vendorConnectorRef {ref, manageUrl} — the vendor-side identifier and its management link');
+    }
   }
   return {
     seatId,
     id,
     kind: input.kind,
-    name: requireString(input.name, 'name'),
+    name,
     oneLiner: requireString(input.oneLiner, 'oneLiner', { max: 512 }),
     iconRef: optionalString(input.iconRef, 'iconRef'),
     vendorName: requireString(input.vendorName, 'vendorName'),
@@ -442,6 +528,9 @@ function validateEntryInput(input = {}) {
     brokerMode: input.brokerMode,
     mcpEndpointUrl,
     vendorConnectorRef,
+    installedPath,
+    configSnippet,
+    baselineFingerprint,
     authMode: input.authMode,
     clientIdentity: optionalString(input.clientIdentity, 'clientIdentity'),
     scopesSummary: optionalString(input.scopesSummary, 'scopesSummary'),
@@ -550,12 +639,16 @@ export function createConnectorLibraryStore(pool) {
                      trust_label = $7, category = $8, mcp_endpoint_url = $9,
                      vendor_connector_ref = $10::jsonb, auth_mode = $11,
                      client_identity = $12, scopes_summary = $13,
-                     workspace_provisioned = $14, updated_at = clock_timestamp()
+                     workspace_provisioned = $14, installed_path = $15,
+                     config_snippet = $16::jsonb, baseline_fingerprint = $17,
+                     updated_at = clock_timestamp()
                where ${whereEntry} returning *`,
               [entry.seatId, entry.id, entry.name, entry.oneLiner, entry.iconRef,
                entry.vendorName, entry.trustLabel, entry.category, entry.mcpEndpointUrl,
                entry.vendorConnectorRef ? JSON.stringify(entry.vendorConnectorRef) : null,
-               entry.authMode, entry.clientIdentity, entry.scopesSummary, entry.workspaceProvisioned],
+               entry.authMode, entry.clientIdentity, entry.scopesSummary, entry.workspaceProvisioned,
+               entry.installedPath, entry.configSnippet ? JSON.stringify(entry.configSnippet) : null,
+               entry.baselineFingerprint],
             );
             return entryOf(r.rows[0]);
           }
@@ -563,15 +656,18 @@ export function createConnectorLibraryStore(pool) {
             `insert into helmion.connector_entries
                (tenant_id, seat_id, id, kind, name, one_liner, icon_ref, vendor_name,
                 trust_label, category, broker_mode, mcp_endpoint_url, vendor_connector_ref,
-                auth_mode, client_identity, scopes_summary, added_by, workspace_provisioned, state)
+                auth_mode, client_identity, scopes_summary, added_by, workspace_provisioned,
+                installed_path, config_snippet, baseline_fingerprint, state)
              values (current_setting('helmion.tenant_id', true), $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, 'available')
+                $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, 'available')
              returning *`,
             [entry.seatId, entry.id, entry.kind, entry.name, entry.oneLiner, entry.iconRef,
              entry.vendorName, entry.trustLabel, entry.category, entry.brokerMode,
              entry.mcpEndpointUrl, entry.vendorConnectorRef ? JSON.stringify(entry.vendorConnectorRef) : null,
              entry.authMode, entry.clientIdentity, entry.scopesSummary, entry.addedBy,
-             entry.workspaceProvisioned],
+             entry.workspaceProvisioned, entry.installedPath,
+             entry.configSnippet ? JSON.stringify(entry.configSnippet) : null,
+             entry.baselineFingerprint],
           );
           return entryOf(r.rows[0]);
         });
@@ -678,6 +774,9 @@ export function createConnectorLibraryStore(pool) {
           const entry = await readEntry(client, key.seatId, key.entryId);
           if (!entry) throw notFound('connector entry not found in this seat\'s library');
           if (entry.state !== 'available') throw conflict('this connector is turned off by the workspace owner');
+          if (entry.kind === 'mcp-local') {
+            throw badRequest('this entry is a local install on a person\'s machine — Helmian holds no connection for it; the install pipeline\'s report is its record');
+          }
           if (entry.broker_mode !== 'helmian') {
             throw badRequest('this entry is vendor-brokered — Helmian holds no tokens for it; record a mirror report instead (§1.5)');
           }

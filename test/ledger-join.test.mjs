@@ -9,9 +9,10 @@
 //       assertions, a self-named entry id, and a relative path;
 //   (c) the write route's install-report action records INTENT in
 //       the tool-connections store (kind 'mcp-stdio', state
-//       'registered', never 'verified'), is owner/admin-gated, and
-//       answers with the library entry honestly NOT created — the
-//       sql/074 wall named, not papered over.
+//       'registered', never 'verified'), is owner/admin-gated, and —
+//       since sql/080 landed (the mcp-local-entries bite) — creates
+//       the library entry itself: kind 'mcp-local' with the local
+//       facts and the pipeline baseline recorded on it.
 //
 // Direction 2 (library → pipeline):
 //   (d) a connection's FIRST frozen snapshot is its arming baseline
@@ -172,9 +173,41 @@ function fakeToolConnections() {
   };
 }
 
+// A minimal library-store fake for the install-report action: the
+// entry half of the action, in JS — getEntry reads what a previous
+// createEntry wrote, keyed (seat, id), like the real store's
+// per-seat scoping.
+function fakeLibraryStore() {
+  const entries = new Map();
+  const calls = [];
+  const keyOf = (seatId, id) => `${seatId}|${id}`;
+  return {
+    calls,
+    async getEntry(tenantId, seatId, entryId) {
+      calls.push(['getEntry', seatId, entryId]);
+      return entries.get(keyOf(seatId, entryId)) ?? null;
+    },
+    async createEntry(tenantId, subject, input) {
+      calls.push(['createEntry', input, subject]);
+      const entry = {
+        seatId: input.seatId, id: input.id, kind: input.kind, name: input.name,
+        oneLiner: input.oneLiner, vendorName: input.vendorName, trustLabel: input.trustLabel,
+        brokerMode: input.brokerMode, mcpEndpointUrl: null, vendorConnectorRef: null,
+        installedPath: input.installedPath ?? null, configSnippet: input.configSnippet ?? null,
+        baselineFingerprint: input.baselineFingerprint ?? null,
+        authMode: input.authMode, category: input.category ?? null,
+        addedBy: input.addedBy, state: 'available',
+      };
+      entries.set(keyOf(input.seatId, input.id), entry);
+      return entry;
+    },
+  };
+}
+
 function writeHarness({ actor = OWNER, toolConnections } = {}) {
+  const libraryStore = fakeLibraryStore();
   const handler = createConnectorLibraryWriteHandler({
-    store: {}, // presence only — the install-report action never touches the library store
+    store: libraryStore,
     toolConnections,
     gateProbe: async () => { throw new Error('no gate probe in this harness'); },
     fetchImpl: async () => { throw new Error('no network in tests'); },
@@ -182,6 +215,7 @@ function writeHarness({ actor = OWNER, toolConnections } = {}) {
   const sent = [];
   return {
     sent,
+    libraryStore,
     async run(path, { body = {}, method = 'POST' } = {}) {
       const handled = await handler({
         request: { method },
@@ -200,7 +234,7 @@ function writeHarness({ actor = OWNER, toolConnections } = {}) {
   };
 }
 
-test('direction 1: the install-report action records intent — registered, never verified — and names the entry wall', async () => {
+test('direction 1: the install-report action records intent — registered, never verified — and creates the mcp-local entry', async () => {
   const { scratch, report } = await installedReport();
   try {
     const tc = fakeToolConnections();
@@ -223,15 +257,19 @@ test('direction 1: the install-report action records intent — registered, neve
     assert.equal(register[2], 'user:troy');
     assert.equal(out.json.toolConnection.state, 'registered');
     assert.equal(out.json.toolConnection.lastVerifiedAt, null);
-    // The entry is honestly NOT created, and the answer names why
-    // and what road is missing — no fabricated row, no fake URL.
-    assert.equal(out.json.libraryEntry, null);
-    assert.match(out.json.entryNotCreated.blockedBy, /sql\/074/);
-    assert.match(out.json.entryNotCreated.missingRoad, /migration/);
-    // The baseline fingerprint is echoed as received, with its
-    // durable home named — not dressed up as recorded in the library.
+    // The library entry IS created now (sql/080): kind 'mcp-local',
+    // the local facts in place of an endpoint — no fabricated URL —
+    // and the pipeline baseline recorded on the entry itself: the
+    // same fingerprint the local ledger keeps.
+    assert.equal(out.json.entryCreated, true);
+    assert.equal(out.json.libraryEntry.kind, 'mcp-local');
+    assert.equal(out.json.libraryEntry.brokerMode, 'helmian');
+    assert.equal(out.json.libraryEntry.mcpEndpointUrl, null);
+    assert.equal(out.json.libraryEntry.installedPath, report.installedPath);
+    assert.deepEqual(out.json.libraryEntry.configSnippet, report.configSnippet);
+    assert.equal(out.json.libraryEntry.baselineFingerprint, report.libraryReport.baseline.fingerprint);
     assert.equal(out.json.baseline.fingerprint, report.libraryReport.baseline.fingerprint);
-    assert.equal(out.json.baseline.recordedInLibrary, false);
+    assert.equal(out.json.baseline.recordedInLibrary, true);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

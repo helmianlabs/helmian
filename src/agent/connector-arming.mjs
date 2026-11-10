@@ -56,6 +56,23 @@ export function sanitizeArmingRecords(input) {
       ...(typeof record.detail === 'string' && record.detail ? { detail: record.detail.slice(0, 300) } : {}),
       ...(typeof record.entryName === 'string' && record.entryName ? { entryName: record.entryName } : {}),
       ...(typeof record.endpointUrl === 'string' && record.endpointUrl ? { endpointUrl: record.endpointUrl } : {}),
+      // An mcp-local record's local facts (sql/080), shape-checked
+      // like everything else at this door: the installed path and
+      // baseline fingerprint as strings, the config snippet as the
+      // object the pipeline printed. They ride so a runner on the
+      // install's own machine can see what would be started there;
+      // the record's state ('local-only') is what rules the turn.
+      ...(record.localInstall && typeof record.localInstall === 'object' && !Array.isArray(record.localInstall)
+        ? {
+          localInstall: {
+            installedPath: typeof record.localInstall.installedPath === 'string' && record.localInstall.installedPath ? record.localInstall.installedPath : null,
+            configSnippet: record.localInstall.configSnippet && typeof record.localInstall.configSnippet === 'object' && !Array.isArray(record.localInstall.configSnippet)
+              ? record.localInstall.configSnippet
+              : null,
+            baselineFingerprint: typeof record.localInstall.baselineFingerprint === 'string' && record.localInstall.baselineFingerprint ? record.localInstall.baselineFingerprint : null,
+          },
+        }
+        : {}),
       ...(typeof record.authMode === 'string' && record.authMode ? { authMode: record.authMode } : {}),
       ...(typeof record.accountIdentity === 'string' && record.accountIdentity ? { accountIdentity: record.accountIdentity } : {}),
       posture: ARMING_POSTURES.has(record.posture) ? record.posture : 'ask',
