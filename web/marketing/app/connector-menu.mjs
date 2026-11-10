@@ -128,10 +128,11 @@ const NATIVES = ['helmian-github'];
 // weather pick (a US National Weather Service data server).
 const REGISTRY_SHELF = ['registry-weather'];
 // The Source 4 vendor-published servers (connector-catalog.mjs): a
-// vendor's own MCP server Helmian brokers directly — today Vercel's,
-// riding the live groups of the seats its catalog entry stocks
+// vendor's own MCP server Helmian brokers directly — Vercel's, plus
+// Bite R2's team-work family (Slack, Asana, HubSpot) — riding the
+// live groups of the seats their catalog entries stock
 // (claude, chatgpt, grok).
-const BROKERED_SERVERS = ['helmian-vercel'];
+const BROKERED_SERVERS = ['helmian-vercel', 'helmian-slack', 'helmian-asana', 'helmian-hubspot'];
 const manageInHelmian = () => manageLink({ label: 'Manage connectors', target: 'integrations' });
 // The plain Helmian list (REPORT §3.6–§3.10 + §3.11): seats with no
 // vendor furniture get attach, the live toggles, and the manager —
@@ -178,7 +179,7 @@ export const MENU_DEFINITIONS = deepFreeze({
       liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-atlassian', 'registry-notion', 'registry-linear', 'registry-stripe', ...BROKERED_SERVERS] }),
       mirrorGroup({
         managedIn: 'Claude',
-        entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva', 'idiolect'],
+        entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva', 'idiolect', 'figma'],
       }),
       // Tool access (§3.1): lands on the seat's Manage surface,
       // where the per-connection posture + the frozen snapshot's
@@ -212,7 +213,7 @@ export const MENU_DEFINITIONS = deepFreeze({
       liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-notion', ...BROKERED_SERVERS] }),
       mirrorGroup({
         managedIn: 'ChatGPT',
-        entryIds: ['gmail', 'google-calendar', 'google-drive', 'slack', 'notion', 'github', 'canva', 'dropbox'],
+        entryIds: ['gmail', 'google-calendar', 'google-drive', 'slack', 'notion', 'github', 'canva', 'dropbox', 'figma'],
       }),
     ]),
     manageInHelmian(),

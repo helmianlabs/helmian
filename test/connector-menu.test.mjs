@@ -83,10 +83,12 @@ const NATIVES = 'helmian-github';
 // their seats (mirrored in connector-menu.mjs's REGISTRY_SHELF and
 // the per-seat live groups).
 const SHELF = 'registry-weather';
-// Source 4 (vendor-published servers): Helmian brokers Vercel's own
-// published MCP server directly, so its entry rides the live groups
-// of the seats it stocks — claude, chatgpt, grok.
-const BROKERED = 'helmian-vercel';
+// Source 4 (vendor-published servers): Helmian brokers the vendors'
+// own published MCP servers directly, so their entries ride the live
+// groups of the seats they stock — claude, chatgpt, grok. Vercel's
+// was the first; Bite R2 added the team-work family (Slack, Asana,
+// HubSpot) in the same order the catalog lists them.
+const BROKERED = 'helmian-vercel,helmian-slack,helmian-asana,helmian-hubspot';
 const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES},${SHELF}`, 'manage:Manage connectors:integrations'];
 
 const EXPECTED = {
@@ -99,7 +101,7 @@ const EXPECTED = {
     'live:-:feed:helmian-skills',
     'submenu:Connectors',
     `live:-:${NATIVES},${SHELF},registry-atlassian,registry-notion,registry-linear,registry-stripe,${BROKERED}`,
-    'mirror:-:Claude:mirror:gmail,google-calendar,google-drive,github,slack,notion,linear,stripe,atlassian,canva,idiolect',
+    'mirror:-:Claude:mirror:gmail,google-calendar,google-drive,github,slack,notion,linear,stripe,atlassian,canva,idiolect,figma',
     'action:Tool access:tool-access',
     'submenu:Plugins',
     'live:-:feed:bridge-plugins',
@@ -110,7 +112,7 @@ const EXPECTED = {
     'attach:Add photos & files',
     'submenu:More',
     `live:-:${NATIVES},${SHELF},registry-notion,${BROKERED}`,
-    'mirror:-:ChatGPT:mirror:gmail,google-calendar,google-drive,slack,notion,github,canva,dropbox',
+    'mirror:-:ChatGPT:mirror:gmail,google-calendar,google-drive,slack,notion,github,canva,dropbox,figma',
     'manage:Manage connectors:integrations',
   ],
   grok: [

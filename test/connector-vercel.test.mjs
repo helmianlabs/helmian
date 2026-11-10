@@ -95,7 +95,7 @@ test('catalog: the Vercel entry is a first-class Helmian-brokered entry on the t
     // stored row carrying a stale label rules 'header'.
     assert.equal(effectiveAuthMode({ ...def, authMode: 'oauth' }), 'header', `${seatId}: catalog authMode wins over a stored row`);
   }
-  assert.equal(CONNECTOR_CATALOG.length, 78, '75 (Sources 1–3) + the Vercel entry on three seats');
+  assert.equal(CONNECTOR_CATALOG.length, 89, '75 (Sources 1–3) + the Vercel entry on three seats + Bite R2: Slack/Asana/HubSpot on three seats and the Figma mirror on two');
 });
 
 test('catalog: no seat outside the named three carries the brokered Vercel entry', () => {

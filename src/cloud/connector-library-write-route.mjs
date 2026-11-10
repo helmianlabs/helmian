@@ -121,6 +121,7 @@ import {
 import {
   ConnectorOAuthDcrError,
   connectorOAuthKindForEntry,
+  fixedProviderForEntry,
   resolvePendingOAuthClient,
   startDcrConnect,
 } from './connector-oauth-dcr.mjs';
@@ -190,8 +191,35 @@ const providerIdFor = (seatId, entryId) => `connector.${seatId}.${entryId}`;
 // what registration and consent request (declaredOAuthScopes
 // below, ruled by the same catalog-authority law as
 // effectiveAuthMode).
+//
+// Bite R2's family, same discipline:
+//   - slack: the USER scopes the catalog entry's words promise —
+//     search and read across conversations and files, nothing that
+//     posts or writes (the promise is "draft replies", composed by
+//     the agent, never sent under the person's name). Every scope
+//     sits inside the set Slack's MCP server itself publishes
+//     (live metadata read, 2026-11-10; the R2 tests pin the ask
+//     against that published set).
+//   - asana: EMPTY, deliberately. Asana defines no permission
+//     split for MCP apps — its own guide says to use `default` or
+//     omit the scope, and that including a scope parameter
+//     produces an error — so the Asana factory sends no scope
+//     parameter at all; the grant is the person's own Asana access.
+//   - hubspot: EMPTY, deliberately. HubSpot defines no scopes on
+//     an MCP connector — its consent page derives them from the
+//     server's tools and the person's own permissions — so the
+//     HubSpot factory sends no scope parameter either.
 const FIXED_CONNECT_SCOPES = Object.freeze({
   github: Object.freeze(['repo', 'read:org']),
+  slack: Object.freeze([
+    'search:read.public', 'search:read.private', 'search:read.im', 'search:read.mpim',
+    'search:read.files', 'search:read.users',
+    'channels:history', 'groups:history', 'im:history', 'mpim:history',
+    'channels:read', 'groups:read', 'im:read', 'mpim:read',
+    'users:read', 'users:read.email', 'files:read',
+  ]),
+  asana: Object.freeze([]),
+  hubspot: Object.freeze([]),
 });
 
 // The catalog definition is the authority for a seeded entry's auth
@@ -263,7 +291,7 @@ async function consentBoundary(entry, fetchImpl) {
     status: 'consent-boundary',
     seatId: entry.seatId,
     entryId: entry.id,
-    provider: entry.id === 'github' || entry.id === 'helmian-github' ? 'github' : 'oauth',
+    provider: fixedProviderForEntry(entry) ?? 'oauth',
     mcpEndpointUrl: endpoint || null,
     resourceMetadataUrl,
     authorizationEndpoint,
@@ -666,11 +694,12 @@ export function createConnectorLibraryWriteHandler({
               personId, seatId, entryId,
               provider: oauthKind.provider,
               // The row names the client the handshake runs under:
-              // for the fixed road that is the registry's env-held
-              // app id — the same value the client was built from
-              // (the exchange posts the factory's own pair; the
-              // callback never reads this field for a fixed row).
-              clientId: String(process.env.GITHUB_OAUTH_CLIENT_ID ?? '').trim(),
+              // for the fixed road that is the registry client's own
+              // env-held app id — the same value the client was
+              // built from (the exchange posts the factory's own
+              // pair; the callback never reads this field for a
+              // fixed row).
+              clientId: String(client.clientId ?? '').trim(),
               codeVerifier, redirectUri: callbackUrl, scopes,
             }) : null;
             if (!saved) {
