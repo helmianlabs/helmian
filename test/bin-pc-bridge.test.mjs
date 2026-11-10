@@ -550,6 +550,43 @@ test('agent members: configured channel is answered per agent via agent-messages
   assert.ok(served >= 1);
 });
 
+test('agent work: a custom agent is composed under its configured identity, not its provider', async (t) => {
+  // The cloud's work item carries the channel's custom-agent records;
+  // the bridge must hand them to the prompt composition. Without them
+  // a custom agent whose handle collides with a provider id is told
+  // "You are Qwen" — the provider's name, with its configured face,
+  // name and job all lost — and answers the room under that identity.
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-custom-identity-'));
+  const cloud = makeFakeCloud();
+  const orig = cloud.fetchImpl;
+  const posted = [];
+  const crab = { id: 'qwen', handle: 'qwen', name: 'Qwen', emoji: '🦀', provider: 'ollama', authMode: 'password_session', jobTitle: 'Weather watcher', jobPrompt: 'Watch the weather connectors.' };
+  const human = { id: '44444444-4444-4444-8444-444444444444', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', authorName: 'Troy', source: 'helmian', body: 'what about the Weather connector?', createdAt: 't' };
+  cloud.fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    const json = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
+    if (u.pathname === '/api/admin/envoy/channel-config') return json({ valid: true, configured: true, config: { agents: [] } });
+    if (u.pathname === '/api/admin/envoy/agent-work') {
+      const work = posted.length ? [] : [{ channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['claude', 'qwen'], message: human, agents: ['qwen'], context: [], customAgents: [crab] }];
+      return json({ valid: true, work });
+    }
+    if (u.pathname === '/api/admin/envoy/agent-messages') { posted.push(JSON.parse(opts.body)); return json({ valid: true, receipt: { replayed: false } }); }
+    return orig(url, opts);
+  };
+  const kids = [];
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'qwen', spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
+  t.after(() => handle.stop());
+  for (let i = 0; i < 50 && posted.length < 1; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(posted.length, 1);
+  assert.deepEqual(posted.map((p) => p.provider), ['qwen']);
+  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
+  assert.equal(turns.length, 1);
+  assert.match(turns[0].text, /You are 🦀 Qwen \(@qwen\), an agent member of the #Team channel/);
+  assert.match(turns[0].text, /Your assigned job: Weather watcher/);
+  assert.doesNotMatch(turns[0].text, /You are Qwen,/);
+  await handle.stop();
+});
+
 // ---- Agent-work slash expansion: expand BEFORE the agentPrompt wrap ----
 // The agent child expands a leading "/name" only when the turn text starts
 // with it; agent-work turns are wrapped in agentPrompt() first, so without

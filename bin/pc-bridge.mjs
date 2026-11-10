@@ -525,7 +525,13 @@ export async function runBridge(overrides = {}) {
       await sendAndWait(child, { cmd: 'reset' }, 'ready');
       const prepared = await expandAgentWorkBody(String(item.message?.body ?? ''));
       const message = prepared.body === String(item.message?.body ?? '') ? item.message : { ...item.message, body: prepared.body };
-      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, notebook: item.notebook ?? null });
+      // The channel's custom-agent records ride the work item (envoy-mesh
+      // agentWork) and MUST reach the prompt composition: without them a
+      // custom agent is composed under the provider table — named for
+      // its engine/provider instead of its configured workspace
+      // identity (name, face, job), or as a bare 'Agent' when its handle
+      // is not a provider id at all.
+      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, customAgents: item.customAgents ?? [], notebook: item.notebook ?? null });
       // The person's connector connections ride the work item when the
       // cloud supplies them ([{seatId, entryId, refreshTokenRef, state}]
       // — vault references only, never values) so the child's arming
