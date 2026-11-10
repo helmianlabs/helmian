@@ -144,6 +144,38 @@ test('a hub-raised PC approval in the real Executive Guard shape lands in the ap
   assert.equal('actionHash' in a, false);
 });
 
+test('guard answering 200 with a non-JSON body is GUARD_BAD_RESPONSE, never a silent empty queue', async () => {
+  // What a placeholder or proxy page on the Guard's host looks like through
+  // fetch: the parse rejects with a SyntaxError. This used to be swallowed
+  // into {} and answered as 200 with an empty list — "no PC actions
+  // waiting" while the Guard's real state was unknown.
+  const htmlFetch = async () => ({ status: 200, json: async () => { throw new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`); } });
+  const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: htmlFetch });
+  let r = res(); await h(req({ cookie: 'troy-cookie' }), r, PC_APPROVALS_PATH);
+  assert.equal(r.out.status, 502);
+  assert.equal(r.out.body.error, 'GUARD_BAD_RESPONSE');
+  r = res(); await h(req({ cookie: 'troy-cookie' }), r, PC_UPCOMING_PATH);
+  assert.equal(r.out.status, 502);
+  assert.equal(r.out.body.error, 'GUARD_BAD_RESPONSE');
+});
+
+test('guard answering JSON of the wrong shape (a scalar) is GUARD_BAD_RESPONSE', async () => {
+  const scalarFetch = async () => ({ status: 200, json: async () => 'ok' });
+  const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: scalarFetch });
+  const r = res(); await h(req({ cookie: 'troy-cookie' }), r, PC_APPROVALS_PATH);
+  assert.equal(r.out.status, 502);
+  assert.equal(r.out.body.error, 'GUARD_BAD_RESPONSE');
+});
+
+test('decide does not fabricate an approval from an unreadable Guard answer', async () => {
+  const htmlFetch = async () => ({ status: 200, json: async () => { throw new SyntaxError('not json'); } });
+  const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: htmlFetch });
+  const r = res(); await h(req({ method: 'POST', cookie: 'troy-cookie', body: { approvalId: 'e1297528-2117-4430-9c76-ea10bd833c19', approve: true } }), r, PC_APPROVALS_DECIDE_PATH);
+  assert.equal(r.out.status, 502);
+  assert.equal(r.out.body.error, 'GUARD_BAD_RESPONSE');
+  assert.equal(r.out.body.approval, undefined);
+});
+
 test('decide validates input and requires JSON', async () => {
   const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: guardFetch([]) });
   let r = res(); await h(req({ method: 'POST', cookie: 'troy-cookie', body: { approvalId: 'x', approve: 'yes' } }), r, PC_APPROVALS_DECIDE_PATH); assert.equal(r.out.status, 400);

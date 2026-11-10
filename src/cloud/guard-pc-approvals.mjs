@@ -82,8 +82,16 @@ export function createPcApprovalsHandler({
     const t = setTimeout(() => ctrl.abort(), 8000);
     try {
       const res = await fetchImpl(`${guardUrl}${path}`, { ...init, signal: ctrl.signal, headers: { ...(init.headers || {}), authorization: `Bearer ${token}` } });
-      const body = await res.json().catch(() => ({}));
-      return { status: res.status, body };
+      // An unreadable answer is a state of its own, never an empty result:
+      // when whatever answered is not speaking the Guard's JSON (a
+      // placeholder page on the Guard's host, a proxy error page), the
+      // parse rejects — that must surface as GUARD_BAD_RESPONSE, not
+      // silently become {} and read as "no approvals waiting" (or, on
+      // decide, a fabricated approval built from an empty object).
+      let body = null;
+      try { body = await res.json(); } catch { body = null; }
+      const badBody = body === null || typeof body !== 'object';
+      return { status: res.status, body: badBody ? {} : body, badBody };
     } finally { clearTimeout(t); }
   }
 
@@ -95,6 +103,7 @@ export function createPcApprovalsHandler({
     try {
       if (request.method === 'GET' && pathname === PC_APPROVALS_PATH) {
         const r = await guard('/v1/approvals?status=pending');
+        if (r.badBody) return sendJson(response, 502, { error: 'GUARD_BAD_RESPONSE', status: r.status });
         if (r.status !== 200) return sendJson(response, 502, { error: 'GUARD_UNAVAILABLE', status: r.status });
         const list = Array.isArray(r.body?.approvals) ? r.body.approvals : Array.isArray(r.body) ? r.body : [];
         return sendJson(response, 200, { approvals: list.map(publicApproval).filter((a) => a.status === 'pending') });
@@ -109,6 +118,7 @@ export function createPcApprovalsHandler({
           guard('/v1/approvals?status=approved'),
           guard('/v1/approvals?status=expired'),
         ]);
+        if (pendingR.badBody || approvedR.badBody) return sendJson(response, 502, { error: 'GUARD_BAD_RESPONSE', status: pendingR.badBody ? pendingR.status : approvedR.status });
         if (pendingR.status !== 200) return sendJson(response, 502, { error: 'GUARD_UNAVAILABLE', status: pendingR.status });
         if (approvedR.status !== 200) return sendJson(response, 502, { error: 'GUARD_UNAVAILABLE', status: approvedR.status });
         const pick = (r, status) => (Array.isArray(r.body?.approvals) ? r.body.approvals : Array.isArray(r.body) ? r.body : [])
@@ -130,6 +140,7 @@ export function createPcApprovalsHandler({
         if (!ID.test(String(body.approvalId || '')) || typeof body.approve !== 'boolean') return sendJson(response, 400, { error: 'approvalId and approve (boolean) are required' });
         const reason = `${body.approve ? 'approved' : 'denied'} by ${subject}${body.reason ? `: ${String(body.reason).slice(0, 200)}` : ''}`;
         const r = await guard(`/v1/approvals/${encodeURIComponent(body.approvalId)}/decide`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approve: body.approve, reason }) });
+        if (r.status === 200 && r.badBody) return sendJson(response, 502, { error: 'GUARD_BAD_RESPONSE', status: r.status });
         if (r.status === 404) return sendJson(response, 404, { error: 'not found (expired or already gone)' });
         if (r.status === 409) return sendJson(response, 409, { error: 'already decided or expired' });
         if (r.status !== 200) return sendJson(response, 502, { error: 'GUARD_UNAVAILABLE', status: r.status });

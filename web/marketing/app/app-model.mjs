@@ -86,6 +86,32 @@ export function approvalsModel(body = {}, role = null) {
   return { items, empty: items.length === 0, pending: items.filter((i) => !i.decision).length };
 }
 
+// ---- PC approvals queue (Executive Guard) read states ----
+// The approvals surfaces read the Guard queue through Helmian's own route
+// (GET /api/admin/guard/pc-approvals and /api/admin/guard/pc-upcoming); the
+// browser never talks to the Guard itself. Three failures used to collapse
+// into one banner that blamed the Guard and quoted a raw JSON parser error:
+// the route reporting the Guard down (its 502 GUARD_UNAVAILABLE), the Guard
+// answering in a shape the route could not read (502 GUARD_BAD_RESPONSE),
+// and the route's own answer not being JSON at all (e.g. a platform error
+// page in front of the function). This classifier keeps the states apart:
+// the words say "Guard is unreachable" only when the route itself said so,
+// and no state ever renders a raw parser error.
+export const GUARD_QUEUE_NO_ANSWER = 'Approvals are unavailable: Helmian’s server did not answer at all, so the Guard’s state is unknown. Nothing will run until it answers.';
+const GUARD_QUEUE_UNREADABLE = 'Approvals are unavailable: Helmian’s server answered in a shape this page cannot read, so the Guard’s state is unknown. Nothing will run until this reads cleanly.';
+export function guardQueueReadModel(status, text) {
+  let body = null;
+  try { body = JSON.parse(String(text ?? '')); } catch { body = null; }
+  if (body === null || typeof body !== 'object') return { state: 'unreadable', message: GUARD_QUEUE_UNREADABLE };
+  if (status === 200) return { state: 'ok', body };
+  if (status === 503) return { state: 'not-configured', message: 'PC approvals are not switched on for this workspace yet. Once your PC is linked, Guard asks you here before anything runs on it.' };
+  if (status === 403) return { state: 'forbidden', message: 'PC actions are approved by the PC owner’s account. Sign in with that account to Allow or Deny them.' };
+  if (status === 401) return { state: 'unauthenticated', message: 'Sign in again to see PC actions waiting for you.' };
+  if (body.error === 'GUARD_BAD_RESPONSE') return { state: 'guard-bad-response', message: 'Guard answered, but the answer could not be read. Nothing will run until it answers cleanly.' };
+  if (body.error === 'GUARD_UNAVAILABLE' || body.error === 'GUARD_TIMEOUT') return { state: 'guard-unreachable', message: 'Guard is unreachable. Nothing will run until it answers.' };
+  return { state: 'unreadable', message: GUARD_QUEUE_UNREADABLE };
+}
+
 export function formatTime(value, opts = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) { const d = new Date(value); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString([], opts); }
 export function clockTime(value) { return formatTime(value, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); }
 
