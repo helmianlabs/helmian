@@ -1,0 +1,17 @@
+# Helmian
+
+Helmian lets a person run Claude, ChatGPT, Grok and Gemini on one project without them stepping on each other. One agent holds write access at a time, risky steps wait for human sign-off, and every action lands in an audit trail.
+
+## The Guard family
+
+- Helmian Guard: a browser extension that helps teams notice potentially harmful and hedging AI actions before they move forward.
+- Executive Guard: the approvals server. When an agent wants to do something that needs a human OK, nothing runs until the person chooses Allow or Deny.
+- Helmian Site Guard: website protection. It screens what visitors send a website's AI, blocks the dangerous classes before the AI acts, and keeps its records free of message content.
+
+## Pages
+
+- Home: https://helmian.cloud/
+- Helmian Guard: https://helmian.cloud/guard
+- Helmian Site Guard: https://helmian.cloud/site-guard
+- Envoy, Helmian's team chat: https://helmian.cloud/envoy
+- Pricing: https://helmian.cloud/pricing
