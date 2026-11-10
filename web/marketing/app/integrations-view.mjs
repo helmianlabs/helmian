@@ -1,8 +1,8 @@
 // Integrations page: small cards, plain words. Nothing internal is shown here:
 // no setting names, ids, addresses of services, or keys. The model is pure (tested);
 // renderIntegrations draws it.
-import { integrationsModel, usageModel } from './app-model.mjs?v=9f1239bd566cc2a9';
-import { avatarFor } from './avatars.mjs?v=9f1239bd566cc2a9';
+import { integrationsModel, profileSyncResultModel, usageModel } from './app-model.mjs?v=7ccd1ca873f34ea5';
+import { avatarFor } from './avatars.mjs?v=7ccd1ca873f34ea5';
 
 export const PHONE_URL = 'https://helmian.cloud/app';
 // The AI providers of the owner's one connect road (2026-11-01):
@@ -50,7 +50,7 @@ const ACCOUNT_ROW_NAMES = Object.freeze({
 // arrived); connectors/providers/toolConnections: the cloud's connection
 // lists. Every status below renders the shared truth rows from
 // integrationsModel (app-model.mjs) — this page invents no state of its own.
-export function integrationSections({ presence = null, connectors = {}, providers = {}, toolConnections = null, usage = null, overview = null, now = Date.now() } = {}) {
+export function integrationSections({ presence = null, connectors = {}, providers = {}, toolConnections = null, usage = null, overview = null, profileSyncJob = null, now = Date.now() } = {}) {
   const online = new Set((Array.isArray(presence) ? presence : []).filter((p) => p.connected === true).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; }));
   // Every presence row, whatever its boolean says: a row means a device
   // reported this provider or a sync stamped it. That earns "Synced" —
@@ -145,8 +145,13 @@ export function integrationSections({ presence = null, connectors = {}, provider
     { key: 'slack', name: 'Slack', blurb: 'Mirror a team channel with Slack.', icon: { mark: 'slack' }, status: slack?.connected ? 'on' : 'off', statusText: slack?.statusText ?? 'Not checked', action: { label: slack?.connected ? 'Manage' : 'Link a channel', href: '#desktop' } },
   ];
   const pcOnline = online.size > 0;
+  // The sync card renders the tenant's newest profile-sync job — the
+  // same job row the Settings section renders, through the same model —
+  // so a queued or running sync reads the same here as there. No job
+  // yet (or the read did not answer) keeps the resting 'Ready'.
+  const syncModel = profileSyncResultModel(profileSyncJob);
   const devices = [
-    { key: 'profile-sync', name: 'Sync Profile and Guard', blurb: 'One-push sync of your rules, flywheel, markdown files and Guard hooks.', icon: { glyph: '⚡' }, status: 'on', statusText: 'Ready', action: { label: 'Sync now', act: 'sync-profile' } },
+    { key: 'profile-sync', name: 'Sync Profile and Guard', blurb: 'One-push sync of your rules, flywheel, markdown files and Guard hooks.', icon: { glyph: '⚡' }, status: syncModel.state === 'failed' ? 'off' : 'on', statusText: syncModel.state === 'idle' ? 'Ready' : syncModel.statusText, action: { label: 'Sync now', act: 'sync-profile' } },
     { key: 'pc', name: 'Your PC', blurb: pcOnline ? 'Online. Agents can answer from your PC.' : 'Offline. Install Helmian on your PC so agents can work there.', icon: { glyph: '🖥️' }, status: pcOnline ? 'on' : 'off', statusText: pcOnline ? 'Online' : 'Offline', action: pcOnline ? { label: 'Manage', href: '#devices' } : { label: 'Set up', act: 'pc-help' } },
     { key: 'phone', name: 'Your phone', blurb: 'Scan with your phone camera, sign in, done.', icon: { glyph: '📱' }, status: 'qr', statusText: 'Scan to open', action: null, qr: PHONE_URL },
   ];

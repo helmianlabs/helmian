@@ -36,7 +36,7 @@
 import { Pool } from 'pg';
 import { PROVIDER_KEY_ENV } from '../runner/vault.mjs';
 import { connectionProvider } from './tenant-agent-state.mjs';
-import { createProfileSyncJobStore } from './profile-sync.mjs';
+import { createProfileSyncJobStore, PROFILE_SYNC_NO_DESKTOP_CODE, PROFILE_SYNC_NO_DESKTOP_MESSAGE } from './profile-sync.mjs';
 
 export const RUNNER_PRESENCE_PATH = '/api/admin/envoy/runner/presence';
 
@@ -376,6 +376,16 @@ export async function handleRunnerPresenceRoute({
       let body = {};
       try { body = (await readJson(request)) ?? {}; } catch {}
       if (body.syncProfile === true) {
+        // Press truth (2026-11-10): with no desktop linked to this
+        // workspace, the sync job can never be claimed — answer with
+        // that fact instead of stamping providers and queueing a job
+        // that spins forever. The probe is optional on the job store so
+        // injected doubles without it keep their behaviour.
+        const jobs = injectedJobs ?? createProfileSyncJobStore(getPool());
+        if (typeof jobs.desktopLinked === 'function' && !(await jobs.desktopLinked(actor.tenantId))) {
+          send(response, 409, JSON.stringify({ valid: false, code: PROFILE_SYNC_NO_DESKTOP_CODE, detail: PROFILE_SYNC_NO_DESKTOP_MESSAGE }));
+          return true;
+        }
         // A sync distributes the profile; it connects nothing. Stamp each
         // provider's presence row with the sync time (markSynced) so the
         // surfaces can say "Synced" — the connected boolean is the
@@ -392,7 +402,6 @@ export async function handleRunnerPresenceRoute({
         // list a surface may render is that device report. If the job
         // store is unavailable (sql/070 not applied) the request fails
         // honestly instead of falling back to the old fiction.
-        const jobs = injectedJobs ?? createProfileSyncJobStore(getPool());
         const job = await jobs.enqueue(actor.tenantId, { requestedBy: actor.subject ?? null });
         send(response, 202, JSON.stringify({
           valid: true,
