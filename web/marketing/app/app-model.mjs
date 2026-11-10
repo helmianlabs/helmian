@@ -567,3 +567,27 @@ export function workspaceName(actor = {}) {
   const named = String(actor?.tenantName ?? '').trim();
   return named || friendlyWorkspace(actor?.tenantId);
 }
+
+// Integrations landing reads (2026-11-10): run every reader to a
+// settled result, then give the STATE-BEARING readers (the ones a
+// card's Connected / Not connected truth is derived from) one
+// retry when they rejected. The defect this answers: the landing
+// ran its reads once, and a single transient failure of the
+// connections or presence read silently degraded every card to
+// "Not checked" with a Connect button — a wrong, action-inviting
+// state for providers that were connected and answering minutes
+// earlier, and nothing short of leaving the view and coming back
+// ever re-read. Non-state readers are not retried: their failure
+// modes degrade to honest empty sections, not false states.
+// Returns { key: settledResult } in Promise.allSettled's shape.
+export async function settleWithStateRetry(readers, { stateKeys = [], retryDelayMs = 700, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  const keys = Object.keys(readers);
+  const first = await Promise.allSettled(keys.map((key) => readers[key]()));
+  const settled = Object.fromEntries(keys.map((key, i) => [key, first[i]]));
+  const retryKeys = stateKeys.filter((key) => settled[key]?.status === 'rejected');
+  if (!retryKeys.length) return settled;
+  await sleep(retryDelayMs);
+  const second = await Promise.allSettled(retryKeys.map((key) => readers[key]()));
+  retryKeys.forEach((key, i) => { settled[key] = second[i]; });
+  return settled;
+}

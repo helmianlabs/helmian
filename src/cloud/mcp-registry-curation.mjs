@@ -65,6 +65,26 @@ export const REGISTRY_PICKS = Object.freeze([
     authMode: 'oauth',
     endpoint: 'https://mcp.atlassian.com/v2/mcp',
     scopesSummary: 'Search and work with Jira, Confluence, and Loom',
+    // The scopes this pick ASKS for at registration and consent —
+    // a deliberate subset of what the server publishes. The live
+    // metadata read (R1, 2026-11-10) found Atlassian's resource
+    // document offering 40 scopes, including delete and manage
+    // permissions across a dozen products this pick never names.
+    // The DCR road's default is the server's whole published set,
+    // so without this list the consent page would ask for far more
+    // than the pick's own words promise. The list below is exactly
+    // the promise: identity basics, staying signed in, and read /
+    // write / search on Jira, Confluence, and Loom — nothing with
+    // delete or manage in it, and no other product. Declared here,
+    // in the curation layer, because the promise is made here; the
+    // DCR road narrows it to what the server actually offers.
+    oauthScopes: Object.freeze([
+      'read:me', 'read:account', 'email', 'offline_access',
+      'read:jira:agent-interface', 'write:jira:agent-interface', 'search:jira:agent-interface',
+      'read:confluence:agent-interface', 'write:confluence:agent-interface', 'search:confluence:agent-interface',
+      'search:rovo:agent-interface',
+      'read:loom:agent-interface', 'write:loom:agent-interface',
+    ]),
     seats: Object.freeze(['claude']),
   }),
   Object.freeze({

@@ -163,6 +163,25 @@ export async function discoverAuthorizationServer(resourceUrl, { fetchImpl = fet
   };
 }
 
+// The scopes a registration asks for. The default is the server's
+// own published set (the resource document's scopes, else the
+// authorization server's) — the shape this road has always run.
+// A catalog entry may DECLARE the scopes it asks for instead (a
+// pick whose own words promise less than the server publishes —
+// Atlassian's entry is the first: its server offers 40 scopes,
+// delete and manage included, against a promise of search-and-work
+// on three products; R1 live read, 2026-11-10). A declaration is
+// narrowed to what the server actually offers; if the server
+// offers none of the declared names, the declaration stands as-is
+// and the registration endpoint itself rules on it — Helmian never
+// silently widens a declared ask back to the server's full set.
+export function dcrScopesForRegistration(metadata, declaredScopes = null) {
+  const offered = metadata.resourceScopes.length ? metadata.resourceScopes : metadata.scopesSupported;
+  if (!Array.isArray(declaredScopes) || !declaredScopes.length) return offered;
+  const narrowed = declaredScopes.filter((scope) => offered.includes(scope));
+  return narrowed.length ? narrowed : [...declaredScopes];
+}
+
 // --------------------------------------------------------- registration
 // Register Helmian as a client of the authorization server
 // (RFC 7591). Prefers a public client (token auth method "none" —
@@ -171,7 +190,7 @@ export async function discoverAuthorizationServer(resourceUrl, { fetchImpl = fet
 // public-client method, and the issued secret then lives on the
 // pending row only. No registration endpoint → the honest named
 // answer: this service needs a different sign-in road.
-export async function registerDcrClient(metadata, { redirectUri, fetchImpl = fetch, clientName = DEFAULT_CLIENT_NAME } = {}) {
+export async function registerDcrClient(metadata, { redirectUri, fetchImpl = fetch, clientName = DEFAULT_CLIENT_NAME, scopes: declaredScopes = null } = {}) {
   if (!metadata?.registrationEndpoint) {
     fail('dcr-unsupported',
       'this service does not let Helmian register itself — it needs a different sign-in road (a pre-registered app), so nothing was connected');
@@ -181,7 +200,7 @@ export async function registerDcrClient(metadata, { redirectUri, fetchImpl = fet
     : offered.includes('client_secret_post') ? 'client_secret_post'
     : offered.includes('client_secret_basic') ? 'client_secret_basic'
     : (offered[0] ?? 'none');
-  const scopes = metadata.resourceScopes.length ? metadata.resourceScopes : metadata.scopesSupported;
+  const scopes = dcrScopesForRegistration(metadata, declaredScopes);
   const body = await fetchJson(fetchImpl, metadata.registrationEndpoint, {
     role: 'client registration endpoint',
     method: 'POST',
@@ -255,7 +274,7 @@ export async function exchangeDcrCode({ tokenEndpoint, clientId, clientSecret = 
 // header): registerClient exists because this road registers a
 // client per handshake. The client is bound to one resource; its
 // discovery runs once and is remembered for the handshake's life.
-export function createDcrOAuthClient({ resourceUrl, fetchImpl = fetch, clientName = DEFAULT_CLIENT_NAME } = {}) {
+export function createDcrOAuthClient({ resourceUrl, fetchImpl = fetch, clientName = DEFAULT_CLIENT_NAME, scopes = null } = {}) {
   let discovered = null;
   const discover = async () => {
     if (!discovered) discovered = await discoverAuthorizationServer(resourceUrl, { fetchImpl });
@@ -268,7 +287,7 @@ export function createDcrOAuthClient({ resourceUrl, fetchImpl = fetch, clientNam
     discover,
     async registerClient({ redirectUri }) {
       const metadata = await discover();
-      return registerDcrClient(metadata, { redirectUri, fetchImpl, clientName });
+      return registerDcrClient(metadata, { redirectUri, fetchImpl, clientName, scopes });
     },
     async authorizeUrl({ redirectUri, state, challenge, scopes = [], registration }) {
       const metadata = await discover();
@@ -368,12 +387,17 @@ export function buildApprovalBriefing({ metadata, registration, entry }) {
 export async function startDcrConnect({
   pendingStore, tenantId, personId, seatId, entry, provider,
   redirectUri = CONNECTOR_OAUTH_CALLBACK_URL, fetchImpl = fetch, clientName = DEFAULT_CLIENT_NAME,
+  scopes = null,
 }) {
   if (!pendingStore) fail('pending-store-unavailable', 'the OAuth road is not switched on yet, so the sign-in cannot be started');
   const resourceUrl = entry?.mcpEndpointUrl ?? entry?.endpoint ?? null;
   if (!resourceUrl) fail('invalid-resource', 'this connector carries no server endpoint to sign in to');
   const metadata = await discoverAuthorizationServer(resourceUrl, { fetchImpl });
-  const registration = await registerDcrClient(metadata, { redirectUri, fetchImpl, clientName });
+  // The scopes asked for: the caller's explicit set wins, then the
+  // entry's own declared ask (catalog data — a pick that promises
+  // less than its server publishes), else the server's set.
+  const declaredScopes = scopes ?? entry?.oauthScopes ?? null;
+  const registration = await registerDcrClient(metadata, { redirectUri, fetchImpl, clientName, scopes: declaredScopes });
   const state = newOAuthState();
   const codeVerifier = newPkceVerifier();
   const authorizeUrl = buildDcrAuthorizationUrl(metadata, {

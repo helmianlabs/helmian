@@ -48,6 +48,13 @@ function fakeRead() {
   };
 }
 
+function throwingRead(error) {
+  return {
+    calls: [],
+    async readSeatLibrary() { throw error; },
+  };
+}
+
 function harness({ actor = ACTOR, read = fakeRead(), actorError = null } = {}) {
   const sent = [];
   return {
@@ -136,4 +143,41 @@ test('route shape: method, seat, membership, and foreign paths', async () => {
   const handled = await foreign.run('/api/admin/tool-connections');
   assert.equal(handled, false);
   assert.deepEqual(foreign.sent, []);
+});
+
+// Membership mapping scope (2026-11-10): the membership code is a
+// statement about the CALLER, so it may only answer an actor-leg
+// refusal. The 2026-11-10 owner walk painted
+// CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED to the workspace OWNER —
+// the actor leg had not refused him; an authorization-flavoured
+// error from inside the read was re-labelled by the shared catch.
+// These tests pin the split: actor leg → membership; read leg →
+// the read mapping, whatever flavour the read's error carries.
+test('membership: an actor-leg TenantAuthorizationError is 403 membership', async () => {
+  const denied = harness({ actorError: new TenantAuthorizationError('tenant membership is not active') });
+  await denied.run(`${CONNECTOR_LIBRARY_PATH}?seat=claude`);
+  assert.equal(denied.sent[0].status, 403);
+  assert.equal(denied.sent[0].body.code, 'CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED');
+});
+
+test('membership: a TenantAuthorizationError from inside the read is NOT re-labelled membership', async () => {
+  const h = harness({ read: throwingRead(new TenantAuthorizationError('tenant membership is not active')) });
+  await h.run(`${CONNECTOR_LIBRARY_PATH}?seat=claude`);
+  assert.equal(h.sent[0].status, 503);
+  assert.equal(h.sent[0].body.code, 'CONNECTOR_LIBRARY_READ_FAILED');
+});
+
+test('membership: a bare 403 from inside the read is NOT re-labelled membership', async () => {
+  const h = harness({ read: throwingRead(Object.assign(new Error('forbidden downstream'), { status: 403 })) });
+  await h.run(`${CONNECTOR_LIBRARY_PATH}?seat=claude`);
+  assert.equal(h.sent[0].status, 503);
+  assert.equal(h.sent[0].body.code, 'CONNECTOR_LIBRARY_READ_FAILED');
+});
+
+test('read errors carrying their own status and code pass through with their words', async () => {
+  const h = harness({ read: throwingRead(Object.assign(new Error('upstream refused'), { status: 502, code: 'CONNECTOR_GITHUB_UPSTREAM' })) });
+  await h.run(`${CONNECTOR_LIBRARY_PATH}?seat=claude`);
+  assert.equal(h.sent[0].status, 502);
+  assert.equal(h.sent[0].body.code, 'CONNECTOR_GITHUB_UPSTREAM');
+  assert.equal(h.sent[0].body.error, 'upstream refused');
 });

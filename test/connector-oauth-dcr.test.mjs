@@ -359,3 +359,85 @@ test('the briefing renders scopes in plain words from the server\u2019s own fact
   assert.equal(briefing.scopes[0].name, 'default');
   assert.match(briefing.scopes[0].words, /standard access/);
 });
+
+// ------------------------------------------------------------- R1
+// The DCR family finished (PLAN.md Bite R1): the three registry
+// picks resolve to this road by their real catalog entries, and a
+// declared ask narrows a registration to what the entry promises.
+// Atlassian's declared list is pinned against the scope set its
+// resource document actually published on the 2026-11-10 live
+// read, so curation drift (a declared name the server no longer
+// offers, or a destructive verb creeping in) fails here first.
+
+import { dcrScopesForRegistration } from '../src/cloud/connector-oauth-dcr.mjs';
+import { catalogEntryById } from '../src/cloud/connector-catalog.mjs';
+import { registryPickByEntryId } from '../src/cloud/mcp-registry-curation.mjs';
+
+test('R1: the three registry picks resolve to the DCR kind by their real catalog entries', () => {
+  assert.deepEqual(
+    connectorOAuthKindForEntry(catalogEntryById('claude', 'registry-atlassian')),
+    { kind: 'dcr', provider: 'atlassian', resourceUrl: 'https://mcp.atlassian.com/v2/mcp' },
+  );
+  assert.deepEqual(
+    connectorOAuthKindForEntry(catalogEntryById('claude', 'registry-linear')),
+    { kind: 'dcr', provider: 'linear', resourceUrl: 'https://mcp.linear.app/mcp' },
+  );
+  assert.deepEqual(
+    connectorOAuthKindForEntry(catalogEntryById('claude', 'registry-stripe')),
+    { kind: 'dcr', provider: 'stripe', resourceUrl: 'https://mcp.stripe.com' },
+  );
+});
+
+test('R1: scope selection — the server set by default, a declared ask narrowed to what is offered', () => {
+  const metadata = { resourceScopes: ['read', 'write', 'delete:all'], scopesSupported: ['openid'] };
+  assert.deepEqual(dcrScopesForRegistration(metadata), ['read', 'write', 'delete:all'], 'no declaration: the resource set, as ever');
+  assert.deepEqual(dcrScopesForRegistration(metadata, null), ['read', 'write', 'delete:all']);
+  assert.deepEqual(dcrScopesForRegistration(metadata, []), ['read', 'write', 'delete:all'], 'an empty declaration is no declaration');
+  assert.deepEqual(dcrScopesForRegistration(metadata, ['write', 'read']), ['write', 'read'], 'a declared subset narrows, in the declared order');
+  assert.deepEqual(dcrScopesForRegistration(metadata, ['read', 'not-offered']), ['read'], 'unoffered names drop out of the ask');
+  assert.deepEqual(dcrScopesForRegistration(metadata, ['not-offered']), ['not-offered'], 'a declaration the server offers none of stands — the registration endpoint rules, Helmian never silently widens');
+  assert.deepEqual(
+    dcrScopesForRegistration({ resourceScopes: [], scopesSupported: ['openid', 'mcp'] }, ['mcp']),
+    ['mcp'],
+    'with no resource scopes, the authorization server set is the offered set',
+  );
+});
+
+test('R1: Atlassian’s declared ask stays inside what its server published — and asks for nothing destructive', () => {
+  // The set Atlassian's resource document published on the
+  // 2026-11-10 live read (R1 harness record).
+  const published = [
+    'read:me', 'read:account', 'offline_access', 'email',
+    'read:jira:agent-interface', 'write:jira:agent-interface', 'search:jira:agent-interface',
+    'delete:jira:agent-interface', 'manage:jira:agent-interface',
+    'read:confluence:agent-interface', 'write:confluence:agent-interface', 'search:confluence:agent-interface',
+    'search:rovo:agent-interface', 'search:code:agent-interface',
+    'read:jsm:agent-interface', 'write:jsm:agent-interface',
+    'read:all:twg', 'write:all:twg',
+    'read:goals:agent-interface', 'write:goals:agent-interface',
+    'read:projects:agent-interface', 'write:projects:agent-interface',
+    'read:bitbucket:agent-interface', 'write:bitbucket:agent-interface',
+    'read:loom:agent-interface', 'write:loom:agent-interface',
+    'read:talent:agent-interface', 'write:talent:agent-interface',
+    'read:jira-align:agent-interface', 'write:jira-align:agent-interface',
+    'read:teams:agent-interface', 'write:teams:agent-interface',
+    'read:artifacts:agent-interface', 'write:artifacts:agent-interface',
+    'read:capacity-planning:agent-interface', 'write:capacity-planning:agent-interface',
+    'read:focus:agent-interface', 'write:focus:agent-interface',
+    'read:assets:agent-interface', 'write:assets:agent-interface',
+  ];
+  const pick = registryPickByEntryId('registry-atlassian');
+  assert.ok(Array.isArray(pick.oauthScopes) && pick.oauthScopes.length > 0, 'the Atlassian pick declares its ask');
+  for (const scope of pick.oauthScopes) {
+    assert.ok(published.includes(scope), `declared scope "${scope}" is one the server published`);
+    assert.ok(!scope.includes('delete') && !scope.includes('manage'), `declared scope "${scope}" is not destructive`);
+  }
+  assert.deepEqual(
+    dcrScopesForRegistration({ resourceScopes: published, scopesSupported: [] }, pick.oauthScopes),
+    [...pick.oauthScopes],
+    'against the live published set, the declared ask survives narrowing whole',
+  );
+  // The catalog entry carries the same declaration (catalog data).
+  assert.deepEqual(catalogEntryById('claude', 'registry-atlassian').oauthScopes, pick.oauthScopes);
+  assert.equal(catalogEntryById('claude', 'registry-linear').oauthScopes, undefined, 'Linear declares nothing — the server set rules');
+});

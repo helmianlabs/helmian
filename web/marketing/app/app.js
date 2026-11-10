@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER } from './app-model.mjs?v=532eef9e5fbe752f';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=532eef9e5fbe752f';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=532eef9e5fbe752f';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=532eef9e5fbe752f';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=b7ff997e6ae6de1d';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=b7ff997e6ae6de1d';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=b7ff997e6ae6de1d';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=b7ff997e6ae6de1d';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2279,17 +2279,26 @@ let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let a
 // A failed warm-up is silent and leaves the vars null: the real
 // open imports again and surfaces any failure exactly as before.
 let integrationsPreloadScheduled = false;
+// Integrations load passes are numbered as they start; a pass
+// paints only while it is still the newest (the same discipline
+// as the Manage surface's refreshSeq, P2). loadIntegrations is
+// re-entered by navigation and by every connect flow's onStored,
+// and two passes in flight together could otherwise let the older
+// pass's slower reads land last and repaint their staler states
+// over the fresher pass's.
+let integrationsLoadSeq = 0;
 function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=532eef9e5fbe752f'); } catch {}
-    try { connectorManageMod ??= await import('./connector-manage.mjs?v=532eef9e5fbe752f'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=b7ff997e6ae6de1d'); } catch {}
+    try { connectorManageMod ??= await import('./connector-manage.mjs?v=b7ff997e6ae6de1d'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
 }
 async function loadIntegrations() {
+  const myLoad = ++integrationsLoadSeq;
   // A loading line lands in the page at once: the view's empty hint
   // ("Nothing connected yet") keys off this box sitting empty, and
   // the reads below take long enough on a cold landing that the hint
@@ -2313,10 +2322,27 @@ async function loadIntegrations() {
       if (mb) mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'));
     }
   } catch {}
-  integrationsMod ??= await import('./integrations-view.mjs?v=532eef9e5fbe752f');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=532eef9e5fbe752f');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=532eef9e5fbe752f');
-  const [c, p, pr, u, o, tc] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview'), api('/api/admin/tool-connections')]);
+  integrationsMod ??= await import('./integrations-view.mjs?v=b7ff997e6ae6de1d');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=b7ff997e6ae6de1d');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=b7ff997e6ae6de1d');
+  // The state-bearing reads (provider connections, runner
+  // presence) get one retry on rejection before any card is
+  // derived: a single transient failure used to degrade every
+  // card to "Not checked" + Connect for providers that were
+  // connected and answering (owner walk, 2026-11-10).
+  const settledReads = await settleWithStateRetry({
+    connectors: () => api('/api/admin/cora/connectors'),
+    providers: () => api('/api/admin/provider-connections'),
+    presence: () => api('/api/admin/envoy/runner/presence'),
+    usage: () => api('/api/admin/cora/usage'),
+    overview: () => api('/api/admin/overview'),
+    tools: () => api('/api/admin/tool-connections'),
+  }, { stateKeys: ['providers', 'presence'] });
+  const c = settledReads.connectors; const p = settledReads.providers; const pr = settledReads.presence; const u = settledReads.usage; const o = settledReads.overview; const tc = settledReads.tools;
+  // A newer landing started while this pass read: its reads are
+  // the fresher ones, so this pass never paints and never mounts
+  // the Manage surface (the newer pass mounts its own).
+  if (myLoad !== integrationsLoadSeq) return p.value;
   const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
   box.replaceChildren(...sections.map((sec) => {
@@ -2331,7 +2357,7 @@ async function loadIntegrations() {
   // the connector library routes.
   const manageBox = $('#connector-manage');
   if (manageBox) {
-    connectorManageMod ??= await import('./connector-manage.mjs?v=532eef9e5fbe752f');
+    connectorManageMod ??= await import('./connector-manage.mjs?v=b7ff997e6ae6de1d');
     await connectorManageMod.mountConnectorManage(manageBox, { api, el, role: state.actor?.role ?? '' }).catch(() => {});
   }
   // Freshly rendered sections start visible; re-apply the remembered
@@ -2492,7 +2518,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=532eef9e5fbe752f')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=b7ff997e6ae6de1d')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3333,7 +3359,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=532eef9e5fbe752f');
+  workspaceModule ??= await import('./envoy-workspace.js?v=b7ff997e6ae6de1d');
   await loadFeedData().catch(() => {});
   await workspaceModule.mountWorkspace({
     api, post, toast, state,
@@ -3883,7 +3909,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=532eef9e5fbe752f');
+    const mod = await import('./maestro-activation.mjs?v=b7ff997e6ae6de1d');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }

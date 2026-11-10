@@ -1,8 +1,8 @@
 // Integrations page: small cards, plain words. Nothing internal is shown here:
 // no setting names, ids, addresses of services, or keys. The model is pure (tested);
 // renderIntegrations draws it.
-import { integrationsModel, usageModel } from './app-model.mjs?v=532eef9e5fbe752f';
-import { avatarFor } from './avatars.mjs?v=532eef9e5fbe752f';
+import { integrationsModel, usageModel } from './app-model.mjs?v=b7ff997e6ae6de1d';
+import { avatarFor } from './avatars.mjs?v=b7ff997e6ae6de1d';
 
 export const PHONE_URL = 'https://helmian.cloud/app';
 // The AI providers of the owner's one connect road (2026-11-01):

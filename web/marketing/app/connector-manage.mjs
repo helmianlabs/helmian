@@ -37,7 +37,7 @@
 // Pure model first (rowControls), then the DOM renderer — the model
 // is unit-tested like connector-panel.mjs's.
 
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=532eef9e5fbe752f';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=b7ff997e6ae6de1d';
 
 export const MANAGE_SEAT_STORAGE_KEY = 'helmian.manageSeat';
 // The Manage road's landing intent (addition, 2026-11-09): taking
@@ -306,7 +306,7 @@ export function pluginsListModel(body) {
 // ---------------------------------------------------------------------
 // The renderer. `api` is app.js's api() (throws on non-2xx with the
 // server's error message where present), `el` its element helper.
-export function renderConnectorManage(box, { api, el, role = '', initialSeat = null } = {}) {
+export function renderConnectorManage(box, { api, el, role = '', initialSeat = null, loadRetryDelays = [350, 900] } = {}) {
   const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false, renderedSeat: null, toolAccess: new Map(), open: new Set(), seatsLoaded: false, seatsStale: false };
   // Refresh order guard (P2 fix, 2026-11-09): refresh() passes are
   // numbered as they START, and a pass paints only while it is
@@ -318,6 +318,10 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
   // installed.", cured only by a reload. The stale pass's reads
   // still run; only its paint (and its failure paint) is dropped.
   let refreshSeq = 0;
+  // First-load retries spent (2026-11-10): a failed FIRST load is
+  // retried a bounded number of times before the failure paints —
+  // see the catch in refresh(). Reset whenever a load lands.
+  let loadAttempts = 0;
   box.replaceChildren();
   const root = el('div', 'cm-root');
   const note = el('p', 'cm-note muted sm');
@@ -831,6 +835,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       // A newer refresh started while this pass read: its reads
       // are the fresher ones, so this pass never paints (P2 fix).
       if (myRefresh !== refreshSeq) return;
+      loadAttempts = 0;
       state.loaded = true;
       state.renderedSeat = state.seat;
       root.replaceChildren(note, head);
@@ -839,6 +844,24 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       // A superseded pass fails quietly: the newer pass owns the
       // surface and will paint (or report) its own outcome.
       if (myRefresh !== refreshSeq) return;
+      // First-load retry (2026-11-10): a single failed load used to
+      // paint the terminal "did not load" error and stop, and the
+      // owner walk hit exactly that — one transient failure of the
+      // library read left the Connectors tab on a red
+      // membership-required line until a full view re-entry. While
+      // the surface has never loaded, retry the load a bounded
+      // number of times first (the loading line stays up; no error
+      // paints). Post-load refreshes keep the long-standing
+      // behaviour: their failures report through say() below and
+      // never wipe the rendered surface.
+      if (!state.loaded && loadAttempts < loadRetryDelays.length) {
+        const delay = loadRetryDelays[loadAttempts];
+        loadAttempts += 1;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        // A newer pass started during the wait owns the surface now.
+        if (myRefresh !== refreshSeq) return;
+        return refresh();
+      }
       if (!state.loaded) {
         root.replaceChildren(note, el('p', 'cm-loading muted sm', 'The connector library did not load — leave this view and come back to try again.'));
       }

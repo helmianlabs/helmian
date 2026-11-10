@@ -323,6 +323,12 @@ function registryEntriesForSeat(seatId) {
     registryName: pick.registryName,
     registryVersion: pick.registryVersion,
     registryAsOf: REGISTRY_PICKS_AS_OF,
+    // A pick that declares the scopes it asks for carries them as
+    // catalog data (same discipline as the registry fields above —
+    // the store keeps its own fixed entry shape). The connect road
+    // reads them from this definition, never from the stored row
+    // (see effectiveAuthMode's law in the write route).
+    ...(pick.oauthScopes ? { oauthScopes: pick.oauthScopes } : {}),
   }));
 }
 
