@@ -38,7 +38,7 @@ test('agent state: no credential is the asleep state with the plain-words line',
   const fresh = computeTenantAgentState({});
   assert.equal(fresh.state, 'asleep');
   assert.equal(fresh.reason, 'no-provider');
-  assert.equal(fresh.line, 'Your agents wake up when you connect a subscription.');
+  assert.equal(fresh.line, 'No AI is connected yet. Your agents wake up when you connect one — open the Agents tab and press Connect on the AI you already have.');
   assert.equal(fresh.line, ASLEEP_NO_PROVIDER_LINE);
   const runnerOnly = computeTenantAgentState({ runners: 2, presence: [], connections: [] });
   assert.equal(runnerOnly.state, 'asleep');
@@ -305,7 +305,7 @@ test('two tenants: B is claimed and answered by its own runner; C stays asleep a
   assert.deepEqual(stateB.connectedProviders, ['gemini']);
   const stateC = await store.stateFor(C);
   assert.equal(stateC.state, 'asleep');
-  assert.equal(stateC.line, 'Your agents wake up when you connect a subscription.');
+  assert.equal(stateC.line, 'No AI is connected yet. Your agents wake up when you connect one — open the Agents tab and press Connect on the AI you already have.');
   assert.equal(stateC.hasRunner, false, 'a pairing code that was never exchanged is not a runner');
   assert.equal((await store.stateFor(A)).gated, false);
 

@@ -1,15 +1,15 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=6d7311c584b21779';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=6d7311c584b21779';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=6d7311c584b21779';
-import { dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=6d7311c584b21779';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=6d7311c584b21779';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=6d7311c584b21779';
-import { createConnectFields } from './connect-fields.mjs?v=6d7311c584b21779';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=6d7311c584b21779';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=6d7311c584b21779';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=46451699583636ae';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=46451699583636ae';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=46451699583636ae';
+import { dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=46451699583636ae';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=46451699583636ae';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=46451699583636ae';
+import { createConnectFields } from './connect-fields.mjs?v=46451699583636ae';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=46451699583636ae';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=46451699583636ae';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -124,6 +124,29 @@ export const CALM_POLL_MS = 2500;
 export function agentStateBanner(agentState) {
   if (!agentState || agentState.state !== 'asleep' || !agentState.line) return null;
   return String(agentState.line);
+}
+
+// The first-run hand-off (polish P1): while the workspace has NO AI
+// connected, the chat pane carries one card with one button —
+// "Connect your first AI" — whose target is the Agents tab of
+// Integrations, the one place a seat connects. It is the visible
+// half of the setup hand-off that follows "Turn on Maestro": the
+// activation notice promises Maestro answers here himself until an
+// AI is connected (the server's empty-desk answer), and this card
+// is how the person fixes it. The model is pure so the suite pins
+// it: present exactly while connectedProviders is empty (a fresh
+// workspace, before any seat connects), gone the moment the first
+// seat connects — including the PC-asleep case, where providers
+// exist and the asleep banner above is the honest surface instead.
+export function firstRunHandoff(agentState) {
+  if (!agentState || !Array.isArray(agentState.connectedProviders) || agentState.connectedProviders.length > 0) return null;
+  return Object.freeze({
+    label: 'Connect your first AI',
+    heading: 'Start here',
+    body: 'This workspace has no AI connected yet. Connect the AI you already have, and your messages get answered here.',
+    view: 'integrations',
+    tab: 'agents',
+  });
 }
 
 // The room mirror of the server's room routing: a private room seats
@@ -4175,7 +4198,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=6d7311c584b21779');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=46451699583636ae');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -4437,10 +4460,36 @@ function renderAgentState() {
   el.textContent = line ?? '';
 }
 
+// The first-run card's render (polish P1): rebuilt only when its
+// visibility flips, so the 15-second state refresh never rebuilds
+// the button under a click. The button rides the app shell's
+// Agents-tab road (ctx.openAgentsTab) and falls back to the
+// Integrations view itself on an older shell.
+let firstRunCardShown = false;
+function renderFirstRunCard() {
+  const el = $('ew-first-run'); if (!el) return;
+  const card = firstRunHandoff(ws.agentState);
+  if (!card) {
+    if (!el.hidden) { el.hidden = true; el.replaceChildren(); }
+    firstRunCardShown = false;
+    return;
+  }
+  if (firstRunCardShown) return;
+  firstRunCardShown = true;
+  el.replaceChildren(
+    h('div', { class: 'ew-first-run-body' },
+      h('strong', {}, card.heading),
+      h('p', {}, card.body)),
+    h('button', { type: 'button', class: 'ew-btn primary', onclick: () => { if (ws.ctx.openAgentsTab) ws.ctx.openAgentsTab(); else ws.ctx.openTools?.(); } }, card.label),
+  );
+  el.hidden = false;
+}
+
 async function loadAgentState() {
   try { const body = await ws.ctx.api('/api/admin/envoy/agent-state'); ws.agentState = body.agentState ?? null; }
   catch { ws.agentState = null; }
   renderAgentState();
+  renderFirstRunCard();
 }
 
 export async function mountWorkspace(ctx) {

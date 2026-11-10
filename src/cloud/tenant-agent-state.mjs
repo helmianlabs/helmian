@@ -23,7 +23,7 @@ import { normalizeEngine, normalizeProvider } from './envoy-agents.mjs';
 
 export const TENANT_AGENT_STATE_PATH = '/api/admin/envoy/agent-state';
 
-export const ASLEEP_NO_PROVIDER_LINE = 'Your agents wake up when you connect a subscription.';
+export const ASLEEP_NO_PROVIDER_LINE = 'No AI is connected yet. Your agents wake up when you connect one — open the Agents tab and press Connect on the AI you already have.';
 export const ASLEEP_NO_RUNNER_LINE = 'Your agents wake up when your computer connects — open Helmian on your PC to bring them online.';
 
 // provider_connections.provider_id -> the envoy agent vocabulary. The

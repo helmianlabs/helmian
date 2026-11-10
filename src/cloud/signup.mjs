@@ -13,10 +13,11 @@ export const SIGNUP_PATH = '/api/signup';
 // The starter channel every new workspace opens with — the same channel
 // the /app client used to create lazily on first load, now seeded at
 // signup so the workspace is never an empty room, with a welcome notice
-// that says the quiet part out loud: until a subscription is connected,
-// messages are saved and nobody answers yet.
+// that says the quiet part out loud: until an AI is connected, posted
+// messages are saved, Maestro answers with the fix (envoy-chat's
+// empty-desk answer), and no agent replies yet.
 export const STARTER_CHANNEL = Object.freeze({ slug: 'team', title: 'Team', kind: 'team' });
-export const STARTER_WELCOME_BODY = `Welcome to Helmian — this is your first channel, and anything you post here is saved. ${ASLEEP_NO_PROVIDER_LINE} Connect one from Integrations, then open Helmian on your PC so your computer can run them.`;
+export const STARTER_WELCOME_BODY = `Welcome to Helmian — this is your first channel, and anything you post here is saved. ${ASLEEP_NO_PROVIDER_LINE} Then open Helmian on your PC so your computer can run them.`;
 
 // Own pool and identity gateway (live-admin.mjs is frozen, can't pass its instances through)
 let _pool = null;
