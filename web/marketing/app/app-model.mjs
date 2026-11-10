@@ -542,8 +542,20 @@ export function profileSyncResultModel(job = null) {
   if (!job || typeof job !== 'object') {
     return { state: 'idle', statusText: '', lines: [] };
   }
-  if (job.status === 'pending' || job.status === 'claimed') {
-    return { state: 'running', statusText: 'Sync running on your PC — waiting for its report…', lines: [] };
+  if (job.status === 'pending') {
+    // Queued, not yet picked up: name the wait and when it started, so a
+    // job no computer can claim reads as waiting — never as running.
+    const since = formatTime(job.createdAt);
+    return { state: 'running', statusText: since ? `Waiting for your computer — queued ${since}, waiting for its report…` : 'Waiting for your computer — waiting for its report…', lines: [] };
+  }
+  if (job.status === 'claimed') {
+    const since = formatTime(job.claimedAt ?? job.createdAt);
+    return { state: 'running', statusText: since ? `Sync running on your PC — started ${since}, waiting for its report…` : 'Sync running on your PC — waiting for its report…', lines: [] };
+  }
+  if (job.status === 'failed' && job.expired === true) {
+    // The server closed this job because no computer picked it up in
+    // time; its error is the whole plain sentence, rendered as-is.
+    return { state: 'failed', statusText: job.error || 'No computer picked up the sync in time, so it was cancelled.', lines: [] };
   }
   if (job.status === 'failed') {
     return { state: 'failed', statusText: `Sync failed on your PC: ${job.error || 'unknown error'}`, lines: [] };

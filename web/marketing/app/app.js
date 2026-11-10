@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=9f1239bd566cc2a9';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=9f1239bd566cc2a9';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=9f1239bd566cc2a9';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=9f1239bd566cc2a9';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=7ccd1ca873f34ea5';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=7ccd1ca873f34ea5';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=7ccd1ca873f34ea5';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=7ccd1ca873f34ea5';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2276,7 +2276,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=9f1239bd566cc2a9'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=7ccd1ca873f34ea5'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2290,9 +2290,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=9f1239bd566cc2a9');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=9f1239bd566cc2a9');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=9f1239bd566cc2a9');
+  integrationsMod ??= await import('./integrations-view.mjs?v=7ccd1ca873f34ea5');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=7ccd1ca873f34ea5');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=7ccd1ca873f34ea5');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2305,13 +2305,19 @@ async function loadIntegrations() {
     usage: () => api('/api/admin/cora/usage'),
     overview: () => api('/api/admin/overview'),
     tools: () => api('/api/admin/tool-connections'),
+    // The sync card's state read: the tenant's newest profile-sync
+    // job. It rides the same settler but not the retried pair — the
+    // retry stays pinned to the two connection-truth reads, and a
+    // missed sync read degrades this one card to 'Ready' for a paint,
+    // like usage and overview.
+    profileSync: () => api('/api/admin/envoy/profile-sync'),
   }, { stateKeys: ['providers', 'presence'] });
-  const c = settledReads.connectors; const p = settledReads.providers; const pr = settledReads.presence; const u = settledReads.usage; const o = settledReads.overview; const tc = settledReads.tools;
+  const c = settledReads.connectors; const p = settledReads.providers; const pr = settledReads.presence; const u = settledReads.usage; const o = settledReads.overview; const tc = settledReads.tools; const ps = settledReads.profileSync;
   // A newer landing started while this pass read: its reads are
   // the fresher ones, so this pass never paints (the newer pass
   // paints its own).
   if (myLoad !== integrationsLoadSeq) return p.value;
-  const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
+  const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null, profileSyncJob: ps.status === 'fulfilled' ? ps.value?.job ?? null : null });
   const box = $('#integrations');
   box.replaceChildren(...sections.map((sec) => {
     const wrap = el('section', 'int-section'); wrap.dataset.intSection = sec.id; wrap.append(el('h3', 'int-head', sec.title));
@@ -2452,9 +2458,13 @@ function integrationCard(card) {
       b.type = 'button';
       b.onclick = async () => {
         if (card.action.act === 'sync-profile') {
+          // The button never claims the outcome: it restores its label
+          // and the re-rendered card carries the job's real state. (The
+          // old handler stamped a Synced checkmark whatever the press
+          // did — including a press no computer could ever answer.)
           b.disabled = true; b.textContent = 'Syncing…';
           await triggerProfileSync();
-          b.disabled = false; b.textContent = 'Synced ✓';
+          b.disabled = false; b.textContent = 'Sync now';
           await loadIntegrations();
           return;
         }
@@ -2479,7 +2489,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=9f1239bd566cc2a9')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=7ccd1ca873f34ea5')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -2610,6 +2620,36 @@ async function loadProviders() {
   }));
 }
 
+// The one renderer for the Settings sync section: the job model in,
+// the status line and the reported-file list out. The press handler
+// and the Settings load both draw through it, so the section shows
+// the same truth however it was reached.
+function renderProfileSyncModel(model) {
+  const statusEl = $('#sync-profile-status');
+  const filesEl = $('#sync-profile-files');
+  if (statusEl) statusEl.textContent = model.statusText;
+  if (filesEl) {
+    if (model.lines.length) {
+      filesEl.hidden = false;
+      filesEl.replaceChildren(...model.lines.map((line) => el('div', 'sm', `✓ ${line}`)));
+    } else {
+      filesEl.hidden = true;
+      filesEl.replaceChildren();
+    }
+  }
+}
+
+// Settings load: read the tenant's newest sync job and render its real
+// state. Before this read the section showed nothing about a job an
+// earlier visit (or the Integrations card) had queued — a pending job
+// was invisible the moment the page that queued it went away.
+async function loadProfileSyncStatus() {
+  const s = await api('/api/admin/envoy/profile-sync').catch(() => null);
+  const model = profileSyncResultModel(s?.job ?? null);
+  if (model.state === 'idle') return;
+  renderProfileSyncModel(model);
+}
+
 async function triggerProfileSync() {
   const statusEl = $('#sync-profile-status');
   const filesEl = $('#sync-profile-files');
@@ -2621,26 +2661,27 @@ async function triggerProfileSync() {
     // list this surface may render is the device's own report, polled
     // from the job below. Before S1 this handler rendered the server's
     // hardcoded syncedFiles as if files had been written; none had.
-    const r = await post('/api/admin/envoy/runner/presence', { syncProfile: true });
+    let r;
+    try {
+      r = await post('/api/admin/envoy/runner/presence', { syncProfile: true });
+    } catch (err) {
+      // No computer is connected yet: the server refused the press
+      // instead of queueing a job nothing can claim. Show its plain
+      // answer — no spinner, no poll.
+      if (err?.body?.code === 'PROFILE_SYNC_NO_DESKTOP') {
+        if (statusEl) statusEl.textContent = err.body.detail || 'No computer is connected yet, so the sync cannot run.';
+        toast('No computer connected yet');
+        return 'no-desktop';
+      }
+      throw err;
+    }
     const jobId = r?.syncJob?.id ?? null;
     if (!jobId) {
       if (statusEl) statusEl.textContent = 'Sync did not start: the server did not queue a job for your PC.';
       toast('Could not sync profile right now');
-      return;
+      return 'not-started';
     }
-    const render = (model) => {
-      if (statusEl) statusEl.textContent = model.statusText;
-      if (filesEl) {
-        if (model.lines.length) {
-          filesEl.hidden = false;
-          filesEl.replaceChildren(...model.lines.map((line) => el('div', 'sm', `✓ ${line}`)));
-        } else {
-          filesEl.hidden = true;
-          filesEl.replaceChildren();
-        }
-      }
-    };
-    render(profileSyncResultModel({ status: 'pending' }));
+    renderProfileSyncModel(profileSyncResultModel({ status: 'pending' }));
     // Poll the job until the device reports or the wait gives out. A
     // timeout is NOT a success: the surface keeps saying nothing has
     // been reported, because nothing has.
@@ -2650,24 +2691,25 @@ async function triggerProfileSync() {
       const s = await api(`/api/admin/envoy/profile-sync?job=${encodeURIComponent(jobId)}`);
       const job = s?.job ?? null;
       const model = profileSyncResultModel(job);
-      render(model);
+      renderProfileSyncModel(model);
       if (model.state === 'done') {
         toast(`Profile sync reported by your PC: ${job.files?.length ?? 0} file(s) written`, 'ok');
         await loadProviders().catch(() => {});
-        return;
+        return 'done';
       }
       if (model.state === 'failed') {
-        toast('Profile sync failed on your PC');
-        return;
+        toast(job?.expired === true ? 'Profile sync cancelled — no computer picked it up' : 'Profile sync failed on your PC');
+        return 'failed';
       }
       if (Date.now() > deadline) {
         if (statusEl) statusEl.textContent = 'Still waiting for your PC — if the bridge is not running, nothing will land. Nothing has been reported yet.';
-        return;
+        return 'waiting';
       }
     }
   } catch (err) {
     if (statusEl) statusEl.textContent = `Sync failed: ${err.message || 'try again'}`;
     toast('Could not sync profile right now');
+    return 'error';
   }
 }
 if ($('#sync-profile-btn')) $('#sync-profile-btn').onclick = () => triggerProfileSync();
@@ -2818,6 +2860,7 @@ async function loadSettings() {
   loadInvites();
   loadProviders();
   loadProfile();
+  loadProfileSyncStatus();
   const saveBtn = $('#profile-save');
   if (saveBtn && !saveBtn.dataset.wired) {
     saveBtn.dataset.wired = '1';
@@ -3322,7 +3365,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=9f1239bd566cc2a9');
+  workspaceModule ??= await import('./envoy-workspace.js?v=7ccd1ca873f34ea5');
   await loadFeedData().catch(() => {});
   await workspaceModule.mountWorkspace({
     api, post, toast, state,
@@ -3872,7 +3915,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=9f1239bd566cc2a9');
+    const mod = await import('./maestro-activation.mjs?v=7ccd1ca873f34ea5');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }

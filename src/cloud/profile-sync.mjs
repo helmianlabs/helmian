@@ -39,6 +39,19 @@ const SHA256_HEX = /^[a-f0-9]{64}$/;
 // report the sanitizer can emit, with headroom, and stays bounded.
 const REPORT_BODY_MAX_BYTES = 1024 * 1024;
 
+// A pending job waits on a machine outside Helmian's control picking it up —
+// the same shape as a pending connector OAuth handshake, so it gets the same
+// window: CONNECTOR_OAUTH_PENDING_TTL_MS (src/cloud/connector-oauth-pending.mjs)
+// is 15 minutes, and envoy-mesh link codes use the same 15 minutes. Past the
+// window the job is failed with the plain reason (PROFILE_SYNC_EXPIRED_MESSAGE)
+// instead of sitting pending forever behind a spinner no surface can see.
+export const PROFILE_SYNC_PENDING_TTL_MS = 15 * 60 * 1000;
+// The press-time answer when the workspace has no desktop linked: nothing
+// can ever claim the job, so no job is queued — the press says so instead.
+export const PROFILE_SYNC_NO_DESKTOP_CODE = 'PROFILE_SYNC_NO_DESKTOP';
+export const PROFILE_SYNC_NO_DESKTOP_MESSAGE = 'No computer is connected yet, so the sync cannot run. Open Helmian on your PC, then press Sync again.';
+export const PROFILE_SYNC_EXPIRED_MESSAGE = 'No computer picked up the sync within 15 minutes, so it was cancelled. Open Helmian on your PC and press Sync again.';
+
 // The report is small scalars only — a path, a target name, a
 // created/updated verb, a hash. Anything else is dropped here so the
 // result column can never become a file-content or secret channel.
@@ -66,6 +79,10 @@ function jobOut(row) {
     status: String(row.status),
     requestedBy: row.requested_by ?? null,
     files: sanitizeProfileSyncFiles(row.result?.files),
+    // True only for a job the pending-expiry sweep below closed; the
+    // surfaces render an expired job's reason whole instead of as a
+    // failure on the PC.
+    expired: row.result?.expired === true,
     error: row.error != null ? String(row.error) : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     claimedAt: row.claimed_at ? new Date(row.claimed_at).toISOString() : null,
@@ -98,7 +115,43 @@ export function createProfileSyncJobStore(pool) {
     }
   };
 
+  // Fail pending jobs older than PROFILE_SYNC_PENDING_TTL_MS in place.
+  // Runs inside the caller's transaction ahead of reads and claims, so a
+  // stale job is never handed out as claimable and every surface reads
+  // the settled truth. Claimed jobs are not swept: a claim means a PC
+  // took the work, and its report (or its own failure) closes the job.
+  const expireStalePending = async (client) => {
+    await client.query(
+      `update helmion.profile_sync_jobs
+       set status = 'failed', error = $1, result = $2::jsonb, completed_at = clock_timestamp()
+       where tenant_id = current_setting('helmion.tenant_id', true)
+         and status = 'pending'
+         and created_at <= clock_timestamp() - ($3 || ' milliseconds')::interval`,
+      [PROFILE_SYNC_EXPIRED_MESSAGE, JSON.stringify({ expired: true }), String(PROFILE_SYNC_PENDING_TTL_MS)]);
+  };
+
   return {
+    // True when the tenant has a desktop link a PC bridge can claim work
+    // with — the same runner truth tenant-agent-state.mjs counts
+    // (helmion.desktop_links rows holding a token, not revoked). A sync
+    // press with no link can never be claimed, so the press answers with
+    // that fact instead of queueing a job nothing will ever run. A
+    // missing desktop_links table reads as no link.
+    async desktopLinked(tenantId) {
+      try {
+        return await withTenant(tenantId, async (client) => {
+          const r = await client.query(
+            `select count(*)::int as n from helmion.desktop_links
+             where tenant_id = $1 and token_hash is not null and revoked_at is null`,
+            [tenantId]);
+          return (r.rows[0]?.n ?? 0) > 0;
+        });
+      } catch (error) {
+        if (isMissingTable(error)) return false;
+        throw error;
+      }
+    },
+
     // A member's button press. One row, pending, carrying nothing but
     // who asked. Returns the job the page will poll.
     async enqueue(tenantId, { requestedBy = null } = {}) {
@@ -122,11 +175,34 @@ export function createProfileSyncJobStore(pool) {
       if (!/^\d+$/.test(jobId)) return null;
       try {
         return await withTenant(tenantId, async (client) => {
+          await expireStalePending(client);
           const r = await client.query(
             `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at
              from helmion.profile_sync_jobs
              where tenant_id = current_setting('helmion.tenant_id', true) and id = $1`,
             [jobId]);
+          return jobOut(r.rows[0] ?? null);
+        });
+      } catch (error) {
+        if (isMissingTable(error)) throw unavailable();
+        throw error;
+      }
+    },
+
+    // The tenant's newest job, whatever its state — the one read both web
+    // surfaces render the sync's state from, so a job queued away from
+    // this page (or left pending by an earlier visit) stays visible
+    // instead of vanishing when the page that queued it goes away.
+    async latest(tenantId) {
+      try {
+        return await withTenant(tenantId, async (client) => {
+          await expireStalePending(client);
+          const r = await client.query(
+            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at
+             from helmion.profile_sync_jobs
+             where tenant_id = current_setting('helmion.tenant_id', true)
+             order by created_at desc, id desc
+             limit 1`);
           return jobOut(r.rows[0] ?? null);
         });
       } catch (error) {
@@ -141,6 +217,7 @@ export function createProfileSyncJobStore(pool) {
     async claimNext(tenantId) {
       try {
         return await withTenant(tenantId, async (client) => {
+          await expireStalePending(client);
           const r = await client.query(
             `update helmion.profile_sync_jobs
              set status = 'claimed', claimed_at = clock_timestamp()
@@ -201,9 +278,12 @@ function getPool() {
 }
 
 // Route delegate, same contract as handleRunnerPresenceRoute. Member:
-// POST enqueues, GET ?job=<id> reads it back. Device token: GET
-// ?work=1 claims the oldest pending job, POST { jobId, status, files }
-// reports it. Returns false when the request is not ours.
+// POST enqueues (or answers 409 PROFILE_SYNC_NO_DESKTOP when no desktop
+// is linked), GET ?job=<id> reads one job back, GET with no job reads
+// the tenant's newest job — the state both web surfaces render. Device
+// token: GET ?work=1 claims the oldest pending job, POST { jobId,
+// status, files } reports it. Returns false when the request is not
+// ours.
 export async function handleProfileSyncRoute({
   request,
   response,
@@ -244,6 +324,14 @@ export async function handleProfileSyncRoute({
         send(response, 200, JSON.stringify({ valid: true, ok: true, job }));
         return true;
       }
+      // The press. With no desktop linked to this workspace, nothing can
+      // ever claim the job — say so now instead of queueing a job that
+      // spins forever. The probe is optional on the store so injected
+      // doubles without it keep their behaviour.
+      if (typeof store.desktopLinked === 'function' && !(await store.desktopLinked(actor.tenantId))) {
+        send(response, 409, JSON.stringify({ valid: false, code: PROFILE_SYNC_NO_DESKTOP_CODE, detail: PROFILE_SYNC_NO_DESKTOP_MESSAGE }));
+        return true;
+      }
       const job = await store.enqueue(actor.tenantId, { requestedBy: actor.subject ?? null });
       send(response, 202, JSON.stringify({ valid: true, ok: true, job }));
       return true;
@@ -258,11 +346,18 @@ export async function handleProfileSyncRoute({
         send(response, 200, JSON.stringify({ valid: true, ok: true, job }));
         return true;
       }
-      const job = await store.get(actor.tenantId, requestUrl.searchParams.get('job'));
-      if (!job) {
-        send(response, 404, JSON.stringify({ valid: false, code: 'PROFILE_SYNC_JOB_NOT_FOUND' }));
+      if (requestUrl.searchParams.get('job') != null) {
+        const job = await store.get(actor.tenantId, requestUrl.searchParams.get('job'));
+        if (!job) {
+          send(response, 404, JSON.stringify({ valid: false, code: 'PROFILE_SYNC_JOB_NOT_FOUND' }));
+          return true;
+        }
+        send(response, 200, JSON.stringify({ valid: true, ok: true, job }));
         return true;
       }
+      // No job named: the tenant's newest job (or none yet) — the state
+      // read both sync surfaces render from on page load.
+      const job = await store.latest(actor.tenantId);
       send(response, 200, JSON.stringify({ valid: true, ok: true, job }));
       return true;
     }

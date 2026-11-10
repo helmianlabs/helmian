@@ -211,7 +211,7 @@ export async function handleEnvoyAblyRoute({
     try {
       const actor = await activeTenantActor(request);
       const { createRunnerPresenceStore } = await import('./runner-presence.mjs');
-      const { createProfileSyncJobStore } = await import('./profile-sync.mjs');
+      const { createProfileSyncJobStore, PROFILE_SYNC_NO_DESKTOP_CODE, PROFILE_SYNC_NO_DESKTOP_MESSAGE } = await import('./profile-sync.mjs');
       const { Pool } = await import('pg');
       const cs = String(process.env.HELMION_DATABASE_URL ?? '').trim();
       const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama'];
@@ -222,6 +222,14 @@ export async function handleEnvoyAblyRoute({
       const pool = new Pool({ connectionString: cs, ssl: cs.includes('sslmode=disable') ? false : undefined, max: 2 });
       let job;
       try {
+        // Press truth (2026-11-10): same rule as the presence route —
+        // with no desktop linked, no job is queued and no provider is
+        // stamped; the press answers with the fact.
+        const jobStore = createProfileSyncJobStore(pool);
+        if (!(await jobStore.desktopLinked(actor.tenantId))) {
+          send(response, 409, JSON.stringify({ valid: false, code: PROFILE_SYNC_NO_DESKTOP_CODE, error: PROFILE_SYNC_NO_DESKTOP_MESSAGE }));
+          return true;
+        }
         const store = createRunnerPresenceStore(pool);
         for (const p of syncedProviders) {
           // A sync connects nothing, for any caller: stamp the sync

@@ -19,16 +19,21 @@ import {
   handleProfileSyncRoute,
   sanitizeProfileSyncFiles,
   PROFILE_SYNC_PATH,
+  PROFILE_SYNC_NO_DESKTOP_CODE,
+  PROFILE_SYNC_NO_DESKTOP_MESSAGE,
+  PROFILE_SYNC_EXPIRED_MESSAGE,
+  PROFILE_SYNC_PENDING_TTL_MS,
 } from '../src/cloud/profile-sync.mjs';
 import { handleRunnerPresenceRoute } from '../src/cloud/runner-presence.mjs';
 import { executeProfileSync } from '../src/core/profile-sync-report.mjs';
 import { profileSyncResultModel } from '../web/marketing/app/app-model.mjs';
+import { integrationSections } from '../web/marketing/app/integrations-view.mjs';
 
 const readSource = (rel) => readFile(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
 // ── fakes ────────────────────────────────────────────────────────────
 
-function makeFakeJobPool({ missingTable = false } = {}) {
+function makeFakeJobPool({ missingTable = false, desktops = 1 } = {}) {
   const byTenant = new Map();
   let nextId = 1;
   let currentTenant = null;
@@ -41,10 +46,30 @@ function makeFakeJobPool({ missingTable = false } = {}) {
       if (missingTable) { const e = new Error('missing'); e.code = '42P01'; throw e; }
       if (sql.includes('set_config')) { currentTenant = params[0]; return { rows: [] }; }
       if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return {};
+      if (sql.includes('from helmion.desktop_links')) {
+        return { rows: [{ n: desktops }] };
+      }
       if (sql.includes('insert into helmion.profile_sync_jobs')) {
         const row = { id: nextId++, kind: params[0], status: 'pending', requested_by: params[1], result: null, error: null, created_at: new Date(), claimed_at: null, completed_at: null };
         rowsFor().push(row);
         return { rows: [row], rowCount: 1 };
+      }
+      if (sql.includes("status = 'pending'") && sql.includes('interval')) {
+        // The pending-expiry sweep: stale pending rows close as failed
+        // with the plain reason, exactly as the real UPDATE does.
+        const ttl = Number(params[2]);
+        const now = Date.now();
+        let swept = 0;
+        for (const row of rowsFor()) {
+          if (row.status === 'pending' && now - row.created_at.getTime() > ttl) {
+            row.status = 'failed';
+            row.error = params[0];
+            row.result = params[1] ? JSON.parse(params[1]) : null;
+            row.completed_at = new Date();
+            swept += 1;
+          }
+        }
+        return { rows: [], rowCount: swept };
       }
       if (sql.includes("set status = 'claimed'")) {
         const row = rowsFor().filter((r) => r.status === 'pending').sort((a, b) => a.id - b.id)[0];
@@ -61,6 +86,10 @@ function makeFakeJobPool({ missingTable = false } = {}) {
         row.completed_at = new Date();
         return { rows: [row], rowCount: 1 };
       }
+      if (sql.includes('order by created_at desc')) {
+        const rows = [...rowsFor()].sort((a, b) => (b.created_at - a.created_at) || (b.id - a.id));
+        return { rows: rows.slice(0, 1) };
+      }
       if (sql.includes('select id, kind, status')) {
         const row = rowsFor().find((r) => r.id === Number(params[0]));
         return { rows: row ? [row] : [] };
@@ -69,7 +98,15 @@ function makeFakeJobPool({ missingTable = false } = {}) {
     },
     release: () => {},
   };
-  return { connect: async () => client };
+  return {
+    connect: async () => client,
+    // Test hook: backdate a job's created_at so the expiry window can
+    // be exercised without waiting for it.
+    _setCreatedAt(tenant, id, when) {
+      const row = (byTenant.get(tenant) ?? []).find((r) => r.id === Number(id));
+      if (row) row.created_at = when;
+    },
+  };
 }
 
 function routeHarness({ actor, body = {}, store }) {
@@ -413,4 +450,166 @@ test('result model: empty report, failure, and pending never look like success',
   }
 
   assert.deepEqual(profileSyncResultModel(null), { state: 'idle', statusText: '', lines: [] });
+});
+
+// ── press truth, state truth, expiry (2026-11-10) ───────────────────
+// Found live: with no desktop linked to the workspace, the press
+// queued a job nothing could ever claim, the page spun on "Syncing",
+// and minutes later both surfaces showed nothing at all — Settings
+// blank, the Devices card back to "Ready" over a still-pending job.
+// These tests pin the three fixes: the press answers with the fact,
+// both surfaces render the newest job's real state, and an unclaimed
+// job closes itself with the plain reason inside the window.
+
+test('desktopLinked reads the tenant desktop links', async () => {
+  assert.equal(await createProfileSyncJobStore(makeFakeJobPool({ desktops: 0 })).desktopLinked('t1'), false);
+  assert.equal(await createProfileSyncJobStore(makeFakeJobPool({ desktops: 2 })).desktopLinked('t1'), true);
+  assert.equal(await createProfileSyncJobStore(makeFakeJobPool({ missingTable: true })).desktopLinked('t1'), false, 'a missing links table reads as no link');
+});
+
+test('profile-sync route: a press with no desktop linked is refused at press time and queues nothing', async () => {
+  const store = createProfileSyncJobStore(makeFakeJobPool({ desktops: 0 }));
+  const h = routeHarness({ actor: MEMBER, body: {}, store });
+  await handleProfileSyncRoute({ ...h.args, request: { method: 'POST' }, requestUrl: new URL(`http://x${PROFILE_SYNC_PATH}`) });
+  assert.equal(h.sent[0].status, 409);
+  assert.equal(h.sent[0].body.valid, false);
+  assert.equal(h.sent[0].body.code, PROFILE_SYNC_NO_DESKTOP_CODE);
+  assert.equal(h.sent[0].body.detail, PROFILE_SYNC_NO_DESKTOP_MESSAGE);
+  assert.equal(await store.latest('t1'), null, 'no job was queued behind the refusal');
+});
+
+test('presence sync press with no desktop linked: refused before any stamp, nothing queued', async () => {
+  const stamped = [];
+  const presenceStore = {
+    markSynced: async (tenantId, provider) => { stamped.push(provider); return { ok: true }; },
+    list: async () => [],
+    listActivity: async () => [],
+  };
+  const store = createProfileSyncJobStore(makeFakeJobPool({ desktops: 0 }));
+  const { sent, args } = routeHarness({ actor: MEMBER, body: { syncProfile: true }, store: presenceStore });
+  const handled = await handleRunnerPresenceRoute({
+    ...args,
+    request: { method: 'POST' },
+    requestUrl: new URL('http://x/api/admin/envoy/runner/presence'),
+    profileSyncJobs: store,
+  });
+  assert.equal(handled, true);
+  assert.equal(sent[0].status, 409);
+  assert.equal(sent[0].body.code, PROFILE_SYNC_NO_DESKTOP_CODE);
+  assert.equal(sent[0].body.detail, PROFILE_SYNC_NO_DESKTOP_MESSAGE);
+  assert.deepEqual(stamped, [], 'a refused press stamps no provider as synced');
+  assert.equal(await store.latest('t1'), null, 'no job was queued behind the refusal');
+});
+
+test('presence sync press with a desktop linked still enqueues and stamps, as before', async () => {
+  const stamped = [];
+  const presenceStore = {
+    markSynced: async (tenantId, provider) => { stamped.push(provider); return { ok: true }; },
+    list: async () => [],
+    listActivity: async () => [],
+  };
+  const store = createProfileSyncJobStore(makeFakeJobPool({ desktops: 1 }));
+  const { sent, args } = routeHarness({ actor: MEMBER, body: { syncProfile: true }, store: presenceStore });
+  await handleRunnerPresenceRoute({
+    ...args,
+    request: { method: 'POST' },
+    requestUrl: new URL('http://x/api/admin/envoy/runner/presence'),
+    profileSyncJobs: store,
+  });
+  assert.equal(sent[0].status, 202);
+  assert.equal(sent[0].body.syncJob.status, 'pending');
+  assert.deepEqual(sent[0].body.syncedFiles, []);
+  assert.ok(stamped.includes('claude'), 'the happy path still stamps');
+  const latest = await store.latest('t1');
+  assert.equal(latest.id, sent[0].body.syncJob.id);
+  assert.equal(latest.status, 'pending');
+});
+
+test('the newest job is readable with no id — the state both surfaces render', async () => {
+  const store = createProfileSyncJobStore(makeFakeJobPool());
+  // Nothing queued yet: a clean null, not an error.
+  let h = routeHarness({ actor: MEMBER, store });
+  await handleProfileSyncRoute({ ...h.args, request: { method: 'GET' }, requestUrl: new URL(`http://x${PROFILE_SYNC_PATH}`) });
+  assert.equal(h.sent[0].status, 200);
+  assert.equal(h.sent[0].body.job, null);
+
+  const first = await store.enqueue('t1', { requestedBy: 'user-1' });
+  const second = await store.enqueue('t1', { requestedBy: 'user-1' });
+  assert.ok(first.id !== second.id);
+  assert.equal((await store.latest('t1')).id, second.id, 'latest is the newest job');
+  assert.equal(await store.latest('t2'), null, 'latest is tenant-scoped');
+
+  h = routeHarness({ actor: MEMBER, store });
+  await handleProfileSyncRoute({ ...h.args, request: { method: 'GET' }, requestUrl: new URL(`http://x${PROFILE_SYNC_PATH}`) });
+  assert.equal(h.sent[0].status, 200);
+  assert.equal(h.sent[0].body.job.id, second.id);
+  assert.equal(h.sent[0].body.job.status, 'pending');
+});
+
+test('a pending job no device claims inside the window is failed with the plain reason', async () => {
+  const pool = makeFakeJobPool();
+  const store = createProfileSyncJobStore(pool);
+  const job = await store.enqueue('t1', { requestedBy: 'user-1' });
+  pool._setCreatedAt('t1', job.id, new Date(Date.now() - PROFILE_SYNC_PENDING_TTL_MS - 60_000));
+  assert.equal(await store.claimNext('t1'), null, 'an expired job is never handed to a device');
+  const read = await store.get('t1', job.id);
+  assert.equal(read.status, 'failed');
+  assert.equal(read.expired, true);
+  assert.equal(read.error, PROFILE_SYNC_EXPIRED_MESSAGE);
+});
+
+test('a fresh pending job and a claimed job are untouched by the expiry window', async () => {
+  const pool = makeFakeJobPool();
+  const store = createProfileSyncJobStore(pool);
+  const job = await store.enqueue('t1', {});
+  pool._setCreatedAt('t1', job.id, new Date(Date.now() - PROFILE_SYNC_PENDING_TTL_MS + 60_000));
+  const readFresh = await store.get('t1', job.id);
+  assert.equal(readFresh.status, 'pending');
+  assert.equal(readFresh.expired, false);
+
+  const claimed = await store.claimNext('t1');
+  assert.equal(claimed.id, job.id);
+  pool._setCreatedAt('t1', job.id, new Date(Date.now() - PROFILE_SYNC_PENDING_TTL_MS - 60_000));
+  const readClaimed = await store.get('t1', job.id);
+  assert.equal(readClaimed.status, 'claimed', 'a claimed job belongs to the PC that took it; the sweep closes only unclaimed work');
+});
+
+test('result model: waiting, running and expired read as what they are', () => {
+  const queuedAt = new Date(Date.now() - 5 * 60_000);
+  const pending = profileSyncResultModel({ status: 'pending', createdAt: queuedAt.toISOString() });
+  assert.equal(pending.state, 'running');
+  assert.match(pending.statusText, /Waiting for your computer/);
+  assert.match(pending.statusText, /waiting for its report/);
+
+  const claimed = profileSyncResultModel({ status: 'claimed', createdAt: queuedAt.toISOString(), claimedAt: new Date().toISOString() });
+  assert.equal(claimed.state, 'running');
+  assert.match(claimed.statusText, /Sync running on your PC/);
+  assert.match(claimed.statusText, /waiting for its report/);
+
+  const expired = profileSyncResultModel({ status: 'failed', expired: true, error: PROFILE_SYNC_EXPIRED_MESSAGE });
+  assert.equal(expired.state, 'failed');
+  assert.equal(expired.statusText, PROFILE_SYNC_EXPIRED_MESSAGE, 'an expired job renders its plain reason whole, not as a failure on the PC');
+});
+
+test('the Devices sync card renders the newest job, not a resting lie', () => {
+  const cardFor = (job) => integrationSections({ profileSyncJob: job })
+    .find((s) => s.id === 'devices').cards.find((c) => c.key === 'profile-sync');
+  assert.equal(cardFor(null).statusText, 'Ready', 'no job yet keeps the resting state');
+  const pending = cardFor({ status: 'pending', createdAt: new Date().toISOString(), files: [] });
+  assert.match(pending.statusText, /Waiting for your computer/);
+  const expired = cardFor({ status: 'failed', expired: true, error: PROFILE_SYNC_EXPIRED_MESSAGE, files: [] });
+  assert.equal(expired.status, 'off');
+  assert.equal(expired.statusText, PROFILE_SYNC_EXPIRED_MESSAGE);
+  const done = cardFor({ status: 'done', files: [VALID_FILE] });
+  assert.equal(done.status, 'on');
+  assert.equal(done.statusText, 'Synced 1 file — as reported by your PC');
+});
+
+test('web sources: the state read is wired and no surface stamps a fake success', async () => {
+  const appSource = await readSource('../web/marketing/app/app.js');
+  assert.ok(appSource.includes('loadProfileSyncStatus'), 'Settings load reads the newest job');
+  assert.ok(appSource.includes('PROFILE_SYNC_NO_DESKTOP'), 'the press renders the no-computer answer');
+  assert.ok(!appSource.includes("textContent = 'Synced ✓'"), 'no handler stamps a success the job never reported');
+  const viewSource = await readSource('../web/marketing/app/integrations-view.mjs');
+  assert.ok(viewSource.includes('profileSyncResultModel'), 'the Devices card renders the same job model as Settings');
 });
