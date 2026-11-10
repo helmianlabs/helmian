@@ -288,7 +288,10 @@ test('curation: the picks are well-formed shelf data', () => {
 test('catalog: the picks stock the seats the placement law names, as community Helmian listings', () => {
   // ffebe55e baseline: 54 day-one entries. Source 3 adds 21:
   // weather ×14 seats, atlassian ×1, notion ×3, linear ×2, stripe ×1.
-  assert.equal(CONNECTOR_CATALOG.length, 75);
+  // Source 4 (the vendor-published Vercel server, Helmian-brokered)
+  // adds 1 entry on each of claude, chatgpt, grok: 78 in all. The
+  // Source 4 entry itself is pinned in connector-vercel.test.mjs.
+  assert.equal(CONNECTOR_CATALOG.length, 78);
   for (const seatId of LIVE_SEATS) {
     const defs = catalogEntriesForSeat(seatId);
     for (const pick of registryPicksForSeat(seatId)) {

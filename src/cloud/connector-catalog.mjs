@@ -326,14 +326,75 @@ function registryEntriesForSeat(seatId) {
   }));
 }
 
+// --------------------------- Source 4 — vendor-published servers
+// A vendor's OWN published MCP server, offered as a Helmian-brokered
+// connector in its own right — not a mirror (Source 1), not a
+// registry import (Source 3). One entry today:
+//
+//   helmian-vercel — Vercel's official MCP server. Vercel's own docs
+//     ("Use Vercel", vercel.com/docs/agent-resources/vercel-mcp,
+//     last updated 2026-09-15) publish the endpoint
+//     https://mcp.vercel.com as a remote MCP server (Streamable
+//     HTTP) whose sign-in is OAuth under the MCP Authorization spec —
+//     and the same endpoint accepts a Vercel access token in the
+//     Authorization header, the token a person creates in their own
+//     account settings (vercel.com/account/tokens). Helmian brokers
+//     the TOKEN road today, so the entry ships authMode 'header':
+//     connecting asks for that token, Helmian's credential service
+//     holds it, and the library record keeps the reference only.
+//     The OAuth road is deliberately NOT claimed — Helmian holds no
+//     client registration for it yet; when it lands it changes this
+//     entry's authMode, never its identity.
+//   - The id is prefixed ('helmian-') by the §3.2 law: on Grok the
+//     Source 1 Vercel mirror (id 'vercel') stays as data, untouched,
+//     and a brokered entry never takes a mirror's id inside one
+//     seat's library. The row a person sees for the name is this
+//     brokered one; the connectors tab represents a name by its
+//     brokered row.
+//   - Placement follows Source 3's geography — the seats named for
+//     it: claude, chatgpt, grok.
+//   - trustLabel 'verified': Vercel's own published server, the
+//     same label Grok's mirror already carries for Vercel.
+//   - The definition carries `vendorPublished: true` as provenance
+//     (catalog data only, like Source 3's registry fields — the
+//     store keeps its own fixed entry shape). It is the marker the
+//     §3.1 brokerMode pin in the bite-2 gate rules by: a vendor-
+//     published reachable pipe is 'helmian', not a mirror.
+const BROKERED_SERVERS = Object.freeze([
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-vercel',
+      name: 'Vercel',
+      oneLiner: 'Manage projects and deployments, read build logs, and search the Vercel docs',
+      icon: 'vercel',
+      vendorName: 'Vercel',
+      trustLabel: 'verified',
+      category: 'development',
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://mcp.vercel.com',
+        authMode: 'header',
+        scopesSummary: 'Connecting takes a Vercel access token: create one in your own Vercel account settings, under Tokens. The token carries the same access as your Vercel account, so keep it like a password.',
+      },
+    }),
+  }),
+]);
+
+function brokeredServerEntriesForSeat(seatId) {
+  return BROKERED_SERVERS
+    .filter((server) => server.seats.includes(seatId))
+    .map((server) => ({ ...catalogEntry(seatId, server.def), vendorPublished: true }));
+}
+
 // ------------------------------------------------------------------ catalog
 
-/** Source 1 + Source 3 + Source 2 definitions for one seat's library. */
+/** Source 1 + Source 3 + Source 4 + Source 2 definitions for one seat's library. */
 export function catalogEntriesForSeat(seatId) {
   if (!LIVE_SEATS.includes(seatId)) {
     throw Object.assign(new Error(`unknown seat "${seatId}" — the catalog seeds the seats live in the room`), { status: 400 });
   }
-  return [...(SOURCE1_BY_SEAT[seatId] ?? []), ...registryEntriesForSeat(seatId), ...helmianNativeEntries(seatId)];
+  return [...(SOURCE1_BY_SEAT[seatId] ?? []), ...registryEntriesForSeat(seatId), ...brokeredServerEntriesForSeat(seatId), ...helmianNativeEntries(seatId)];
 }
 
 /** The whole day-one catalog: every live seat's definitions. */

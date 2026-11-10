@@ -83,6 +83,10 @@ const NATIVES = 'helmian-github';
 // their seats (mirrored in connector-menu.mjs's REGISTRY_SHELF and
 // the per-seat live groups).
 const SHELF = 'registry-weather';
+// Source 4 (vendor-published servers): Helmian brokers Vercel's own
+// published MCP server directly, so its entry rides the live groups
+// of the seats it stocks — claude, chatgpt, grok.
+const BROKERED = 'helmian-vercel';
 const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES},${SHELF}`, 'manage:Manage connectors:integrations'];
 
 const EXPECTED = {
@@ -94,7 +98,7 @@ const EXPECTED = {
     'submenu:Skills',
     'live:-:feed:helmian-skills',
     'submenu:Connectors',
-    `live:-:${NATIVES},${SHELF},registry-atlassian,registry-notion,registry-linear,registry-stripe`,
+    `live:-:${NATIVES},${SHELF},registry-atlassian,registry-notion,registry-linear,registry-stripe,${BROKERED}`,
     'mirror:-:Claude:mirror:gmail,google-calendar,google-drive,github,slack,notion,linear,stripe,atlassian,canva,idiolect',
     'action:Tool access:tool-access',
     'submenu:Plugins',
@@ -105,14 +109,14 @@ const EXPECTED = {
   chatgpt: [
     'attach:Add photos & files',
     'submenu:More',
-    `live:-:${NATIVES},${SHELF},registry-notion`,
+    `live:-:${NATIVES},${SHELF},registry-notion,${BROKERED}`,
     'mirror:-:ChatGPT:mirror:gmail,google-calendar,google-drive,slack,notion,github,canva,dropbox',
     'manage:Manage connectors:integrations',
   ],
   grok: [
     'attach:Files',
     'submenu:Connectors',
-    `live:-:github,${NATIVES},${SHELF},registry-notion,registry-linear`,
+    `live:-:github,${NATIVES},${SHELF},registry-notion,registry-linear,${BROKERED}`,
     'mirror:-:Grok:state:gmail,google-calendar,google-drive,onedrive,outlook,microsoft-teams,sharepoint,salesforce,box,canva,gamma,linear,meltwater,notion,sp-global,vercel',
     'manage:Manage connectors:integrations',
   ],

@@ -275,9 +275,13 @@ test('brokerMode follows §3.1: vendor-brokered ecosystems mirror; only reachabl
   // mirror is vendor. Source 3 registry imports (def.registryName)
   // are a different source with their own §3.1 ruling — a reachable
   // public pipe is 'helmian' — and are pinned in mcp-registry.test.
+  // Source 4 vendor-published servers (def.vendorPublished) carry
+  // the same §3.1 ruling — the vendor's own published MCP endpoint
+  // is a reachable pipe Helmian brokers — and are pinned in
+  // connector-vercel.test.
   for (const seat of ['claude', 'chatgpt', 'gemini']) {
     for (const def of catalogEntriesForSeat(seat)) {
-      if (def.kind === 'catalog' && !def.registryName) assert.equal(def.brokerMode, 'vendor', `${seat}/${def.id}`);
+      if (def.kind === 'catalog' && !def.registryName && !def.vendorPublished) assert.equal(def.brokerMode, 'vendor', `${seat}/${def.id}`);
     }
   }
   // xAI built-ins + catalog are brokered by xAI — except GitHub, whose

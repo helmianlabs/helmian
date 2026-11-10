@@ -127,6 +127,11 @@ const NATIVES = ['helmian-github'];
 // natives, so it rides the same live toggle groups. Today: the
 // weather pick (a US National Weather Service data server).
 const REGISTRY_SHELF = ['registry-weather'];
+// The Source 4 vendor-published servers (connector-catalog.mjs): a
+// vendor's own MCP server Helmian brokers directly — today Vercel's,
+// riding the live groups of the seats its catalog entry stocks
+// (claude, chatgpt, grok).
+const BROKERED_SERVERS = ['helmian-vercel'];
 const manageInHelmian = () => manageLink({ label: 'Manage connectors', target: 'integrations' });
 // The plain Helmian list (REPORT §3.6–§3.10 + §3.11): seats with no
 // vendor furniture get attach, the live toggles, and the manager —
@@ -170,7 +175,7 @@ export const MENU_DEFINITIONS = deepFreeze({
       // Source 3 service picks for this seat ride beside their
       // vendor mirrors below (different ids, different pipes):
       // Helmian's own brokered road to the same service.
-      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-atlassian', 'registry-notion', 'registry-linear', 'registry-stripe'] }),
+      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-atlassian', 'registry-notion', 'registry-linear', 'registry-stripe', ...BROKERED_SERVERS] }),
       mirrorGroup({
         managedIn: 'Claude',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva', 'idiolect'],
@@ -204,7 +209,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   chatgpt: [
     attach('Add photos & files'),
     submenu('More', [
-      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-notion'] }),
+      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-notion', ...BROKERED_SERVERS] }),
       mirrorGroup({
         managedIn: 'ChatGPT',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'slack', 'notion', 'github', 'canva', 'dropbox'],
@@ -222,7 +227,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   grok: [
     attach('Files'),
     submenu('Connectors', [
-      liveGroup({ entryIds: ['github', ...NATIVES, ...REGISTRY_SHELF, 'registry-notion', 'registry-linear'] }),
+      liveGroup({ entryIds: ['github', ...NATIVES, ...REGISTRY_SHELF, 'registry-notion', 'registry-linear', ...BROKERED_SERVERS] }),
       mirrorGroup({
         managedIn: 'Grok', rowShape: 'state',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'onedrive', 'outlook', 'microsoft-teams', 'sharepoint', 'salesforce', 'box', 'canva', 'gamma', 'linear', 'meltwater', 'notion', 'sp-global', 'vercel'],
