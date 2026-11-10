@@ -1,15 +1,15 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=82bb407dddbc098d';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=82bb407dddbc098d';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=82bb407dddbc098d';
-import { menuForSeat, walkMenuItems } from './connector-menu.mjs?v=82bb407dddbc098d';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=82bb407dddbc098d';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=82bb407dddbc098d';
-import { createConnectFields } from './connect-fields.mjs?v=82bb407dddbc098d';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=82bb407dddbc098d';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=82bb407dddbc098d';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c945d648586ce552';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c945d648586ce552';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c945d648586ce552';
+import { dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c945d648586ce552';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c945d648586ce552';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c945d648586ce552';
+import { createConnectFields } from './connect-fields.mjs?v=c945d648586ce552';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c945d648586ce552';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c945d648586ce552';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -2516,7 +2516,11 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
       case 'live-toggle-group': return groupRows(item, 'mirror');
       case 'mirror-group': return groupRows(item, item.rowShape ?? 'mirror');
       case 'submenu': {
-        const rows = (item.items ?? []).flatMap(itemRows);
+        // One connector name, one row (menu dedupe, 2026-11-09):
+        // a submenu is where a seat's brokered toggles and its
+        // vendor mirrors stand in ONE list — the composed rows go
+        // through the panel dedupe before they render.
+        const rows = dedupePanelConnectorRows((item.items ?? []).flatMap(itemRows));
         const hasConnectorRows = rows.some((r) => r.kind === 'toggle' || r.kind === 'mirror' || r.kind === 'row');
         return [{ kind: 'submenu', label: item.label, rows, ...(hasConnectorRows && reconnectCount > 0 ? { badge: reconnectCount } : {}) }];
       }
@@ -2527,7 +2531,9 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
   return Object.freeze({
     seatId,
     seatName: seatName(seatId),
-    rows: Object.freeze(definition.flatMap(itemRows)),
+    // The same one-name-one-row law on the panel's top level,
+    // where the plain Helmian lists carry their toggle group.
+    rows: Object.freeze(dedupePanelConnectorRows(definition.flatMap(itemRows))),
   });
 }
 
@@ -4169,7 +4175,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=82bb407dddbc098d');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c945d648586ce552');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();

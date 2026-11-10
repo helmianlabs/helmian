@@ -360,16 +360,137 @@ test('the seat list is fetched once per surface, not once per refresh (remove ma
     'the Remove handler marks the cached seat list stale — the one write that can change seat membership');
 });
 
-test('wiring: mount and seat-change renders paint the header with the loading line before the rows read', () => {
+test('wiring: the rows read fires beside the seats read — and the header still paints before the list renders', () => {
+  // Speed fix 1 (2026-11-09): the two reads used to run serially —
+  // seats awaited alone, then rows — and every mount paid both
+  // legs end to end. The rows read now STARTS before the seats
+  // read is awaited; the early header paint and the
+  // render-after-paint law are unchanged.
   const refreshStart = manage.indexOf('async function refresh()');
   assert.ok(refreshStart >= 0);
-  const refreshBody = manage.slice(refreshStart, refreshStart + 2600);
+  const refreshBody = manage.slice(refreshStart, refreshStart + 3400);
   assert.match(refreshBody, /if \(!state\.loaded \|\| seatChanged\)/, 'the early header paint is scoped to mounts and seat changes, not every refresh');
+  const flightAt = refreshBody.indexOf('startRowsFlight()');
   const seatsAt = refreshBody.indexOf('await loadSeats()');
+  assert.ok(flightAt >= 0 && seatsAt > flightAt, 'the rows read is started before the seats read is awaited — the two fly together');
   const paintAt = refreshBody.indexOf('root.replaceChildren(note, header(), loadingLine())', seatsAt);
-  const rowsAt = refreshBody.indexOf('await loadRows()', seatsAt);
-  assert.ok(seatsAt >= 0 && paintAt > seatsAt, 'once the seats are known, header + loading paint');
-  assert.ok(rowsAt > paintAt, 'before the rows read — the remembered seat’s list can never be a mount’s first render');
+  assert.ok(paintAt > seatsAt, 'once the seats are known, header + loading paint');
+  assert.ok(refreshBody.indexOf('await connectorsTab()') > paintAt, 'and the tab body renders only after that paint — the remembered seat’s list can never be a mount’s first render');
+});
+
+// ------------------------------------------------------- parallel reads
+// (speed fix 1, 2026-11-09): the seats read and the per-seat rows
+// read are independent and each costs ~1 s; refresh() used to
+// await them one after the other. These tests drive the real
+// surface (the FakeEl harness stands below, with the plugin
+// section) against deferred promises, so "in flight" is proven,
+// not inferred from source shape.
+
+function deferred() {
+  let resolve; let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+const flushMicrotasks = () => new Promise((r) => setImmediate(r));
+const manageRow = (entryId, name, over = {}) => ({
+  entryId, name, brokerMode: 'helmian', state: 'connected', oneLiner: `The ${name} line`, ...over,
+});
+
+test('parallel reads: on mount the seats and rows reads are both in flight before either resolves', async () => {
+  const calls = [];
+  const seatsD = deferred(); const rowsD = deferred();
+  const api = (path) => {
+    calls.push(path);
+    if (path === '/api/admin/connector-library/seats') return seatsD.promise;
+    if (path.startsWith('/api/admin/connector-library?seat=')) return rowsD.promise;
+    return Promise.reject(new Error(`unexpected api call: ${path}`));
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'claude' });
+  const done = surface.refresh();
+  assert.deepEqual(calls, [
+    '/api/admin/connector-library?seat=claude',
+    '/api/admin/connector-library/seats',
+  ], 'both reads are in flight before either resolves — the rows read no longer waits on the seats read');
+  rowsD.resolve({ rows: [manageRow('helmian-github', 'GitHub')] });
+  await flushMicrotasks();
+  assert.equal(surface.state.loaded, false, 'the surface still waits for the seats read before it renders');
+  seatsD.resolve({ seats: [{ seatId: 'claude' }, { seatId: 'chatgpt' }] });
+  await done;
+  assert.equal(surface.state.loaded, true);
+  assert.ok(box.textContent.includes('GitHub'), 'the rows that flew beside the seats read are the ones that render');
+});
+
+test('parallel reads: a seat switch and a post-action refresh fire only the per-seat read', async () => {
+  const calls = [];
+  const api = async (path) => {
+    calls.push(path);
+    if (path === '/api/admin/connector-library/seats') return { seats: [{ seatId: 'claude' }, { seatId: 'chatgpt' }] };
+    if (path.startsWith('/api/admin/connector-library?')) {
+      const seat = new URLSearchParams(path.split('?')[1]).get('seat');
+      return { rows: [manageRow(`gh-${seat}`, `GitHub ${seat}`)] };
+    }
+    throw new Error(`unexpected api call: ${path}`);
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'claude' });
+  await surface.refresh();
+  const seatsCalls = () => calls.filter((p) => p.endsWith('/seats')).length;
+  const rowsCalls = () => calls.filter((p) => p.includes('connector-library?seat=')).length;
+  assert.equal(seatsCalls(), 1, 'the mount reads the seats list once');
+  assert.equal(rowsCalls(), 1);
+  // A post-action refresh (every write handler ends in one): the
+  // seats list is NOT re-read — only the current seat's library.
+  await surface.refresh();
+  assert.equal(seatsCalls(), 1, 'a post-action refresh does not re-read the seats list');
+  assert.equal(rowsCalls(), 2, 'it re-reads only the current seat’s library');
+  // A seat switch, through the surface's own seat tab.
+  const tab = buttonsNamed(box, 'ChatGPT')[0];
+  assert.ok(tab, 'the seat tab renders');
+  await tab.click();
+  assert.equal(surface.state.seat, 'chatgpt');
+  assert.equal(seatsCalls(), 1, 'a seat switch does not re-read the seats list');
+  assert.equal(rowsCalls(), 3, 'the switch fires exactly the new seat’s read');
+  assert.ok(box.textContent.includes('GitHub chatgpt'), 'the new seat’s rows render');
+});
+
+test('parallel reads: a stale seat marker re-reads for the settled seat, and the early read’s late answer is discarded', async () => {
+  const rowsBySeat = new Map();
+  const api = (path) => {
+    if (path === '/api/admin/connector-library/seats') return Promise.resolve({ seats: [{ seatId: 'claude' }] });
+    if (path.startsWith('/api/admin/connector-library?')) {
+      const seat = new URLSearchParams(path.split('?')[1]).get('seat');
+      const d = deferred(); rowsBySeat.set(seat, d); return d.promise;
+    }
+    return Promise.reject(new Error(`unexpected api call: ${path}`));
+  };
+  const box = fakeEl('div');
+  const surface = renderConnectorManage(box, { api, el: fakeEl, role: 'owner', initialSeat: 'ghost' });
+  const done = surface.refresh();
+  await flushMicrotasks();
+  assert.deepEqual([...rowsBySeat.keys()], ['ghost', 'claude'], 'the early read flew for the marker’s seat; the settled seat got its own');
+  rowsBySeat.get('claude').resolve({ rows: [manageRow('gh-claude', 'Claude GitHub')] });
+  await done;
+  assert.ok(box.textContent.includes('Claude GitHub'), 'the settled seat’s rows render');
+  rowsBySeat.get('ghost').resolve({ rows: [manageRow('gh-ghost', 'Ghost GitHub')] });
+  await flushMicrotasks();
+  assert.deepEqual(surface.state.rows.map((r) => r.entryId), ['gh-claude'], 'a superseded read’s late answer never paints over the settled seat');
+});
+
+test('preload: app.js warms the Integrations modules at idle once the workspace mounts (speed fix 2)', () => {
+  const warmStart = appJs.indexOf('function scheduleIntegrationsPreload()');
+  assert.ok(warmStart >= 0, 'the preload scheduler exists');
+  const warmBody = appJs.slice(warmStart, appJs.indexOf('async function loadIntegrations', warmStart));
+  assert.match(warmBody, /integrationsMod \?\?= await import\('\.\/integrations-view\.mjs\?v=[0-9a-f]{16}'\)/, 'the warm-up fills the same module var the real open reads');
+  assert.match(warmBody, /connectorManageMod \?\?= await import\('\.\/connector-manage\.mjs\?v=[0-9a-f]{16}'\)/, 'and the Manage surface’s module var');
+  assert.equal((warmBody.match(/catch \{\}/g) ?? []).length, 2, 'a failed warm-up is swallowed per module — the vars stay null and the real open retries normally');
+  assert.match(warmBody, /requestIdleCallback/, 'the warm-up is scheduled for idle time');
+  assert.match(warmBody, /setTimeout/, 'with a timer fallback where idle callbacks do not exist');
+  assert.match(warmBody, /integrationsPreloadScheduled/, 'it schedules once, not once per mount');
+  const desktopStart = appJs.indexOf('async function loadDesktop()');
+  assert.ok(desktopStart >= 0);
+  const desktopBody = appJs.slice(desktopStart, appJs.indexOf('function wireRail()', desktopStart));
+  assert.ok(desktopBody.indexOf('scheduleIntegrationsPreload();') > desktopBody.indexOf('mountWorkspace({'), 'the scheduling call lands after the workspace mounts');
 });
 
 // ------------------------------------------------------- plugin catalog

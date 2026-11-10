@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER } from './app-model.mjs?v=82bb407dddbc098d';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=82bb407dddbc098d';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=82bb407dddbc098d';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=82bb407dddbc098d';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER } from './app-model.mjs?v=c945d648586ce552';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=c945d648586ce552';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=c945d648586ce552';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=c945d648586ce552';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2266,6 +2266,24 @@ async function loadEvidence() {
   note.textContent = denied ? 'Handoffs and checkpoints are visible to owners and admins.' : '';
 }
 let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let apiKeyFieldsMod = null; let connectorManageMod = null;
+// Integrations preload (speed fix 2, 2026-11-09): the first
+// Integrations open paid the two first-visit module fetches cold —
+// integrations-view and connector-manage, ~0.5–1.5 s of the cold
+// open. Once the workspace is mounted and the app sits idle, warm
+// both imports into the module map so the open finds them there.
+// A failed warm-up is silent and leaves the vars null: the real
+// open imports again and surfaces any failure exactly as before.
+let integrationsPreloadScheduled = false;
+function scheduleIntegrationsPreload() {
+  if (integrationsPreloadScheduled) return;
+  integrationsPreloadScheduled = true;
+  const warm = async () => {
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=c945d648586ce552'); } catch {}
+    try { connectorManageMod ??= await import('./connector-manage.mjs?v=c945d648586ce552'); } catch {}
+  };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
+  else setTimeout(() => { void warm(); }, 2000);
+}
 async function loadIntegrations() {
   // A loading line lands in the page at once: the view's empty hint
   // ("Nothing connected yet") keys off this box sitting empty, and
@@ -2290,9 +2308,9 @@ async function loadIntegrations() {
       if (mb) mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'));
     }
   } catch {}
-  integrationsMod ??= await import('./integrations-view.mjs?v=82bb407dddbc098d');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=82bb407dddbc098d');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=82bb407dddbc098d');
+  integrationsMod ??= await import('./integrations-view.mjs?v=c945d648586ce552');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=c945d648586ce552');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=c945d648586ce552');
   const [c, p, pr, u, o, tc] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview'), api('/api/admin/tool-connections')]);
   const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
@@ -2308,7 +2326,7 @@ async function loadIntegrations() {
   // the connector library routes.
   const manageBox = $('#connector-manage');
   if (manageBox) {
-    connectorManageMod ??= await import('./connector-manage.mjs?v=82bb407dddbc098d');
+    connectorManageMod ??= await import('./connector-manage.mjs?v=c945d648586ce552');
     await connectorManageMod.mountConnectorManage(manageBox, { api, el, role: state.actor?.role ?? '' }).catch(() => {});
   }
   // Freshly rendered sections start visible; re-apply the remembered
@@ -2469,7 +2487,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=82bb407dddbc098d')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=c945d648586ce552')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3310,7 +3328,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=82bb407dddbc098d');
+  workspaceModule ??= await import('./envoy-workspace.js?v=c945d648586ce552');
   await loadFeedData().catch(() => {});
   await workspaceModule.mountWorkspace({
     api, post, toast, state,
@@ -3332,6 +3350,10 @@ async function loadDesktop() {
   });
   state.pendingBenchTab = null;
   wireGuardCreate();
+  // The workspace is mounted: warm the Integrations modules at
+  // idle (speed fix 2) so the first open does not pay their
+  // fetches cold.
+  scheduleIntegrationsPreload();
 }
 
 // Left nav: unpinned it rests as an icon rail that peeks open on hover or
@@ -3855,7 +3877,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=82bb407dddbc098d');
+    const mod = await import('./maestro-activation.mjs?v=c945d648586ce552');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }

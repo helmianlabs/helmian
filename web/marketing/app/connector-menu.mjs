@@ -89,7 +89,7 @@
 // plugins) or deleted (the vendor skills mirror, Mistral's agents;
 // M7 re-points Mistral's at Helmian's custom agents). A feed-bound
 // group names no connector, so it can never invent one.
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=82bb407dddbc098d';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=c945d648586ce552';
 
 export const MENU_ITEM_TYPES = Object.freeze([
   'attach', 'capability', 'action', 'projects', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',
@@ -348,4 +348,53 @@ export function collectCatalogEntryIds(items) {
     if (Array.isArray(item.entryIds)) out.push(...item.entryIds);
   }
   return out;
+}
+
+// The panel dedupe (menu dedupe, 2026-11-09): ONE connector name,
+// ONE row in a composed panel list — the law the Connectors tab
+// already applies (planConnectorRows in connector-manage.mjs),
+// restated for the "+" panel's composed rows. A seat's menu binds
+// both Helmian's brokered entry for a service (the live toggle
+// group) and the seat vendor's own entry for the same service (the
+// mirror group); when both stand in one list the person sees the
+// connector twice — Claude's panel carried GitHub as Helmian's
+// connected switch AND as Claude's not-connected mirror. The
+// survivor is chosen in the tab's tiers: a Helmian-brokered row
+// beats a vendor mirror; inside a tier a connected row beats a
+// not-connected one; ties keep the list's own order. The survivor
+// keeps its own place and its own state — a dropped row's state
+// never lends itself to the row that stands. Only connector rows
+// (toggle / mirror / row kinds carrying a library row) take part;
+// labels, notes, actions, skills, plugins and projects pass
+// through untouched. A mirror whose brokered namesake never made
+// the list (not connected, so the live group offered no switch)
+// stands as the name's only row, exactly as it does today.
+const PANEL_CONNECTOR_KINDS = new Set(['toggle', 'mirror', 'row']);
+const panelConnectorNameKey = (entry) => String(entry?.row?.name ?? entry?.row?.entryId ?? '').trim().toLowerCase();
+
+export function dedupePanelConnectorRows(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const groups = new Map();
+  list.forEach((entry, i) => {
+    if (!entry || !PANEL_CONNECTOR_KINDS.has(entry.kind) || !entry.row) return;
+    const key = panelConnectorNameKey(entry);
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
+  });
+  const dropped = new Set();
+  for (const idxs of groups.values()) {
+    if (idxs.length < 2) continue;
+    let survivor = idxs[0];
+    for (const i of idxs.slice(1)) {
+      const cand = list[i].row;
+      const best = list[survivor].row;
+      const candBrokered = cand.brokerMode !== 'vendor';
+      const bestBrokered = best.brokerMode !== 'vendor';
+      if (candBrokered !== bestBrokered) { if (candBrokered) survivor = i; continue; }
+      if (cand.state === 'connected' && best.state !== 'connected') survivor = i;
+    }
+    for (const i of idxs) if (i !== survivor) dropped.add(i);
+  }
+  return dropped.size ? list.filter((_, i) => !dropped.has(i)) : list;
 }
