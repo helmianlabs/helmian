@@ -220,6 +220,54 @@ test('route -> reader: every real envelope of both read routes classifies into i
   assert.equal((await classify(healthy, req({ cookie: 'bryce-cookie' }), PC_APPROVALS_PATH)).state, 'forbidden');
 });
 
+test('an upstream refusal (403, empty body — the shape a refusing proxy actually sends) is the approver verdict, never an outage or a shape problem', async () => {
+  // Proven live 2026-11-09: the Guard's public door answers remote
+  // callers of /v1/approvals with 403 and an EMPTY body (response size
+  // 0 in the door's own access log, 14k+ times) before the Guard ever
+  // sees the request. Through fetch that is status 403 + a json() that
+  // throws. The route must answer its designed refusal envelope, and
+  // the page's classifier must read it as 'forbidden' (the approver
+  // state) — not guard-unreachable, not guard-bad-response, not
+  // unreadable.
+  const refusedFetch = async () => ({ status: 403, json: async () => { throw new SyntaxError('Unexpected end of JSON input'); } });
+  const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: refusedFetch });
+  for (const path of [PC_APPROVALS_PATH, PC_UPCOMING_PATH]) {
+    const r = res(); await h(req({ cookie: 'troy-cookie' }), r, path);
+    assert.equal(r.out.status, 403, `${path} answers 403`);
+    assert.equal(r.out.body.error, 'GUARD_APPROVER_REFUSED', `${path} refusal envelope`);
+    assert.equal(r.out.body.status, 403, `${path} carries the upstream status`);
+    assert.equal(guardQueueReadModel(r.out.status, JSON.stringify(r.out.body)).state, 'forbidden', `${path} classifies as the approver state`);
+  }
+});
+
+test('an upstream refusal carrying the Guard refusal body ({error, message}) maps to the same designed envelope', async () => {
+  // The Guard's own refusals are JSON with exactly the keys error +
+  // message (captured from the box: its 401 for a bad token). If the
+  // Guard itself ever refuses our approver credential with a 403 in
+  // that family, the mapping is identical.
+  const guardRefusedFetch = async () => ({ status: 403, json: async () => ({ error: 'forbidden', message: 'approver is not authorized for this road' }) });
+  const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: guardRefusedFetch });
+  for (const path of [PC_APPROVALS_PATH, PC_UPCOMING_PATH]) {
+    const r = res(); await h(req({ cookie: 'troy-cookie' }), r, path);
+    assert.equal(r.out.status, 403, `${path} answers 403`);
+    assert.equal(r.out.body.error, 'GUARD_APPROVER_REFUSED', `${path} refusal envelope`);
+    assert.equal(guardQueueReadModel(r.out.status, JSON.stringify(r.out.body)).state, 'forbidden', `${path} classifies as the approver state`);
+  }
+});
+
+test('an upstream 401 (the Guard does not know our approver token) is the same refusal state, and decide refuses the same way', async () => {
+  const unknownTokenFetch = async () => ({ status: 401, json: async () => ({ error: 'unauthorized', message: 'unknown approver token' }) });
+  const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: unknownTokenFetch });
+  const r = res(); await h(req({ cookie: 'troy-cookie' }), r, PC_APPROVALS_PATH);
+  assert.equal(r.out.status, 403);
+  assert.equal(r.out.body.error, 'GUARD_APPROVER_REFUSED');
+  assert.equal(r.out.body.status, 401, 'the upstream status is carried, not hidden');
+  assert.equal(guardQueueReadModel(r.out.status, JSON.stringify(r.out.body)).state, 'forbidden');
+  const d = res(); await h(req({ method: 'POST', cookie: 'troy-cookie', body: { approvalId: 'e1297528-2117-4430-9c76-ea10bd833c19', approve: true } }), d, PC_APPROVALS_DECIDE_PATH);
+  assert.equal(d.out.status, 403);
+  assert.equal(d.out.body.error, 'GUARD_APPROVER_REFUSED');
+});
+
 test('decide validates input and requires JSON', async () => {
   const h = createPcApprovalsHandler({ env: ENV, identity, verifyBearer, fetchImpl: guardFetch([]) });
   let r = res(); await h(req({ method: 'POST', cookie: 'troy-cookie', body: { approvalId: 'x', approve: 'yes' } }), r, PC_APPROVALS_DECIDE_PATH); assert.equal(r.out.status, 400);
