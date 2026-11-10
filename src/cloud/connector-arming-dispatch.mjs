@@ -77,6 +77,7 @@
 // need when a road exists that can start the server and freeze its
 // tools there.
 
+import { randomUUID } from 'node:crypto';
 import { createConnectorLibraryStore } from './connector-library.mjs';
 import { createCredentialConnectClient } from './credential-connect.mjs';
 import { createMcpPromptsClient } from './connector-mcp-prompts.mjs';
@@ -143,11 +144,37 @@ function operatorProviderKeyFor(entry) {
   return entry?.id === 'helmian-github' || entry?.id === 'github' ? 'github' : null;
 }
 
+// The actor the token resolve below runs as. The vault demands a
+// full actor context on every call (credential-vault.mjs's
+// requireActor: tenantId, actorSubject, actorRole, sessionId,
+// requestId — the omission that broke the library write route's
+// stores, fixed there by naming the person, whose own click it
+// was). This call is NOT the person's click: it is the cloud
+// dispatch arming a seat for a turn, resolving the person's stored
+// credential on the system's own initiative. Naming the person
+// would write a false audit line, so the resolve names the system
+// actor it is — the codebase's system-actor shape: a namespaced
+// subject ('helmion:signed-session-policy',
+// tenant-action-policy.mjs) in the credential service's system
+// role — its audit records the box's own executor resolving as
+// actorRole 'device'. The connection's owner is not lost: the
+// reference and providerId name whose credential it is, and the
+// arming record stays keyed to the person throughout. The dispatch
+// carries no session or request ids of its own, so both are minted
+// per the audit convention for actor shapes that carry none
+// (org-invites.mjs): one sessionId per dispatch run, one requestId
+// per resolve.
+export const ARMING_ACTOR_SUBJECT = 'helmion:connector-arming';
+
+export function armingActorContext({ tenantId, sessionId = randomUUID(), requestId = randomUUID() } = {}) {
+  return { tenantId, actorSubject: ARMING_ACTOR_SUBJECT, actorRole: 'device', sessionId, requestId };
+}
+
 /**
  * Resolve ONE armed pair into its arming record. Domain outcomes
  * are records (see the header); store/credential throws propagate.
  */
-export async function resolveArmingRecord({ store, credentials = null, listTools, operatorTokens = {}, toolConnections = null, tenantId, personId, seatId, entryId }) {
+export async function resolveArmingRecord({ store, credentials = null, listTools, operatorTokens = {}, toolConnections = null, tenantId, personId, seatId, entryId, actorContext = null }) {
   const base = { seatId, entryId };
   const key = { personId, seatId, entryId };
   const entry = await store.getEntry(tenantId, seatId, entryId);
@@ -211,7 +238,7 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
   let tokenSource = null;
   if (entry.authMode !== 'none' && connection.accessTokenRef && credentials) {
     const resolved = await credentials.resolveVaultCredential({
-      tenantId,
+      ...(actorContext ?? armingActorContext({ tenantId })),
       providerId: `connector.${seatId}.${entryId}`,
       credentialReference: connection.accessTokenRef,
       reasonClass: 'provider_call',
@@ -282,6 +309,9 @@ export async function resolveDispatchArming({ pool, tenantId, personId, pairs, s
   const wire = createMcpPromptsClient({});
   const lister = listTools ?? (({ endpoint, accessToken }) => wire.listTools({ endpoint, accessToken }));
   const operators = operatorTokens ?? { github: String(process.env.GITHUB_TOKEN ?? '').trim() || null };
+  // One arming run is one session of the dispatch's system actor;
+  // each pair's resolve is its own request under it.
+  const sessionId = randomUUID();
   const records = [];
   for (const pair of pairs ?? []) {
     records.push(await resolveArmingRecord({
@@ -294,6 +324,7 @@ export async function resolveDispatchArming({ pool, tenantId, personId, pairs, s
       personId,
       seatId: pair.seatId,
       entryId: pair.entryId,
+      actorContext: armingActorContext({ tenantId, sessionId }),
     }));
   }
   return records;
