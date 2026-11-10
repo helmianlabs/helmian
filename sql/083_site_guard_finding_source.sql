@@ -1,0 +1,33 @@
+-- Guard findings: admit Helmian Site Guard's own source value
+-- (Site Guard bite A1.5, 2026-11-09). sql/047 pinned the findings
+-- source column to ('browser-extension', 'governance-kernel',
+-- 'cloud'), so bite A1's intake-screening findings (src/cloud/
+-- site-guard.mjs) shipped under the borrowed 'cloud' source, with
+-- the Site Guard's name riding the fingerprint prefix, the title,
+-- and detail.kind instead. This migration widens the CHECK so those
+-- findings carry their own source, 'site-guard'; the store's enum
+-- mirror (SOURCES in src/cloud/guard-findings.mjs) widens in the
+-- same bite, and SITE_GUARD_FINDING_SOURCE in site-guard.mjs is the
+-- single switch point that flips to it.
+--
+-- Same widening shape as sql/071: 047's check is an inline unnamed
+-- constraint, which Postgres auto-names guard_findings_source_check;
+-- drop it if it exists, then re-add it under the same name with the
+-- wider set. Idempotent — re-running lands the same constraint.
+--
+-- Ordering: apply this migration BEFORE the A1.5 code deploys.
+-- Until it lands, the database still rejects a 'site-guard' row,
+-- and the Site Guard's ingest wrapper answers a rejected write the
+-- way it answers any failed write — logged loudly, turn untouched —
+-- so flags raised in the gap are lost from the feed, never from the
+-- turn. After it lands, no code change is needed: the constant
+-- already names the new source.
+--
+-- No rows are rewritten. Findings A1 recorded under 'cloud' keep
+-- that source (they still name the Site Guard in their fingerprint,
+-- title, and detail.kind); only new findings carry 'site-guard'.
+--
+-- NOT applied by the build — the parent applies it on the box road
+-- (advisory lock + ledger row, the established apply pattern).
+alter table helmion.guard_findings drop constraint if exists guard_findings_source_check;
+alter table helmion.guard_findings add constraint guard_findings_source_check check (source in ('browser-extension', 'governance-kernel', 'cloud', 'site-guard'));

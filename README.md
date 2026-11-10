@@ -169,6 +169,13 @@ first.
   capped by a per-round turn limit that stops the round on its own.
 - **Guard**: watches for destructive commands and unsourced claims,
   with severity-ranked findings and per-finding actions.
+- **Secret redaction**: before a tool result reaches a model or
+  the console, one redaction step in the agent runtime strips the
+  secrets out of it — the password inside a database connection
+  string, Neon passwords, API keys (OpenAI, Anthropic, xAI, Groq,
+  GitHub, Google, Gemini, Stripe, Slack, Hugging Face), AWS access
+  key IDs, bearer tokens, JSON Web Tokens, and private keys all
+  come back as `[REDACTED]`.
 - **Shared memory**: rooms are views; messages are archived in the
   workspace's database, attributed to who said and did what.
 - **The Librarian**: the workspace's memory keeper. It files every
@@ -193,6 +200,15 @@ first.
 - **Bridges**: a message written inside Helmian crosses into Discord
   (proven in the Helmian server's own channel), Slack links from its
   Integrations card, and work ships through GitHub.
+- **Notifications**: background work speaks up once, when it
+  counts. A background agent fires exactly one notification when
+  it finishes — and none while it is merely running, so long jobs
+  are not silently missed and
+  short ones do not spam. On the machine the agent runs on, that
+  is an operating-system notification, and it can be spoken at the
+  next voice turn. In the cloud, a critical Guard finding also
+  posts itself to the workspace's connected Discord and Slack
+  guard channels, best-effort, alongside the finding itself.
 - **Herald**: your desk on your phone — pair it once by QR code, send
   an instruction from the phone, and approve what needs approving from
   the phone.

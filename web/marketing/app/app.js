@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER } from './app-model.mjs?v=c945d648586ce552';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=c945d648586ce552';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=c945d648586ce552';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=c945d648586ce552';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER } from './app-model.mjs?v=6d7311c584b21779';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=6d7311c584b21779';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=6d7311c584b21779';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=6d7311c584b21779';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -1904,7 +1904,7 @@ function renderFeed() {
         const counts = { all: merged.length };
         for (const c of merged) { const s = srcOf(c); counts[s] = (counts[s] || 0) + 1; }
         dpFilters.replaceChildren(...sources.map((s) => {
-          const label = s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1);
+          const label = s === 'all' ? 'All' : s === 'site-guard' ? 'Helmian Site Guard' : s.charAt(0).toUpperCase() + s.slice(1);
           const b = el('button', `chip sm${s === active ? ' active' : ''}`, `${label} (${counts[s] || 0})`);
           b.dataset.gsource = s;
           return b;
@@ -2278,8 +2278,8 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=c945d648586ce552'); } catch {}
-    try { connectorManageMod ??= await import('./connector-manage.mjs?v=c945d648586ce552'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=6d7311c584b21779'); } catch {}
+    try { connectorManageMod ??= await import('./connector-manage.mjs?v=6d7311c584b21779'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2308,9 +2308,9 @@ async function loadIntegrations() {
       if (mb) mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'));
     }
   } catch {}
-  integrationsMod ??= await import('./integrations-view.mjs?v=c945d648586ce552');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=c945d648586ce552');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=c945d648586ce552');
+  integrationsMod ??= await import('./integrations-view.mjs?v=6d7311c584b21779');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=6d7311c584b21779');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=6d7311c584b21779');
   const [c, p, pr, u, o, tc] = await Promise.allSettled([api('/api/admin/cora/connectors'), api('/api/admin/provider-connections'), api('/api/admin/envoy/runner/presence'), api('/api/admin/cora/usage'), api('/api/admin/overview'), api('/api/admin/tool-connections')]);
   const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
@@ -2326,7 +2326,7 @@ async function loadIntegrations() {
   // the connector library routes.
   const manageBox = $('#connector-manage');
   if (manageBox) {
-    connectorManageMod ??= await import('./connector-manage.mjs?v=c945d648586ce552');
+    connectorManageMod ??= await import('./connector-manage.mjs?v=6d7311c584b21779');
     await connectorManageMod.mountConnectorManage(manageBox, { api, el, role: state.actor?.role ?? '' }).catch(() => {});
   }
   // Freshly rendered sections start visible; re-apply the remembered
@@ -2487,7 +2487,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=c945d648586ce552')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=6d7311c584b21779')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3328,7 +3328,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=c945d648586ce552');
+  workspaceModule ??= await import('./envoy-workspace.js?v=6d7311c584b21779');
   await loadFeedData().catch(() => {});
   await workspaceModule.mountWorkspace({
     api, post, toast, state,
@@ -3877,7 +3877,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=c945d648586ce552');
+    const mod = await import('./maestro-activation.mjs?v=6d7311c584b21779');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }

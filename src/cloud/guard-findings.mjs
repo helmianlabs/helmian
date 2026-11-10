@@ -3,7 +3,7 @@ import { withTenantTransaction, requireActiveTenantMembership, applyTenantContex
 import { appendAuditEvent } from './audit-event-repository.mjs';
 import { enqueueConnectorMessage } from '../cora/connector-outbound-worker.mjs';
 
-const SOURCES = new Set(['browser-extension', 'governance-kernel', 'cloud']);
+const SOURCES = new Set(['browser-extension', 'governance-kernel', 'cloud', 'site-guard']);
 const SEVERITIES = new Set(['info', 'warning', 'critical']);
 
 // Detail payloads stay small: findings carry metadata, not page content. Anything

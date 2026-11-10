@@ -36,7 +36,22 @@ export function createRuntimeEntitlementStore(env = process.env) {
   });
 }
 
+// Guard ships one package per browser target. A target-specific private URL
+// (HELMION_ARTIFACT_HELMIAN_GUARD_CHROMIUM_URL / ..._FIREFOX_URL) wins when set;
+// otherwise the single Guard URL serves every target, as before.
+const GUARD_TARGET_URL_ENV = Object.freeze({ chromium: 'HELMION_ARTIFACT_HELMIAN_GUARD_CHROMIUM_URL', firefox: 'HELMION_ARTIFACT_HELMIAN_GUARD_FIREFOX_URL' });
+
 export function createArtifactResolver(env = process.env) {
   const urls = Object.freeze({ helmian_individual: env.HELMION_ARTIFACT_HELMIAN_INDIVIDUAL_URL, helmian_guard: env.HELMION_ARTIFACT_HELMIAN_GUARD_URL, helmian_bundle: env.HELMION_ARTIFACT_HELMIAN_BUNDLE_URL });
-  return async ({ product }) => { const value = String(urls[product] ?? '').trim(); if (!value) return null; const url = new URL(value); if (url.protocol !== 'https:') return null; return { url: url.toString() }; };
+  return async ({ product, target } = {}) => {
+    let value = String(urls[product] ?? '').trim();
+    if (product === 'helmian_guard' && target && GUARD_TARGET_URL_ENV[target]) {
+      const targeted = String(env[GUARD_TARGET_URL_ENV[target]] ?? '').trim();
+      if (targeted) value = targeted;
+    }
+    if (!value) return null;
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return null;
+    return { url: url.toString() };
+  };
 }
