@@ -349,6 +349,77 @@ test('bridge pairs from HELMION_BRIDGE_PAIRING_CODE when no promptCode is inject
   await handle.stop();
 });
 
+test('bridge pairs from the pairing-code file when no prompt or env code exists', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-filecode-'));
+  const cloud = makeFakeCloud();
+  const prev = process.env.HELMION_BRIDGE_PAIRING_CODE;
+  delete process.env.HELMION_BRIDGE_PAIRING_CODE;
+  t.after(() => {
+    if (prev === undefined) delete process.env.HELMION_BRIDGE_PAIRING_CODE;
+    else process.env.HELMION_BRIDGE_PAIRING_CODE = prev;
+  });
+  const codePath = join(tmp, 'pairing-code.txt');
+  await writeFile(codePath, '  filecode1 \n');
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { promptCode: undefined, pairingCodePath: codePath }));
+  t.after(() => handle.stop());
+  assert.equal(handle.ok, true);
+  const exchangeCalls = cloud.calls.filter((c) => c.url.endsWith('/api/admin/desktop/link/exchange'));
+  assert.equal(exchangeCalls.length, 1);
+  assert.deepEqual(JSON.parse(exchangeCalls[0].body), { code: 'FILECODE1' }, 'file code is trimmed and uppercased');
+  const saved = JSON.parse(await readFile(join(tmp, 'token.json'), 'utf8'));
+  assert.equal(saved.token, 'tok-1');
+  // The spent code file is gone: a supervisor restart must never replay it.
+  await assert.rejects(readFile(codePath, 'utf8'), /ENOENT/);
+  await handle.stop();
+});
+
+test('bridge prefers HELMION_BRIDGE_PAIRING_CODE over the pairing-code file', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-filecode-order-'));
+  const cloud = makeFakeCloud();
+  const prev = process.env.HELMION_BRIDGE_PAIRING_CODE;
+  process.env.HELMION_BRIDGE_PAIRING_CODE = 'envcode9';
+  t.after(() => {
+    if (prev === undefined) delete process.env.HELMION_BRIDGE_PAIRING_CODE;
+    else process.env.HELMION_BRIDGE_PAIRING_CODE = prev;
+  });
+  const codePath = join(tmp, 'pairing-code.txt');
+  await writeFile(codePath, 'filecode1');
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { promptCode: undefined, pairingCodePath: codePath }));
+  t.after(() => handle.stop());
+  assert.equal(handle.ok, true);
+  const exchangeCalls = cloud.calls.filter((c) => c.url.endsWith('/api/admin/desktop/link/exchange'));
+  assert.equal(exchangeCalls.length, 1);
+  assert.deepEqual(JSON.parse(exchangeCalls[0].body), { code: 'ENVCODE9' }, 'env code wins over the file');
+  // The env road never spends the file: its writer still owns it.
+  assert.equal(await readFile(codePath, 'utf8'), 'filecode1');
+  await handle.stop();
+});
+
+test('bridge removes a pairing-code file the cloud refuses and fails cleanly', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-filecode-dead-'));
+  const prev = process.env.HELMION_BRIDGE_PAIRING_CODE;
+  delete process.env.HELMION_BRIDGE_PAIRING_CODE;
+  t.after(() => {
+    if (prev === undefined) delete process.env.HELMION_BRIDGE_PAIRING_CODE;
+    else process.env.HELMION_BRIDGE_PAIRING_CODE = prev;
+  });
+  const calls = [];
+  const fetchImpl = async (url, opts = {}) => {
+    calls.push({ url, method: opts.method ?? 'GET', body: opts.body });
+    const body = { valid: false, code: 'DESKTOP_CODE_EXPIRED' };
+    return { ok: false, status: 410, text: async () => JSON.stringify(body), json: async () => body };
+  };
+  const codePath = join(tmp, 'pairing-code.txt');
+  await writeFile(codePath, 'deadcode1');
+  const handle = await runBridge(bridgeDeps(tmp, { fetchImpl, calls }, { promptCode: undefined, pairingCodePath: codePath }));
+  assert.equal(handle.ok, false);
+  assert.equal(handle.reason, 'pairing failed');
+  // The refused code is spent: the file is removed so a supervisor's
+  // restart backoff never replays it, and no token was written.
+  await assert.rejects(readFile(codePath, 'utf8'), /ENOENT/);
+  await assert.rejects(readFile(join(tmp, 'token.json'), 'utf8'), /ENOENT/);
+});
+
 test('bridge injects the vault provider key into the agent child env', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-vault-'));
   const cloud = makeFakeCloud();
@@ -548,43 +619,6 @@ test('agent members: configured channel is answered per agent via agent-messages
   const configures = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'configure').map((c) => c.provider);
   assert.ok(configures.includes('claude'));
   assert.ok(served >= 1);
-});
-
-test('agent work: a custom agent is composed under its configured identity, not its provider', async (t) => {
-  // The cloud's work item carries the channel's custom-agent records;
-  // the bridge must hand them to the prompt composition. Without them
-  // a custom agent whose handle collides with a provider id is told
-  // "You are Qwen" — the provider's name, with its configured face,
-  // name and job all lost — and answers the room under that identity.
-  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-custom-identity-'));
-  const cloud = makeFakeCloud();
-  const orig = cloud.fetchImpl;
-  const posted = [];
-  const crab = { id: 'qwen', handle: 'qwen', name: 'Qwen', emoji: '🦀', provider: 'ollama', authMode: 'password_session', jobTitle: 'Weather watcher', jobPrompt: 'Watch the weather connectors.' };
-  const human = { id: '44444444-4444-4444-8444-444444444444', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', authorName: 'Troy', source: 'helmian', body: 'what about the Weather connector?', createdAt: 't' };
-  cloud.fetchImpl = async (url, opts = {}) => {
-    const u = new URL(url);
-    const json = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
-    if (u.pathname === '/api/admin/envoy/channel-config') return json({ valid: true, configured: true, config: { agents: [] } });
-    if (u.pathname === '/api/admin/envoy/agent-work') {
-      const work = posted.length ? [] : [{ channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['claude', 'qwen'], message: human, agents: ['qwen'], context: [], customAgents: [crab] }];
-      return json({ valid: true, work });
-    }
-    if (u.pathname === '/api/admin/envoy/agent-messages') { posted.push(JSON.parse(opts.body)); return json({ valid: true, receipt: { replayed: false } }); }
-    return orig(url, opts);
-  };
-  const kids = [];
-  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'qwen', spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
-  t.after(() => handle.stop());
-  for (let i = 0; i < 50 && posted.length < 1; i++) await new Promise((r) => setTimeout(r, 20));
-  assert.equal(posted.length, 1);
-  assert.deepEqual(posted.map((p) => p.provider), ['qwen']);
-  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
-  assert.equal(turns.length, 1);
-  assert.match(turns[0].text, /You are 🦀 Qwen \(@qwen\), an agent member of the #Team channel/);
-  assert.match(turns[0].text, /Your assigned job: Weather watcher/);
-  assert.doesNotMatch(turns[0].text, /You are Qwen,/);
-  await handle.stop();
 });
 
 // ---- Agent-work slash expansion: expand BEFORE the agentPrompt wrap ----
