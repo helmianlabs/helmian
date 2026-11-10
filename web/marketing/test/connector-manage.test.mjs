@@ -325,6 +325,35 @@ test('wiring: a Manage-road landing paints the Manage box’s loading line befor
   assert.ok(!peekBlock.includes("removeItem('helmian.manageSeat')"), 'the marker is only peeked — mountConnectorManage still consumes it');
 });
 
+test('landing: show() clears the Manage box to the loading line before the integrations loader runs', () => {
+  // The perf bite (2026-11-09 ~18:19): arriving at Integrations from
+  // another seat's Manage row still showed the PREVIOUS seat's rows
+  // as the first visible content — the box is persistent DOM and the
+  // surface only re-mounts at the end of loadIntegrations, so the
+  // old rows stood until the mount landed. The navigation handler
+  // clears the box synchronously, before any loader is invoked.
+  const showStart = appJs.indexOf('function show(view)');
+  assert.ok(showStart > 0);
+  const showBody = appJs.slice(showStart, appJs.indexOf('loaders[panelView]', showStart));
+  const clearAt = showBody.indexOf("view === 'integrations'");
+  const paintAt = showBody.indexOf("mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'))");
+  assert.ok(clearAt > 0 && paintAt > clearAt,
+    'show() clears #connector-manage to the loading line when the integrations view is shown, before the loader runs');
+});
+
+test('the seat list is fetched once per surface, not once per refresh (remove marks it stale)', () => {
+  const loadSeatsAt = manage.indexOf('async function loadSeats()');
+  assert.ok(loadSeatsAt > 0);
+  const loadSeatsBody = manage.slice(loadSeatsAt, manage.indexOf('\n  }', loadSeatsAt));
+  const guardAt = loadSeatsBody.indexOf('state.seatsLoaded && !state.seatsStale');
+  const fetchAt = loadSeatsBody.indexOf("api('/api/admin/connector-library/seats')");
+  assert.ok(guardAt > 0 && fetchAt > guardAt,
+    'loadSeats answers from the cached list unless it was never loaded or was marked stale');
+  const removeAt = manage.indexOf("'/api/admin/connector-library/entries/remove'");
+  assert.ok(removeAt > 0 && manage.indexOf('state.seatsStale = true', removeAt) > removeAt,
+    'the Remove handler marks the cached seat list stale — the one write that can change seat membership');
+});
+
 test('wiring: mount and seat-change renders paint the header with the loading line before the rows read', () => {
   const refreshStart = manage.indexOf('async function refresh()');
   assert.ok(refreshStart >= 0);

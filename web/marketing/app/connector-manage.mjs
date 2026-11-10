@@ -244,7 +244,7 @@ export function pluginsListModel(body) {
 // The renderer. `api` is app.js's api() (throws on non-2xx with the
 // server's error message where present), `el` its element helper.
 export function renderConnectorManage(box, { api, el, role = '', initialSeat = null } = {}) {
-  const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false, renderedSeat: null, toolAccess: new Map(), open: new Set() };
+  const state = { seat: initialSeat, tab: 'connectors', seats: [], rows: [], note: '', busy: false, loaded: false, renderedSeat: null, toolAccess: new Map(), open: new Set(), seatsLoaded: false, seatsStale: false };
   box.replaceChildren();
   const root = el('div', 'cm-root');
   const note = el('p', 'cm-note muted sm');
@@ -273,8 +273,21 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
   };
 
   async function loadSeats() {
+    // The seat list is fetched once per surface, not once per
+    // refresh (2026-11-09 perf bite): refresh() runs on every seat
+    // switch, tab switch, and write, and the seats read is the
+    // surface's most expensive call — re-asking it on every switch
+    // made each switch pay the whole tenant's counts again (~20s
+    // live). Seat membership cannot change under a read, a connect,
+    // or a posture change; it changes only when an entry is REMOVED
+    // (a seat can empty), whose handler marks the list stale. A
+    // fresh mount (every Integrations landing builds one) always
+    // fetches afresh.
+    if (state.seatsLoaded && !state.seatsStale) return;
     const body = await api('/api/admin/connector-library/seats');
     state.seats = Array.isArray(body?.seats) ? body.seats : [];
+    state.seatsLoaded = true;
+    state.seatsStale = false;
     if (!state.seat || !state.seats.some((s) => s.seatId === state.seat)) {
       state.seat = state.seats[0]?.seatId ?? null;
     }
@@ -406,6 +419,10 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
       side.append(actionButton('Remove', async () => {
         await call('/api/admin/connector-library/entries/remove', { seatId: state.seat, entryId: row.entryId });
         say(`${row.name} was removed from this seat\u2019s library.`);
+        // Removing an entry is the one act that can change seat
+        // membership (this seat may have just emptied) — the cached
+        // seat list is stale now and the refresh must re-ask.
+        state.seatsStale = true;
         await refresh();
       }, 'ghost'));
     }

@@ -1073,5 +1073,83 @@ export function createConnectorLibraryStore(pool) {
         throw error;
       }
     },
+
+    // ------------------------------------------------- tenant summaries
+    // The Level 1 counts read's store shape (connector-library-read
+    // .mjs readSeatCounts): the caller's OWN tenant, the caller's OWN
+    // person, every seat at once — the three listings the per-seat
+    // reads would make, made once each for the whole tenant instead
+    // of once per seat (the /seats route otherwise pays a full
+    // library read per seat to produce two counts per seat). These
+    // are SUMMARY reads, deliberately narrow:
+    //   · tenant and person are fixed by the caller exactly as on
+    //     the per-seat reads — §3.4 isolation is across tenants and
+    //     persons, and neither can be selected here either;
+    //   · seats are never mixed: every row carries its seatId and
+    //     the reader splits by it — a record written for one seat
+    //     is counted for that seat alone;
+    //   · the columns are the minimum the counts join needs (ids,
+    //     kind, broker mode, state) — no descriptive row data, no
+    //     account identities, and never a token reference.
+    // Row-level reads (listEntries / listConnections / listMirrors)
+    // remain the only road to a seat's actual rows.
+
+    /** Every entry in the tenant's libraries, seat-tagged, summary fields only. */
+    async listEntriesForTenant(tenantId) {
+      try {
+        return await withTenant(tenantId, async (client) => {
+          const r = await client.query(
+            `select seat_id, id, kind, broker_mode, state from helmion.connector_entries
+              where tenant_id = current_setting('helmion.tenant_id', true)
+              order by seat_id, id`,
+          );
+          return r.rows.map((row) => ({
+            seatId: row.seat_id, id: row.id, kind: row.kind,
+            brokerMode: row.broker_mode, state: row.state,
+          }));
+        });
+      } catch (error) {
+        if (isMissingTable(error)) return [];
+        throw error;
+      }
+    },
+
+    /** One person's connections across the tenant's seats, summary fields only. */
+    async listConnectionsForTenant(tenantId, filter = {}) {
+      const personId = requireString(filter.personId ?? '', 'personId');
+      try {
+        return await withTenant(tenantId, async (client) => {
+          const r = await client.query(
+            `select seat_id, entry_id, state from helmion.connector_connections
+              where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1
+              order by seat_id, entry_id`,
+            [personId],
+          );
+          return r.rows.map((row) => ({ seatId: row.seat_id, entryId: row.entry_id, state: row.state }));
+        });
+      } catch (error) {
+        if (isMissingTable(error)) return [];
+        throw error;
+      }
+    },
+
+    /** One person's mirror records across the tenant's seats, summary fields only. */
+    async listMirrorsForTenant(tenantId, filter = {}) {
+      const personId = requireString(filter.personId ?? '', 'personId');
+      try {
+        return await withTenant(tenantId, async (client) => {
+          const r = await client.query(
+            `select seat_id, entry_id, reported_state from helmion.connector_mirrors
+              where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1
+              order by seat_id, entry_id`,
+            [personId],
+          );
+          return r.rows.map((row) => ({ seatId: row.seat_id, entryId: row.entry_id, reportedState: row.reported_state }));
+        });
+      } catch (error) {
+        if (isMissingTable(error)) return [];
+        throw error;
+      }
+    },
   };
 }

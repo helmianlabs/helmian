@@ -333,7 +333,11 @@ function joinedStateInner(entry, { connection, mirror, nativeSurface, repoLinks 
 // steps aside for it. Entries the gate does not govern, and reads
 // whose store could not answer the gate (gateRow undefined), take
 // the inner join untouched.
-function joinedState(entry, deps) {
+//
+// Exported because the Level 1 counts read (readSeatCounts below)
+// rules every entry through this same join — the counts are the
+// rows' states counted, never a second, drifting state logic.
+export function joinedState(entry, deps) {
   const gateRow = deps?.gateRow;
   if (entry.kind !== 'custom' || gateRow === undefined || entry.state === 'disabled-by-owner') {
     return joinedStateInner(entry, deps);
@@ -604,6 +608,151 @@ export function createSeatLibraryRead({
         // catalog is current, so the read wrote nothing.
         seed,
       };
+    },
+
+    /**
+     * Level 1 (SPEC §1.1): every live seat's counts for this person —
+     * entryCount and connectedCount — the seats read the composer
+     * panel and the Manage surface's seat tabs are picked from.
+     *
+     * This exists because the counts are ALL that read needs, and
+     * producing them from readSeatLibrary cost a full library read
+     * per seat: three list transactions plus the two tenant-level
+     * joins (the tool-connections surface list and the envoy
+     * channels list, which exist to state ONE native row) — times
+     * fourteen seats, sequentially, for two numbers per seat (the
+     * 2026-11-09 live walks measured that fan-out at ~20 seconds).
+     * Here the listings are made once for the whole tenant (the
+     * store's summary reads, connector-library.mjs), the two joins
+     * are resolved once (they are tenant facts, identical for every
+     * seat), and each entry is ruled through the SAME joinedState
+     * the row read uses — so a seat's connectedCount here is its
+     * rows' connected states counted, by construction, not by a
+     * parallel approximation.
+     *
+     * Seed/heal parity with readSeatLibrary, tenant-wide: an empty
+     * tenant seeds once; a populated seat missing catalog additions
+     * heals once (the same one-flight refresh either way); the
+     * entries are then re-listed. Connections and mirrors are not
+     * re-read after a refresh — it writes entries only.
+     *
+     * Stores without the summary reads (test fakes, older wirings)
+     * fall back to assembling the same listings per seat; the joins
+     * still resolve once. The route keeps its own legacy fallback
+     * for read objects without this method at all.
+     */
+    async readSeatCounts(tenantId, { personId, now = Date.now(), verifiedMaxAgeMs = CONNECTOR_LIBRARY_FRESH_MS, actor = null } = {}) {
+      const person = requireString(personId ?? '', 'personId');
+      const summaryReads = typeof libraryStore.listEntriesForTenant === 'function'
+        && typeof libraryStore.listConnectionsForTenant === 'function'
+        && typeof libraryStore.listMirrorsForTenant === 'function';
+      const listAll = async () => {
+        if (summaryReads) {
+          return Promise.all([
+            libraryStore.listEntriesForTenant(tenantId),
+            libraryStore.listConnectionsForTenant(tenantId, { personId: person }),
+            libraryStore.listMirrorsForTenant(tenantId, { personId: person }),
+          ]);
+        }
+        const entries = [];
+        const connections = [];
+        const mirrors = [];
+        for (const seatId of LIVE_SEATS) {
+          entries.push(...await libraryStore.listEntries(tenantId, seatId));
+          connections.push(...await libraryStore.listConnections(tenantId, { personId: person, seatId }));
+          mirrors.push(...await libraryStore.listMirrors(tenantId, { personId: person, seatId }));
+        }
+        return [entries, connections, mirrors];
+      };
+      let [entries, connections, mirrors] = await listAll();
+
+      // The seed/heal triggers, tenant-wide (readSeatLibrary's two
+      // gates aggregated over the seats it would check one by one):
+      // seed only when the tenant holds no entries at all on the
+      // live seats; heal when a populated live seat lacks catalog
+      // ids (custom entries count toward neither set, exactly as
+      // in maybeHealCatalog).
+      let seed = SEED_NOT_ATTEMPTED;
+      const liveEntries = entries.filter((entry) => LIVE_SEATS.includes(entry.seatId));
+      if (liveEntries.length === 0) {
+        seed = await runSeedOnce(tenantId);
+      } else {
+        const heldBySeat = new Map();
+        for (const entry of liveEntries) {
+          if (entry.kind !== 'catalog' && entry.kind !== 'helmian-native') continue;
+          if (!heldBySeat.has(entry.seatId)) heldBySeat.set(entry.seatId, new Set());
+          heldBySeat.get(entry.seatId).add(entry.id);
+        }
+        const anyMissing = LIVE_SEATS.some((seatId) => {
+          const held = heldBySeat.get(seatId);
+          if (!held || held.size === 0) return false;
+          return catalogEntriesForSeat(seatId).some((def) => !held.has(def.id));
+        });
+        if (anyMissing) seed = await runSeedOnce(tenantId);
+      }
+      if (seed.attempted) {
+        // The refresh writes entries only; re-list just those.
+        entries = summaryReads
+          ? await libraryStore.listEntriesForTenant(tenantId)
+          : (await Promise.all(LIVE_SEATS.map((seatId) => libraryStore.listEntries(tenantId, seatId)))).flat();
+      }
+
+      // The tenant-level joins, once: the tool-connections surfaces
+      // for the services any entry names, and the channel repo
+      // links — the same sources, the same conditions as the row
+      // read (no actor → the link source stays silent).
+      const nativeSurfaces = new Map();
+      if (surface) {
+        for (const entry of entries) {
+          const source = NATIVE_STATE_SOURCES[entry.id];
+          if (source?.stateSource === 'tool-connections' && !nativeSurfaces.has(source.serviceId)) {
+            nativeSurfaces.set(source.serviceId, await surface.surfaceFor(tenantId, source.serviceId, { now, maxAgeMs: verifiedMaxAgeMs }));
+          }
+        }
+      }
+      let tenantRepoLinks = null;
+      if (repoLinkSurface && actor && entries.some((entry) => NATIVE_STATE_SOURCES[entry.id]?.repoLinks === true)) {
+        tenantRepoLinks = await repoLinkSurface.linksFor(actor);
+      }
+
+      const connectionBySeatEntry = new Map(connections.map((c) => [`${c.seatId} ${c.entryId}`, c]));
+      const mirrorBySeatEntry = new Map(mirrors.map((m) => [`${m.seatId} ${m.entryId}`, m]));
+
+      // Gate rows only where they can change a count: a custom
+      // entry whose connection reads connected (an unpassed gate
+      // caps exactly that case at not-connected; every other case
+      // is ruled the same with or without the row).
+      const gateRows = new Map();
+      if (toolConnectionsStore && typeof toolConnectionsStore.get === 'function') {
+        for (const entry of entries) {
+          if (entry.kind !== 'custom') continue;
+          const connection = connectionBySeatEntry.get(`${entry.seatId} ${entry.id}`);
+          if (!connection || connection.state !== 'connected') continue;
+          gateRows.set(`${entry.seatId} ${entry.id}`, await toolConnectionsStore.get(tenantId, customGateKey(entry.seatId, entry.id)));
+        }
+      }
+
+      const seats = [];
+      for (const seatId of LIVE_SEATS) {
+        const seatEntries = entries.filter((entry) => entry.seatId === seatId);
+        if (!seatEntries.length) continue;
+        let connectedCount = 0;
+        for (const entry of seatEntries) {
+          const source = NATIVE_STATE_SOURCES[entry.id];
+          const joined = joinedState(entry, {
+            connection: connectionBySeatEntry.get(`${seatId} ${entry.id}`) ?? null,
+            mirror: mirrorBySeatEntry.get(`${seatId} ${entry.id}`) ?? null,
+            nativeSurface: source?.stateSource === 'tool-connections'
+              ? nativeSurfaces.get(source.serviceId) ?? null
+              : null,
+            repoLinks: tenantRepoLinks,
+            gateRow: gateRows.has(`${seatId} ${entry.id}`) ? gateRows.get(`${seatId} ${entry.id}`) : undefined,
+          });
+          if (joined.state === 'connected') connectedCount += 1;
+        }
+        seats.push({ seatId, entryCount: seatEntries.length, connectedCount });
+      }
+      return { seats, seed };
     },
   };
 }
