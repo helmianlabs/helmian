@@ -289,6 +289,12 @@ async function consentBoundary(entry, fetchImpl) {
       }
     } catch { /* the boundary answer stands without the live fetch */ }
   }
+  let displayName = null;
+  try { displayName = catalogEntryById(entry.seatId, entry.id)?.name ?? null; } catch { displayName = null; }
+  if (!displayName) {
+    const p = fixedProviderForEntry(entry);
+    displayName = p ? p.charAt(0).toUpperCase() + p.slice(1) : 'This connector';
+  }
   return {
     status: 'consent-boundary',
     seatId: entry.seatId,
@@ -297,7 +303,7 @@ async function consentBoundary(entry, fetchImpl) {
     mcpEndpointUrl: endpoint || null,
     resourceMetadataUrl,
     authorizationEndpoint,
-    note: 'Helmian holds no OAuth client registration for this connector yet, so the sign-in cannot be completed inside Helmian. The consent endpoint and the remaining callback leg are M3\u2019s work; nothing was connected.',
+    note: `Helmian's app registration in ${displayName}'s own console has not been placed yet, so ${displayName} cannot be connected inside Helmian yet. Nothing was connected.`,
   };
 }
 
