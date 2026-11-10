@@ -1,15 +1,15 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=6da01986518daab8';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=6da01986518daab8';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=6da01986518daab8';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=6da01986518daab8';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=6da01986518daab8';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=6da01986518daab8';
-import { createConnectFields } from './connect-fields.mjs?v=6da01986518daab8';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=6da01986518daab8';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=6da01986518daab8';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=9f1239bd566cc2a9';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=9f1239bd566cc2a9';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=9f1239bd566cc2a9';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=9f1239bd566cc2a9';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=9f1239bd566cc2a9';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=9f1239bd566cc2a9';
+import { createConnectFields } from './connect-fields.mjs?v=9f1239bd566cc2a9';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=9f1239bd566cc2a9';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=9f1239bd566cc2a9';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -2283,8 +2283,7 @@ async function loadLibraryFacts() {
 // invisible in a tab opened earlier for exactly this reason. Past
 // the window the next load re-reads; inside it the cache stands.
 // No polling, no timers — the check rides the surface opens that
-// already call this loader. (The Manage surface needs no such
-// rule: it builds fresh state and re-reads on every open.)
+// already call this loader.
 export const LIBRARY_STALE_MS = 60_000;
 function seatLibraryStale(seatId, now) {
   if (!ws.libraryFacts?.libraries?.[seatId]) return true;
@@ -2368,29 +2367,30 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     h('span', { class: 'ew-lib-line' }, row.oneLiner),
     h('span', { class: 'ew-lib-line' }, vendorLine));
   if (row.toggleable) {
-    // The switch IS the connection (owner order, 2026-11-10): a
-    // connected card stands ON, word "On", with the connection's
-    // own line in the text block — and a flip runs the per-agent
-    // disconnect, the same road Manage's Disconnect runs (see
-    // startPanelDisconnect), after which the card repaints as not
-    // connected with its Connect button. The switch no longer draws
-    // the channel's armed state: armed-in-this-channel is the
-    // standing set's fact, carried by the toggle store and shown
-    // by the chips above the composer, and drawing it in this slot
-    // painted OFF beside the words "Connected as …" — the state
-    // line and the switch in one slot, two sources, and the row
-    // read as a lie. The first fix separated the words; this one
-    // gives the switch itself to the connection, which is what
-    // the owner reads it as.
+    // The state line stands in the text block as its own line, and
+    // the word beside the switch comes from the switch's own source
+    // (row.on — armed in THIS channel) and nothing else (owner
+    // report, 2026-11-10: the switch rendered OFF beside the words
+    // "Connected as …" because the trailing word borrowed the
+    // connection's state label while the switch drew the channel's
+    // armed state — two sources in one slot, and the row read as a
+    // lie).
     text.append(h('span', { class: 'ew-lib-line ew-lib-state' }, row.stateLabel));
-    return h('button', { type: 'button', class: 'ew-picker-row on', title: `${row.name} is connected for ${seatName(row.seatId)} — tap to disconnect it`, onclick: () => { void startPanelDisconnect(which, row); } }, libraryIconTile(row), text,
+    return h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on in this channel — tap to turn it off` : `Turn ${row.name} on in this channel`, onclick: () => {
+      ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId);
+      // The flip persists to the channel's config before anything
+      // else renders from it (bite A2); a failed save reverts the
+      // store and re-renders, inside persistArmedConnectors.
+      void persistArmedConnectors();
+      renderAttachChips(which); renderPicker(which);
+    } }, libraryIconTile(row), text,
       h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
-      h('span', { class: 'ew-picker-state on' }, 'On'));
+      h('span', { class: `ew-picker-state ${row.on ? 'on' : 'off'}` }, row.on ? 'On' : 'Off'));
   }
   if (row.connectable) {
     // The Connect button the owner ordered on this panel
-    // (2026-11-10): it starts the same library connect the
-    // Connectors tab's Manage panel runs — see startPanelConnect.
+    // (2026-11-10): it starts the connector library's
+    // connect-start — see startPanelConnect.
     return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
       h('span', { class: 'ew-picker-state off' }, row.stateLabel),
       h('button', { type: 'button', class: 'ew-lib-connect', title: `Connect ${row.name} for ${seatName(row.seatId)}`, onclick: () => { void startPanelConnect(which, row); } }, row.reconnect ? 'Reconnect' : 'Connect'));
@@ -2398,42 +2398,31 @@ function libraryRowNode(which, row, { shape = null } = {}) {
   if (row.mirror) {
     // A mirror row is never a button Helmian can't honour (§1.5):
     // the connection lives in the seat's own product, so the button
-    // this row CAN honour opens Helmian's own connector library at
-    // this seat — where the same-name Helmian-brokered entry, when
-    // the library holds one, carries the real Connect — and never a
-    // link out to the vendor (Troy's ruling, 2026-11-08). The row
+    // this row CAN honour opens the seat's account page in Helmian —
+    // the Agents tab, where the seat's own sign-in is managed — and
+    // never a link out to the vendor (Troy's ruling, 2026-11-08).
+    // The same-name Helmian-brokered entry, when the library holds
+    // one, stands in this panel with the real Connect. The row
     // states that plainly in its title and its trailing word; the
     // state it shows is the state the vendor side last reported.
-    return h('button', { type: 'button', class: `ew-picker-row ew-lib-row mirror${shape === 'state' ? ' state' : ''}`, title: `${row.name} is managed in ${row.mirror.managedIn}, not in Helmian — open Helmian's connector library for ${seatName(row.seatId)}`, onclick: () => openManageForSeat(which) }, libraryIconTile(row), text,
+    return h('button', { type: 'button', class: `ew-picker-row ew-lib-row mirror${shape === 'state' ? ' state' : ''}`, title: `${row.name} is managed in ${row.mirror.managedIn}, not in Helmian — open Helmian's Agents page for ${seatName(row.seatId)}'s account`, onclick: () => openManageForSeat(which) }, libraryIconTile(row), text,
       h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel),
       h('span', { class: 'ew-picker-state off' }, 'Open'));
-  }
-  if (row.connectionSwitch) {
-    // Turned off for everyone (the Manage surface's "Turn off for
-    // everyone"): the connection switch stands OFF on this card
-    // too — a real Off, with its reason as the state line — never
-    // a plain state row that hides the switch the connected card
-    // carries. The row is a statement, not a button: turning the
-    // connector back on is the owner's Manage act (the
-    // entry-state road), not a panel flip.
-    text.append(h('span', { class: 'ew-lib-line ew-lib-state' }, row.stateLabel));
-    return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
-      h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
-      h('span', { class: 'ew-picker-state off' }, 'Off'));
   }
   return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
     h('span', { class: 'ew-picker-state off' }, row.stateLabel));
 }
 
-// The panel's Connect button (owner order, 2026-11-10): the SAME
-// library connect-start the Connectors tab's Manage panel calls —
-// one road, two faces. The answers are handled exactly as Manage
-// handles them: a no-sign-in connector lands connected on the spot
-// (the panel re-reads the seat's library and repaints); an OAuth
-// connector answers with the service's own sign-in door and the
-// person is handed that door; a sign-in Helmian cannot broker yet
-// says so in the route's own words; a key connector's form lives on
-// the Manage surface, so the panel says so and opens it there.
+// The panel's Connect button (owner order, 2026-11-10): the same
+// library connect-start the connector library routes serve. The
+// answers are handled in the panel: a no-sign-in connector lands
+// connected on the spot (the panel re-reads the seat's library and
+// repaints); an OAuth connector answers with the service's own
+// sign-in door and the person is handed that door; a sign-in
+// Helmian cannot broker yet says so in the route's own words; a
+// key connector needs its key — Helmian has no key form since the
+// Manage surface was removed (2026-11-10), so the panel says so
+// and opens the seat's account page.
 async function startPanelConnect(which, row) {
   let out;
   try {
@@ -2459,34 +2448,11 @@ async function startPanelConnect(which, row) {
     return;
   }
   if (out?.status === 'needs-credential') {
-    ws.ctx.toast(`${row.name} needs its key — its form is in Helmian's connector library.`);
+    ws.ctx.toast(`${row.name} needs its key to connect.`);
     openManageForSeat(which);
     return;
   }
   ws.ctx.toast(`${row.name}: ${out?.status ?? 'connect started'}.`);
-}
-
-// The panel's switch flip (owner order, 2026-11-10): the SAME
-// per-agent disconnect the Connectors tab's Manage panel runs —
-// one road, two faces. The answer is handled as Manage handles
-// it: the stored sign-in's custody revocation is the route's to
-// report; the panel then re-reads the seat's library and
-// repaints, and the card comes back as not connected, carrying
-// its Connect button. The chips re-render on the same re-read:
-// a pair the library no longer shows as connected wears no chip.
-async function startPanelDisconnect(which, row) {
-  let out;
-  try {
-    out = await ws.ctx.post('/api/admin/connector-library/disconnect', { seatId: row.seatId, entryId: row.entryId });
-  } catch (e) {
-    ws.ctx.toast(e?.body?.error || `Could not disconnect ${row.name}. Try again.`);
-    return;
-  }
-  ws.ctx.toast(out?.custodyRevoked ? `${row.name} is disconnected and its stored sign-in was revoked.` : `${row.name} is disconnected.`, 'ok');
-  ws.libraryFetchedAt[row.seatId] = 0;
-  await loadSeatLibrary(row.seatId).catch(() => {});
-  renderAttachChips(which);
-  renderPicker(which);
 }
 
 // The Level 2 model: one seat's menu definition composed with that
@@ -2511,12 +2477,10 @@ async function startPanelDisconnect(which, row) {
 // definition's own order. A live-toggle group — the Connectors list —
 // carries the seat's WHOLE Helmian-brokered library (owner order,
 // 2026-11-10, superseding bite A2's connected-only list): Connected
-// rows render as connection switches (owner order, 2026-11-10: the
-// switch is the connection — a flip disconnects), not-connected
-// rows carry a working Connect action, an owner-disabled row stands
-// with its switch OFF and its reason on the card, rows that can be
-// neither today (an unpassed safety gate, a local-only entry) stand
-// as honest state rows, and library rows no
+// rows render as switches in the channel's standing set (Amendment 1
+// §2.3), not-connected rows carry a working Connect action, rows that
+// can be neither today (owner-disabled, an unpassed safety gate, a
+// local-only entry) stand as honest state rows, and library rows no
 // menu binds — a person's own entries — join this list so nothing
 // the library holds is missing from the panel. Vendor mirrors are
 // never offered here; an unbound mirror joins the seat's mirror
@@ -2616,13 +2580,11 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
     if (item.type === 'live-toggle-group') {
       // The Connectors list (owner order, 2026-11-10): the seat's
       // whole Helmian-brokered library — bound rows in the menu's
-      // order, then the unbound sweep. Connected rows are
-      // connection switches (row.toggleable is exactly that test);
-      // not-connected rows carry the Connect action
-      // (row.connectable); the rest stand as state rows with their
-      // true labels — an owner-disabled row among them carrying
-      // its switch OFF. A vendor mirror bound here is not offered:
-      // mirrors are the mirror groups' rows.
+      // order, then the unbound sweep. Connected rows are switches
+      // (row.toggleable is exactly that test); not-connected rows
+      // carry the Connect action (row.connectable); the rest stand
+      // as state rows with their true labels. A vendor mirror bound
+      // here is not offered: mirrors are the mirror groups' rows.
       let rows = boundRows(item) ?? [];
       if (helmianSweep.length) { rows = [...rows, ...helmianSweep]; helmianSweep = []; }
       const mine = rows.filter((r) => r.brokerMode === 'helmian');
@@ -2839,20 +2801,20 @@ function screenshotRowNode(which, row) {
   return h('div', { class: 'ew-picker-group' }, btn, note);
 }
 
-// Land on the Manage surface at the panel seat's tab (mirror M1):
-// the marker is read once by the surface as it mounts. The tab
-// marker rides beside it (addition, 2026-11-09): this road always
-// lands on the Integrations view's Connectors tab — app.js's
-// loadIntegrations consumes the marker and selects that tab, so
-// the surface is never left hidden behind the remembered tab.
-// Shared by the
-// manage footer row and the Tool access action row (bite M2) — the
-// Tool access face lives on that surface, under the seat.
+// Land on the Integrations view's Agents tab (owner order,
+// 2026-11-10): the per-seat Manage surface that used to live on the
+// Integrations Connectors tab is removed — connectors live in this
+// panel now — so this road lands on the seat's account page instead.
+// The tab marker names 'agents'; app.js's loadIntegrations consumes
+// it and selects that tab, so the landing is never left hidden
+// behind the remembered tab. No seat marker is written any more:
+// nothing consumes one. Shared by the manage footer row, the Tool
+// access action row, the mirror rows, and the panel Connect's
+// key-needed answer.
 function openManageForSeat(which) {
   try {
-    if (ws.libraryPanel.seatId) sessionStorage.setItem('helmian.manageSeat', ws.libraryPanel.seatId);
-    else sessionStorage.removeItem('helmian.manageSeat');
-    sessionStorage.setItem('helmian.manageTab', 'connectors');
+    sessionStorage.removeItem('helmian.manageSeat');
+    sessionStorage.setItem('helmian.manageTab', 'agents');
   } catch {}
   closePicker();
   document.querySelector('.nav-item[data-view="integrations"]')?.click();
@@ -2947,7 +2909,7 @@ function plusMenuRowNode(which, row, index) {
     case 'action': {
       if (row.action === 'github-file') return githubFileNode(which, row);
       if (row.action === 'tool-access') {
-        return h('button', { type: 'button', class: 'ew-picker-row', title: 'See what this seat\u2019s connections can do — the posture and per-tool switches on the Manage surface', onclick: () => openManageForSeat(which) },
+        return h('button', { type: 'button', class: 'ew-picker-row', title: 'Open this seat\u2019s account page in Helmian', onclick: () => openManageForSeat(which) },
           h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
       }
       return h('p', { class: 'ew-note' }, '');
@@ -4330,7 +4292,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=6da01986518daab8');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=9f1239bd566cc2a9');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();

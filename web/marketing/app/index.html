@@ -21,9 +21,9 @@
   <link rel="manifest" href="/app/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="/app/app.css?v=6da01986518daab8">
-  <link rel="stylesheet" href="/app/envoy.css?v=6da01986518daab8">
-  <script type="module" src="/app/app.js?v=6da01986518daab8"></script>
+  <link rel="stylesheet" href="/app/app.css?v=9f1239bd566cc2a9">
+  <link rel="stylesheet" href="/app/envoy.css?v=9f1239bd566cc2a9">
+  <script type="module" src="/app/app.js?v=9f1239bd566cc2a9"></script>
 </head>
 <body>
 <div id="shell" class="shell" data-view="desktop">
@@ -544,24 +544,18 @@
       <p class="muted sm">Connect the things Helmian works with. Passwords and keys are never shown here.</p>
       <div class="int-tabs" role="tablist" aria-label="Integrations sections">
         <button type="button" class="int-tab" role="tab" data-int-tab="agents" aria-selected="true">Agents</button>
-        <button type="button" class="int-tab" role="tab" data-int-tab="connectors" aria-selected="false">Connectors</button>
         <button type="button" class="int-tab" role="tab" data-int-tab="devices" aria-selected="false">Devices</button>
         <button type="button" class="int-tab" role="tab" data-int-tab="chat" aria-selected="false">Chat and code</button>
         <button type="button" class="int-tab" role="tab" data-int-tab="account" aria-selected="false">Account</button>
       </div>
       <div id="integrations" class="int-page"></div>
-      <section class="cm-section" data-int-pane="connectors">
-        <h3 class="int-head">Manage connectors, per seat</h3>
-        <p class="muted sm">Each seat&rsquo;s own connector library — connect and manage inside Helmian, never in a vendor window.</p>
-        <div id="connector-manage" class="cm-page"></div>
-      </section>
       <div class="empty empty-hint" data-empty-for="integrations" hidden><p class="t">Nothing connected yet</p><p class="sm">Link Discord or Slack from the Team channel, and link a PC in Devices.</p><a class="btn sm" href="#devices">Link a PC</a></div>
     </section>
 
     
     <section id="view-agents" class="view" data-view-panel="agents" hidden>
       <h2>Agents</h2>
-      <p class="muted sm">AI providers linked to this workspace. Turns still run on the desktop app.</p>
+      <p class="muted sm">The AI accounts linked to this workspace.</p>
       <div class="row-btns left" style="margin-bottom:12px">
         <button id="agents-refresh" class="btn primary sm" type="button">Refresh</button>
         <a class="btn sm" href="#integrations">Integrations</a>
@@ -577,10 +571,6 @@
         <div class="side-head" style="padding:0 0 8px"><span>OPEN SESSIONS</span></div>
         <div id="agents-sessions"></div>
       </div>
-      <details class="panel show-details" id="agents-details">
-        <summary class="eyebrow"><span class="sd-label">SHOW DETAILS</span><span class="chev" aria-hidden="true">▾</span></summary>
-        <div id="agents-detail-list" class="kv"></div>
-      </details>
     </section>
 
     

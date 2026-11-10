@@ -9,8 +9,9 @@
 //     full per-seat library read fourteen times sequentially
 //     (308 queries on a converged library), joins included;
 //   · the Manage surface re-asked for the seats on every refresh,
-//     so every seat switch paid that fan-out again (pinned in the
-//     view's test file, web/marketing/test/connector-manage.test.mjs).
+//     so every seat switch paid that fan-out again. (That surface
+//     was removed 2026-11-10; the read laws below stand on their
+//     own.)
 // The pins below hold the fixes to their numbers:
 //   (a) a current library performs ZERO entry writes on any read;
 //   (b) a catalog delta triggers exactly the delta — the missing
