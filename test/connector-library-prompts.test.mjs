@@ -221,7 +221,7 @@ function harness({ actor = OWNER, store, credentials, promptsClient } = {}) {
     store: store ?? fakeStore({}),
     pendingStore: { async save() { return true; }, async take() { return null; } },
     credentialClient: credentials ?? fakeCredentials(),
-    doorOAuth: { async registerClient() { return { clientId: 'c' }; }, async authorizeUrl() { return 'https://x'; }, async exchangeCode() { return {}; } },
+    oauthClientFor: () => ({ displayName: 'Stub', async exchangeCode() { return {}; } }),
     promptsClient: promptsClient ?? fakePromptsClient(),
     fetchImpl: async () => { throw new Error('no network in tests'); },
   });

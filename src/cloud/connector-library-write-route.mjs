@@ -15,9 +15,13 @@
 //                           endpoint and resource metadata — because
 //                           Helmian holds no OAuth client registration
 //                           for it yet; starting the OAuth road from
-//                           inside Helmian (DCR + PKCE S256 + a
-//                           remembered pending row) and landing those
-//                           callbacks is M3's leg.
+//                           inside Helmian (PKCE S256 + a remembered
+//                           pending row) is M3's connect leg. The
+//                           callback below is landed: it resolves
+//                           its OAuth client from the pending row's
+//                           provider through the registry in
+//                           connector-oauth-pending.mjs (§6) — there
+//                           is no default client.
 //     Vendor-brokered entries are refused plainly: they are mirrors,
 //     managed in the vendor's own garden (§1.5).
 //   POST /api/admin/connector-library/connect/header
@@ -70,8 +74,8 @@ import { LIVE_SEATS, NATIVE_STATE_SOURCES, catalogEntryById } from './connector-
 import { createMcpPromptsClient, renderPromptText } from './connector-mcp-prompts.mjs';
 import { createCredentialConnectClient } from './credential-connect.mjs';
 import {
+  createConnectorOAuthClient,
   createConnectorOAuthPendingStore,
-  createScribeDoorOAuth,
   hashOAuthState,
 } from './connector-oauth-pending.mjs';
 
@@ -184,14 +188,20 @@ export function createConnectorLibraryWriteHandler({
   store: injectedStore,
   pendingStore: injectedPending,
   credentialClient: injectedCredentials,
-  doorOAuth: injectedDoor,
+  oauthClientFor: injectedOAuthClientFor,
   promptsClient: injectedPrompts,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const resolveStore = () => injectedStore ?? (getPool() ? createConnectorLibraryStore(getPool()) : null);
   const resolvePending = () => injectedPending ?? (getPool() ? createConnectorOAuthPendingStore(getPool()) : null);
   const resolveCredentials = () => injectedCredentials !== undefined ? injectedCredentials : createCredentialConnectClient();
-  const resolveDoor = () => injectedDoor ?? createScribeDoorOAuth({ fetchImpl });
+  // The callback's OAuth client comes from the provider registry,
+  // keyed by the pending row's provider — there is no default client
+  // (m3-github/DESIGN.md §6.2). Null means the provider is unknown
+  // or not configured, and the callback fails honestly.
+  const resolveOAuthClient = (provider) => injectedOAuthClientFor
+    ? injectedOAuthClientFor(provider)
+    : createConnectorOAuthClient(provider, { fetchImpl });
   const resolvePrompts = () => injectedPrompts ?? createMcpPromptsClient({ fetchImpl });
 
   return async function connectorLibraryWrite({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson }) {
@@ -215,20 +225,33 @@ export function createConnectorLibraryWriteHandler({
         const fail = (line) => { send(response, 200, callbackPage('That sign-in did not land', line), 'text/html; charset=utf-8'); return true; };
         const code = requestUrl.searchParams.get('code');
         const state = requestUrl.searchParams.get('state');
-        const doorError = requestUrl.searchParams.get('error');
-        if (doorError) return fail('The Scribe door answered with an error, so nothing was connected. Start the connect again from the Manage surface.');
-        if (!code || !state) return fail('The Scribe door sent back no code, so nothing was connected. Start the connect again from the Manage surface.');
+        const providerError = requestUrl.searchParams.get('error');
+        if (providerError) return fail('The sign-in answered with an error, so nothing was connected. Start the connect again from the Manage surface.');
+        if (!code || !state) return fail('The sign-in sent back no code, so nothing was connected. Start the connect again from the Manage surface.');
         const pendingStore = resolvePending();
         const pending = pendingStore ? await pendingStore.take(tenantId, hashOAuthState(state)) : null;
         if (!pending) return fail('This sign-in link has expired or was never started here. Start the connect again from the Manage surface.');
         if (pending.personId !== personId) return fail('This sign-in was started by a different person in the workspace, so it cannot land on your account.');
+        // The client is the pending row's provider's, from the
+        // registry — never a default. A provider with no registered
+        // (or no configured) client gets the same honest answer as
+        // an expired link: Helmian cannot finish what it holds no
+        // client for.
+        const oauthClient = resolveOAuthClient(pending.provider);
+        if (!oauthClient) return fail('This sign-in link has expired or was never started here. Start the connect again from the Manage surface.');
+        const providerName = oauthClient.displayName || pending.provider;
         const credentials = resolveCredentials();
         if (!credentials) return fail('Helmian\u2019s credential storage is not switched on, so the sign-in could not be kept. Nothing was connected.');
         const store = resolveStore();
         if (!store) return fail('The connector library is not switched on yet. Nothing was connected.');
-        const tokens = await resolveDoor().exchangeCode({
-          clientId: pending.clientId, code, codeVerifier: pending.codeVerifier, redirectUri: pending.redirectUri,
-        });
+        let tokens;
+        try {
+          tokens = await oauthClient.exchangeCode({
+            clientId: pending.clientId, code, codeVerifier: pending.codeVerifier, redirectUri: pending.redirectUri,
+          });
+        } catch {
+          return fail(`The ${providerName} sign-in answered with an error, so nothing was connected. Start the connect again from the Manage surface.`);
+        }
         const providerId = providerIdFor(pending.seatId, pending.entryId);
         const accessTokenRef = buildConnectorTokenRef({ tenantId, seatId: pending.seatId, entryId: pending.entryId, personId, tokenKind: 'access' });
         const refreshTokenRef = tokens.refreshToken
@@ -249,12 +272,23 @@ export function createConnectorLibraryWriteHandler({
           if (!storedRefresh?.accepted) return fail('The credential service would not keep the sign-in, so nothing was connected.');
         }
         const grantedScopes = (tokens.scope ? tokens.scope.split(/\s+/) : pending.scopes).filter(Boolean);
+        // The recorded identity is the person's own account at the
+        // provider when the client can fetch it (GitHub: the login,
+        // one GET /user at callback time) — fail-soft to the
+        // provider's label when it cannot.
+        let accountIdentity = `${providerName} account`;
+        if (tokens.accessToken && typeof oauthClient.fetchIdentity === 'function') {
+          try {
+            const login = await oauthClient.fetchIdentity({ accessToken: tokens.accessToken });
+            if (login) accountIdentity = String(login);
+          } catch { /* the provider label stands */ }
+        }
         const connection = await store.createConnection(tenantId, personId, {
           personId, seatId: pending.seatId, entryId: pending.entryId,
-          accountIdentity: 'Scribe account', accessTokenRef, refreshTokenRef, grantedScopes,
+          accountIdentity, accessTokenRef, refreshTokenRef, grantedScopes,
         });
         void connection;
-        send(response, 200, callbackPage('Scribe is connected', 'Scribe is now connected inside Helmian for this seat. Taking you back to the Manage surface.'), 'text/html; charset=utf-8');
+        send(response, 200, callbackPage(`${providerName} is connected`, `${providerName} is now connected inside Helmian for this seat. Taking you back to the Manage surface.`), 'text/html; charset=utf-8');
         return true;
       }
 

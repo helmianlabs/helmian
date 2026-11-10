@@ -27,12 +27,12 @@
 //   armedStateFromConfig / armedConnectorPairs below are the two
 //   bridges between that stored shape and this store), and every
 //   message the composer sends carries the set's still-connected
-//   pairs as metadata.connectors. HONESTY, stated once and kept:
-//   carrying the set on a message is all a flip does today — the
-//   turn path's connectorArming seam is not wired yet (Mirror M3
-//   G4), so an armed connector's tools do not join a turn on the
-//   strength of this set. The switch records the choice; it does
-//   not yet run anything.
+//   pairs as metadata.connectors. Since Mirror M3 G4 (commit
+//   d6d215b) the turn path's connectorArming seam IS wired:
+//   dispatch resolves the set into arming records, the runner
+//   opens the connection and gates its tools by the connection's
+//   posture, fail closed. A flip therefore does run something —
+//   the armed connector's frozen tools join the seat's next turn.
 // - Only a Connected, Helmian-brokered row can be armed. A
 //   vendor-brokered row is a mirror (§1.5): its state is what the
 //   seat's vendor side last reported, its management lives in the
