@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=6da01986518daab8';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=6da01986518daab8';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=6da01986518daab8';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=6da01986518daab8';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=9f1239bd566cc2a9';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=9f1239bd566cc2a9';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=9f1239bd566cc2a9';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=9f1239bd566cc2a9';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -247,21 +247,6 @@ function show(view) {
   const panelView = view === 'chats' ? 'console' : view;
   for (const p of document.querySelectorAll('[data-view-panel]')) p.hidden = p.dataset.viewPanel !== panelView && !p.closest('#chat-panel');
   for (const b of document.querySelectorAll('.nav-item')) b.classList.toggle('active', b.dataset.view === view);
-  if (view === 'integrations') {
-    // The Manage surface's box is persistent DOM holding the previous
-    // mount's rows, and the surface only re-mounts at the END of
-    // loadIntegrations (the loader invoked below) — so without this
-    // clear, the first paint of every Integrations landing is the
-    // remembered seat's list until the mount lands (live walk,
-    // 2026-11-09 ~18:19: arriving from ChatGPT's Manage row showed
-    // Claude's rows first). loadIntegrations carries a second,
-    // marker-conditioned paint for the Manage road; navigation is
-    // where the panel becomes visible, so the unconditional clear
-    // belongs here — the surface re-mounts and re-reads on every
-    // landing, and its old rows are never the right thing to show.
-    const mb = $('#connector-manage');
-    if (mb) mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'));
-  }
   $('#view-title').textContent = stripLeadingEmoji(viewTitles(state.emojiMode)[view]);
   if (view === 'desktop') syncWorkspaceViewTitle();
   // ADVANCED is never forced by navigation: it offers itself once when a
@@ -288,13 +273,16 @@ function selectPanelTab(name, { openDrawer = false } = {}) {
 }
 for (const b of document.querySelectorAll('.panel-tab')) b.onclick = () => selectPanelTab(b.dataset.panelTab);
 
-// ---- Integrations view tabs (R1: Agents | Connectors | Devices | Chat and code | Account) ----
+// ---- Integrations view tabs (Agents | Devices | Chat and code | Account) ----
 // Same pattern as the workbench panel tabs above: one pane visible at a
 // time, the pick remembered in the store so it survives a reload. The
-// four card sections render into #integrations (loadIntegrations tags
-// each with data-int-section); the Manage-connectors section is the
-// Connectors pane. Sections not yet rendered are simply absent.
-const INT_TABS = ['agents', 'connectors', 'devices', 'chat', 'account'];
+// card sections render into #integrations (loadIntegrations tags each
+// with data-int-section). Sections not yet rendered are simply absent.
+// The per-seat connector library has no pane here (owner order,
+// 2026-11-10): connectors live in each agent's Connectors panel in the
+// channel. A remembered 'connectors' pick from before the removal is
+// not in INT_TABS, so selectIntegrationsTab falls back to Agents.
+const INT_TABS = ['agents', 'devices', 'chat', 'account'];
 const INT_TAB_SECTIONS = { agents: 'ai', devices: 'devices', chat: 'chat', account: 'account' };
 function selectIntegrationsTab(name) {
   const tab = INT_TABS.includes(name) ? name : 'agents';
@@ -305,8 +293,6 @@ function selectIntegrationsTab(name) {
   }
   const secId = INT_TAB_SECTIONS[tab];
   for (const s of document.querySelectorAll('#integrations .int-section')) s.hidden = s.dataset.intSection !== secId;
-  const cm = document.querySelector('#view-integrations .cm-section');
-  if (cm) cm.hidden = tab !== 'connectors';
   store.set('integrationsTab', tab);
 }
 for (const b of document.querySelectorAll('.int-tab')) b.onclick = () => selectIntegrationsTab(b.dataset.intTab);
@@ -2270,18 +2256,17 @@ async function loadEvidence() {
   const denied = (h.status === 'rejected' && h.reason?.status === 403) || (c.status === 'rejected' && c.reason?.status === 403);
   note.textContent = denied ? 'Handoffs and checkpoints are visible to owners and admins.' : '';
 }
-let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let apiKeyFieldsMod = null; let connectorManageMod = null;
+let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let apiKeyFieldsMod = null;
 // Integrations preload (speed fix 2, 2026-11-09): the first
-// Integrations open paid the two first-visit module fetches cold —
-// integrations-view and connector-manage, ~0.5–1.5 s of the cold
-// open. Once the workspace is mounted and the app sits idle, warm
-// both imports into the module map so the open finds them there.
+// Integrations open paid the first-visit module fetch cold —
+// integrations-view, ~0.5–1.5 s of the cold open. Once the
+// workspace is mounted and the app sits idle, warm the import
+// into the module map so the open finds it there.
 // A failed warm-up is silent and leaves the vars null: the real
 // open imports again and surfaces any failure exactly as before.
 let integrationsPreloadScheduled = false;
 // Integrations load passes are numbered as they start; a pass
-// paints only while it is still the newest (the same discipline
-// as the Manage surface's refreshSeq, P2). loadIntegrations is
+// paints only while it is still the newest. loadIntegrations is
 // re-entered by navigation and by every connect flow's onStored,
 // and two passes in flight together could otherwise let the older
 // pass's slower reads land last and repaint their staler states
@@ -2291,8 +2276,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=6da01986518daab8'); } catch {}
-    try { connectorManageMod ??= await import('./connector-manage.mjs?v=6da01986518daab8'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=9f1239bd566cc2a9'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2306,25 +2290,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  // A Manage-road landing (the composer panel's Manage row) leaves
-  // one-shot markers naming the seat and tab it wants. The Manage
-  // surface itself only mounts at the END of this function, after
-  // the reads below, and its box keeps the previous mount's rows
-  // until then — the landing's first paint was the remembered
-  // seat's list (live walk, 2026-11-09 ~18:00). Paint the surface's
-  // loading line into its box NOW, at landing time, so the first
-  // paint is never the remembered seat's rows. The markers are
-  // only peeked here: mountConnectorManage still consumes the seat
-  // marker, and the tab marker is consumed further down.
-  try {
-    if (sessionStorage.getItem('helmian.manageSeat') || sessionStorage.getItem('helmian.manageTab')) {
-      const mb = $('#connector-manage');
-      if (mb) mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'));
-    }
-  } catch {}
-  integrationsMod ??= await import('./integrations-view.mjs?v=6da01986518daab8');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=6da01986518daab8');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=6da01986518daab8');
+  integrationsMod ??= await import('./integrations-view.mjs?v=9f1239bd566cc2a9');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=9f1239bd566cc2a9');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=9f1239bd566cc2a9');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2340,8 +2308,8 @@ async function loadIntegrations() {
   }, { stateKeys: ['providers', 'presence'] });
   const c = settledReads.connectors; const p = settledReads.providers; const pr = settledReads.presence; const u = settledReads.usage; const o = settledReads.overview; const tc = settledReads.tools;
   // A newer landing started while this pass read: its reads are
-  // the fresher ones, so this pass never paints and never mounts
-  // the Manage surface (the newer pass mounts its own).
+  // the fresher ones, so this pass never paints (the newer pass
+  // paints its own).
   if (myLoad !== integrationsLoadSeq) return p.value;
   const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null });
   const box = $('#integrations');
@@ -2352,24 +2320,17 @@ async function loadIntegrations() {
     return wrap;
   }));
   for (const q of box.querySelectorAll('[data-qr]')) drawQr(q, q.dataset.qr);
-  // The per-seat Manage surface (mirror M1) mounts under the account
-  // cards: connector-manage.mjs owns its own reads and writes against
-  // the connector library routes.
-  const manageBox = $('#connector-manage');
-  if (manageBox) {
-    connectorManageMod ??= await import('./connector-manage.mjs?v=6da01986518daab8');
-    await connectorManageMod.mountConnectorManage(manageBox, { api, el, role: state.actor?.role ?? '' }).catch(() => {});
-  }
   // Freshly rendered sections start visible; re-apply the remembered
   // Integrations tab so a re-render never dumps every section back out.
   // A Manage-road landing (the composer panel's Manage row) names its
-  // tab in a one-shot marker ('helmian.manageTab', connector-manage's
-  // MANAGE_TAB_STORAGE_KEY): it opens on Connectors, and selecting it
-  // here persists the choice like any other tab pick.
+  // tab in a one-shot marker ('helmian.manageTab'): since the
+  // Connectors pane was removed (2026-11-10) it opens on Agents — the
+  // seat's account page — and selecting it here persists the choice
+  // like any other tab pick.
   let wantedTab = store.get('integrationsTab', 'agents');
   try {
-    if (sessionStorage.getItem('helmian.manageTab') === 'connectors') {
-      wantedTab = 'connectors';
+    if (sessionStorage.getItem('helmian.manageTab') === 'agents') {
+      wantedTab = 'agents';
       sessionStorage.removeItem('helmian.manageTab');
     }
   } catch {}
@@ -2518,7 +2479,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=6da01986518daab8')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=9f1239bd566cc2a9')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -2886,7 +2847,14 @@ async function loadAgents() {
     const icon = agentIconFor(a.name);
     card.append(el('div', 'title', icon ? `${icon} ${a.name}` : a.name), el('div', 'meta'));
     card.lastChild.append(el('span', `status ${a.connected ? 'ok' : ''}`, a.connected ? 'Connected' : 'Not connected'));
-    if (a.connected && a.lifecycle) card.append(el('div', 'meta', a.lifecycle));
+    // One primary action per card (2026 cleanup): the account itself
+    // is connected and managed on the Integrations Agents tab.
+    const actions = el('div', 'row-btns left');
+    const action = el('button', a.connected ? 'btn sm' : 'btn primary sm', a.connected ? 'Manage' : 'Connect');
+    action.type = 'button';
+    action.onclick = () => openAgentsTab();
+    actions.append(action);
+    card.append(actions);
     return card;
   }));
   const sess = $('#agents-sessions');
@@ -2899,11 +2867,6 @@ async function loadAgents() {
     d.style.cursor = 'pointer';
     return d;
   }));
-  const det = $('#agents-detail-list');
-  det.replaceChildren(...model.agents.filter((a) => a.connected).flatMap((a) => [
-    row(a.name, [a.authMode, a.adapter, a.lifecycle].filter(Boolean).join(' · ') || 'saved'),
-  ]));
-  if (!det.childElementCount) det.replaceChildren(el('p', 'muted sm', 'No provider details yet. Connect providers from Integrations or the desktop app.'));
 }
 $('#agents-refresh').onclick = () => Promise.all([loadAgents(), loadAgentSessions()]).then(() => toast('Agents refreshed', 'ok')).catch(() => toast('Could not refresh'));
 
@@ -3359,7 +3322,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=6da01986518daab8');
+  workspaceModule ??= await import('./envoy-workspace.js?v=9f1239bd566cc2a9');
   await loadFeedData().catch(() => {});
   await workspaceModule.mountWorkspace({
     api, post, toast, state,
@@ -3909,7 +3872,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=6da01986518daab8');
+    const mod = await import('./maestro-activation.mjs?v=9f1239bd566cc2a9');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }

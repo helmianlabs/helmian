@@ -31,8 +31,9 @@
 //                     picked (mirror-design §4): 'github-file' opens
 //                     the GitHub file source (the picker's picked
 //                     file rides the attach road); 'tool-access'
-//                     lands on the seat's Tool access face on the
-//                     Manage surface. An action exists ONLY where
+//                     opens the seat's account page in Helmian (the
+//                     Manage surface it once landed on was removed
+//                     2026-11-10). An action exists ONLY where
 //                     its carrier is real for that seat.
 //   projects          the "Add to project" row: the composer's
 //                     active-project picker, bound to the workspace
@@ -89,7 +90,7 @@
 // plugins) or deleted (the vendor skills mirror, Mistral's agents;
 // M7 re-points Mistral's at Helmian's custom agents). A feed-bound
 // group names no connector, so it can never invent one.
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=6da01986518daab8';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=9f1239bd566cc2a9';
 
 export const MENU_ITEM_TYPES = Object.freeze([
   'attach', 'capability', 'action', 'projects', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',
@@ -181,10 +182,11 @@ export const MENU_DEFINITIONS = deepFreeze({
         managedIn: 'Claude',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva', 'idiolect', 'figma'],
       }),
-      // Tool access (§3.1): lands on the seat's Manage surface,
-      // where the per-connection posture + the frozen snapshot's
-      // per-tool list live (bites M1/M2). Enforcement on armed
-      // turns is M3's leg.
+      // Tool access (§3.1): once landed on the seat's Manage
+      // surface, where the per-connection posture + the frozen
+      // snapshot's per-tool list lived (bites M1/M2). That surface
+      // was removed 2026-11-10; the row now opens the seat's
+      // account page (the Agents tab) like the Manage footer.
       action('Tool access', 'tool-access'),
     ]),
     submenu('Plugins', [
@@ -352,9 +354,9 @@ export function collectCatalogEntryIds(items) {
 }
 
 // The panel dedupe (menu dedupe, 2026-11-09): ONE connector name,
-// ONE row in a composed panel list — the law the Connectors tab
-// already applies (planConnectorRows in connector-manage.mjs),
-// restated for the "+" panel's composed rows. A seat's menu binds
+// ONE row in a composed panel list — the connector library's
+// standing one-name-one-row law, restated for the "+" panel's
+// composed rows. A seat's menu binds
 // both Helmian's brokered entry for a service (the live toggle
 // group) and the seat vendor's own entry for the same service (the
 // mirror group); when both stand in one list the person sees the

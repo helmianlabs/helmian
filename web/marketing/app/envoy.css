@@ -708,8 +708,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 /* ---- Integrations: small friendly cards ---- */
 .int-page { display:flex; flex-direction:column; gap:18px; max-width:1100px; }
 /* R1 (Integrations redesign): the 1100px cap covers the WHOLE view —
-   heading, tab bar, the card sections and the Manage-connectors section
-   (the cm-section used to sit outside .int-page and stretch full width). */
+   heading, tab bar and the card sections. */
 #view-integrations { max-width:1100px; }
 .int-tabs { display:flex; gap:2px; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:18px; position:sticky; top:0; z-index:2; background:var(--bg); }
 .int-tab { position:relative; border:0; background:transparent; color:var(--muted); font-weight:700; font-size:12px; letter-spacing:.04em; padding:8px 10px; border-radius:6px 6px 0 0; cursor:pointer; white-space:nowrap; min-height:40px; }
