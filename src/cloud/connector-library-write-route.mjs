@@ -125,6 +125,7 @@ import {
   connectorOAuthKindForEntry,
   fixedProviderForEntry,
   resolvePendingOAuthClient,
+  startCimdConnect,
   startDcrConnect,
 } from './connector-oauth-dcr.mjs';
 import { createToolConnectionsStore } from './tool-connections.mjs';
@@ -682,21 +683,28 @@ export function createConnectorLibraryWriteHandler({
         //     (dcr-unsupported) falls through to the consent
         //     boundary; every other named failure answers with its
         //     own code and its plain message.
+        //   cimd — the entry declares a client metadata document:
+        //     startCimdConnect runs discovery → the authorize URL
+        //     built directly on the document URL as client_id, no
+        //     registration call at all. A server that does not
+        //     advertise CIMD (cimd-unsupported) falls through to
+        //     the consent boundary the same way.
         // Anything else (no endpoint, not an OAuth entry at all)
         // keeps the consent-boundary answer.
         const oauthKind = connectorOAuthKindForEntry({ ...entry, authMode });
         const callbackUrl = `https://helmian.cloud${CONNECTOR_OAUTH_CALLBACK_PATH}`;
-        if (oauthKind?.kind === 'dcr') {
+        if (oauthKind?.kind === 'dcr' || oauthKind?.kind === 'cimd') {
           let started = null;
           try {
-            started = await startDcrConnect({
+            const startConnect = oauthKind.kind === 'cimd' ? startCimdConnect : startDcrConnect;
+            started = await startConnect({
               pendingStore: resolvePending(), tenantId, personId, seatId, entry,
               provider: oauthKind.provider, redirectUri: callbackUrl, fetchImpl,
               scopes: declaredOAuthScopes(entry),
             });
           } catch (error) {
             if (!(error instanceof ConnectorOAuthDcrError)) throw error;
-            if (error.code !== 'dcr-unsupported') {
+            if (error.code !== 'dcr-unsupported' && error.code !== 'cimd-unsupported') {
               throw failure(error.code === 'pending-store-unavailable' ? 503 : 502, error.message, { code: error.code });
             }
           }

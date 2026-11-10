@@ -337,6 +337,11 @@ test('the fixed registry is untouched: GitHub resolves as before, DCR rows only 
 
 test('provider keys and kinds: registry ids shed their prefix, GitHub stays fixed', () => {
   assert.equal(dcrProviderKeyForEntry({ id: 'registry-notion' }), 'notion');
+  // A Helmian-brokered Source 4 entry keys its pending rows off its
+  // own id too: the helmian- prefix is the same id-shaping family —
+  // Vercel's rows carry 'vercel' (Troy's 2026-11-10 call: Vercel
+  // connects through Vercel's own sign-in door, on this road).
+  assert.equal(dcrProviderKeyForEntry({ id: 'helmian-vercel' }), 'vercel');
   assert.equal(dcrProviderKeyForEntry({ id: 'custom-x' }), 'custom-x');
   assert.deepEqual(
     connectorOAuthKindForEntry({ id: 'helmian-github', authMode: 'oauth' }, { env: {} }),
@@ -344,6 +349,46 @@ test('provider keys and kinds: registry ids shed their prefix, GitHub stays fixe
   );
   assert.equal(connectorOAuthKindForEntry({ id: 'x', authMode: 'header', mcpEndpointUrl: 'https://example.com/mcp' }), null);
   assert.equal(connectorOAuthKindForEntry(null), null);
+});
+
+test('CIMD kinds: an entry declaring a client metadata document resolves to the cimd kind, outranking registration', () => {
+  // A synthetic entry carrying the declaration resolves by the
+  // data alone — kind, the service's own provider key, and the
+  // declared document URL as clientId.
+  assert.deepEqual(
+    connectorOAuthKindForEntry({
+      id: 'helmian-example', authMode: 'oauth', mcpEndpointUrl: 'https://mcp.example.com',
+      cimdClientId: 'https://helmian.cloud/oauth/client-metadata.json',
+    }),
+    {
+      kind: 'cimd', provider: 'example', resourceUrl: 'https://mcp.example.com',
+      clientId: 'https://helmian.cloud/oauth/client-metadata.json',
+    },
+  );
+  // Without the declaration the same shape stays DCR — the
+  // declaration, not the entry, makes the kind.
+  assert.equal(
+    connectorOAuthKindForEntry({ id: 'helmian-example', authMode: 'oauth', mcpEndpointUrl: 'https://mcp.example.com' }).kind,
+    'dcr',
+  );
+  // A non-HTTPS declaration is no declaration (a client_id must
+  // be an HTTPS URL under the CIMD draft).
+  assert.equal(
+    connectorOAuthKindForEntry({
+      id: 'helmian-example', authMode: 'oauth', mcpEndpointUrl: 'https://mcp.example.com',
+      cimdClientId: 'http://helmian.cloud/oauth/client-metadata.json',
+    }).kind,
+    'dcr',
+  );
+  // The real catalog entry: Vercel resolves to CIMD under its own
+  // provider key, carrying the published document URL.
+  assert.deepEqual(
+    connectorOAuthKindForEntry(catalogEntryById('claude', 'helmian-vercel')),
+    {
+      kind: 'cimd', provider: 'vercel', resourceUrl: 'https://mcp.vercel.com',
+      clientId: 'https://helmian.cloud/oauth/client-metadata.json',
+    },
+  );
 });
 
 test('the briefing renders scopes in plain words from the server\u2019s own facts', () => {
