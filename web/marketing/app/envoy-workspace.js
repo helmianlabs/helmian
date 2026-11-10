@@ -1,15 +1,19 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=7ccd1ca873f34ea5';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=7ccd1ca873f34ea5';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=7ccd1ca873f34ea5';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=7ccd1ca873f34ea5';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=7ccd1ca873f34ea5';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=7ccd1ca873f34ea5';
-import { createConnectFields } from './connect-fields.mjs?v=7ccd1ca873f34ea5';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=7ccd1ca873f34ea5';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=7ccd1ca873f34ea5';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=6991fd71304920aa';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=6991fd71304920aa';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=6991fd71304920aa';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=6991fd71304920aa';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=6991fd71304920aa';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=6991fd71304920aa';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=6991fd71304920aa';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=6991fd71304920aa';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=6991fd71304920aa';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=6991fd71304920aa';
+import { createConnectFields } from './connect-fields.mjs?v=6991fd71304920aa';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=6991fd71304920aa';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=6991fd71304920aa';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -861,7 +865,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2284,10 +2288,39 @@ async function loadLibraryFacts() {
 // the window the next load re-reads; inside it the cache stands.
 // No polling, no timers — the check rides the surface opens that
 // already call this loader.
+//
+// THE WORKSPACE SET RULE (sync S2b): connections are the person's
+// workspace set, not one agent's — a connector write made through
+// ANY agent's panel in this session (connect, disconnect, a
+// posture or tool-enable write, a key store or replace, a custom
+// entry created or removed) changes what EVERY agent's library
+// read answers. So a write invalidates every seat's cached
+// library at once (invalidateAllSeatLibraries below): each seat's
+// fetch stamp is zeroed, the Level 1 facts stamp is zeroed (its
+// counts ride the same set), and the write's own time is kept in
+// ws.libraryWriteAt. seatLibraryStale then refuses any copy
+// fetched before that write, however fresh its 60-second window
+// still is — so a Connectors level opened after a write in this
+// session always re-reads, and a stale set can never be served on
+// open. The server read itself is always fresh; this rule governs
+// only this session's cached copies.
 export const LIBRARY_STALE_MS = 60_000;
 function seatLibraryStale(seatId, now) {
   if (!ws.libraryFacts?.libraries?.[seatId]) return true;
-  return now - (ws.libraryFetchedAt[seatId] ?? 0) >= LIBRARY_STALE_MS;
+  const fetchedAt = ws.libraryFetchedAt[seatId] ?? 0;
+  if (fetchedAt < (ws.libraryWriteAt ?? 0)) return true;
+  return now - fetchedAt >= LIBRARY_STALE_MS;
+}
+// Every connector write the panel makes lands here first (the
+// write sites in this file call it on success, before any
+// re-read): all seats' cached libraries are stale from this
+// moment, the acted-on seat included — its own write site
+// re-reads it straight away, so its fresh copy carries a fetch
+// stamp at or after the write and stands.
+export function invalidateAllSeatLibraries(now = Date.now()) {
+  ws.libraryWriteAt = now;
+  for (const seatId of Object.keys(ws.libraryFetchedAt)) ws.libraryFetchedAt[seatId] = 0;
+  ws.libraryFactsFetchedAt = 0;
 }
 export async function loadSeatLibrary(seatId, now = Date.now()) {
   const facts = await loadLibraryFacts();
@@ -2302,6 +2335,14 @@ export async function loadSeatLibrary(seatId, now = Date.now()) {
     library = { seatId, connectedCount: 0, rows: [], error: true };
   }
   facts.libraries[seatId] = library;
+  // The key-kind seed (panel key-seed bite): each read row carries
+  // its entry's authMode from its definition, so the panel learns
+  // which entries take a key from the read itself — a header entry
+  // connected in an earlier session shows Replace in this fresh
+  // session, with no connect attempt. Rows without the field seed
+  // nothing and the panel learns from connect answers exactly as
+  // before (connector-key-form.mjs's known set carries the rules).
+  ws.keyForm.known = seedKnownKeyEntries(ws.keyForm.known, library.rows);
   ws.libraryFetchedAt[seatId] = now;
   return library;
 }
@@ -2339,7 +2380,12 @@ export function resetLibrarySession(ctx) {
   ws.libraryLoading = null;
   ws.libraryFetchedAt = {};
   ws.libraryFactsFetchedAt = 0;
+  ws.libraryWriteAt = 0;
   ws.libraryPreloadStarted = false;
+  ws.toolAccess = { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' };
+  ws.keyForm = { openFor: null, model: null, saving: false, error: '', known: {} };
+  ws.customForm = { open: false, seatId: null, model: null, saving: false, error: '', created: null };
+  ws.customRemove = { confirmFor: null, model: null, removing: false, error: '' };
   ws.skills = { list: null, loaded: false, loading: null };
   ws.plugins = { list: null, unavailable: [], loaded: false, loading: null };
 }
@@ -2366,6 +2412,20 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     h('span', { class: 'ew-lib-name' }, row.name),
     h('span', { class: 'ew-lib-line' }, row.oneLiner),
     h('span', { class: 'ew-lib-line' }, vendorLine));
+  // The removal control (panel-native home bite 4): a custom
+  // entry's row — and only a custom entry's row — carries the
+  // removal control under it (customRemoveNode below). The model
+  // rules on the row's own facts (row.kind, row.brokerMode,
+  // row.mirror): catalog and Helmian entries carry none, because
+  // the removal road refuses them, and a mirror row carries none,
+  // because a mirror's state lives in the vendor's own product.
+  const removeModel = customRemoveModel({
+    seatId: row.seatId, entryId: row.entryId, name: row.name,
+    kind: row.kind, brokerMode: row.brokerMode, mirror: row.mirror,
+  });
+  const withRemove = (node) => (removeModel
+    ? h('div', { class: 'ew-picker-group' }, node, customRemoveNode(which, row, removeModel))
+    : node);
   if (row.toggleable) {
     // The state line stands in the text block as its own line, and
     // the word beside the switch comes from the switch's own source
@@ -2376,7 +2436,7 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     // armed state — two sources in one slot, and the row read as a
     // lie).
     text.append(h('span', { class: 'ew-lib-line ew-lib-state' }, row.stateLabel));
-    return h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on in this channel — tap to turn it off` : `Turn ${row.name} on in this channel`, onclick: () => {
+    const toggleRow = h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on in this channel — tap to turn it off` : `Turn ${row.name} on in this channel`, onclick: () => {
       ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId);
       // The flip persists to the channel's config before anything
       // else renders from it (bite A2); a failed save reverts the
@@ -2386,14 +2446,38 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     } }, libraryIconTile(row), text,
       h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
       h('span', { class: `ew-picker-state ${row.on ? 'on' : 'off'}` }, row.on ? 'On' : 'Off'));
+    // A connected entry the panel knows takes a key — seeded
+    // from the library read's authMode when the seat's library
+    // loaded, or taught by a connect start's needs-credential
+    // answer this session — carries the key form's Replace row
+    // under its switch — see keyFormNode. An entry known from
+    // neither source carries nothing extra: the panel invents no
+    // key-kind it was not told.
+    const key = keyEntryKey(row.seatId, row.entryId);
+    if (!key || !ws.keyForm.known[key]) return withRemove(toggleRow);
+    const formOpen = ws.keyForm.openFor === key;
+    const replaceRow = h('div', { class: 'ew-picker-row ew-lib-row' },
+      h('span', { class: 'ew-lib-text' },
+        h('span', { class: 'ew-lib-name' }, 'Key or token'),
+        h('span', { class: 'ew-lib-line' }, row.stateLabel)),
+      h('button', { type: 'button', class: 'ew-lib-connect', title: `Replace the key for ${row.name}`, onclick: () => { openKeyForm(which, row, { connected: true }); renderPicker(which); } }, 'Replace key'));
+    return withRemove(formOpen
+      ? h('div', { class: 'ew-picker-group' }, toggleRow, replaceRow, keyFormNode(which, row))
+      : h('div', { class: 'ew-picker-group' }, toggleRow, replaceRow));
   }
   if (row.connectable) {
     // The Connect button the owner ordered on this panel
     // (2026-11-10): it starts the connector library's
     // connect-start — see startPanelConnect.
-    return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
+    const connectRow = h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
       h('span', { class: 'ew-picker-state off' }, row.stateLabel),
-      h('button', { type: 'button', class: 'ew-lib-connect', title: `Connect ${row.name} for ${seatName(row.seatId)}`, onclick: () => { void startPanelConnect(which, row); } }, row.reconnect ? 'Reconnect' : 'Connect'));
+      h('button', { type: 'button', class: 'ew-lib-connect', title: `Connect ${row.name} for your workspace — every agent shares it`, onclick: () => { void startPanelConnect(which, row); } }, row.reconnect ? 'Reconnect' : 'Connect'));
+    // The key form, when this entry's connect start opened it,
+    // expands under its own row in the panel (keyFormNode below).
+    if (ws.keyForm.openFor === keyEntryKey(row.seatId, row.entryId) && ws.keyForm.model) {
+      return withRemove(h('div', { class: 'ew-picker-group' }, connectRow, keyFormNode(which, row)));
+    }
+    return withRemove(connectRow);
   }
   if (row.mirror) {
     // A mirror row is never a button Helmian can't honour (§1.5):
@@ -2409,8 +2493,8 @@ function libraryRowNode(which, row, { shape = null } = {}) {
       h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel),
       h('span', { class: 'ew-picker-state off' }, 'Open'));
   }
-  return h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
-    h('span', { class: 'ew-picker-state off' }, row.stateLabel));
+  return withRemove(h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
+    h('span', { class: 'ew-picker-state off' }, row.stateLabel)));
 }
 
 // The panel's Connect button (owner order, 2026-11-10): the same
@@ -2420,10 +2504,37 @@ function libraryRowNode(which, row, { shape = null } = {}) {
 // repaints); an OAuth connector answers with the service's own
 // sign-in door and the person is handed that door; a sign-in
 // Helmian cannot broker yet says so in the route's own words; a
-// key connector needs its key — Helmian has no key form since the
-// Manage surface was removed (2026-11-10), so the panel says so
-// and opens the seat's account page.
+// key connector needs its key — that answer opens the key form
+// under the entry's own row in this panel (openKeyForm below;
+// panel-native home bite 2). Every other answer's handling is
+// exactly what it was before the form landed. A key entry the
+// library read already seeded (its row carries authMode 'header')
+// never makes this trip at all: its Connect opens the form from
+// the seed, and the connect answers that do happen fold into the
+// known set as the live truth (noteConnectAnswer).
 async function startPanelConnect(which, row) {
+  // A read-seeded key entry opens its key form on Connect
+  // directly — the library read already named its auth mode, so
+  // the connect start's round trip would only repeat it. The
+  // seed is the read's word, not the road's: the first connect
+  // answer this entry actually gets still re-rules the known set
+  // (noteConnectAnswer below).
+  // The one row the seed shortcut must NOT serve (sync S2c): a
+  // gate missing on this seat — a custom entry projected from the
+  // agent it was created on, holding no gate row here. Its
+  // Connect promises, in the row's own words, that connecting
+  // runs its safety check for this agent, and the connect start
+  // below is the road that registers and probes this seat's gate
+  // (S2a); opening the key form from the seed would skip that
+  // start entirely. When the check passes, the start's own
+  // needs-credential answer opens the key form through the normal
+  // answer path below.
+  const gateMissingHere = row.gate?.state === 'missing' && row.gate?.passed !== true;
+  if (!gateMissingHere && opensKeyFormFromSeed(ws.keyForm.known, row.seatId, row.entryId)) {
+    openKeyForm(which, row, { connected: row.state === 'connected' });
+    renderPicker(which);
+    return;
+  }
   let out;
   try {
     out = await ws.ctx.post('/api/admin/connector-library/connect', { seatId: row.seatId, entryId: row.entryId });
@@ -2431,9 +2542,14 @@ async function startPanelConnect(which, row) {
     ws.ctx.toast(e?.body?.error || `Could not start ${row.name}. Try again.`);
     return;
   }
+  // The live answer outranks the read seed, either way it lands:
+  // needs-credential confirms the entry as key-kind from the
+  // road's own mouth; any other answer clears a seeded entry the
+  // road just declined to treat as one.
+  ws.keyForm.known = noteConnectAnswer(ws.keyForm.known, row, out);
   if (out?.status === 'connected') {
     ws.ctx.toast(`${row.name} is connected.`, 'ok');
-    ws.libraryFetchedAt[row.seatId] = 0;
+    invalidateAllSeatLibraries();
     await loadSeatLibrary(row.seatId).catch(() => {});
     renderPicker(which);
     return;
@@ -2447,12 +2563,122 @@ async function startPanelConnect(which, row) {
     ws.ctx.toast(out.note || 'This sign-in cannot be completed inside Helmian yet.');
     return;
   }
-  if (out?.status === 'needs-credential') {
-    ws.ctx.toast(`${row.name} needs its key to connect.`);
-    openManageForSeat(which);
+  if (isNeedsCredentialAnswer(out)) {
+    openKeyForm(which, row, { connected: row.state === 'connected' });
+    renderPicker(which);
     return;
   }
   ws.ctx.toast(`${row.name}: ${out?.status ?? 'connect started'}.`);
+}
+
+// The key form (panel-native home bite 2): a key-kind entry's
+// Connect — the connect start's needs-credential answer — opens
+// this form under the entry's own row in the panel, the same
+// expand-in-place pattern as the Tool access face
+// (connector-key-form.mjs renders the model; this section renders
+// its DOM). The key field is write-only: it starts empty every
+// time the form is drawn, a stored key is never read back into
+// it, and the state the form shows after a write is the write
+// road's own returned connection — the panel re-reads the seat's
+// library too, so the row's state comes from the same stored
+// record. A refused write stays in the form as the server's own
+// plain words, and nothing reads connected. A connected key entry
+// the panel knows — seeded from the library read's authMode, or
+// taught by a connect answer this session — offers Replace (this
+// same form, a fresh key through the same road) and the existing
+// disconnect, which revokes the stored key before the record
+// clears.
+function openKeyForm(which, row, { connected = false } = {}) {
+  const kf = ws.keyForm;
+  const key = keyEntryKey(row.seatId, row.entryId);
+  if (!key) return;
+  // Opening the form records the entry as known — and keeps the
+  // source it was known by: a read seed stays a seed (its Connect
+  // keeps opening from the read until a live answer re-rules it),
+  // an answer-taught entry stays answer-sourced, and a form opened
+  // any other way (the Replace row) counts as learned here.
+  kf.known[key] = { seatId: row.seatId, entryId: row.entryId, source: kf.known[key]?.source ?? 'answer' };
+  kf.openFor = key;
+  kf.model = keyFormModel({
+    seatId: row.seatId, entryId: row.entryId, name: row.name, kind: row.kind,
+    connected, accountIdentity: row.accountIdentity ?? null,
+  });
+  kf.error = '';
+}
+async function saveKeyForm(which, inputs) {
+  const kf = ws.keyForm;
+  if (!kf.model || kf.saving) return;
+  kf.saving = true;
+  const result = await submitKeyForm({
+    post: (path, body) => ws.ctx.post(path, body),
+    model: kf.model,
+    values: { apiKey: inputs.apiKey?.value ?? '', accountLabel: inputs.accountLabel?.value ?? '' },
+  });
+  kf.saving = false;
+  if (result.ok) {
+    kf.model = result.model;
+    kf.error = '';
+    ws.ctx.toast(`${result.model.name} is connected.`, 'ok');
+    invalidateAllSeatLibraries();
+    await loadSeatLibrary(result.model.seatId).catch(() => {});
+  } else {
+    kf.error = result.error;
+  }
+  if (ws.pickerFor === which) renderPicker(which);
+}
+async function disconnectKeyForm(which) {
+  const kf = ws.keyForm;
+  if (!kf.model || kf.saving) return;
+  kf.saving = true;
+  const result = await disconnectKeyEntry({
+    post: (path, body) => ws.ctx.post(path, body),
+    model: kf.model,
+  });
+  kf.saving = false;
+  if (result.ok) {
+    kf.model = result.model;
+    kf.error = '';
+    ws.ctx.toast(result.out?.custodyRevoked
+      ? `${result.model.name} is disconnected and its stored sign-in was revoked.`
+      : `${result.model.name} is disconnected.`);
+    invalidateAllSeatLibraries();
+    await loadSeatLibrary(result.model.seatId).catch(() => {});
+  } else {
+    kf.error = result.error;
+  }
+  if (ws.pickerFor === which) renderPicker(which);
+}
+function keyFormNode(which, row) {
+  const kf = ws.keyForm;
+  const model = kf.model;
+  if (!model) return h('p', { class: 'ew-note' }, '');
+  const children = [h('p', { class: 'ew-note' }, model.intro)];
+  if (model.connected) children.push(h('p', { class: 'ew-note' }, model.stateLine));
+  const inputs = {};
+  for (const field of model.fields) {
+    const input = h('input', {
+      type: field.type, class: 'ew-gh-path', placeholder: field.placeholder,
+      autocomplete: field.autocomplete, 'aria-label': field.label,
+      ...(field.maxLength ? { maxLength: field.maxLength } : {}),
+    });
+    inputs[field.name] = input;
+    children.push(input);
+  }
+  if (kf.error) children.push(h('p', { class: 'ew-note' }, kf.error));
+  const buttons = [h('button', {
+    type: 'button', class: 'ew-lib-connect', disabled: kf.saving,
+    title: `Store the key and connect ${model.name} for your workspace — every agent shares it`,
+    onclick: () => { void saveKeyForm(which, inputs); },
+  }, kf.saving ? model.button.pendingLabel : model.button.label)];
+  if (model.connected) {
+    buttons.push(h('button', {
+      type: 'button', class: 'ew-btn sm', disabled: kf.saving,
+      title: `Disconnect ${model.name} and revoke its stored key`,
+      onclick: () => { void disconnectKeyForm(which); },
+    }, 'Disconnect'));
+  }
+  children.push(h('div', { class: 'ew-gh-bar' }, ...buttons));
+  return h('div', { class: 'ew-picker-group ew-key-form' }, ...children);
 }
 
 // The Level 2 model: one seat's menu definition composed with that
@@ -2464,10 +2690,12 @@ async function startPanelConnect(which, row) {
 //   { kind: 'attach', label }
 //   { kind: 'capability', label, capability, on }  (web search only)
 //   { kind: 'screenshot', label }                  (browser capture)
-//   { kind: 'action', label, action }              (github-file / tool-access)
+//   { kind: 'action', label, action }              (github-file)
+//   { kind: 'action', label, action:'tool-access', seatId, entries, selectedEntryId, open, libraryState }
 //   { kind: 'label', label }                       (a group heading)
 //   { kind: 'note', text }
 //   { kind: 'toggle' | 'mirror' | 'row' | 'connect', row, rowShape }
+//   { kind: 'custom-add', seatId }                (the Connectors list's last row)
 //   { kind: 'skill', skillId, name, description, on, disabled }
 //   { kind: 'plugin', name, brings, toolCount, on }
 //   { kind: 'project', key, name, active }
@@ -2479,8 +2707,9 @@ async function startPanelConnect(which, row) {
 // 2026-11-10, superseding bite A2's connected-only list): Connected
 // rows render as switches in the channel's standing set (Amendment 1
 // §2.3), not-connected rows carry a working Connect action, rows that
-// can be neither today (owner-disabled, an unpassed safety gate, a
-// local-only entry) stand as honest state rows, and library rows no
+// can be neither today (owner-disabled, a safety check that ran
+// on this seat and did not pass, a local-only entry) stand as
+// honest state rows, and library rows no
 // menu binds — a person's own entries — join this list so nothing
 // the library holds is missing from the panel. Vendor mirrors are
 // never offered here; an unbound mirror joins the seat's mirror
@@ -2500,13 +2729,14 @@ export function pluginsUnavailableNote(count) {
   return n ? `${n} plugin${n === 1 ? '' : 's'} could not be loaded.` : null;
 }
 
-export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, pluginsUnavailable = [], skillAttach = [], attachments = [], projects = null, activeProjectKey = null } = {}) {
+export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, pluginsUnavailable = [], skillAttach = [], attachments = [], projects = null, activeProjectKey = null, toolAccess = null } = {}) {
   const definition = menuForSeat(seatId);
   if (!definition) return null;
   const byId = new Map();
+  let level2 = null;
   if (library && !library.error) {
-    const model = level2Model(library, toggles, conversationId);
-    for (const row of [...model.connected, ...model.catalog]) byId.set(row.entryId, row);
+    level2 = level2Model(library, toggles, conversationId);
+    for (const row of [...level2.connected, ...level2.catalog]) byId.set(row.entryId, row);
   }
   // The Connectors badge (mirror-design §3.1, bite M2): Troy's
   // Claude.ai shot carries ⚠ 1 on the Connectors row — Canva needs
@@ -2592,12 +2822,20 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
       const connects = mine.filter((r) => !r.toggleable && r.connectable);
       const resting = mine.filter((r) => !r.toggleable && !r.connectable);
       if (!toggles.length && !connects.length && !resting.length) {
-        out.push({ kind: 'note', text: `No connectors are connected for ${seatName(seatId)} yet.` });
+        out.push({ kind: 'note', text: 'No connectors are connected yet.' });
+        out.push({ kind: 'custom-add', seatId });
         return out;
       }
       for (const row of toggles) out.push({ kind: 'toggle', row, rowShape });
       for (const row of connects) out.push({ kind: 'connect', row, rowShape });
       for (const row of resting) out.push({ kind: 'row', row, rowShape });
+      // The add-a-custom row (panel-native home bite 3): the
+      // Connectors list's last row — where a person adding
+      // something new looks is the end of the list it will join.
+      // The creation road is owner/admin on the server; a caller
+      // the road refuses reads its words in the form, never a
+      // hidden row this client cannot ground.
+      out.push({ kind: 'custom-add', seatId });
       return out;
     }
     let rows = boundRows(item);
@@ -2628,7 +2866,25 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
         if (item.capability === 'web-search') return [{ kind: 'capability', label: item.label, capability: item.capability, on: webSearchOn === true }];
         if (item.capability === 'screenshot') return [{ kind: 'screenshot', label: item.label }];
         return [];
-      case 'action': return [{ kind: 'action', label: item.label, action: item.action }];
+      case 'action': {
+        if (item.action === 'tool-access') {
+          // Tool access (panel-native home bite 1): the row opens
+          // THIS seat's tool access face in the panel — the entries
+          // it can speak for come from the seat's own library read
+          // (connector-tool-access.mjs's entry list over the Level 2
+          // model), and the face's open/selected state rides in from
+          // the workspace so the model stays pure.
+          const entries = level2 ? toolAccessEntries(level2) : [];
+          const selected = pickToolAccessEntry(entries, toolAccess?.entryId ?? null);
+          return [{
+            kind: 'action', label: item.label, action: item.action, seatId,
+            entries, selectedEntryId: selected?.entryId ?? null,
+            open: toolAccess?.open === true && toolAccess?.seatId === seatId,
+            libraryState: !library ? 'loading' : library.error ? 'error' : 'ready',
+          }];
+        }
+        return [{ kind: 'action', label: item.label, action: item.action }];
+      }
       case 'projects': return [{ kind: 'submenu', label: item.label, rows: projectRows() }];
       case 'live-toggle-group': return groupRows(item, 'mirror');
       case 'mirror-group': return groupRows(item, item.rowShape ?? 'mirror');
@@ -2706,6 +2962,7 @@ function renderPlusMenuLevel2(which) {
     attachments: ws.attach[which] ?? [],
     projects: ws.projects.loaded ? ws.projects.list : null,
     activeProjectKey: ws.projects.activeKey ?? ws.ctx?.state?.activeProjectKey ?? null,
+    toolAccess: ws.toolAccess,
   });
   const back = h('button', { type: 'button', class: 'ew-btn sm ghost ew-lib-back', onclick: () => { ws.libraryPanel = { level: 1, seatId: null, sub: null }; renderPicker(which); } }, '‹ All agents');
   const head = h('div', { class: 'ew-plus-head' }, back, h('strong', {}, seatName(seatId)));
@@ -2808,9 +3065,11 @@ function screenshotRowNode(which, row) {
 // The tab marker names 'agents'; app.js's loadIntegrations consumes
 // it and selects that tab, so the landing is never left hidden
 // behind the remembered tab. No seat marker is written any more:
-// nothing consumes one. Shared by the manage footer row, the Tool
-// access action row, the mirror rows, and the panel Connect's
-// key-needed answer.
+// nothing consumes one. Shared by the manage footer row and the
+// mirror rows. (The Tool access action row no longer rides this
+// funnel — it expands its own face in the panel, toolAccessNode
+// below; the panel Connect's key-needed answer no longer rides it
+// either — it opens the key form in the panel, keyFormNode above.)
 function openManageForSeat(which) {
   try {
     sessionStorage.removeItem('helmian.manageSeat');
@@ -2902,16 +3161,169 @@ async function ingestGithubBody(which, body, note) {
   await ingestPickedFile(which, file, note);
 }
 
+// The Tool access face (panel-native home bite 1): the Tool access
+// row in a seat's Connectors submenu expands in place — the same
+// expand pattern as the GitHub file source above — into the seat's
+// per-connection posture picker and per-tool switches
+// (connector-tool-access.mjs). The face reads its state from the
+// tool-access read when it opens (loadToolAccess below, on the
+// workspace's own api road); a posture pick or a tool flip writes
+// through the library's write roads, and what renders next is the
+// state the write itself returned — never an optimistic flip.
+// Entries with no connection carry no controls: posture belongs to
+// a connection, so their row states the truth ("Connect first" /
+// "Reconnect first") and is not a button. The key/token form is a
+// sibling bite — it expands under the connector's own row in the
+// Connectors list (keyFormNode above), following this face's
+// expand-in-place pattern. The add-a-custom form (panel-native
+// home bite 3) stands as the Connectors list's last row —
+// customFormNode above.
+async function openToolAccess(which, row) {
+  const ta = ws.toolAccess;
+  ta.open = true;
+  ta.seatId = row.seatId;
+  ta.entryId = row.selectedEntryId ?? null;
+  ta.model = null;
+  ta.error = '';
+  if (ta.entryId) await refreshToolAccess(which);
+}
+async function refreshToolAccess(which) {
+  const ta = ws.toolAccess;
+  if (!ta.seatId || !ta.entryId || ta.loading) return;
+  ta.loading = true;
+  try {
+    ta.model = await loadToolAccess({ api: (url) => ws.ctx.api(url), seatId: ta.seatId, entryId: ta.entryId });
+    ta.error = '';
+  } catch {
+    ta.model = null;
+    ta.error = 'Tool access could not be loaded. Try again.';
+  }
+  ta.loading = false;
+  if (ws.pickerFor === which) renderPicker(which);
+}
+async function saveToolAccessPosture(which, posture) {
+  const ta = ws.toolAccess;
+  if (!ta.model || ta.saving) return;
+  ta.saving = true;
+  try {
+    const next = await writeToolAccessPosture({ post: (path, body) => ws.ctx.post(path, body), model: ta.model, posture });
+    if (next) {
+      ta.model = next;
+      // A posture write is a write to the workspace set's
+      // connection: every seat's cached library is stale from
+      // here (sync S2b) — the next open of any agent's
+      // Connectors level re-reads. This face keeps the write's
+      // own returned record; it does not re-read a library the
+      // posture does not change the rows of.
+      invalidateAllSeatLibraries();
+    }
+    ta.error = '';
+  } catch { ta.error = 'That change could not be saved. Try again.'; }
+  ta.saving = false;
+  if (ws.pickerFor === which) renderPicker(which);
+}
+async function saveToolAccessTool(which, tool) {
+  const ta = ws.toolAccess;
+  if (!ta.model || ta.saving) return;
+  ta.saving = true;
+  try {
+    const next = await writeToolAccessTool({ post: (path, body) => ws.ctx.post(path, body), model: ta.model, toolName: tool.name, enabled: !tool.enabled });
+    if (next) {
+      ta.model = next;
+      // Same set rule as the posture write above: a tool-enable
+      // write invalidates every seat's cached library.
+      invalidateAllSeatLibraries();
+    }
+    ta.error = '';
+  } catch { ta.error = 'That change could not be saved. Try again.'; }
+  ta.saving = false;
+  if (ws.pickerFor === which) renderPicker(which);
+}
+function toolAccessNode(which, row) {
+  const ta = ws.toolAccess;
+  const open = row.open === true;
+  const head = h('button', { type: 'button', class: 'ew-picker-row', 'aria-expanded': String(open), title: 'Set when this connection\u2019s tools ask before they run, and turn single tools on or off', onclick: () => {
+    if (open) { ta.open = false; renderPicker(which); return; }
+    void openToolAccess(which, row).then(() => { if (ws.pickerFor === which) renderPicker(which); });
+    renderPicker(which);
+  } }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, open ? '▾' : '›'));
+  if (!open) return head;
+  const children = [head];
+  if (row.libraryState === 'loading') {
+    children.push(h('p', { class: 'ew-note' }, 'Loading connectors...'));
+    return h('div', { class: 'ew-picker-group' }, ...children);
+  }
+  if (row.libraryState === 'error') {
+    children.push(h('p', { class: 'ew-note' }, 'This library could not be loaded.'));
+    return h('div', { class: 'ew-picker-group' }, ...children);
+  }
+  if (!row.entries.length) {
+    children.push(h('p', { class: 'ew-note' }, 'No connectors can be set here yet.'));
+    return h('div', { class: 'ew-picker-group' }, ...children);
+  }
+  for (const entry of row.entries) {
+    if (!entry.connected) {
+      // No connection, no controls — the row states the truth and
+      // is a plain row, never a button that goes nowhere.
+      children.push(h('div', { class: 'ew-picker-row ew-lib-row ew-tool-access-entry' },
+        h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, entry.name)),
+        h('span', { class: 'ew-picker-state off' }, entry.blockedNote)));
+      continue;
+    }
+    const picked = entry.entryId === row.selectedEntryId;
+    children.push(h('button', { type: 'button', class: `ew-picker-row ew-tool-access-entry${picked ? ' on' : ''}`, 'aria-expanded': String(picked), onclick: () => {
+      if (picked) return;
+      ta.entryId = entry.entryId;
+      ta.model = null;
+      ta.error = '';
+      void refreshToolAccess(which);
+      renderPicker(which);
+    } }, h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, entry.name)),
+      h('span', { class: 'ew-picker-state off' }, picked ? '▾' : '›')));
+    if (!picked) continue;
+    if (ta.loading || !ta.model) {
+      children.push(h('p', { class: 'ew-note' }, ta.error || 'Loading tool access...'));
+      continue;
+    }
+    const model = ta.model;
+    if (model.connectFirst) {
+      children.push(h('p', { class: 'ew-note' }, 'Connect first — tool access belongs to a connection, and this one is not connected.'));
+      continue;
+    }
+    if (ta.error) children.push(h('p', { class: 'ew-note' }, ta.error));
+    children.push(h('div', { class: 'ew-subhead' }, 'When tools ask before running'));
+    for (const option of model.options) {
+      children.push(h('button', { type: 'button', class: `ew-picker-row${option.selected ? ' on' : ''}`, disabled: ta.saving || option.selected, title: option.detail, onclick: () => { void saveToolAccessPosture(which, option.value); } },
+        h('span', { class: 'ew-lib-text' },
+          h('span', { class: 'ew-lib-name' }, option.label),
+          h('span', { class: 'ew-lib-line' }, option.detail)),
+        h('span', { class: `ew-picker-state ${option.selected ? 'on' : 'off'}` }, option.selected ? 'In use' : 'Use')));
+    }
+    children.push(h('div', { class: 'ew-subhead' }, 'Tools'));
+    if (!model.tools.length) {
+      children.push(h('p', { class: 'ew-note' }, model.hasSnapshot ? 'This connection has no tools.' : 'No tool list has been saved for this connection yet.'));
+    }
+    for (const tool of model.tools) {
+      const text = h('span', { class: 'ew-lib-text' },
+        h('span', { class: 'ew-lib-name' }, tool.name),
+        ...(tool.description ? [h('span', { class: 'ew-lib-line' }, tool.description)] : []),
+        h('span', { class: 'ew-lib-line' }, tool.kindLabel));
+      children.push(h('button', { type: 'button', class: `ew-picker-row${tool.enabled ? ' on' : ''}`, disabled: ta.saving, title: tool.enabled ? `${tool.name} is on — tap to turn it off` : `Turn ${tool.name} on`, onclick: () => { void saveToolAccessTool(which, tool); } },
+        text,
+        h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
+        h('span', { class: `ew-picker-state ${tool.enabled ? 'on' : 'off'}` }, tool.enabled ? 'On' : 'Off')));
+    }
+  }
+  return h('div', { class: 'ew-picker-group' }, ...children);
+}
+
 function plusMenuRowNode(which, row, index) {
   switch (row.kind) {
     case 'attach': return attachRowNode(which, row);
     case 'screenshot': return screenshotRowNode(which, row);
     case 'action': {
       if (row.action === 'github-file') return githubFileNode(which, row);
-      if (row.action === 'tool-access') {
-        return h('button', { type: 'button', class: 'ew-picker-row', title: 'Open this seat\u2019s account page in Helmian', onclick: () => openManageForSeat(which) },
-          h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
-      }
+      if (row.action === 'tool-access') return toolAccessNode(which, row);
       return h('p', { class: 'ew-note' }, '');
     }
     case 'skill': {
@@ -2964,6 +3376,7 @@ function plusMenuRowNode(which, row, index) {
     case 'label': return h('div', { class: 'ew-subhead' }, row.label);
     case 'note': return h('p', { class: 'ew-note' }, row.text);
     case 'toggle': case 'mirror': case 'row': case 'connect': return libraryRowNode(which, row.row, { shape: row.rowShape });
+    case 'custom-add': return customFormNode(which, row);
     case 'submenu': {
       const open = ws.libraryPanel.sub === index;
       const head = h('button', { type: 'button', class: 'ew-picker-row', 'aria-expanded': String(open), onclick: () => {
@@ -2999,6 +3412,190 @@ function renderPicker(which) {
   } else {
     panel.replaceChildren(...renderPlusMenuLevel1(which));
   }
+}
+
+// The add-a-custom form (panel-native home bite 3): the last row
+// of a seat's Connectors list opens this form in the panel — the
+// same expand-in-place pattern as the key form above
+// (connector-custom-form.mjs renders the model; this section
+// renders its DOM). Submitting posts the creation road's exact
+// payload; on success the panel re-reads the seat's library, so
+// the new entry appears in the list from the stored record, in
+// its true state — created, not connected — and the form states
+// the creation answer's safety-check state in plain words (a
+// check that has not passed is stated, never dressed as passed;
+// the entry's key, when it takes one, is entered afterwards
+// through the key form under its own row). On refusal the
+// server's plain words stay in the form and no entry appears —
+// the creation road is owner/admin, and a member who is neither
+// reads exactly that refusal here.
+function openCustomForm(which, seatId) {
+  const cf = ws.customForm;
+  cf.open = true;
+  cf.seatId = seatId;
+  cf.model = customFormModel({ seatId });
+  cf.error = '';
+  cf.created = null;
+}
+async function saveCustomForm(which, inputs) {
+  const cf = ws.customForm;
+  if (!cf.model || cf.saving) return;
+  cf.saving = true;
+  const result = await submitCustomForm({
+    post: (path, body) => ws.ctx.post(path, body),
+    model: cf.model,
+    values: {
+      name: inputs.name?.value ?? '',
+      mcpEndpointUrl: inputs.mcpEndpointUrl?.value ?? '',
+      oneLiner: inputs.oneLiner?.value ?? '',
+      authMode: inputs.authMode?.value ?? '',
+    },
+  });
+  cf.saving = false;
+  if (result.ok) {
+    cf.created = result.created;
+    cf.error = '';
+    ws.ctx.toast(`${result.created.name} was added to ${seatName(result.created.seatId ?? cf.seatId)}'s library.`, 'ok');
+    invalidateAllSeatLibraries();
+    await loadSeatLibrary(cf.seatId).catch(() => {});
+  } else {
+    cf.error = result.error;
+    cf.created = null;
+  }
+  if (ws.pickerFor === which) renderPicker(which);
+}
+function customFormNode(which, row) {
+  const cf = ws.customForm;
+  const open = cf.open === true && cf.seatId === row.seatId;
+  const head = h('button', { type: 'button', class: 'ew-picker-row', 'aria-expanded': String(open), title: `Add a custom connector to ${seatName(row.seatId)}'s library`, onclick: () => {
+    if (open) { cf.open = false; renderPicker(which); return; }
+    openCustomForm(which, row.seatId);
+    renderPicker(which);
+  } }, h('span', {}, 'Add a custom connector'), h('span', { class: 'ew-picker-state off' }, open ? '▾' : '›'));
+  if (!open) return head;
+  const model = cf.model;
+  if (!model) return h('div', { class: 'ew-picker-group' }, head, h('p', { class: 'ew-note' }, 'This connector cannot be added here.'));
+  const children = [head, h('p', { class: 'ew-note' }, model.intro)];
+  if (cf.created) {
+    children.push(h('p', { class: 'ew-note' }, `${cf.created.name} was added to this seat's library. It is not connected yet.`));
+    children.push(h('p', { class: 'ew-note' }, cf.created.gate.line));
+  }
+  const inputs = {};
+  for (const field of model.fields) {
+    if (field.kind === 'select') {
+      const select = h('select', { class: 'ew-gh-path', 'aria-label': field.label });
+      for (const option of field.options) {
+        const opt = h('option', { value: option.value }, option.label);
+        if (option.value === model.defaultAuthMode) opt.selected = true;
+        select.append(opt);
+      }
+      inputs[field.name] = select;
+      children.push(select);
+      continue;
+    }
+    const input = h('input', {
+      type: field.type, class: 'ew-gh-path', placeholder: field.placeholder,
+      autocomplete: field.autocomplete, 'aria-label': field.label,
+      ...(field.maxLength ? { maxLength: field.maxLength } : {}),
+    });
+    inputs[field.name] = input;
+    children.push(input);
+  }
+  if (cf.error) children.push(h('p', { class: 'ew-note' }, cf.error));
+  children.push(h('div', { class: 'ew-gh-bar' }, h('button', {
+    type: 'button', class: 'ew-lib-connect', disabled: cf.saving,
+    title: `Add a custom connector to ${seatName(model.seatId)}'s library`,
+    onclick: () => { void saveCustomForm(which, inputs); },
+  }, cf.saving ? model.button.pendingLabel : model.button.label)));
+  return h('div', { class: 'ew-picker-group ew-custom-form' }, ...children);
+}
+
+// The custom entry removal control (panel-native home bite 4): a
+// custom entry's row in the Connectors list carries a Remove
+// control under it (connector-custom-remove.mjs renders the
+// model; this section renders its DOM) — the panel surface for
+// the removal road bite 3's report named as a dead end.
+// Placement and confirmation follow the panel's own patterns:
+// the control stands under the entry's row the way the key
+// form's Replace row stands under a connected row, and the
+// confirmation follows the skill editor's delete pattern — a
+// plain line stating what goes, then Keep it / Remove for good.
+// The confirmation is not the key form's Disconnect:
+// disconnect leaves the entry standing and revokes its stored
+// key; this removes the entry itself, and the model's line says
+// so, including that a connection under the entry goes with it.
+// Submitting posts the road's exact payload; on success the
+// panel re-reads the seat's library, so the entry is gone
+// because the read no longer returns it — nothing is removed
+// from the cached list here. On refusal the server's plain
+// words stay on the row and the entry stays. The road is
+// owner/admin and custom entries only: the control is offered
+// only on a custom entry's row (libraryRowNode above), and a
+// member the road refuses reads its words here.
+async function removeCustomEntry(which) {
+  const cr = ws.customRemove;
+  if (!cr.model || cr.removing) return;
+  cr.removing = true;
+  const result = await submitCustomRemove({
+    post: (path, body) => ws.ctx.post(path, body),
+    model: cr.model,
+  });
+  cr.removing = false;
+  if (result.ok) {
+    const seatId = cr.model.seatId;
+    cr.confirmFor = null;
+    cr.model = null;
+    cr.error = '';
+    ws.ctx.toast(`${result.removed.name} was removed from ${seatName(seatId)}'s library.`, 'ok');
+    invalidateAllSeatLibraries();
+    await loadSeatLibrary(seatId).catch(() => {});
+  } else {
+    cr.error = result.error;
+  }
+  if (ws.pickerFor === which) renderPicker(which);
+}
+function customRemoveNode(which, row, model) {
+  const cr = ws.customRemove;
+  const confirming = cr.confirmFor === keyEntryKey(model.seatId, model.entryId) && Boolean(cr.model);
+  if (!confirming) {
+    return h('div', { class: 'ew-picker-row ew-lib-row' },
+      h('span', { class: 'ew-lib-text' },
+        h('span', { class: 'ew-lib-name' }, 'Custom connector'),
+        h('span', { class: 'ew-lib-line' }, 'Added to this seat — it can be removed from here')),
+      h('button', {
+        type: 'button', class: 'ew-lib-connect',
+        title: `Remove ${model.name} from ${seatName(model.seatId)}'s library`,
+        onclick: () => { openCustomRemove(which, model); },
+      }, model.button.label));
+  }
+  const children = [h('p', { class: 'ew-note' }, model.confirmLine)];
+  if (cr.error) children.push(h('p', { class: 'ew-note' }, cr.error));
+  children.push(h('div', { class: 'ew-gh-bar' },
+    h('button', {
+      type: 'button', class: 'ew-btn sm', disabled: cr.removing,
+      title: `Keep ${model.name} in ${seatName(model.seatId)}'s library`,
+      onclick: () => { cancelCustomRemove(which); },
+    }, model.keepLabel),
+    h('button', {
+      type: 'button', class: 'ew-lib-connect', disabled: cr.removing,
+      title: `Remove ${model.name} from ${seatName(model.seatId)}'s library for good`,
+      onclick: () => { void removeCustomEntry(which); },
+    }, cr.removing ? model.button.pendingLabel : model.confirmLabel)));
+  return h('div', { class: 'ew-picker-group ew-custom-remove' }, ...children);
+}
+function openCustomRemove(which, model) {
+  const cr = ws.customRemove;
+  cr.confirmFor = keyEntryKey(model.seatId, model.entryId);
+  cr.model = model;
+  cr.error = '';
+  renderPicker(which);
+}
+function cancelCustomRemove(which) {
+  const cr = ws.customRemove;
+  cr.confirmFor = null;
+  cr.model = null;
+  cr.error = '';
+  renderPicker(which);
 }
 
 // ---------- composer "/" menu: the workspace's slash commands ----------
@@ -4292,7 +4889,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=7ccd1ca873f34ea5');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=6991fd71304920aa');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
