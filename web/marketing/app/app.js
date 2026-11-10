@@ -2255,6 +2255,22 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
+  // A Manage-road landing (the composer panel's Manage row) leaves
+  // one-shot markers naming the seat and tab it wants. The Manage
+  // surface itself only mounts at the END of this function, after
+  // the reads below, and its box keeps the previous mount's rows
+  // until then — the landing's first paint was the remembered
+  // seat's list (live walk, 2026-11-09 ~18:00). Paint the surface's
+  // loading line into its box NOW, at landing time, so the first
+  // paint is never the remembered seat's rows. The markers are
+  // only peeked here: mountConnectorManage still consumes the seat
+  // marker, and the tab marker is consumed further down.
+  try {
+    if (sessionStorage.getItem('helmian.manageSeat') || sessionStorage.getItem('helmian.manageTab')) {
+      const mb = $('#connector-manage');
+      if (mb) mb.replaceChildren(el('p', 'cm-loading muted sm', 'Loading connectors…'));
+    }
+  } catch {}
   integrationsMod ??= await import('./integrations-view.mjs');
   connectFieldsMod ??= await import('./connect-fields.mjs');
   apiKeyFieldsMod ??= await import('./api-key-fields.mjs');

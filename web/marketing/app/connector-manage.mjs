@@ -16,7 +16,9 @@
 //     rows never stand as their own cards in the primary list: a
 //     mirror whose name a Helmian-brokered entry on the same seat
 //     already carries is hidden behind that entry (the brokered row
-//     is the one row for the name), and the mirrors left over group
+//     is the one row for the name — the rule binds brokered entries
+//     too: two primary-shaped entries with one name collapse to one
+//     row), and the mirrors left over group
 //     under one "On <seat>'s own side" section whose head says the
 //     mirror note ONCE — they are managed in the vendor's own
 //     garden; connecting them there connects nothing here.
@@ -106,34 +108,63 @@ const STATE_TEXT = Object.freeze({
   'disabled-by-owner': 'Turned off by the workspace owner',
 });
 
-// The Connectors tab's row plan (Troy, 2026-11-09 ~17:36): ONE
-// primary row per connector name per seat. A vendor mirror whose
-// name a Helmian-brokered entry on the same seat already carries
-// does not appear at all — the brokered entry is the row for that
-// name (the live page showed two GitHub cards for one seat: the
-// brokered connection and its vendor mirror). Mirrors left over
-// group under one section whose head carries the mirror note once
-// (mirrorNote is a single string for the seat, however many mirror
-// rows stand under it). Names compare trimmed and case-insensitively;
-// row order otherwise follows the read.
+// The Connectors tab's row plan (Troy, 2026-11-09 ~17:36; dedupe
+// finished the same evening, ~18:00): ONE row per connector name
+// per seat, across ALL entries. The key is the name alone (trimmed,
+// case-insensitive): an entry id encodes which catalog source or
+// road an entry came by, not a different connector — keying on it
+// would keep the exact duplicate Troy rejected. The survivor for a
+// name is chosen in tiers:
+//   - A name with any Helmian-brokered entry is represented in the
+//     primary list by ONE brokered entry (the rule the simplify
+//     pass shipped: a mirror with a brokered namesake never
+//     renders). Every other same-name entry — mirror or brokered —
+//     is suppressed entirely; it does not drop into the mirror
+//     group either. Grok's library carries two primary-shaped
+//     GitHub entries (one connected, one not); the mirror-only
+//     rule let both stand, and the seat showed two GitHub rows.
+//   - A name with only mirrors is represented by ONE mirror in the
+//     group, whose head carries the mirror note once (mirrorNote
+//     is a single string for the seat, however many mirror rows
+//     stand under it).
+// Inside a tier, a connected entry beats a not-connected one, then
+// the read's own order stands. The surviving row renders with its
+// OWN state: a not-connected brokered survivor over a connected
+// mirror still reads "Not connected" — the suppressed entry's
+// state never lends itself to the row that stands. Row order
+// follows each name's first appearance in the read.
 function connectorNameKey(row) {
   return String(row?.name ?? row?.entryId ?? '').trim().toLowerCase();
 }
 
+// The one row of a same-name group that stands: connected beats
+// not-connected; ties keep the read's order (first stands).
+function nameSurvivor(group) {
+  let best = null;
+  for (const row of group) {
+    if (!best) { best = row; continue; }
+    if (row.state === 'connected' && best.state !== 'connected') best = row;
+  }
+  return best;
+}
+
 export function planConnectorRows(rows, seatDisplayName = '') {
   const list = Array.isArray(rows) ? rows : [];
-  const brokeredNames = new Set(
-    list.filter((r) => r && typeof r === 'object' && r.brokerMode !== 'vendor').map(connectorNameKey).filter(Boolean),
-  );
-  const primary = [];
-  const mirrors = [];
+  const groups = new Map();
   for (const row of list) {
     if (!row || typeof row !== 'object') continue;
-    if (row.brokerMode === 'vendor') {
-      if (!brokeredNames.has(connectorNameKey(row))) mirrors.push(row);
-    } else {
-      primary.push(row);
-    }
+    // A row with no name and no entry id keys on itself, so two
+    // nameless rows can never collapse into one another.
+    const key = connectorNameKey(row) || row;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  const primary = [];
+  const mirrors = [];
+  for (const group of groups.values()) {
+    const brokered = group.filter((r) => r.brokerMode !== 'vendor');
+    if (brokered.length) primary.push(nameSurvivor(brokered));
+    else mirrors.push(nameSurvivor(group));
   }
   return Object.freeze({
     primary: Object.freeze(primary),
@@ -141,6 +172,17 @@ export function planConnectorRows(rows, seatDisplayName = '') {
     mirrorTitle: mirrors.length ? mirrorGroupTitle(seatDisplayName) : null,
     mirrorNote: mirrors.length ? MIRROR_NOTE : null,
   });
+}
+
+// Expansion state is keyed per (seat, entry): entry ids repeat
+// across seats (every seat's library holds a 'github'), so an
+// entryId alone leaks one seat's open row onto the next seat —
+// the live walk (2026-11-09 ~18:00) found the GitHub row arriving
+// expanded on a seat where it had never been opened. The renderer
+// also clears the open set on a seat change, so a seat's rows
+// start collapsed however the seat was arrived at.
+export function openKeyFor(seatId, entryId) {
+  return `${seatId ?? ''}:${entryId ?? ''}`;
 }
 
 // The Tool access read's shape, normalized for the face (bite M2).
@@ -278,7 +320,8 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
   function connectorRow(row) {
     const ctl = rowControls(row, { role });
     if (ctl.mode === 'mirror') return mirrorRow(row);
-    const open = state.open.has(row.entryId);
+    const openKey = openKeyFor(state.seat, row.entryId);
+    const open = state.open.has(openKey);
     const card = el('article', 'cm-row cm-connector');
     const head = el('div', 'cm-row-head');
     const main = el('div', 'cm-row-main');
@@ -290,7 +333,7 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
     toggle.type = 'button';
     toggle.setAttribute('aria-expanded', String(open));
     toggle.addEventListener('click', () => {
-      if (open) state.open.delete(row.entryId); else state.open.add(row.entryId);
+      if (open) state.open.delete(openKey); else state.open.add(openKey);
       refresh();
     });
     head.append(toggle);
@@ -572,16 +615,29 @@ export function renderConnectorManage(box, { api, el, role = '', initialSeat = n
   }
 
   async function refresh() {
+    const seatChanged = Boolean(state.loaded && state.renderedSeat && state.seat && state.renderedSeat !== state.seat);
     if (!state.loaded) root.replaceChildren(note, loadingLine());
-    else if (state.renderedSeat && state.seat && state.renderedSeat !== state.seat) {
+    else if (seatChanged) {
       // Seat switch (addition, 2026-11-09): the previous seat's cards
       // must not sit on screen while the new seat's read is in flight
       // (the live walk measured a ~2s stale list). Paint the header
       // and the loading line NOW, before the awaits below.
+      // Expansion resets on the same beat (dedupe finish, ~18:00):
+      // the open set clears, so the incoming seat's rows start
+      // collapsed — and the per-(seat, entry) keys (openKeyFor)
+      // keep one seat's open rows from ever rendering on another.
+      state.open.clear();
       root.replaceChildren(note, header(), loadingLine());
     }
     try {
       await loadSeats();
+      // Mount and seat-change renders (dedupe finish, 2026-11-09
+      // ~18:00): once the seats are known, paint the header with
+      // the loading line BEFORE the tab's reads land, so a first
+      // list render is always the current seat's own — on the
+      // menu→Manage landing the previous seat's list showed for a
+      // beat because the mount path never painted early.
+      if (!state.loaded || seatChanged) root.replaceChildren(note, header(), loadingLine());
       const head = header();
       let body = null;
       if (state.tab === 'connectors') { await loadRows(); body = await connectorsTab(); }
