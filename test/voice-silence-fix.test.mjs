@@ -4,7 +4,7 @@
 // the bound (labelled "still loading"), no fresh wait when the load is
 // already older than the bound, a stuck load abandoned and retried
 // fresh with Kokoro taking over, the failure reason staying distinct
-// ("could not load"), the prime-after-enable seam, mic hold-off across
+// ("could not load"), the prime-after-enable seam, the mic gate across
 // the wait, and the app.js inline copy carrying the same machinery.
 // Run together with test/voice-dictation.test.mjs (repo regression) and
 // test/voice-kokoro-bite.test.mjs (bite regression) against the staged
@@ -229,7 +229,7 @@ test('envoy prime pin (H2): speakNewMessages primes on first sight of a stream a
   assert.ok(!body.includes('voiceMode'), 'priming does not consult the voice toggle');
 });
 
-test('mic hold-off spans the bounded wait: no new turn while a reply waits, mic resumes after it speaks', async () => {
+test('mic gate (L1): a new turn opens while a reply waits behind the load; the waiting reply is cancelled, never spoken', async () => {
   const f = makeFakes();
   const calls = [];
   let resolveLoad;
@@ -238,13 +238,15 @@ test('mic hold-off spans the bounded wait: no new turn while a reply waits, mic 
   assert.equal(f.instances.length, 1);
   assert.equal(v.speak('Hold the mic.'), true);
   f.instances[0].onend(); // recognition turn ends; the loop wants to restart
-  await new Promise((r) => setTimeout(r, 500)); // > the 400ms hold poll
-  assert.equal(f.instances.length, 1, 'mic held while the reply waits behind the load');
-  resolveLoad();
-  await until(() => f.sources.length === 1 && f.sources[0].started);
-  f.sources[0].onended(); // reply finished; speech drains
+  // L1 gate: the restart keys on actual playback only, so a reply
+  // that is merely waiting behind the load no longer holds the mic.
   await until(() => f.instances.length === 2, 3000);
-  assert.equal(f.instances[1].started, true, 'mic resumed once the reply drained');
+  assert.equal(f.instances[1].started, true, 'mic reopened while the reply was still waiting behind the load');
+  resolveLoad();
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(calls.length, 0, 'the waiting reply was cancelled by the new turn before it ever generated');
+  assert.equal(f.sources.length, 0, 'the cancelled reply never played');
+  assert.equal(f.spoken.length, 0, 'the cancelled reply never fell back to the backup voice');
 });
 
 test('speak after a load failure keeps the precise label: "could not load", not "unavailable"', async () => {

@@ -11,11 +11,16 @@
 //    source playing, or a backup utterance speaking). The echo guard
 //    and the auto-submit hold key on it, so results are accepted and
 //    sends fire while a reply is still being generated.
-//  - The mic loop's restart keeps keying on speechInFlight() (the old
-//    body): starting a turn cancels speech, so a restart while a
-//    reply is being prepared would kill the reply before it played.
-//    The hold is bounded now — the load wait and every generate have
-//    hard bounds — so it delays a turn, never holds the mic hostage.
+  //  - The mic loop's restart originally kept keying on
+  //    speechInFlight() (the old body); latency fix L1 (2026-11-10)
+  //    reversed that: the restart now keys on speechActive() —
+  //    actual playback only — widened by servedPlaying: a served
+  //    chunk is committed to speak from the moment its fetch
+  //    starts, and a restart in that window would orphan the fetch.
+  //    So the user can dictate while the room is still preparing
+  //    answers, and starting a turn cancels what has not played
+  //    yet (the turn-taking contract). Both copies carry the gate
+  //    identically — lockstep, pinned by the lockstep test below.
 //  - Every generate is bounded by KOKORO_GENERATE_MS in the load
 //    wait's own idiom (a Date.now deadline, polled). A generate that
 //    never settles is treated as a generate failure: the backup voice
@@ -234,27 +239,48 @@ test('mic fix: a generate that never resolves times out, falls back to the backu
           return new Promise(() => {}); // never settles — the wedged worker
         },
       };
-      const { v, transcripts } = voiceOn(f, { kokoroLoader: async () => engine });
+      const { v } = voiceOn(f, { kokoroLoader: async () => engine });
       assert.equal(v.speak('A wedged reply.', 'claude'), true);
       await until(() => calls.length === 1); // the generate is in flight
-      // While the reply is in flight the loop's restart still holds —
-      // starting a turn would cancel the reply — but the hold is
-      // bounded now, not a hostage-taking.
+      // L1 gate: the loop's restart no longer holds while a reply is
+      // merely generating. The new turn opens at once and cancels
+      // the wedged item (starting a turn cancels speech), so the
+      // wedged chunk is replaced, never spoken — it never reaches
+      // the fallback below.
       f.instances[0].onend();
-      await wait(500); // > the 400ms hold poll
-      assert.equal(f.instances.length, 1, 'mic restart held while the reply is in flight');
+      await wait(500); // > the 400ms restart re-check
+      assert.equal(f.instances.length, 2, 'mic restart opens while the generate is in flight (L1 gate)');
       clock.advance(16000); // past the 15s generate bound
-      await until(() => f.spoken.length === 1);
-      assert.equal(f.spoken[0].text, 'A wedged reply.', 'the backup voice speaks the chunk the wedged generate could not');
+      await wait(500);
+      assert.equal(f.spoken.length, 0, 'the cancelled wedged chunk never falls back — it was replaced, not spoken');
+      assert.equal(v.setVoiceMode(false, {}), true);
+      // The bounded fallback itself is untouched: a wedged generate
+      // whose turn is never interrupted still times out and the
+      // backup voice speaks the chunk.
+      const f2 = makeFakes();
+      const calls2 = [];
+      const engine2 = {
+        generate: (text, { voice } = {}) => {
+          calls2.push({ text, voice });
+          return new Promise(() => {}); // never settles — the wedged worker
+        },
+      };
+      const second = voiceOn(f2, { kokoroLoader: async () => engine2 });
+      assert.equal(second.v.speak('A wedged reply.', 'claude'), true);
+      await until(() => calls2.length === 1); // the generate is in flight
+      clock.advance(16000); // past the 15s generate bound
+      await until(() => f2.spoken.length === 1);
+      assert.equal(f2.spoken[0].text, 'A wedged reply.', 'the backup voice speaks the chunk the wedged generate could not');
       assert.match(els[0].textContent, /Backup voice — Kokoro unavailable/);
       // The microphone is free: once the fallback playback ends, the
-      // held restart starts a fresh turn and words land again.
-      f.spoken[0].onend();
-      await until(() => f.instances.length === 2, 3000);
-      assert.equal(f.instances[1].started, true);
-      f.instances[1].onresult(resultEvent(['I can talk again']));
-      assert.deepEqual(transcripts, ['I can talk again']);
-      assert.equal(v.setVoiceMode(false, {}), true);
+      // restart starts a fresh turn and words land again.
+      f2.spoken[0].onend();
+      f2.instances[0].onend();
+      await until(() => f2.instances.length === 2, 3000);
+      assert.equal(f2.instances[1].started, true);
+      f2.instances[1].onresult(resultEvent(['I can talk again']));
+      assert.deepEqual(second.transcripts, ['I can talk again']);
+      assert.equal(second.v.setVoiceMode(false, {}), true);
     } finally {
       clock.restore();
     }
@@ -264,10 +290,8 @@ test('mic fix: a generate that never resolves times out, falls back to the backu
 test('lockstep: the app.js inline copy carries the same mic-hostage fix as the shared module', async () => {
   const needles = [
     'const KOKORO_GENERATE_MS = 15000',
-    'function speechInFlight()',
     'async function kokoroGenerateBounded(engine, item)',
     'out = await kokoroGenerateBounded(engine, item);',
-    'if (speechInFlight()) {',
     'try { return !!(synthesis?.speaking); } catch { return false; }',
   ];
   const appJs = await readFile(new URL('../web/marketing/app/app.js', import.meta.url), 'utf8');
@@ -276,9 +300,26 @@ test('lockstep: the app.js inline copy carries the same mic-hostage fix as the s
     for (const needle of needles) {
       assert.ok(js.includes(needle), `${name} has: ${needle}`);
     }
+    // Neither copy carries the old in-flight restart gate any more
+    // (latency fix L1 removed speechInFlight from both).
+    assert.ok(!js.includes('speechInFlight'), `${name}: the in-flight gate is gone`);
+  }
+  // The restart gate itself (L1, lockstep restored): BOTH copies
+  // carry the identical gate — speechActive() widened by
+  // servedPlaying. A served chunk is committed to speak from the
+  // moment its fetch starts, and a restart in that window would
+  // cancel the fetch and orphan the reply, so the fetch window
+  // holds the mic too; while a reply is merely queued or
+  // generating, the mic reopens. The shared module carries the
+  // full served road as well (repo HEAD rewrote it), so the gate
+  // is the same expression in both files — no divergence.
+  for (const [name, js] of [['app.js', appJs], ['shared', shared]]) {
+    assert.ok(js.includes('if (speechActive() || servedPlaying) {'), `${name}: restart gate is playback widened by servedPlaying (lockstep)`);
+  }
+  for (const [name, js] of [['app.js', appJs], ['shared', shared]]) {
     // speechActive itself is playback-only: its body consults neither
     // the queue nor the in-flight generate.
-    const body = js.slice(js.indexOf('function speechActive()'), js.indexOf('function speechInFlight()'));
+    const body = js.slice(js.indexOf('function speechActive()'), js.indexOf('function restartTurn()'));
     assert.ok(body.includes('if (activeSource) return true;'), `${name}: speechActive keys on actual playback`);
     assert.ok(!body.includes('kokoroQueue'), `${name}: speechActive no longer counts the queue as speaking`);
     assert.ok(!body.includes('kokoroPlaying'), `${name}: speechActive no longer counts a pending generate as speaking`);

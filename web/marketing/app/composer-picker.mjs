@@ -118,7 +118,7 @@
 //   store and clamps the target to the record's own scope — a message
 //   can narrow a skill, never widen it (DESIGN §2.1/§3.2). Carried
 //   only when at least one skill is armed, the same absence rule.
-import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs?v=ce65665042b4b26c';
+import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs?v=ae4fe9b6b63b9c75';
 
 // Truthful attachment states (see the header): what attaching an entry
 // actually does on the turn, never just what the registry holds.

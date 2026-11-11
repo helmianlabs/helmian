@@ -1045,11 +1045,11 @@ test('seatFaceFor: defaults render before load, stored faces win, junk falls bac
 // class, gated by the desk's still gate (plain mode / reduced
 // motion). No event, no motion; a finished seat is still.
 
-test('motion: working stages bounce, publishing talks, terminal and idle are still', () => {
+test('motion: working stages roll, publishing talks, terminal and idle are still', () => {
   const { activityMotionKind, activityMotionClass } = envoyWorkspace;
   for (const stage of ['started', 'working', 'file-placed']) {
-    assert.equal(activityMotionKind(stage), 'bounce', `${stage} bounces`);
-    assert.equal(activityMotionClass(stage, false), 'ew-ava-bounce');
+    assert.equal(activityMotionKind(stage), 'roll', `${stage} rolls`);
+    assert.equal(activityMotionClass(stage, false), 'ew-ava-roll');
   }
   assert.equal(activityMotionKind('published'), 'talk', 'a reply landing talks');
   assert.equal(activityMotionClass('published', false), 'ew-ava-talk');
@@ -1081,13 +1081,13 @@ test('motion: the stage comes from the live cue — terminal linger and expiry a
 test('motion wiring: rows, cards and message avatars carry it; css animates the shell only', async () => {
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
-  for (const needle of ['activityMotionClass', 'activityMotionStage', 'syncAgentCardMotion', 'ew-ava-bounce', 'ew-ava-talk', 'data-provider']) {
+  for (const needle of ['activityMotionClass', 'activityMotionStage', 'syncAgentCardMotion', 'ew-ava-roll', 'ew-ava-talk', 'data-provider']) {
     assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
   }
-  for (const needle of ['.ew-avatar.ew-ava-bounce', '.ew-avatar.ew-ava-talk', '@keyframes ew-ava-bounce', '@keyframes ew-ava-talk']) {
+  for (const needle of ['.ew-avatar.ew-ava-roll', '.ew-avatar.ew-ava-talk', '@keyframes ew-ava-roll', '@keyframes ew-ava-talk']) {
     assert.ok(css.includes(needle), `envoy.css has ${needle}`);
   }
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*ew-ava-bounce[^}]*animation:none/, 'reduced motion turns the avatar animation off in css too');
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*ew-ava-roll[^}]*animation:none/, 'reduced motion turns the avatar animation off in css too');
 });
 
 test('bite 5 wiring: faces route, member face, channel face, custom pill art', async () => {

@@ -24,12 +24,12 @@ test('floor arithmetic: the crew floor fits the fixed content plus one row', () 
   // Measured from the CSS, border-box (app.css * rule): section
   // padding 8+6 and its 1px top border; crew head padding 2+6 around
   // an 11px title line (~15px); the subhead's 10+6 padding around the
-  // same line; one crew row = 28px face + 5+5 padding. The pill
+  // same line; one crew row = 36px face + 5+5 padding. The pill
   // block's cap is read from the stylesheet, not restated here, so
   // raising the cap without redoing this sum fails the test.
-  const FIXED = { section: 14 + 1, head: 8 + 15, subhead: 16 + 15, oneRow: 38 };
+  const FIXED = { section: 14 + 1, head: 8 + 15, subhead: 16 + 15, oneRow: 46 };
   const sum = FIXED.section + FIXED.head + FIXED.subhead + addCap + FIXED.oneRow;
-  assert.equal(addCap, 60, 'the pill block is capped at two 24px pill rows + gap + padding');
+  assert.equal(addCap, 180, 'the pill block is capped at six 24px pill rows + gap + padding');
   assert.ok(crewFloor >= sum, `crew floor ${crewFloor} covers fixed content + one row (${sum})`);
   assert.ok(crewFloor <= sum + 8, `crew floor ${crewFloor} is not padded past the sum (${sum})`);
 });
