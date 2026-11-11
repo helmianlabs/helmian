@@ -533,13 +533,14 @@
 
 /* 0.6.0: compact allow/deny pill, bottom-right, never covers the chat. */
 .helmion-guard-approval-pill {
-  position: fixed; right: 16px; bottom: 16px; z-index: 2147483646;
+  position: fixed !important; right: 16px !important; bottom: 16px !important; z-index: 2147483646 !important;
+  pointer-events: auto !important;
   max-width: 320px; font: 13px/1.35 system-ui, sans-serif; color: #1f1f1f;
   background: #fff8e1; border: 1px solid #c58f00; border-radius: 18px;
   box-shadow: 0 2px 8px rgba(0,0,0,.18); padding: 4px;
 }
 .helmion-guard-approval-pill.helmion-guard-tone-danger { background: #fdecea; border-color: #b3261e; }
-.helmion-guard-approval-pill-toggle { all: unset; cursor: pointer; padding: 4px 10px; font-weight: 600; display: block; }
+.helmion-guard-approval-pill-toggle { all: unset; cursor: pointer; pointer-events: auto; padding: 4px 10px; font-weight: 600; display: block; }
 .helmion-guard-approval-pill[aria-expanded="true"] { border-radius: 12px; }
 .helmion-guard-approval-pill-details { padding: 4px 10px 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 .helmion-guard-approval-pill-details[hidden] { display: none; }

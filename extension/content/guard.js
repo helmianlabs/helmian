@@ -503,8 +503,42 @@
     return null;
   }
 
+  // Guard's own page UI (the corner pill, ask cards, toasts) carries
+  // data-helmion-ui. A click there is the person answering Guard, never a send
+  // to the AI. Without this check the pill's own toggle ("Guard: send this as
+  // written?") matched the /send/ label test below, the window-capture listener
+  // re-ran the privacy check on the composer text, stopped the click with
+  // stopImmediatePropagation before it reached the pill, and re-drew a fresh
+  // collapsed pill: the pill could never be opened or answered.
+  function isGuardUiEvent(event) {
+    const path = event && typeof event.composedPath === 'function'
+      ? event.composedPath() : [event && event.target].filter(Boolean);
+    for (const node of path) {
+      if (!node || typeof node.getAttribute !== 'function') continue;
+      if (node.getAttribute('data-helmion-ui') !== null) return true;
+      if (typeof node.closest === 'function' && node.closest('[data-helmion-ui]')) return true;
+    }
+    return false;
+  }
+
+  function isSendButton(button) {
+    if (!button || typeof button.getAttribute !== 'function') return false;
+    if (button.getAttribute('data-helmion-ui') !== null) return false;
+    const label = [
+      button.getAttribute('aria-label'),
+      button.getAttribute('title'),
+      button.getAttribute('data-test-id'),
+      button.getAttribute('data-testid'),
+      button.className,
+      button.textContent,
+    ]
+      .filter(Boolean).join(' ').toLowerCase();
+    return button.getAttribute('type') === 'submit' || /\b(?:send|submit)\b/.test(label);
+  }
+
   function isSendEvent(event) {
     if (!event) return false;
+    if (isGuardUiEvent(event)) return false;
     if (event.type === 'submit') return true;
     if (event.type === 'keydown' || event.type === 'keypress' || event.type === 'keyup') {
       return event.key === 'Enter' && !event.shiftKey && !event.ctrlKey
@@ -523,16 +557,7 @@
       if (button) break;
     }
     if (!button) return false;
-    const label = [
-      button.getAttribute('aria-label'),
-      button.getAttribute('title'),
-      button.getAttribute('data-test-id'),
-      button.getAttribute('data-testid'),
-      button.className,
-      button.textContent,
-    ]
-      .filter(Boolean).join(' ').toLowerCase();
-    return button.getAttribute('type') === 'submit' || /\b(?:send|submit)\b/.test(label);
+    return isSendButton(button);
   }
 
   function stopPrompt(event, composer, verdict) {
@@ -567,7 +592,7 @@
   }
 
   function inspectPromptEvent(event) {
-    if (!isSendEvent(event)) return;
+    if (!isSendEvent(event)) return; // also false for clicks on Guard's own UI
     const composer = eventComposer(event);
     if (!composer) return;
     const text = composerText(composer);
@@ -709,7 +734,8 @@
               label: 'Send as written',
               onClick: () => {
                 grantOnce(fp, 'person-after-flags-scan');
-                HelmionUI.showAskAlert({ tone: 'ok', title: 'Allowed once', message: 'Press Send again to send it as written.', actions: [cancel] });
+                state.scanActiveFp = null;
+                sendAsWritten(composer, fp, () => HelmionUI.showAskAlert({ tone: 'ok', title: 'Allowed once', message: 'Press Send again to send it as written.', actions: [cancel] }));
               },
             },
             cancel,
@@ -804,6 +830,74 @@
 
   function grantOnce(fp, by, options) {
     state.allowOnce = { fp, by, usedAt: 0, quiet: Boolean(options && options.quiet) };
+  }
+
+  function isDisabled(node) {
+    if (!node || typeof node.getAttribute !== 'function') return true;
+    if (node.disabled === true) return true;
+    if (node.getAttribute('disabled') !== null) return true;
+    return node.getAttribute('aria-disabled') === 'true';
+  }
+
+  // The site's own Send button for this composer: the nearest enabled
+  // send/submit button found walking up from the composer (Grok, ChatGPT,
+  // Claude, Gemini, Mistral and Perplexity all keep it within a few levels).
+  function findSendButton(composer) {
+    let scope = composer && composer.parentElement;
+    for (let depth = 0; scope && depth < 8; depth += 1) {
+      if (typeof scope.querySelectorAll === 'function') {
+        const buttons = Array.from(scope.querySelectorAll('button, [role="button"]'));
+        const match = buttons.find((button) => isSendButton(button) && !isDisabled(button)
+          && !(typeof button.closest === 'function' && button.closest('[data-helmion-ui]')));
+        if (match) return match;
+      }
+      scope = scope.parentElement;
+    }
+    return null;
+  }
+
+  function dispatchEnter(composer) {
+    if (typeof composer.dispatchEvent !== 'function' || typeof KeyboardEvent !== 'function') return false;
+    const init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+    try {
+      composer.dispatchEvent(new KeyboardEvent('keydown', init));
+      composer.dispatchEvent(new KeyboardEvent('keypress', init));
+      composer.dispatchEvent(new KeyboardEvent('keyup', init));
+      return true;
+    } catch { return false; }
+  }
+
+  // "Send as written", answered explicitly by the person: send the exact text
+  // that was approved, through the site's own path, so they do not have to
+  // find and press Send again. The one-time grant for this fingerprint (set by
+  // the caller) lets these events through inspectPromptEvent instead of
+  // re-asking, so there is no loop. If the text changed, or the site did not
+  // take the send, fall back to "Press Send again".
+  function sendAsWritten(composer, fp, onFallback) {
+    const fallback = () => { if (typeof onFallback === 'function') onFallback(); };
+    if (!composer || fingerprint(composerText(composer)) !== fp) { fallback(); return 'changed'; }
+    if (state.allowOnce && state.allowOnce.fp === fp) state.allowOnce.usedAt = 0;
+    try { if (typeof composer.focus === 'function') composer.focus(); } catch { /* best effort */ }
+    let how = 'none';
+    const button = findSendButton(composer);
+    if (button && typeof button.click === 'function') {
+      button.click();
+      how = 'button';
+    } else {
+      const form = typeof composer.closest === 'function' ? composer.closest('form') : null;
+      if (form && typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+        how = 'form';
+      } else if (dispatchEnter(composer)) {
+        how = 'enter';
+      }
+    }
+    HelmionUI.hideAskAlert();
+    setTimeout(() => {
+      // Still sitting in the composer, unchanged: the site did not take it.
+      if (composer.isConnected !== false && fingerprint(composerText(composer)) === fp && composerText(composer)) fallback();
+    }, 600);
+    return how;
   }
 
   function stopApprovalPolling() {
@@ -948,12 +1042,13 @@
           onAllow: () => {
             if (state.privacyActiveFp !== fp) return;
             grantOnce(fp, 'person-at-keyboard');
-            HelmionUI.showAskAlert({
+            state.privacyActiveFp = null;
+            sendAsWritten(composer, fp, () => HelmionUI.showAskAlert({
               tone: 'ok',
               title: 'Allowed once',
               message: 'Press Send again to send it as written.',
               actions: [redactAction, cancelAction],
-            });
+            }));
           },
           onDeny: (why) => {
             logToLedger({ kind: 'ai-flag', site: SOURCE, matched: `approval-pill-${why}`, text: '', outcome: 'blocked-before-send' });
