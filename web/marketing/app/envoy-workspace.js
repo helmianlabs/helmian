@@ -1,19 +1,19 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=ae4fe9b6b63b9c75';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=ae4fe9b6b63b9c75';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=ae4fe9b6b63b9c75';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=ae4fe9b6b63b9c75';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=ae4fe9b6b63b9c75';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=ae4fe9b6b63b9c75';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=ae4fe9b6b63b9c75';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=ae4fe9b6b63b9c75';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=ae4fe9b6b63b9c75';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=ae4fe9b6b63b9c75';
-import { createConnectFields } from './connect-fields.mjs?v=ae4fe9b6b63b9c75';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=ae4fe9b6b63b9c75';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=ae4fe9b6b63b9c75';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=531a4d5df872f33e';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=531a4d5df872f33e';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=531a4d5df872f33e';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=531a4d5df872f33e';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=531a4d5df872f33e';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=531a4d5df872f33e';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=531a4d5df872f33e';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=531a4d5df872f33e';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=531a4d5df872f33e';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=531a4d5df872f33e';
+import { createConnectFields } from './connect-fields.mjs?v=531a4d5df872f33e';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=531a4d5df872f33e';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=531a4d5df872f33e';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -4242,10 +4242,11 @@ export function speakCatchUp() {
 // this module owns the drawing. The marker is machine-readable: a
 // checker counts `.ew-speaking[data-speaking="true"]` inside
 // `#ew-messages` and reads the seat from its data-seat (the engine
-// from data-engine). State lives in this module, not on DOM nodes,
-// because renderMessages rebuilds the list on every poll: renders
-// draw the icon from speakingNow, and noteSpeaking patches the live
-// DOM immediately between renders.
+// from data-engine). State lives in this module, not on DOM nodes:
+// renders draw the icon from speakingNow (the speaking state rides
+// the row's render signature), and noteSpeaking patches the live
+// DOM immediately between renders — an incremental render keeps the
+// very node the patch landed on, so the icon is never wiped.
 let speakingNow = null;
 export function noteSpeaking(info) {
   speakingNow = info ?? null;
@@ -4322,6 +4323,28 @@ function markChannelSeen(channelId, messages) {
   if (newest > (Number(ls.get(`lastSeen.${channelId}`, 0)) || 0)) ls.set(`lastSeen.${channelId}`, newest);
   if (unread.channelId === channelId && newest > unread.at) unread.at = newest;
 }
+// ---------- incremental message rendering (page-lockup fix, 2026-11-11) ----------
+// renderMessages used to rebuild every row on every call: it looped
+// the whole loaded history, re-ran renderBody on every body and
+// re-created every avatar, then swapped the container. During a fast
+// round (a post landing every second or two, plus the activity tick
+// re-rendering once a second while any seat works) the tab's main
+// thread saturated and Chrome raised "Page Unresponsive" (Troy,
+// 2026-11-10). The render is now keyed: a per-channel cache maps a
+// row's key to its live DOM node plus a signature of everything that
+// can change that row's drawing. A call builds rows only for new or
+// changed messages, drops rows whose messages vanished, and — when
+// the desired child sequence already matches the DOM exactly —
+// performs no DOM writes at all (the bare poll case). Day dividers,
+// the New divider and the activity rows are keyed in the same cache;
+// their rebuilds are cheap and never touch a kept message row.
+// The speaking icon keeps its standing discipline: the signature
+// covers the speaking state, and noteSpeaking()/patchSpeakingIcon()
+// still patch the live DOM between renders — a kept row is the very
+// node they patch, so an incremental render never wipes a live icon
+// from an unchanged row.
+const msgRenderCache = { channelId: undefined, entries: new Map() };
+
 function renderMessages() {
   const box = $('ew-messages');
   const deskChannel = inMaestroMode();
@@ -4330,7 +4353,6 @@ function renderMessages() {
   const desk = true;
   unreadSnapshot();
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  const out = []; let prev = null; let prevDay = ''; let newShown = false;
   const onLink = (url) => { openBench('browser'); navigate(url); };
   // Agent replies open their links in a full tab: a build reveal is one
   // click at full size and the desk stays put (navigate() gives Helmian's
@@ -4344,10 +4366,46 @@ function renderMessages() {
   const cues = activityCues(ws.activity, ws.channelId, ws.config?.customAgents);
   const liveMotion = new Map();
   for (const c of cues) if (!ACTIVITY_TERMINAL_STAGES.has(c.event.stage)) liveMotion.set(c.provider, c.event.stage);
+  // The keyed-row cache is per channel: entering another channel
+  // starts from an empty cache (the box is reconciled against the
+  // real DOM either way, so a foreign writer — the Loading… card, the
+  // Discord empty state — is evicted by the same pass).
+  if (msgRenderCache.channelId !== ws.channelId) { msgRenderCache.channelId = ws.channelId; msgRenderCache.entries = new Map(); }
+  const prevEntries = msgRenderCache.entries;
+  const nextEntries = new Map();
+  const desired = [];
+  const keyUse = new Map();
+  const keep = (key, sig, build) => {
+    const seen = (keyUse.get(key) ?? 0) + 1; keyUse.set(key, seen);
+    const k = seen > 1 ? `${key}#${seen}` : key;
+    const hit = prevEntries.get(k);
+    const node = hit && hit.sig === sig ? hit.node : build();
+    nextEntries.set(k, { node, sig });
+    desired.push(node);
+    return node;
+  };
+  // The salt: every workspace-level input a row's drawing reads —
+  // whose face is whose (the faces map, the profile nickname), the
+  // still/motion gate, the custom-agent records behind whoOf, and
+  // the desk roster behind the dispatch line. When any of it moves
+  // (loadFaces landing is the live case), every signature moves and
+  // the rows rebuild once, exactly as the old full render did.
+  const salt = JSON.stringify([
+    ws.ctx.state.actor?.subject ?? '',
+    ws.faces ?? null,
+    ws.profile?.nickname ?? '',
+    emojiStill(),
+    ws.config?.customAgents ?? null,
+    (ws.config?.agents ?? []).map((a) => a.provider),
+  ]);
+  let prev = null; let prevDay = ''; let newShown = false;
   for (const m of ws.messages) {
     const day = dayLabel(m.createdAt);
-    if (day !== prevDay) { out.push(h('div', { class: 'ew-day' }, day)); prevDay = day; prev = null; }
-    if (m.authorKind === 'system') { out.push(h('div', { class: 'ew-notice' }, h('span', {}, m.body))); prev = null; continue; }
+    if (day !== prevDay) { keep(`day:${day}`, day, () => h('div', { class: 'ew-day' }, day)); prevDay = day; prev = null; }
+    if (m.authorKind === 'system') {
+      keep(`msg:${m.id}`, JSON.stringify([salt, m.authorKind, m.body]), () => h('div', { class: 'ew-notice' }, h('span', {}, m.body)));
+      prev = null; continue;
+    }
     const who = whoOf(m);
     // The red "New" divider (bite 2): the first message from someone
     // else newer than the entry snapshot carries it, and the divider
@@ -4356,41 +4414,51 @@ function renderMessages() {
     if (showNew) newShown = true;
     const cont = !showNew && prev && prev.authorSubject === m.authorSubject && new Date(m.createdAt) - new Date(prev.createdAt) < 5 * 60_000;
     const motionCls = who.kind === 'agent' ? activityMotionClass(liveMotion.get(who.custom ? who.custom.handle : who.provider)) : '';
-    const avatar = who.kind === 'agent'
-      ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${motionCls ? ` ${motionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : msgSeatAvatar(who.provider, liveMotion.get(who.provider) ?? null))
-      : who.kind === 'me'
-        ? msgOwnerAvatar()
-        : (who.authorEmoji ? (isLibraryFaceToken(who.authorEmoji) ? h('div', { class: 'ew-avatar lib-ava' }, libraryFaceImg(who.authorEmoji)) : h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji))) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
-    const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
-    const src = who.kind === 'agent'
-      ? h('span', { class: 'ew-src agent' }, who.custom?.jobTitle ? `AGENT · ${who.custom.jobTitle}` : 'AGENT')
-      : who.kind === 'discord' ? h('span', { class: 'ew-src discord' }, 'DISCORD') : who.kind === 'slack' ? h('span', { class: 'ew-src slack' }, `SLACK${slackChannel}`) : null;
-    // In the desk, a manager send carries its dispatch line; agent
-    // replies render as themselves, under their own names, as anywhere.
-    const dispatch = desk && m.authorKind === 'human' ? deskDispatchLine(m) : null;
-    // A Helmian skill that rode this message shows as a chip row
-    // under its body (DESIGN §4.4): without it a metadata skill
-    // would be invisible on its own message — the by-name road's
-    // skill is visible only because its /name leads the body text.
-    const skillRefs = Array.isArray(m.metadata?.skills) ? m.metadata.skills : [];
-    const skillRefRow = skillRefs.length ? h('div', { class: 'ew-msg-skills' }, ...skillRefs.map((s) => h('span', { class: 'ew-chip skill-ref' }, s.seatId === 'all' ? `/${s.skillId}` : `/${s.skillId} → ${skillSeatLabel(s.seatId)}`))) : null;
-    if (showNew) out.push(h('div', { class: 'ew-new-divider' }, h('span', {}, 'New')));
-    // Grouped follow-ups print no avatar and no header; in their
-    // place the gutter carries the follow-up's time, shown on hover
-    // (bite 2). Every per-message action lives in the one hover
-    // toolbar — the reaction button moved inside it, beside Copy.
-    const firstCell = cont ? h('time', { class: 'ew-gutter-time', datetime: m.createdAt }, clock(m.createdAt)) : avatar;
-    // Speaking proof: the message being spoken right now carries the
-    // speaker icon — in its meta line, or (grouped follow-up, whose
-    // meta is hidden) standing right after the meta, beside the text.
-    const speakIcon = speakingNow && speakingNow.ref === m.id ? speakingIconNode(speakingNow) : null;
-    out.push(h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}`, 'data-id': m.id }, firstCell,
-      h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt)), cont ? null : speakIcon),
-        cont ? speakIcon : null,
-        h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })),
-        skillRefRow,
-        h('div', { class: 'ew-reactions' }, ...reactionChipKids(m.id)), dispatch),
-      m._pending ? null : h('div', { class: 'ew-msg-tools', role: 'toolbar', 'aria-label': 'Message actions' }, reactionAddButton(m), copyMessageButton(m))));
+    if (showNew) keep('new-divider', `new:${m.id}`, () => h('div', { class: 'ew-new-divider' }, h('span', {}, 'New')));
+    // The row signature: everything this row's drawing reads — the
+    // message's own fields (body, stamp, pending flag, author fields,
+    // metadata), its grouping against the previous message, the New
+    // divider break, its seat's live motion class, the speaking
+    // state, and its reaction chips as the store currently stands.
+    const speakingSig = speakingNow && speakingNow.ref === m.id ? `${speakingNow.seat ?? ''}|${speakingNow.engine ?? ''}` : '';
+    const reactionsSig = ws.reactions.channelId === ws.channelId ? JSON.stringify([ws.reactions.byId[m.id] ?? null, ws.reactions.mine[m.id] ?? null]) : '';
+    const sig = JSON.stringify([salt, m.body, m.createdAt, m._pending ? 1 : 0, m.authorKind, m.authorSubject ?? '', m.agentProvider ?? '', m.authorName ?? '', m.authorEmoji ?? '', m.source ?? '', JSON.stringify(m.metadata ?? null), cont ? 1 : 0, showNew ? 1 : 0, motionCls, speakingSig, reactionsSig]);
+    keep(`msg:${m.id}`, sig, () => {
+      const avatar = who.kind === 'agent'
+        ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${motionCls ? ` ${motionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : msgSeatAvatar(who.provider, liveMotion.get(who.provider) ?? null))
+        : who.kind === 'me'
+          ? msgOwnerAvatar()
+          : (who.authorEmoji ? (isLibraryFaceToken(who.authorEmoji) ? h('div', { class: 'ew-avatar lib-ava' }, libraryFaceImg(who.authorEmoji)) : h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji))) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
+      const slackChannel = who.kind === 'slack' && m.metadata?.source?.channelName ? ` · #${m.metadata.source.channelName}` : '';
+      const src = who.kind === 'agent'
+        ? h('span', { class: 'ew-src agent' }, who.custom?.jobTitle ? `AGENT · ${who.custom.jobTitle}` : 'AGENT')
+        : who.kind === 'discord' ? h('span', { class: 'ew-src discord' }, 'DISCORD') : who.kind === 'slack' ? h('span', { class: 'ew-src slack' }, `SLACK${slackChannel}`) : null;
+      // In the desk, a manager send carries its dispatch line; agent
+      // replies render as themselves, under their own names, as anywhere.
+      const dispatch = desk && m.authorKind === 'human' ? deskDispatchLine(m) : null;
+      // A Helmian skill that rode this message shows as a chip row
+      // under its body (DESIGN §4.4): without it a metadata skill
+      // would be invisible on its own message — the by-name road's
+      // skill is visible only because its /name leads the body text.
+      const skillRefs = Array.isArray(m.metadata?.skills) ? m.metadata.skills : [];
+      const skillRefRow = skillRefs.length ? h('div', { class: 'ew-msg-skills' }, ...skillRefs.map((s) => h('span', { class: 'ew-chip skill-ref' }, s.seatId === 'all' ? `/${s.skillId}` : `/${s.skillId} → ${skillSeatLabel(s.seatId)}`))) : null;
+      // Grouped follow-ups print no avatar and no header; in their
+      // place the gutter carries the follow-up's time, shown on hover
+      // (bite 2). Every per-message action lives in the one hover
+      // toolbar — the reaction button moved inside it, beside Copy.
+      const firstCell = cont ? h('time', { class: 'ew-gutter-time', datetime: m.createdAt }, clock(m.createdAt)) : avatar;
+      // Speaking proof: the message being spoken right now carries the
+      // speaker icon — in its meta line, or (grouped follow-up, whose
+      // meta is hidden) standing right after the meta, beside the text.
+      const speakIcon = speakingNow && speakingNow.ref === m.id ? speakingIconNode(speakingNow) : null;
+      return h('div', { class: `ew-msg${cont ? ' cont' : ''}${m._pending ? ' pending' : ''}`, 'data-id': m.id }, firstCell,
+        h('div', {}, h('div', { class: 'ew-meta' }, h('strong', { class: who.kind === 'agent' ? 'agent' : '' }, who.name), src, h('time', { datetime: m.createdAt }, clock(m.createdAt)), cont ? null : speakIcon),
+          cont ? speakIcon : null,
+          h('div', { class: 'ew-body' }, renderBody(m.body, who.kind === 'agent' ? { onLink: onAgentLink, linkTitle: 'Open in a new tab', onCanvas } : { onLink, onCanvas })),
+          skillRefRow,
+          h('div', { class: 'ew-reactions' }, ...reactionChipKids(m.id)), dispatch),
+        m._pending ? null : h('div', { class: 'ew-msg-tools', role: 'toolbar', 'aria-label': 'Message actions' }, reactionAddButton(m), copyMessageButton(m)));
+    });
     prev = m;
   }
   // Real runner activity rows (activity desk bite): one per seat whose
@@ -4398,10 +4466,29 @@ function renderMessages() {
   // reply will land. Events or nothing — the age-derived "X is
   // answering…" cue that stood here was removed 2026-11-04 on Troy's
   // order; it lit seats from message age alone, job or no job.
-  for (const cue of cues) out.push(activityRow(cue.provider, cue.event, ws.config?.customAgents));
-  if (!ws.messages.length) out.push(h('div', { class: 'ew-empty' }, emptyChannelText({ desk: deskChannel, hasAgents: Boolean(ws.config?.agents?.length) })));
-  box.replaceChildren(...out);
-  if (atBottom || ws.messages.at(-1)?._pending || ws.messages.at(-1)?.authorSubject === ws.ctx.state.actor?.subject) box.scrollTop = box.scrollHeight;
+  for (const cue of cues) keep(`act:${cue.provider}`, JSON.stringify([salt, cue.provider, cue.event.stage, activityElapsed(cue.event), activityCueText(activityName(cue.provider, ws.config?.customAgents), cue.event)]), () => activityRow(cue.provider, cue.event, ws.config?.customAgents));
+  if (!ws.messages.length) keep('ew-empty', emptyChannelText({ desk: deskChannel, hasAgents: Boolean(ws.config?.agents?.length) }), () => h('div', { class: 'ew-empty' }, emptyChannelText({ desk: deskChannel, hasAgents: Boolean(ws.config?.agents?.length) })));
+  msgRenderCache.entries = nextEntries;
+  // Reconcile the box against the desired sequence by node identity.
+  // An identical sequence (the bare poll) writes nothing at all.
+  // Otherwise only the delta moves: foreign or vanished children are
+  // removed, new or out-of-order nodes are inserted — kept rows are
+  // never re-created, so their patched speaking icons, reaction chips
+  // and scroll state survive untouched.
+  const cur = [...box.childNodes];
+  let identical = cur.length === desired.length;
+  if (identical) for (let i = 0; i < cur.length; i++) { if (cur[i] !== desired[i]) { identical = false; break; } }
+  if (!identical) {
+    const keepSet = new Set(desired);
+    for (const n of cur) if (!keepSet.has(n)) n.remove();
+    let next = null;
+    for (let i = desired.length - 1; i >= 0; i--) {
+      const node = desired[i];
+      if (node.parentNode !== box || node.nextSibling !== next) box.insertBefore(node, next);
+      next = node;
+    }
+    if (atBottom || ws.messages.at(-1)?._pending || ws.messages.at(-1)?.authorSubject === ws.ctx.state.actor?.subject) box.scrollTop = box.scrollHeight;
+  }
 }
 
 // ---------- message reactions (emoji bites 2 + 3) ----------
@@ -4908,7 +4995,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=ae4fe9b6b63b9c75');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=531a4d5df872f33e');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
