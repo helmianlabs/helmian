@@ -2,7 +2,7 @@
 // (web/shared/voice-dictation.mjs). Covers: warmup at voice-enable,
 // speaks queueing behind an in-flight load, the shared single load,
 // load failure -> labelled backup voice, the retry window, per-seat
-// voices, the visible engine status, and the mic hold-off while a
+// voices, the visible engine status, and the mic gate while a
 // reply waits behind the load. Run together with the repo's existing
 // test/voice-dictation.test.mjs (regression) against the staged module.
 import { test } from 'node:test';
@@ -211,7 +211,7 @@ test('per-seat voices reach generate: default af_heart, chatgpt am_michael', asy
   assert.deepEqual(calls.map((c) => c.voice), ['af_heart', 'am_michael']);
 });
 
-test('mic hold-off: no new turn while a reply waits behind the load; resumes after it speaks', async () => {
+test('mic gate (L1): a new turn opens while a reply waits behind the load; the waiting reply is cancelled, never spoken', async () => {
   await withStatusDom(async () => {
     const f = makeFakes();
     const calls = [];
@@ -221,12 +221,14 @@ test('mic hold-off: no new turn while a reply waits behind the load; resumes aft
     assert.equal(f.instances.length, 1);
     assert.equal(v.speak('Hold the mic.'), true);
     f.instances[0].onend(); // recognition turn ends; the loop wants to restart
-    await new Promise((r) => setTimeout(r, 500)); // > the 400ms hold poll
-    assert.equal(f.instances.length, 1, 'mic held while the reply waits behind the model load');
-    resolveLoad();
-    await until(() => f.sources.length === 1 && f.sources[0].started);
-    f.sources[0].onended(); // reply finished; speech drains
+    // L1 gate: the restart keys on actual playback only, so a reply
+    // that is merely waiting behind the load no longer holds the mic.
     await until(() => f.instances.length === 2, 3000);
-    assert.equal(f.instances[1].started, true, 'mic resumed once the reply drained');
+    assert.equal(f.instances[1].started, true, 'mic reopened while the reply was still waiting behind the load');
+    resolveLoad();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(calls.length, 0, 'the waiting reply was cancelled by the new turn before it ever generated');
+    assert.equal(f.sources.length, 0, 'the cancelled reply never played');
+    assert.equal(f.spoken.length, 0, 'the cancelled reply never fell back to the backup voice');
   });
 });

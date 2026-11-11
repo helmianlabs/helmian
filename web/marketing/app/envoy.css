@@ -75,14 +75,14 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 /* The crew section also carries FIXED content below its list — the
    ADD TO THIS CHANNEL subhead and the #ew-crew-add pill block (ported
    into the section by the panes-removal bite). Both are pinned, and
-   the pill block is capped at two pill rows (24px pills + 6px gap +
-   6px bottom padding = 60px) with any further pills scrolling inside
+   the pill block is capped at six pill rows (24px pills + 6px gap +
+   6px bottom padding = 180px) with any further pills scrolling inside
    the block itself — so at the shelf floor the fixed share always
    fits (see SHELF_MIN in envoy-workspace.js for the arithmetic) and
    nothing can spill over the footer below. The section's own
    overflow:hidden is the belt-and-braces clip behind that. */
 .ew-channels.crew-sized .ew-crew .ew-subhead { flex:none; }
-.ew-channels.crew-sized #ew-crew-add { flex:none; max-height:60px; overflow:auto; }
+.ew-channels.crew-sized #ew-crew-add { flex:none; max-height:180px; overflow:auto; }
 /* Approvals shelf sized: the same shape — the approvals list scrolls
    inside the var height instead of pushing the Guard feed down. */
 .ew-guard.appr-sized .ew-approvals { height:var(--ew-appr-h); display:flex; flex-direction:column; overflow:hidden; }
@@ -350,7 +350,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 
 /* CREW rail (UI polish bite 1): the sidebar presence list that
    replaces the composer pill strip and the Agents pane cards. One
-   row per seat: a 28px rounded-square face (radius 8, never a
+   row per seat: a 36px rounded-square face (radius 8, never a
    circle), a status dot pinned at the face's bottom-right over a
    surface ring, the seat's name, and one plain line of current
    work. Every colour reads a theme token, so the light and black
@@ -364,14 +364,14 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-crew-row:hover { background:var(--panel-2); }
 .ew-crew-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 .ew-crew-row.selected { background:var(--panel-2); border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
-.ew-crew-face { position:relative; flex:none; width:28px; height:28px; border-radius:8px; background:#10151F; display:grid; place-items:center; font-weight:700; color:var(--text); }
-.ew-crew-face > img { width:28px; height:28px; border-radius:8px; object-fit:cover; display:block; }
-/* Faces bite 4b: the state clip fills the 28px tile edge to edge —
+.ew-crew-face { position:relative; flex:none; width:36px; height:36px; border-radius:8px; background:#10151F; display:grid; place-items:center; font-weight:700; color:var(--text); }
+.ew-crew-face > img { width:36px; height:36px; border-radius:8px; object-fit:cover; display:block; }
+/* Faces bite 4b: the state clip fills the 36px tile edge to edge —
    the clips are dark-stage renders with no alpha, so cover-fit on
    the shell's dark tile leaves no letterbox and no seam. */
-.ew-crew-face > video.ew-crew-face-video { width:28px; height:28px; border-radius:8px; object-fit:cover; display:block; }
-.ew-crew-face > .hx-emoji { width:24px; height:24px; object-fit:contain; }
-.ew-crew-initial { font-size:13px; }
+.ew-crew-face > video.ew-crew-face-video { width:36px; height:36px; border-radius:8px; object-fit:cover; display:block; }
+.ew-crew-face > .hx-emoji { width:30px; height:30px; object-fit:contain; }
+.ew-crew-initial { font-size:16px; }
 .ew-crew-dot { position:absolute; right:-3px; bottom:-3px; width:10px; height:10px; border-radius:50%; background:var(--faint); box-shadow:0 0 0 2px var(--panel); z-index:1; }
 .ew-crew-dot.live { background:var(--green); }
 .ew-crew-dot.working { background:var(--accent); animation:ew-pulse 1.1s ease-in-out infinite; }
@@ -379,10 +379,16 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-crew-dot.offline { background:transparent; border:2px solid var(--faint); width:6px; height:6px; }
 @media (prefers-reduced-motion: reduce) { .ew-crew-dot.working { animation:none; } }
 /* The face shell carries the same activity motion classes the agent
-   cards used (keyframes below); reduced motion never animates. */
-.ew-crew-face.ew-ava-bounce { animation:ew-ava-bounce .9s ease-in-out infinite; }
+   cards used (keyframes below); reduced motion never animates.
+   Roll (2026-11-10): while a seat works, its face PICTURE tumbles
+   inside the tile — the tile and the status dot pinned at its corner
+   stay put — one smooth turn with a slight shrink at the halfway
+   point so the square picture's corners stay inside the tile. The
+   selectors outrank the bite-4c idle sway on the same picture, so a
+   working face rolls instead of breathing. */
+.ew-crew-list .ew-crew-face.ew-ava-roll > img, .ew-crew-list .ew-crew-face.ew-ava-roll > video { animation:ew-ava-roll 1.6s ease-in-out infinite; }
 .ew-crew-face.ew-ava-talk { animation:ew-ava-talk .5s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .ew-crew-face.ew-ava-bounce, .ew-crew-face.ew-ava-talk { animation:none; } }
+@media (prefers-reduced-motion: reduce) { .ew-crew-face.ew-ava-talk { animation:none; } .ew-crew-list .ew-crew-face.ew-ava-roll > img, .ew-crew-list .ew-crew-face.ew-ava-roll > video { animation:none; } }
 /* Faces bite 4c — still-mode idle life: a standing-by face whose
    slot holds the pack still (plain mode, reduced motion's still,
    or a clip that failed and fell back) breathes — a slow, small
@@ -402,18 +408,16 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 /* Seat avatar motion (emoji bite 4): the class is added by
    activityMotionClass in envoy-workspace.js only while the seat's
    real activity stage is live — transforms on the avatar shell only,
-   so nothing reflows. Working seats bounce; a seat whose reply is
-   publishing gets the talking bobble; reduced motion never animates
-   (the JS gate already withholds the class — this is the second lock).
-   Faces bite 4c raised the amplitude: at 28px a small motion reads as
-   no motion, so the bounce lifts higher and grows more, and the talk
-   bobble rocks wider with a slight swell. Faces only — no other
-   element uses these keyframes. */
-.ew-avatar.ew-ava-bounce { animation:ew-ava-bounce .9s ease-in-out infinite; }
+   so nothing reflows. Working seats roll (the round avatar turns
+   like a ball — Troy's Grok-companion ask, 2026-11-10); a seat whose
+   reply is publishing gets the talking bobble; reduced motion never
+   animates (the JS gate already withholds the class — this is the
+   second lock). Faces only — no other element uses these keyframes. */
+.ew-avatar.ew-ava-roll { animation:ew-ava-roll 1.6s ease-in-out infinite; }
 .ew-avatar.ew-ava-talk { animation:ew-ava-talk .5s ease-in-out infinite; }
-@keyframes ew-ava-bounce { 0%, 100% { transform:translateY(0) scale(1); } 35% { transform:translateY(-5px) scale(1.15); } 70% { transform:translateY(0) scale(1); } }
+@keyframes ew-ava-roll { 0% { transform:rotate(0deg) scale(1); } 50% { transform:rotate(180deg) scale(.88); } 100% { transform:rotate(360deg) scale(1); } }
 @keyframes ew-ava-talk { 0%, 100% { transform:translateY(0) rotate(0deg) scale(1); } 25% { transform:translateY(-2px) rotate(-7deg) scale(1.05); } 75% { transform:translateY(-2px) rotate(7deg) scale(1.05); } }
-@media (prefers-reduced-motion: reduce) { .ew-avatar.ew-ava-bounce, .ew-avatar.ew-ava-talk { animation:none; } }
+@media (prefers-reduced-motion: reduce) { .ew-avatar.ew-ava-roll, .ew-avatar.ew-ava-talk { animation:none; } }
 .ew-agent-add { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px 6px; }
 
 /* Workbench */

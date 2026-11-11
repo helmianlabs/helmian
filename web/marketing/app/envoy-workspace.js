@@ -1,19 +1,19 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=ce65665042b4b26c';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=ce65665042b4b26c';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=ce65665042b4b26c';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=ce65665042b4b26c';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=ce65665042b4b26c';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=ce65665042b4b26c';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=ce65665042b4b26c';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=ce65665042b4b26c';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=ce65665042b4b26c';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=ce65665042b4b26c';
-import { createConnectFields } from './connect-fields.mjs?v=ce65665042b4b26c';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=ce65665042b4b26c';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=ce65665042b4b26c';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=ae4fe9b6b63b9c75';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=ae4fe9b6b63b9c75';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=ae4fe9b6b63b9c75';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=ae4fe9b6b63b9c75';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=ae4fe9b6b63b9c75';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=ae4fe9b6b63b9c75';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=ae4fe9b6b63b9c75';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=ae4fe9b6b63b9c75';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=ae4fe9b6b63b9c75';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=ae4fe9b6b63b9c75';
+import { createConnectFields } from './connect-fields.mjs?v=ae4fe9b6b63b9c75';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=ae4fe9b6b63b9c75';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=ae4fe9b6b63b9c75';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -343,7 +343,8 @@ export function activityLive(activity, channelId, customAgents = [], now = Date.
 // viewed channel is a working stage, and stops the moment the stage
 // turns terminal or the event expires — the class rides the same
 // poll-driven renders the cue text does, so no timers exist here.
-// Working stages bounce (the seat is visibly busy); 'published' —
+// Working stages roll (the seat is visibly busy — the face
+// tumbles in its tile, Troy's Grok-companion ask, 2026-11-10); 'published' —
 // its reply landing — gets the talking bobble. The gate is the
 // desk's own emojiStill(): plain emoji mode and prefers-reduced-
 // motion systems get the still frame and no motion class at all,
@@ -352,7 +353,7 @@ export function activityLive(activity, channelId, customAgents = [], now = Date.
 // separate layer and untouched by this one.
 export function activityMotionKind(stage) {
   if (stage === 'published') return 'talk';
-  if (stage === 'started' || stage === 'working' || stage === 'file-placed') return 'bounce';
+  if (stage === 'started' || stage === 'working' || stage === 'file-placed') return 'roll';
   return null;
 }
 export function activityMotionClass(stage, still = emojiStill()) {
@@ -420,7 +421,7 @@ function syncCrewMotion() {
     if (!face) continue;
     const stage = activityMotionStage(ws.activity, row.getAttribute('data-provider'), ws.channelId);
     const cls = activityMotionClass(stage);
-    face.classList.toggle('ew-ava-bounce', cls === 'ew-ava-bounce');
+    face.classList.toggle('ew-ava-roll', cls === 'ew-ava-roll');
     face.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
     const video = face.querySelector('video.ew-crew-face-video');
     if (video) crewClipApply(video, stage);
@@ -503,7 +504,7 @@ function seatFaceImg(provider) {
 const CREW_FACE_SLUG = { openai: 'chatgpt' };
 const crewFaceSlug = (provider) => CREW_FACE_SLUG[provider] ?? provider;
 function crewFaceImg(slug, fallback) {
-  const img = h('img', { class: 'ew-crew-face-img', src: `/app/assets/crew/${slug}-56.png`, srcset: `/app/assets/crew/${slug}-128.png 2x, /app/assets/crew/${slug}-256.png 3x`, alt: '', width: 28, height: 28, loading: 'lazy' });
+  const img = h('img', { class: 'ew-crew-face-img', src: `/app/assets/crew/${slug}-56.png`, srcset: `/app/assets/crew/${slug}-128.png 2x, /app/assets/crew/${slug}-256.png 3x`, alt: '', width: 36, height: 36, loading: 'lazy' });
   img.addEventListener('error', () => {
     if (img.dataset.fbk) return;
     img.dataset.fbk = '1';
@@ -513,7 +514,7 @@ function crewFaceImg(slug, fallback) {
 }
 const crewSeatFaceImg = (provider) => crewFaceImg(crewFaceSlug(provider), () => seatFaceImg(provider));
 const crewOwnerFaceImg = () => crewFaceImg('owner', () => ownerFaceFallback());
-// The rail's face slot: 28px rounded square (radius 8 — never a
+// The rail's face slot: 36px rounded square (radius 8 — never a
 // circle) on the soft backing, with the status dot pinned at its
 // bottom-right over a surface ring, and the seat's live activity
 // motion riding the shell exactly as it did on the agent cards.
@@ -528,7 +529,7 @@ function crewFaceNode(faceImg, statusKind, motionStage) {
 // The rail face can carry the library pack's per-seat state clips
 // (bite 4a uploads them next to the stills as
 // /app/assets/crew/<slug>-<kind>.webm): a muted, looping <video>
-// inside the same 28px dark-tile shell, the 56px still as its poster.
+// inside the same 36px dark-tile shell, the 56px still as its poster.
 // The clips are dark-stage renders with no alpha channel — the
 // shell's dark tile is what contains them, and envoy.css fits the
 // video to the tile edge to edge so no letterbox shows.
@@ -1212,8 +1213,8 @@ function wireSplitters() {
 // The smallest honest shelf heights (floor-fix, 2026-11-08). Crew
 // arithmetic, border-box (the app.css * rule): section padding 14 +
 // border 1 + crew head ~23 + the ADD TO THIS CHANNEL subhead ~31 +
-// the add block capped at 60 (two 24px pill rows, envoy.css) + one
-// 38px crew row = 167 — the floor sits just above the sum. The
+// the add block capped at 180 (six 24px pill rows, envoy.css) + one
+// 46px crew row = 295 — the floor sits just above the sum. The
 // original 112 predated the panes-removal port that moved the subhead
 // and pill block inside this section: at 112 the fixed content alone
 // overflowed the box (the live-gate breakage — rows squeezed to zero,
@@ -1223,7 +1224,7 @@ function wireSplitters() {
 // are ignored on restore (applyHeights), so a height persisted under
 // the old crew floor returns the section to its natural height
 // instead of rendering broken.
-const SHELF_MIN = { crew: 168, approvals: 104 };
+const SHELF_MIN = { crew: 296, approvals: 104 };
 // The room the flexible sibling always keeps, whatever the drag asks.
 const SHELF_FLEX_MIN = 120;
 const SHELF_DEFS = {
@@ -2044,10 +2045,28 @@ function renderAgents() {
   // member count rides the CREW title, and the add-pills live
   // under the crew list in the same rail (#ew-crew-add).
   renderCrew(roster, customList, states, desk);
-  $('ew-crew-add').replaceChildren(
-    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)),
+  // Panel-stays-open fix (2026-11-10): the add list rebuilds on every
+  // render, and the pill that was clicked is one of the nodes the
+  // rebuild destroys — an added seat leaves the list. A destroyed
+  // focused node drops focus to <body>, and the channels pane reads
+  // focus leaving as a close: its focusout handler drops the rail
+  // peek, so the panel shut on every add and the owner had to reopen
+  // it per agent. Remember a focused pill and land focus on its
+  // successor in the same pass — the same pill when it survives (a
+  // render the click did not cause), else the create pill, which
+  // always renders. renderCrew does the same for crew rows above;
+  // this is the add list's half of that discipline.
+  const addBox = $('ew-crew-add');
+  const focusedPill = addBox && document.activeElement && addBox.contains(document.activeElement) ? document.activeElement : null;
+  const focusedAdd = focusedPill ? focusedPill.getAttribute('data-provider') : null;
+  addBox.replaceChildren(
+    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', 'data-provider': p, title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)),
     h('button', { type: 'button', class: 'ew-pill create-custom', title: 'Create a custom agent with emoji, name, job & AI provider', onclick: openCreateAgentModal }, '✨ + Custom Agent')
   );
+  if (focusedPill) {
+    const next = (focusedAdd && addBox.querySelector(`[data-provider="${focusedAdd}"]`)) || addBox.querySelector('.create-custom');
+    if (next) next.focus({ preventScroll: true });
+  }
 }
 async function changeAgent(action, provider) {
   try {
@@ -4109,7 +4128,7 @@ async function loadMessages() {
   ws.sig = sig; ws.messages = messages;
   speakNewMessages(id, messages);
   renderMessages(); renderAgents();
-  loadReactions({ force: true });
+  loadReactions(); // throttled — the 5s cadence governs during activity too (latency fix L1)
 }
 // ---------- spoken replies (voice bite 2d) ----------
 // While voice chat is on, messages from anyone else are read aloud
@@ -4889,7 +4908,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=ce65665042b4b26c');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=ae4fe9b6b63b9c75');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();

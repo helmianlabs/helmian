@@ -257,7 +257,7 @@ export function createVoiceController({
       listening = false;
       recognition = null;
       const hidden = typeof document !== 'undefined' && document.hidden;
-      if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a reply is in flight
+      if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a voice is playing or committed to play
       else if (!voiceMode) handlers.onState?.('idle');
     };
     recognition.start();
@@ -270,32 +270,39 @@ export function createVoiceController({
   // true, and a pending auto-submit holds until it clears. A reply
   // that is merely queued or still generating is NOT speech yet and
   // must not close the mic (mic-hostage fix): while an answer is
-  // being prepared, the user's words are accepted normally.
+  // being prepared, the user's words are accepted normally. The mic
+  // loop's restart keys on this predicate widened by servedPlaying
+  // (latency fix L1; see restartTurn).
   function speechActive() {
     if (activeSource) return true;
     if (synthSpeaking) return true;
     try { return !!(synthesis?.speaking); } catch { return false; }
   }
 
-  // Whether a reply is in flight on either engine — playing,
-  // generating, waiting behind the model load, or queued. The mic
-  // loop's restart keys on this rather than speechActive: starting a
-  // turn cancels speech (startTurn), so a restart fired while a reply
-  // is being prepared would kill the reply before it ever played.
-  // The hold can no longer hold the mic hostage: the load wait and
-  // every generate are bounded, so an in-flight reply always drains
-  // or fails forward within its bounds, and the restart follows.
-  function speechInFlight() {
-    if (kokoroPlaying || activeSource || kokoroQueue.length > 0) return true;
-    if (servedPlaying || servedQueue.length > 0) return true;
-    if (synthSpeaking || synthQueue.length > 0) return true;
-    try { return !!(synthesis?.speaking || synthesis?.pending); } catch { return false; }
-  }
-
+  // The mic loop's restart gate (latency fix L1, 2026-11-10): the
+  // restart holds only while a voice is playing or about to play.
+  // It previously keyed on the wider in-flight state (queued,
+  // waiting behind the model load, or generating), which held the
+  // mic closed for a whole round — minutes. Now the user can
+  // dictate the next message while the room is still thinking:
+  // replies that are merely queued or generating no longer close
+  // the mic. The gate is speechActive() — actual playback only,
+  // the same predicate the echo guard keys on — widened by
+  // servedPlaying: on the served road a chunk is committed to
+  // speak from the moment its fetch starts, about a second before
+  // sound comes out, and a restart in that window would cancel
+  // the fetch and orphan the reply (starting a turn cancels
+  // speech). This module and the app.js inline copy carry the
+  // gate identically — lockstep, pinned by the lockstep test.
+  // Starting a turn still replaces what has not played yet
+  // — the established turn-taking contract. The gate can never
+  // fire mid-playback: speechActive() is true for the whole of
+  // any chunk's playback, and the 400ms re-check below keeps
+  // polling until it clears.
   function restartTurn() {
     if (!voiceMode) return;
     if (typeof document !== 'undefined' && document.hidden) return;
-    if (speechInFlight()) {
+    if (speechActive() || servedPlaying) {
       if (!restartTimer) {
         restartTimer = setTimeout(() => { restartTimer = null; restartTurn(); }, 400);
       }
