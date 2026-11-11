@@ -436,3 +436,88 @@ test('FLAGS SCAN: clean -> press Send again; scanner down -> Guard\'s own check 
     assert.equal(sendEnter(fakeWindow, composer).prevented, false);
   } finally { await api.close(); }
 });
+
+// ─── "Guard: send this as written?" pill on the live page ──────────────────
+//
+// Bug, Nov 11 2026 (grok.com): the pill's own toggle button reads "Guard: send
+// this as written?", so the window-capture send detector took a click on it
+// for a click on the site's Send button, re-ran the privacy check, stopped the
+// click before it reached the pill and re-drew a fresh collapsed pill. The
+// tests above dispatch straight on the pill's buttons, which skips the window
+// listener; these route every click through it the way a browser does.
+
+function windowClick(fakeWindow, target, type = 'click') {
+  const event = { target, prevented: false, stopped: false };
+  event.preventDefault = () => { event.prevented = true; };
+  event.stopImmediatePropagation = () => { event.stopped = true; };
+  fakeWindow.dispatch(type, event);
+  if (!event.stopped && type === 'click') target.dispatch('click', { isTrusted: true });
+  return event;
+}
+
+test('PILL CLICK: a click on Guard\'s own pill is not mistaken for a send, so it opens', async () => {
+  fake.resetStorage();
+  const composer = textarea('call Dave at (208) 644-1690 or davesuitter@msn.com');
+  const { doc, fakeWindow } = await runExtension([composer]);
+  await wait(40);
+  sendEnter(fakeWindow, composer);
+  assert.ok(await waitFor(() => button(doc, 'expand')), 'no approval pill');
+  const pill = pills(doc)[0];
+  assert.match(button(doc, 'expand').textContent, /send this as written/i);
+
+  for (const type of ['pointerdown', 'mousedown']) {
+    const e = windowClick(fakeWindow, button(doc, 'expand'), type);
+    assert.equal(e.stopped, false, `Guard swallowed its own pill ${type}`);
+  }
+  const click = windowClick(fakeWindow, button(doc, 'expand'));
+  assert.equal(click.stopped, false, 'Guard swallowed the click on its own pill');
+  assert.equal(click.prevented, false);
+  await wait(60);
+  assert.equal(pills(doc).length, 1);
+  assert.equal(pills(doc)[0], pill, 'the pill was torn down and re-drawn');
+  assert.equal(pill.getAttribute('aria-expanded'), 'true', 'the pill did not open');
+  HelmionCleanup(doc);
+});
+
+test('PILL ALLOW: "send as written" sends the approved text through the site\'s own Send button, once', async () => {
+  fake.resetStorage();
+  const composer = textarea('call Dave at (208) 644-1690 or davesuitter@msn.com');
+  const sent = [];
+  const sendButton = element('button', { 'aria-label': 'Send message' }, ['↑']);
+  const wrap = element('div', {}, [element('div', {}, [composer]), element('div', {}, [element('button', { 'aria-label': 'Attach' }), sendButton])]);
+  const { doc, fakeWindow } = await runExtension([wrap]);
+  sendButton.click = () => {
+    const e = windowClick(fakeWindow, sendButton);
+    if (!e.stopped && !e.prevented) { sent.push(composer.value); composer.value = ''; }
+  };
+  await wait(40);
+
+  sendButton.click();
+  assert.deepEqual(sent, [], 'the unapproved text went out');
+  assert.ok(await waitFor(() => button(doc, 'allow')), 'no approval pill');
+  windowClick(fakeWindow, button(doc, 'expand'));
+  assert.equal(doc.querySelector('.helmion-guard-approval-pill-details').hidden, false);
+  windowClick(fakeWindow, button(doc, 'allow'));
+
+  assert.deepEqual(sent, ['call Dave at (208) 644-1690 or davesuitter@msn.com'], 'Allow did not send it');
+  assert.equal(pills(doc).length, 0);
+  await wait(700);
+  assert.equal(askAlerts(doc).length, 0, 'a "press Send again" card was left behind after a real send');
+});
+
+test('PILL ALLOW: if the site does not take the send, it falls back to "Press Send again"', async () => {
+  fake.resetStorage();
+  const composer = textarea('call Dave at (208) 644-1690 or davesuitter@msn.com');
+  const { doc, fakeWindow } = await runExtension([composer]);
+  await wait(40);
+  sendEnter(fakeWindow, composer);
+  assert.ok(await waitFor(() => button(doc, 'allow')));
+  windowClick(fakeWindow, button(doc, 'allow'));
+  assert.ok(await waitFor(() => /Press Send again/.test(askAlerts(doc)[0]?.textContent || ''), { timeout: 1500 }), 'no fallback card');
+  assert.equal(sendEnter(fakeWindow, composer).prevented, false, 'the approved text was still blocked');
+});
+
+function HelmionCleanup(doc) {
+  const deny = doc.querySelector('[data-helmion-action="deny"]');
+  if (deny) deny.dispatch('click', {});
+}
