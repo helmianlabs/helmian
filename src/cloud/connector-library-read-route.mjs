@@ -81,7 +81,13 @@ function getPool() {
   if (!sharedPool) {
     const connectionString = String(process.env.HELMION_DATABASE_URL ?? '').trim();
     if (!connectionString) throw Object.assign(new Error('database not configured'), { status: 503 });
-    sharedPool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 3 });
+    // connectionTimeoutMillis bounds the connect wait: without it a
+    // stalled connect (a waking Neon compute holding the pooler) can
+    // burn the whole function execution before the read fails — the
+    // 2026-11-11 tool-access 503s each ran ~6.7s with no timeout of
+    // any kind on the road. 5s matches the sibling pools in
+    // web/marketing/api/_herald-store.js and _team-oauth-store.js.
+    sharedPool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 3, connectionTimeoutMillis: 5_000 });
   }
   return sharedPool;
 }
@@ -209,6 +215,21 @@ export async function handleConnectorLibraryRoute({
     // long-standing mapping (400 stays 400, anything else 503).
     const passthrough = Number.isInteger(error?.status) && error.status >= 400 && error.status < 600 && typeof error?.code === 'string';
     const status = membershipApplies && membershipError(error) ? 403 : passthrough ? error.status : error?.status === 400 ? 400 : 503;
+    // A read failure mapped to the 503 must name itself in the
+    // function log before it is mapped: the client only ever sees
+    // CONNECTOR_LIBRARY_READ_FAILED, and until this line existed the
+    // underlying store error (the 2026-11-11 tool-access 503s) was
+    // unrecoverable after the fact — the function log showed nothing.
+    // Same channel and bracketed-tag shape as the sibling server
+    // code (envoy-chat, maestro-activation) and this library's own
+    // seed-failure logger in connector-library-read.mjs. The answer
+    // below is unchanged; a logger must never break the read, so the
+    // line is guarded exactly like that seed logger.
+    if (status === 503 && !passthrough) {
+      try {
+        console.error(`[connector-library] read failed (${requestUrl?.pathname ?? 'connector-library'}): ${error?.message ?? error}${typeof error?.code === 'string' ? ` [pg code ${error.code}]` : ''}`);
+      } catch { /* a logger must never break the read */ }
+    }
     send(response, status, JSON.stringify({
       valid: false,
       code: status === 403 ? 'CONNECTOR_LIBRARY_MEMBERSHIP_REQUIRED' : error?.code ?? (status === 400 ? 'CONNECTOR_LIBRARY_INVALID' : 'CONNECTOR_LIBRARY_READ_FAILED'),
