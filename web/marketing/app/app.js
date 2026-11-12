@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=531a4d5df872f33e';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=531a4d5df872f33e';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=531a4d5df872f33e';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=531a4d5df872f33e';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=c0d6966f9644aeb0';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=c0d6966f9644aeb0';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=c0d6966f9644aeb0';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=c0d6966f9644aeb0';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -1933,20 +1933,50 @@ $('#composer').onsubmit = async (e) => {
 };
 
 // ---- guard feed ----
-async function loadFeedData() {
-  const [ev, ap, gf] = await Promise.allSettled([api('/api/admin/events'), api('/api/admin/cora/approvals'), api('/api/admin/guard/findings')]);
-  if (ev.status === 'fulfilled') state.events = Array.isArray(ev.value.events) ? ev.value.events : [];
-  if (ap.status === 'fulfilled') state.approvals = approvalsModel(ap.value, state.actor?.role).items;
-  state.findings = gf.status === 'fulfilled' && Array.isArray(gf.value.findings) ? gf.value.findings : [];
-  const pending = state.approvals.filter((a) => !a.decision).length;
-  $('#approvals-badge').hidden = pending === 0; $('#approvals-badge').textContent = String(pending);
-  refreshUpcomingBadge();
-  renderFeed();
+// ONE feed load in flight, shared by every caller (boot-load fix,
+// 2026-11-11). This loader used to be fired bare by the boot line,
+// the first view's own loader and the desktop loader back to back,
+// and the 6-second heartbeat kept firing while a slow answer was
+// still out — nothing deduped any of it. On the 2026-11-11 cold
+// start the approvals read alone arrived dozens of times in
+// parallel and every copy took ~55 s (production request log,
+// 18:03 MST), each one queueing behind the same small pool. Now:
+// concurrent callers join the in-flight load; a load that finished
+// inside FEED_STALE_MS is served from state; and { force: true } —
+// passed where a write just landed (a decision, an ack, the Guard
+// panel's own refresh) — re-reads at once. The heartbeat's cadence
+// is unchanged; it just cannot stack any more. Like the library
+// facts loader in envoy-workspace.js, a failed load still advances
+// the fetch clock, so a down read is not retried on every call
+// inside the window.
+const FEED_STALE_MS = 5000;
+let feedLoadInFlight = null;
+let feedLoadedAt = 0;
+async function loadFeedData({ force = false } = {}) {
+  if (feedLoadInFlight) return feedLoadInFlight;
+  if (!force && feedLoadedAt && Date.now() - feedLoadedAt < FEED_STALE_MS) return;
+  const loading = (async () => {
+    const [ev, ap, gf] = await Promise.allSettled([api('/api/admin/events'), api('/api/admin/cora/approvals'), api('/api/admin/guard/findings')]);
+    if (ev.status === 'fulfilled') state.events = Array.isArray(ev.value.events) ? ev.value.events : [];
+    if (ap.status === 'fulfilled') state.approvals = approvalsModel(ap.value, state.actor?.role).items;
+    state.findings = gf.status === 'fulfilled' && Array.isArray(gf.value.findings) ? gf.value.findings : [];
+    const pending = state.approvals.filter((a) => !a.decision).length;
+    $('#approvals-badge').hidden = pending === 0; $('#approvals-badge').textContent = String(pending);
+    refreshUpcomingBadge();
+    renderFeed();
+    feedLoadedAt = Date.now();
+  })();
+  feedLoadInFlight = loading;
+  try {
+    return await loading;
+  } finally {
+    if (feedLoadInFlight === loading) feedLoadInFlight = null;
+  }
 }
 async function decide(item, decision) {
   try { await post('/api/admin/cora/approvals', { decision, requestKind: item.requestKind, requestReceiptId: item.requestReceiptId, reason: `${decision === 'approve' ? 'Approved' : 'Rejected'} in Helmian app`, idempotencyKey: crypto.randomUUID() }); toast(decision === 'approve' ? 'Approved' : 'Rejected'); }
   catch { toast('Decision not saved — try again'); }
-  await loadFeedData(); if (shell.dataset.view === 'approvals') renderApprovals();
+  await loadFeedData({ force: true }); if (shell.dataset.view === 'approvals') renderApprovals();
 }
 // Inline copy of web/shared/guard-motion.mjs (desktop parity for the Guard
 // feed; /app applies motion only, no toggles).
@@ -1981,12 +2011,12 @@ function findingCards() {
 }
 async function ackFinding(fingerprint) {
   try { await post('/api/admin/guard/acks', { fingerprint }); toast('Acknowledged'); }
-  catch { toast('Acknowledgement not saved — try again'); await loadFeedData(); renderFeed(); return; }
+  catch { toast('Acknowledgement not saved — try again'); await loadFeedData({ force: true }); renderFeed(); return; }
   // The ack is saved on the server; the card also leaves the pile for good
   // via the persisted cleared set — criticals included (owner's call,
   // 2026-11-08: the reds clear on ack like everything else).
   state.cleared.add(`finding:${fingerprint}`); store.set('cleared', [...state.cleared]);
-  await loadFeedData(); renderFeed();
+  await loadFeedData({ force: true }); renderFeed();
 }
 // Acknowledging an event card removes it from the feed for good: the id
 // lands in the persisted cleared set, so a reload (which refetches the
@@ -2124,7 +2154,7 @@ $('#feed-ack-all').onclick = async () => {
     for (const id of ids) { state.ack.add(id); state.cleared.add(id); }
     store.set('ack', [...state.ack]); store.set('cleared', [...state.cleared]);
   }
-  await loadFeedData(); renderFeed();
+  await loadFeedData({ force: true }); renderFeed();
 };
 
 
@@ -2443,7 +2473,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=531a4d5df872f33e'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=c0d6966f9644aeb0'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2457,9 +2487,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=531a4d5df872f33e');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=531a4d5df872f33e');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=531a4d5df872f33e');
+  integrationsMod ??= await import('./integrations-view.mjs?v=c0d6966f9644aeb0');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=c0d6966f9644aeb0');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=c0d6966f9644aeb0');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2656,7 +2686,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=531a4d5df872f33e')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=c0d6966f9644aeb0')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3532,8 +3562,14 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=531a4d5df872f33e');
-  await loadFeedData().catch(() => {});
+  workspaceModule ??= await import('./envoy-workspace.js?v=c0d6966f9644aeb0');
+  // The feed load rides along unawaited (boot-load fix, 2026-11-11):
+  // it used to be awaited here, so the whole workspace mount — the
+  // Desktop view's first paint — waited on the slowest of the events,
+  // approvals and findings reads. Now the workspace paints first and
+  // the Guard feed fills in when the shared load lands (loadFeedData
+  // repaints the feed itself when its reads settle).
+  void loadFeedData().catch(() => {});
   await workspaceModule.mountWorkspace({
     api, post, toast, state,
     openTools,
@@ -4082,7 +4118,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=531a4d5df872f33e');
+    const mod = await import('./maestro-activation.mjs?v=c0d6966f9644aeb0');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }

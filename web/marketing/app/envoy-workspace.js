@@ -1,19 +1,19 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=531a4d5df872f33e';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=531a4d5df872f33e';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=531a4d5df872f33e';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=531a4d5df872f33e';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=531a4d5df872f33e';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=531a4d5df872f33e';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=531a4d5df872f33e';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=531a4d5df872f33e';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=531a4d5df872f33e';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=531a4d5df872f33e';
-import { createConnectFields } from './connect-fields.mjs?v=531a4d5df872f33e';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=531a4d5df872f33e';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=531a4d5df872f33e';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c0d6966f9644aeb0';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c0d6966f9644aeb0';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c0d6966f9644aeb0';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c0d6966f9644aeb0';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=c0d6966f9644aeb0';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=c0d6966f9644aeb0';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=c0d6966f9644aeb0';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=c0d6966f9644aeb0';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c0d6966f9644aeb0';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c0d6966f9644aeb0';
+import { createConnectFields } from './connect-fields.mjs?v=c0d6966f9644aeb0';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c0d6966f9644aeb0';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c0d6966f9644aeb0';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -866,7 +866,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2344,39 +2344,65 @@ export function invalidateAllSeatLibraries(now = Date.now()) {
 export async function loadSeatLibrary(seatId, now = Date.now()) {
   const facts = await loadLibraryFacts();
   if (facts.libraries[seatId] && !seatLibraryStale(seatId, now)) return facts.libraries[seatId];
-  let library;
+  // One read per seat in flight (boot-load fix, 2026-11-11): the
+  // mount preload and a panel open can ask for the same seat in the
+  // same moment; both join the read already running instead of the
+  // second firing a duplicate. The in-flight entry clears when the
+  // read settles — the staleness window above governs every later
+  // load exactly as before.
+  if (ws.librarySeatLoading[seatId]) return ws.librarySeatLoading[seatId];
+  const loading = (async () => {
+    let library;
+    try {
+      const body = await ws.ctx.api(`/api/admin/connector-library?seat=${encodeURIComponent(seatId)}`);
+      library = { seatId, connectedCount: body?.connectedCount ?? 0, rows: Array.isArray(body?.rows) ? body.rows : [] };
+      for (const key of Object.keys(facts.names)) if (key.startsWith(`${seatId}:`)) delete facts.names[key];
+      for (const row of library.rows) facts.names[`${seatId}:${row.entryId}`] = row.name;
+    } catch {
+      library = { seatId, connectedCount: 0, rows: [], error: true };
+    }
+    facts.libraries[seatId] = library;
+    // The key-kind seed (panel key-seed bite): each read row carries
+    // its entry's authMode from its definition, so the panel learns
+    // which entries take a key from the read itself — a header entry
+    // connected in an earlier session shows Replace in this fresh
+    // session, with no connect attempt. Rows without the field seed
+    // nothing and the panel learns from connect answers exactly as
+    // before (connector-key-form.mjs's known set carries the rules).
+    ws.keyForm.known = seedKnownKeyEntries(ws.keyForm.known, library.rows);
+    ws.libraryFetchedAt[seatId] = now;
+    return library;
+  })();
+  ws.librarySeatLoading[seatId] = loading;
   try {
-    const body = await ws.ctx.api(`/api/admin/connector-library?seat=${encodeURIComponent(seatId)}`);
-    library = { seatId, connectedCount: body?.connectedCount ?? 0, rows: Array.isArray(body?.rows) ? body.rows : [] };
-    for (const key of Object.keys(facts.names)) if (key.startsWith(`${seatId}:`)) delete facts.names[key];
-    for (const row of library.rows) facts.names[`${seatId}:${row.entryId}`] = row.name;
-  } catch {
-    library = { seatId, connectedCount: 0, rows: [], error: true };
+    return await loading;
+  } finally {
+    if (ws.librarySeatLoading[seatId] === loading) delete ws.librarySeatLoading[seatId];
   }
-  facts.libraries[seatId] = library;
-  // The key-kind seed (panel key-seed bite): each read row carries
-  // its entry's authMode from its definition, so the panel learns
-  // which entries take a key from the read itself — a header entry
-  // connected in an earlier session shows Replace in this fresh
-  // session, with no connect attempt. Rows without the field seed
-  // nothing and the panel learns from connect answers exactly as
-  // before (connector-key-form.mjs's known set carries the rules).
-  ws.keyForm.known = seedKnownKeyEntries(ws.keyForm.known, library.rows);
-  ws.libraryFetchedAt[seatId] = now;
-  return library;
 }
 // The mount preload (speed fix, 2026-11-09): the plus menu used to
 // start its reads on first open and paint "Loading libraries…" while
 // they ran. mountWorkspace fires this once per session instead — the
 // same loaders, the same caches, started early: the seats facts, the
 // plugins list and the skills list land while the workspace settles,
-// then each seat's library prefetches in the background, one seat at
-// a time, so the preload never becomes the per-open fan-out the
-// read-perf fix removed. Opening the menu afterwards paints from
-// memory with the library's own joined states; the loaders'
-// staleness windows still govern every later refresh, and a cold
-// first open (the preload has not landed yet) keeps the loading line
-// exactly as before. Nothing here is awaited by the mount.
+// then every seat's library prefetches in the background as ONE
+// batch. Opening the menu afterwards paints from memory with the
+// library's own joined states; the loaders' staleness windows still
+// govern every later refresh, and a cold first open (the preload has
+// not landed yet) keeps the loading line exactly as before. Nothing
+// here is awaited by the mount.
+//
+// The batch shape (boot-load fix, 2026-11-11): the prefetch used to
+// walk the seats strictly one at a time — each seat's read waited
+// for the seat before it — so on a cold start the chain summed
+// every seat's seconds: the production log for 2026-11-11
+// 18:04:59–18:06:46 MST shows the fourteen seat reads landing one
+// after another, 1.8 s growing to 27 s apiece, ~135 s for the chain.
+// One batch fires them together; the wall clock is the slowest
+// single read, not the sum, and loadSeatLibrary's in-flight share
+// means a panel open during the batch joins the running read
+// instead of doubling it. The per-open fan-out the read-perf fix
+// removed stays removed: an open still reads only its own seat.
 export function preloadLibrarySession() {
   if (!ws.ctx?.api || ws.libraryPreloadStarted) return;
   ws.libraryPreloadStarted = true;
@@ -2385,9 +2411,7 @@ export function preloadLibrarySession() {
   void (async () => {
     const facts = await loadLibraryFacts().catch(() => null);
     if (!facts || facts.error) return;
-    for (const seat of facts.seats) {
-      await loadSeatLibrary(seat.seatId).catch(() => {});
-    }
+    await Promise.allSettled(facts.seats.map((seat) => loadSeatLibrary(seat.seatId)));
   })();
 }
 // The test seam for the session caches above: installs the read
@@ -2397,6 +2421,7 @@ export function resetLibrarySession(ctx) {
   ws.ctx = ctx;
   ws.libraryFacts = null;
   ws.libraryLoading = null;
+  ws.librarySeatLoading = {};
   ws.libraryFetchedAt = {};
   ws.libraryFactsFetchedAt = 0;
   ws.libraryWriteAt = 0;
@@ -2496,6 +2521,14 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     if (ws.keyForm.openFor === keyEntryKey(row.seatId, row.entryId) && ws.keyForm.model) {
       return withRemove(h('div', { class: 'ew-picker-group' }, connectRow, keyFormNode(which, row)));
     }
+    // A refused connect start's words paint under its own row in
+    // the panel's note style (startPanelConnect records them on
+    // ws.connectErrors), the same expand-in-place shape as the
+    // key form above.
+    const connectError = ws.connectErrors[keyEntryKey(row.seatId, row.entryId)];
+    if (connectError) {
+      return withRemove(h('div', { class: 'ew-picker-group' }, connectRow, h('p', { class: 'ew-note' }, connectError)));
+    }
     return withRemove(connectRow);
   }
   if (row.mirror) {
@@ -2514,6 +2547,15 @@ function libraryRowNode(which, row, { shape = null } = {}) {
   }
   return withRemove(h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
     h('span', { class: 'ew-picker-state off' }, row.stateLabel)));
+}
+
+// The words a refused connect start paints: the server's own
+// plain-language error when the answer carried one (the write
+// route sends { error } and the shell's api() throws with that
+// parsed body on the error's .body), else the panel's generic
+// refusal. Pure, so the wording contract is unit-tested.
+export function connectFailureMessage(error, name) {
+  return error?.body?.error || `Could not start ${name}. Try again.`;
 }
 
 // The panel's Connect button (owner order, 2026-11-10): the same
@@ -2554,13 +2596,28 @@ async function startPanelConnect(which, row) {
     renderPicker(which);
     return;
   }
+  const connectKey = keyEntryKey(row.seatId, row.entryId);
   let out;
   try {
     out = await ws.ctx.post('/api/admin/connector-library/connect', { seatId: row.seatId, entryId: row.entryId });
   } catch (e) {
-    ws.ctx.toast(e?.body?.error || `Could not start ${row.name}. Try again.`);
+    // A refused start answers with the server's own plain words
+    // (connectFailureMessage). The toast alone cannot carry them
+    // here: its node lives in the console view's section, which
+    // is hidden whenever this panel is on screen, so from the
+    // panel a refused Connect read as silence (the Gamma walk,
+    // 2026-11-11: a 502 with plain words in the body, and the
+    // panel showed nothing). The refusal also paints under the
+    // entry's own row, in the panel's note style, and stays
+    // until the entry's next answer (cleared below on any
+    // answer that comes back).
+    const message = connectFailureMessage(e, row.name);
+    if (connectKey) ws.connectErrors[connectKey] = message;
+    ws.ctx.toast(message);
+    renderPicker(which);
     return;
   }
+  if (connectKey) delete ws.connectErrors[connectKey];
   // The live answer outranks the read seed, either way it lands:
   // needs-credential confirms the entry as key-kind from the
   // road's own mouth; any other answer clears a seeded entry the
@@ -4995,7 +5052,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=531a4d5df872f33e');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c0d6966f9644aeb0');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -5239,7 +5296,7 @@ function wire() {
   renderMeFace();
   // Guard
   $('guard-ackall').addEventListener('click', () => ws.ctx.ackAll?.());
-  $('ew-guard-refresh').addEventListener('click', async () => { await ws.ctx.loadFeedData?.(); ws.ctx.renderFeed?.(); });
+  $('ew-guard-refresh').addEventListener('click', async () => { await ws.ctx.loadFeedData?.({ force: true }); ws.ctx.renderFeed?.(); });
   ws.ctx.wireVoice?.();
   window.matchMedia('(max-width: 900px)').addEventListener?.('change', applyLayout);
 }
