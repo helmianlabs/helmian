@@ -1108,6 +1108,27 @@ test('boxless faces: no 28px tile, no dark stage, mask on, clips in message rows
   assert.ok(!sig.includes('activityElapsed'), 'the elapsed clock is not part of the rebuild signature');
 });
 
+test('owner union mask (animation bite A): owner masks with owner-mask.png, every other slug with its still', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const maskFn = js.slice(js.indexOf('const faceMaskStyle'), js.indexOf('function crewFaceImg'));
+  assert.ok(maskFn.includes("slug === 'owner' ? 'owner-mask.png'"), 'the owner slug resolves to the union-silhouette mask');
+  assert.ok(maskFn.includes('${slug}-256.png'), 'every other slug still masks with its own 256px still');
+  // The mask asset itself: a 256x256 PNG (the union silhouette of the
+  // neutral master and the owner's pose masters), next to the clips.
+  const { readFile: rf, stat } = await import('node:fs/promises');
+  const maskBuf = await rf(new URL('../app/assets/crew/owner-mask.png', import.meta.url));
+  assert.equal(maskBuf.readUInt32BE(16), 256, 'owner-mask.png is 256px wide');
+  assert.equal(maskBuf.readUInt32BE(20), 256, 'owner-mask.png is 256px high');
+  for (const kind of ['idle', 'thinking', 'speaking']) {
+    const s = await stat(new URL(`../app/assets/crew/owner-${kind}.webm`, import.meta.url));
+    assert.ok(s.size > 10_000, `owner-${kind}.webm is present and non-trivial`);
+  }
+  // The owner never takes the generic stage motion: his message face
+  // is built at stage null and his rows re-point at null.
+  const msgOwner = js.slice(js.indexOf('function msgOwnerAvatar'), js.indexOf('// The desk crew rail'));
+  assert.ok(msgOwner.includes('crewOwnerFaceClip(null)'), 'owner message faces hold the idle clip (stage null)');
+});
+
 test('bite 5 wiring: faces route, member face, channel face, custom pill art', async () => {
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');

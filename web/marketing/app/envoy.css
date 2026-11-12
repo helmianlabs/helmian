@@ -377,7 +377,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-msg .ew-avatar.face-ava > video.ew-crew-face-video { width:36px; height:36px; border-radius:0; object-fit:contain; display:block; }
 /* Clips are opaque black-stage VP9. The matching still is real RGBA.
    Mask the video with that still so a boxless slot does not become
-   a black square. Motion outside the still silhouette is clipped. */
+   a black square. Motion outside the still silhouette is clipped —
+   except the owner, whose mask is the union silhouette of all his
+   poses (owner-mask.png, wired in faceMaskStyle), so his head tilt
+   is not clipped by the neutral still's outline. */
 .ew-crew-face > video.ew-crew-face-video,
 .ew-msg .ew-avatar.face-ava > video.ew-crew-face-video {
   -webkit-mask-image:var(--face-mask);

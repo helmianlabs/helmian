@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=765728ff7cdada1e';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=765728ff7cdada1e';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=765728ff7cdada1e';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=765728ff7cdada1e';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=765728ff7cdada1e';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=765728ff7cdada1e';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=765728ff7cdada1e';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=765728ff7cdada1e';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=765728ff7cdada1e';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=765728ff7cdada1e';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=765728ff7cdada1e';
-import { createConnectFields } from './connect-fields.mjs?v=765728ff7cdada1e';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=765728ff7cdada1e';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=765728ff7cdada1e';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=1fcc10008d70c760';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=1fcc10008d70c760';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=1fcc10008d70c760';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=1fcc10008d70c760';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=1fcc10008d70c760';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=1fcc10008d70c760';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=1fcc10008d70c760';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=1fcc10008d70c760';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=1fcc10008d70c760';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=1fcc10008d70c760';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=1fcc10008d70c760';
+import { createConnectFields } from './connect-fields.mjs?v=1fcc10008d70c760';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=1fcc10008d70c760';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=1fcc10008d70c760';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -591,7 +591,13 @@ const CREW_FACE_SLUG = { openai: 'chatgpt' };
 const crewFaceSlug = (provider) => CREW_FACE_SLUG[provider] ?? provider;
 // The still that masks a slug's clips (envoy.css --face-mask): the
 // pack still at the same slug is real RGBA; the clips are not.
-const faceMaskStyle = (slug) => `--face-mask:url("${assetUrl(`/app/assets/crew/${slug}-256.png`)}")`;
+// Owner is the one exception (avatar animation bite A): his rebuilt
+// clips move his head outside the neutral still's outline (the idle
+// head tilt), so he masks with owner-mask.png — the union silhouette
+// of the neutral master and every pose the clips morph through —
+// instead of his still. His visible stills and poster are untouched;
+// every other slug keeps masking with its own still.
+const faceMaskStyle = (slug) => `--face-mask:url("${assetUrl(`/app/assets/crew/${slug === 'owner' ? 'owner-mask.png' : `${slug}-256.png`}`)}")`;
 function crewFaceImg(slug, fallback) {
   const img = h('img', { class: 'ew-crew-face-img', src: assetUrl(`/app/assets/crew/${slug}-56.png`), srcset: `${assetUrl(`/app/assets/crew/${slug}-128.png`)} 2x, ${assetUrl(`/app/assets/crew/${slug}-256.png`)} 3x`, alt: '', width: 36, height: 36, loading: 'lazy' });
   img.dataset.slug = slug;
@@ -5526,7 +5532,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=765728ff7cdada1e');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=1fcc10008d70c760');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
