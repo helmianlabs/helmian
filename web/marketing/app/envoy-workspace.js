@@ -1,20 +1,30 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=60b377f31d4d798f';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=60b377f31d4d798f';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=60b377f31d4d798f';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=60b377f31d4d798f';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=60b377f31d4d798f';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=60b377f31d4d798f';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=60b377f31d4d798f';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=60b377f31d4d798f';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=60b377f31d4d798f';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=60b377f31d4d798f';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=60b377f31d4d798f';
-import { createConnectFields } from './connect-fields.mjs?v=60b377f31d4d798f';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=60b377f31d4d798f';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=60b377f31d4d798f';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=94caa8deac8b08b8';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=94caa8deac8b08b8';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=94caa8deac8b08b8';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=94caa8deac8b08b8';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=94caa8deac8b08b8';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=94caa8deac8b08b8';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=94caa8deac8b08b8';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=94caa8deac8b08b8';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=94caa8deac8b08b8';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=94caa8deac8b08b8';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=94caa8deac8b08b8';
+import { createConnectFields } from './connect-fields.mjs?v=94caa8deac8b08b8';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=94caa8deac8b08b8';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=94caa8deac8b08b8';
+// The art URLs minted here ride the shell stamp (optimization
+// bite 2, 2026-11-12): the import graph loads this module under
+// `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
+// read back off this module's own URL and lent to the art — a
+// face, clip or emoji is then served under the same immutable
+// cache rule as the code, and can never drift from it. Loaded
+// without a stamp (the test suite, tooling), the builders
+// return the bare URLs they return today.
+const ASSET_STAMP = new URL(import.meta.url).searchParams.get('v');
+const assetUrl = (url) => (ASSET_STAMP ? `${url}?v=${ASSET_STAMP}` : url);
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -58,7 +68,7 @@ function h(tag, attrs = {}, ...kids) {
   for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) n.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   return n;
 }
-const avatarImg = (p) => h('img', { src: `/assets/agents/${AVATAR[p] ?? 'maestro'}.png`, alt: '', width: 30, height: 30 });
+const avatarImg = (p) => h('img', { src: assetUrl(`/assets/agents/${AVATAR[p] ?? 'maestro'}.png`), alt: '', width: 30, height: 30 });
 const clock = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
 const dayLabel = (iso) => { const d = new Date(iso); const t = new Date(); if (d.toDateString() === t.toDateString()) return 'Today'; const y = new Date(t); y.setDate(t.getDate() - 1); if (d.toDateString() === y.toDateString()) return 'Yesterday'; return d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
 
@@ -543,9 +553,9 @@ const CREW_FACE_SLUG = { openai: 'chatgpt' };
 const crewFaceSlug = (provider) => CREW_FACE_SLUG[provider] ?? provider;
 // The still that masks a slug's clips (envoy.css --face-mask): the
 // pack still at the same slug is real RGBA; the clips are not.
-const faceMaskStyle = (slug) => `--face-mask:url("/app/assets/crew/${slug}-256.png")`;
+const faceMaskStyle = (slug) => `--face-mask:url("${assetUrl(`/app/assets/crew/${slug}-256.png`)}")`;
 function crewFaceImg(slug, fallback) {
-  const img = h('img', { class: 'ew-crew-face-img', src: `/app/assets/crew/${slug}-56.png`, srcset: `/app/assets/crew/${slug}-128.png 2x, /app/assets/crew/${slug}-256.png 3x`, alt: '', width: 36, height: 36, loading: 'lazy' });
+  const img = h('img', { class: 'ew-crew-face-img', src: assetUrl(`/app/assets/crew/${slug}-56.png`), srcset: `${assetUrl(`/app/assets/crew/${slug}-128.png`)} 2x, ${assetUrl(`/app/assets/crew/${slug}-256.png`)} 3x`, alt: '', width: 36, height: 36, loading: 'lazy' });
   img.dataset.slug = slug;
   img.addEventListener('error', () => {
     if (img.dataset.fbk) return;
@@ -598,7 +608,7 @@ export function crewClipKind(stage) {
   if (stage === 'started' || stage === 'working' || stage === 'file-placed') return 'thinking';
   return 'idle';
 }
-const crewClipSrc = (slug, kind) => `/app/assets/crew/${slug}-${kind}.webm`;
+const crewClipSrc = (slug, kind) => assetUrl(`/app/assets/crew/${slug}-${kind}.webm`);
 // Point one face's video at the clip for a stage and keep playback
 // honest: the src swaps only when the kind actually changed, the
 // clip plays unless the tab is hidden, and pauses when it is.
@@ -618,7 +628,7 @@ function crewClipApply(video, stage) {
 // still — no video element is built.
 function crewFaceClip(slug, stage, stillFallback) {
   if (emojiStill()) return crewFaceImg(slug, stillFallback);
-  const video = h('video', { class: 'ew-crew-face-video', muted: true, loop: true, playsinline: true, preload: 'metadata', poster: `/app/assets/crew/${slug}-56.png`, 'aria-hidden': 'true' });
+  const video = h('video', { class: 'ew-crew-face-video', muted: true, loop: true, playsinline: true, preload: 'metadata', poster: assetUrl(`/app/assets/crew/${slug}-56.png`), 'aria-hidden': 'true' });
   video.muted = true;
   video.dataset.slug = slug;
   video.dataset.clip = 'idle';
@@ -1617,9 +1627,9 @@ function renderChannels() {
   const regular = ws.channels.filter((c) => c.kind !== 'agent' && !isDeskChannel(c));
   const rooms = ws.channels.filter((c) => c.kind === 'agent');
   list.replaceChildren(
-    h('div', { class: 'ew-src-head' }, h('img', { src: '/assets/agents/maestro.png', alt: '', width: 14, height: 14 }), 'MAESTRO'),
+    h('div', { class: 'ew-src-head' }, h('img', { src: assetUrl('/assets/agents/maestro.png'), alt: '', width: 14, height: 14 }), 'MAESTRO'),
     seatRow,
-    h('div', { class: 'ew-src-head' }, h('img', { src: '/assets/agents/maestro.png', alt: '', width: 14, height: 14 }), 'ENVOY'),
+    h('div', { class: 'ew-src-head' }, h('img', { src: assetUrl('/assets/agents/maestro.png'), alt: '', width: 14, height: 14 }), 'ENVOY'),
     ...(regular.length ? regular.map(row) : [h('p', { class: 'ew-note' }, 'No channels yet.')]),
     ...(rooms.length ? [h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-room-mark', 'aria-hidden': 'true' }), 'AGENT ROOMS'), ...rooms.map(row)] : []),
     h('div', { class: 'ew-src-head' },
@@ -5323,7 +5333,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=60b377f31d4d798f');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=94caa8deac8b08b8');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();

@@ -10,6 +10,17 @@
 // first frame at /assets/emoji/<slug>-still.svg for emojiMode "plain" and
 // for reduced-motion users. Keys are codepoint sequences WITHOUT the
 // U+FE0F variation selector; lookups strip it, so "✌️" and "✌" both hit.
+// The art URLs minted here ride the shell stamp (optimization
+// bite 2, 2026-11-12): the import graph loads this module under
+// `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
+// read back off this module's own URL and lent to the art — a
+// face, clip or emoji is then served under the same immutable
+// cache rule as the code, and can never drift from it. Loaded
+// without a stamp (the test suite, tooling), the builders
+// return the bare URLs they return today.
+const ASSET_STAMP = new URL(import.meta.url).searchParams.get('v');
+const assetUrl = (url) => (ASSET_STAMP ? `${url}?v=${ASSET_STAMP}` : url);
+
 export const EMOJI_ASSET_BASE = '/assets/emoji/';
 
 export const EMOJI_MAP = Object.freeze({
@@ -64,7 +75,7 @@ export function emojiAssetSlug(token) {
 
 /** URL of the asset for a slug; still=true picks the static first frame. */
 export function emojiAssetUrl(slug, { still = false } = {}) {
-  return `${EMOJI_ASSET_BASE}${slug}${still ? '-still' : ''}.svg`;
+  return assetUrl(`${EMOJI_ASSET_BASE}${slug}${still ? '-still' : ''}.svg`);
 }
 
 // Built-in seat faces (emoji bite 5): the character each provider seat
